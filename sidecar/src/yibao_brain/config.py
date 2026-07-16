@@ -23,3 +23,8 @@ def a11y_enabled() -> bool:
 
 def screenshot_dir() -> str:
     return os.environ.get("YIBAO_SCREENSHOT_DIR", "/tmp")
+
+
+def glm_vision_model() -> str:
+    """computer-use 兜底用的视觉模型（glm-4.6v-flash 免费，生产用 glm-4.6v）。"""
+    return os.environ.get("YIBAO_GLM_VISION_MODEL", "glm-4.6v-flash")

@@ -5,6 +5,8 @@ click_control 的三级回退（AX 动作 → 坐标）在这里体现。
 """
 from __future__ import annotations
 
+import json
+
 from .ipc import ActionResult, RiskLevel
 from .skills import Skill, SkillContext, SkillRegistry
 
@@ -150,6 +152,120 @@ class TypeTextSkill(Skill):
             return ActionResult(success=False, error="缺少 text 参数")
         ctx.host.input.type_text(text)
         return ActionResult(success=True, data={"chars": len(text)})
+
+
+class ComputerUseSkill(Skill):
+    """视觉兜底：截图 → GLM-4.6V → 动作 → 注入，覆盖 a11y 力不能及的 UI。"""
+
+    id = "computer_use"
+    description = (
+        "computer-use 视觉兜底：当 read_tree/click_control 因控件无 title 或 UI 自绘而失效时，"
+        "用视觉模型看截图识别目标并点击/输入。慢、可能不准、高风险。"
+    )
+    default_risk = RiskLevel.L2_MEDIUM
+
+    def __init__(self, client, max_steps: int = 5):
+        self._client = client
+        self._default_max_steps = max_steps
+
+    def openai_schema(self) -> dict:
+        return {
+            "name": self.id,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task": {"type": "string", "description": "要完成的操作目标"},
+                    "max_steps": {"type": "integer", "default": 5, "description": "最多执行步数"},
+                },
+                "required": ["task"],
+            },
+        }
+
+    def run(self, params: dict, ctx: SkillContext) -> ActionResult:
+        if ctx.host is None:
+            return _no_host()
+        task = str(params.get("task", "")).strip()
+        if not task:
+            return ActionResult(success=False, error="缺少 task 参数")
+        if self._client is None:
+            return ActionResult(success=False, error="无 computer-use client")
+        max_steps = int(params.get("max_steps", self._default_max_steps))
+        history: list[dict] = []
+        done: list[dict] = []
+        prev_hash: str | None = None
+        for _ in range(max_steps):
+            shot = ctx.host.screenshotter.capture()
+            shot_hash = self._md5(shot)
+            if shot_hash is not None and shot_hash == prev_hash:
+                break  # 连续两帧无变化 → 停
+            prev_hash = shot_hash
+            b64 = self._b64(shot)
+            if b64 is None:
+                break
+            action = self._client.next_action(b64, task, history)
+            if not action:
+                break  # 模型输出非法/空 → 停，防失控
+            if action.get("action") == "finish":
+                break
+            scale = self._scale(shot)
+            self._execute(action, ctx.host, scale)
+            done.append(action)
+            history.append({"role": "assistant", "content": json.dumps(action, ensure_ascii=False)})
+        return ActionResult(success=True, data={"steps": len(done), "actions": done})
+
+    @staticmethod
+    def _md5(path: str) -> str | None:
+        try:
+            import hashlib
+
+            with open(path, "rb") as f:
+                return hashlib.md5(f.read()).hexdigest()
+        except Exception:
+            return None
+
+    @staticmethod
+    def _b64(path: str) -> str | None:
+        try:
+            import base64
+
+            with open(path, "rb") as f:
+                return "data:image/png;base64," + base64.b64encode(f.read()).decode()
+        except Exception:
+            return None
+
+    @staticmethod
+    def _scale(shot_path: str) -> float:
+        """截图像素物理宽 / pyautogui 逻辑宽（Retina≈2）。失败退化 1.0。"""
+        try:
+            from PIL import Image
+            import pyautogui
+
+            phys_w = Image.open(shot_path).width
+            logical_w = pyautogui.size().width
+            return phys_w / logical_w if logical_w else 1.0
+        except Exception:
+            return 1.0
+
+    @staticmethod
+    def _execute(action: dict, host, scale: float) -> None:
+        kind = action.get("action")
+        box = action.get("box") or []
+        if kind == "click" and len(box) == 4:
+            x1, y1, x2, y2 = (float(v) for v in box)
+            host.input.click((x1 + x2) / 2 / scale, (y1 + y2) / 2 / scale)
+        elif kind == "type":
+            host.input.type_text(str(action.get("text", "")))
+        elif kind == "scroll":
+            import pyautogui
+
+            delta = int(action.get("delta", -3))
+            if len(box) == 4:
+                x1, y1, x2, y2 = (float(v) for v in box)
+                pyautogui.scroll(delta, (x1 + x2) / 2 / scale, (y1 + y2) / 2 / scale)
+            else:
+                pyautogui.scroll(delta)
+        # finish / 未知动作 → 不执行
 
 
 def register_real_skills(reg: SkillRegistry) -> None:
