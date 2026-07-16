@@ -19,11 +19,11 @@
         "decorations": false,
         "alwaysOnTop": true,
         "skipTaskbar": true,
-        "resizable": false,
+        "resizable": true,
         "shadow": false,
         "visible": false,
-        "width": 360,
-        "height": 460
+        "width": 132,
+        "height": 140
       }
     ],
     "security": {

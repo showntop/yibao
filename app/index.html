@@ -6,12 +6,29 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>译宝</title>
     <style>
+      :root {
+        --yb-bg: rgba(255, 255, 255, 0.72);
+        --yb-glass-border: rgba(255, 255, 255, 0.6);
+        --yb-text: #1f2330;
+        --yb-text-dim: #6b7280;
+        --yb-accent: #5b6cff;
+        --yb-accent-soft: rgba(91, 108, 255, 0.16);
+        --yb-bubble-ai: rgba(245, 246, 255, 0.92);
+        --yb-bubble-user: rgba(91, 108, 255, 0.16);
+        --yb-danger: #e5484d;
+        --yb-danger-soft: rgba(229, 72, 77, 0.28);
+        --yb-radius: 14px;
+        --yb-shadow: 0 8px 30px rgba(20, 20, 40, 0.18);
+        --yb-blur: saturate(160%) blur(20px);
+      }
       html,
       body,
       #app {
         margin: 0;
         height: 100%;
         background: transparent;
+        border-radius: 18px;
+        overflow: hidden;
       }
     </style>
   </head>

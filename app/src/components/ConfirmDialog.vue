@@ -5,29 +5,39 @@ const emit = defineEmits<{ (e: "approve"): void; (e: "deny"): void }>();
 
 <template>
   <div class="dlg">
-    <b>⚠️ 确认执行</b>
-    <p><span class="skill">{{ skill }}</span>{{ desc ? "：" + desc : "" }}</p>
+    <div class="title"><span class="icon">⚠️</span> 确认执行高风险操作</div>
+    <p><span class="skill">{{ skill }}</span>{{ desc ? " · " + desc : "" }}</p>
     <div class="btns">
       <button class="deny" @click="emit('deny')">拒绝</button>
-      <button class="ok" @click="emit('approve')">允许</button>
+      <button class="ok" @click="emit('approve')">允许执行</button>
     </div>
   </div>
 </template>
 
 <style scoped>
 .dlg {
-  padding: 12px;
-  border-radius: 10px;
-  border: 1px solid rgba(204, 51, 51, 0.5);
+  padding: 14px;
+  border-radius: 14px;
   background: rgba(255, 255, 255, 0.96);
-  font-size: 14px;
+  border: 1px solid var(--yb-danger-soft);
+  box-shadow: var(--yb-shadow);
 }
-b {
-  color: #c33;
+.title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--yb-danger);
+}
+.icon {
+  font-size: 16px;
 }
 p {
-  margin: 6px 0 10px;
-  color: #333;
+  margin: 8px 0 12px;
+  color: var(--yb-text);
+  font-size: 13px;
+  line-height: 1.4;
 }
 .skill {
   font-weight: 600;
@@ -38,18 +48,24 @@ p {
   justify-content: flex-end;
 }
 button {
-  padding: 6px 14px;
-  border-radius: 7px;
+  padding: 7px 16px;
+  border-radius: 9px;
   border: none;
   cursor: pointer;
   font-size: 13px;
+  font-weight: 500;
+  transition: filter 0.15s;
 }
 .ok {
-  background: #2f7;
-  color: #063;
+  background: var(--yb-accent);
+  color: #fff;
 }
 .deny {
-  background: #eee;
-  color: #333;
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--yb-text-dim);
+}
+.ok:hover,
+.deny:hover {
+  filter: brightness(0.96);
 }
 </style>
