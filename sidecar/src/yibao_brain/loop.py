@@ -5,6 +5,7 @@ import json
 from collections.abc import Callable, Iterator
 
 from .audit import AuditLog
+from .host import Host
 from .ipc import Action, Event
 from .llm import LLMProvider, LLMResponse
 from .memory import Memory
@@ -31,8 +32,10 @@ class AgentLoop:
         confirmer: Confirmer | None = None,
         user_id: str = "default",
         max_steps: int = 8,
+        host: Host | None = None,
     ):
         self.provider = provider
+        self.host = host
         self.skills = skills
         self.classifier = classifier
         self.gate = gate
@@ -80,9 +83,9 @@ class AgentLoop:
                     yield Event(kind="error", text=f"策略禁止执行 {tc.skill_id}（风险过高）")
                     messages.append({"role": "tool", "tool_call_id": tc.id, "content": "策略禁止该操作"})
                     continue
-                ctx = SkillContext()
+                ctx = SkillContext(host=self.host)
                 result = skill.run(tc.params, ctx)
-                self.log.record(action, result)
+                self.log.record(action, result, screenshot_path=result.screenshot_path)
                 yield Event(kind="action_result", action=action, result=result)
                 messages.append(
                     {"role": "tool", "tool_call_id": tc.id, "content": _stringify_result(result)}

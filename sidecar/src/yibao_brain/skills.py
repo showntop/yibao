@@ -4,12 +4,14 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
+from .host import Host
 from .ipc import ActionResult, RiskLevel
 
 
 @dataclass
 class SkillContext:
-    """执行上下文：留给真实技能放日志/截图等。Plan 1 暂为空壳。"""
+    """技能执行上下文：host 提供感知/执行基座，meta 放 per-call 杂项。"""
+    host: Host | None = None
     meta: dict = field(default_factory=dict)
 
 

@@ -6,12 +6,14 @@ import sys
 from collections.abc import Callable
 
 from .audit import AuditLog
-from .config import glm_api_key
+from .config import a11y_enabled, glm_api_key, screenshot_dir
+from .ipc import RiskLevel
 from .llm import FakeProvider, GLMProvider
 from .loop import AgentLoop
 from .memory import FakeMemory, Mem0Memory
 from .safety import Gate, GatePolicy, RiskClassifier
 from .skills import EchoSkill, SkillRegistry
+from .skills_real import register_real_skills
 
 ReadMsg = Callable[[], dict | None]
 WriteMsg = Callable[[dict], None]
@@ -24,9 +26,12 @@ def build_loop(
     provider=None,
     skills_factory=None,
 ) -> AgentLoop:
+    real_a11y = use_real and a11y_enabled() and sys.platform == "darwin"
     reg = skills_factory() if skills_factory else SkillRegistry()
     if not skills_factory:
         reg.register(EchoSkill())
+        if real_a11y:
+            register_real_skills(reg)
 
     if provider is not None:
         prov = provider
@@ -38,6 +43,15 @@ def build_loop(
     except Exception:
         memory = FakeMemory()
 
+    host = None
+    if real_a11y:
+        try:
+            from .mac.host_mac import MacHost
+
+            host = MacHost(screenshot_dir=screenshot_dir())
+        except Exception as e:  # pyobjc 未装 / 非 mac → 回退无基座（技能会优雅报错）
+            print(f"[yibao] MacHost 不可用，回退无基座：{e}", file=sys.stderr)
+
     def confirmer(action) -> bool:
         # 由 serve 在 confirmation_needed 事件之后触发；阻塞读壳的回答
         ans = read_msg() or {}
@@ -47,10 +61,11 @@ def build_loop(
         provider=prov,
         skills=reg,
         classifier=RiskClassifier(),
-        gate=Gate(GatePolicy()),
+        gate=Gate(GatePolicy(auto_below_or_equal=RiskLevel.L1_LOW)),  # L2+ 走确认
         memory=memory,
         log=AuditLog(db_path),
         confirmer=confirmer,
+        host=host,
     )
 
 

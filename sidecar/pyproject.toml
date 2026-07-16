@@ -2,10 +2,20 @@
 name = "yibao-brain"
 version = "0.1.0"
 description = "译宝 Python sidecar 大脑核心"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     "pydantic>=2.7",
     "openai>=1.40",
+    # Plan 3a 执行/感知基座（跨平台）
+    "mss>=9.0",
+    "pillow>=10.0",
+    "pyautogui>=0.9.54",
+    "pyperclip>=1.8",
+    # macOS 专属（HIServices AX C API + 截图权限 + NSWorkspace）
+    "pyobjc-core>=10.0; sys_platform == 'darwin'",
+    "pyobjc-framework-ApplicationServices>=10.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'",
 ]
 
 [project.optional-dependencies]
