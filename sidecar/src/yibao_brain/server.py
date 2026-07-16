@@ -13,7 +13,7 @@ from .loop import AgentLoop
 from .memory import FakeMemory, Mem0Memory
 from .safety import Gate, GatePolicy, RiskClassifier
 from .skills import EchoSkill, SkillRegistry
-from .skills_real import register_real_skills
+from .skills_real import ComputerUseSkill, register_real_skills
 
 ReadMsg = Callable[[], dict | None]
 WriteMsg = Callable[[dict], None]
@@ -32,6 +32,13 @@ def build_loop(
         reg.register(EchoSkill())
         if real_a11y:
             register_real_skills(reg)
+            if glm_api_key():
+                try:
+                    from .llm import ComputerUseClient
+
+                    reg.register(ComputerUseSkill(ComputerUseClient()))
+                except Exception as e:
+                    print(f"[yibao] computer-use 兜底未启用：{e}", file=sys.stderr)
 
     if provider is not None:
         prov = provider

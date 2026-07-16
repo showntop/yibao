@@ -11,7 +11,7 @@ from .loop import AgentLoop
 from .memory import FakeMemory, Mem0Memory
 from .safety import Gate, GatePolicy, RiskClassifier
 from .skills import EchoSkill, SkillRegistry
-from .skills_real import register_real_skills
+from .skills_real import ComputerUseSkill, register_real_skills
 
 
 def build_loop(use_real: bool, db_path: str = "audit.db"):
@@ -20,6 +20,13 @@ def build_loop(use_real: bool, db_path: str = "audit.db"):
     reg.register(EchoSkill())
     if real_a11y:
         register_real_skills(reg)
+        if glm_api_key():
+            try:
+                from .llm import ComputerUseClient
+
+                reg.register(ComputerUseSkill(ComputerUseClient()))
+            except Exception as e:
+                print(f"[yibao] computer-use 兜底未启用：{e}", file=sys.stderr)
 
     provider = GLMProvider() if (use_real and glm_api_key()) else FakeProvider(text="(未配置 GLM key，使用 fake 回复)")
     try:

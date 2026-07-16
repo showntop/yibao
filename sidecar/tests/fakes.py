@@ -16,12 +16,15 @@ class _FakeHandle:
 
 
 class FakeScreenshotter:
-    def __init__(self, path: str = "/tmp/yibao-fake.png"):
+    def __init__(self, path: str = "/tmp/yibao-fake.png", paths: list | None = None):
         self.path = path
+        self.paths = list(paths) if paths else None  # 给序列则每次返下一个（模拟截图变化）
         self.calls: list[str] = []
 
     def capture(self) -> str:
         self.calls.append("capture")
+        if self.paths:
+            return self.paths.pop(0)
         return self.path
 
 
@@ -82,3 +85,18 @@ class FakeHost:
         self.screenshotter = FakeScreenshotter()
         self.a11y = FakeA11yReader()
         self.input = FakeInputInjector()
+
+
+class FakeComputerUseClient:
+    """按预设序列返回动作、记录调用；序列耗尽返回 finish。"""
+
+    def __init__(self, actions: list | None = None, image_width: int = 1440):
+        self.actions = list(actions or [{"action": "finish"}])
+        self.calls: list[dict] = []
+        self.image_width = image_width  # 供技能算 HiDPI scale 用
+
+    def next_action(self, screenshot_b64: str, task: str, history: list | None = None):
+        self.calls.append({"task": task, "history_len": len(history or [])})
+        if self.actions:
+            return self.actions.pop(0)
+        return {"action": "finish"}
