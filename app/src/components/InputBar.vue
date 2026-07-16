@@ -1,0 +1,80 @@
+<script setup lang="ts">
+import { ref, computed } from "vue";
+
+const emit = defineEmits<{ (e: "submit", text: string): void; (e: "mic"): void }>();
+const text = ref("");
+const canSend = computed(() => text.value.trim().length > 0);
+
+function send() {
+  const t = text.value.trim();
+  if (t) {
+    emit("submit", t);
+    text.value = "";
+  }
+}
+</script>
+
+<template>
+  <form class="bar" @submit.prevent="send">
+    <input v-model="text" placeholder="对译宝说点什么…" />
+    <button type="button" class="mic" aria-label="语音输入" @click="emit('mic')">🎤</button>
+    <button type="submit" class="send" :disabled="!canSend" aria-label="发送">↑</button>
+  </form>
+</template>
+
+<style scoped>
+.bar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 6px 6px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 2px 10px rgba(20, 20, 40, 0.06);
+}
+input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-size: 13.5px;
+  outline: none;
+  color: var(--yb-text);
+}
+input::placeholder {
+  color: var(--yb-text-dim);
+}
+.mic,
+.send {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  line-height: 1;
+  transition: filter 0.15s, opacity 0.15s;
+}
+.mic {
+  background: rgba(0, 0, 0, 0.06);
+  font-size: 16px;
+}
+.send {
+  background: var(--yb-accent);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+}
+.mic:hover {
+  filter: brightness(0.96);
+}
+.send:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+.send:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+</style>
