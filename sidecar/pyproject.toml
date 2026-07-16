@@ -1,0 +1,27 @@
+[project]
+name = "yibao-brain"
+version = "0.1.0"
+description = "译宝 Python sidecar 大脑核心"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.7",
+    "openai>=1.40",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+memory = ["mem0ai>=0.1.20"]
+
+[project.scripts]
+yibao-brain = "yibao_brain.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/yibao_brain"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
