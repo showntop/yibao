@@ -174,10 +174,17 @@ class MacA11yReader:
         return hit if err == kAXErrorSuccess else None
 
     def launch_app(self, app: str):
+        ws = NSWorkspace.sharedWorkspace()
+        before = {a.processIdentifier() for a in ws.runningApplications()}
         subprocess.run(["open", "-a", app], check=False)
         time.sleep(1.0)  # 等进程起来
-        ws = NSWorkspace.sharedWorkspace()
+        # 优先取「新启动」的进程 pid（不依赖本地化名）
         for a in ws.runningApplications():
-            if a.localizedName() == app:
+            if a.processIdentifier() not in before:
+                return a.processIdentifier()
+        # 兜底：名字模糊匹配
+        for a in ws.runningApplications():
+            name = a.localizedName() or ""
+            if app.lower() in name.lower() or name.lower() in app.lower():
                 return a.processIdentifier()
         return None
