@@ -14,6 +14,7 @@ memory = ["mem0ai>=0.1.20"]
 
 [project.scripts]
 yibao-brain = "yibao_brain.cli:main"
+yibao-brain-server = "yibao_brain.server:main"
 
 [build-system]
 requires = ["hatchling"]
