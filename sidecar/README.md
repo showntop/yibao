@@ -21,3 +21,6 @@ uv run yibao-brain --fake       # 假模型，无需 key/联网
 
 ## 配置
 环境变量见 `.env.example`。
+
+## 作为 sidecar（供桌面壳调用）
+`uv run yibao-brain-server` —— 行分隔 JSON over stdio；协议见 `docs/superpowers/plans/2026-07-16-yibao-v1-plan2-shell-and-ipc.md`。
