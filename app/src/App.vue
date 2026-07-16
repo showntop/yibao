@@ -1,160 +1,113 @@
 <script setup lang="ts">
-import { ref } from "vue";
-import { invoke } from "@tauri-apps/api/core";
+import { ref, onMounted, onUnmounted } from "vue";
+import Avatar from "./components/Avatar.vue";
+import InputBar from "./components/InputBar.vue";
+import ConfirmDialog from "./components/ConfirmDialog.vue";
+import Bubble from "./components/Bubble.vue";
+import { onBrainEvent, runInput, sendConfirm, type BrainEvent } from "./lib/brain";
 
-const greetMsg = ref("");
-const name = ref("");
+type AvatarState = "idle" | "listen" | "think" | "work";
+type BubbleMsg = { role: "user" | "ai"; text: string };
 
-async function greet() {
-  // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-  greetMsg.value = await invoke("greet", { name: name.value });
+const state = ref<AvatarState>("idle");
+const bubbles = ref<BubbleMsg[]>([]);
+const pending = ref<{ id: string; skill: string; desc: string } | null>(null);
+let unlisten: (() => void) | null = null;
+
+function onEvent(e: BrainEvent) {
+  switch (e.kind) {
+    case "action_proposed":
+      state.value = "work";
+      break;
+    case "confirmation_needed":
+      state.value = "idle";
+      pending.value = {
+        id: e.confirmation_id ?? "",
+        skill: e.action?.skill_id ?? "",
+        desc: e.action?.description ?? "",
+      };
+      break;
+    case "action_result":
+      if (e.result?.success) {
+        bubbles.value.push({
+          role: "ai",
+          text: "✓ " + JSON.stringify(e.result.data ?? {}),
+        });
+      }
+      break;
+    case "final_reply":
+      state.value = "idle";
+      bubbles.value.push({ role: "ai", text: e.text ?? "" });
+      break;
+    case "error":
+      state.value = "idle";
+      bubbles.value.push({ role: "ai", text: "⚠️ " + (e.text ?? "出错了") });
+      break;
+  }
 }
+
+async function submit(text: string) {
+  bubbles.value.push({ role: "user", text });
+  state.value = "think";
+  try {
+    await runInput(text);
+  } catch (err) {
+    bubbles.value.push({ role: "ai", text: "⚠️ 发送失败：" + String(err) });
+    state.value = "idle";
+  }
+}
+
+async function decide(approved: boolean) {
+  if (!pending.value) return;
+  const { id } = pending.value;
+  pending.value = null;
+  state.value = "think";
+  try {
+    await sendConfirm(id, approved);
+  } catch (err) {
+    bubbles.value.push({ role: "ai", text: "⚠️ 确认失败：" + String(err) });
+  }
+}
+
+onMounted(async () => {
+  unlisten = await onBrainEvent(onEvent);
+});
+onUnmounted(() => unlisten?.());
 </script>
 
 <template>
-  <main class="container">
-    <h1>Welcome to Tauri + Vue</h1>
-
-    <div class="row">
-      <a href="https://vite.dev" target="_blank">
-        <img src="/vite.svg" class="logo vite" alt="Vite logo" />
-      </a>
-      <a href="https://tauri.app" target="_blank">
-        <img src="/tauri.svg" class="logo tauri" alt="Tauri logo" />
-      </a>
-      <a href="https://vuejs.org/" target="_blank">
-        <img src="./assets/vue.svg" class="logo vue" alt="Vue logo" />
-      </a>
+  <div class="shell">
+    <Avatar :state="state" />
+    <div class="bubbles">
+      <Bubble v-for="(b, i) in bubbles" :key="i" :role="b.role" :text="b.text" />
     </div>
-    <p>Click on the Tauri, Vite, and Vue logos to learn more.</p>
-
-    <form class="row" @submit.prevent="greet">
-      <input id="greet-input" v-model="name" placeholder="Enter a name..." />
-      <button type="submit">Greet</button>
-    </form>
-    <p>{{ greetMsg }}</p>
-  </main>
+    <InputBar v-if="!pending" @submit="submit" />
+    <ConfirmDialog
+      v-else
+      :skill="pending.skill"
+      :desc="pending.desc"
+      @approve="() => decide(true)"
+      @deny="() => decide(false)"
+    />
+  </div>
 </template>
 
 <style scoped>
-.logo.vite:hover {
-  filter: drop-shadow(0 0 2em #747bff);
-}
-
-.logo.vue:hover {
-  filter: drop-shadow(0 0 2em #249b73);
-}
-
-</style>
-<style>
-:root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-  font-size: 16px;
-  line-height: 24px;
-  font-weight: 400;
-
-  color: #0f0f0f;
-  background-color: #f6f6f6;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  -webkit-text-size-adjust: 100%;
-}
-
-.container {
-  margin: 0;
-  padding-top: 10vh;
+.shell {
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  text-align: center;
+  gap: 8px;
+  height: 100vh;
+  box-sizing: border-box;
+  padding: 12px;
+  font-family: -apple-system, "PingFang SC", system-ui, sans-serif;
 }
-
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: 0.75s;
-}
-
-.logo.tauri:hover {
-  filter: drop-shadow(0 0 2em #24c8db);
-}
-
-.row {
+.bubbles {
+  flex: 1;
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  padding: 2px;
 }
-
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-
-a:hover {
-  color: #535bf2;
-}
-
-h1 {
-  text-align: center;
-}
-
-input,
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  color: #0f0f0f;
-  background-color: #ffffff;
-  transition: border-color 0.25s;
-  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
-}
-
-button {
-  cursor: pointer;
-}
-
-button:hover {
-  border-color: #396cd8;
-}
-button:active {
-  border-color: #396cd8;
-  background-color: #e8e8e8;
-}
-
-input,
-button {
-  outline: none;
-}
-
-#greet-input {
-  margin-right: 5px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    color: #f6f6f6;
-    background-color: #2f2f2f;
-  }
-
-  a:hover {
-    color: #24c8db;
-  }
-
-  input,
-  button {
-    color: #ffffff;
-    background-color: #0f0f0f98;
-  }
-  button:active {
-    background-color: #0f0f0f69;
-  }
-}
-
 </style>
