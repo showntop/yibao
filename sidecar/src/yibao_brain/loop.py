@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import sys
 from collections.abc import AsyncIterator, Callable, Iterator
 
 from .audit import AuditLog
@@ -19,6 +20,14 @@ SYSTEM_PROMPT = (
     "你是译宝，一个桌面 AI 助手。通过调用工具帮用户操作电脑。"
     "若无需调用工具，直接用自然语言回复。"
 )
+
+
+def _safe_record(log, action, result) -> None:
+    """审计写库失败只记 stderr、不中断对话（丢一条日志好过整个 run 崩掉）。"""
+    try:
+        log.record(action, result, screenshot_path=result.screenshot_path)
+    except Exception as e:
+        print(f"[yibao] 审计日志写入失败（已跳过）：{e}", file=sys.stderr)
 
 
 class AgentLoop:
@@ -86,7 +95,7 @@ class AgentLoop:
                     continue
                 ctx = SkillContext(host=self.host)
                 result = skill.run(tc.params, ctx)
-                self.log.record(action, result, screenshot_path=result.screenshot_path)
+                _safe_record(self.log, action, result)
                 yield Event(kind="action_result", action=action, result=result)
                 messages.append(
                     {"role": "tool", "tool_call_id": tc.id, "content": _stringify_result(result)}
@@ -169,7 +178,7 @@ class AgentLoop:
                     continue
                 ctx = SkillContext(host=self.host)
                 result = skill.run(tc.params, ctx)
-                self.log.record(action, result, screenshot_path=result.screenshot_path)
+                _safe_record(self.log, action, result)
                 yield Event(kind="action_result", action=action, result=result)
                 messages.append(
                     {"role": "tool", "tool_call_id": tc.id, "content": _stringify_result(result)}

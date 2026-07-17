@@ -1,6 +1,7 @@
 """IPC schema：译宝 shell ↔ 脑 的契约（Plan 2 的 Tauri 壳直接复用）。"""
 from __future__ import annotations
 
+import uuid
 from enum import IntEnum
 from typing import Literal
 
@@ -54,10 +55,6 @@ class Event(BaseModel):
     confirmation_id: str | None = None
 
 
-_id_counter = 0
-
-
 def _new_id(prefix: str) -> str:
-    global _id_counter
-    _id_counter += 1
-    return f"{prefix}_{_id_counter}"
+    """全局唯一 id：带随机段，sidecar 重启后也不会与 audit.db 旧记录冲突。"""
+    return f"{prefix}_{uuid.uuid4().hex[:12]}"

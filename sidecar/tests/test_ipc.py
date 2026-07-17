@@ -28,3 +28,19 @@ def test_event_kinds():
     assert e.action is None
     e2 = Event(kind="confirmation_needed", confirmation_id="c1")
     assert e2.confirmation_id == "c1"
+
+
+def test_action_ids_unique_across_calls():
+    # 回归：进程内自增计数器会在 sidecar 重启后与 audit.db 旧记录撞 id（UNIQUE 约束）
+    from yibao_brain.ipc import _new_id
+
+    ids = {_new_id("act") for _ in range(1000)}
+    assert len(ids) == 1000
+    assert all(i.startswith("act_") for i in ids)
+
+
+def test_new_id_not_sequential_counter():
+    # 回归：计数器 id（act_1）重启后必撞库；id 应带随机段
+    from yibao_brain.ipc import _new_id
+
+    assert _new_id("act") != "act_1"

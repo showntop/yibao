@@ -199,3 +199,27 @@ def test_loop_arun_assistant_msg_carries_tool_calls(tmp_path):
     assert "tool_calls" in asst, "assistant 消息缺 tool_calls → DeepSeek 会 400"
     assert asst["tool_calls"][0]["function"]["name"] == "echo"
     assert any(m.get("role") == "tool" and m.get("tool_call_id") == "c1" for m in second)
+
+
+class _RaisingLog:
+    """record 永远失败的审计日志（模拟 UNIQUE 冲突/磁盘故障）。"""
+
+    def record(self, *a, **kw):
+        raise RuntimeError("UNIQUE constraint failed: actions.id")
+
+    def recent(self, n=50):
+        return []
+
+
+def test_loop_survives_audit_failure(tmp_path):
+    # 审计写库失败不应炸掉整个 run，用户仍拿到回复
+    provider = _TwoStepProvider(
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="echo", params={"text": "hi"})]),
+        second=FakeProvider(text="echoed: hi"),
+    )
+    loop = build_loop(tmp_path, provider)
+    loop.log = _RaisingLog()
+    events = list(loop.run("请回显 hi"))
+    kinds = [e.kind for e in events]
+    assert "action_result" in kinds
+    assert kinds[-1] == "final_reply"
