@@ -8,10 +8,13 @@ export type BrainEventKind =
   | "confirmation_needed"
   | "action_result"
   | "final_reply"
+  | "final_reply_chunk"
+  | "interrupted"
   | "error"
   | "listening"
   | "listening_done"
-  | "speaking";
+  | "speaking"
+  | "speaking_done";
 
 export interface BrainAction {
   id?: string;
@@ -48,6 +51,11 @@ export function sendConfirm(confirmationId: string, approved: boolean): Promise<
 /** 触发语音输入：sidecar 录音→STT→run→TTS 播报（Plan 4a 最小语音）。 */
 export function voiceStart(): Promise<void> {
   return invoke("voice_start");
+}
+
+/** 打断进行中的生成/播报（Plan 4b：停 TTS + 终止 LLM + 清队列）。 */
+export function interrupt(): Promise<void> {
+  return invoke("interrupt");
 }
 
 /** 订阅大脑事件流，返回取消监听函数。 */

@@ -52,6 +52,12 @@ fn voice_start(state: tauri::State<Brain>) -> Result<(), String> {
     write_to_brain(&state, serde_json::json!({ "id": 0, "type": "voice_start" }))
 }
 
+/// 打断当前进行中的生成/播报（Plan 4b 三连取消：停 TTS + 终止 LLM + 清队列）。
+#[tauri::command]
+fn interrupt(state: tauri::State<Brain>) -> Result<(), String> {
+    write_to_brain(&state, serde_json::json!({ "id": 0, "type": "interrupt" }))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let shortcuts = tauri_plugin_global_shortcut::Builder::new()
@@ -150,7 +156,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![run_input, confirm, voice_start])
+        .invoke_handler(tauri::generate_handler![run_input, confirm, voice_start, interrupt])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, computed } from "vue";
 
-const emit = defineEmits<{ (e: "submit", text: string): void; (e: "mic"): void }>();
+defineProps<{ busy?: boolean }>();
+const emit = defineEmits<{ (e: "submit", text: string): void; (e: "mic"): void; (e: "interrupt"): void }>();
 const text = ref("");
 const canSend = computed(() => text.value.trim().length > 0);
 
@@ -18,6 +19,16 @@ function send() {
   <form class="bar" @submit.prevent="send">
     <input v-model="text" placeholder="对译宝说点什么…" />
     <button type="button" class="mic" aria-label="语音输入" @click="emit('mic')">🎤</button>
+    <button
+      v-if="busy"
+      type="button"
+      class="stop"
+      aria-label="打断（停止生成与播报）"
+      title="打断"
+      @click="emit('interrupt')"
+    >
+      ⏹
+    </button>
     <button type="submit" class="send" :disabled="!canSend" aria-label="发送">↑</button>
   </form>
 </template>
@@ -60,6 +71,14 @@ input::placeholder {
 .mic {
   background: rgba(0, 0, 0, 0.06);
   font-size: 16px;
+}
+.stop {
+  background: rgba(220, 70, 70, 0.16);
+  color: #c0392b;
+  font-size: 14px;
+}
+.stop:hover {
+  filter: brightness(1.04);
 }
 .send {
   background: var(--yb-accent);
