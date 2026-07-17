@@ -75,3 +75,21 @@ def vad_model_path() -> str:
 def tts_voice() -> str:
     """edge-tts 中文音色（默认 XiaoxiaoNeural 女声，最自然）。"""
     return os.environ.get("YIBAO_TTS_VOICE", "zh-CN-XiaoxiaoNeural")
+
+
+def mem0_embedder_model() -> str:
+    """mem0 本地 embedding 模型（默认 BAAI/bge-small-zh-v1.5，中文 512 维 ~100MB）。"""
+    return os.environ.get("YIBAO_MEM0_EMBEDDER", "BAAI/bge-small-zh-v1.5")
+
+
+def mem0_embedder_dim() -> int:
+    """embedder 向量维度（须与 mem0_embedder_model 匹配；bge-small-zh-v1.5=512）。"""
+    return int(os.environ.get("YIBAO_MEM0_EMBED_DIM", "512"))
+
+
+def mem0_vector_path() -> str:
+    """mem0 本地 qdrant 向量库存储路径（嵌入模式，免外部 server）。"""
+    return os.environ.get(
+        "YIBAO_MEM0_VECTOR_PATH",
+        os.path.join(os.path.dirname(__file__), "..", "..", "mem0_store"),
+    )
