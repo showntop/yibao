@@ -1,6 +1,7 @@
 """Agent 回路：输入 -> 规划 -> 逐步执行 -> 结果，产出 Event 流。"""
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import sys
@@ -28,6 +29,14 @@ def _safe_record(log, action, result) -> None:
         log.record(action, result, screenshot_path=result.screenshot_path)
     except Exception as e:
         print(f"[yibao] 审计日志写入失败（已跳过）：{e}", file=sys.stderr)
+
+
+async def _offload(fn, *args):
+    """同步阻塞调用（技能执行 / 记忆读写：HTTP、torch、subprocess）挪到线程池。
+
+    压在事件循环上会冻结整个 sidecar：看门狗 ping 答不了 → 15s 无 pong 被杀。
+    """
+    return await asyncio.get_running_loop().run_in_executor(None, lambda: fn(*args))
 
 
 class AgentLoop:
@@ -114,7 +123,7 @@ class AgentLoop:
         cancel 为 asyncio.Event（或任何带 is_set() 的对象）。打断时产出 interrupted 并返回。
         confirmer 可同步也可异步（返回协程则 await）。
         """
-        memories = self.memory.recall(user_text, self.user_id)
+        memories = await _offload(self.memory.recall, user_text, self.user_id)
         messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
         if memories:
             messages.append({"role": "system", "content": "关于用户的记忆：\n" + "\n".join(memories)})
@@ -141,7 +150,7 @@ class AgentLoop:
                     delta_acc.extend(delta.tool_call_deltas)
             tool_calls = merge_tool_call_deltas(delta_acc)
             if not tool_calls:
-                self.memory.add(user_text, self.user_id)
+                await _offload(self.memory.add, user_text, self.user_id)
                 yield Event(kind="final_reply", text=text_buf)
                 return
             messages.append(_assistant_with_tools(text_buf, tool_calls))
@@ -177,7 +186,7 @@ class AgentLoop:
                     )
                     continue
                 ctx = SkillContext(host=self.host)
-                result = skill.run(tc.params, ctx)
+                result = await _offload(skill.run, tc.params, ctx)
                 _safe_record(self.log, action, result)
                 yield Event(kind="action_result", action=action, result=result)
                 messages.append(

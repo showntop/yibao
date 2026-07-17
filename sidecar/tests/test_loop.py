@@ -223,3 +223,47 @@ def test_loop_survives_audit_failure(tmp_path):
     kinds = [e.kind for e in events]
     assert "action_result" in kinds
     assert kinds[-1] == "final_reply"
+
+
+# ---------- Plan 5 修复：arun 不把同步阻塞调用压在事件循环上 ----------
+
+
+def test_arun_runs_skill_and_memory_off_loop_thread(tmp_path):
+    """skill.run / memory.recall / memory.add 是同步阻塞实现（HTTP/torch），
+    必须在线程池执行，否则冻结事件循环 → 看门狗 15s 无 pong 杀大脑。"""
+    import threading
+
+    main_tid = threading.get_ident()
+    seen: dict[str, int] = {}
+
+    class SlowEcho(EchoSkill):
+        def run(self, params, ctx):
+            seen["skill"] = threading.get_ident()
+            return super().run(params, ctx)
+
+    class SpyMemory(FakeMemory):
+        def recall(self, query, user_id):
+            seen["recall"] = threading.get_ident()
+            return super().recall(query, user_id)
+
+        def add(self, text, user_id):
+            seen["add"] = threading.get_ident()
+            return super().add(text, user_id)
+
+    provider = _TwoStepProvider(
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="echo", params={"text": "hi"})]),
+        second=FakeProvider(text="done"),
+    )
+    loop = build_loop(tmp_path, provider)
+    reg = SkillRegistry()
+    reg.register(SlowEcho())
+    loop.skills = reg
+    loop.memory = SpyMemory()
+
+    async def _go():
+        return [e async for e in loop.arun("hi")]
+
+    asyncio.run(_go())
+    assert seen["skill"] != main_tid
+    assert seen["recall"] != main_tid
+    assert seen["add"] != main_tid
