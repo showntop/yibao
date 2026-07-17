@@ -51,3 +51,73 @@ def test_mem0_recall_tolerates_search_error(monkeypatch):
 
     m = Mem0Memory()
     assert m.recall("q", user_id="u1") == []
+
+
+# ---------- LazyMem0Memory：后台懒加载 ----------
+
+
+def _wait(pred, timeout=5.0):
+    import time
+
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < timeout:
+        if pred():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def test_lazy_memory_buffers_then_replays():
+    import threading
+
+    from yibao_brain.memory import LazyMem0Memory
+
+    gate = threading.Event()
+    real = FakeMemory()
+
+    def factory():
+        gate.wait(5)
+        return real
+
+    m = LazyMem0Memory(factory=factory)
+    assert m.recall("深色", "u") == []  # 未就绪：空召回，不阻塞
+    m.add("用户喜欢深色模式", "u")  # 未就绪：进缓冲
+    assert not m.ready
+    gate.set()
+    assert _wait(lambda: m.ready)
+    assert "用户喜欢深色模式" in real.recall("深色", "u")  # 缓冲已回放
+    m.add("第二条记忆", "u")  # 就绪后直通真实实例
+    assert "第二条记忆" in real.recall("第二", "u")
+
+
+def test_lazy_memory_failure_degrades():
+    from yibao_brain.memory import LazyMem0Memory
+
+    def factory():
+        raise RuntimeError("no torch")
+
+    m = LazyMem0Memory(factory=factory)
+    assert _wait(lambda: m.failed)
+    assert not m.ready
+    assert m.recall("x", "u") == []
+    m.add("y", "u")  # 降级后静默丢弃，不抛异常
+
+
+def test_lazy_memory_buffer_cap():
+    import threading
+
+    from yibao_brain.memory import LazyMem0Memory
+
+    gate = threading.Event()
+    real = FakeMemory()
+
+    def factory():
+        gate.wait(5)
+        return real
+
+    m = LazyMem0Memory(factory=factory, buffer_max=2)
+    for i in range(5):
+        m.add(f"m{i}", "u")
+    gate.set()
+    assert _wait(lambda: m.ready)
+    assert real.recall("m", "u") == ["m0", "m1"]  # 只回放前 buffer_max 条

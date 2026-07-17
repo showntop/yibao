@@ -1,6 +1,8 @@
-"""长期记忆：接口 + Fake（测试）+ Mem0（生产）。"""
+"""长期记忆：接口 + Fake（测试）+ Mem0（生产）+ LazyMem0（后台懒加载）。"""
 from __future__ import annotations
 
+import sys
+import threading
 from abc import ABC, abstractmethod
 
 
@@ -80,3 +82,66 @@ class Mem0Memory(Memory):
             if mem:
                 out.append(mem)
         return out
+
+
+class LazyMem0Memory(Memory):
+    """mem0 后台懒加载：构造秒回（不 import torch/mem0），真实实例在后台线程初始化。
+
+    就绪前 recall 返回空、add 进缓冲（上限 buffer_max 条）；就绪后回放缓冲并直通真实实例；
+    初始化失败永久降级为空记忆（不阻断回路）。解决 torch/sentence-transformers
+    冷加载把 sidecar 启动拖慢的问题（大脑先上线，记忆随后接入）。
+    """
+
+    def __init__(self, factory=None, buffer_max: int = 50) -> None:
+        self._factory = factory or Mem0Memory
+        self._buf_max = buffer_max
+        self._real = None
+        self._failed = False
+        self._buf: list[tuple[str, str]] = []
+        self._lock = threading.Lock()
+        threading.Thread(target=self._init, daemon=True).start()
+
+    @property
+    def ready(self) -> bool:
+        with self._lock:
+            return self._real is not None
+
+    @property
+    def failed(self) -> bool:
+        with self._lock:
+            return self._failed
+
+    def _init(self) -> None:
+        try:
+            real = self._factory()
+        except Exception as e:
+            print(f"[yibao] mem0 后台初始化失败，记忆降级为空：{e}", file=sys.stderr)
+            with self._lock:
+                self._failed = True
+                self._buf.clear()
+            return
+        with self._lock:
+            self._real = real
+            pending, self._buf = self._buf, []
+        for text, user_id in pending:  # 回放就绪前的缓冲（单条失败不阻断其余）
+            try:
+                real.add(text, user_id)
+            except Exception:
+                pass
+        print("[yibao] mem0 后台就绪", file=sys.stderr)
+
+    def add(self, text: str, user_id: str) -> None:
+        with self._lock:
+            real = self._real
+            if real is None:
+                if not self._failed and len(self._buf) < self._buf_max:
+                    self._buf.append((text, user_id))
+                return
+        real.add(text, user_id)
+
+    def recall(self, query: str, user_id: str) -> list[str]:
+        with self._lock:
+            real = self._real
+        if real is None:
+            return []
+        return real.recall(query, user_id)

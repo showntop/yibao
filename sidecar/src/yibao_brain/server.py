@@ -17,7 +17,7 @@ from .config import a11y_enabled, llm_api_key, screenshot_dir, stt_model_dir, tt
 from .ipc import RiskLevel
 from .llm import FakeProvider, GLMProvider
 from .loop import AgentLoop
-from .memory import FakeMemory, Mem0Memory
+from .memory import FakeMemory, LazyMem0Memory
 from .safety import Gate, GatePolicy, RiskClassifier
 from .skills import EchoSkill, SkillRegistry
 from .skills_composite import register_composite_skills
@@ -64,7 +64,8 @@ def build_loop(
         prov = GLMProvider() if (use_real and llm_api_key()) else FakeProvider(text="(未配置 LLM key，使用 fake 回复)")
 
     try:
-        memory = Mem0Memory() if use_real else FakeMemory()
+        # 懒加载：构造秒回（不 import torch/mem0），真实 mem0 后台线程就绪后接入
+        memory = LazyMem0Memory() if use_real else FakeMemory()
     except Exception:
         memory = FakeMemory()
 
