@@ -1,4 +1,8 @@
-"""stdio 行分隔 JSON 服务：把 AgentLoop 接到桌面壳（Phase B 的 Tauri 侧）。"""
+"""stdio 行分隔 JSON 服务：把 AgentLoop 接到桌面壳（Phase B 的 Tauri 侧）。
+
+协议（脑→壳）：hello（启动握手，含权限状态）、pong、permissions、event、run_done。
+协议（壳→脑）：run、confirm、voice_start、interrupt、ping、check_permissions、prompt_permission。
+"""
 from __future__ import annotations
 
 import asyncio
@@ -7,6 +11,7 @@ import sys
 import threading
 from collections.abc import Callable
 
+from . import permissions
 from .audit import AuditLog
 from .config import a11y_enabled, llm_api_key, screenshot_dir, stt_model_dir, tts_voice, vad_model_path, voice_enabled
 from .ipc import RiskLevel
@@ -20,6 +25,14 @@ from .skills_real import ComputerUseSkill, register_real_skills
 
 ReadMsg = Callable[[], dict | None]
 WriteMsg = Callable[[dict], None]
+
+
+def _permissions_status() -> dict:
+    """检测辅助功能/屏幕录制权限；检测本身失败时乐观返回 True（不出误报 banner）。"""
+    try:
+        return {"ax": permissions.check_ax(), "screen": permissions.check_screen()}
+    except Exception:
+        return {"ax": True, "screen": True}
 
 
 def build_loop(
@@ -150,6 +163,8 @@ async def serve_async(
     agent = build_loop(
         read_msg, use_real, db_path, provider, skills_factory, confirmer=confirmer
     )
+    # 启动握手：壳靠它确认大脑上线（守护重启后也靠它判断已恢复）
+    write_msg({"type": "hello", "version": 1, "permissions": _permissions_status()})
 
     def _reader():
         while True:
@@ -255,6 +270,18 @@ async def serve_async(
             fut = pending_confirm["future"]
             if fut is not None and not fut.done():
                 fut.set_result(bool(msg.get("approved", False)))
+        elif rtype == "ping":
+            # 壳侧看门狗心跳：run 进行中主循环也停在 queue.get()，总能即时应答
+            write_msg({"type": "pong"})
+        elif rtype == "check_permissions":
+            write_msg({"type": "permissions", "permissions": _permissions_status()})
+        elif rtype == "prompt_permission":
+            which = msg.get("which")
+            if which == "ax":
+                permissions.prompt_ax()
+            elif which == "screen":
+                permissions.prompt_screen()
+            write_msg({"type": "permissions", "permissions": _permissions_status()})
 
 
 def _line_reader() -> ReadMsg:

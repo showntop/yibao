@@ -214,3 +214,72 @@ def test_serve_async_confirm_roundtrip(tmp_path):
         m["type"] == "event" and m["event"].get("kind") == "action_result"
         and m["event"]["result"]["data"].get("did") for m in out
     )
+
+
+# ---------- 协议扩展：hello / ping / permissions ----------
+
+
+def test_serve_async_emits_hello_on_start(tmp_path):
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([]),  # 立即 EOF
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+        )
+    )
+    assert out[0]["type"] == "hello"
+    assert out[0]["version"] == 1
+    assert set(out[0]["permissions"]) >= {"ax", "screen"}
+
+
+def test_serve_async_ping_pong(tmp_path):
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([{"type": "ping"}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+        )
+    )
+    pongs = [m for m in out if m["type"] == "pong"]
+    assert len(pongs) == 1
+
+
+def test_serve_async_check_permissions(tmp_path):
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([{"type": "check_permissions"}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+        )
+    )
+    perms = [m for m in out if m["type"] == "permissions"]
+    assert len(perms) == 1
+    assert set(perms[0]["permissions"]) >= {"ax", "screen"}
+
+
+def test_serve_async_prompt_permission(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(
+        "yibao_brain.server.permissions.prompt_ax", lambda: calls.append("ax") or True
+    )
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([{"type": "prompt_permission", "which": "ax"}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+        )
+    )
+    assert calls == ["ax"]
+    assert any(m["type"] == "permissions" for m in out)
