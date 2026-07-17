@@ -14,6 +14,7 @@ use tauri_plugin_shell::ShellExt;
 struct BrainState {
     child: Option<CommandChild>,
     last_pong: Instant,
+    seen_pong: bool, // 本代进程是否已回过一个 pong/hello（区分启动中与运行中）
     restarts: u32, // 连续掉线次数（稳定运行 60s 后清零）
     last_restart: Option<Instant>,
     shutting_down: bool,
@@ -24,6 +25,7 @@ impl BrainState {
         Self {
             child: None,
             last_pong: Instant::now(),
+            seen_pong: false,
             restarts: 0,
             last_restart: None,
             shutting_down: false,
@@ -108,6 +110,7 @@ fn spawn_bridge(app: AppHandle, mut rx: tauri::async_runtime::Receiver<CommandEv
                                     let state = app.state::<Brain>();
                                     let mut g = state.0.lock().unwrap();
                                     g.last_pong = Instant::now();
+                                    g.seen_pong = true; // hello 意味着分发循环即将就绪
                                     // 稳定运行 60s+ 后的重启视为已恢复，清零退避计数
                                     if g
                                         .last_restart
@@ -126,6 +129,7 @@ fn spawn_bridge(app: AppHandle, mut rx: tauri::async_runtime::Receiver<CommandEv
                                 let state = app.state::<Brain>();
                                 let mut g = state.0.lock().unwrap();
                                 g.last_pong = Instant::now();
+                                g.seen_pong = true;
                             }
                             Some("permissions") => {
                                 if let Some(perms) = v.get("permissions") {
@@ -200,6 +204,7 @@ async fn restart_brain(app: AppHandle) {
                 let mut g = state.0.lock().unwrap();
                 g.child = Some(child);
                 g.last_pong = Instant::now(); // 给新进程启动留窗口
+                g.seen_pong = false; // 启动宽限期内不启用 15s 心跳超时
             }
             spawn_bridge(app.clone(), rx);
         }
@@ -220,7 +225,8 @@ async fn restart_brain(app: AppHandle) {
     }
 }
 
-/// 看门狗：每 5s 发 ping；>15s 无 pong 视为僵死，kill 后由桥任务 Terminated 统一重启。
+/// 看门狗：每 5s 发 ping；运行中 >15s 无 pong 视为僵死，kill 后由桥任务 Terminated 统一重启。
+/// 启动宽限：首个 pong/hello 之前按 90s 启动窗口算（torch/mem0/sherpa 冷启动可能数十秒）。
 fn spawn_watchdog(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         loop {
@@ -233,8 +239,9 @@ fn spawn_watchdog(app: AppHandle) {
             if g.shutting_down {
                 return;
             }
-            if g.child.is_some() && g.last_pong.elapsed() > Duration::from_secs(15) {
-                eprintln!("[brain] 看门狗：15s 无 pong，kill 重启");
+            let timeout = if g.seen_pong { 15 } else { 90 };
+            if g.child.is_some() && g.last_pong.elapsed() > Duration::from_secs(timeout) {
+                eprintln!("[brain] 看门狗：{timeout}s 无 pong，kill 重启");
                 if let Some(child) = g.child.take() {
                     let _ = child.kill();
                 }
