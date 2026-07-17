@@ -4,7 +4,7 @@ from __future__ import annotations
 import sys
 
 from .audit import AuditLog
-from .config import a11y_enabled, glm_api_key, screenshot_dir
+from .config import a11y_enabled, llm_api_key, screenshot_dir
 from .ipc import RiskLevel
 from .llm import FakeProvider, GLMProvider
 from .loop import AgentLoop
@@ -20,7 +20,7 @@ def build_loop(use_real: bool, db_path: str = "audit.db"):
     reg.register(EchoSkill())
     if real_a11y:
         register_real_skills(reg)
-        if glm_api_key():
+        if llm_api_key():
             try:
                 from .llm import ComputerUseClient
 
@@ -28,7 +28,7 @@ def build_loop(use_real: bool, db_path: str = "audit.db"):
             except Exception as e:
                 print(f"[yibao] computer-use 兜底未启用：{e}", file=sys.stderr)
 
-    provider = GLMProvider() if (use_real and glm_api_key()) else FakeProvider(text="(未配置 GLM key，使用 fake 回复)")
+    provider = GLMProvider() if (use_real and llm_api_key()) else FakeProvider(text="(未配置 LLM key，使用 fake 回复)")
     try:
         memory = Mem0Memory() if use_real else FakeMemory()
     except Exception:

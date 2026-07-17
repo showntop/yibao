@@ -4,7 +4,7 @@ import Avatar from "./components/Avatar.vue";
 import InputBar from "./components/InputBar.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
 import Bubble from "./components/Bubble.vue";
-import { onBrainEvent, runInput, sendConfirm, voiceStart, type BrainEvent } from "./lib/brain";
+import { onBrainEvent, runInput, sendConfirm, voiceStart, interrupt, type BrainEvent } from "./lib/brain";
 import {
   expand as expandWin,
   collapse as collapseWin,
@@ -17,6 +17,7 @@ type BubbleMsg = { role: "user" | "ai"; text: string };
 
 const state = ref<AvatarState>("idle");
 const bubbles = ref<BubbleMsg[]>([]);
+const streamingIdx = ref<number | null>(null); // 正在接收 chunk 的 bubble 下标
 const pending = ref<{ id: string; skill: string; desc: string } | null>(null);
 const expanded = ref(false);
 const dir = ref<Dir>("nw");
@@ -25,6 +26,7 @@ let unlisten: (() => void) | null = null;
 const statusText = computed(
   () => ({ idle: "待命中", listen: "聆听中", think: "思考中…", work: "操作中…", say: "说话中…" }[state.value]),
 );
+const busy = computed(() => state.value === "think" || state.value === "work" || state.value === "say");
 
 async function expand() {
   expanded.value = true;
@@ -59,12 +61,41 @@ function onEvent(e: BrainEvent) {
         bubbles.value.push({ role: "ai", text: "✓ " + JSON.stringify(e.result.data ?? {}) });
       }
       break;
+    case "final_reply_chunk": {
+      // 流式增量：拼到当前 streaming bubble（首片时新建）
+      if (streamingIdx.value === null) {
+        bubbles.value.push({ role: "ai", text: e.text ?? "" });
+        streamingIdx.value = bubbles.value.length - 1;
+      } else {
+        bubbles.value[streamingIdx.value].text += e.text ?? "";
+      }
+      break;
+    }
     case "final_reply":
+      // 以完整文本为准收尾（兜底 chunk 丢失）；语音中保持 say 等 speaking_done
+      if (streamingIdx.value !== null) {
+        bubbles.value[streamingIdx.value].text = e.text ?? "";
+        streamingIdx.value = null;
+      } else {
+        bubbles.value.push({ role: "ai", text: e.text ?? "" });
+      }
+      if (state.value !== "say") state.value = "idle";
+      break;
+    case "interrupted":
+      if (streamingIdx.value !== null) {
+        bubbles.value[streamingIdx.value].text += " ⛔";
+        streamingIdx.value = null;
+      } else {
+        bubbles.value.push({ role: "ai", text: "⛔ 已打断" });
+      }
       state.value = "idle";
-      bubbles.value.push({ role: "ai", text: e.text ?? "" });
+      break;
+    case "speaking_done":
+      state.value = "idle";
       break;
     case "error":
       state.value = "idle";
+      streamingIdx.value = null;
       bubbles.value.push({ role: "ai", text: "⚠️ " + (e.text ?? "出错了") });
       break;
     case "listening":
@@ -108,6 +139,13 @@ function onMic() {
   void voiceStart();
 }
 
+function onInterrupt() {
+  if (!busy.value) return;
+  void interrupt().catch((err) => {
+    bubbles.value.push({ role: "ai", text: "⚠️ 打断失败：" + String(err) });
+  });
+}
+
 function onKeydown(e: KeyboardEvent) {
   if (e.key === "Escape" && expanded.value) void collapse();
 }
@@ -137,7 +175,7 @@ onUnmounted(() => {
     </div>
 
     <div v-if="expanded" class="input-slot">
-      <InputBar v-if="!pending" @submit="submit" @mic="onMic" />
+      <InputBar v-if="!pending" :busy="busy" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
       <ConfirmDialog
         v-else
         :skill="pending.skill"

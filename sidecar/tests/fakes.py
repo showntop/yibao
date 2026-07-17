@@ -103,14 +103,37 @@ class FakeComputerUseClient:
 
 
 class FakeVoice:
-    """listen 返 canned text；记录 speak 调用（Plan 4a 语音测试）。"""
+    """listen 返 canned text；记录 speak/speak_stream 调用。
 
-    def __init__(self, text: str = "你好"):
+    speak_stream 模拟边收边播：每 chunk 先记录后按 stream_delay"播放"，
+    期间轮询 cancel（模拟真实现的 sd 非阻塞播放 + 30ms 轮询）。
+    """
+
+    def __init__(self, text: str = "你好", stream_delay: float = 0.0):
         self._text = text
+        self.stream_delay = stream_delay
         self.speak_calls: list[str] = []
+        self.stream_chunks: list[str] = []
+        self.stream_interrupted: bool = False
 
     def listen(self) -> str:
         return self._text
 
     def speak(self, text: str) -> None:
         self.speak_calls.append(text)
+
+    async def speak_stream(self, text_iter, cancel) -> None:
+        import asyncio
+
+        self.stream_chunks = []
+        self.stream_interrupted = False
+        async for delta in text_iter:
+            if cancel.is_set():
+                self.stream_interrupted = True
+                return
+            self.stream_chunks.append(delta)
+            if self.stream_delay:
+                await asyncio.sleep(self.stream_delay)
+            if cancel.is_set():
+                self.stream_interrupted = True
+                return
