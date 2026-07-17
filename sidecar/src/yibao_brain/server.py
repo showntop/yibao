@@ -147,10 +147,17 @@ async def serve_async(
     """
     ai_loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
-    pending_confirm: dict = {"future": None}
+    # 确认单槽 + 早到缓存：confirm 可能先于 confirmer 注册 future 到达
+    # （读线程瞬时投递 run+confirm，主循环先处理 confirm），直接丢会死锁。
+    pending_confirm: dict = {"future": None, "early": None}
     run_state: dict = {"task": None, "cancel": None}
 
     async def confirmer(action) -> bool:
+        # 早到的 confirm 直接兑现
+        if pending_confirm["early"] is not None:
+            approved = pending_confirm["early"]
+            pending_confirm["early"] = None
+            return bool(approved)
         # 单槽 future：收到任意 confirm 消息即兑现（v1 run 串行，确认也串行）
         fut = ai_loop.create_future()
         pending_confirm["future"] = fut
@@ -270,6 +277,9 @@ async def serve_async(
             fut = pending_confirm["future"]
             if fut is not None and not fut.done():
                 fut.set_result(bool(msg.get("approved", False)))
+            else:
+                # confirmer 还没注册（消息先于 run 任务到达）→ 缓存，由 confirmer 兑现
+                pending_confirm["early"] = bool(msg.get("approved", False))
         elif rtype == "ping":
             # 壳侧看门狗心跳：run 进行中主循环也停在 queue.get()，总能即时应答
             write_msg({"type": "pong"})
