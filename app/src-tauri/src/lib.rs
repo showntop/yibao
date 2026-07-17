@@ -2,7 +2,9 @@
 use std::sync::Mutex;
 
 use serde_json::Value;
-use tauri::{Emitter, Manager};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{Emitter, Manager, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
@@ -79,12 +81,65 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .manage(Brain(Mutex::new(None)))
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                // 桌宠常驻：关窗只隐藏，真正退出走托盘菜单
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .setup(|app| {
             // 注册全局热键：Super+Shift+Y 显隐主窗（macOS 上 Super=Cmd）
             #[cfg(desktop)]
             if let Err(e) = app.global_shortcut().register("Super+Shift+Y") {
                 eprintln!("[yibao] 注册热键失败：{e}");
             }
+
+            // 系统托盘：关窗隐藏后靠它重新显示/退出。左键点图标切换显隐，右键菜单。
+            let show_item = MenuItem::with_id(app, "show", "显示译宝", true, None::<&str>)?;
+            let hide_item = MenuItem::with_id(app, "hide", "隐藏译宝", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "退出译宝", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_item, &hide_item, &quit_item])?;
+            let tray_img = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))
+                .expect("加载托盘图标失败");
+            TrayIconBuilder::with_id("main-tray")
+                .icon(tray_img)
+                .icon_as_template(false)
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .tooltip("译宝")
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => {
+                        if let Some(w) = app.get_webview_window("main") {
+                            let _ = w.show().and_then(|_| w.set_focus());
+                        }
+                    }
+                    "hide" => {
+                        if let Some(w) = app.get_webview_window("main") {
+                            let _ = w.hide();
+                        }
+                    }
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        if let Some(w) = app.get_webview_window("main") {
+                            let _ = if w.is_visible().unwrap_or(false) {
+                                w.hide()
+                            } else {
+                                w.show().and_then(|_| w.set_focus())
+                            };
+                        }
+                    }
+                })
+                .build(app)?;
 
             // 拉起 Python sidecar。
             // dev：sidecar/.venv/bin/python（绝对路径，避免 GUI 应用 PATH 缺失）
