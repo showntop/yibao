@@ -1,7 +1,8 @@
-"""语音能力（Plan 4a 最小版 + Plan 4b 流式/打断）：录音+VAD→STT，TTS→播放。
+"""语音能力（Plan 4a 最小版 + Plan 4b 流式/打断 + Plan 5 体验修复）：录音+VAD→STT，TTS→播放。
 
-speak_stream（4b）：按句切分流式文本 → edge-tts stream 取 mp3 → miniaudio 解码
-→ sounddevice 非阻塞播放 + 30ms 轮询 cancel，命中即 stop（"三连取消"之一：停 TTS）。
+speak_stream（5）：按句切分 → 生产者/消费者管道 —— 播当前句的同时预合成下一句
+（旧实现句间串行：合成整句→播完→再合成下一句，句间有完整网络延迟，听着一顿一顿）。
+cancel 命中即停（"三连取消"之一：停 TTS）。
 组件 factory 注入：真实现用 sherpa-onnx/sounddevice/edge-tts/miniaudio；
 测试用 tests/fakes.py 的 Fake*。
 """
@@ -57,9 +58,12 @@ class SherpaRecognizer:
 
 
 class SounddeviceRecorder:
-    """sounddevice 录音 + Silero VAD：说完一句（静音 min_silence）自动停，返回该段 PCM。"""
+    """sounddevice 录音 + Silero VAD：说完一句（静音 min_silence）自动停，返回该段 PCM。
 
-    def __init__(self, vad_model: str, max_seconds: int = 10, min_silence: float = 0.5):
+    min_silence 默认 0.9s：说话中途的自然停顿（<0.9s）不会被误判为说完。
+    """
+
+    def __init__(self, vad_model: str, max_seconds: int = 30, min_silence: float = 0.9):
         self._vad_model = vad_model
         self._max = max_seconds
         self._min_silence = min_silence
@@ -100,7 +104,7 @@ class EdgeTtsSpeaker:
     """edge-tts 合成（zh-CN-XiaoxiaoNeural）→ miniaudio 解码 → sounddevice 播放。
 
     speak（同步，4a）：整段合成→阻塞播放。
-    speak_stream（4b）：按句流式合成→边收边播，cancel 命中立即 stop。
+    speak_stream（5）：按句切分 → 合成/播放管道化（预取下一句），cancel 命中立即 stop。
     """
 
     def __init__(self, voice: str = "zh-CN-XiaoxiaoNeural"):
@@ -112,37 +116,69 @@ class EdgeTtsSpeaker:
         asyncio.run(self._speak_one(text, _NeverCancel()))
 
     async def speak_stream(self, text_iter: AsyncIterator[str], cancel) -> None:
-        """边收 LLM 文本增量边按句播报；cancel.is_set() 立即停（清队列 + stop 播放）。"""
-        buf = ""
-        async for delta in text_iter:
-            if cancel.is_set():
-                return
-            buf += delta
-            while True:  # 把已凑齐的整句全部冲掉
-                sentence, rest = _take_sentence(buf)
-                if sentence is None:
-                    break
-                buf = rest
-                if cancel.is_set():
-                    return
-                await self._speak_one(sentence, cancel)
-                if cancel.is_set():
-                    return
-        tail = buf.strip()
-        if tail and not cancel.is_set():
-            await self._speak_one(tail, cancel)
+        """边收 LLM 文本增量边按句播报；cancel.is_set() 立即停（清队列 + stop 播放）。
 
-    async def _speak_one(self, text: str, cancel) -> None:
+        生产者/消费者管道：合成下一句与播放当前句并行，句间不再有完整网络延迟。
+        """
         import asyncio
 
+        queue: asyncio.Queue = asyncio.Queue()  # 句子 PCM 队列；None=结束哨兵
+        synth_error: list[BaseException] = []
+
+        async def produce() -> None:
+            try:
+                buf = ""
+                async for delta in text_iter:
+                    if cancel.is_set():
+                        return
+                    buf += delta
+                    while True:  # 把已凑齐的整句全部冲掉
+                        sentence, rest = _take_sentence(buf)
+                        if sentence is None:
+                            break
+                        buf = rest
+                        if cancel.is_set():
+                            return
+                        pcm = await self._synth_pcm(sentence)
+                        if pcm is not None:
+                            await queue.put(pcm)
+                tail = buf.strip()
+                if tail and not cancel.is_set():
+                    pcm = await self._synth_pcm(tail)
+                    if pcm is not None:
+                        await queue.put(pcm)
+            except BaseException as e:
+                synth_error.append(e)
+            finally:
+                await queue.put(None)
+
+        async def consume() -> None:
+            while True:
+                pcm = await queue.get()
+                if pcm is None or cancel.is_set():
+                    return
+                await self._play_pcm(pcm, cancel)
+
+        producer = asyncio.create_task(produce())
+        try:
+            await consume()
+        finally:
+            if not producer.done():
+                producer.cancel()
+            await asyncio.gather(producer, return_exceptions=True)
+        if synth_error:
+            raise synth_error[0]
+
+    async def _synth_pcm(self, text: str):
+        """一句文本 → edge-tts 合成 mp3 → 解码 float32 PCM；空文本/解码失败返回 None。"""
         if not text or not text.strip():
-            return
+            return None
         mp3 = await self._fetch_mp3(text)
-        if cancel.is_set():
-            return
         pcm = _decode_mp3(mp3)
-        if len(pcm) == 0:
-            return
+        return pcm if len(pcm) else None
+
+    async def _play_pcm(self, pcm, cancel) -> None:
+        """非阻塞播放一段 PCM + 30ms 轮询 cancel（命中即 stop）。"""
         import sounddevice as sd
 
         sd.play(pcm, samplerate=24000)
@@ -160,6 +196,14 @@ class EdgeTtsSpeaker:
                 sd.stop()
             except Exception:
                 pass
+
+    async def _speak_one(self, text: str, cancel) -> None:
+        if cancel.is_set():
+            return
+        pcm = await self._synth_pcm(text)
+        if pcm is None or cancel.is_set():
+            return
+        await self._play_pcm(pcm, cancel)
 
     async def _fetch_mp3(self, text: str) -> bytes:
         import edge_tts
@@ -214,10 +258,16 @@ def _decode_mp3(mp3_bytes: bytes):
     return np.frombuffer(dec.samples, dtype=np.float32)
 
 
-def build_voice(model_dir: str, vad_model: str, voice_name: str) -> VoiceCapability:
+def build_voice(
+    model_dir: str,
+    vad_model: str,
+    voice_name: str,
+    min_silence: float = 0.9,
+    max_seconds: int = 30,
+) -> VoiceCapability:
     """生产装配：sherpa STT + sounddevice 录 + edge-tts 播。"""
     return VoiceCapability(
         SherpaRecognizer(model_dir),
-        SounddeviceRecorder(vad_model=vad_model),
+        SounddeviceRecorder(vad_model=vad_model, max_seconds=max_seconds, min_silence=min_silence),
         EdgeTtsSpeaker(voice_name),
     )

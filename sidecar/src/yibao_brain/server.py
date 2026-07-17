@@ -13,7 +13,7 @@ from collections.abc import Callable
 
 from . import permissions
 from .audit import AuditLog
-from .config import a11y_enabled, llm_api_key, screenshot_dir, stt_model_dir, tts_voice, vad_model_path, voice_enabled
+from .config import a11y_enabled, llm_api_key, screenshot_dir, stt_model_dir, tts_voice, vad_max_seconds, vad_min_silence, vad_model_path, voice_enabled
 from .ipc import RiskLevel
 from .llm import FakeProvider, GLMProvider
 from .loop import AgentLoop
@@ -319,7 +319,13 @@ def _build_voice_or_none():
     try:
         from .voice import build_voice
 
-        return build_voice(stt_model_dir(), vad_model_path(), tts_voice())
+        return build_voice(
+            stt_model_dir(),
+            vad_model_path(),
+            tts_voice(),
+            min_silence=vad_min_silence(),
+            max_seconds=vad_max_seconds(),
+        )
     except Exception as e:
         print(f"[yibao] 语音不可用，已禁用：{e}", file=sys.stderr)
         return None

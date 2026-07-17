@@ -77,6 +77,16 @@ def vad_model_path() -> str:
     )
 
 
+def vad_min_silence() -> float:
+    """VAD 判定「说完」的静音时长（秒）。太短会把说话中途的自然停顿切成两句话。"""
+    return float(os.environ.get("YIBAO_VAD_MIN_SILENCE", "0.9"))
+
+
+def vad_max_seconds() -> int:
+    """单次录音最长时长（秒）。"""
+    return int(os.environ.get("YIBAO_VAD_MAX_SECONDS", "30"))
+
+
 def tts_voice() -> str:
     """edge-tts 中文音色（默认 XiaoxiaoNeural 女声，最自然）。"""
     return os.environ.get("YIBAO_TTS_VOICE", "zh-CN-XiaoxiaoNeural")
