@@ -25,3 +25,9 @@ uv run yibao-brain --fake       # 假模型，无需 key/联网
 
 ## 作为 sidecar（供桌面壳调用）
 `uv run yibao-brain-server` —— 行分隔 JSON over stdio；协议见 `docs/superpowers/plans/2026-07-16-yibao-v1-plan2-shell-and-ipc.md`。
+
+启动握手发 `hello`（含 macOS 权限状态）；壳→脑另有 `ping`（看门狗心跳，回 `pong`）、`check_permissions` / `prompt_permission`（权限检测/系统授权引导，回 `permissions`）。
+
+## 技能
+- 原子技能（`skills_real.py`）：screenshot / read_tree / open_app / click_control / type_text + computer_use 视觉兜底。
+- 复合技能（`skills_composite.py`）：find_file（Spotlight）/ web_search（默认百度，`YIBAO_SEARCH_ENGINE` 可切 bing/google）/ open_path（访达定位）/ write_note（TextEdit 起草）。

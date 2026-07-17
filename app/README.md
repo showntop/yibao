@@ -1,6 +1,6 @@
 # 译宝 · 桌面壳（Tauri v2 + Vue 3）
 
-译宝的桌面外壳：全局快捷键唤起、置顶透明形象窗、文字输入，经 stdio 行分隔 JSON 桥接 Python 大脑 sidecar（`../sidecar`），渲染对话与形象状态，高风险（L3+）操作弹窗确认。
+译宝的桌面外壳：全局快捷键唤起、置顶透明形象窗、文字/语音输入，经 stdio 行分隔 JSON 桥接 Python 大脑 sidecar（`../sidecar`），渲染对话与形象状态，高风险（L2+）操作弹窗确认。sidecar 崩溃自动重启（看门狗守护），macOS 权限缺失时引导授权。
 
 - 架构与设计：`../docs/superpowers/specs/2026-07-16-desktop-agent-design.md`
 - IPC 协议与本计划：`../docs/superpowers/plans/2026-07-16-yibao-v1-plan2-shell-and-ipc.md`
@@ -21,8 +21,11 @@ npm run tauri dev
 
 启动后：
 - vite 在 `http://localhost:1420`，Rust app 自动拉起 sidecar。
-- 按 `Super+Shift+Y`（macOS 即 `Cmd+Shift+Y`）显隐主窗。
-- 输入文字 → 触发大脑 `run` → 事件流回显；高风险技能（L3+）弹确认框。
+- 按 `Super+Shift+Y`（macOS 即 `Cmd+Shift+Y`）显隐主窗；关窗只隐藏，真正退出走托盘菜单（左键托盘图标也可切换显隐）。
+- 输入文字 → 触发大脑 `run` → 流式回显；点麦克风按钮语音输入（本地 STT 转写 → run → TTS 播报），播报/生成中点打断按钮可"三连取消"（停 TTS + 终止 LLM + 清队列）。
+- 中高风险技能（L2+）弹确认框。
+- 缺 macOS 权限（辅助功能/屏幕录制）时自动展开权限引导，授权后点「重新检测」；屏幕录制需重启 app 生效。
+- sidecar 崩溃/僵死会被守护进程自动拉起（退避重启，气泡提示"大脑掉线/已恢复"）。
 
 > 若 sidecar 未拉起：确认 `../sidecar/.venv` 存在；或设 `YIBAO_SIDECAR_DIR` 指向 sidecar 绝对路径；无 `.venv` 时回退 `uv run`（依赖 PATH 中有 `uv`）。
 
@@ -61,8 +64,7 @@ npm run tauri -- build --debug   # debug 打包（较快）
 ### 全局热键
 - `Super+Shift+Y`：macOS 上 `Super`=`Cmd`，Windows 上为 `Win`。若与系统/输入法冲突，改 `src-tauri/src/lib.rs` 中 `register(...)` 的字符串。
 
-## 已知限制（v1 / Plan 2 范围）
+## 已知限制（v1 范围）
 - 一次只处理一个 `run`（单对话）；并发对话需改 server。
 - 形象为状态驱动 emoji 占位；Live2D 留待后续 Plan。
-- 暂无 STT/TTS（后续 Plan）。
 - sidecar 打包未接入（见上）。
