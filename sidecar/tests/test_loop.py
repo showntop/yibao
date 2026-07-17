@@ -1,3 +1,5 @@
+import asyncio
+
 from yibao_brain.loop import AgentLoop
 from yibao_brain.llm import FakeProvider, ToolCall
 from yibao_brain.skills import SkillRegistry, EchoSkill, Skill, SkillContext
@@ -66,13 +68,104 @@ def test_loop_confirms_high_risk(tmp_path):
 
 
 class _TwoStepProvider:
-    """第一次返回 first，之后都返回 second。"""
+    """第一次返回 first，之后都返回 second。chat/astream 各自计数（互不干扰）。"""
 
     def __init__(self, first, second):
         self._first = first
         self._second = second
-        self._n = 0
+        self._n_chat = 0
+        self._n_stream = 0
 
     def chat(self, messages, tools=None):
-        self._n += 1
-        return self._first.chat(messages, tools) if self._n == 1 else self._second.chat(messages, tools)
+        self._n_chat += 1
+        return self._first.chat(messages, tools) if self._n_chat == 1 else self._second.chat(messages, tools)
+
+    async def astream(self, messages, tools=None):
+        self._n_stream += 1
+        src = self._first if self._n_stream == 1 else self._second
+        async for d in src.astream(messages, tools):
+            yield d
+
+
+async def _collect_events(agen):
+    out = []
+    async for e in agen:
+        out.append(e)
+    return out
+
+
+def test_loop_arun_streams_chunks_then_final(tmp_path):
+    provider = FakeProvider(chunks=["你好", "，我是", "译宝"])
+    loop = build_loop(tmp_path, provider)
+    events = asyncio.run(_collect_events(loop.arun("hi")))
+    kinds = [e.kind for e in events]
+    assert kinds[:-1] == ["final_reply_chunk", "final_reply_chunk", "final_reply_chunk"]
+    assert kinds[-1] == "final_reply"
+    assert events[-1].text == "你好，我是译宝"
+
+
+def test_loop_arun_executes_tool_then_streams_reply(tmp_path):
+    provider = _TwoStepProvider(
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="echo", params={"text": "hi"})]),
+        second=FakeProvider(chunks=["echoed:", " hi"]),
+    )
+    loop = build_loop(tmp_path, provider)
+    events = asyncio.run(_collect_events(loop.arun("请回显 hi")))
+    kinds = [e.kind for e in events]
+    assert "action_result" in kinds
+    assert "final_reply_chunk" in kinds
+    assert kinds[-1] == "final_reply"
+    assert events[-1].text == "echoed: hi"
+
+
+def test_loop_arun_interrupt_mid_stream(tmp_path):
+    async def _go():
+        provider = FakeProvider(chunks=["A", "B", "C", "D"], delay=0.02)
+        loop = build_loop(tmp_path, provider)
+        cancel = asyncio.Event()
+
+        async def _trip():
+            await asyncio.sleep(0.01)
+            cancel.set()
+
+        asyncio.ensure_future(_trip())
+        return await _collect_events(loop.arun("hi", cancel))
+
+    events = asyncio.run(_go())
+    kinds = [e.kind for e in events]
+    assert "interrupted" in kinds
+    assert "final_reply" not in kinds
+
+
+def test_loop_arun_async_confirmer_rejected(tmp_path):
+    class DangerSkill(Skill):
+        id = "danger"
+        description = "危险占位"
+        default_risk = RiskLevel.L3_HIGH
+
+        def run(self, params, ctx):
+            return ActionResult(success=True, data={"did": True})
+
+    reg = SkillRegistry()
+    reg.register(DangerSkill())
+
+    async def confirmer(_action):
+        return False  # 异步 confirmer 返回协程
+
+    loop = AgentLoop(
+        provider=_TwoStepProvider(
+            first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="danger", params={})]),
+            second=FakeProvider(text="done"),
+        ),
+        skills=reg,
+        classifier=RiskClassifier(),
+        gate=Gate(GatePolicy()),
+        memory=FakeMemory(),
+        log=AuditLog(tmp_path / "a.db"),
+        confirmer=confirmer,
+    )
+    events = asyncio.run(_collect_events(loop.arun("做危险的事")))
+    kinds = [e.kind for e in events]
+    assert "confirmation_needed" in kinds
+    assert "error" in kinds
+    assert not any(e.kind == "action_result" and e.result and e.result.data.get("did") for e in events)

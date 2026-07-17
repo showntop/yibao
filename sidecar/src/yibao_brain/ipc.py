@@ -36,10 +36,13 @@ EventKind = Literal[
     "confirmation_needed",
     "action_result",
     "final_reply",
+    "final_reply_chunk",
+    "interrupted",
     "error",
     "listening",
     "listening_done",
     "speaking",
+    "speaking_done",
 ]
 
 
