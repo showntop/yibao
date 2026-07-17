@@ -4,16 +4,22 @@ from __future__ import annotations
 import os
 
 
-def glm_api_key() -> str:
-    return os.environ.get("YIBAO_GLM_API_KEY", "")
+def _env(new: str, old: str = "", default: str = "") -> str:
+    """读新名 env，回退旧名（YIBAO_GLM_* 向后兼容），再回退默认值。"""
+    return os.environ.get(new) or (os.environ.get(old, "") if old else "") or default
 
 
-def glm_model() -> str:
-    return os.environ.get("YIBAO_GLM_MODEL", "glm-4.6")
+def llm_api_key() -> str:
+    # 主 LLM provider 的 key（任意 OpenAI 兼容端点：智谱 GLM / DeepSeek / OpenAI …）
+    return _env("YIBAO_LLM_API_KEY", "YIBAO_GLM_API_KEY")
 
 
-def glm_base_url() -> str:
-    return os.environ.get("YIBAO_GLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4/")
+def llm_model() -> str:
+    return _env("YIBAO_LLM_MODEL", "YIBAO_GLM_MODEL", "glm-4.6")
+
+
+def llm_base_url() -> str:
+    return _env("YIBAO_LLM_BASE_URL", "YIBAO_GLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4/")
 
 
 def a11y_enabled() -> bool:
@@ -25,9 +31,9 @@ def screenshot_dir() -> str:
     return os.environ.get("YIBAO_SCREENSHOT_DIR", "/tmp")
 
 
-def glm_vision_model() -> str:
-    """computer-use 兜底用的视觉模型（glm-4.6v-flash 免费，生产用 glm-4.6v）。"""
-    return os.environ.get("YIBAO_GLM_VISION_MODEL", "glm-4.6v-flash")
+def vision_model() -> str:
+    """computer-use 视觉兜底模型（目前仅 GLM-4.6V 支持；DeepSeek 等无视觉模型时该兜底自动禁用）。"""
+    return _env("YIBAO_VISION_MODEL", "YIBAO_GLM_VISION_MODEL", "glm-4.6v-flash")
 
 
 def voice_enabled() -> bool:

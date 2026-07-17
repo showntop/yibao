@@ -8,7 +8,7 @@ from typing import Protocol
 
 from pydantic import BaseModel, Field
 
-from .config import glm_api_key, glm_base_url, glm_model, glm_vision_model
+from .config import llm_api_key, llm_base_url, llm_model, vision_model
 
 
 class ToolCall(BaseModel):
@@ -140,9 +140,9 @@ class GLMProvider:
     ):
         from openai import AsyncOpenAI, OpenAI
 
-        self.model = model or glm_model()
-        creds_key = api_key or glm_api_key()
-        creds_url = base_url or glm_base_url()
+        self.model = model or llm_model()
+        creds_key = api_key or llm_api_key()
+        creds_url = base_url or llm_base_url()
         factory = client_factory or OpenAI
         self.client = factory(api_key=creds_key, base_url=creds_url)
 
@@ -227,11 +227,11 @@ class ComputerUseClient:
     def __init__(self, api_key=None, model=None, base_url=None, client_factory=None):
         from openai import OpenAI
 
-        self.model = model or glm_vision_model()
+        self.model = model or vision_model()
         factory = client_factory or OpenAI
         self.client = factory(
-            api_key=api_key or glm_api_key(),
-            base_url=base_url or glm_base_url(),
+            api_key=api_key or llm_api_key(),
+            base_url=base_url or llm_base_url(),
         )
 
     def next_action(self, screenshot_b64: str, task: str, history: list | None = None) -> dict | None:
