@@ -100,3 +100,17 @@ class FakeComputerUseClient:
         if self.actions:
             return self.actions.pop(0)
         return {"action": "finish"}
+
+
+class FakeVoice:
+    """listen 返 canned text；记录 speak 调用（Plan 4a 语音测试）。"""
+
+    def __init__(self, text: str = "你好"):
+        self._text = text
+        self.speak_calls: list[str] = []
+
+    def listen(self) -> str:
+        return self._text
+
+    def speak(self, text: str) -> None:
+        self.speak_calls.append(text)

@@ -4,7 +4,7 @@ import Avatar from "./components/Avatar.vue";
 import InputBar from "./components/InputBar.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
 import Bubble from "./components/Bubble.vue";
-import { onBrainEvent, runInput, sendConfirm, type BrainEvent } from "./lib/brain";
+import { onBrainEvent, runInput, sendConfirm, voiceStart, type BrainEvent } from "./lib/brain";
 import {
   expand as expandWin,
   collapse as collapseWin,
@@ -12,7 +12,7 @@ import {
   type Dir,
 } from "./lib/window";
 
-type AvatarState = "idle" | "listen" | "think" | "work";
+type AvatarState = "idle" | "listen" | "think" | "work" | "say";
 type BubbleMsg = { role: "user" | "ai"; text: string };
 
 const state = ref<AvatarState>("idle");
@@ -23,7 +23,7 @@ const dir = ref<Dir>("nw");
 let unlisten: (() => void) | null = null;
 
 const statusText = computed(
-  () => ({ idle: "待命中", listen: "聆听中", think: "思考中…", work: "操作中…" }[state.value]),
+  () => ({ idle: "待命中", listen: "聆听中", think: "思考中…", work: "操作中…", say: "说话中…" }[state.value]),
 );
 
 async function expand() {
@@ -67,6 +67,16 @@ function onEvent(e: BrainEvent) {
       state.value = "idle";
       bubbles.value.push({ role: "ai", text: "⚠️ " + (e.text ?? "出错了") });
       break;
+    case "listening":
+      state.value = "listen";
+      break;
+    case "listening_done":
+      state.value = "think";
+      if (e.text) bubbles.value.push({ role: "user", text: e.text });
+      break;
+    case "speaking":
+      state.value = "say";
+      break;
   }
 }
 
@@ -94,7 +104,8 @@ async function decide(approved: boolean) {
 }
 
 function onMic() {
-  bubbles.value.push({ role: "ai", text: "🎤 语音功能开发中，请先用文字～" });
+  state.value = "listen";
+  void voiceStart();
 }
 
 function onKeydown(e: KeyboardEvent) {

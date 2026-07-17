@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { startDrag } from "../lib/window";
 
-defineProps<{ state: "idle" | "listen" | "think" | "work" }>();
+defineProps<{ state: "idle" | "listen" | "think" | "work" | "say" }>();
 const emit = defineEmits<{ (e: "click"): void }>();
 
 const faces: Record<string, string> = {
@@ -9,6 +9,7 @@ const faces: Record<string, string> = {
   listen: "👂",
   think: "🤔",
   work: "⚙️",
+  say: "💬",
 };
 
 // 拖动 vs 点击：pointerdown 记坐标，移动 >4px 触发 startDragging，否则 pointerup 算 click。
@@ -78,7 +79,8 @@ function onPointerUp() {
   border-color: rgba(91, 108, 255, 0.7);
 }
 .av.think,
-.av.work {
+.av.work,
+.av.say {
   animation: pulse 1.1s infinite alternate ease-in-out;
 }
 @keyframes pulse {

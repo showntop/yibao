@@ -6,7 +6,7 @@ import sys
 from collections.abc import Callable
 
 from .audit import AuditLog
-from .config import a11y_enabled, glm_api_key, screenshot_dir
+from .config import a11y_enabled, glm_api_key, screenshot_dir, stt_model_dir, tts_voice, vad_model_path, voice_enabled
 from .ipc import RiskLevel
 from .llm import FakeProvider, GLMProvider
 from .loop import AgentLoop
@@ -76,15 +76,39 @@ def build_loop(
     )
 
 
-def serve(loop: AgentLoop, read_msg: ReadMsg, write_msg: WriteMsg) -> None:
+def _run_and_emit(loop: AgentLoop, text: str, write_msg: WriteMsg, rid, voice=None) -> None:
+    for event in loop.run(text):
+        write_msg({"type": "event", "event": event.model_dump(mode="json")})
+        if voice is not None and event.kind == "final_reply" and event.text:
+            write_msg({"type": "event", "event": {"kind": "speaking"}})
+            try:
+                voice.speak(event.text)
+            except Exception as e:
+                write_msg({"type": "event", "event": {"kind": "error", "text": f"语音播报失败：{e}"}})
+    write_msg({"type": "run_done", "id": rid})
+
+
+def serve(loop: AgentLoop, read_msg: ReadMsg, write_msg: WriteMsg, voice=None) -> None:
     while True:
         req = read_msg()
         if req is None:
             return
-        if req.get("type") == "run":
-            for event in loop.run(req.get("text", "")):
-                write_msg({"type": "event", "event": event.model_dump(mode="json")})
-            write_msg({"type": "run_done", "id": req.get("id")})
+        rtype = req.get("type")
+        if rtype == "run":
+            _run_and_emit(loop, req.get("text", ""), write_msg, req.get("id"), voice)
+        elif rtype == "voice_start" and voice is not None:
+            write_msg({"type": "event", "event": {"kind": "listening"}})
+            try:
+                text = voice.listen()
+            except Exception as e:
+                write_msg({"type": "event", "event": {"kind": "error", "text": f"语音识别失败：{e}"}})
+                write_msg({"type": "run_done", "id": req.get("id")})
+                continue
+            write_msg({"type": "event", "event": {"kind": "listening_done", "text": text}})
+            if text:
+                _run_and_emit(loop, text, write_msg, req.get("id"), voice)
+            else:
+                write_msg({"type": "run_done", "id": req.get("id")})
 
 
 def _line_reader() -> ReadMsg:
@@ -106,10 +130,22 @@ def _line_writer() -> WriteMsg:
     return _w
 
 
+def _build_voice_or_none():
+    if not (voice_enabled() and sys.platform == "darwin"):
+        return None
+    try:
+        from .voice import build_voice
+
+        return build_voice(stt_model_dir(), vad_model_path(), tts_voice())
+    except Exception as e:
+        print(f"[yibao] 语音不可用，已禁用：{e}", file=sys.stderr)
+        return None
+
+
 def main() -> int:
     reader, writer = _line_reader(), _line_writer()
     loop = build_loop(reader, use_real=True, db_path="audit.db")
-    serve(loop, reader, writer)
+    serve(loop, reader, writer, voice=_build_voice_or_none())
     return 0
 
 

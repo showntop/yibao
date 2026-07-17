@@ -47,6 +47,11 @@ fn confirm(state: tauri::State<Brain>, confirmation_id: String, approved: bool) 
     )
 }
 
+#[tauri::command]
+fn voice_start(state: tauri::State<Brain>) -> Result<(), String> {
+    write_to_brain(&state, serde_json::json!({ "id": 0, "type": "voice_start" }))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let shortcuts = tauri_plugin_global_shortcut::Builder::new()
@@ -145,7 +150,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![run_input, confirm])
+        .invoke_handler(tauri::generate_handler![run_input, confirm, voice_start])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
