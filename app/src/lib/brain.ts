@@ -67,3 +67,38 @@ export function onBrainEvent(cb: (e: BrainEvent) => void): Promise<UnlistenFn> {
 export function onRunDone(cb: (v: unknown) => void): Promise<UnlistenFn> {
   return listen("brain-run-done", (ev) => cb(ev.payload));
 }
+
+// ---- 守护状态 + 权限引导 ----
+
+export type BrainStatus = "up" | "down" | "restarting";
+
+export interface BrainStatusMsg {
+  status: BrainStatus;
+  attempt?: number;
+  detail?: string;
+}
+
+export interface BrainPermissions {
+  ax: boolean;
+  screen: boolean;
+}
+
+/** 订阅大脑守护状态（up=在线 / down=掉线 / restarting=重启中）。 */
+export function onBrainStatus(cb: (m: BrainStatusMsg) => void): Promise<UnlistenFn> {
+  return listen<BrainStatusMsg>("brain-status", (ev) => cb(ev.payload));
+}
+
+/** 订阅 macOS 权限状态（hello / check_permissions / prompt_permission 都会触发）。 */
+export function onBrainPermissions(cb: (p: BrainPermissions) => void): Promise<UnlistenFn> {
+  return listen<BrainPermissions>("brain-permissions", (ev) => cb(ev.payload));
+}
+
+/** 请求 sidecar 重新检测权限（结果经 brain-permissions 事件回来）。 */
+export function checkPermissions(): Promise<void> {
+  return invoke("check_permissions");
+}
+
+/** 触发系统授权引导弹窗（which = "ax" | "screen"）。 */
+export function promptPermission(which: "ax" | "screen"): Promise<void> {
+  return invoke("prompt_permission", { which });
+}

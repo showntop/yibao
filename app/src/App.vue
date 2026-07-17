@@ -4,7 +4,19 @@ import Avatar from "./components/Avatar.vue";
 import InputBar from "./components/InputBar.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
 import Bubble from "./components/Bubble.vue";
-import { onBrainEvent, runInput, sendConfirm, voiceStart, interrupt, type BrainEvent } from "./lib/brain";
+import PermissionsBanner from "./components/PermissionsBanner.vue";
+import {
+  onBrainEvent,
+  onBrainStatus,
+  onBrainPermissions,
+  runInput,
+  sendConfirm,
+  voiceStart,
+  interrupt,
+  type BrainEvent,
+  type BrainStatusMsg,
+  type BrainPermissions,
+} from "./lib/brain";
 import {
   expand as expandWin,
   collapse as collapseWin,
@@ -19,14 +31,19 @@ const state = ref<AvatarState>("idle");
 const bubbles = ref<BubbleMsg[]>([]);
 const streamingIdx = ref<number | null>(null); // 正在接收 chunk 的 bubble 下标
 const pending = ref<{ id: string; skill: string; desc: string } | null>(null);
+const brainDown = ref(false); // 大脑掉线/重启中（守护在恢复）
+const perms = ref<BrainPermissions | null>(null); // macOS 权限状态（null=未收到）
 const expanded = ref(false);
 const dir = ref<Dir>("nw");
 let unlisten: (() => void) | null = null;
+let unlistenStatus: (() => void) | null = null;
+let unlistenPerms: (() => void) | null = null;
 
 const statusText = computed(
   () => ({ idle: "待命中", listen: "聆听中", think: "思考中…", work: "操作中…", say: "说话中…" }[state.value]),
 );
 const busy = computed(() => state.value === "think" || state.value === "work" || state.value === "say");
+const missingPerms = computed(() => perms.value !== null && (!perms.value.ax || !perms.value.screen));
 
 async function expand() {
   expanded.value = true;
@@ -111,6 +128,34 @@ function onEvent(e: BrainEvent) {
   }
 }
 
+function onStatus(m: BrainStatusMsg) {
+  if (m.status === "up") {
+    if (brainDown.value) {
+      brainDown.value = false;
+      bubbles.value.push({ role: "ai", text: "✓ 大脑已恢复" });
+    }
+    return;
+  }
+  // down / restarting：复位界面状态（进行中的 run/确认已随进程丢失）
+  state.value = "idle";
+  streamingIdx.value = null;
+  pending.value = null;
+  if (!brainDown.value) {
+    brainDown.value = true;
+    bubbles.value.push({ role: "ai", text: "⚠️ 大脑掉线，正在自动重启…" });
+  }
+}
+
+function onPerms(p: BrainPermissions) {
+  const wasMissing = missingPerms.value;
+  perms.value = p;
+  if (missingPerms.value) {
+    if (!expanded.value) void expand(); // 权限引导必须可见
+  } else if (wasMissing) {
+    bubbles.value.push({ role: "ai", text: "✓ 权限就绪" });
+  }
+}
+
 async function submit(text: string) {
   bubbles.value.push({ role: "user", text });
   state.value = "think";
@@ -153,22 +198,28 @@ function onKeydown(e: KeyboardEvent) {
 onMounted(async () => {
   await resetCollapsedSize();
   unlisten = await onBrainEvent(onEvent);
+  unlistenStatus = await onBrainStatus(onStatus);
+  unlistenPerms = await onBrainPermissions(onPerms);
   window.addEventListener("keydown", onKeydown);
 });
 onUnmounted(() => {
   unlisten?.();
+  unlistenStatus?.();
+  unlistenPerms?.();
   window.removeEventListener("keydown", onKeydown);
 });
 </script>
 
 <template>
-  <div class="shell" :class="expanded ? ['exp', dir] : []">
+  <div class="shell" :class="[expanded ? ['exp', dir] : [], { 'has-perm': missingPerms && expanded }]">
     <Avatar class="pet" :state="state" @click="toggleExpand" />
 
     <div v-if="expanded" class="meta">
       <span class="name">译宝</span>
       <span class="status" :class="state">{{ statusText }}</span>
     </div>
+
+    <PermissionsBanner v-if="expanded && missingPerms && perms" class="perm" :perms="perms" />
 
     <div v-if="expanded" class="bubbles">
       <Bubble v-for="(b, i) in bubbles" :key="i" :role="b.role" :text="b.text" />
@@ -294,6 +345,15 @@ onUnmounted(() => {
 .exp.sw .bubbles,
 .exp.se .bubbles {
   margin-bottom: 80px;
+}
+/* 权限 banner：nw/ne 时占据 bubbles 的顶部避让位，bubbles 自身不再避让 */
+.exp.nw .perm,
+.exp.ne .perm {
+  margin-top: 80px;
+}
+.exp.has-perm.nw .bubbles,
+.exp.has-perm.ne .bubbles {
+  margin-top: 0;
 }
 /* input 默认在底(order 2)；形象在下(sw/se)时 input 移到顶(order 0) */
 .input-slot {
