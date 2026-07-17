@@ -60,7 +60,7 @@ class AgentLoop:
                 self.memory.add(user_text, self.user_id)
                 yield Event(kind="final_reply", text=resp.text)
                 return
-            messages.append({"role": "assistant", "content": resp.text})
+            messages.append(_assistant_with_tools(resp.text, resp.tool_calls))
             proceeded = False
             for tc in resp.tool_calls:
                 skill = self.skills.get(tc.skill_id)
@@ -135,7 +135,7 @@ class AgentLoop:
                 self.memory.add(user_text, self.user_id)
                 yield Event(kind="final_reply", text=text_buf)
                 return
-            messages.append({"role": "assistant", "content": text_buf})
+            messages.append(_assistant_with_tools(text_buf, tool_calls))
             proceeded = False
             for tc in tool_calls:
                 if cancelled():
@@ -185,6 +185,28 @@ class AgentLoop:
         if inspect.isawaitable(res):
             res = await res
         return bool(res)
+
+
+def _assistant_with_tools(content: str, tool_calls) -> dict:
+    """构造 assistant 消息：带 tool_calls 时附 OpenAI 标准字段。
+
+    DeepSeek 等严格校验：tool 消息必须紧跟带 tool_calls 的 assistant 消息，
+    否则 400（GLM 容忍缺字段，但不能依赖）。
+    """
+    msg: dict = {"role": "assistant", "content": content}
+    if tool_calls:
+        msg["tool_calls"] = [
+            {
+                "id": tc.id,
+                "type": "function",
+                "function": {
+                    "name": tc.skill_id,
+                    "arguments": json.dumps(tc.params, ensure_ascii=False),
+                },
+            }
+            for tc in tool_calls
+        ]
+    return msg
 
 
 def _stringify_result(result) -> str:

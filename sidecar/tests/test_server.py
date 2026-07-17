@@ -158,6 +158,28 @@ def test_serve_async_new_run_preempts_old(tmp_path):
     assert dones[-1] == {"type": "run_done", "id": 2}
 
 
+def test_serve_async_provider_error_emits_error_and_run_done(tmp_path):
+    # arun 抛异常（如 provider 400）→ 必须发 error + run_done，不能让前端卡死
+    class _Boom:
+        async def astream(self, messages, tools=None):
+            raise RuntimeError("boom")
+            yield  # 让它成为 async generator
+
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([{"id": 1, "type": "run", "text": "hi"}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=_Boom(),
+        )
+    )
+    kinds = [m["event"]["kind"] for m in out if m["type"] == "event"]
+    assert "error" in kinds
+    assert out[-1] == {"type": "run_done", "id": 1}
+
+
 def test_serve_async_confirm_roundtrip(tmp_path):
     from yibao_brain.skills import Skill, SkillRegistry
     from yibao_brain.ipc import ActionResult, RiskLevel

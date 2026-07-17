@@ -180,22 +180,28 @@ async def serve_async(
         tts_q: asyncio.Queue | None = asyncio.Queue() if voice is not None else None
         tts_task = asyncio.create_task(_pump_tts(tts_q, cancel)) if tts_q is not None else None
         started_speaking = False
-        async for event in agent.arun(text, cancel):
-            write_msg({"type": "event", "event": event.model_dump(mode="json")})
-            if (
-                tts_q is not None
-                and event.kind == "final_reply_chunk"
-                and event.text
-            ):
-                if not started_speaking:
-                    started_speaking = True
-                    write_msg({"type": "event", "event": {"kind": "speaking"}})
-                await tts_q.put(event.text)
-        if tts_q is not None:
-            await tts_q.put(None)  # 收尾哨兵，唤醒可能在 get() 上等待的 _pump_tts
-        if tts_task is not None:
-            await tts_task
-        write_msg({"type": "run_done", "id": rid})
+        try:
+            async for event in agent.arun(text, cancel):
+                write_msg({"type": "event", "event": event.model_dump(mode="json")})
+                if (
+                    tts_q is not None
+                    and event.kind == "final_reply_chunk"
+                    and event.text
+                ):
+                    if not started_speaking:
+                        started_speaking = True
+                        write_msg({"type": "event", "event": {"kind": "speaking"}})
+                    await tts_q.put(event.text)
+        except Exception as e:
+            # arun 抛异常（如 provider 400）→ 发 error + 停 TTS，别让前端卡死
+            cancel.set()
+            write_msg({"type": "event", "event": {"kind": "error", "text": f"大脑出错：{e}"}})
+        finally:
+            if tts_q is not None:
+                await tts_q.put(None)  # 收尾哨兵，唤醒可能在 get() 上等待的 _pump_tts
+            if tts_task is not None:
+                await tts_task
+            write_msg({"type": "run_done", "id": rid})
 
     async def _drive_run(text: str, rid, cancel: asyncio.Event):
         await _stream_agent(text, rid, cancel)

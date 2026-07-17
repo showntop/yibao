@@ -1,7 +1,7 @@
 import asyncio
 
 from yibao_brain.loop import AgentLoop
-from yibao_brain.llm import FakeProvider, ToolCall
+from yibao_brain.llm import FakeProvider, ToolCall, LLMDelta, ToolCallDelta
 from yibao_brain.skills import SkillRegistry, EchoSkill, Skill, SkillContext
 from yibao_brain.safety import RiskClassifier, Gate, GatePolicy
 from yibao_brain.audit import AuditLog
@@ -169,3 +169,33 @@ def test_loop_arun_async_confirmer_rejected(tmp_path):
     assert "confirmation_needed" in kinds
     assert "error" in kinds
     assert not any(e.kind == "action_result" and e.result and e.result.data.get("did") for e in events)
+
+
+def test_loop_arun_assistant_msg_carries_tool_calls(tmp_path):
+    # 回归：DeepSeek 严格校验——tool 消息前 assistant 必须带 tool_calls（曾 400）
+    class _Recording:
+        def __init__(self):
+            self.seen: list[list[dict]] = []
+            self._n = 0
+
+        async def astream(self, messages, tools=None):
+            self.seen.append([dict(m) for m in messages])
+            self._n += 1
+            if self._n == 1:
+                yield LLMDelta(
+                    tool_call_deltas=[
+                        ToolCallDelta(index=0, id="c1", skill_id="echo", arguments='{"text":"hi"}')
+                    ]
+                )
+            else:
+                yield LLMDelta(text="done")
+
+    prov = _Recording()
+    loop = build_loop(tmp_path, prov)
+    asyncio.run(_collect_events(loop.arun("回显 hi")))
+    assert len(prov.seen) == 2  # 第二轮请求存在
+    second = prov.seen[1]
+    asst = [m for m in second if m.get("role") == "assistant"][-1]
+    assert "tool_calls" in asst, "assistant 消息缺 tool_calls → DeepSeek 会 400"
+    assert asst["tool_calls"][0]["function"]["name"] == "echo"
+    assert any(m.get("role") == "tool" and m.get("tool_call_id") == "c1" for m in second)
