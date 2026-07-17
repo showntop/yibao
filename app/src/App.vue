@@ -142,7 +142,8 @@ function onStatus(m: BrainStatusMsg) {
   pending.value = null;
   if (!brainDown.value) {
     brainDown.value = true;
-    bubbles.value.push({ role: "ai", text: "⚠️ 大脑掉线，正在自动重启…" });
+    const why = m.detail ? `（${m.detail}）` : "";
+    bubbles.value.push({ role: "ai", text: `⚠️ 大脑掉线${why}，正在自动重启…` });
   }
 }
 

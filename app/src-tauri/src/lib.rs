@@ -86,6 +86,7 @@ fn write_to_brain(state: &Brain, msg: Value) -> Result<(), String> {
 /// 进程结束（Terminated / stdout 关闭）→ on_brain_down 统一接管重启。
 fn spawn_bridge(app: AppHandle, mut rx: tauri::async_runtime::Receiver<CommandEvent>) {
     tauri::async_runtime::spawn(async move {
+        let mut down_detail: Option<String> = None;
         while let Some(event) = rx.recv().await {
             match event {
                 CommandEvent::Stdout(bytes) => {
@@ -145,17 +146,18 @@ fn spawn_bridge(app: AppHandle, mut rx: tauri::async_runtime::Receiver<CommandEv
                 CommandEvent::Error(err) => eprintln!("[brain] error：{err}"),
                 CommandEvent::Terminated(payload) => {
                     eprintln!("[brain] 进程退出：{payload:?}");
+                    down_detail = Some(format!("code={:?} signal={:?}", payload.code, payload.signal));
                     break;
                 }
                 _ => {}
             }
         }
-        on_brain_down(app).await;
+        on_brain_down(app, down_detail).await;
     });
 }
 
 /// 进程掉线统一入口：清槽 → brain-status(down) → 退避重启（退出中则不动）。
-async fn on_brain_down(app: AppHandle) {
+async fn on_brain_down(app: AppHandle, detail: Option<String>) {
     {
         let state = app.state::<Brain>();
         let mut g = state.0.lock().unwrap();
@@ -166,7 +168,11 @@ async fn on_brain_down(app: AppHandle) {
         g.restarts += 1;
         g.last_restart = Some(Instant::now());
     }
-    let _ = app.emit("brain-status", serde_json::json!({"status": "down"}));
+    let mut msg = serde_json::json!({"status": "down"});
+    if let Some(d) = detail {
+        msg["detail"] = Value::String(d);
+    }
+    let _ = app.emit("brain-status", msg);
     restart_brain(app).await;
 }
 
