@@ -15,6 +15,7 @@ from .loop import AgentLoop
 from .memory import FakeMemory, Mem0Memory
 from .safety import Gate, GatePolicy, RiskClassifier
 from .skills import EchoSkill, SkillRegistry
+from .skills_composite import register_composite_skills
 from .skills_real import ComputerUseSkill, register_real_skills
 
 ReadMsg = Callable[[], dict | None]
@@ -35,6 +36,7 @@ def build_loop(
         reg.register(EchoSkill())
         if real_a11y:
             register_real_skills(reg)
+            register_composite_skills(reg)
             if llm_api_key():
                 try:
                     from .llm import ComputerUseClient

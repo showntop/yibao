@@ -44,6 +44,11 @@ def a11y_enabled() -> bool:
     return os.environ.get("YIBAO_A11Y", "1") != "0"
 
 
+def search_engine() -> str:
+    """web_search 技能的搜索引擎（baidu/bing/google，默认 baidu）。"""
+    return os.environ.get("YIBAO_SEARCH_ENGINE", "baidu")
+
+
 def screenshot_dir() -> str:
     return os.environ.get("YIBAO_SCREENSHOT_DIR", "/tmp")
 
