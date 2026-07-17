@@ -16,6 +16,13 @@ dependencies = [
     "pyobjc-framework-ApplicationServices>=10.0; sys_platform == 'darwin'",
     "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
     "pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'",
+    # 语音（Plan 4a：STT sherpa + 录音 sounddevice + TTS edge-tts + 解码 miniaudio）
+    "sherpa-onnx>=1.13",
+    "sherpa-onnx-core>=1.13",
+    "sounddevice>=0.4",
+    "numpy>=1.26",
+    "edge-tts>=7.2",
+    "miniaudio>=1.59",
 ]
 
 [project.optional-dependencies]

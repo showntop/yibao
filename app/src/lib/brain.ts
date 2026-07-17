@@ -8,7 +8,10 @@ export type BrainEventKind =
   | "confirmation_needed"
   | "action_result"
   | "final_reply"
-  | "error";
+  | "error"
+  | "listening"
+  | "listening_done"
+  | "speaking";
 
 export interface BrainAction {
   id?: string;
@@ -40,6 +43,11 @@ export function runInput(text: string): Promise<void> {
 /** 回复高风险确认（Rust 命令参数 confirmation_id 在 JS 侧为 camelCase）。 */
 export function sendConfirm(confirmationId: string, approved: boolean): Promise<void> {
   return invoke("confirm", { confirmationId, approved });
+}
+
+/** 触发语音输入：sidecar 录音→STT→run→TTS 播报（Plan 4a 最小语音）。 */
+export function voiceStart(): Promise<void> {
+  return invoke("voice_start");
 }
 
 /** 订阅大脑事件流，返回取消监听函数。 */

@@ -37,6 +37,9 @@ EventKind = Literal[
     "action_result",
     "final_reply",
     "error",
+    "listening",
+    "listening_done",
+    "speaking",
 ]
 
 
