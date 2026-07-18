@@ -44,6 +44,7 @@ class PluginDb:
         self.plugin_id = plugin_id
         path = db_path or os.path.join(config.plugin_data_dir(plugin_id), "data.db")
         os.makedirs(os.path.dirname(path), exist_ok=True)
+        self.path = path
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.Lock()
