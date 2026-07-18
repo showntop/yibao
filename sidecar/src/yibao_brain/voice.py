@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -167,10 +168,19 @@ class EdgeTtsSpeaker:
             raise synth_error[0]
 
     async def _synth_pcm(self, text: str):
-        """一句文本 → edge-tts 合成 mp3 → 解码 float32 PCM；空文本/解码失败返回 None。"""
-        if not text or not text.strip():
+        """一句文本 → edge-tts 合成 mp3 → 解码 float32 PCM。
+
+        返回 None 的两种情况（都跳过该句、不杀整段播报）：
+        - 无可播内容（空串 / 纯标点——edge-tts 对「？」这类会 NoAudioReceived）
+        - edge-tts 单句合成失败（NoAudioReceived 等），记 stderr 留痕
+        """
+        if not text or not re.search(r"\w", text):
             return None
-        mp3 = await self._fetch_mp3(text)
+        try:
+            mp3 = await self._fetch_mp3(text)
+        except Exception as e:
+            print(f"[yibao] 句子合成失败（已跳过）：{text!r} {e}", file=sys.stderr)
+            return None
         pcm = _decode_mp3(mp3)
         return pcm if len(pcm) else None
 

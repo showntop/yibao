@@ -281,3 +281,46 @@ def test_play_pcm_no_name_error(monkeypatch):
     speaker = EdgeTtsSpeaker()
     cancel = asyncio.Event()
     asyncio.run(speaker._play_pcm([0.0] * 10, cancel))  # NameError 即失败
+
+
+def test_synth_pcm_skips_punctuation_only_sentence(monkeypatch):
+    """纯标点句（如「？」）edge-tts 会 NoAudioReceived：直接判为不可播，不发请求。"""
+    from yibao_brain.voice import EdgeTtsSpeaker
+
+    speaker = EdgeTtsSpeaker()
+    calls = []
+
+    async def fake_fetch(text):
+        calls.append(text)
+        return b"mp3"
+
+    monkeypatch.setattr(speaker, "_fetch_mp3", fake_fetch)
+    assert asyncio.run(speaker._synth_pcm("？")) is None
+    assert asyncio.run(speaker._synth_pcm("…")) is None
+    assert calls == []  # 纯标点根本没发请求
+
+
+def test_speak_stream_no_audio_sentence_skipped(monkeypatch):
+    """单句 NoAudioReceived 跳过该句、不杀整段播报（其余句照播）。"""
+    from edge_tts.exceptions import NoAudioReceived
+
+    from yibao_brain.voice import EdgeTtsSpeaker
+
+    speaker = EdgeTtsSpeaker()
+    played: list[str] = []
+
+    async def fake_fetch(text):
+        if text == "嗯？":
+            raise NoAudioReceived("No audio was received.")
+        return f"pcm:{text}".encode()
+
+    async def fake_play(pcm, cancel):
+        played.append(pcm)
+
+    monkeypatch.setattr(speaker, "_fetch_mp3", fake_fetch)
+    monkeypatch.setattr(speaker, "_play_pcm", fake_play)
+    monkeypatch.setattr("yibao_brain.voice._decode_mp3", lambda b: b)  # 跳过真解码
+
+    cancel = asyncio.Event()
+    asyncio.run(speaker.speak_stream(_async_gen(["嗯？", "记好了。"]), cancel))
+    assert played == ["pcm:记好了。".encode()]  # 炸的那句被跳过，播报没死
