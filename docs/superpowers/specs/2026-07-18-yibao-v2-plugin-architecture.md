@@ -147,6 +147,7 @@ name = "delete_lead"
 handler = "growth.delete_lead"
 direct = true
 risk = "L3"                   # 可选覆盖：只许比 tool 自身更高（收紧），不许降低
+refresh = "growth.list_leads" # 可选：直调成功后跟一次查询 tool（本插件只读），面板拿刷新数据而非操作回执
 
 # 意图方法：转给 agent，过 LLM
 [[method]]
@@ -163,6 +164,7 @@ name = "sync_done"
 规则：
 
 - `risk` 单一事实源在 tool，api.toml 只能收紧，防面板入口成降权后门
+- `refresh` 解决「写操作后面板数据过期」：直调成功 → 执行 refresh 指向的本插件只读 tool → 面板事件携带新数据；刷新 tool 意外需要确认则静默跳过（不弹确认打断用户）
 - `direct=false` 不带 risk：意图经 LLM 展开后以最终 tool 调用的 risk 过闸，确认只弹一次
 - 参数 schema 以 tool 声明为准，ToolInvoker 校验，api.toml 不做参数收口
 - 对话路径不经过此文件：LLM 入口看 ToolRegistry 可见性，面板入口看 api.toml，两份白名单互不授权

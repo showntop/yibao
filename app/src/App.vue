@@ -5,6 +5,7 @@ import InputBar from "./components/InputBar.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
 import Bubble from "./components/Bubble.vue";
 import PermissionsBanner from "./components/PermissionsBanner.vue";
+import SchemaPanel from "./components/SchemaPanel.vue";
 import {
   onBrainEvent,
   onBrainStatus,
@@ -13,6 +14,7 @@ import {
   sendConfirm,
   voiceStart,
   interrupt,
+  panelAction,
   type BrainEvent,
   type BrainStatusMsg,
   type BrainPermissions,
@@ -35,6 +37,8 @@ const brainDown = ref(false); // 大脑掉线/重启中（守护在恢复）
 const perms = ref<BrainPermissions | null>(null); // macOS 权限状态（null=未收到）
 const expanded = ref(false);
 const dir = ref<Dir>("nw");
+// 当前打开的面板：kind="panel" 事件整体替换（同面板再触发即刷新数据）
+const currentPanel = ref<{ panel: string; schema: any; data: Record<string, unknown> } | null>(null);
 let unlisten: (() => void) | null = null;
 let unlistenStatus: (() => void) | null = null;
 let unlistenPerms: (() => void) | null = null;
@@ -125,6 +129,15 @@ function onEvent(e: BrainEvent) {
     case "speaking":
       state.value = "say";
       break;
+    case "panel":
+      // 面板事件：整体替换（同面板再触发 = 刷新数据）；收起态下必须展开才看得见
+      currentPanel.value = {
+        panel: e.payload?.panel ?? "",
+        schema: (e.payload?.schema as any) ?? null,
+        data: e.payload?.data ?? {},
+      };
+      if (!expanded.value) void expand();
+      break;
   }
 }
 
@@ -185,6 +198,15 @@ function onMic() {
   void voiceStart();
 }
 
+/** 面板 action：交给大脑走 api.toml 白名单直调，响应仍走 brain-event 通道回来。 */
+async function onPanelAction(a: { method: string; params: Record<string, unknown> }) {
+  try {
+    await panelAction(a.method, a.params);
+  } catch (err) {
+    bubbles.value.push({ role: "ai", text: "⚠️ 面板操作失败：" + String(err) });
+  }
+}
+
 function onInterrupt() {
   if (!busy.value) return;
   void interrupt().catch((err) => {
@@ -212,7 +234,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="shell" :class="[expanded ? ['exp', dir] : [], { 'has-perm': missingPerms && expanded }]">
+  <div class="shell" :class="[expanded ? ['exp', dir] : [], { 'has-perm': missingPerms && expanded, 'has-panel': currentPanel !== null && expanded }]">
     <Avatar class="pet" :state="state" @click="toggleExpand" />
 
     <div v-if="expanded" class="meta">
@@ -221,6 +243,16 @@ onUnmounted(() => {
     </div>
 
     <PermissionsBanner v-if="expanded && missingPerms && perms" class="perm" :perms="perms" />
+
+    <SchemaPanel
+      v-if="expanded && currentPanel"
+      class="panel"
+      :panel="currentPanel.panel"
+      :schema="currentPanel.schema"
+      :data="currentPanel.data"
+      @action="onPanelAction"
+      @close="currentPanel = null"
+    />
 
     <div v-if="expanded" class="bubbles">
       <Bubble v-for="(b, i) in bubbles" :key="i" :role="b.role" :text="b.text" />
@@ -354,6 +386,22 @@ onUnmounted(() => {
 }
 .exp.has-perm.nw .bubbles,
 .exp.has-perm.ne .bubbles {
+  margin-top: 0;
+}
+/* schema 面板：对话流上方（order 0）；nw/ne 时与 banner 同款顶部避让，占位的替代规则也一致 */
+.panel {
+  order: 0;
+}
+.exp.nw .panel,
+.exp.ne .panel {
+  margin-top: 80px;
+}
+.exp.has-perm.nw .panel,
+.exp.has-perm.ne .panel {
+  margin-top: 0;
+}
+.exp.has-panel.nw .bubbles,
+.exp.has-panel.ne .bubbles {
   margin-top: 0;
 }
 /* input 默认在底(order 2)；形象在下(sw/se)时 input 移到顶(order 0) */

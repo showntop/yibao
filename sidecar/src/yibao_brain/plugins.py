@@ -290,6 +290,7 @@ class ApiMethod:
     intent: str | None
     risk: RiskLevel | None  # 非空时直调风险取 max(tool, api)——api.toml 只许收紧
     plugin_id: str
+    refresh: str | None = None  # 直调成功后跟一次查询 tool，面板拿刷新数据而非操作回执
 
 
 _API: dict[str, ApiMethod] = {}
@@ -318,13 +319,19 @@ def _load_api(pid: str, path: Path, registry: SkillRegistry) -> None:
                 raise ValueError(f"handler 必须指向本插件 tool：{handler!r}")
             registry.get(handler)  # handler 必须指向本插件已注册的 tool
             risk = _RISK[str(m["risk"]).upper()] if m.get("risk") is not None else None
+            refresh = None
+            if m.get("refresh") is not None:
+                refresh = str(m["refresh"])
+                if not refresh.startswith(f"{pid}."):
+                    raise ValueError(f"refresh 必须指向本插件 tool：{refresh!r}")
+                registry.get(refresh)  # 必须已注册
         except (KeyError, ValueError) as e:
             print(f"[yibao] 插件 {pid} api method {name!r} 无效（已跳过）：{e}", file=sys.stderr)
             continue
         _API[full] = ApiMethod(
             name=full, handler=handler,
             direct=bool(m.get("direct", False)), intent=m.get("intent"),
-            risk=risk, plugin_id=pid,
+            risk=risk, plugin_id=pid, refresh=refresh,
         )
     _API_EVENTS[pid] = [str(e["name"]) for e in doc.get("event") or [] if e.get("name")]
 

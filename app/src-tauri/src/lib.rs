@@ -284,6 +284,20 @@ fn confirm(state: tauri::State<Brain>, confirmation_id: String, approved: bool) 
     )
 }
 
+/// 面板动作（v2 §7）：壳不懂 panel 语义，透传 api.toml 白名单方法给大脑裁决。
+#[tauri::command]
+fn panel_action(
+    state: tauri::State<Brain>,
+    id: i64,
+    method: String,
+    params: Value,
+) -> Result<(), String> {
+    write_to_brain(
+        &state,
+        serde_json::json!({ "id": id, "type": "panel_action", "method": method, "params": params }),
+    )
+}
+
 #[tauri::command]
 fn voice_start(state: tauri::State<Brain>) -> Result<(), String> {
     write_to_brain(&state, serde_json::json!({ "id": 0, "type": "voice_start" }))
@@ -412,6 +426,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             run_input,
             confirm,
+            panel_action,
             voice_start,
             interrupt,
             check_permissions,

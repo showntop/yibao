@@ -144,6 +144,20 @@ def _render_intent(api, params: dict) -> str:
     return template.format_map(_KeepMissing(params))
 
 
+async def _emit_refresh_panel(agent: AgentLoop, emit, refresh_tool: str) -> None:
+    """直调成功后的声明式刷新：执行查询 tool（应为本插件 L0 只读），把它的 panel 事件推给壳。
+
+    刷新 tool 若意外需要确认/被拒，静默跳过（不弹确认——刷新不该打断用户）。
+    """
+    action = agent.invoker.propose(ToolCall(id=f"pa_refresh_{id(emit)}", skill_id=refresh_tool, params={}))
+    if agent.invoker.decide(action) != Decision.AUTO:
+        return
+    result = await _offload(agent.invoker.execute, action, {})
+    payload = panel_payload(result)
+    if payload is not None:
+        emit(Event(kind="panel", payload=payload))
+
+
 async def handle_panel_action(msg: dict, agent: AgentLoop, write_msg: WriteMsg, *, run_text) -> None:
     """处理壳侧 panel_action（v2 §7）：api.toml 白名单内的面板方法。
 
@@ -182,9 +196,13 @@ async def handle_panel_action(msg: dict, agent: AgentLoop, write_msg: WriteMsg, 
                 return
         result = await _offload(agent.invoker.execute, action, params)  # 与 arun 一致挪线程池
         emit(Event(kind="action_result", action=action, result=result))
-        payload = panel_payload(result)
-        if payload is not None:
-            emit(Event(kind="panel", payload=payload))
+        if result.success and api.refresh is not None:
+            # 声明式刷新：删除类操作后跟一次查询，面板拿新数据而不是操作回执
+            await _emit_refresh_panel(agent, emit, api.refresh)
+        else:
+            payload = panel_payload(result)
+            if payload is not None:
+                emit(Event(kind="panel", payload=payload))
         write_msg({"type": "run_done", "id": rid})
     except Exception as e:  # 兜底：任何意外都要给壳一个交代，别让面板卡死
         emit(Event(kind="error", text=f"面板操作失败：{e}"))

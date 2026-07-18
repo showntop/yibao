@@ -1,0 +1,279 @@
+<script setup lang="ts">
+// schema 面板（协议 v1 附录 A）：白名单渲染 list/detail/form；未知 type 或无 schema → 折叠 JSON 降级。
+import { computed, reactive, watchEffect } from "vue";
+import { resolve, resolveParams, type ActionDecl, type BindCtx } from "../lib/schema";
+
+const props = defineProps<{
+  panel: string; // 面板引用（plugin_id:name），标题栏展示
+  schema: Record<string, any> | null; // null → 未知降级
+  data: Record<string, unknown>; // panel 事件注入的数据（$data.x）
+}>();
+const emit = defineEmits<{
+  (e: "action", a: { method: string; params: Record<string, unknown> }): void;
+  (e: "close"): void;
+}>();
+
+const kind = computed<string | undefined>(() => props.schema?.type);
+const ctx = computed<BindCtx>(() => ({ data: props.data }));
+
+/** 展示用文本：绑定解析后转字符串（undefined/null → 空串）。 */
+function text(v: unknown, item?: Record<string, unknown>): string {
+  const r = resolve(v, { data: props.data, item });
+  return r === undefined || r === null ? "" : String(r);
+}
+
+/** 触发 action：params 里的绑定按当前上下文解析后上抛。 */
+function fire(a: ActionDecl, item?: Record<string, unknown>) {
+  emit("action", { method: a.method, params: resolveParams(a.params, { data: props.data, item }) });
+}
+
+// ---- list ----
+const listItems = computed<Record<string, unknown>[]>(() => {
+  const bind = props.schema?.bind?.items;
+  const v = bind ? resolve(bind, ctx.value) : undefined;
+  return Array.isArray(v) ? (v as Record<string, unknown>[]) : [];
+});
+const itemTpl = computed(() => props.schema?.item ?? {});
+
+// ---- detail ----
+const detailFields = computed<{ label: string; value: string }[]>(() => props.schema?.fields ?? []);
+
+// ---- form ----
+const formFields = computed<{ name: string; label: string; input?: string }[]>(
+  () => props.schema?.fields ?? [],
+);
+const submitDecl = computed<ActionDecl | undefined>(() => props.schema?.submit);
+const formValues = reactive<Record<string, any>>({});
+// schema 切换时补齐表单键（不覆盖已输入内容）
+watchEffect(() => {
+  for (const f of formFields.value) {
+    if (!(f.name in formValues)) formValues[f.name] = f.input === "number" ? null : "";
+  }
+});
+function onSubmit() {
+  if (!submitDecl.value) return;
+  // 提交时把表单值并入 params（协议：submit.params 里的绑定同样生效）
+  emit("action", {
+    method: submitDecl.value.method,
+    params: { ...resolveParams(submitDecl.value.params, ctx.value), ...formValues },
+  });
+}
+
+// ---- 未知降级 ----
+const fallbackJson = computed(() =>
+  JSON.stringify(props.schema ?? { data: props.data }, null, 2),
+);
+</script>
+
+<template>
+  <div class="panel">
+    <div class="head">
+      <span class="ref">{{ panel }}</span>
+      <button class="x" title="关闭" @click="emit('close')">×</button>
+    </div>
+
+    <!-- list：卡片列表 + 行级 action -->
+    <div v-if="kind === 'list'" class="list">
+      <div v-if="!listItems.length" class="empty">暂无数据</div>
+      <div v-for="(it, i) in listItems" :key="i" class="card">
+        <div class="card-main">
+          <div class="card-title">{{ text(itemTpl.title, it) }}</div>
+          <div v-if="itemTpl.subtitle" class="card-sub">{{ text(itemTpl.subtitle, it) }}</div>
+        </div>
+        <div v-if="itemTpl.actions?.length" class="card-actions">
+          <button
+            v-for="a in itemTpl.actions"
+            :key="a.method + a.label"
+            class="act"
+            @click="fire(a, it)"
+          >
+            {{ a.label }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- detail：字段表 -->
+    <div v-else-if="kind === 'detail'" class="detail">
+      <div v-for="(f, i) in detailFields" :key="i" class="row">
+        <span class="k">{{ f.label }}</span>
+        <span class="v">{{ text(f.value) }}</span>
+      </div>
+      <div v-if="!detailFields.length" class="empty">暂无数据</div>
+    </div>
+
+    <!-- form：输入收集 + submit action -->
+    <form v-else-if="kind === 'form'" class="form" @submit.prevent="onSubmit">
+      <label v-for="f in formFields" :key="f.name" class="field">
+        <span class="k">{{ f.label }}</span>
+        <textarea v-if="f.input === 'textarea'" v-model="formValues[f.name]" rows="3" />
+        <input v-else-if="f.input === 'number'" v-model.number="formValues[f.name]" type="number" />
+        <input v-else v-model="formValues[f.name]" type="text" />
+      </label>
+      <div class="btns">
+        <button type="submit" class="act primary">{{ submitDecl?.label ?? "提交" }}</button>
+      </div>
+    </form>
+
+    <!-- 未知降级：折叠 JSON，不报错 -->
+    <details v-else class="fallback">
+      <summary>未知面板（{{ kind ?? "schema 缺失" }}），展开查看原始数据</summary>
+      <pre>{{ fallbackJson }}</pre>
+    </details>
+  </div>
+</template>
+
+<style scoped>
+.panel {
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid var(--yb-accent-soft);
+  box-shadow: var(--yb-shadow);
+  padding: 10px 12px;
+  max-height: 45%;
+  overflow-y: auto;
+  font-size: 13px;
+  color: var(--yb-text);
+  animation: pop 0.18s ease-out;
+}
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.ref {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--yb-text-dim);
+}
+.x {
+  border: none;
+  background: transparent;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--yb-text-dim);
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+.x:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+.empty {
+  color: var(--yb-text-dim);
+  text-align: center;
+  padding: 12px 0;
+}
+.card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--yb-bubble-ai);
+  margin-bottom: 6px;
+}
+.card-main {
+  flex: 1;
+  min-width: 0;
+}
+.card-title {
+  font-size: 13px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+.card-sub {
+  font-size: 11.5px;
+  color: var(--yb-text-dim);
+  margin-top: 2px;
+}
+.card-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.act {
+  padding: 5px 12px;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  background: var(--yb-accent-soft);
+  color: var(--yb-accent);
+  transition: filter 0.15s;
+}
+.act:hover {
+  filter: brightness(0.96);
+}
+.act.primary {
+  background: var(--yb-accent);
+  color: #fff;
+}
+.row {
+  display: flex;
+  gap: 10px;
+  padding: 5px 2px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+.row:last-child {
+  border-bottom: none;
+}
+.k {
+  flex-shrink: 0;
+  width: 64px;
+  color: var(--yb-text-dim);
+  font-size: 12px;
+}
+.v {
+  word-break: break-word;
+}
+.form .field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.form input,
+.form textarea {
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  background: #fff;
+  color: var(--yb-text);
+  outline: none;
+}
+.form input:focus,
+.form textarea:focus {
+  border-color: var(--yb-accent);
+}
+.btns {
+  display: flex;
+  justify-content: flex-end;
+}
+.fallback summary {
+  cursor: pointer;
+  color: var(--yb-text-dim);
+  font-size: 12px;
+}
+.fallback pre {
+  margin: 8px 0 0;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
+}
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+</style>

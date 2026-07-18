@@ -14,7 +14,8 @@ export type BrainEventKind =
   | "listening"
   | "listening_done"
   | "speaking"
-  | "speaking_done";
+  | "speaking_done"
+  | "panel";
 
 export interface BrainAction {
   id?: string;
@@ -28,6 +29,14 @@ export interface BrainResult {
   success?: boolean;
   data?: Record<string, unknown>;
   error?: string;
+  panel?: string | null;
+}
+
+/** kind="panel" 事件的 payload：面板引用 + schema（找不到为 null，前端降级）+ 注入数据。 */
+export interface PanelPayload {
+  panel?: string;
+  schema?: unknown;
+  data?: Record<string, unknown>;
 }
 
 export interface BrainEvent {
@@ -36,6 +45,7 @@ export interface BrainEvent {
   action?: BrainAction;
   result?: BrainResult;
   confirmation_id?: string;
+  payload?: PanelPayload;
 }
 
 /** 发送用户输入，触发大脑一次 run。 */
@@ -56,6 +66,11 @@ export function voiceStart(): Promise<void> {
 /** 打断进行中的生成/播报（Plan 4b：停 TTS + 终止 LLM + 清队列）。 */
 export function interrupt(): Promise<void> {
   return invoke("interrupt");
+}
+
+/** 面板动作：调 api.toml 白名单内的方法（id 毫秒取模，一次请求一个够唯一）。 */
+export function panelAction(method: string, params: Record<string, unknown>): Promise<void> {
+  return invoke("panel_action", { id: Date.now() % 2 ** 31, method, params });
 }
 
 /** 订阅大脑事件流，返回取消监听函数。 */

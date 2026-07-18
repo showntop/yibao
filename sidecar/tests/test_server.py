@@ -500,3 +500,49 @@ def test_render_intent_missing_key_kept_and_default():
     api2 = ApiMethod(name="tdel.delete", handler="tdel.delete", direct=False,
                      intent=None, risk=None, plugin_id="tdel")
     assert _render_intent(api2, {}) == "调用 tdel.delete"      # 无 intent 用默认
+
+
+def test_panel_action_refresh_replaces_stale_panel_data(tmp_path, monkeypatch):
+    """api.toml method 声明 refresh：直调成功后面板拿到的是刷新查询的新数据，而非操作回执。"""
+    from yibao_brain import plugins
+    from yibao_brain.ipc import ActionResult as AR
+    from yibao_brain.skills import Skill as _S, SkillRegistry
+
+    executed = []
+
+    class Del(_S):
+        id = "tdel.delete"; description = "删"; default_risk = RiskLevel.L1_LOW
+        def run(self, params, ctx):
+            executed.append(dict(params))
+            return AR(success=True, data={"deleted": params.get("id")}, panel="tdel:list")
+
+    class List_(_S):
+        id = "tdel.list"; description = "列"; default_risk = RiskLevel.L0_READONLY
+        def run(self, params, ctx):
+            return AR(success=True, data={"rows": [{"id": "r2", "text": "还剩这条"}]}, panel="tdel:list")
+
+    def factory():
+        reg = SkillRegistry()
+        reg.register(Del(), plugin="tdel")
+        reg.register(List_(), plugin="tdel")
+        return reg
+
+    _patch_api(monkeypatch, refresh="tdel.list")
+    monkeypatch.setitem(plugins._PANELS, "tdel:list", {"type": "list"})
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([{"id": 1, "type": "panel_action", "method": "tdel.delete", "params": {"id": "r1"}}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+            skills_factory=factory,
+        )
+    )
+    evs = [m["event"] for m in out if m["type"] == "event"]
+    panels = [e for e in evs if e["kind"] == "panel"]
+    # 只发一次 panel，且是刷新后的 rows（不是删除回执）
+    assert len(panels) == 1
+    assert panels[0]["payload"]["data"] == {"rows": [{"id": "r2", "text": "还剩这条"}]}
+    assert out[-1] == {"type": "run_done", "id": 1}

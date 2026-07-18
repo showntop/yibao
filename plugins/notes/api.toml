@@ -3,6 +3,7 @@
 name = "delete"
 handler = "notes.delete"
 direct = true
+refresh = "notes.list"   # 删除成功后跟一次查询，面板拿刷新后的列表
 
 [[method]]
 name = "list"
