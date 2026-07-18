@@ -340,3 +340,35 @@ def test_speak_stream_cancel_during_synth_does_not_raise(monkeypatch):
 
     monkeypatch.setattr(speaker, "_synth_pcm", fake_synth)
     asyncio.run(speaker.speak_stream(_async_gen(["你好。"]), cancel))  # 不抛即过
+
+
+def test_speech_text_strips_markdown_and_emoji():
+    """TTS 播报前清洗 Markdown 与 emoji：星号/标题/链接/列表/代码/表情都不念出来。"""
+    from yibao_brain.voice import _speech_text
+
+    assert _speech_text("**记好了**，这是重点") == "记好了，这是重点"
+    assert _speech_text("好嘞 ✅ 已记下！") == "好嘞 已记下！"
+    assert _speech_text("看[这个链接](https://x.com)吧") == "看这个链接吧"
+    assert _speech_text("# 标题\n- 第一条\n1. 第二条") == "标题 第一条 第二条"
+    assert _speech_text("用 `notes.keep` 就行") == "用 notes.keep 就行"
+    assert _speech_text("1️⃣ 第一步") == "第一步"
+    # 清洗后无可播字符 → 空串（调用方跳过合成）
+    assert _speech_text("**？**") == "？"
+    assert _speech_text("✨🎉") == ""
+
+
+def test_synth_pcm_speaks_cleaned_text(monkeypatch):
+    """端到端到 _fetch_mp3：合成用的是清洗后的文本。"""
+    from yibao_brain.voice import EdgeTtsSpeaker
+
+    speaker = EdgeTtsSpeaker()
+    got = []
+
+    async def fake_fetch(text):
+        got.append(text)
+        return b"mp3"
+
+    monkeypatch.setattr(speaker, "_fetch_mp3", fake_fetch)
+    monkeypatch.setattr("yibao_brain.voice._decode_mp3", lambda b: [0.0])
+    asyncio.run(speaker._synth_pcm("**记好了** ✅"))
+    assert got == ["记好了"]

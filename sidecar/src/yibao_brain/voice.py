@@ -172,10 +172,12 @@ class EdgeTtsSpeaker:
     async def _synth_pcm(self, text: str):
         """一句文本 → edge-tts 合成 mp3 → 解码 float32 PCM。
 
+        先清洗成可播文本（Markdown 标记/emoji 不念出来）。
         返回 None 的两种情况（都跳过该句、不杀整段播报）：
         - 无可播内容（空串 / 纯标点——edge-tts 对「？」这类会 NoAudioReceived）
         - edge-tts 单句合成失败（NoAudioReceived 等），记 stderr 留痕
         """
+        text = _speech_text(text)
         if not text or not re.search(r"\w", text):
             return None
         try:
@@ -233,6 +235,22 @@ class _NeverCancel:
 
 
 _SENT_RE = re.compile(r"[。！？!?…\n]")
+
+_MD_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+_MD_LIST_RE = re.compile(r"(?m)^\s*(?:[-*+]|\d+[.、)])\s+")
+_EMOJI_RE = re.compile(
+    "[\U0001F000-\U0001FAFF☀-➿⬀-⯿\uFE0F\u20E3]"
+)
+
+
+def _speech_text(text: str) -> str:
+    """LLM 回复（Markdown）→ 可播文本：去标记符号、emoji、列表/标题符，链接只念文字。"""
+    t = _MD_LINK_RE.sub(r"\1", text)          # [文字](url) → 文字
+    t = _MD_LIST_RE.sub("", t)                # 行首「- 」「1. 」等列表标记
+    t = re.sub(r"[\d#*]\uFE0F\u20E3", "", t)  # 键帽序列（1️⃣）整体删
+    t = re.sub(r"[`*#>~]", "", t)             # 粗斜体/代码/标题/引用/删除线符号
+    t = _EMOJI_RE.sub("", t)                  # emoji（念着很奇怪）
+    return re.sub(r"\s+", " ", t).strip()
 
 
 def _take_sentence(buf: str, max_len: int = 80):
