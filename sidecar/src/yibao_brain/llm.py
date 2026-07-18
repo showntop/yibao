@@ -246,7 +246,9 @@ class ComputerUseClient:
             ],
         })
         resp = self.client.chat.completions.create(
-            model=self.model, messages=messages, thinking={"type": "enabled"}
+            model=self.model,
+            messages=messages,
+            extra_body={"thinking": {"type": "enabled"}},  # GLM 特有参数走 extra_body（openai SDK 不认顶层 kwargs）
         )
         content = (resp.choices[0].message.content or "") if resp.choices else ""
         return self._parse_action(content)

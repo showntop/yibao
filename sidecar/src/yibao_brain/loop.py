@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator, Callable, Iterator
 
 from .audit import AuditLog
 from .host import Host
-from .ipc import Action, Event
+from .ipc import Action, ActionResult, Event
 from .llm import LLMProvider, LLMResponse, merge_tool_call_deltas
 from .memory import Memory
 from .safety import Decision, Gate, RiskClassifier
@@ -103,7 +103,11 @@ class AgentLoop:
                     messages.append({"role": "tool", "tool_call_id": tc.id, "content": "策略禁止该操作"})
                     continue
                 ctx = SkillContext(host=self.host)
-                result = skill.run(tc.params, ctx)
+                try:
+                    result = skill.run(tc.params, ctx)
+                except Exception as e:
+                    # 技能异常不应杀掉整个 run：转为失败结果喂回模型换策略
+                    result = ActionResult(success=False, error=f"技能执行异常：{e}")
                 _safe_record(self.log, action, result)
                 yield Event(kind="action_result", action=action, result=result)
                 messages.append(
@@ -186,7 +190,11 @@ class AgentLoop:
                     )
                     continue
                 ctx = SkillContext(host=self.host)
-                result = await _offload(skill.run, tc.params, ctx)
+                try:
+                    result = await _offload(skill.run, tc.params, ctx)
+                except Exception as e:
+                    # 技能异常不应杀掉整个 run：转为失败结果喂回模型换策略
+                    result = ActionResult(success=False, error=f"技能执行异常：{e}")
                 _safe_record(self.log, action, result)
                 yield Event(kind="action_result", action=action, result=result)
                 messages.append(

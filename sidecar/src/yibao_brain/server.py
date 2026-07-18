@@ -13,7 +13,7 @@ from collections.abc import Callable
 
 from . import permissions
 from .audit import AuditLog
-from .config import a11y_enabled, llm_api_key, screenshot_dir, stt_model_dir, tts_voice, vad_max_seconds, vad_min_silence, vad_model_path, voice_enabled
+from .config import a11y_enabled, computer_use_enabled, llm_api_key, screenshot_dir, stt_model_dir, tts_voice, vad_max_seconds, vad_min_silence, vad_model_path, voice_enabled
 from .ipc import RiskLevel
 from .llm import FakeProvider, GLMProvider
 from .loop import AgentLoop
@@ -50,7 +50,7 @@ def build_loop(
         if real_a11y:
             register_real_skills(reg)
             register_composite_skills(reg)
-            if llm_api_key():
+            if llm_api_key() and computer_use_enabled():
                 try:
                     from .llm import ComputerUseClient
 

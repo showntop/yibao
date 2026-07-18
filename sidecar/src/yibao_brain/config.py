@@ -58,6 +58,11 @@ def vision_model() -> str:
     return _env("YIBAO_VISION_MODEL", "YIBAO_GLM_VISION_MODEL", "glm-4.6v-flash")
 
 
+def computer_use_enabled() -> bool:
+    """computer-use 视觉兜底仅 GLM 端点可用（DeepSeek 等无视觉模型时自动禁用）。"""
+    return "bigmodel" in llm_base_url()
+
+
 def voice_enabled() -> bool:
     return os.environ.get("YIBAO_VOICE", "1") != "0"
 

@@ -141,3 +141,45 @@ async def _collect(ait):
     async for d in ait:
         out.append(d)
     return out
+
+
+def test_computer_use_thinking_via_extra_body():
+    # GLM 的 thinking 参数必须走 extra_body（openai SDK 不认顶层 kwargs）
+    from yibao_brain.llm import ComputerUseClient
+
+    seen = {}
+
+    class FakeMsg:
+        content = '{"action":"finish"}'
+
+    class FakeChoice:
+        message = FakeMsg()
+
+    class FakeResp:
+        choices = [FakeChoice()]
+
+    class FakeClient:
+        def __init__(self, **kw):
+            pass
+
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**kw):
+                    seen.update(kw)
+                    return FakeResp()
+
+    c = ComputerUseClient(api_key="x", model="glm-4.6v-flash", base_url="https://open.bigmodel.cn/api/paas/v4/", client_factory=FakeClient)
+    assert c.next_action("data:image/png;base64,x", "任务") == {"action": "finish"}
+    assert "thinking" not in seen
+    assert seen["extra_body"] == {"thinking": {"type": "enabled"}}
+
+
+def test_computer_use_enabled_only_for_glm(monkeypatch):
+    from yibao_brain import config
+
+    monkeypatch.setenv("YIBAO_LLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4/")
+    monkeypatch.delenv("YIBAO_GLM_BASE_URL", raising=False)
+    assert config.computer_use_enabled() is True
+    monkeypatch.setenv("YIBAO_LLM_BASE_URL", "https://api.deepseek.com")
+    assert config.computer_use_enabled() is False

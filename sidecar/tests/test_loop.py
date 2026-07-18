@@ -267,3 +267,54 @@ def test_arun_runs_skill_and_memory_off_loop_thread(tmp_path):
     assert seen["skill"] != main_tid
     assert seen["recall"] != main_tid
     assert seen["add"] != main_tid
+
+
+def test_arun_skill_exception_becomes_tool_error(tmp_path):
+    """技能抛异常 → 失败的 action_result 喂回模型，run 继续到 final_reply（不死）。"""
+    class BoomSkill(Skill):
+        id = "boom"
+        description = "必炸"
+        def run(self, params, ctx):
+            raise RuntimeError("炸了")
+
+    provider = _TwoStepProvider(
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="boom", params={})]),
+        second=FakeProvider(text="换个法子完成了"),
+    )
+    loop = build_loop(tmp_path, provider)
+    reg = SkillRegistry()
+    reg.register(BoomSkill())
+    loop.skills = reg
+
+    async def _go():
+        return [e async for e in loop.arun("炸一下")]
+
+    events = asyncio.run(_go())
+    kinds = [e.kind for e in events]
+    assert "action_result" in kinds
+    ar = next(e for e in events if e.kind == "action_result")
+    assert ar.result.success is False
+    assert "炸了" in ar.result.error
+    assert kinds[-1] == "final_reply"
+
+
+def test_run_skill_exception_becomes_tool_error(tmp_path):
+    """同步 run() 路径同上。"""
+    class BoomSkill(Skill):
+        id = "boom"
+        description = "必炸"
+        def run(self, params, ctx):
+            raise RuntimeError("炸了")
+
+    provider = _TwoStepProvider(
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="boom", params={})]),
+        second=FakeProvider(text="换个法子完成了"),
+    )
+    loop = build_loop(tmp_path, provider)
+    reg = SkillRegistry()
+    reg.register(BoomSkill())
+    loop.skills = reg
+    events = list(loop.run("炸一下"))
+    kinds = [e.kind for e in events]
+    assert "action_result" in kinds
+    assert kinds[-1] == "final_reply"
