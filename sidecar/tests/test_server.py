@@ -546,3 +546,29 @@ def test_panel_action_refresh_replaces_stale_panel_data(tmp_path, monkeypatch):
     assert len(panels) == 1
     assert panels[0]["payload"]["data"] == {"rows": [{"id": "r2", "text": "还剩这条"}]}
     assert out[-1] == {"type": "run_done", "id": 1}
+
+
+def test_serve_async_tts_cancelled_error_does_not_crash_brain(tmp_path):
+    """TTS 抛 CancelledError（打断命中合成）：_pump_tts 视为正常取消，
+    run 正常收尾 run_done，大脑不崩。"""
+    provider = FakeProvider(chunks=["你好。"])
+    out = []
+
+    class _CancelVoice:
+        async def speak_stream(self, text_iter, cancel):
+            async for _ in text_iter:
+                pass
+            raise asyncio.CancelledError
+
+    async def _go():
+        await serve_async(
+            make_reader([{"id": 1, "type": "run", "text": "hi"}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=provider,
+            voice=_CancelVoice(),
+        )
+
+    _run_async(_go())  # 不抛即过
+    assert out[-1] == {"type": "run_done", "id": 1}

@@ -324,3 +324,19 @@ def test_speak_stream_no_audio_sentence_skipped(monkeypatch):
     cancel = asyncio.Event()
     asyncio.run(speaker.speak_stream(_async_gen(["嗯？", "记好了。"]), cancel))
     assert played == ["pcm:记好了。".encode()]  # 炸的那句被跳过，播报没死
+
+
+def test_speak_stream_cancel_during_synth_does_not_raise(monkeypatch):
+    """打断命中合成中：edge-tts websocket 读被 cancel → CancelledError 是正常取消，
+    不是合成错误，不许进 synth_error 重新抛出（曾一路炸穿 serve_async → 大脑 exit 1）。"""
+    from yibao_brain.voice import EdgeTtsSpeaker
+
+    speaker = EdgeTtsSpeaker()
+    cancel = asyncio.Event()
+
+    async def fake_synth(text):
+        cancel.set()
+        raise asyncio.CancelledError  # 模拟 producer.cancel() 击中合成中
+
+    monkeypatch.setattr(speaker, "_synth_pcm", fake_synth)
+    asyncio.run(speaker.speak_stream(_async_gen(["你好。"]), cancel))  # 不抛即过

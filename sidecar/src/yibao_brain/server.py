@@ -291,7 +291,10 @@ async def serve_async(
     def _reader():
         while True:
             msg = read_msg()
-            ai_loop.call_soon_threadsafe(queue.put_nowait, msg)
+            try:
+                ai_loop.call_soon_threadsafe(queue.put_nowait, msg)
+            except RuntimeError:
+                return  # 事件循环已关（进程退出中），daemon 读者线程随之结束
             if msg is None:
                 return
 
@@ -309,6 +312,8 @@ async def serve_async(
             return
         try:
             await voice.speak_stream(_tts_chunks(tts_q), cancel)
+        except asyncio.CancelledError:
+            return  # 打断命中合成/播放的正常取消，不是播报失败
         except Exception as e:
             write_msg({"type": "event", "event": {"kind": "error", "text": f"语音播报失败：{e}"}})
             return

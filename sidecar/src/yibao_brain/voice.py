@@ -145,6 +145,8 @@ class EdgeTtsSpeaker:
                     pcm = await self._synth_pcm(tail)
                     if pcm is not None:
                         await queue.put(pcm)
+            except asyncio.CancelledError:
+                raise  # 正常取消（打断命中合成中），不是合成错误，必须向上传
             except BaseException as e:
                 synth_error.append(e)
             finally:
