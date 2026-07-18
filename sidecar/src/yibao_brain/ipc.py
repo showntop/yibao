@@ -29,6 +29,7 @@ class ActionResult(BaseModel):
     data: dict = Field(default_factory=dict)
     error: str = ""
     screenshot_path: str | None = None
+    panel: str | None = None  # 面板引用「plugin_id:name」：执行成功时带上，壳侧渲染对应面板
 
 
 EventKind = Literal[
@@ -44,6 +45,7 @@ EventKind = Literal[
     "listening_done",
     "speaking",
     "speaking_done",
+    "panel",
 ]
 
 
@@ -53,6 +55,7 @@ class Event(BaseModel):
     action: Action | None = None
     result: ActionResult | None = None
     confirmation_id: str | None = None
+    payload: dict = Field(default_factory=dict)  # kind="panel" 时放 {panel, schema, data}
 
 
 def _new_id(prefix: str) -> str:

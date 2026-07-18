@@ -2,6 +2,7 @@ import asyncio
 import json
 from yibao_brain.server import serve, serve_async, build_loop
 from yibao_brain.llm import FakeProvider, ToolCall
+from yibao_brain.ipc import RiskLevel
 
 
 class _TwoStepProvider:
@@ -316,3 +317,186 @@ def test_load_plugins_safe_never_raises(tmp_path, monkeypatch):
 
     monkeypatch.setenv("YIBAO_PLUGINS_DIR", str(tmp_path / "nonexistent"))
     _load_plugins_safe(SkillRegistry(), FakeMemory(), FakeProvider(), None)  # 不抛
+
+
+# ---------- ⑦py：panel_action（面板直调方法，过白名单 + 闸门）----------
+
+
+class _RecSkill:
+    """记录执行的删除 tool（plugin 命名空间注册）。"""
+
+    @staticmethod
+    def make(executed, ref=None, risk=RiskLevel.L1_LOW):
+        from yibao_brain.ipc import ActionResult as AR
+        from yibao_brain.skills import Skill as _S
+
+        class Rec(_S):
+            id = "tdel.delete"
+            description = "删除一条"
+            default_risk = risk
+
+            def run(self, params, ctx):
+                executed.append(dict(params))
+                return AR(success=True, data={"deleted": params.get("id")}, panel=ref)
+
+        return Rec()
+
+
+def _pa_factory(executed, ref=None, risk=RiskLevel.L1_LOW):
+    from yibao_brain.skills import SkillRegistry
+
+    def factory():
+        reg = SkillRegistry()
+        reg.register(_RecSkill.make(executed, ref, risk), plugin="tdel")
+        return reg
+
+    return factory
+
+
+def _patch_api(monkeypatch, **kw):
+    from yibao_brain import plugins
+    from yibao_brain.plugins import ApiMethod
+
+    kw.setdefault("name", "tdel.delete")
+    kw.setdefault("handler", "tdel.delete")
+    kw.setdefault("direct", True)
+    kw.setdefault("intent", None)
+    kw.setdefault("risk", None)
+    kw.setdefault("plugin_id", "tdel")
+    if isinstance(kw["risk"], str):  # "L2" → RiskLevel.L2_MEDIUM（与 _load_api 的解析一致）
+        kw["risk"] = RiskLevel(int(kw["risk"][1]))
+    monkeypatch.setitem(plugins._API, kw["name"], ApiMethod(**kw))
+
+
+def test_panel_action_direct_end_to_end(tmp_path, monkeypatch):
+    executed = []
+    _patch_api(monkeypatch)
+    from yibao_brain import plugins
+
+    monkeypatch.setitem(plugins._PANELS, "tdel:list", {"type": "list"})
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([{"id": 1, "type": "panel_action", "method": "tdel.delete", "params": {"id": "r1"}}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+            skills_factory=_pa_factory(executed, ref="tdel:list"),
+        )
+    )
+    evs = [m["event"] for m in out if m["type"] == "event"]
+    kinds = [e["kind"] for e in evs]
+    assert executed == [{"id": "r1"}]                       # tool 真的被执行
+    ar = next(e for e in evs if e["kind"] == "action_result")
+    assert ar["result"]["success"] and ar["result"]["data"] == {"deleted": "r1"}
+    pe = next(e for e in evs if e["kind"] == "panel")       # 带 panel 引用 → panel 事件
+    assert pe["payload"] == {"panel": "tdel:list", "schema": {"type": "list"}, "data": {"deleted": "r1"}}
+    assert kinds.index("panel") > kinds.index("action_result")
+    assert out[-1] == {"type": "run_done", "id": 1}
+
+
+def test_panel_action_not_in_whitelist_rejected(tmp_path):
+    executed = []
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([{"id": 1, "type": "panel_action", "method": "tdel.ghost", "params": {}}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+            skills_factory=_pa_factory(executed),
+        )
+    )
+    evs = [m["event"] for m in out if m["type"] == "event"]
+    err = next(e for e in evs if e["kind"] == "error")
+    assert "白名单" in err["text"] and "tdel.ghost" in err["text"]
+    assert executed == []                                    # 未执行
+    assert out[-1] == {"type": "run_done", "id": 1}
+
+
+def test_panel_action_confirm_flow_rejected(tmp_path, monkeypatch):
+    # api.risk="L2" 收紧（tool 默认 L1）→ 触发确认流；壳拒绝 → error，不执行
+    executed = []
+    _patch_api(monkeypatch, risk="L2")
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([
+                {"id": 1, "type": "panel_action", "method": "tdel.delete", "params": {"id": "r1"}},
+                {"type": "confirm", "approved": False},
+            ]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+            skills_factory=_pa_factory(executed),
+        )
+    )
+    evs = [m["event"] for m in out if m["type"] == "event"]
+    kinds = [e["kind"] for e in evs]
+    assert "confirmation_needed" in kinds
+    assert "action_result" not in kinds and executed == []   # 拒绝了就没执行
+    err = next(e for e in evs if e["kind"] == "error")
+    assert "拒绝" in err["text"]
+    assert out[-1] == {"type": "run_done", "id": 1}
+
+
+def test_panel_action_confirm_flow_approved_executes(tmp_path, monkeypatch):
+    executed = []
+    _patch_api(monkeypatch, risk="L2")
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([
+                {"id": 1, "type": "panel_action", "method": "tdel.delete", "params": {"id": "r1"}},
+                {"type": "confirm", "approved": True},
+            ]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+            skills_factory=_pa_factory(executed),
+        )
+    )
+    evs = [m["event"] for m in out if m["type"] == "event"]
+    assert "confirmation_needed" in [e["kind"] for e in evs]
+    assert executed == [{"id": "r1"}]
+    assert out[-1] == {"type": "run_done", "id": 1}
+
+
+def test_panel_action_intent_goes_to_agent(tmp_path, monkeypatch):
+    executed = []
+    _patch_api(monkeypatch, name="tdel.clean", direct=False, intent="清理闪念 {id}")
+    provider = FakeProvider(text="已清理")
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([{"id": 1, "type": "panel_action", "method": "tdel.clean", "params": {"id": "r1"}}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=provider,
+            skills_factory=_pa_factory(executed),
+        )
+    )
+    # intent 渲染后当作用户输入走了 agent 流程（FakeProvider 收到渲染文本）
+    msgs = provider.astream_calls[0]["messages"]
+    assert msgs[-1] == {"role": "user", "content": "清理闪念 r1"}
+    assert executed == []                                     # 不直调 tool
+    evs = [m["event"] for m in out if m["type"] == "event"]
+    assert "final_reply" in [e["kind"] for e in evs]
+    assert out[-1] == {"type": "run_done", "id": 1}
+
+
+def test_render_intent_missing_key_kept_and_default():
+    from yibao_brain.plugins import ApiMethod
+    from yibao_brain.server import _render_intent
+
+    api = ApiMethod(name="tdel.delete", handler="tdel.delete", direct=False,
+                    intent="删 {id} {extra}", risk=None, plugin_id="tdel")
+    assert _render_intent(api, {"id": "1"}) == "删 1 {extra}"  # 缺键保留原样不炸
+    api2 = ApiMethod(name="tdel.delete", handler="tdel.delete", direct=False,
+                     intent=None, risk=None, plugin_id="tdel")
+    assert _render_intent(api2, {}) == "调用 tdel.delete"      # 无 intent 用默认

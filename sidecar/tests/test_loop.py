@@ -318,3 +318,87 @@ def test_run_skill_exception_becomes_tool_error(tmp_path):
     kinds = [e.kind for e in events]
     assert "action_result" in kinds
     assert kinds[-1] == "final_reply"
+
+
+# ---------- ⑤a：action_result 之后的 panel 事件 ----------
+
+
+class _PanelSkill(Skill):
+    """返回带 panel 引用的结果（ref 由测试用 monkeypatch 注入 _PANELS）。"""
+
+    id = "paneldemo"
+    description = "演示 panel 事件"
+
+    def __init__(self, ref="notes:list", data=None):
+        self._ref = ref
+        self._data = data if data is not None else {"rows": [1]}
+
+    def run(self, params, ctx):
+        return ActionResult(success=True, data=self._data, panel=self._ref)
+
+
+def _build_panel_loop(tmp_path, provider, skill):
+    reg = SkillRegistry()
+    reg.register(skill)
+    return AgentLoop(
+        provider=provider,
+        skills=reg,
+        classifier=RiskClassifier(),
+        gate=Gate(GatePolicy()),
+        memory=FakeMemory(),
+        log=AuditLog(tmp_path / "a.db"),
+    )
+
+
+def test_run_emits_panel_event_after_action_result(tmp_path, monkeypatch):
+    from yibao_brain import plugins
+
+    monkeypatch.setitem(plugins._PANELS, "notes:list", {"type": "list"})
+    provider = _TwoStepProvider(
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="paneldemo", params={})]),
+        second=FakeProvider(text="done"),
+    )
+    loop = _build_panel_loop(tmp_path, provider, _PanelSkill())
+    events = list(loop.run("go"))
+    kinds = [e.kind for e in events]
+    assert kinds.index("panel") == kinds.index("action_result") + 1  # 紧跟其后
+    pe = next(e for e in events if e.kind == "panel")
+    assert pe.payload == {"panel": "notes:list", "schema": {"type": "list"}, "data": {"rows": [1]}}
+
+
+def test_arun_emits_panel_event_after_action_result(tmp_path, monkeypatch):
+    from yibao_brain import plugins
+
+    monkeypatch.setitem(plugins._PANELS, "notes:list", {"type": "list"})
+    provider = _TwoStepProvider(
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="paneldemo", params={})]),
+        second=FakeProvider(text="done"),
+    )
+    loop = _build_panel_loop(tmp_path, provider, _PanelSkill())
+    events = asyncio.run(_collect_events(loop.arun("go")))
+    kinds = [e.kind for e in events]
+    assert kinds.index("panel") == kinds.index("action_result") + 1
+    pe = next(e for e in events if e.kind == "panel")
+    assert pe.payload["schema"] == {"type": "list"} and pe.payload["data"] == {"rows": [1]}
+
+
+def test_panel_event_unknown_schema_gives_none(tmp_path):
+    # schema 找不到：payload.schema = None，不炸（前端做未知降级）
+    provider = _TwoStepProvider(
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="paneldemo", params={})]),
+        second=FakeProvider(text="done"),
+    )
+    loop = _build_panel_loop(tmp_path, provider, _PanelSkill(ref="zz:ghost"))
+    events = list(loop.run("go"))
+    pe = next(e for e in events if e.kind == "panel")
+    assert pe.payload == {"panel": "zz:ghost", "schema": None, "data": {"rows": [1]}}
+
+
+def test_no_panel_event_without_ref(tmp_path):
+    provider = _TwoStepProvider(
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="echo", params={"text": "x"})]),
+        second=FakeProvider(text="done"),
+    )
+    loop = build_loop(tmp_path, provider)
+    events = list(loop.run("go"))
+    assert "panel" not in [e.kind for e in events]  # 无 panel 引用不发事件

@@ -212,3 +212,34 @@ name = "sync_done"
 5. schema 协议 v1：bind + 开放 type + 未知降级，够吗？
 6. 「找类似旧选题」业务数据语义搜索：v1 不做还是单列底座方案？
 7. MCP 接入算不算 v2 方向？
+
+
+## 附录 A：schema 协议 v1
+
+panel schema 是一个 JSON 文件（manifest `[[panel]] src` 指向），描述面板结构；前端引擎按白名单渲染，**engine version = 1**（`"version": 1`）。
+
+顶层：`{"version": 1, "type": "list" | "detail" | "form", ...}`。
+
+### 三个组件
+
+- **list**：列表。`bind.items` 绑定数组数据；`item` 描述每行：`title` / `subtitle`（可绑定）+ `actions`（行级操作数组）。
+- **detail**：详情。`fields: [{label, value}]`，`value` 可绑定。
+- **form**：表单。`fields: [{name, label, input: "text" | "textarea" | "number"}]`；`submit` 是一个 action，提交时把表单值并入 params。
+
+### 绑定语法
+
+- `$data.x`：绑定 panel 事件注入的数据（`ActionResult.data` 里的键，如 `$data.rows`）。
+- `$item.x`：list item 上下文，仅 `item` 模板内可用（如 `$item.text`、`$item.id`）。
+- 绑定可出现在任何字符串字段：整串恰好是一个绑定时取原值（保留类型），否则做字符串插值；查不到的键渲染为空串。
+
+### action
+
+```json
+{"label": "删除", "method": "notes.delete", "params": {"id": "$item.id"}}
+```
+
+`method` 必须在 api.toml 白名单；`params` 值支持同一套绑定语法。本地操作（filter/sort）后续版本再加。
+
+### 降级
+
+未知 `type`（或 schema 缺失/`version` 更高）：前端降级为 JSON 展示，不报错。

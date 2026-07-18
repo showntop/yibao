@@ -16,11 +16,12 @@ from . import permissions
 from .audit import AuditLog
 from .config import a11y_enabled, computer_use_enabled, history_path, llm_api_key, screenshot_dir, stt_model_dir, tts_voice, vad_max_seconds, vad_min_silence, vad_model_path, voice_enabled
 from .history import ConversationHistory
-from .ipc import RiskLevel
-from .llm import FakeProvider, GLMProvider
-from .loop import AgentLoop
+from .ipc import Event, RiskLevel
+from .llm import FakeProvider, GLMProvider, ToolCall
+from .loop import AgentLoop, _offload
 from .memory import FakeMemory, LazyMem0Memory
-from .safety import Gate, GatePolicy, RiskClassifier
+from .plugins import get_api, panel_payload
+from .safety import Decision, Gate, GatePolicy, RiskClassifier
 from .skills import EchoSkill, SkillRegistry
 from .skills_composite import register_composite_skills
 from .skills_real import ComputerUseSkill, register_real_skills
@@ -128,6 +129,66 @@ def _load_plugins_safe(reg, memory, prov, host) -> None:
             print(f"[yibao] 插件 {pid}: {status}", file=sys.stderr)
     except Exception as e:
         print(f"[yibao] 插件加载失败（已跳过）：{e}", file=sys.stderr)
+
+
+class _KeepMissing(dict):
+    """format_map 缺键时保留 {key} 原样（intent 渲染不炸）。"""
+
+    def __missing__(self, key):
+        return "{" + key + "}"
+
+
+def _render_intent(api, params: dict) -> str:
+    """intent 模板用 params 渲染（{key} 占位）；无 intent 用「调用 <handler>」。"""
+    template = api.intent or f"调用 {api.handler}"
+    return template.format_map(_KeepMissing(params))
+
+
+async def handle_panel_action(msg: dict, agent: AgentLoop, write_msg: WriteMsg, *, run_text) -> None:
+    """处理壳侧 panel_action（v2 §7）：api.toml 白名单内的面板方法。
+
+    direct=true：invoker 直调（propose → api.risk 只许收紧 → decide → 确认/执行 → 审计）；
+    direct=false：intent 渲染后交给 run_text（与 type="run" 同路径的 agent 流程）。
+    """
+    def emit(event: Event) -> None:
+        write_msg({"type": "event", "event": event.model_dump(mode="json")})
+
+    rid = msg.get("id")
+    try:
+        method = str(msg.get("method", ""))
+        params = msg.get("params") or {}
+        api = get_api(method)
+        if api is None:  # 白名单外：拒绝执行
+            emit(Event(kind="error", text=f"面板方法未在白名单：{method}"))
+            write_msg({"type": "run_done", "id": rid})
+            return
+        if not api.direct:
+            await run_text(_render_intent(api, params), rid)
+            return
+
+        action = agent.invoker.propose(ToolCall(id=f"pa_{rid}", skill_id=api.handler, params=params))
+        if api.risk is not None:
+            action.risk = max(action.risk, api.risk)  # api.toml 只许收紧，不许放宽
+        decision = agent.invoker.decide(action)
+        if decision == Decision.DENY:
+            emit(Event(kind="error", text=f"策略禁止执行 {api.handler}（风险过高）"))
+            write_msg({"type": "run_done", "id": rid})
+            return
+        if decision == Decision.CONFIRM:
+            emit(Event(kind="confirmation_needed", action=action, confirmation_id=action.id))
+            if not await agent.invoker.confirm(action):  # 等壳 confirm 消息（复用单槽确认流）
+                emit(Event(kind="error", text=f"用户拒绝执行 {api.handler}"))
+                write_msg({"type": "run_done", "id": rid})
+                return
+        result = await _offload(agent.invoker.execute, action, params)  # 与 arun 一致挪线程池
+        emit(Event(kind="action_result", action=action, result=result))
+        payload = panel_payload(result)
+        if payload is not None:
+            emit(Event(kind="panel", payload=payload))
+        write_msg({"type": "run_done", "id": rid})
+    except Exception as e:  # 兜底：任何意外都要给壳一个交代，别让面板卡死
+        emit(Event(kind="error", text=f"面板操作失败：{e}"))
+        write_msg({"type": "run_done", "id": rid})
 
 
 def _run_and_emit(loop: AgentLoop, text: str, write_msg: WriteMsg, rid, voice=None) -> None:
@@ -307,6 +368,18 @@ async def serve_async(
                 )
             elif voice is not None:
                 run_state["task"] = asyncio.ensure_future(_drive_voice_start(msg.get("id"), cancel))
+        elif rtype == "panel_action":
+            # 面板直调/意图方法：与 run 同槽位（抢占并等待在跑的任务结束）
+            _preempt_current()
+            await _join_current()
+            cancel = asyncio.Event()
+            run_state["cancel"] = cancel
+            run_state["task"] = asyncio.ensure_future(
+                handle_panel_action(
+                    msg, agent, write_msg,
+                    run_text=lambda text, rid, c=cancel: _stream_agent(text, rid, c),
+                )
+            )
         elif rtype == "interrupt":
             _preempt_current()
         elif rtype == "confirm":

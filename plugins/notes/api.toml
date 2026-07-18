@@ -1,0 +1,10 @@
+# 面板可调方法白名单（v2 §7）：直调方法不过 LLM，过闸门
+[[method]]
+name = "delete"
+handler = "notes.delete"
+direct = true
+
+[[method]]
+name = "list"
+handler = "notes.list"
+direct = true

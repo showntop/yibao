@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "type": "list",
+  "bind": {"items": "$data.rows"},
+  "item": {
+    "title": "$item.text",
+    "subtitle": "$item.created_at",
+    "actions": [
+      {"label": "删除", "method": "notes.delete", "params": {"id": "$item.id"}}
+    ]
+  }
+}

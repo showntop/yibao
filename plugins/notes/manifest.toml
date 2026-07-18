@@ -1,0 +1,59 @@
+# 闪念盘（全声明式插件，v2 方案 §3.4 第一档）
+id = "notes"
+name = "闪念盘"
+capabilities = ["db", "memory"]
+mem_namespace = "notes"
+
+[[table]]
+name = "notes"
+columns = [
+  {name = "id", type = "text", pk = true},
+  {name = "text", type = "text"},
+  {name = "tags", type = "text", default = "[]"},
+  {name = "created_at", type = "integer"},
+]
+indexes = ["created_at"]
+
+[[tool]]
+id = "keep"
+type = "db"
+description = "记一条闪念"
+risk = "L1"
+panel = "notes:list"
+required = ["text"]
+[tool.params]
+text = {type = "string", description = "内容"}
+[tool.db]
+op = "insert"
+table = "notes"
+auto = {created_at = "unixts"}   # created_at 由系统生成（unix 秒）
+
+[[tool]]
+id = "list"
+type = "db"
+description = "列出闪念（按时间倒序，最多 50 条）"
+risk = "L0"
+panel = "notes:list"
+[tool.db]
+op = "query"
+table = "notes"
+order = "created_at DESC"
+limit = 50
+
+[[tool]]
+id = "delete"
+type = "db"
+description = "删除一条闪念"
+risk = "L2"
+panel = "notes:list"
+required = ["id"]
+[tool.params]
+id = {type = "string", description = "闪念 id"}
+[tool.db]
+op = "delete"
+table = "notes"
+
+[[panel]]
+type = "schema"
+name = "list"
+src = "panel/list.schema.json"

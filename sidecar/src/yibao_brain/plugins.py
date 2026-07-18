@@ -10,9 +10,12 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+import sys
+import time
 import tomllib
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 
 from .ipc import ActionResult, RiskLevel
@@ -132,14 +135,16 @@ class DeclarativeTool(Skill):
         self._type = spec.get("type", "db")
         self._spec = spec
         self._params_schema = spec.get("params") or {}
+        self._required = list(spec.get("required") or [])
+        self._panel_ref = spec.get("panel")  # 可选：执行成功时在结果上带面板引用
         self._registry = registry  # composite 顺序调用同 registry 的其他 tool
 
     def openai_schema(self) -> dict:
-        """用 manifest 的 description 和 [tool.params]。"""
+        """用 manifest 的 description 和 [tool.params]（required 列出必填参数）。"""
         return {
             "name": self.id,
             "description": self.description,
-            "parameters": {"type": "object", "properties": self._params_schema, "required": []},
+            "parameters": {"type": "object", "properties": self._params_schema, "required": self._required},
         }
 
     def run(self, params: dict, ctx: SkillContext) -> ActionResult:
@@ -151,7 +156,10 @@ class DeclarativeTool(Skill):
         }.get(self._type)
         if handler is None:
             return ActionResult(success=False, error=f"未知 tool 类型：{self._type!r}")
-        return handler(params, ctx)
+        result = handler(params, ctx)
+        if result.success and self._panel_ref:  # 失败不放 panel 引用
+            result.panel = self._panel_ref
+        return result
 
     def _run_db(self, params: dict, ctx: SkillContext) -> ActionResult:
         if ctx.db is None:
@@ -159,10 +167,20 @@ class DeclarativeTool(Skill):
         spec = self._spec.get("db") or {}
         op, table = spec.get("op", "insert"), spec["table"]
         if op == "insert":
-            return ActionResult(success=True, data={"id": ctx.db.insert(table, dict(params))})
+            row = dict(params)
+            # auto 声明系统生成字段（当前仅 unixts = unix 秒）；覆盖入参防伪造
+            for field_name, kind in (spec.get("auto") or {}).items():
+                if kind != "unixts":
+                    return ActionResult(success=False, error=f"未知 auto 类型：{kind!r}（仅支持 unixts）")
+                row[field_name] = int(time.time())
+            return ActionResult(success=True, data={"id": ctx.db.insert(table, row)})
         if op == "query":
+            # where/order/limit 运行时参数优先，缺省回落 [tool.db] 里声明的默认值
             rows = ctx.db.query(
-                table, where=params.get("where"), order=params.get("order"), limit=params.get("limit")
+                table,
+                where=params.get("where", spec.get("where")),
+                order=params.get("order", spec.get("order")),
+                limit=params.get("limit", spec.get("limit")),
             )
             return ActionResult(success=True, data={"rows": rows})
         if op == "update":
@@ -226,6 +244,89 @@ class DeclarativeTool(Skill):
                 return ActionResult(success=False, error=f"composite 第 {i} 步（{name}）失败：{res.error}")
             results.append(res)
         return ActionResult(success=True, data=results[-1].data if results else {})
+
+
+# ---------- panel schema 注册表（⑤a） ----------
+
+_PANELS: dict[str, dict] = {}
+
+
+def get_panel(ref: str) -> dict | None:
+    """按「plugin_id:name」查 panel schema；找不到返回 None（前端做未知降级，不算错误）。"""
+    return _PANELS.get(ref)
+
+
+def panel_payload(result) -> dict | None:
+    """result.panel 非空时构造 panel 事件 payload（loop 与 panel_action 共用）。"""
+    if not result.panel:
+        return None
+    return {"panel": result.panel, "schema": get_panel(result.panel), "data": result.data}
+
+
+def _load_panels(child: Path, pid: str, manifest: dict) -> None:
+    """解析 manifest [[panel]]：schema 类型读入 JSON 存注册表；webview 留口不实现（记错误跳过）。"""
+    for p in manifest.get("panel") or []:
+        name = p.get("name") or "main"
+        ref = f"{pid}:{name}"
+        if p.get("type", "schema") != "schema":
+            print(f"[yibao] 插件 {pid} panel {ref} 类型 {p.get('type')!r} 暂不支持（已跳过）", file=sys.stderr)
+            continue
+        try:
+            _PANELS[ref] = json.loads((child / p["src"]).read_text(encoding="utf-8"))
+        except Exception as e:
+            print(f"[yibao] 插件 {pid} panel {ref} schema 读取失败（已跳过）：{e}", file=sys.stderr)
+
+
+# ---------- api.toml：面板可调方法白名单（⑦py） ----------
+
+
+@dataclass(frozen=True)
+class ApiMethod:
+    """api.toml [[method]] 条目。direct=true 直调 handler（过闸门）；false 走 intent → agent。"""
+
+    name: str            # 全局名（强制 <plugin_id>. 前缀）
+    handler: str         # 本插件已注册 tool 的 id
+    direct: bool
+    intent: str | None
+    risk: RiskLevel | None  # 非空时直调风险取 max(tool, api)——api.toml 只许收紧
+    plugin_id: str
+
+
+_API: dict[str, ApiMethod] = {}
+_API_EVENTS: dict[str, list[str]] = {}
+
+
+def get_api(method: str) -> ApiMethod | None:
+    """查面板可调方法白名单；查不到返回 None（调用方拒绝执行）。"""
+    return _API.get(method)
+
+
+def get_plugin_events(plugin_id: str) -> list[str]:
+    """api.toml [[event]] 声明的可订阅事件（推送通道后续做，先解析存着）。"""
+    return list(_API_EVENTS.get(plugin_id, []))
+
+
+def _load_api(pid: str, path: Path, registry: SkillRegistry) -> None:
+    """解析 api.toml。单个 method 无效（handler 未注册/跨插件、risk 非法）记错误跳过，不拖垮其他 method。"""
+    doc = tomllib.loads(path.read_text(encoding="utf-8"))
+    for m in doc.get("method") or []:
+        name = str(m.get("name", "?"))
+        try:
+            full = name if name.startswith(f"{pid}.") else f"{pid}.{name}"
+            handler = str(m["handler"])
+            if not handler.startswith(f"{pid}."):
+                raise ValueError(f"handler 必须指向本插件 tool：{handler!r}")
+            registry.get(handler)  # handler 必须指向本插件已注册的 tool
+            risk = _RISK[str(m["risk"]).upper()] if m.get("risk") is not None else None
+        except (KeyError, ValueError) as e:
+            print(f"[yibao] 插件 {pid} api method {name!r} 无效（已跳过）：{e}", file=sys.stderr)
+            continue
+        _API[full] = ApiMethod(
+            name=full, handler=handler,
+            direct=bool(m.get("direct", False)), intent=m.get("intent"),
+            risk=risk, plugin_id=pid,
+        )
+    _API_EVENTS[pid] = [str(e["name"]) for e in doc.get("event") or [] if e.get("name")]
 
 
 # ---------- 加载器 ----------
@@ -304,6 +405,10 @@ def _load_one(child: Path, registry: SkillRegistry, *, memory, http, llm, emit_p
         skill.plugin_ctx = ctx
         skill.plugin_capabilities = frozenset(caps)
         registry.register(skill, plugin=pid)  # 命名空间/重复 id 由 registry 强制
+    _load_panels(child, pid, manifest)
+    api_file = child / "api.toml"  # 面板可调方法白名单（可选）
+    if api_file.is_file():
+        _load_api(pid, api_file, registry)
     return pid
 
 

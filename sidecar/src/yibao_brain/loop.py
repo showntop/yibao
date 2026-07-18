@@ -12,6 +12,7 @@ from .invoker import ToolInvoker
 from .ipc import Action, Event
 from .llm import LLMProvider, LLMResponse, merge_tool_call_deltas
 from .memory import Memory
+from .plugins import panel_payload
 from .safety import Decision, Gate, RiskClassifier
 from .skills import SkillRegistry
 
@@ -102,6 +103,9 @@ class AgentLoop:
                     continue
                 result = self.invoker.execute(action, tc.params)
                 yield Event(kind="action_result", action=action, result=result)
+                payload = panel_payload(result)  # 结果带面板引用 → 通知壳渲染（schema 缺失给 None 降级）
+                if payload is not None:
+                    yield Event(kind="panel", payload=payload)
                 messages.append(
                     {"role": "tool", "tool_call_id": tc.id, "content": _stringify_result(result)}
                 )
@@ -179,6 +183,9 @@ class AgentLoop:
                     continue
                 result = await _offload(self.invoker.execute, action, tc.params)
                 yield Event(kind="action_result", action=action, result=result)
+                payload = panel_payload(result)  # 结果带面板引用 → 通知壳渲染（schema 缺失给 None 降级）
+                if payload is not None:
+                    yield Event(kind="panel", payload=payload)
                 messages.append(
                     {"role": "tool", "tool_call_id": tc.id, "content": _stringify_result(result)}
                 )

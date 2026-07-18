@@ -535,3 +535,249 @@ def test_invoker_no_host_graft_without_capability(tmp_path):
     action = inv.propose(ToolCall(id="t", skill_id="probe.nohost", params={}))
     assert inv.execute(action, {}).success
     assert rec["ctx"].host is None  # 未声明 host capability → 不给
+
+
+# ---------- ⑤a：panel schema 注册 + DeclarativeTool panel 引用 ----------
+
+NOTES_PANEL_MANIFEST = """
+id = "notes"
+capabilities = ["db"]
+
+[[table]]
+name = "notes"
+columns = [
+  {name = "id", type = "text", pk = true},
+  {name = "text", type = "text"},
+  {name = "tags", type = "text", default = "[]"},
+  {name = "created_at", type = "integer"},
+]
+
+[[tool]]
+id = "keep"
+type = "db"
+description = "记一条闪念"
+risk = "L1"
+panel = "notes:list"
+required = ["text"]
+[tool.params]
+text = {type = "string", description = "内容"}
+[tool.db]
+op = "insert"
+table = "notes"
+auto = {created_at = "unixts"}
+
+[[tool]]
+id = "list"
+type = "db"
+description = "列出闪念"
+risk = "L0"
+panel = "notes:list"
+[tool.db]
+op = "query"
+table = "notes"
+
+[[tool]]
+id = "delete"
+type = "db"
+description = "删除一条闪念"
+risk = "L2"
+panel = "notes:list"
+[tool.params]
+id = {type = "string", description = "闪念 id"}
+[tool.db]
+op = "delete"
+table = "notes"
+
+[[tool]]
+id = "combo_fail"
+type = "composite"
+description = "必失败的编排"
+panel = "notes:list"
+[tool.composite]
+steps = [{tool = "notes.ghost", params = {}}]
+
+[[panel]]
+type = "schema"
+name = "list"
+src = "panel/list.schema.json"
+"""
+
+LIST_SCHEMA = '{"type": "list", "bind": {"items": "$data.rows"}}'
+
+
+def test_panel_schema_registered_and_tool_result_carries_ref(data_dir, tmp_path):
+    from yibao_brain.plugins import get_panel
+
+    _write_plugin(tmp_path, "notes", NOTES_PANEL_MANIFEST, {"panel/list.schema.json": LIST_SCHEMA})
+    reg = SkillRegistry()
+    assert _load(tmp_path, reg) == {"notes": "ok"}
+    assert get_panel("notes:list") == {"type": "list", "bind": {"items": "$data.rows"}}
+    keep = reg.get("notes.keep")
+    r = keep.run({"text": "x"}, keep.plugin_ctx)
+    assert r.success and r.panel == "notes:list"  # 成功才带 panel 引用
+
+
+def test_panel_ref_not_set_on_failure(data_dir, tmp_path):
+    _write_plugin(tmp_path, "notes", NOTES_PANEL_MANIFEST, {"panel/list.schema.json": LIST_SCHEMA})
+    reg = SkillRegistry()
+    _load(tmp_path, reg)
+    combo = reg.get("notes.combo_fail")
+    r = combo.run({}, combo.plugin_ctx)
+    assert not r.success and r.panel is None  # 失败不放 panel
+
+
+def test_tool_required_params_in_schema(data_dir, tmp_path):
+    _write_plugin(tmp_path, "notes", NOTES_PANEL_MANIFEST, {"panel/list.schema.json": LIST_SCHEMA})
+    reg = SkillRegistry()
+    _load(tmp_path, reg)
+    schema = reg.get("notes.keep").openai_schema()
+    assert schema["parameters"]["required"] == ["text"]
+
+
+def test_webview_panel_skipped_with_error(data_dir, tmp_path, capsys):
+    # 独立插件 id，避免与模块级 _PANELS 里其他测试注册的 notes:list 互相污染
+    manifest = NOTES_PANEL_MANIFEST.replace('type = "schema"', 'type = "webview"').replace('id = "notes"', 'id = "webv"')
+    manifest = manifest.replace("notes:", "webv:").replace('"notes.', '"webv.').replace('table = "notes"', 'table = "webv"')
+    _write_plugin(tmp_path, "webv", manifest)
+    from yibao_brain.plugins import get_panel
+
+    reg = SkillRegistry()
+    assert _load(tmp_path, reg) == {"webv": "ok"}  # panel 跳过不拖垮插件
+    assert get_panel("webv:list") is None
+    assert "跳过" in capsys.readouterr().err
+
+
+def test_panel_missing_src_skipped(data_dir, tmp_path, capsys):
+    manifest = NOTES_PANEL_MANIFEST.replace('id = "notes"', 'id = "nosrc"').replace("notes:", "nosrc:")
+    _write_plugin(tmp_path, "nosrc", manifest)  # 不写 list.schema.json
+    from yibao_brain.plugins import get_panel
+
+    reg = SkillRegistry()
+    assert _load(tmp_path, reg) == {"nosrc": "ok"}
+    assert get_panel("nosrc:list") is None
+    assert "跳过" in capsys.readouterr().err
+
+
+# ---------- db insert auto（系统生成字段）----------
+
+
+def test_db_insert_auto_unixts(data_dir, tmp_path):
+    _write_plugin(tmp_path, "notes", NOTES_PANEL_MANIFEST, {"panel/list.schema.json": LIST_SCHEMA})
+    reg = SkillRegistry()
+    _load(tmp_path, reg)
+    keep = reg.get("notes.keep")
+    before = int(__import__("time").time())
+    r = keep.run({"text": "带时间戳"}, keep.plugin_ctx)
+    assert r.success
+    row = keep.plugin_ctx.db.query("notes")[0]
+    assert isinstance(row["created_at"], int) and before <= row["created_at"] <= before + 5
+    assert row["tags"] == "[]"  # 列默认值生效
+
+
+def test_db_insert_auto_unknown_kind_fails(data_dir, tmp_path):
+    manifest = NOTES_PANEL_MANIFEST.replace('auto = {created_at = "unixts"}', 'auto = {created_at = "bogus"}')
+    _write_plugin(tmp_path, "notes", manifest, {"panel/list.schema.json": LIST_SCHEMA})
+    reg = SkillRegistry()
+    _load(tmp_path, reg)
+    keep = reg.get("notes.keep")
+    r = keep.run({"text": "x"}, keep.plugin_ctx)
+    assert not r.success and "auto" in r.error
+
+
+# ---------- ⑦py：api.toml 解析 ----------
+
+API_TOML = """
+[[method]]
+name = "delete"
+handler = "notes.delete"
+direct = true
+risk = "L2"
+
+[[method]]
+name = "notes.list"
+handler = "notes.list"
+direct = true
+
+[[method]]
+name = "ghost"
+handler = "notes.ghost"
+direct = true
+
+[[method]]
+name = "badrisk"
+handler = "notes.keep"
+direct = true
+risk = "L9"
+
+[[method]]
+name = "cross"
+handler = "other.tool"
+direct = true
+
+[[method]]
+name = "agent_thing"
+handler = "notes.keep"
+intent = "整理 {text}"
+
+[[event]]
+name = "notes.changed"
+"""
+
+
+def test_api_toml_parsed(data_dir, tmp_path, capsys):
+    from yibao_brain.plugins import get_api, get_plugin_events
+
+    _write_plugin(tmp_path, "notes", NOTES_PANEL_MANIFEST, {
+        "panel/list.schema.json": LIST_SCHEMA,
+        "api.toml": API_TOML,
+    })
+    reg = SkillRegistry()
+    assert _load(tmp_path, reg) == {"notes": "ok"}
+
+    api = get_api("notes.delete")
+    assert api.handler == "notes.delete" and api.direct is True
+    assert api.risk == RiskLevel.L2_MEDIUM
+    assert get_api("notes.list") is not None          # name 已带前缀容错
+    assert get_api("notes.ghost") is None             # handler 不存在 → 跳过
+    assert get_api("notes.badrisk") is None           # risk 非法 → 跳过
+    assert get_api("notes.cross") is None             # handler 跨插件 → 跳过
+    agent_api = get_api("notes.agent_thing")
+    assert agent_api.direct is False and agent_api.intent == "整理 {text}"
+    assert get_plugin_events("notes") == ["notes.changed"]
+    err = capsys.readouterr().err
+    assert err.count("跳过") >= 3  # ghost/badrisk/cross 各一条
+
+
+# ---------- ⑥：仓库里的真实闪念盘插件 ----------
+
+REPO_PLUGINS_DIR = Path(__file__).resolve().parents[2] / "plugins"
+
+
+def test_repo_notes_plugin_loads(data_dir):
+    """仓库根 plugins/notes 必须能被 load_plugins 无错加载（⑥ 的验收）。"""
+    from yibao_brain.plugins import get_api, get_panel
+
+    reg = SkillRegistry()
+    results = _load(REPO_PLUGINS_DIR, reg)
+    assert results["notes"] == "ok"
+    for tid in ("notes.keep", "notes.list", "notes.delete"):
+        reg.get(tid)
+    assert isinstance(get_panel("notes:list"), dict)
+    assert get_api("notes.delete").direct is True
+    assert get_api("notes.list").direct is True
+
+    keep = reg.get("notes.keep")
+    r = keep.run({"text": "持久化验证"}, keep.plugin_ctx)
+    assert r.success and r.panel == "notes:list"
+    lst = reg.get("notes.list")
+    rows = lst.run({}, lst.plugin_ctx).data["rows"]
+    row = next(x for x in rows if x["text"] == "持久化验证")
+    assert isinstance(row["created_at"], int) and row["created_at"] > 0
+    assert row["tags"] == "[]"
+    assert reg.get("notes.delete").default_risk == RiskLevel.L2_MEDIUM
+    # list 的 manifest 默认 order="created_at DESC"（不传参也倒序）
+    db = keep.plugin_ctx.db
+    db.insert("notes", {"text": "旧", "created_at": 1})
+    db.insert("notes", {"text": "新", "created_at": 2})
+    texts = [x["text"] for x in lst.run({}, lst.plugin_ctx).data["rows"]]
+    assert texts.index("新") < texts.index("旧")
