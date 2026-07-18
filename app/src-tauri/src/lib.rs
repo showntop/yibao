@@ -15,6 +15,7 @@ struct BrainState {
     child: Option<CommandChild>,
     last_pong: Instant,
     seen_pong: bool, // 本代进程是否已回过一个 pong/hello（区分启动中与运行中）
+    warned: bool,    // 已超时一轮：两轮确认才 kill（App Nap/休眠苏醒后时间跳变不误杀）
     restarts: u32, // 连续掉线次数（稳定运行 60s 后清零）
     last_restart: Option<Instant>,
     shutting_down: bool,
@@ -26,6 +27,7 @@ impl BrainState {
             child: None,
             last_pong: Instant::now(),
             seen_pong: false,
+            warned: false,
             restarts: 0,
             last_restart: None,
             shutting_down: false,
@@ -111,6 +113,7 @@ fn spawn_bridge(app: AppHandle, mut rx: tauri::async_runtime::Receiver<CommandEv
                                     let mut g = state.0.lock().unwrap();
                                     g.last_pong = Instant::now();
                                     g.seen_pong = true; // hello 意味着分发循环即将就绪
+                                    g.warned = false;
                                     // 稳定运行 60s+ 后的重启视为已恢复，清零退避计数
                                     if g
                                         .last_restart
@@ -130,6 +133,7 @@ fn spawn_bridge(app: AppHandle, mut rx: tauri::async_runtime::Receiver<CommandEv
                                 let mut g = state.0.lock().unwrap();
                                 g.last_pong = Instant::now();
                                 g.seen_pong = true;
+                                g.warned = false;
                             }
                             Some("permissions") => {
                                 if let Some(perms) = v.get("permissions") {
@@ -205,6 +209,7 @@ async fn restart_brain(app: AppHandle) {
                 g.child = Some(child);
                 g.last_pong = Instant::now(); // 给新进程启动留窗口
                 g.seen_pong = false; // 启动宽限期内不启用 15s 心跳超时
+                g.warned = false;
             }
             spawn_bridge(app.clone(), rx);
         }
@@ -225,7 +230,9 @@ async fn restart_brain(app: AppHandle) {
     }
 }
 
-/// 看门狗：每 5s 发 ping；运行中 >15s 无 pong 视为僵死，kill 后由桥任务 Terminated 统一重启。
+/// 看门狗：每 5s 发 ping；运行中 >15s 无 pong 视为疑似僵死。
+/// 两轮确认：第一轮只补发 ping 并标记 warned，下一轮仍无 pong 才 kill（由桥任务 Terminated 统一重启）——
+/// macOS App Nap/休眠会把整个壳挂起，苏醒后 last_pong 时间跳变，单轮判断会误杀健康大脑。
 /// 启动宽限：首个 pong/hello 之前按 90s 启动窗口算（torch/mem0/sherpa 冷启动可能数十秒）。
 fn spawn_watchdog(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
@@ -241,9 +248,18 @@ fn spawn_watchdog(app: AppHandle) {
             }
             let timeout = if g.seen_pong { 15 } else { 90 };
             if g.child.is_some() && g.last_pong.elapsed() > Duration::from_secs(timeout) {
-                eprintln!("[brain] 看门狗：{timeout}s 无 pong，kill 重启");
-                if let Some(child) = g.child.take() {
-                    let _ = child.kill();
+                if g.warned {
+                    eprintln!("[brain] 看门狗：{timeout}s 无 pong（两轮确认），kill 重启");
+                    g.warned = false;
+                    if let Some(child) = g.child.take() {
+                        let _ = child.kill();
+                    }
+                } else {
+                    eprintln!("[brain] 看门狗：{timeout}s 无 pong，补发 ping 观察一轮");
+                    g.warned = true;
+                    if let Some(child) = g.child.as_mut() {
+                        let _ = child.write(b"{\"type\":\"ping\"}\n");
+                    }
                 }
             } else if let Some(child) = g.child.as_mut() {
                 let _ = child.write(b"{\"type\":\"ping\"}\n");

@@ -8,6 +8,7 @@ import sys
 from collections.abc import AsyncIterator, Callable, Iterator
 
 from .audit import AuditLog
+from .history import ConversationHistory
 from .host import Host
 from .ipc import Action, ActionResult, Event
 from .llm import LLMProvider, LLMResponse, merge_tool_call_deltas
@@ -52,6 +53,7 @@ class AgentLoop:
         user_id: str = "default",
         max_steps: int = 8,
         host: Host | None = None,
+        history: ConversationHistory | None = None,
     ):
         self.provider = provider
         self.host = host
@@ -63,12 +65,15 @@ class AgentLoop:
         self.confirmer = confirmer or (lambda _a: False)
         self.user_id = user_id
         self.max_steps = max_steps
+        self.history = history
 
     def run(self, user_text: str) -> Iterator[Event]:
         memories = self.memory.recall(user_text, self.user_id)
         messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
         if memories:
             messages.append({"role": "system", "content": "关于用户的记忆：\n" + "\n".join(memories)})
+        if self.history:
+            messages.extend(self.history.messages())
         messages.append({"role": "user", "content": user_text})
         tools = self.skills.openai_tools()
 
@@ -76,6 +81,8 @@ class AgentLoop:
             resp: LLMResponse = self.provider.chat(messages, tools=tools)
             if not resp.tool_calls:
                 self.memory.add(user_text, self.user_id)
+                if self.history:
+                    self.history.record_turn(user_text, resp.text)
                 yield Event(kind="final_reply", text=resp.text)
                 return
             messages.append(_assistant_with_tools(resp.text, resp.tool_calls))
@@ -131,6 +138,8 @@ class AgentLoop:
         messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
         if memories:
             messages.append({"role": "system", "content": "关于用户的记忆：\n" + "\n".join(memories)})
+        if self.history:
+            messages.extend(self.history.messages())
         messages.append({"role": "user", "content": user_text})
         tools = self.skills.openai_tools()
 
@@ -155,6 +164,8 @@ class AgentLoop:
             tool_calls = merge_tool_call_deltas(delta_acc)
             if not tool_calls:
                 await _offload(self.memory.add, user_text, self.user_id)
+                if self.history:
+                    self.history.record_turn(user_text, text_buf)
                 yield Event(kind="final_reply", text=text_buf)
                 return
             messages.append(_assistant_with_tools(text_buf, tool_calls))

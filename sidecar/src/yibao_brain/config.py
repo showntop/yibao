@@ -113,3 +113,11 @@ def mem0_vector_path() -> str:
         "YIBAO_MEM0_VECTOR_PATH",
         os.path.join(os.path.dirname(__file__), "..", "..", "mem0_store"),
     )
+
+
+def history_path() -> str:
+    """短期会话历史 JSON 落盘路径（大脑重启后恢复最近几轮对话）。"""
+    return os.environ.get(
+        "YIBAO_HISTORY_PATH",
+        os.path.join(os.path.dirname(__file__), "..", "..", "history.json"),
+    )

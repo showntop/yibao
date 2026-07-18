@@ -13,7 +13,8 @@ from collections.abc import Callable
 
 from . import permissions
 from .audit import AuditLog
-from .config import a11y_enabled, computer_use_enabled, llm_api_key, screenshot_dir, stt_model_dir, tts_voice, vad_max_seconds, vad_min_silence, vad_model_path, voice_enabled
+from .config import a11y_enabled, computer_use_enabled, history_path, llm_api_key, screenshot_dir, stt_model_dir, tts_voice, vad_max_seconds, vad_min_silence, vad_model_path, voice_enabled
+from .history import ConversationHistory
 from .ipc import RiskLevel
 from .llm import FakeProvider, GLMProvider
 from .loop import AgentLoop
@@ -42,6 +43,7 @@ def build_loop(
     provider=None,
     skills_factory=None,
     confirmer=None,
+    history_file: str | None = None,
 ) -> AgentLoop:
     real_a11y = use_real and a11y_enabled() and sys.platform == "darwin"
     reg = skills_factory() if skills_factory else SkillRegistry()
@@ -83,6 +85,9 @@ def build_loop(
         ans = read_msg() or {}
         return bool(ans.get("approved", False))
 
+    # 会话历史：仅真实模式默认落盘（fake/测试模式不污染本地文件）
+    hist = history_file or (history_path() if use_real else None)
+
     return AgentLoop(
         provider=prov,
         skills=reg,
@@ -92,6 +97,7 @@ def build_loop(
         log=AuditLog(db_path),
         confirmer=confirmer or default_confirmer,
         host=host,
+        history=ConversationHistory(hist) if hist else None,
     )
 
 
