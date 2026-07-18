@@ -41,8 +41,8 @@ function recheck() {
 
 <style scoped>
 .banner {
-  padding: 12px 14px;
-  border-radius: 14px;
+  padding: var(--yb-space-3) 14px;
+  border-radius: var(--yb-radius-lg);
   background: rgba(255, 255, 255, 0.96);
   border: 1px solid var(--yb-glass-border);
   box-shadow: var(--yb-shadow);
@@ -54,17 +54,17 @@ function recheck() {
   align-items: center;
   gap: 6px;
   font-weight: 600;
-  font-size: 13.5px;
-  margin-bottom: 8px;
+  font-size: var(--yb-fs-lg);
+  margin-bottom: var(--yb-space-2);
 }
 .icon {
-  font-size: 15px;
+  font-size: var(--yb-fs-xl);
 }
 .row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--yb-space-2);
   padding: 6px 0;
   border-top: 1px solid rgba(0, 0, 0, 0.05);
 }
@@ -73,10 +73,10 @@ function recheck() {
 }
 button {
   padding: 6px 14px;
-  border-radius: 9px;
+  border-radius: var(--yb-radius-sm);
   border: none;
   cursor: pointer;
-  font-size: 12.5px;
+  font-size: var(--yb-fs-md);
   font-weight: 500;
   white-space: nowrap;
   transition: filter 0.15s;

@@ -233,6 +233,7 @@ panel schema 是一个 JSON 文件（manifest `[[panel]] src` 指向），描述
 - `$data.x`：绑定 panel 事件注入的数据（`ActionResult.data` 里的键，如 `$data.rows`）。
 - `$item.x`：list item 上下文，仅 `item` 模板内可用（如 `$item.text`、`$item.id`）。
 - 绑定可出现在任何字符串字段：整串恰好是一个绑定时取原值（保留类型），否则做字符串插值；查不到的键渲染为空串。
+- 绑定可带管道过滤器（v1 仅 `date`）：`$item.created_at|date` 把 unix 秒渲染为 `M月d日 HH:mm`；未知过滤器原样透传。
 
 ### action
 

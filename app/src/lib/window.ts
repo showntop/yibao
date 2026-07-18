@@ -1,5 +1,6 @@
 // 桌宠窗口控制：收起/展开切换，展开方向按屏幕剩余空间自适应（形象屏幕位置钉死不动）。
 // 全程用 LogicalSize/LogicalPosition（Retina 下 Physical 会 2x 偏差）。
+import { invoke } from "@tauri-apps/api/core";
 import {
   getCurrentWindow,
   LogicalPosition,
@@ -9,8 +10,8 @@ import {
 
 const COLLAPSE_W = 132;
 const COLLAPSE_H = 140;
-const EXP_W = 320;
-const EXP_H = 460;
+const EXP_W = 360;
+const EXP_H = 520;
 const PET = 64;
 const PET_OFF_X = 34; // 形象在收起窗内的左偏移（132 宽居中 64 → 34）
 const PET_OFF_Y = 12; // 形象在收起窗内的上偏移
@@ -70,3 +71,6 @@ export async function collapse(dir: Dir): Promise<void> {
 }
 
 export const startDrag = (): Promise<void> => getCurrentWindow().startDragging();
+
+/** 打开/聚焦面板窗（窗不存在由 Rust 侧创建；大脑 panel 事件触发）。 */
+export const openPanel = (): Promise<void> => invoke("open_panel_window");

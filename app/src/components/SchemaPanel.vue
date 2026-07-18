@@ -1,16 +1,16 @@
 <script setup lang="ts">
 // schema 面板（协议 v1 附录 A）：白名单渲染 list/detail/form；未知 type 或无 schema → 折叠 JSON 降级。
+// 标题栏/关闭由外层容器（PanelApp）负责；本组件只管内容，撑满容器高度、内部滚动。
 import { computed, reactive, watchEffect } from "vue";
 import { resolve, resolveParams, type ActionDecl, type BindCtx } from "../lib/schema";
 
 const props = defineProps<{
-  panel: string; // 面板引用（plugin_id:name），标题栏展示
+  panel: string; // 面板引用（plugin_id:name），当前仅用于调试展示
   schema: Record<string, any> | null; // null → 未知降级
   data: Record<string, unknown>; // panel 事件注入的数据（$data.x）
 }>();
 const emit = defineEmits<{
   (e: "action", a: { method: string; params: Record<string, unknown> }): void;
-  (e: "close"): void;
 }>();
 
 const kind = computed<string | undefined>(() => props.schema?.type);
@@ -67,11 +67,6 @@ const fallbackJson = computed(() =>
 
 <template>
   <div class="panel">
-    <div class="head">
-      <span class="ref">{{ panel }}</span>
-      <button class="x" title="关闭" @click="emit('close')">×</button>
-    </div>
-
     <!-- list：卡片列表 + 行级 action -->
     <div v-if="kind === 'list'" class="list">
       <div v-if="!listItems.length" class="empty">暂无数据</div>
@@ -125,52 +120,24 @@ const fallbackJson = computed(() =>
 
 <style scoped>
 .panel {
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.96);
-  border: 1px solid var(--yb-accent-soft);
-  box-shadow: var(--yb-shadow);
-  padding: 10px 12px;
-  max-height: 45%;
+  height: 100%;
+  box-sizing: border-box;
   overflow-y: auto;
-  font-size: 13px;
+  padding: var(--yb-space-3);
+  font-size: var(--yb-fs-lg);
   color: var(--yb-text);
-  animation: pop 0.18s ease-out;
-}
-.head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-}
-.ref {
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--yb-text-dim);
-}
-.x {
-  border: none;
-  background: transparent;
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
-  color: var(--yb-text-dim);
-  padding: 2px 6px;
-  border-radius: 6px;
-}
-.x:hover {
-  background: rgba(0, 0, 0, 0.06);
 }
 .empty {
   color: var(--yb-text-dim);
   text-align: center;
-  padding: 12px 0;
+  padding: var(--yb-space-4) 0;
 }
 .card {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: 10px;
+  gap: var(--yb-space-2);
+  padding: var(--yb-space-2) 10px;
+  border-radius: var(--yb-radius-md);
   background: var(--yb-bubble-ai);
   margin-bottom: 6px;
 }
@@ -179,12 +146,12 @@ const fallbackJson = computed(() =>
   min-width: 0;
 }
 .card-title {
-  font-size: 13px;
+  font-size: var(--yb-fs-lg);
   line-height: 1.4;
   word-break: break-word;
 }
 .card-sub {
-  font-size: 11.5px;
+  font-size: var(--yb-fs-sm);
   color: var(--yb-text-dim);
   margin-top: 2px;
 }
@@ -195,10 +162,10 @@ const fallbackJson = computed(() =>
 }
 .act {
   padding: 5px 12px;
-  border-radius: 8px;
+  border-radius: var(--yb-radius-sm);
   border: none;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--yb-fs-md);
   background: var(--yb-accent-soft);
   color: var(--yb-accent);
   transition: filter 0.15s;
@@ -223,7 +190,7 @@ const fallbackJson = computed(() =>
   flex-shrink: 0;
   width: 64px;
   color: var(--yb-text-dim);
-  font-size: 12px;
+  font-size: var(--yb-fs-md);
 }
 .v {
   word-break: break-word;
@@ -231,15 +198,15 @@ const fallbackJson = computed(() =>
 .form .field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin-bottom: 8px;
+  gap: var(--yb-space-1);
+  margin-bottom: var(--yb-space-2);
 }
 .form input,
 .form textarea {
   border: 1px solid rgba(0, 0, 0, 0.12);
-  border-radius: 8px;
+  border-radius: var(--yb-radius-sm);
   padding: 6px 8px;
-  font-size: 13px;
+  font-size: var(--yb-fs-lg);
   font-family: inherit;
   background: #fff;
   color: var(--yb-text);
@@ -256,24 +223,12 @@ const fallbackJson = computed(() =>
 .fallback summary {
   cursor: pointer;
   color: var(--yb-text-dim);
-  font-size: 12px;
+  font-size: var(--yb-fs-md);
 }
 .fallback pre {
-  margin: 8px 0 0;
-  font-size: 11px;
+  margin: var(--yb-space-2) 0 0;
+  font-size: var(--yb-fs-sm);
   white-space: pre-wrap;
   word-break: break-all;
-  max-height: 200px;
-  overflow-y: auto;
-}
-@keyframes pop {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
 }
 </style>

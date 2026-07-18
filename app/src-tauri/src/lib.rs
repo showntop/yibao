@@ -298,6 +298,48 @@ fn panel_action(
     )
 }
 
+/// 打开/聚焦面板窗：已存在则 show+focus（关闭只是隐藏，状态保留）；
+/// 首次用 builder 创建（无装饰+透明与主窗一致，不需 always_on_top），位置取屏幕中央偏右（避开宠物球常驻角）。
+/// 注：CloseRequested → hide 由全局 on_window_event 统一拦截（对所有窗生效，面板窗同享）。
+#[tauri::command]
+fn open_panel_window(app: AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("panel") {
+        win.show().map_err(|e| e.to_string())?;
+        win.set_focus().map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    let win =
+        tauri::WebviewWindowBuilder::new(&app, "panel", tauri::WebviewUrl::App("panel.html".into()))
+            .title("译宝面板")
+            .transparent(true)
+            .decorations(false)
+            .resizable(true)
+            .inner_size(680.0, 540.0)
+            .build()
+            .map_err(|e| format!("创建面板窗失败：{e}"))?;
+    if let Ok(Some(mon)) = win.current_monitor() {
+        let s = mon.scale_factor();
+        let mx = mon.position().x as f64 / s;
+        let my = mon.position().y as f64 / s;
+        let sw = mon.size().width as f64 / s;
+        let sh = mon.size().height as f64 / s;
+        // 屏幕中央偏右：宠物球多在屏幕角落，面板居中偏右避让
+        let x = mx + (sw - 680.0) / 2.0 + 80.0;
+        let y = my + (sh - 540.0) / 2.0;
+        let _ = win.set_position(tauri::LogicalPosition::new(x, y));
+    }
+    Ok(())
+}
+
+/// 关闭面板窗 = 隐藏（不销毁，保状态、二次打开快）。
+#[tauri::command]
+fn close_panel_window(app: AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("panel") {
+        win.hide().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn voice_start(state: tauri::State<Brain>) -> Result<(), String> {
     write_to_brain(&state, serde_json::json!({ "id": 0, "type": "voice_start" }))
@@ -427,6 +469,8 @@ pub fn run() {
             run_input,
             confirm,
             panel_action,
+            open_panel_window,
+            close_panel_window,
             voice_start,
             interrupt,
             check_permissions,

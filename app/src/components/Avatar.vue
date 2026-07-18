@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import { startDrag } from "../lib/window";
 
-defineProps<{ state: "idle" | "listen" | "think" | "work" | "say" }>();
+// size：常态球 64 / chat 头部 44；状态用外圈色环表达（本体不缩放）
+const props = withDefaults(
+  defineProps<{ state: "idle" | "listen" | "think" | "work" | "say"; size?: number }>(),
+  { size: 64 },
+);
 const emit = defineEmits<{ (e: "click"): void }>();
 
 const faces: Record<string, string> = {
@@ -44,6 +48,7 @@ function onPointerUp() {
   <div
     class="av"
     :class="state"
+    :style="{ width: props.size + 'px', height: props.size + 'px', fontSize: Math.round(props.size * 0.53) + 'px' }"
     @pointerdown.prevent="onPointerDown"
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
@@ -55,6 +60,7 @@ function onPointerUp() {
 
 <style scoped>
 .av {
+  position: relative;
   width: 64px;
   height: 64px;
   border-radius: 50%;
@@ -67,30 +73,49 @@ function onPointerUp() {
   cursor: grab;
   user-select: none;
   touch-action: none;
-  transition: transform 0.25s ease, border-color 0.25s ease;
 }
 .av:active {
   cursor: grabbing;
 }
+/* 状态环：外圈 2px 呼吸色环表达状态，pulse 动画只在环上（本体不缩放） */
+.av::before {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  border: 2px solid var(--ring, var(--yb-idle));
+  opacity: 0.55;
+  pointer-events: none;
+}
+.av.idle {
+  --ring: var(--yb-idle);
+}
+.av.listen {
+  --ring: var(--yb-listen);
+}
 .av.think {
-  border-color: rgba(91, 108, 255, 0.45);
+  --ring: var(--yb-think);
 }
 .av.work {
-  border-color: rgba(91, 108, 255, 0.7);
+  --ring: var(--yb-work);
 }
-.av.think,
-.av.work,
 .av.say {
-  animation: pulse 1.1s infinite alternate ease-in-out;
+  --ring: var(--yb-say);
 }
-@keyframes pulse {
+.av.listen::before,
+.av.think::before,
+.av.work::before,
+.av.say::before {
+  animation: ring-pulse 1.2s infinite alternate ease-in-out;
+}
+@keyframes ring-pulse {
   from {
-    opacity: 0.7;
-    transform: scale(0.94);
+    opacity: 0.35;
+    transform: scale(0.97);
   }
   to {
-    opacity: 1;
-    transform: scale(1.05);
+    opacity: 0.9;
+    transform: scale(1.04);
   }
 }
 </style>

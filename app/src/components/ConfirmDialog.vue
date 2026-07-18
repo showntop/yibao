@@ -16,8 +16,8 @@ const emit = defineEmits<{ (e: "approve"): void; (e: "deny"): void }>();
 
 <style scoped>
 .dlg {
-  padding: 14px;
-  border-radius: 14px;
+  padding: var(--yb-space-3);
+  border-radius: var(--yb-radius-lg);
   background: rgba(255, 255, 255, 0.96);
   border: 1px solid var(--yb-danger-soft);
   box-shadow: var(--yb-shadow);
@@ -34,7 +34,7 @@ const emit = defineEmits<{ (e: "approve"): void; (e: "deny"): void }>();
   font-size: 16px;
 }
 p {
-  margin: 8px 0 12px;
+  margin: var(--yb-space-2) 0 var(--yb-space-3);
   color: var(--yb-text);
   font-size: 13px;
   line-height: 1.4;
@@ -44,15 +44,15 @@ p {
 }
 .btns {
   display: flex;
-  gap: 8px;
+  gap: var(--yb-space-2);
   justify-content: flex-end;
 }
 button {
   padding: 7px 16px;
-  border-radius: 9px;
+  border-radius: var(--yb-radius-sm);
   border: none;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--yb-fs-md);
   font-weight: 500;
   transition: filter 0.15s;
 }

@@ -5,7 +5,6 @@ import InputBar from "./components/InputBar.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
 import Bubble from "./components/Bubble.vue";
 import PermissionsBanner from "./components/PermissionsBanner.vue";
-import SchemaPanel from "./components/SchemaPanel.vue";
 import {
   onBrainEvent,
   onBrainStatus,
@@ -14,7 +13,6 @@ import {
   sendConfirm,
   voiceStart,
   interrupt,
-  panelAction,
   type BrainEvent,
   type BrainStatusMsg,
   type BrainPermissions,
@@ -23,6 +21,7 @@ import {
   expand as expandWin,
   collapse as collapseWin,
   resetCollapsedSize,
+  openPanel,
   type Dir,
 } from "./lib/window";
 
@@ -36,9 +35,7 @@ const pending = ref<{ id: string; skill: string; desc: string } | null>(null);
 const brainDown = ref(false); // 大脑掉线/重启中（守护在恢复）
 const perms = ref<BrainPermissions | null>(null); // macOS 权限状态（null=未收到）
 const expanded = ref(false);
-const dir = ref<Dir>("nw");
-// 当前打开的面板：kind="panel" 事件整体替换（同面板再触发即刷新数据）
-const currentPanel = ref<{ panel: string; schema: any; data: Record<string, unknown> } | null>(null);
+const dir = ref<Dir>("nw"); // 展开方向（collapse 沿同一锚点缩回要用）
 let unlisten: (() => void) | null = null;
 let unlistenStatus: (() => void) | null = null;
 let unlistenPerms: (() => void) | null = null;
@@ -78,9 +75,8 @@ function onEvent(e: BrainEvent) {
       if (!expanded.value) void expand(); // 高风险确认必须可见
       break;
     case "action_result":
-      if (e.result?.success) {
-        bubbles.value.push({ role: "ai", text: "✓ " + JSON.stringify(e.result.data ?? {}) });
-      }
+      // 双窗口：确认可能在面板窗作答，结果回来即收尾（成功不再刷 ✓ 气泡）
+      pending.value = null;
       break;
     case "final_reply_chunk": {
       // 流式增量：拼到当前 streaming bubble（首片时新建）
@@ -117,6 +113,7 @@ function onEvent(e: BrainEvent) {
     case "error":
       state.value = "idle";
       streamingIdx.value = null;
+      pending.value = null; // 确认被拒（任一窗口作答）或出错
       bubbles.value.push({ role: "ai", text: "⚠️ " + (e.text ?? "出错了") });
       break;
     case "listening":
@@ -130,13 +127,9 @@ function onEvent(e: BrainEvent) {
       state.value = "say";
       break;
     case "panel":
-      // 面板事件：整体替换（同面板再触发 = 刷新数据）；收起态下必须展开才看得见
-      currentPanel.value = {
-        panel: e.payload?.panel ?? "",
-        schema: (e.payload?.schema as any) ?? null,
-        data: e.payload?.data ?? {},
-      };
-      if (!expanded.value) void expand();
+      // 面板 = 独立浮窗（工作模式）：交给面板窗，宠物窗收回球形态
+      void openPanel();
+      if (expanded.value) void collapse();
       break;
   }
 }
@@ -198,15 +191,6 @@ function onMic() {
   void voiceStart();
 }
 
-/** 面板 action：交给大脑走 api.toml 白名单直调，响应仍走 brain-event 通道回来。 */
-async function onPanelAction(a: { method: string; params: Record<string, unknown> }) {
-  try {
-    await panelAction(a.method, a.params);
-  } catch (err) {
-    bubbles.value.push({ role: "ai", text: "⚠️ 面板操作失败：" + String(err) });
-  }
-}
-
 function onInterrupt() {
   if (!busy.value) return;
   void interrupt().catch((err) => {
@@ -234,42 +218,41 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="shell" :class="[expanded ? ['exp', dir] : [], { 'has-perm': missingPerms && expanded, 'has-panel': currentPanel !== null && expanded }]">
-    <Avatar class="pet" :state="state" @click="toggleExpand" />
+  <div class="shell" :class="{ exp: expanded }">
+    <!-- 常态：宠物球 + 状态文字 -->
+    <template v-if="!expanded">
+      <Avatar class="pet" :state="state" @click="toggleExpand" />
+      <div class="status-collapsed" :class="state">{{ statusText }}</div>
+    </template>
 
-    <div v-if="expanded" class="meta">
-      <span class="name">译宝</span>
-      <span class="status" :class="state">{{ statusText }}</span>
-    </div>
+    <!-- 对话：header（头像+名称+状态+收起）/ (权限引导) / 气泡流 / 输入条 -->
+    <template v-else>
+      <header class="chat-header">
+        <Avatar :state="state" :size="44" @click="collapse" />
+        <div class="meta">
+          <span class="name">译宝</span>
+          <span class="status" :class="state">{{ statusText }}</span>
+        </div>
+        <button class="collapse-btn" title="收起" @click="collapse">—</button>
+      </header>
 
-    <PermissionsBanner v-if="expanded && missingPerms && perms" class="perm" :perms="perms" />
+      <PermissionsBanner v-if="missingPerms && perms" :perms="perms" />
 
-    <SchemaPanel
-      v-if="expanded && currentPanel"
-      class="panel"
-      :panel="currentPanel.panel"
-      :schema="currentPanel.schema"
-      :data="currentPanel.data"
-      @action="onPanelAction"
-      @close="currentPanel = null"
-    />
+      <div class="bubbles">
+        <Bubble v-for="(b, i) in bubbles" :key="i" :role="b.role" :text="b.text" />
+      </div>
 
-    <div v-if="expanded" class="bubbles">
-      <Bubble v-for="(b, i) in bubbles" :key="i" :role="b.role" :text="b.text" />
-    </div>
-
-    <div v-if="expanded" class="input-slot">
-      <InputBar v-if="!pending" :busy="busy" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
-      <ConfirmDialog
-        v-else
-        :skill="pending.skill"
-        :desc="pending.desc"
-        @approve="() => decide(true)"
-        @deny="() => decide(false)"
-      />
-    </div>
-
-    <div v-else class="status-collapsed" :class="state">{{ statusText }}</div>
+      <div class="input-slot">
+        <InputBar v-if="!pending" :busy="busy" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
+        <ConfirmDialog
+          v-else
+          :skill="pending.skill"
+          :desc="pending.desc"
+          @approve="() => decide(true)"
+          @deny="() => decide(false)"
+        />
+      </div>
+    </template>
   </div>
 </template>
 
@@ -283,85 +266,70 @@ onUnmounted(() => {
   color: var(--yb-text);
 }
 .shell.exp {
-  padding: 12px;
+  padding: var(--yb-space-3);
   display: flex;
   flex-direction: column;
+  gap: var(--yb-space-2);
   background: var(--yb-bg);
   -webkit-backdrop-filter: var(--yb-blur);
   backdrop-filter: var(--yb-blur);
   border: 1px solid var(--yb-glass-border);
-  border-radius: 18px;
+  border-radius: var(--yb-radius-xl);
   box-shadow: var(--yb-shadow);
 }
-/* 形象钉在展开方向的源角；收起态默认左上偏移(=居中) */
+/* 常态：宠物球（可拖可点开） */
 .pet {
   position: absolute;
   left: 34px;
   top: 12px;
   z-index: 3;
 }
-.exp.ne .pet {
-  left: auto;
-  right: 34px;
-}
-.exp.sw .pet {
-  top: auto;
-  bottom: 12px;
-}
-.exp.se .pet {
-  left: auto;
-  top: auto;
-  right: 34px;
-  bottom: 12px;
+.chat-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 .meta {
-  position: absolute;
-  z-index: 2;
+  flex: 1;
   display: flex;
   flex-direction: column;
   line-height: 1.3;
 }
-.exp.nw .meta {
-  left: 110px;
-  top: 16px;
-  align-items: flex-start;
-}
-.exp.ne .meta {
-  right: 110px;
-  top: 16px;
-  align-items: flex-end;
-}
-.exp.sw .meta {
-  left: 110px;
-  bottom: 16px;
-  align-items: flex-start;
-}
-.exp.se .meta {
-  right: 110px;
-  bottom: 16px;
-  align-items: flex-end;
-}
 .name {
-  font-size: 15px;
+  font-size: var(--yb-fs-xl);
   font-weight: 600;
 }
 .status {
-  font-size: 11.5px;
+  font-size: var(--yb-fs-sm);
   color: var(--yb-text-dim);
 }
 .status.think,
 .status.work {
   color: var(--yb-accent);
 }
+.collapse-btn {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: var(--yb-radius-sm);
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--yb-text-dim);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+.collapse-btn:hover {
+  filter: brightness(0.96);
+}
 .bubbles {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: var(--yb-space-2);
   overflow-y: auto;
   padding: 0 2px;
   scrollbar-width: thin;
-  order: 1;
 }
 .bubbles::-webkit-scrollbar {
   width: 6px;
@@ -370,55 +338,13 @@ onUnmounted(() => {
   background: rgba(0, 0, 0, 0.15);
   border-radius: 3px;
 }
-/* 形象在上(nw/ne) → bubbles 避让顶部；形象在下(sw/se) → 避让底部 */
-.exp.nw .bubbles,
-.exp.ne .bubbles {
-  margin-top: 80px;
-}
-.exp.sw .bubbles,
-.exp.se .bubbles {
-  margin-bottom: 80px;
-}
-/* 权限 banner：nw/ne 时占据 bubbles 的顶部避让位，bubbles 自身不再避让 */
-.exp.nw .perm,
-.exp.ne .perm {
-  margin-top: 80px;
-}
-.exp.has-perm.nw .bubbles,
-.exp.has-perm.ne .bubbles {
-  margin-top: 0;
-}
-/* schema 面板：对话流上方（order 0）；nw/ne 时与 banner 同款顶部避让，占位的替代规则也一致 */
-.panel {
-  order: 0;
-}
-.exp.nw .panel,
-.exp.ne .panel {
-  margin-top: 80px;
-}
-.exp.has-perm.nw .panel,
-.exp.has-perm.ne .panel {
-  margin-top: 0;
-}
-.exp.has-panel.nw .bubbles,
-.exp.has-panel.ne .bubbles {
-  margin-top: 0;
-}
-/* input 默认在底(order 2)；形象在下(sw/se)时 input 移到顶(order 0) */
-.input-slot {
-  order: 2;
-}
-.exp.sw .input-slot,
-.exp.se .input-slot {
-  order: 0;
-}
 .status-collapsed {
   position: absolute;
   left: 0;
   right: 0;
   top: 86px;
   text-align: center;
-  font-size: 11.5px;
+  font-size: var(--yb-fs-sm);
   color: var(--yb-text-dim);
 }
 .status-collapsed.think,

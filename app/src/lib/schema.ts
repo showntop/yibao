@@ -36,9 +36,9 @@ export interface BindCtx {
   item?: Record<string, unknown>;
 }
 
-// 绑定表达式：$data.a.b / $item.x（路径段允许字母数字下划线连字符）
-const FULL_BIND = /^\$((?:data|item)(?:\.[\w-]+)*)$/;
-const EMBED_BIND = /\$((?:data|item)(?:\.[\w-]+)*)/g;
+// 绑定表达式：$data.a.b / $item.x，可带管道过滤器（$item.created_at|date）
+const FULL_BIND = /^\$((?:data|item)(?:\.[\w-]+)*(?:\|[\w-]+)*)$/;
+const EMBED_BIND = /\$((?:data|item)(?:\.[\w-]+)*(?:\|[\w-]+)*)/g;
 
 function lookupPath(root: unknown, keys: string[]): unknown {
   let cur = root;
@@ -49,9 +49,25 @@ function lookupPath(root: unknown, keys: string[]): unknown {
   return cur;
 }
 
-function bindValue(path: string, ctx: BindCtx): unknown {
+/** 管道过滤器（v1 仅 date：unix 秒 → "M月d日 HH:mm"）；未知过滤器原样透传不炸。 */
+function applyFilter(v: unknown, name: string): unknown {
+  if (name === "date") {
+    const n = typeof v === "number" ? v : Number(v);
+    if (!Number.isFinite(n) || n <= 0) return "";
+    const d = new Date(n * 1000);
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    return `${d.getMonth() + 1}月${d.getDate()}日 ${hh}:${mm}`;
+  }
+  return v;
+}
+
+function bindValue(expr: string, ctx: BindCtx): unknown {
+  const [path, ...filters] = expr.split("|");
   const [root, ...keys] = path.split(".");
-  return lookupPath(root === "data" ? ctx.data : ctx.item, keys);
+  let v = lookupPath(root === "data" ? ctx.data : ctx.item, keys);
+  for (const f of filters) v = applyFilter(v, f);
+  return v;
 }
 
 /**

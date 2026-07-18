@@ -8,13 +8,13 @@ defineProps<{ role: "user" | "ai"; text: string }>();
 
 <style scoped>
 .bubble {
-  padding: 8px 12px;
-  border-radius: 14px;
+  padding: var(--yb-space-2) var(--yb-space-3);
+  border-radius: var(--yb-radius-lg);
   max-width: 88%;
-  font-size: 13.5px;
+  font-size: var(--yb-fs-lg);
   line-height: 1.45;
   word-break: break-word;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  box-shadow: 0 1px 4px rgba(20, 20, 40, 0.08);
   animation: pop 0.18s ease-out;
 }
 .ai {

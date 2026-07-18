@@ -1,0 +1,44 @@
+/* 设计令牌：宠物窗与面板窗共用（两入口 main.ts / panel.ts 各 import 一次，避免复制漂移）。 */
+:root {
+  /* 玻璃拟态 */
+  --yb-bg: rgba(255, 255, 255, 0.72);
+  --yb-glass-border: rgba(255, 255, 255, 0.6);
+  --yb-blur: saturate(160%) blur(20px);
+  --yb-shadow: 0 8px 30px rgba(20, 20, 40, 0.18);
+
+  /* 颜色 */
+  --yb-text: #1f2330;
+  --yb-text-dim: #6b7280;
+  --yb-accent: #5b6cff;
+  --yb-accent-soft: rgba(91, 108, 255, 0.16);
+  --yb-bubble-ai: rgba(245, 246, 255, 0.92);
+  --yb-bubble-user: rgba(91, 108, 255, 0.16);
+  --yb-danger: #e5484d;
+  --yb-danger-soft: rgba(229, 72, 77, 0.28);
+
+  /* Avatar 状态环颜色 */
+  --yb-idle: #adb5bd;
+  --yb-listen: #22b8cf;
+  --yb-think: #5b6cff;
+  --yb-work: #3b82f6;
+  --yb-say: #2f9e44;
+
+  /* 间距梯度 */
+  --yb-space-1: 4px;
+  --yb-space-2: 8px;
+  --yb-space-3: 12px;
+  --yb-space-4: 16px;
+
+  /* 字号梯度 */
+  --yb-fs-sm: 11.5px;
+  --yb-fs-md: 12.5px;
+  --yb-fs-lg: 13.5px;
+  --yb-fs-xl: 15px;
+
+  /* 圆角梯度（--yb-radius 为旧名保留） */
+  --yb-radius-sm: 8px;
+  --yb-radius-md: 12px;
+  --yb-radius-lg: 14px;
+  --yb-radius-xl: 18px;
+  --yb-radius: var(--yb-radius-lg);
+}

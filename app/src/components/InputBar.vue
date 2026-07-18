@@ -36,10 +36,10 @@ function send() {
 <style scoped>
 .bar {
   display: flex;
-  gap: 6px;
+  gap: var(--yb-space-2);
   align-items: center;
-  padding: 6px 6px 6px 12px;
-  border-radius: 14px;
+  padding: 6px 6px 6px var(--yb-space-3);
+  border-radius: var(--yb-radius-lg);
   background: rgba(255, 255, 255, 0.7);
   border: 1px solid rgba(0, 0, 0, 0.08);
   box-shadow: 0 2px 10px rgba(20, 20, 40, 0.06);
@@ -48,7 +48,7 @@ input {
   flex: 1;
   border: none;
   background: transparent;
-  font-size: 13.5px;
+  font-size: var(--yb-fs-lg);
   outline: none;
   color: var(--yb-text);
 }
