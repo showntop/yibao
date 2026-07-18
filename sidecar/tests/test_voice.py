@@ -252,3 +252,32 @@ def test_vad_config_defaults_and_env(monkeypatch):
     monkeypatch.setenv("YIBAO_VAD_MAX_SECONDS", "20")
     assert config.vad_min_silence() == 1.2
     assert config.vad_max_seconds() == 20
+
+
+def test_play_pcm_no_name_error(monkeypatch):
+    """回归：_play_pcm 内 asyncio.sleep 曾 NameError（import 漏在拆分中丢失）。
+    用假 sounddevice 打穿真实 _play_pcm。"""
+    import sys
+    import types
+
+    from yibao_brain.voice import EdgeTtsSpeaker
+
+    stream = types.SimpleNamespace(active=True)
+    polls = {"n": 0}
+
+    def _get_stream():
+        polls["n"] += 1
+        if polls["n"] > 1:
+            stream.active = False  # 第二次轮询视为播完
+        return stream
+
+    fake_sd = types.SimpleNamespace(
+        play=lambda pcm, samplerate: None,
+        get_stream=_get_stream,
+        stop=lambda: None,
+    )
+    monkeypatch.setitem(sys.modules, "sounddevice", fake_sd)
+
+    speaker = EdgeTtsSpeaker()
+    cancel = asyncio.Event()
+    asyncio.run(speaker._play_pcm([0.0] * 10, cancel))  # NameError 即失败

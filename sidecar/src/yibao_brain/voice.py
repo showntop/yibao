@@ -8,6 +8,7 @@ cancel 命中即停（"三连取消"之一：停 TTS）。
 """
 from __future__ import annotations
 
+import asyncio
 import re
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -111,8 +112,6 @@ class EdgeTtsSpeaker:
         self._voice = voice
 
     def speak(self, text: str) -> None:
-        import asyncio
-
         asyncio.run(self._speak_one(text, _NeverCancel()))
 
     async def speak_stream(self, text_iter: AsyncIterator[str], cancel) -> None:
@@ -120,8 +119,6 @@ class EdgeTtsSpeaker:
 
         生产者/消费者管道：合成下一句与播放当前句并行，句间不再有完整网络延迟。
         """
-        import asyncio
-
         queue: asyncio.Queue = asyncio.Queue()  # 句子 PCM 队列；None=结束哨兵
         synth_error: list[BaseException] = []
 
