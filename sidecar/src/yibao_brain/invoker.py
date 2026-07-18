@@ -64,7 +64,16 @@ class ToolInvoker:
         """执行 + 审计。技能异常转为失败结果，不抛出（不杀 run）。"""
         skill = self.skills.get(action.skill_id)
         try:
-            result = skill.run(params, SkillContext(host=self.host))
+            # 插件技能用加载器按 capability 注入好的 plugin_ctx；底座技能照旧给 host
+            ctx = skill.plugin_ctx or SkillContext(host=self.host)
+            # 插件声明了 host capability：加载器拿不到 host，在这里嫁接 invoker 的
+            if (
+                skill.plugin_ctx is not None
+                and skill.plugin_ctx.host is None
+                and "host" in skill.plugin_capabilities
+            ):
+                ctx.host = self.host
+            result = skill.run(params, ctx)
         except Exception as e:
             result = ActionResult(success=False, error=f"技能执行异常：{e}")
         self._safe_record(action, result)

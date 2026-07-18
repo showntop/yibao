@@ -81,6 +81,9 @@ def build_loop(
         except Exception as e:  # pyobjc 未装 / 非 mac → 回退无基座（技能会优雅报错）
             print(f"[yibao] MacHost 不可用，回退无基座：{e}", file=sys.stderr)
 
+    if use_real and not skills_factory:
+        _load_plugins_safe(reg, memory, prov, host)
+
     def default_confirmer(action) -> bool:
         # 由 serve 在 confirmation_needed 事件之后触发；阻塞读壳的回答
         ans = read_msg() or {}
@@ -100,6 +103,31 @@ def build_loop(
         host=host,
         history=ConversationHistory(hist) if hist else None,
     )
+
+
+def _load_plugins_safe(reg, memory, prov, host) -> None:
+    """加载 <repo>/plugins 下的插件（env YIBAO_PLUGINS_DIR 可覆盖）。
+
+    只在 use_real 且无自定义 skills_factory 时调用（测试不碰真实文件系统）；
+    整个加载过程再兜一层 try：插件系统任何问题都不许拖垮底座启动。
+    """
+    try:
+        from pathlib import Path
+
+        from .plugins import HttpClient, LlmChat, load_plugins
+
+        # sidecar/src/yibao_brain/server.py → 上四级即仓库根
+        default_dir = Path(__file__).resolve().parents[3] / "plugins"
+        plugins_dir = os.environ.get("YIBAO_PLUGINS_DIR") or str(default_dir)
+        results = load_plugins(
+            plugins_dir, reg,
+            memory=memory, http=HttpClient(), llm=LlmChat(prov),
+            host_available=host is not None,
+        )
+        for pid, status in results.items():
+            print(f"[yibao] 插件 {pid}: {status}", file=sys.stderr)
+    except Exception as e:
+        print(f"[yibao] 插件加载失败（已跳过）：{e}", file=sys.stderr)
 
 
 def _run_and_emit(loop: AgentLoop, text: str, write_msg: WriteMsg, rid, voice=None) -> None:

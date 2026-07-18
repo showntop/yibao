@@ -283,3 +283,36 @@ def test_serve_async_prompt_permission(monkeypatch, tmp_path):
     )
     assert calls == ["ax"]
     assert any(m["type"] == "permissions" for m in out)
+
+
+def test_load_plugins_safe_wires_registry(tmp_path, monkeypatch, capsys):
+    """build_loop 的插件接线：YIBAO_PLUGINS_DIR 指向 tmp，加载结果进 registry 并打印 stderr。"""
+    from yibao_brain.memory import FakeMemory
+    from yibao_brain.server import _load_plugins_safe
+    from yibao_brain.skills import SkillRegistry
+
+    plugin = tmp_path / "notes"
+    plugin.mkdir()
+    (plugin / "manifest.toml").write_text(
+        'id = "notes"\ncapabilities = ["db"]\n'
+        '[[table]]\nname = "t"\ncolumns = [{name = "id", type = "text", pk = true}]\n'
+        '[[tool]]\nid = "keep"\ntype = "db"\ndescription = "记"\n'
+        "[tool.db]\nop = \"insert\"\ntable = \"t\"\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("YIBAO_PLUGINS_DIR", str(tmp_path))
+    monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path / "data"))
+    reg = SkillRegistry()
+    _load_plugins_safe(reg, FakeMemory(), FakeProvider(), None)
+    assert reg.get("notes.keep").id == "notes.keep"
+    assert "[yibao] 插件 notes: ok" in capsys.readouterr().err
+
+
+def test_load_plugins_safe_never_raises(tmp_path, monkeypatch):
+    """插件系统整体异常也不许拖垮底座启动（外层兜底 try）。"""
+    from yibao_brain.memory import FakeMemory
+    from yibao_brain.server import _load_plugins_safe
+    from yibao_brain.skills import SkillRegistry
+
+    monkeypatch.setenv("YIBAO_PLUGINS_DIR", str(tmp_path / "nonexistent"))
+    _load_plugins_safe(SkillRegistry(), FakeMemory(), FakeProvider(), None)  # 不抛
