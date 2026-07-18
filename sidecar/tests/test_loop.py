@@ -402,3 +402,55 @@ def test_no_panel_event_without_ref(tmp_path):
     loop = build_loop(tmp_path, provider)
     events = list(loop.run("go"))
     assert "panel" not in [e.kind for e in events]  # 无 panel 引用不发事件
+
+
+def test_plugin_tool_names_are_llm_safe(tmp_path):
+    """插件 tool id 带点号（notes.keep），DeepSeek/OpenAI 要求 function name ^[a-zA-Z0-9_-]+$：
+    发给 LLM 的 schema 用安全名（点→下划线），回调时映射回真实 id。"""
+    from yibao_brain.skills import SkillRegistry
+
+    class Keep(Skill):
+        id = "notes.keep"
+        description = "记"
+
+        def run(self, params, ctx):
+            raise NotImplementedError
+
+    reg = SkillRegistry()
+    reg.register(EchoSkill())
+    reg.register(Keep(), plugin="notes")
+
+    names = [t["name"] for t in reg.openai_tools()]
+    assert "notes_keep" in names          # 点号转下划线
+    assert "notes.keep" not in names      # 非法字符不进 schema
+    assert "echo" in names                # 底座 id 原样
+    assert reg.resolve_llm_name("notes_keep") == "notes.keep"
+    assert reg.resolve_llm_name("echo") == "echo"
+    assert reg.resolve_llm_name("ghost") == "ghost"  # 未知名原样返回（走既有的 skill 未找到路径）
+
+
+def test_loop_executes_plugin_tool_called_by_safe_name(tmp_path):
+    """端到端：LLM 回调安全名 notes_keep，loop 映射回 notes.keep 并执行。"""
+    provider = _TwoStepProvider(
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="notes_keep", params={"text": "hi"})]),
+        second=FakeProvider(text="记好了"),
+    )
+    loop = build_loop(tmp_path, provider)
+    from yibao_brain.skills import SkillRegistry
+    from yibao_brain.ipc import ActionResult as AR
+
+    class Keep(Skill):
+        id = "notes.keep"
+        description = "记"
+        def run(self, params, ctx):
+            return AR(success=True, data={"kept": params.get("text")})
+
+    reg = SkillRegistry()
+    reg.register(Keep(), plugin="notes")
+    loop.skills = reg
+    events = list(loop.run("记一下 hi"))
+    kinds = [e.kind for e in events]
+    assert "action_result" in kinds
+    ar = next(e for e in events if e.kind == "action_result")
+    assert ar.result.success and ar.result.data == {"kept": "hi"}
+    assert kinds[-1] == "final_reply"

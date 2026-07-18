@@ -61,6 +61,22 @@ class SkillRegistry:
     def __init__(self) -> None:
         self._skills: dict[str, Skill] = {}
 
+    @staticmethod
+    def llm_name(skill_id: str) -> str:
+        """发给 LLM 的 function name：DeepSeek/OpenAI 要求 ^[a-zA-Z0-9_-]+$，
+        插件 id 的点号（notes.keep）转成下划线（notes_keep）。"""
+        return skill_id.replace(".", "_")
+
+    def resolve_llm_name(self, name: str) -> str:
+        """LLM 回调的安全名 → 真实 tool id。完全匹配优先（底座 id 可能本身带下划线，
+        如 web_search——撞名时底座赢，插件侧撞名属插件作者命名失误）。"""
+        if name in self._skills:
+            return name
+        for sid in self._skills:
+            if self.llm_name(sid) == name:
+                return sid
+        return name
+
     def register(self, skill: Skill, plugin: str | None = None) -> None:
         """注册技能。命名空间强制（v2 方案 §3.2）：
 
@@ -85,4 +101,9 @@ class SkillRegistry:
         return list(self._skills.values())
 
     def openai_tools(self) -> list[dict]:
-        return [s.openai_schema() for s in self._skills.values()]
+        out = []
+        for s in self._skills.values():
+            schema = s.openai_schema()
+            schema["name"] = self.llm_name(s.id)  # LLM 只见安全名；回调经 resolve_llm_name 映射回
+            out.append(schema)
+        return out

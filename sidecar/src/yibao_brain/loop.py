@@ -88,6 +88,7 @@ class AgentLoop:
             messages.append(_assistant_with_tools(resp.text, resp.tool_calls))
             proceeded = False
             for tc in resp.tool_calls:
+                tc.skill_id = self.skills.resolve_llm_name(tc.skill_id)  # 安全名 → 真实 id
                 action = self.invoker.propose(tc)
                 yield Event(kind="action_proposed", action=action)
                 decision = self.invoker.decide(action)
@@ -163,6 +164,7 @@ class AgentLoop:
                 if cancelled():
                     yield Event(kind="interrupted")
                     return
+                tc.skill_id = self.skills.resolve_llm_name(tc.skill_id)  # 安全名 → 真实 id
                 action = self.invoker.propose(tc)
                 yield Event(kind="action_proposed", action=action)
                 decision = self.invoker.decide(action)
