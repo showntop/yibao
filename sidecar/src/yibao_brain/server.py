@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import threading
 from collections.abc import Callable
@@ -341,12 +342,17 @@ def _build_voice_or_none():
 def main() -> int:
     reader, writer = _line_reader(), _line_writer()
     voice = _build_voice_or_none()
+    # 数据目录分离：仓库时代的用户数据一次性迁走（sidecar/ → 应用数据目录）
+    from . import config as _cfg
+
+    _cfg.migrate_legacy_data(os.path.join(os.path.dirname(__file__), "..", ".."))
+    os.makedirs(_cfg.data_dir(), exist_ok=True)  # sqlite/qdrant 不会自建父目录
     asyncio.run(
         serve_async(
             reader,
             writer,
             use_real=True,
-            db_path="audit.db",
+            db_path=_cfg.audit_db_path(),
             voice=voice,
         )
     )

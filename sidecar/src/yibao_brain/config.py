@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 
@@ -19,6 +20,45 @@ def _load_dotenv() -> None:
 
 
 _load_dotenv()
+
+
+def data_dir() -> str:
+    """用户数据根目录（v2：代码与数据分离，数据不再落仓库）。默认 macOS 应用支持目录。"""
+    d = os.environ.get("YIBAO_DATA_DIR")
+    if d:
+        return d
+    if sys.platform == "darwin":
+        return os.path.expanduser("~/Library/Application Support/yibao")
+    return os.path.expanduser("~/.yibao")
+
+
+def audit_db_path() -> str:
+    return os.environ.get("YIBAO_AUDIT_DB", os.path.join(data_dir(), "audit.db"))
+
+
+def plugin_data_dir(plugin_id: str) -> str:
+    """某插件的业务数据目录（data.db / assets/ 放这里）。"""
+    return os.path.join(data_dir(), "plugins", plugin_id)
+
+
+def migrate_legacy_data(legacy_dir: str) -> None:
+    """把仓库时代的用户数据（sidecar/ 下的 mem0_store/audit.db/history.json）迁到数据目录。
+
+    新位置已存在则保留旧文件不覆盖（交给用户处理）；move 语义。
+    """
+    import shutil
+
+    for name in ("mem0_store", "audit.db", "history.json"):
+        src = os.path.join(legacy_dir, name)
+        dst = os.path.join(data_dir(), name)
+        if not os.path.exists(src) or os.path.exists(dst):
+            continue
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        try:
+            shutil.move(src, dst)
+            print(f"[yibao] 已迁移 {name} → {dst}", file=sys.stderr)
+        except OSError as e:
+            print(f"[yibao] 迁移 {name} 失败（保留原位）：{e}", file=sys.stderr)
 
 
 def _env(new: str, old: str = "", default: str = "") -> str:
@@ -109,15 +149,9 @@ def mem0_embedder_dim() -> int:
 
 def mem0_vector_path() -> str:
     """mem0 本地 qdrant 向量库存储路径（嵌入模式，免外部 server）。"""
-    return os.environ.get(
-        "YIBAO_MEM0_VECTOR_PATH",
-        os.path.join(os.path.dirname(__file__), "..", "..", "mem0_store"),
-    )
+    return os.environ.get("YIBAO_MEM0_VECTOR_PATH", os.path.join(data_dir(), "mem0_store"))
 
 
 def history_path() -> str:
     """短期会话历史 JSON 落盘路径（大脑重启后恢复最近几轮对话）。"""
-    return os.environ.get(
-        "YIBAO_HISTORY_PATH",
-        os.path.join(os.path.dirname(__file__), "..", "..", "history.json"),
-    )
+    return os.environ.get("YIBAO_HISTORY_PATH", os.path.join(data_dir(), "history.json"))
