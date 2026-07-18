@@ -1,20 +1,19 @@
-"""Agent 回路：输入 -> 规划 -> 逐步执行 -> 结果，产出 Event 流。"""
+"""Agent 回路：输入 -> 规划 -> 逐步执行 -> 结果，产出 Event 流。tool 执行收编到 ToolInvoker。"""
 from __future__ import annotations
 
 import asyncio
-import inspect
 import json
-import sys
 from collections.abc import AsyncIterator, Callable, Iterator
 
 from .audit import AuditLog
 from .history import ConversationHistory
 from .host import Host
-from .ipc import Action, ActionResult, Event
+from .invoker import ToolInvoker
+from .ipc import Action, Event
 from .llm import LLMProvider, LLMResponse, merge_tool_call_deltas
 from .memory import Memory
 from .safety import Decision, Gate, RiskClassifier
-from .skills import SkillContext, SkillRegistry
+from .skills import SkillRegistry
 
 Confirmer = Callable[[Action], bool]
 
@@ -22,14 +21,6 @@ SYSTEM_PROMPT = (
     "你是译宝，一个桌面 AI 助手。通过调用工具帮用户操作电脑。"
     "若无需调用工具，直接用自然语言回复。"
 )
-
-
-def _safe_record(log, action, result) -> None:
-    """审计写库失败只记 stderr、不中断对话（丢一条日志好过整个 run 崩掉）。"""
-    try:
-        log.record(action, result, screenshot_path=result.screenshot_path)
-    except Exception as e:
-        print(f"[yibao] 审计日志写入失败（已跳过）：{e}", file=sys.stderr)
 
 
 async def _offload(fn, *args):
@@ -57,15 +48,23 @@ class AgentLoop:
     ):
         self.provider = provider
         self.host = host
-        self.skills = skills
-        self.classifier = classifier
-        self.gate = gate
         self.memory = memory
         self.log = log
         self.confirmer = confirmer or (lambda _a: False)
         self.user_id = user_id
         self.max_steps = max_steps
         self.history = history
+        # tool 执行收编到唯一执行器；loop 只留事件路由与 LLM 往返
+        self.invoker = ToolInvoker(skills, classifier, gate, log, self.confirmer, host)
+
+    @property
+    def skills(self) -> SkillRegistry:
+        """委托给 invoker：替换 registry 时执行器同步生效（测试/运行期换注册表）。"""
+        return self.invoker.skills
+
+    @skills.setter
+    def skills(self, reg: SkillRegistry) -> None:
+        self.invoker.skills = reg
 
     def run(self, user_text: str) -> Iterator[Event]:
         memories = self.memory.recall(user_text, self.user_id)
@@ -88,20 +87,12 @@ class AgentLoop:
             messages.append(_assistant_with_tools(resp.text, resp.tool_calls))
             proceeded = False
             for tc in resp.tool_calls:
-                skill = self.skills.get(tc.skill_id)
-                action = Action(
-                    skill_id=tc.skill_id,
-                    params=tc.params,
-                    description=skill.description,
-                    risk=self.classifier.classify(
-                        Action(skill_id=tc.skill_id, params=tc.params), skill
-                    ),
-                )
+                action = self.invoker.propose(tc)
                 yield Event(kind="action_proposed", action=action)
-                decision = self.gate.decide(action)
+                decision = self.invoker.decide(action)
                 if decision == Decision.CONFIRM:
                     yield Event(kind="confirmation_needed", action=action, confirmation_id=action.id)
-                    if not self.confirmer(action):
+                    if not self.invoker.confirm_sync(action):
                         yield Event(kind="error", text=f"用户拒绝执行 {tc.skill_id}")
                         messages.append({"role": "tool", "tool_call_id": tc.id, "content": "用户拒绝执行该操作"})
                         continue
@@ -109,13 +100,7 @@ class AgentLoop:
                     yield Event(kind="error", text=f"策略禁止执行 {tc.skill_id}（风险过高）")
                     messages.append({"role": "tool", "tool_call_id": tc.id, "content": "策略禁止该操作"})
                     continue
-                ctx = SkillContext(host=self.host)
-                try:
-                    result = skill.run(tc.params, ctx)
-                except Exception as e:
-                    # 技能异常不应杀掉整个 run：转为失败结果喂回模型换策略
-                    result = ActionResult(success=False, error=f"技能执行异常：{e}")
-                _safe_record(self.log, action, result)
+                result = self.invoker.execute(action, tc.params)
                 yield Event(kind="action_result", action=action, result=result)
                 messages.append(
                     {"role": "tool", "tool_call_id": tc.id, "content": _stringify_result(result)}
@@ -174,20 +159,12 @@ class AgentLoop:
                 if cancelled():
                     yield Event(kind="interrupted")
                     return
-                skill = self.skills.get(tc.skill_id)
-                action = Action(
-                    skill_id=tc.skill_id,
-                    params=tc.params,
-                    description=skill.description,
-                    risk=self.classifier.classify(
-                        Action(skill_id=tc.skill_id, params=tc.params), skill
-                    ),
-                )
+                action = self.invoker.propose(tc)
                 yield Event(kind="action_proposed", action=action)
-                decision = self.gate.decide(action)
+                decision = self.invoker.decide(action)
                 if decision == Decision.CONFIRM:
                     yield Event(kind="confirmation_needed", action=action, confirmation_id=action.id)
-                    ok = await self._await_confirmer(action)
+                    ok = await self.invoker.confirm(action)
                     if cancelled() or not ok:
                         yield Event(kind="error", text=f"用户拒绝执行 {tc.skill_id}")
                         messages.append(
@@ -200,13 +177,7 @@ class AgentLoop:
                         {"role": "tool", "tool_call_id": tc.id, "content": "策略禁止该操作"}
                     )
                     continue
-                ctx = SkillContext(host=self.host)
-                try:
-                    result = await _offload(skill.run, tc.params, ctx)
-                except Exception as e:
-                    # 技能异常不应杀掉整个 run：转为失败结果喂回模型换策略
-                    result = ActionResult(success=False, error=f"技能执行异常：{e}")
-                _safe_record(self.log, action, result)
+                result = await _offload(self.invoker.execute, action, tc.params)
                 yield Event(kind="action_result", action=action, result=result)
                 messages.append(
                     {"role": "tool", "tool_call_id": tc.id, "content": _stringify_result(result)}
@@ -215,13 +186,6 @@ class AgentLoop:
             if not proceeded:
                 continue
         yield Event(kind="error", text="达到最大步数仍未完成")
-
-    async def _await_confirmer(self, action: Action) -> bool:
-        """同步/异步 confirmer 兼容：返回协程则直接 await（与 arun 同 loop）。"""
-        res = self.confirmer(action)
-        if inspect.isawaitable(res):
-            res = await res
-        return bool(res)
 
 
 def _assistant_with_tools(content: str, tool_calls) -> dict:
