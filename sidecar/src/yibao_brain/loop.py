@@ -10,7 +10,7 @@ from .history import ConversationHistory
 from .host import Host
 from .invoker import ToolInvoker
 from .ipc import Action, Event
-from .llm import LLMProvider, LLMResponse, merge_tool_call_deltas
+from .llm import LLMProvider, LLMResponse, ToolCall, merge_tool_call_deltas
 from .memory import Memory
 from .plugins import panel_payload
 from .safety import Decision, Gate, RiskClassifier
@@ -71,6 +71,27 @@ class AgentLoop:
     def skills(self, reg: SkillRegistry) -> None:
         self.invoker.skills = reg
 
+    def _panel_with_refresh(self, action, result) -> dict | None:
+        """面板载荷：tool 声明了 refresh 时跟一次本插件只读查询，面板拿刷新数据而非操作回执。
+
+        写操作（insert/delete 等）的 result.data 是回执 {"id":…}，直接喂面板会显示空；
+        声明 refresh（如 notes.list）则面板事件携带查询结果。刷新意外需确认/失败 →
+        回退原数据（刷新不该弹确认打断用户，与 server._emit_refresh_panel 同一策略）。
+        """
+        payload = panel_payload(result)
+        if payload is None or not result.success:
+            return payload
+        refresh_id = getattr(self.skills.get(action.skill_id), "refresh", None)
+        if not refresh_id:
+            return payload
+        r_action = self.invoker.propose(
+            ToolCall(id=f"refresh_{action.id}", skill_id=refresh_id, params={})
+        )
+        if self.invoker.decide(r_action) != Decision.AUTO:
+            return payload
+        r_result = self.invoker.execute(r_action, {})
+        return panel_payload(r_result) or payload
+
     def run(self, user_text: str) -> Iterator[Event]:
         memories = self.memory.recall(user_text, self.user_id)
         messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -110,7 +131,7 @@ class AgentLoop:
                     continue
                 result = self.invoker.execute(action, tc.params)
                 yield Event(kind="action_result", action=action, result=result)
-                payload = panel_payload(result)  # 结果带面板引用 → 通知壳渲染（schema 缺失给 None 降级）
+                payload = self._panel_with_refresh(action, result)  # 声明 refresh 则面板拿刷新数据
                 if payload is not None:
                     yield Event(kind="panel", payload=payload)
                 messages.append(
@@ -193,7 +214,7 @@ class AgentLoop:
                     continue
                 result = await _offload(self.invoker.execute, action, tc.params)
                 yield Event(kind="action_result", action=action, result=result)
-                payload = panel_payload(result)  # 结果带面板引用 → 通知壳渲染（schema 缺失给 None 降级）
+                payload = await _offload(self._panel_with_refresh, action, result)  # 声明 refresh 则面板拿刷新数据
                 if payload is not None:
                     yield Event(kind="panel", payload=payload)
                 messages.append(

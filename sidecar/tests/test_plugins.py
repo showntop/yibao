@@ -781,3 +781,89 @@ def test_repo_notes_plugin_loads(data_dir):
     db.insert("notes", {"text": "新", "created_at": 2})
     texts = [x["text"] for x in lst.run({}, lst.plugin_ctx).data["rows"]]
     assert texts.index("新") < texts.index("旧")
+
+
+# ---------- [[tool]] refresh：写操作后面板拿刷新数据 ----------
+
+REFRESH_MANIFEST = """
+id = "notes"
+capabilities = ["db"]
+
+[[table]]
+name = "notes"
+columns = [
+  {name = "id", type = "text", pk = true},
+  {name = "text", type = "text"},
+]
+indexes = []
+
+[[tool]]
+id = "keep"
+type = "db"
+description = "记一条闪念"
+risk = "L1"
+panel = "notes:list"
+refresh = "list"
+[tool.params]
+text = {type = "string", description = "内容"}
+[tool.db]
+op = "insert"
+table = "notes"
+
+[[tool]]
+id = "list"
+type = "db"
+description = "列出闪念"
+risk = "L0"
+panel = "notes:list"
+[tool.db]
+op = "query"
+table = "notes"
+"""
+
+
+class _SeqProvider:
+    """第一次返回 first，之后都返回 second。"""
+
+    def __init__(self, first, second):
+        self._f, self._s, self._n = first, second, 0
+
+    def chat(self, messages, tools=None):
+        self._n += 1
+        return self._f.chat(messages, tools) if self._n == 1 else self._s.chat(messages, tools)
+
+
+def test_chat_write_tool_panel_carries_refresh_data(data_dir, tmp_path):
+    """对话路径写操作：面板事件拿 refresh 查询数据而非回执 {"id":…}（否则面板显示「暂无数据」）。"""
+    from yibao_brain.loop import AgentLoop
+
+    _write_plugin(tmp_path, "notes", REFRESH_MANIFEST)
+    reg = SkillRegistry()
+    assert _load(tmp_path, reg) == {"notes": "ok"}
+    provider = _SeqProvider(
+        FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="notes_keep", params={"text": "牛奶"})]),
+        FakeProvider(text="记下了"),
+    )
+    loop = AgentLoop(
+        provider=provider, skills=reg, classifier=RiskClassifier(),
+        gate=Gate(GatePolicy(auto_below_or_equal=RiskLevel.L1_LOW)),
+        memory=FakeMemory(), log=AuditLog(tmp_path / "a.db"),
+    )
+    events = list(loop.run("记一下"))
+    panels = [e for e in events if e.kind == "panel"]
+    assert len(panels) == 1, "写操作应只出一个面板事件（refresh 的）"
+    rows = panels[0].payload["data"].get("rows")
+    assert rows is not None, "面板数据必须是查询结果（rows），不是回执 {id}"
+    assert [r["text"] for r in rows] == ["牛奶"]
+
+
+def test_refresh_cross_plugin_rejected(data_dir, tmp_path):
+    _write_plugin(tmp_path, "notes", REFRESH_MANIFEST.replace('refresh = "list"', 'refresh = "other.list"'))
+    results = _load(tmp_path, SkillRegistry())
+    assert results["notes"].startswith("ValueError") and "本插件" in results["notes"]
+
+
+def test_refresh_unregistered_tool_rejected(data_dir, tmp_path):
+    _write_plugin(tmp_path, "notes", REFRESH_MANIFEST.replace('refresh = "list"', 'refresh = "ghost"'))
+    results = _load(tmp_path, SkillRegistry())
+    assert results["notes"].startswith("ValueError") and "未注册" in results["notes"]

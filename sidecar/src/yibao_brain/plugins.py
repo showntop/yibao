@@ -137,6 +137,17 @@ class DeclarativeTool(Skill):
         self._params_schema = spec.get("params") or {}
         self._required = list(spec.get("required") or [])
         self._panel_ref = spec.get("panel")  # 可选：执行成功时在结果上带面板引用
+        # 可选 refresh：写操作（data 是回执非展示数据）成功后跟一次本插件只读 tool，
+        # 面板事件拿刷新数据。短名自动补插件前缀；点号形式必须本插件前缀（防跨插件读）。
+        refresh = spec.get("refresh")
+        if refresh is not None:
+            refresh = str(refresh)
+            if "." in refresh:
+                if not refresh.startswith(f"{plugin_id}."):
+                    raise ValueError(f"refresh 必须指向本插件 tool：{refresh!r}")
+            else:
+                refresh = f"{plugin_id}.{refresh}"
+        self.refresh = refresh
         self._registry = registry  # composite 顺序调用同 registry 的其他 tool
 
     def openai_schema(self) -> dict:
@@ -412,6 +423,11 @@ def _load_one(child: Path, registry: SkillRegistry, *, memory, http, llm, emit_p
         skill.plugin_ctx = ctx
         skill.plugin_capabilities = frozenset(caps)
         registry.register(skill, plugin=pid)  # 命名空间/重复 id 由 registry 强制
+    # refresh 目标必须已注册（全部 tool 注册完统一校验，声明顺序随意）
+    registered_ids = {s.id for s in registry.list()}
+    for skill in skills:
+        if skill.refresh is not None and skill.refresh not in registered_ids:
+            raise ValueError(f"refresh 指向未注册的 tool：{skill.refresh!r}")
     _load_panels(child, pid, manifest)
     api_file = child / "api.toml"  # 面板可调方法白名单（可选）
     if api_file.is_file():

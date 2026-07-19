@@ -20,6 +20,7 @@ type = "db"
 description = "记一条闪念"
 risk = "L1"
 panel = "notes:list"
+refresh = "list"   # 写入后面板拿刷新列表，而非回执 {"id":…}
 required = ["text"]
 [tool.params]
 text = {type = "string", description = "内容"}
@@ -46,6 +47,7 @@ type = "db"
 description = "删除一条闪念"
 risk = "L2"
 panel = "notes:list"
+refresh = "list"
 required = ["id"]
 [tool.params]
 id = {type = "string", description = "闪念 id"}

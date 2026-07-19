@@ -36,6 +36,9 @@ class Skill(ABC):
     # 插件注入位：加载器按插件设置；底座技能保持 None/空集，行为不变
     plugin_ctx: SkillContext | None = None
     plugin_capabilities: frozenset = frozenset()
+    # 声明式 refresh：执行成功后跟一次本插件只读 tool，面板拿刷新数据而非操作回执
+    # （写操作 data 是回执 {"id":…} 不适合喂面板；None = 不刷新，面板直接用 result.data）
+    refresh: str | None = None
 
     @abstractmethod
     def run(self, params: dict, ctx: SkillContext) -> ActionResult: ...
