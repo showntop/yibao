@@ -202,8 +202,8 @@ name = "sync_done"
 | 阶段 | 内容 |
 |---|---|
 | 0 趟路 | 数据目录分离 + capability 模型 + ToolInvoker + 插件加载 + 测试套件 + schema 协议（3 组件）+ 闪念盘插件（声明式验证全链路） |
-| 1 自媒体 | 接 AIHOT 选题/写作（代码插件，先 1–2 个尖刀） |
-| 2 第二垂直 + webview | 反推接口；webview 随首个重 UI 需求引入 |
+| 1 需求磨刀 | forge 插件（代码 tool）：录 → 快筛 → 挑战+竞品扫描 → 裁决（档案+记忆飞轮）→ PRD/HTML 原型；schema 第 4 组件 board + detail actions；guides/ 按需加载 = Skill 能力包雏形（2026-07-19 定：原「自媒体接 AIHOT」取消——无此系统；Agora 集成过重暂缓，仅抄方法论文本） |
+| 2 第二垂直 + webview | 反推接口；webview 随首个重 UI 需求引入（候选：原型双向交互、自媒体 Agora） |
 | 3 ④档 | code-exec（带沙箱） |
 
 ## 12. 终审待决项
@@ -226,18 +226,19 @@ name = "sync_done"
 
 panel schema 是一个 JSON 文件（manifest `[[panel]] src` 指向），描述面板结构；前端引擎按白名单渲染，**engine version = 1**（`"version": 1`）。
 
-顶层：`{"version": 1, "type": "list" | "detail" | "form", ...}`。
+顶层：`{"version": 1, "type": "list" | "detail" | "form" | "board", ...}`。
 
-### 三个组件
+### 四个组件
 
 - **list**：列表。`bind.items` 绑定数组数据；`item` 描述每行：`title` / `subtitle`（可绑定）+ `actions`（行级操作数组）。
-- **detail**：详情。`fields: [{label, value}]`，`value` 可绑定。
+- **detail**：详情。`fields: [{label, value}]`，`value` 可绑定；可选 `actions`（操作数组，params 走 `$data` 上下文）。
 - **form**：表单。`fields: [{name, label, input: "text" | "textarea" | "number"}]`；`submit` 是一个 action，提交时把表单值并入 params。
+- **board**：看板（2026-07-19 随 forge 插件引入）。`bind.items` 绑定数组；`bind.column` 对每行求值得列归属（如 `$item.status`）；`columns: [{key, label}]` 声明列（按顺序渲染，值不匹配任何列的行归入首列，不丢数据）；`card` 描述卡片：`title` / `subtitle` + `actions`（同 list 的 `item`）。
 
 ### 绑定语法
 
 - `$data.x`：绑定 panel 事件注入的数据（`ActionResult.data` 里的键，如 `$data.rows`）。
-- `$item.x`：list item 上下文，仅 `item` 模板内可用（如 `$item.text`、`$item.id`）。
+- `$item.x`：item 上下文，仅 list 的 `item` / board 的 `card` 模板内可用（如 `$item.text`、`$item.id`）。
 - 绑定可出现在任何字符串字段：整串恰好是一个绑定时取原值（保留类型），否则做字符串插值；查不到的键渲染为空串。
 - 绑定可带管道过滤器（v1 仅 `date`）：`$item.created_at|date` 把 unix 秒渲染为 `M月d日 HH:mm`；未知过滤器原样透传。
 
