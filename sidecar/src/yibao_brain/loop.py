@@ -19,8 +19,12 @@ from .skills import SkillRegistry
 Confirmer = Callable[[Action], bool]
 
 SYSTEM_PROMPT = (
-    "你是译宝，一个桌面 AI 助手。通过调用工具帮用户操作电脑。"
-    "若无需调用工具，直接用自然语言回复。"
+    "你是译宝，一个桌面 AI 助手。通过调用工具帮用户操作电脑。\n"
+    "铁律：用户的任何动作类请求（记录、查询、删除、修改、打开面板、操作电脑等）"
+    "都必须调用工具完成；只有工具执行成功后，才能告诉用户「已完成」。\n"
+    "禁止在未调用工具的情况下声称做了任何事，禁止编造执行结果（条数、内容、时间等）；"
+    "没有对应工具就如实说做不到。\n"
+    "只有纯闲聊/知识问答才直接用自然语言回复。"
 )
 
 
@@ -75,6 +79,7 @@ class AgentLoop:
         if self.history:
             messages.extend(self.history.messages())
         messages.append({"role": "user", "content": user_text})
+        run_start = len(messages) - 1  # 本轮轨迹起点（user 消息），成功收尾时整轮入史（含工具调用）
         tools = self.skills.openai_tools()
 
         for _ in range(self.max_steps):
@@ -82,7 +87,8 @@ class AgentLoop:
             if not resp.tool_calls:
                 self.memory.add(user_text, self.user_id)
                 if self.history:
-                    self.history.record_turn(user_text, resp.text)
+                    span = messages[run_start:] + [{"role": "assistant", "content": resp.text}]
+                    self.history.record_messages(span)
                 yield Event(kind="final_reply", text=resp.text)
                 return
             messages.append(_assistant_with_tools(resp.text, resp.tool_calls))
@@ -131,6 +137,7 @@ class AgentLoop:
         if self.history:
             messages.extend(self.history.messages())
         messages.append({"role": "user", "content": user_text})
+        run_start = len(messages) - 1  # 本轮轨迹起点（user 消息），成功收尾时整轮入史（含工具调用）
         tools = self.skills.openai_tools()
 
         def cancelled() -> bool:
@@ -155,7 +162,8 @@ class AgentLoop:
             if not tool_calls:
                 await _offload(self.memory.add, user_text, self.user_id)
                 if self.history:
-                    self.history.record_turn(user_text, text_buf)
+                    span = messages[run_start:] + [{"role": "assistant", "content": text_buf}]
+                    self.history.record_messages(span)
                 yield Event(kind="final_reply", text=text_buf)
                 return
             messages.append(_assistant_with_tools(text_buf, tool_calls))

@@ -96,3 +96,88 @@ def test_corrupt_history_file_ignored(tmp_path):
     # 损坏不碍事：继续记录并覆盖成合法 JSON
     history.record_turn("u", "a")
     assert json.loads(path.read_text())[0]["content"] == "u"
+
+
+class _SeqProvider:
+    """第一次返回 first，之后都返回 second（chat/astream 各自计数）。"""
+
+    def __init__(self, first, second):
+        self._first = first
+        self._second = second
+        self._n_chat = 0
+        self._n_stream = 0
+
+    def chat(self, messages, tools=None):
+        self._n_chat += 1
+        src = self._first if self._n_chat == 1 else self._second
+        return src.chat(messages, tools)
+
+    async def astream(self, messages, tools=None):
+        self._n_stream += 1
+        src = self._first if self._n_stream == 1 else self._second
+        async for d in src.astream(messages, tools):
+            yield d
+
+
+def test_tool_run_records_full_trace(tmp_path):
+    """工具轮整轮入史：user → assistant(tool_calls) → tool → assistant 终复。
+
+    模型模仿历史里的行为模式——只记「请求→文字答复」会教它跳过工具直接声称完成。
+    """
+    history = ConversationHistory(tmp_path / "h.json")
+    provider = _SeqProvider(
+        FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="echo", params={"text": "hi"})]),
+        FakeProvider(text="已回显 hi"),
+    )
+    loop = build_loop(tmp_path, provider, history)
+    events = list(loop.run(" echo 一下"))
+    assert events[-1].kind == "final_reply"
+
+    msgs = history.messages()
+    assert [m["role"] for m in msgs] == ["user", "assistant", "tool", "assistant"]
+    assert msgs[1].get("tool_calls"), "assistant 消息必须带 tool_calls（模式的关键）"
+    assert msgs[2]["tool_call_id"] == "t1"
+    assert msgs[3]["content"] == "已回显 hi"
+    # 重启加载后轨迹仍在
+    assert [m["role"] for m in ConversationHistory(tmp_path / "h.json").messages()] == [
+        "user", "assistant", "tool", "assistant",
+    ]
+
+
+def test_trim_with_tool_traces_keeps_user_boundary(tmp_path):
+    """带工具轨迹裁剪只在 user 边界下刀：孤儿 tool 消息会让严格校验的 provider 400。"""
+    history = ConversationHistory(tmp_path / "h.json", max_turns=1)
+    trace = [
+        {"role": "user", "content": "u"},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "t1"}]},
+        {"role": "tool", "tool_call_id": "t1", "content": "r"},
+        {"role": "assistant", "content": "a"},
+    ]
+    history.record_messages(trace)
+    history.record_messages([dict(m) for m in trace])
+    msgs = history.messages()
+    assert msgs[0]["role"] == "user"
+    assert all(m["role"] != "tool" or msgs[i - 1]["role"] == "assistant" for i, m in enumerate(msgs))
+
+
+def test_tool_content_truncated_in_history(tmp_path):
+    history = ConversationHistory(tmp_path / "h.json")
+    history.record_messages([
+        {"role": "user", "content": "u"},
+        {"role": "tool", "tool_call_id": "t1", "content": "x" * 500},
+    ])
+    content = history.messages()[1]["content"]
+    assert len(content) == 301 and content.endswith("…")
+
+
+def test_load_drops_orphan_head(tmp_path):
+    """文件头有孤儿 assistant/tool（手工编辑/旧版裁剪残留）→ 丢弃到第一条 user 为止。"""
+    path = tmp_path / "h.json"
+    path.write_text(json.dumps([
+        {"role": "tool", "tool_call_id": "t9", "content": "孤儿"},
+        {"role": "assistant", "content": "也是孤儿"},
+        {"role": "user", "content": "u"},
+        {"role": "assistant", "content": "a"},
+    ], ensure_ascii=False), encoding="utf-8")
+    msgs = ConversationHistory(path).messages()
+    assert [m["content"] for m in msgs] == ["u", "a"]
