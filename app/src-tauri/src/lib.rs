@@ -111,10 +111,6 @@ fn spawn_bridge(app: AppHandle, mut rx: tauri::async_runtime::Receiver<CommandEv
                                     if let Some(p) = payload.get("payload") {
                                         let state = app.state::<Brain>();
                                         state.0.lock().unwrap().last_panel = Some(p.clone());
-                                        eprintln!(
-                                            "[panel] 已缓存面板载荷：{:?}",
-                                            p.get("panel").and_then(|n| n.as_str())
-                                        );
                                     }
                                 }
                                 let _ = app.emit("brain-event", payload);
@@ -359,7 +355,6 @@ fn close_panel_window(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 fn get_current_panel(state: tauri::State<Brain>) -> Result<Option<Value>, String> {
     let g = state.0.lock().map_err(|e| e.to_string())?;
-    eprintln!("[panel] get_current_panel → {}", if g.last_panel.is_some() { "Some" } else { "None" });
     Ok(g.last_panel.clone())
 }
 
