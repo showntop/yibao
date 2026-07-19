@@ -3,6 +3,7 @@
 // 事件与命令复用 app 级 brain-event / invoke（与宠物窗同通道，无新协议）。
 import { onMounted, onUnmounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import SchemaPanel from "./SchemaPanel.vue";
 import { onBrainEvent, panelAction, sendConfirm, type BrainEvent } from "../lib/brain";
 
@@ -11,6 +12,7 @@ const current = ref<{ panel: string; schema: any; data: Record<string, unknown> 
 const errorText = ref(""); // 面板内顶部错误细条（不进对话气泡）
 const pending = ref<{ id: string; skill: string; desc: string } | null>(null); // 内嵌确认条
 let unlisten: (() => void) | null = null;
+let unlistenFocus: (() => void) | null = null;
 
 function onEvent(e: BrainEvent) {
   switch (e.kind) {
@@ -63,15 +65,31 @@ function close() {
   void invoke("close_panel_window");
 }
 
+async function pullCache() {
+  try {
+    const cached = await invoke<{ panel: string; schema: any; data: Record<string, unknown> } | null>(
+      "get_current_panel"
+    );
+    if (cached && current.value === null) current.value = cached;
+  } catch (err) {
+    // 命令缺失（旧壳进程）等问题要看得见，不能静默停在占位页
+    errorText.value = "面板数据拉取失败：" + String(err);
+  }
+}
+
 onMounted(async () => {
   unlisten = await onBrainEvent(onEvent);
   // 首开竞态：panel 事件先于本窗口订阅发出，从 Rust 缓存补拉最近一次面板
-  const cached = await invoke<{ panel: string; schema: any; data: Record<string, unknown> } | null>(
-    "get_current_panel"
-  );
-  if (cached && current.value === null) current.value = cached;
+  await pullCache();
+  // 兜底：窗口再聚焦时若仍是占位页，重拉一次（覆盖旧壳残留窗口等边角）
+  unlistenFocus = await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+    if (focused && current.value === null) void pullCache();
+  });
 });
-onUnmounted(() => unlisten?.());
+onUnmounted(() => {
+  unlisten?.();
+  unlistenFocus?.();
+});
 </script>
 
 <template>
