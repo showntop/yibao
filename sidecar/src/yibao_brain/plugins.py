@@ -187,16 +187,26 @@ class DeclarativeTool(Skill):
             return ActionResult(success=True, data={"id": ctx.db.insert(table, row)})
         if op == "query":
             # where/order/limit 运行时参数优先，缺省回落 [tool.db] 里声明的默认值
+            where = params.get("where", spec.get("where"))
+            if where is None and params.get("id") is not None:
+                # 面板 action 扁平传 {id: …} 的快捷映射（嵌套 where 过不了前端绑定解析）
+                where = {"id": params["id"]}
             rows = ctx.db.query(
                 table,
-                where=params.get("where", spec.get("where")),
+                where=where,
                 order=params.get("order", spec.get("order")),
                 limit=params.get("limit", spec.get("limit")),
             )
             return ActionResult(success=True, data={"rows": rows})
         if op == "update":
             row_id = params.get("id")
-            ctx.db.update(table, row_id, {k: v for k, v in params.items() if k != "id"})
+            fields = {k: v for k, v in params.items() if k != "id"}
+            # auto 声明系统生成字段（同 insert；覆盖入参防伪造）
+            for field_name, kind in (spec.get("auto") or {}).items():
+                if kind != "unixts":
+                    return ActionResult(success=False, error=f"未知 auto 类型：{kind!r}（仅支持 unixts）")
+                fields[field_name] = int(time.time())
+            ctx.db.update(table, row_id, fields)
             return ActionResult(success=True, data={"id": row_id})
         if op == "delete":
             ctx.db.delete(table, params.get("id"))
