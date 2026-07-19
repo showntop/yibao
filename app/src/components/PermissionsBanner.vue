@@ -43,7 +43,7 @@ function recheck() {
 .banner {
   padding: var(--yb-space-3) 14px;
   border-radius: var(--yb-radius-lg);
-  background: rgba(255, 255, 255, 0.96);
+  background: var(--yb-surface-solid);
   border: 1px solid var(--yb-glass-border);
   box-shadow: var(--yb-shadow);
   font-size: 13px;
@@ -66,7 +66,7 @@ function recheck() {
   justify-content: space-between;
   gap: var(--yb-space-2);
   padding: 6px 0;
-  border-top: 1px solid rgba(0, 0, 0, 0.05);
+  border-top: 1px solid var(--yb-surface-border);
 }
 .why {
   color: var(--yb-text-dim);
@@ -86,7 +86,7 @@ button {
   color: #fff;
 }
 .dim {
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--yb-btn-neutral);
   color: var(--yb-text-dim);
 }
 button:hover {

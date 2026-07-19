@@ -1,28 +1,7 @@
-/* 设计令牌：宠物窗与面板窗共用（两入口 main.ts / panel.ts 各 import 一次，避免复制漂移）。 */
+/* 设计令牌：宠物窗与面板窗共用（两入口 main.ts / panel.ts 各 import 一次，避免复制漂移）。
+ * 主题已定「治愈系」：暖奶油底 + 杏子橙 accent + 大圆角 + 弹簧动效。
+ * 结构令牌（间距/字号）与色彩/圆角/阴影/动效分层；组件只消费变量，不写死颜色。 */
 :root {
-  /* 玻璃拟态 */
-  --yb-bg: rgba(255, 255, 255, 0.72);
-  --yb-glass-border: rgba(255, 255, 255, 0.6);
-  --yb-blur: saturate(160%) blur(20px);
-  --yb-shadow: 0 8px 30px rgba(20, 20, 40, 0.18);
-
-  /* 颜色 */
-  --yb-text: #1f2330;
-  --yb-text-dim: #6b7280;
-  --yb-accent: #5b6cff;
-  --yb-accent-soft: rgba(91, 108, 255, 0.16);
-  --yb-bubble-ai: rgba(245, 246, 255, 0.92);
-  --yb-bubble-user: rgba(91, 108, 255, 0.16);
-  --yb-danger: #e5484d;
-  --yb-danger-soft: rgba(229, 72, 77, 0.28);
-
-  /* Avatar 状态环颜色 */
-  --yb-idle: #adb5bd;
-  --yb-listen: #22b8cf;
-  --yb-think: #5b6cff;
-  --yb-work: #3b82f6;
-  --yb-say: #2f9e44;
-
   /* 间距梯度 */
   --yb-space-1: 4px;
   --yb-space-2: 8px;
@@ -34,11 +13,54 @@
   --yb-fs-md: 12.5px;
   --yb-fs-lg: 13.5px;
   --yb-fs-xl: 15px;
+}
 
-  /* 圆角梯度（--yb-radius 为旧名保留） */
-  --yb-radius-sm: 8px;
-  --yb-radius-md: 12px;
-  --yb-radius-lg: 14px;
-  --yb-radius-xl: 18px;
+/* ============ 治愈系：暖奶油底 + 杏子橙 + 大圆角 + 弹簧动效 ============ */
+:root {
+  --yb-bg: #fff6ee;
+  --yb-shell-bg: rgba(255, 251, 246, 0.86);
+  --yb-glass-border: rgba(255, 255, 255, 0.7);
+  --yb-blur: saturate(150%) blur(20px);
+  --yb-shadow: 0 10px 32px rgba(120, 72, 40, 0.16);
+
+  --yb-text: #3e3229;
+  --yb-text-dim: #9c8b7a;
+  --yb-accent: #ff8a5c;
+  --yb-accent-soft: rgba(255, 138, 92, 0.15);
+  --yb-bubble-ai: rgba(255, 255, 255, 0.94);
+  --yb-bubble-user: rgba(255, 227, 210, 0.9);
+  --yb-danger: #e5484d;
+  --yb-danger-soft: rgba(229, 72, 77, 0.24);
+
+  /* Avatar 状态色（暖调） */
+  --yb-idle: #c9bbae;
+  --yb-listen: #3ebfb5;
+  --yb-think: #8e7cf0;
+  --yb-work: #ff8a5c;
+  --yb-say: #58b368;
+
+  /* 圆角梯度（大圆角；--yb-radius 为旧名保留） */
+  --yb-radius-sm: 10px;
+  --yb-radius-md: 14px;
+  --yb-radius-lg: 18px;
+  --yb-radius-xl: 24px;
   --yb-radius: var(--yb-radius-lg);
+
+  /* 动效：弹簧曲线 */
+  --yb-ease: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --yb-dur: 0.22s;
+
+  /* 团子角色 */
+  --yb-dumpling-hi: #fffdf9;
+  --yb-dumpling-lo: #ffe8d4;
+  --yb-dumpling-ink: #4a3b30;
+  --yb-dumpling-blush: #ffb89a;
+
+  /* 组件表面（输入条/卡片/次级按钮） */
+  --yb-surface: rgba(255, 255, 255, 0.78);
+  --yb-surface-solid: #fffaf4;
+  --yb-surface-border: rgba(120, 72, 40, 0.1);
+  --yb-btn-neutral: rgba(62, 50, 41, 0.07);
+  --yb-well: rgba(62, 50, 41, 0.05);
+  --yb-shadow-soft: 0 2px 8px rgba(120, 72, 40, 0.08);
 }

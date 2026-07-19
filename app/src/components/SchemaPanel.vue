@@ -88,7 +88,7 @@ const fallbackJson = computed(() =>
   <div class="panel">
     <!-- list：卡片列表 + 行级 action -->
     <div v-if="kind === 'list'" class="list">
-      <div v-if="!listItems.length" class="empty">暂无数据</div>
+      <div v-if="!listItems.length" class="empty">还没有内容，来一条？</div>
       <div v-for="(it, i) in listItems" :key="i" class="card">
         <div class="card-main">
           <div class="card-title">{{ text(itemTpl.title, it) }}</div>
@@ -109,7 +109,7 @@ const fallbackJson = computed(() =>
 
     <!-- board：分列看板，卡片纵向堆叠 + 卡级 action -->
     <div v-else-if="kind === 'board'" class="board">
-      <div v-if="!boardGroups.length" class="empty">暂无数据</div>
+      <div v-if="!boardGroups.length" class="empty">还没有内容，来一条？</div>
       <div v-for="g in boardGroups" :key="g.column.key" class="board-col">
         <div class="board-head">
           <span class="board-label">{{ g.column.label }}</span>
@@ -141,7 +141,7 @@ const fallbackJson = computed(() =>
         <span class="k">{{ f.label }}</span>
         <span class="v">{{ text(f.value) }}</span>
       </div>
-      <div v-if="!detailFields.length" class="empty">暂无数据</div>
+      <div v-if="!detailFields.length" class="empty">还没有内容</div>
       <div v-if="schema?.actions?.length" class="detail-actions">
         <button
           v-for="a in schema.actions"
@@ -195,7 +195,8 @@ const fallbackJson = computed(() =>
   gap: var(--yb-space-2);
   padding: var(--yb-space-2) 10px;
   border-radius: var(--yb-radius-md);
-  background: var(--yb-bubble-ai);
+  background: var(--yb-surface);
+  box-shadow: var(--yb-shadow-soft);
   margin-bottom: 6px;
 }
 .card-main {
@@ -230,7 +231,7 @@ const fallbackJson = computed(() =>
   box-sizing: border-box;
   padding: var(--yb-space-2);
   border-radius: var(--yb-radius-md);
-  background: rgba(0, 0, 0, 0.03);
+  background: var(--yb-well);
 }
 .board-head {
   display: flex;
@@ -286,7 +287,7 @@ const fallbackJson = computed(() =>
   display: flex;
   gap: 10px;
   padding: 5px 2px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  border-bottom: 1px solid var(--yb-surface-border);
 }
 .row:last-child {
   border-bottom: none;
@@ -308,12 +309,12 @@ const fallbackJson = computed(() =>
 }
 .form input,
 .form textarea {
-  border: 1px solid rgba(0, 0, 0, 0.12);
+  border: 1px solid var(--yb-surface-border);
   border-radius: var(--yb-radius-sm);
   padding: 6px 8px;
   font-size: var(--yb-fs-lg);
   font-family: inherit;
-  background: #fff;
+  background: var(--yb-surface-solid);
   color: var(--yb-text);
   outline: none;
 }

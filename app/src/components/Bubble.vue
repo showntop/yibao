@@ -14,8 +14,8 @@ defineProps<{ role: "user" | "ai"; text: string }>();
   font-size: var(--yb-fs-lg);
   line-height: 1.45;
   word-break: break-word;
-  box-shadow: 0 1px 4px rgba(20, 20, 40, 0.08);
-  animation: pop 0.18s ease-out;
+  box-shadow: var(--yb-shadow-soft);
+  animation: pop var(--yb-dur) var(--yb-ease);
 }
 .ai {
   background: var(--yb-bubble-ai);

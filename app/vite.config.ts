@@ -15,6 +15,7 @@ export default defineConfig(async () => ({
       input: {
         main: fileURLToPath(new URL("./index.html", import.meta.url)),
         panel: fileURLToPath(new URL("./panel.html", import.meta.url)),
+        design: fileURLToPath(new URL("./design.html", import.meta.url)),
       },
     },
   },

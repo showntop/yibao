@@ -18,7 +18,7 @@ const emit = defineEmits<{ (e: "approve"): void; (e: "deny"): void }>();
 .dlg {
   padding: var(--yb-space-3);
   border-radius: var(--yb-radius-lg);
-  background: rgba(255, 255, 255, 0.96);
+  background: var(--yb-surface-solid);
   border: 1px solid var(--yb-danger-soft);
   box-shadow: var(--yb-shadow);
 }
@@ -61,7 +61,7 @@ button {
   color: #fff;
 }
 .deny {
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--yb-btn-neutral);
   color: var(--yb-text-dim);
 }
 .ok:hover,

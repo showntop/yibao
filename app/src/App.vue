@@ -270,7 +270,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: var(--yb-space-2);
-  background: var(--yb-bg);
+  background: var(--yb-shell-bg);
   -webkit-backdrop-filter: var(--yb-blur);
   backdrop-filter: var(--yb-blur);
   border: 1px solid var(--yb-glass-border);
@@ -313,7 +313,7 @@ onUnmounted(() => {
   flex-shrink: 0;
   border: none;
   border-radius: var(--yb-radius-sm);
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--yb-btn-neutral);
   color: var(--yb-text-dim);
   cursor: pointer;
   font-size: 14px;
@@ -335,7 +335,7 @@ onUnmounted(() => {
   width: 6px;
 }
 .bubbles::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.15);
+  background: var(--yb-surface-border);
   border-radius: 3px;
 }
 .status-collapsed {

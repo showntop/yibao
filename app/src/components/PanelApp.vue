@@ -117,7 +117,7 @@ onUnmounted(() => {
         :data="current.data"
         @action="onAction"
       />
-      <div v-else class="placeholder">暂无面板内容</div>
+      <div v-else class="placeholder">这里还空空的，喊我一声试试？</div>
     </div>
   </div>
 </template>
@@ -131,7 +131,7 @@ onUnmounted(() => {
   overflow: hidden;
   font-family: -apple-system, "PingFang SC", system-ui, sans-serif;
   color: var(--yb-text);
-  background: var(--yb-bg);
+  background: var(--yb-shell-bg);
   -webkit-backdrop-filter: var(--yb-blur);
   backdrop-filter: var(--yb-blur);
   border: 1px solid var(--yb-glass-border);
@@ -160,7 +160,7 @@ onUnmounted(() => {
   border-radius: var(--yb-radius-sm);
 }
 .x:hover {
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--yb-btn-neutral);
 }
 .confirm-bar {
   display: flex;
@@ -170,7 +170,7 @@ onUnmounted(() => {
   margin: 0 var(--yb-space-4) var(--yb-space-2);
   padding: var(--yb-space-2) var(--yb-space-3);
   border-radius: var(--yb-radius-md);
-  background: rgba(255, 255, 255, 0.96);
+  background: var(--yb-surface-solid);
   border: 1px solid var(--yb-danger-soft);
   font-size: var(--yb-fs-md);
 }
@@ -195,7 +195,7 @@ onUnmounted(() => {
   color: #fff;
 }
 .deny {
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--yb-btn-neutral);
   color: var(--yb-text-dim);
 }
 .error-bar {
@@ -211,7 +211,7 @@ onUnmounted(() => {
   min-height: 0;
   margin: 0 var(--yb-space-2) var(--yb-space-2);
   border-radius: var(--yb-radius-md);
-  background: rgba(255, 255, 255, 0.6);
+  background: var(--yb-surface);
 }
 .placeholder {
   height: 100%;

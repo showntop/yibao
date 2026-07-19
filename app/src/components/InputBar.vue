@@ -40,9 +40,9 @@ function send() {
   align-items: center;
   padding: 6px 6px 6px var(--yb-space-3);
   border-radius: var(--yb-radius-lg);
-  background: rgba(255, 255, 255, 0.7);
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  box-shadow: 0 2px 10px rgba(20, 20, 40, 0.06);
+  background: var(--yb-surface);
+  border: 1px solid var(--yb-surface-border);
+  box-shadow: var(--yb-shadow-soft);
 }
 input {
   flex: 1;
@@ -69,12 +69,12 @@ input::placeholder {
   transition: filter 0.15s, opacity 0.15s;
 }
 .mic {
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--yb-btn-neutral);
   font-size: 16px;
 }
 .stop {
-  background: rgba(220, 70, 70, 0.16);
-  color: #c0392b;
+  background: var(--yb-danger-soft);
+  color: var(--yb-danger);
   font-size: 14px;
 }
 .stop:hover {
