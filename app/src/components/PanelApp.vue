@@ -65,6 +65,11 @@ function close() {
 
 onMounted(async () => {
   unlisten = await onBrainEvent(onEvent);
+  // 首开竞态：panel 事件先于本窗口订阅发出，从 Rust 缓存补拉最近一次面板
+  const cached = await invoke<{ panel: string; schema: any; data: Record<string, unknown> } | null>(
+    "get_current_panel"
+  );
+  if (cached && current.value === null) current.value = cached;
 });
 onUnmounted(() => unlisten?.());
 </script>

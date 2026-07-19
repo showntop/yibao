@@ -19,6 +19,9 @@ struct BrainState {
     restarts: u32, // 连续掉线次数（稳定运行 60s 后清零）
     last_restart: Option<Instant>,
     shutting_down: bool,
+    /// 最近一次 panel 事件载荷（panel/schema/data）：面板窗首开时事件已发完，
+    /// 窗口挂载后靠 get_current_panel 拉这份缓存补渲染（解首开竞态）。
+    last_panel: Option<Value>,
 }
 
 impl BrainState {
@@ -31,6 +34,7 @@ impl BrainState {
             restarts: 0,
             last_restart: None,
             shutting_down: false,
+            last_panel: None,
         }
     }
 }
@@ -102,6 +106,13 @@ fn spawn_bridge(app: AppHandle, mut rx: tauri::async_runtime::Receiver<CommandEv
                         Ok(v) => match v.get("type").and_then(|t| t.as_str()) {
                             Some("event") => {
                                 let payload = v.get("event").cloned().unwrap_or(Value::Null);
+                                // panel 事件顺带缓存载荷，供面板窗首开竞态下补拉
+                                if payload.get("kind").and_then(|k| k.as_str()) == Some("panel") {
+                                    if let Some(p) = payload.get("payload") {
+                                        let state = app.state::<Brain>();
+                                        state.0.lock().unwrap().last_panel = Some(p.clone());
+                                    }
+                                }
                                 let _ = app.emit("brain-event", payload);
                             }
                             Some("run_done") => {
@@ -340,6 +351,13 @@ fn close_panel_window(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// 面板窗挂载后补拉最近一次的 panel 载荷（首开时 brain-event 先于窗口订阅发出）。
+#[tauri::command]
+fn get_current_panel(state: tauri::State<Brain>) -> Result<Option<Value>, String> {
+    let g = state.0.lock().map_err(|e| e.to_string())?;
+    Ok(g.last_panel.clone())
+}
+
 #[tauri::command]
 fn voice_start(state: tauri::State<Brain>) -> Result<(), String> {
     write_to_brain(&state, serde_json::json!({ "id": 0, "type": "voice_start" }))
@@ -471,6 +489,7 @@ pub fn run() {
             panel_action,
             open_panel_window,
             close_panel_window,
+            get_current_panel,
             voice_start,
             interrupt,
             check_permissions,
