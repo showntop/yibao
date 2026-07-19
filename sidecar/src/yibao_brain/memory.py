@@ -104,6 +104,8 @@ class LazyMem0Memory(Memory):
         self._buf_max = buffer_max
         self._real = None
         self._failed = False
+        self._fail_msg: str | None = None
+        self._on_status = None  # 降级时通知壳（server 注入，经 call_soon_threadsafe 回主循环）
         self._buf: list[tuple[str, str]] = []
         self._lock = threading.Lock()
         threading.Thread(target=self._init, daemon=True).start()
@@ -118,6 +120,14 @@ class LazyMem0Memory(Memory):
         with self._lock:
             return self._failed
 
+    def set_status_callback(self, cb) -> None:
+        """注入降级通知回调；若已失败则立即补发（回调注入晚于失败时不错过）。"""
+        with self._lock:
+            self._on_status = cb
+            msg = self._fail_msg
+        if msg is not None:
+            cb(msg)
+
     def _init(self) -> None:
         try:
             real = self._factory()
@@ -125,7 +135,11 @@ class LazyMem0Memory(Memory):
             print(f"[yibao] mem0 后台初始化失败，记忆降级为空：{e}", file=sys.stderr)
             with self._lock:
                 self._failed = True
+                self._fail_msg = f"长期记忆不可用（{e}），本次运行将记不住事"
+                cb = self._on_status
                 self._buf.clear()
+            if cb is not None:
+                cb(self._fail_msg)
             return
         with self._lock:
             self._real = real

@@ -103,6 +103,38 @@ def test_lazy_memory_failure_degrades():
     m.add("y", "u")  # 降级后静默丢弃，不抛异常
 
 
+def test_lazy_memory_failure_notifies_callback():
+    import threading
+
+    from yibao_brain.memory import LazyMem0Memory
+
+    gate = threading.Event()
+    seen: list[str] = []
+
+    def factory():
+        gate.wait(5)
+        raise RuntimeError("no torch")
+
+    m = LazyMem0Memory(factory=factory)
+    m.set_status_callback(seen.append)  # 先注入：失败时回调
+    gate.set()
+    assert _wait(lambda: bool(seen))
+    assert "no torch" in seen[0]
+
+
+def test_lazy_memory_callback_set_after_failure_fires_immediately():
+    from yibao_brain.memory import LazyMem0Memory
+
+    def factory():
+        raise RuntimeError("no torch")
+
+    m = LazyMem0Memory(factory=factory)
+    assert _wait(lambda: m.failed)
+    seen: list[str] = []
+    m.set_status_callback(seen.append)  # 失败后才注入：立即补发，不错过
+    assert seen and "no torch" in seen[0]
+
+
 def test_lazy_memory_buffer_cap():
     import threading
 

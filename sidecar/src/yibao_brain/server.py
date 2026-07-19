@@ -305,6 +305,14 @@ async def serve_async(
     agent = build_loop(
         read_msg, use_real, db_path, provider, skills_factory, confirmer=confirmer
     )
+    # mem0 降级（如多实例争 qdrant 锁）→ 显式推到壳，别让「失忆」无声发生
+    mem = getattr(agent, "memory", None)
+    if hasattr(mem, "set_status_callback"):
+        mem.set_status_callback(
+            lambda text: ai_loop.call_soon_threadsafe(
+                write_msg, {"type": "event", "event": {"kind": "error", "text": text}}
+            )
+        )
     # 启动握手：壳靠它确认大脑上线（守护重启后也靠它判断已恢复）
     write_msg({"type": "hello", "version": 1, "permissions": _permissions_status()})
 
