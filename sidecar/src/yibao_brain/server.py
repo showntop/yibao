@@ -399,14 +399,6 @@ async def serve_async(
         if run_state["cancel"] is not None:
             run_state["cancel"].set()
 
-    async def _join_current():
-        task = run_state["task"]
-        if task is not None and not task.done():
-            try:
-                await task
-            except Exception:
-                pass
-
     async def _chain_start(prev, start, queued_gen: int) -> None:
         """槽位串行：等上一任务收尾再启动；主循环不在这里阻塞（ping 照答，看门狗不误杀）。
 
@@ -433,8 +425,19 @@ async def serve_async(
     while True:
         msg = await queue.get()
         if msg is None:
-            # stdin 关闭：不再接新活，让在跑的 run 自然结束再退出
-            await _join_current()
+            # stdin 关闭（壳退出）：不再接新活。给在跑任务 5s 自然收尾；
+            # 超时说明它卡死了（确认未答/hung）→ 取消 + 2s 清场 → 强 cancel。
+            # 不能无限等：否则大脑变孤儿占着 qdrant 锁/麦
+            # （2026-07-19 实测孤儿 brain 存活 3 小时，新 brain 被迫记忆降级）。
+            task = run_state["task"]
+            if task is not None and not task.done():
+                done, _ = await asyncio.wait({task}, timeout=5)
+                if not done:
+                    if run_state["cancel"] is not None:
+                        run_state["cancel"].set()
+                    done, _ = await asyncio.wait({task}, timeout=2)
+                    if not done:
+                        task.cancel()
             return
         rtype = msg.get("type")
         if rtype in ("run", "voice_start"):

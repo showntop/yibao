@@ -220,6 +220,52 @@ def test_serve_async_confirm_roundtrip(tmp_path):
 # ---------- 协议扩展：hello / ping / permissions ----------
 
 
+def test_serve_async_stdin_close_cancels_pending_confirmation(tmp_path):
+    """stdin 关闭时卡在确认等待的任务必须被取消、限时退出（防孤儿 brain 占 qdrant 锁）。"""
+    import time as _time
+
+    from yibao_brain.skills import Skill, SkillRegistry
+    from yibao_brain.ipc import ActionResult, RiskLevel
+
+    class DangerSkill(Skill):
+        id = "danger"; description = "危险占位"; default_risk = RiskLevel.L3_HIGH
+        def run(self, params, ctx): return ActionResult(success=True, data={"did": True})
+
+    provider = _TwoStepProvider(
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="danger", params={})]),
+        second=FakeProvider(text="done"),
+    )
+    inbox = iter([{"id": 1, "type": "run", "text": "做危险的事"}])
+
+    def reader():
+        try:
+            return next(inbox)
+        except StopIteration:
+            _time.sleep(0.5)  # 让 run 任务先走到确认等待，再送 EOF（确认始终不答）
+            return None
+
+    out = []
+    t0 = _time.monotonic()
+    _run_async(
+        serve_async(
+            reader,
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=provider,
+            skills_factory=lambda: _registry_with(DangerSkill()),
+        )
+    )
+    elapsed = _time.monotonic() - t0
+    assert elapsed < 8  # 取消 + 5s 限时内退出（旧行为：永久挂起 → 孤儿进程）
+    kinds = [m["event"]["kind"] for m in out if m["type"] == "event"]
+    assert "confirmation_needed" in kinds
+    assert not any(
+        m["type"] == "event" and m["event"].get("kind") == "action_result"
+        and m["event"]["result"]["data"].get("did") for m in out
+    )
+
+
 def test_serve_async_emits_hello_on_start(tmp_path):
     out = []
     _run_async(
