@@ -12,8 +12,12 @@ import asyncio
 import re
 import sys
 import threading
+import warnings
 from collections.abc import AsyncIterator
 from pathlib import Path
+
+# sounddevice 在 NumPy 2.5+ 下每次播放刷 4 行 DeprecationWarning（库内旧用法，非我们能修），压住
+warnings.filterwarnings("ignore", message="Setting the shape on a NumPy array.*", category=DeprecationWarning)
 
 
 class VoiceCapability:

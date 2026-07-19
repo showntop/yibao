@@ -1,9 +1,16 @@
 """长期记忆：接口 + Fake（测试）+ Mem0（生产）+ LazyMem0（后台懒加载）。"""
 from __future__ import annotations
 
+import os
 import sys
 import threading
+import warnings
 from abc import ABC, abstractmethod
+
+# mem0 的 PostHog 遥测默认开（本地产品不该外发），须在 mem0 首次导入前关掉；
+# 顺带压住 mem0 调 sentence-transformers 旧接口的 FutureWarning（第三方噪音）。
+os.environ.setdefault("MEM0_TELEMETRY", "false")
+warnings.filterwarnings("ignore", message=".*get_sentence_embedding_dimension.*", category=FutureWarning)
 
 
 class Memory(ABC):
