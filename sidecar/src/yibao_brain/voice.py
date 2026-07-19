@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import re
 import sys
+import threading
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -57,6 +58,27 @@ class SherpaRecognizer:
         stream.accept_waveform(16000, pcm)
         self._rec.decode_stream(stream)
         return (stream.result.text or "").strip()
+
+
+class LazySherpaRecognizer:
+    """首次 transcribe 才加载 STT 模型：大脑启动不背模型加载（秒级）开销。
+
+    加载发生在 server 的 executor 线程（listen 经 run_in_executor 调用），
+    不压事件循环——看门狗 ping 不受影响。加载失败原样抛出（下次重试）。
+    """
+
+    def __init__(self, model_dir: str):
+        self._model_dir = model_dir
+        self._rec: SherpaRecognizer | None = None
+        self._lock = threading.Lock()
+
+    def transcribe(self, pcm) -> str:
+        if self._rec is None:
+            with self._lock:
+                if self._rec is None:
+                    print("[yibao] 首次语音输入，加载 STT 模型…", file=sys.stderr)
+                    self._rec = SherpaRecognizer(self._model_dir)
+        return self._rec.transcribe(pcm)
 
 
 class SounddeviceRecorder:
@@ -292,9 +314,9 @@ def build_voice(
     min_silence: float = 0.9,
     max_seconds: int = 30,
 ) -> VoiceCapability:
-    """生产装配：sherpa STT + sounddevice 录 + edge-tts 播。"""
+    """生产装配：sherpa STT（懒加载）+ sounddevice 录 + edge-tts 播。"""
     return VoiceCapability(
-        SherpaRecognizer(model_dir),
+        LazySherpaRecognizer(model_dir),
         SounddeviceRecorder(vad_model=vad_model, max_seconds=max_seconds, min_silence=min_silence),
         EdgeTtsSpeaker(voice_name),
     )

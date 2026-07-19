@@ -372,3 +372,24 @@ def test_synth_pcm_speaks_cleaned_text(monkeypatch):
     monkeypatch.setattr("yibao_brain.voice._decode_mp3", lambda b: [0.0])
     asyncio.run(speaker._synth_pcm("**记好了** ✅"))
     assert got == ["记好了"]
+
+
+def test_lazy_recognizer_loads_on_first_transcribe(monkeypatch):
+    """懒加载：构造不加载模型（启动提速），首次 transcribe 才加载且只加载一次。"""
+    from yibao_brain import voice as voice_mod
+
+    constructions = []
+
+    class _FakeRec:
+        def __init__(self, model_dir):
+            constructions.append(model_dir)
+
+        def transcribe(self, pcm):
+            return "识别文字"
+
+    monkeypatch.setattr(voice_mod, "SherpaRecognizer", _FakeRec)
+    rec = voice_mod.LazySherpaRecognizer("/models/x")
+    assert constructions == []  # 构造即返回，启动不背模型开销
+    assert rec.transcribe(None) == "识别文字"
+    assert rec.transcribe(None) == "识别文字"
+    assert constructions == ["/models/x"]  # 只加载一次
