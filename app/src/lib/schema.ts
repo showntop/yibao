@@ -1,5 +1,5 @@
 // schema 协议 v1（docs/superpowers/specs/2026-07-18-yibao-v2-plugin-architecture.md 附录 A）：
-// 三组件 list/detail/form + 绑定语法（$data.x 注入数据 / $item.x list item 上下文）。
+// 四组件 list/detail/form/board + 绑定语法（$data.x 注入数据 / $item.x list/board item 上下文）。
 
 /** 面板动作声明：method 必须在 api.toml 白名单，params 值支持绑定语法。 */
 export interface ActionDecl {
@@ -19,6 +19,7 @@ export interface DetailSchema {
   version?: number;
   type: "detail";
   fields?: { label: string; value: string }[];
+  actions?: ActionDecl[];
 }
 
 export interface FormSchema {
@@ -28,9 +29,22 @@ export interface FormSchema {
   submit?: ActionDecl;
 }
 
-export type SchemaDoc = ListSchema | DetailSchema | FormSchema;
+export interface BoardColumn {
+  key: string;
+  label: string;
+}
 
-/** 绑定解析上下文：data 是 panel 事件注入的数据；item 仅 list item 模板内有。 */
+export interface BoardSchema {
+  version?: number;
+  type: "board";
+  bind?: { items?: string; column?: string };
+  columns?: BoardColumn[];
+  card?: { title?: string; subtitle?: string; actions?: ActionDecl[] };
+}
+
+export type SchemaDoc = ListSchema | DetailSchema | FormSchema | BoardSchema;
+
+/** 绑定解析上下文：data 是 panel 事件注入的数据；item 仅 list/board item 模板内有。 */
 export interface BindCtx {
   data: Record<string, unknown>;
   item?: Record<string, unknown>;

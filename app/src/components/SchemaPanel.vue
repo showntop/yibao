@@ -1,8 +1,8 @@
 <script setup lang="ts">
-// schema 面板（协议 v1 附录 A）：白名单渲染 list/detail/form；未知 type 或无 schema → 折叠 JSON 降级。
+// schema 面板（协议 v1 附录 A）：白名单渲染 list/detail/form/board；未知 type 或无 schema → 折叠 JSON 降级。
 // 标题栏/关闭由外层容器（PanelApp）负责；本组件只管内容，撑满容器高度、内部滚动。
 import { computed, reactive, watchEffect } from "vue";
-import { resolve, resolveParams, type ActionDecl, type BindCtx } from "../lib/schema";
+import { resolve, resolveParams, type ActionDecl, type BindCtx, type BoardColumn } from "../lib/schema";
 
 const props = defineProps<{
   panel: string; // 面板引用（plugin_id:name），当前仅用于调试展示
@@ -34,6 +34,25 @@ const listItems = computed<Record<string, unknown>[]>(() => {
   return Array.isArray(v) ? (v as Record<string, unknown>[]) : [];
 });
 const itemTpl = computed(() => props.schema?.item ?? {});
+
+// ---- board（items 解析复用 list 的 listItems）----
+const boardColumns = computed<BoardColumn[]>(() => props.schema?.columns ?? []);
+const cardTpl = computed(() => props.schema?.card ?? {});
+/** 按 bind.column 求值分组；不匹配任何声明列的行归入第一列（不丢数据）。 */
+const boardGroups = computed<{ column: BoardColumn; items: Record<string, unknown>[] }[]>(() => {
+  const groups = boardColumns.value.map((column) => ({
+    column,
+    items: [] as Record<string, unknown>[],
+  }));
+  if (!groups.length) return groups;
+  const colBind = props.schema?.bind?.column;
+  for (const it of listItems.value) {
+    const key = colBind ? String(resolve(colBind, { data: props.data, item: it })) : "";
+    const g = groups.find((g) => g.column.key === key) ?? groups[0];
+    g.items.push(it);
+  }
+  return groups;
+});
 
 // ---- detail ----
 const detailFields = computed<{ label: string; value: string }[]>(() => props.schema?.fields ?? []);
@@ -88,13 +107,51 @@ const fallbackJson = computed(() =>
       </div>
     </div>
 
-    <!-- detail：字段表 -->
+    <!-- board：分列看板，卡片纵向堆叠 + 卡级 action -->
+    <div v-else-if="kind === 'board'" class="board">
+      <div v-if="!boardGroups.length" class="empty">暂无数据</div>
+      <div v-for="g in boardGroups" :key="g.column.key" class="board-col">
+        <div class="board-head">
+          <span class="board-label">{{ g.column.label }}</span>
+          <span class="board-count">{{ g.items.length }}</span>
+        </div>
+        <div v-if="!g.items.length" class="board-empty">空</div>
+        <div v-for="(it, i) in g.items" :key="i" class="card">
+          <div class="card-main">
+            <div class="card-title">{{ text(cardTpl.title, it) }}</div>
+            <div v-if="cardTpl.subtitle" class="card-sub">{{ text(cardTpl.subtitle, it) }}</div>
+          </div>
+          <div v-if="cardTpl.actions?.length" class="card-actions">
+            <button
+              v-for="a in cardTpl.actions"
+              :key="a.method + a.label"
+              class="act"
+              @click="fire(a, it)"
+            >
+              {{ a.label }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- detail：字段表 + 底部 action 按钮行 -->
     <div v-else-if="kind === 'detail'" class="detail">
       <div v-for="(f, i) in detailFields" :key="i" class="row">
         <span class="k">{{ f.label }}</span>
         <span class="v">{{ text(f.value) }}</span>
       </div>
       <div v-if="!detailFields.length" class="empty">暂无数据</div>
+      <div v-if="schema?.actions?.length" class="detail-actions">
+        <button
+          v-for="a in schema.actions"
+          :key="a.method + a.label"
+          class="act"
+          @click="fire(a)"
+        >
+          {{ a.label }}
+        </button>
+      </div>
     </div>
 
     <!-- form：输入收集 + submit action -->
@@ -159,6 +216,54 @@ const fallbackJson = computed(() =>
   display: flex;
   gap: 6px;
   flex-shrink: 0;
+}
+.board {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--yb-space-2);
+  height: 100%;
+  overflow-x: auto;
+}
+.board-col {
+  flex: 1 0 160px;
+  min-width: 160px;
+  box-sizing: border-box;
+  padding: var(--yb-space-2);
+  border-radius: var(--yb-radius-md);
+  background: rgba(0, 0, 0, 0.03);
+}
+.board-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--yb-space-2);
+  font-size: var(--yb-fs-md);
+  color: var(--yb-text-dim);
+}
+.board-count {
+  font-size: var(--yb-fs-sm);
+}
+.board-empty {
+  color: var(--yb-text-dim);
+  text-align: center;
+  font-size: var(--yb-fs-sm);
+  padding: var(--yb-space-3) 0;
+  opacity: 0.7;
+}
+/* board 内卡片：纵向堆叠、宽度撑满列 */
+.board .card {
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  box-sizing: border-box;
+}
+.board .card:last-child {
+  margin-bottom: 0;
+}
+.detail-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: var(--yb-space-3);
 }
 .act {
   padding: 5px 12px;
