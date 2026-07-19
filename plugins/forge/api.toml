@@ -1,0 +1,49 @@
+# 面板可调方法白名单（v2 §7）：direct 直调过闸门不过 LLM；intent 渲染后走 agent 流程
+[[method]]
+name = "list"
+handler = "forge.list"
+direct = true
+
+[[method]]
+name = "get"
+handler = "forge.get"
+direct = true
+
+[[method]]
+name = "verdict_form"
+handler = "forge.verdict_form"
+direct = true
+
+[[method]]
+name = "delete"
+handler = "forge.delete"
+direct = true
+refresh = "forge.list"   # 删除成功后跟一次看板查询，面板拿刷新后的列表
+
+[[method]]
+name = "verdict"
+handler = "forge.verdict"
+direct = true
+refresh = "forge.list"   # 裁决后跟一次看板查询，卡片落到新状态列
+
+# 以下为 intent 方法（direct=false）：{title}/{id} 占位由面板 action 参数渲染，
+# 交给 agent 多步完成（加载方法论 → 追问/搜索/生成 → 落盘），handler 仅作注册校验锚点
+[[method]]
+name = "challenge"
+handler = "forge.guide"
+intent = "对需求「{title}」发起挑战：先调用 forge.guide 加载 challenge 方法论，再多轮追问（id={id}）"
+
+[[method]]
+name = "scan"
+handler = "forge.guide"
+intent = "为需求「{title}」做竞品扫描：先调 forge.guide 加载 scan 方法论，用 web_search 搜索后把结论存进该需求（id={id}）"
+
+[[method]]
+name = "prd"
+handler = "forge.doc_save"
+intent = "为需求「{title}」撰写 PRD：先调 forge.guide 加载 prd 模板，用 forge.doc_save 落盘（id={id}）"
+
+[[method]]
+name = "proto"
+handler = "forge.proto_gen"
+intent = "为需求「{title}」生成交互原型 HTML，用 forge.proto_gen 落盘并预览（id={id}）"

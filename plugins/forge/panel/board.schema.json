@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "type": "board",
+  "bind": {"items": "$data.rows", "column": "$item.status"},
+  "columns": [
+    {"key": "灵感", "label": "灵感"},
+    {"key": "快筛过", "label": "快筛过"},
+    {"key": "挑战中", "label": "挑战中"},
+    {"key": "已立项", "label": "已立项"},
+    {"key": "已搁置", "label": "已搁置"},
+    {"key": "已否决", "label": "已否决"}
+  ],
+  "card": {
+    "title": "$item.title",
+    "subtitle": "$item.pain",
+    "actions": [
+      {"label": "详情", "method": "forge.get", "params": {"id": "$item.id"}}
+    ]
+  }
+}

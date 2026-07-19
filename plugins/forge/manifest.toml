@@ -1,0 +1,115 @@
+# 需求磨刀（阶段 1 尖刀：录 → 快筛 → 挑战+扫描 → 裁决 → PRD/原型）
+# 声明式 tool 管 CRUD；方法论加载/落盘/裁决等带逻辑的动作走 tools/ 代码 tool。
+id = "forge"
+name = "需求磨刀"
+capabilities = ["db", "memory"]
+mem_namespace = "forge"
+
+[code]
+entry = "tools"
+
+[[table]]
+name = "requirements"
+columns = [
+  {name = "id", type = "text", pk = true},
+  {name = "title", type = "text"},
+  {name = "pain", type = "text"},
+  {name = "who", type = "text"},
+  {name = "source", type = "text", default = ""},
+  {name = "status", type = "text", default = "灵感"},
+  {name = "triage", type = "text", default = ""},
+  {name = "verdict_reason", type = "text", default = ""},
+  {name = "challenge_path", type = "text", default = ""},
+  {name = "prd_path", type = "text", default = ""},
+  {name = "proto_path", type = "text", default = ""},
+  {name = "created_at", type = "integer"},
+  {name = "updated_at", type = "integer"},
+  {name = "decided_at", type = "integer"},
+]
+indexes = ["status", "updated_at"]
+
+[[tool]]
+id = "add"
+type = "db"
+description = "记录一条新需求灵感（标题+痛点必填），初始状态为「灵感」进看板"
+risk = "L1"
+panel = "forge:board"
+refresh = "list"   # 写入后面板拿刷新后的看板，而非回执 {"id":…}
+required = ["title", "pain"]
+[tool.params]
+title = {type = "string", description = "需求标题（一句话说清要做什么）"}
+pain = {type = "string", description = "痛点：解决什么问题、有多痛"}
+who = {type = "string", description = "谁有这个痛点（目标人群）"}
+source = {type = "string", description = "需求来源（如用户反馈/自己的想法）"}
+[tool.db]
+op = "insert"
+table = "requirements"
+auto = {created_at = "unixts", updated_at = "unixts"}   # 时间戳由系统生成（unix 秒）
+
+[[tool]]
+id = "list"
+type = "db"
+description = "列出需求看板（按更新时间倒序，最多 100 条）"
+risk = "L0"
+panel = "forge:board"
+[tool.db]
+op = "query"
+table = "requirements"
+order = "updated_at DESC"
+limit = 100
+
+[[tool]]
+id = "get"
+type = "db"
+description = "查看一条需求的详情（运行时 where 由调用方传，如 {where: {id: …}}）"
+risk = "L0"
+panel = "forge:detail"
+[tool.db]
+op = "query"
+table = "requirements"
+
+[[tool]]
+id = "triage"
+type = "db"
+description = "存快筛结论并推进状态：快筛过/已搁置（快筛方法论先用 forge.guide 加载 triage）"
+risk = "L1"
+panel = "forge:detail"
+refresh = "get"
+required = ["id", "triage", "status"]
+[tool.params]
+id = {type = "string", description = "需求 id"}
+triage = {type = "string", description = "快筛结论（按快筛卡格式：真实性/现有方案/匹配度/建议）"}
+status = {type = "string", description = "快筛后的状态：快筛过 或 已搁置"}
+[tool.db]
+op = "update"
+table = "requirements"
+auto = {updated_at = "unixts"}   # 快筛落库自动刷更新时间（看板按它倒序）
+
+[[tool]]
+id = "delete"
+type = "db"
+description = "删除一条需求"
+risk = "L2"
+panel = "forge:board"
+refresh = "list"
+required = ["id"]
+[tool.params]
+id = {type = "string", description = "需求 id"}
+[tool.db]
+op = "delete"
+table = "requirements"
+
+[[panel]]
+type = "schema"
+name = "board"
+src = "panel/board.schema.json"
+
+[[panel]]
+type = "schema"
+name = "detail"
+src = "panel/detail.schema.json"
+
+[[panel]]
+type = "schema"
+name = "verdict_form"
+src = "panel/verdict_form.schema.json"

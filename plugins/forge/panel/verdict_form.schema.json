@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "type": "form",
+  "fields": [
+    {"name": "verdict", "label": "裁决（填：已立项 / 已搁置 / 已否决）", "input": "text"},
+    {"name": "reason", "label": "理由（会记入长期记忆，影响以后快筛）", "input": "textarea"}
+  ],
+  "submit": {"label": "提交裁决", "method": "forge.verdict", "params": {"id": "$data.id"}}
+}
