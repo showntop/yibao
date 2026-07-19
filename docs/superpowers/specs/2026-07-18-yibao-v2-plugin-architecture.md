@@ -207,13 +207,18 @@ name = "sync_done"
 
 ## 12. 终审待决项
 
-1. 面板形态：独立浮窗 vs 小窗抽屉？
+1. ~~面板形态：独立浮窗 vs 小窗抽屉？~~ **已定：独立浮窗**（2026-07-19 实装：面板事件 → 开面板窗 + 宠物收球；关闭只 hide 保状态；面板内闭环确认/报错）
 2. `use_plugin` 展开未激活插件时，对话里要不要让用户知情？
 3. webview 协议留口时机：阶段 0 留（不实现）还是阶段 2 再说？
 4. 自媒体第一尖刀：选题+写作 / 剪辑+素材 / 都要？
 5. schema 协议 v1：bind + 开放 type + 未知降级，够吗？
 6. 「找类似旧选题」业务数据语义搜索：v1 不做还是单列底座方案？
 7. MCP 接入算不算 v2 方向？
+
+### 实装踩坑记录（Tauri 侧）
+
+- **新窗口必须配 capability**：Tauri v2 里窗口无匹配 capability = 无任何 IPC 权限（`listen`/`invoke` 插件与 core 命令全拒，自定义命令除外）。窗口事件订阅需 `core:event:allow-listen/unlisten`，标题栏拖动需 `core:window:allow-start-dragging`（见 `app/src-tauri/capabilities/panel.json`）。
+- **事件先发、窗口后开的竞态**：`app.emit` 只送达当时已存在的窗口；后创建的窗口要靠 Rust 侧缓存载荷 + 窗口挂载后 `invoke` 补拉（`get_current_panel`）。
 
 
 ## 附录 A：schema 协议 v1
