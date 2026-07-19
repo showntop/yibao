@@ -11,10 +11,14 @@ import { onBrainEvent, panelAction, sendConfirm, type BrainEvent } from "../lib/
 const current = ref<{ panel: string; schema: any; data: Record<string, unknown> } | null>(null);
 const errorText = ref(""); // 面板内顶部错误细条（不进对话气泡）
 const pending = ref<{ id: string; skill: string; desc: string } | null>(null); // 内嵌确认条
+// 临时诊断（排查面板首开取数问题，定位后删）：事件计数 / 最近事件 / 缓存拉取结果
+const dbg = ref({ events: 0, lastKind: "-", cache: "未拉" });
 let unlisten: (() => void) | null = null;
 let unlistenFocus: (() => void) | null = null;
 
 function onEvent(e: BrainEvent) {
+  dbg.value.events++;
+  dbg.value.lastKind = e.kind;
   switch (e.kind) {
     case "panel":
       current.value = {
@@ -70,8 +74,10 @@ async function pullCache() {
     const cached = await invoke<{ panel: string; schema: any; data: Record<string, unknown> } | null>(
       "get_current_panel"
     );
+    dbg.value.cache = cached ? `有(${cached.panel})` : "空";
     if (cached && current.value === null) current.value = cached;
   } catch (err) {
+    dbg.value.cache = "拉取失败";
     // 命令缺失（旧壳进程）等问题要看得见，不能静默停在占位页
     errorText.value = "面板数据拉取失败：" + String(err);
   }
@@ -117,7 +123,10 @@ onUnmounted(() => {
         :data="current.data"
         @action="onAction"
       />
-      <div v-else class="placeholder">暂无面板内容</div>
+      <div v-else class="placeholder">
+        <div>暂无面板内容</div>
+        <div class="dbg">事件 {{ dbg.events }} · 最近 {{ dbg.lastKind }} · 缓存 {{ dbg.cache }}</div>
+      </div>
     </div>
   </div>
 </template>
@@ -217,7 +226,13 @@ onUnmounted(() => {
   height: 100%;
   display: grid;
   place-items: center;
+  align-content: center;
+  gap: var(--yb-space-2);
   color: var(--yb-text-dim);
   font-size: var(--yb-fs-lg);
+}
+.dbg {
+  font-size: 12px;
+  opacity: 0.7;
 }
 </style>
