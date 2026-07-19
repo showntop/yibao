@@ -10,6 +10,7 @@ import json
 import os
 import sys
 import threading
+import time
 from collections.abc import Callable
 
 from . import permissions
@@ -265,7 +266,9 @@ async def serve_async(
     # 确认单槽 + 早到缓存：confirm 可能先于 confirmer 注册 future 到达
     # （读线程瞬时投递 run+confirm，主循环先处理 confirm），直接丢会死锁。
     pending_confirm: dict = {"future": None, "early": None}
-    run_state: dict = {"task": None, "cancel": None}
+    # preempt_gen：抢占代数。新请求到来即 +1；排队中的任务启动时发现自己落后 →
+    # 一启动即置 cancel（快速跳过），保证「只有最新请求真正执行」。
+    run_state: dict = {"task": None, "cancel": None, "preempt_gen": 0}
 
     async def confirmer(action) -> bool:
         # 早到的 confirm 直接兑现
@@ -276,9 +279,26 @@ async def serve_async(
         # 单槽 future：收到任意 confirm 消息即兑现（v1 run 串行，确认也串行）
         fut = ai_loop.create_future()
         pending_confirm["future"] = fut
+        # 确认等待必须响应抢占/打断：否则新请求 join 一个永不结束的确认 →
+        # 派发循环卡死、ping 不应答、看门狗误杀（2026-07-19 复现确认）
+        cancel = run_state["cancel"]
+        cancel_wait = ai_loop.create_task(cancel.wait()) if cancel is not None else None
+        skill_id = getattr(action, "skill_id", "?")
+        print(f"[yibao] 等待用户确认：{skill_id}", file=sys.stderr)
         try:
-            return await fut
+            waiters: set = {fut}
+            if cancel_wait is not None:
+                waiters.add(cancel_wait)
+            done, _ = await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+            if fut in done:
+                approved = bool(fut.result())
+                print(f"[yibao] 确认结果：{'允许' if approved else '拒绝'}（{skill_id}）", file=sys.stderr)
+                return approved
+            print(f"[yibao] 确认被抢占取消：{skill_id}", file=sys.stderr)
+            return False
         finally:
+            if cancel_wait is not None:
+                cancel_wait.cancel()
             if pending_confirm["future"] is fut:
                 pending_confirm["future"] = None
 
@@ -321,6 +341,7 @@ async def serve_async(
             write_msg({"type": "event", "event": {"kind": "speaking_done"}})
 
     async def _stream_agent(text: str, rid, cancel: asyncio.Event):
+        t0 = time.monotonic()
         tts_q: asyncio.Queue | None = asyncio.Queue() if voice is not None else None
         tts_task = asyncio.create_task(_pump_tts(tts_q, cancel)) if tts_q is not None else None
         started_speaking = False
@@ -346,6 +367,7 @@ async def serve_async(
             if tts_task is not None:
                 await tts_task
             write_msg({"type": "run_done", "id": rid})
+            print(f"[yibao] run 完成 rid={rid}（{time.monotonic() - t0:.1f}s）", file=sys.stderr)
 
     async def _drive_run(text: str, rid, cancel: asyncio.Event):
         await _stream_agent(text, rid, cancel)
@@ -365,13 +387,40 @@ async def serve_async(
             write_msg({"type": "run_done", "id": rid})
 
     def _preempt_current():
+        run_state["preempt_gen"] += 1
         if run_state["cancel"] is not None:
             run_state["cancel"].set()
 
     async def _join_current():
         task = run_state["task"]
         if task is not None and not task.done():
-            await task
+            try:
+                await task
+            except Exception:
+                pass
+
+    async def _chain_start(prev, start, queued_gen: int) -> None:
+        """槽位串行：等上一任务收尾再启动；主循环不在这里阻塞（ping 照答，看门狗不误杀）。
+
+        排队期间又来了更新的请求（preempt_gen 前进）→ 本任务一启动即置 cancel 快速跳过。
+        """
+        if prev is not None and not prev.done():
+            t0 = time.monotonic()
+            print("[yibao] 新请求排队，等上一任务收尾…", file=sys.stderr)
+            try:
+                await prev
+            except Exception:
+                pass
+            print(f"[yibao] 上一任务收尾完成（{time.monotonic() - t0:.1f}s）", file=sys.stderr)
+        cancel = asyncio.Event()
+        if run_state["preempt_gen"] > queued_gen:
+            cancel.set()
+        run_state["cancel"] = cancel
+        run_state["task"] = asyncio.current_task()
+        try:
+            await start(cancel)
+        except Exception as e:  # 兜底：任务未预期的异常不能毒死槽位
+            print(f"[yibao] 任务异常收尾：{type(e).__name__}: {e}", file=sys.stderr)
 
     while True:
         msg = await queue.get()
@@ -382,26 +431,29 @@ async def serve_async(
         rtype = msg.get("type")
         if rtype in ("run", "voice_start"):
             _preempt_current()
-            await _join_current()
-            cancel = asyncio.Event()
-            run_state["cancel"] = cancel
+            prev = run_state["task"]
             if rtype == "run":
-                run_state["task"] = asyncio.ensure_future(
-                    _drive_run(msg.get("text", ""), msg.get("id"), cancel)
-                )
+                text, rid = msg.get("text", ""), msg.get("id")
+                start = lambda c, t=text, r=rid: _drive_run(t, r, c)
+                print(f"[yibao] run 受理 rid={rid}：{text[:30]!r}", file=sys.stderr)
             elif voice is not None:
-                run_state["task"] = asyncio.ensure_future(_drive_voice_start(msg.get("id"), cancel))
-        elif rtype == "panel_action":
-            # 面板直调/意图方法：与 run 同槽位（抢占并等待在跑的任务结束）
-            _preempt_current()
-            await _join_current()
-            cancel = asyncio.Event()
-            run_state["cancel"] = cancel
+                rid = msg.get("id")
+                start = lambda c, r=rid: _drive_voice_start(r, c)
+                print(f"[yibao] voice_start 受理 rid={rid}", file=sys.stderr)
+            else:
+                continue
             run_state["task"] = asyncio.ensure_future(
-                handle_panel_action(
-                    msg, agent, write_msg,
-                    run_text=lambda text, rid, c=cancel: _stream_agent(text, rid, c),
-                )
+                _chain_start(prev, start, run_state["preempt_gen"])
+            )
+        elif rtype == "panel_action":
+            # 面板直调/意图方法：与 run 同槽位（抢占 + 链式排队，主循环不阻塞）
+            _preempt_current()
+            prev = run_state["task"]
+            start = lambda c, m=msg: handle_panel_action(
+                m, agent, write_msg, run_text=lambda text, rid: _stream_agent(text, rid, c)
+            )
+            run_state["task"] = asyncio.ensure_future(
+                _chain_start(prev, start, run_state["preempt_gen"])
             )
         elif rtype == "interrupt":
             _preempt_current()

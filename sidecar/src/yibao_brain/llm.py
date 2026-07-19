@@ -10,6 +10,10 @@ from pydantic import BaseModel, Field
 
 from .config import llm_api_key, llm_base_url, llm_model, vision_model
 
+# 流式响应空闲超时（秒）：建连或任意 chunk 超过该时长无数据即判定连接僵死，
+# 避免死连接永久挂住 agent 任务、进而触发看门狗误杀。
+_STREAM_IDLE_TIMEOUT = 60.0
+
 
 class ToolCall(BaseModel):
     id: str
@@ -186,9 +190,23 @@ class GLMProvider:
                 {"type": "function", "function": t} if "function" not in t else t
                 for t in tools
             ]
+        import asyncio
+
         client = self._ensure_async_client()
-        stream = await client.chat.completions.create(**kwargs)
-        async for chunk in stream:
+        try:
+            stream = await asyncio.wait_for(
+                client.chat.completions.create(**kwargs), timeout=_STREAM_IDLE_TIMEOUT
+            )
+        except asyncio.TimeoutError:
+            raise TimeoutError("LLM 流式请求建立超时（60s 无响应）") from None
+        it = stream.__aiter__()
+        while True:
+            try:
+                chunk = await asyncio.wait_for(it.__anext__(), timeout=_STREAM_IDLE_TIMEOUT)
+            except StopAsyncIteration:
+                break
+            except asyncio.TimeoutError:
+                raise TimeoutError("LLM 流式响应超过 60s 无数据（连接僵死）") from None
             choices = getattr(chunk, "choices", None) or []
             if not choices:
                 continue
