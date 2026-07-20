@@ -20,6 +20,14 @@ function onMic() {
   if (props.listening) emit("interrupt");
   else emit("mic");
 }
+
+/** 右端主按钮：生成/播报中=打断、其余=发送（无内容置灰）；聆听时取消录音归麦克风，主按钮仍是发送。 */
+const stopping = computed(() => props.busy && !props.listening);
+
+function onMain() {
+  if (stopping.value) emit("interrupt");
+  else send();
+}
 </script>
 
 <template>
@@ -42,23 +50,24 @@ function onMic() {
       </svg>
     </button>
     <button
-      v-if="busy && !listening"
       type="button"
-      class="stop"
-      aria-label="打断（停止生成与播报）"
-      title="打断"
-      @click="emit('interrupt')"
+      class="main"
+      :class="{ stopping }"
+      :disabled="!stopping && !canSend"
+      :aria-label="stopping ? '打断（停止生成与播报）' : '发送'"
+      :title="stopping ? '打断' : '发送'"
+      @click="onMain"
     >
-      <svg viewBox="0 0 24 24" fill="currentColor" class="icon">
-        <rect x="6" y="6" width="12" height="12" rx="2.5" />
-      </svg>
-    </button>
-    <button type="submit" class="send" :disabled="!canSend" aria-label="发送" title="发送">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-        stroke-linecap="round" stroke-linejoin="round" class="icon">
-        <line x1="12" y1="19" x2="12" y2="5" />
-        <polyline points="5 12 12 5 19 12" />
-      </svg>
+      <Transition name="swap" mode="out-in">
+        <svg v-if="stopping" key="stop" viewBox="0 0 24 24" fill="currentColor" class="icon">
+          <rect x="6" y="6" width="12" height="12" rx="2.5" />
+        </svg>
+        <svg v-else key="send" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+          stroke-linecap="round" stroke-linejoin="round" class="icon">
+          <line x1="12" y1="19" x2="12" y2="5" />
+          <polyline points="5 12 12 5 19 12" />
+        </svg>
+      </Transition>
     </button>
   </form>
 </template>
@@ -86,8 +95,7 @@ input::placeholder {
   color: var(--yb-text-dim);
 }
 .mic,
-.stop,
-.send {
+.main {
   width: 30px;
   height: 30px;
   flex-shrink: 0;
@@ -155,22 +163,38 @@ input::placeholder {
     height: 13px;
   }
 }
-.stop {
-  background: var(--yb-danger-soft);
-  color: var(--yb-danger);
-}
-.stop:hover {
-  filter: brightness(1.04);
-}
-.send {
+/* 主按钮：常态=发送（杏橙），打断态=红色方块；图标交叉淡入淡出切换 */
+.main {
   background: var(--yb-accent);
   color: #fff;
 }
-.send:hover:not(:disabled) {
+.main:hover:not(:disabled) {
   filter: brightness(1.06);
 }
-.send:disabled {
+.main:disabled {
   opacity: 0.4;
   cursor: default;
+}
+.main.stopping {
+  background: var(--yb-danger-soft);
+  color: var(--yb-danger);
+  opacity: 1;
+}
+.main.stopping:hover {
+  filter: brightness(1.04);
+}
+.swap-enter-active,
+.swap-leave-active {
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.swap-enter-from,
+.swap-leave-to {
+  opacity: 0;
+  transform: scale(0.7);
+}
+.swap-enter-active,
+.swap-leave-active {
+  display: grid;
+  place-items: center;
 }
 </style>
