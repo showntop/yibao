@@ -273,29 +273,38 @@ _PANELS: dict[str, dict] = {}
 
 
 def get_panel(ref: str) -> dict | None:
-    """按「plugin_id:name」查 panel schema；找不到返回 None（前端做未知降级，不算错误）。"""
+    """按「plugin_id:name」查面板。schema 面板为 JSON dict；webview 面板为 {"type": "webview", "html": …}。"""
     return _PANELS.get(ref)
 
 
 def panel_payload(result) -> dict | None:
-    """result.panel 非空时构造 panel 事件 payload（loop 与 panel_action 共用）。"""
+    """result.panel 非空时构造 panel 事件 payload（loop 与 panel_action 共用）。
+
+    schema 面板：{panel, schema, data}；webview 面板：{panel, schema: None, webview: {html}, data}
+    （html 随事件发出，前端 iframe srcdoc 渲染；schema 面板 payload 形状保持不变）。
+    """
     if not result.panel:
         return None
-    return {"panel": result.panel, "schema": get_panel(result.panel), "data": result.data}
+    panel = get_panel(result.panel)
+    if isinstance(panel, dict) and panel.get("type") == "webview" and "html" in panel:
+        return {"panel": result.panel, "schema": None, "webview": {"html": panel["html"]}, "data": result.data}
+    return {"panel": result.panel, "schema": panel, "data": result.data}
 
 
 def _load_panels(child: Path, pid: str, manifest: dict) -> None:
-    """解析 manifest [[panel]]：schema 类型读入 JSON 存注册表；webview 留口不实现（记错误跳过）。"""
+    """解析 manifest [[panel]]：schema 读 JSON、webview 读 HTML 文本存注册表；未知类型记错误跳过。"""
     for p in manifest.get("panel") or []:
         name = p.get("name") or "main"
         ref = f"{pid}:{name}"
-        if p.get("type", "schema") != "schema":
-            print(f"[yibao] 插件 {pid} panel {ref} 类型 {p.get('type')!r} 暂不支持（已跳过）", file=sys.stderr)
+        ptype = p.get("type", "schema")
+        if ptype not in ("schema", "webview"):
+            print(f"[yibao] 插件 {pid} panel {ref} 类型 {ptype!r} 暂不支持（已跳过）", file=sys.stderr)
             continue
         try:
-            _PANELS[ref] = json.loads((child / p["src"]).read_text(encoding="utf-8"))
+            text = (child / p["src"]).read_text(encoding="utf-8")
+            _PANELS[ref] = {"type": "webview", "html": text} if ptype == "webview" else json.loads(text)
         except Exception as e:
-            print(f"[yibao] 插件 {pid} panel {ref} schema 读取失败（已跳过）：{e}", file=sys.stderr)
+            print(f"[yibao] 插件 {pid} panel {ref} 读取失败（已跳过）：{e}", file=sys.stderr)
 
 
 # ---------- api.toml：面板可调方法白名单（⑦py） ----------
@@ -312,6 +321,7 @@ class ApiMethod:
     risk: RiskLevel | None  # 非空时直调风险取 max(tool, api)——api.toml 只许收紧
     plugin_id: str
     refresh: str | None = None  # 直调成功后跟一次查询 tool，面板拿刷新数据而非操作回执
+    panel: str | None = None    # 直调成功后改用该面板发 panel 事件（覆盖 tool 自带引用，如 webview 编辑器）
 
 
 _API: dict[str, ApiMethod] = {}
@@ -346,13 +356,20 @@ def _load_api(pid: str, path: Path, registry: SkillRegistry) -> None:
                 if not refresh.startswith(f"{pid}."):
                     raise ValueError(f"refresh 必须指向本插件 tool：{refresh!r}")
                 registry.get(refresh)  # 必须已注册
+            panel = None
+            if m.get("panel") is not None:
+                panel = str(m["panel"])
+                if not panel.startswith(f"{pid}:"):
+                    raise ValueError(f"panel 必须指向本插件面板：{panel!r}")
+                if panel not in _PANELS:
+                    raise ValueError(f"panel 指向未声明的面板：{panel!r}")
         except (KeyError, ValueError) as e:
             print(f"[yibao] 插件 {pid} api method {name!r} 无效（已跳过）：{e}", file=sys.stderr)
             continue
         _API[full] = ApiMethod(
             name=full, handler=handler,
             direct=bool(m.get("direct", False)), intent=m.get("intent"),
-            risk=risk, plugin_id=pid, refresh=refresh,
+            risk=risk, plugin_id=pid, refresh=refresh, panel=panel,
         )
     _API_EVENTS[pid] = [str(e["name"]) for e in doc.get("event") or [] if e.get("name")]
 

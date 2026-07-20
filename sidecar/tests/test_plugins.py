@@ -634,16 +634,28 @@ def test_tool_required_params_in_schema(data_dir, tmp_path):
     assert schema["parameters"]["required"] == ["text"]
 
 
-def test_webview_panel_skipped_with_error(data_dir, tmp_path, capsys):
+def test_webview_panel_loaded_as_html(data_dir, tmp_path):
     # 独立插件 id，避免与模块级 _PANELS 里其他测试注册的 notes:list 互相污染
     manifest = NOTES_PANEL_MANIFEST.replace('type = "schema"', 'type = "webview"').replace('id = "notes"', 'id = "webv"')
     manifest = manifest.replace("notes:", "webv:").replace('"notes.', '"webv.').replace('table = "notes"', 'table = "webv"')
-    _write_plugin(tmp_path, "webv", manifest)
+    _write_plugin(tmp_path, "webv", manifest, {"panel/list.schema.json": "<html><body>hi</body></html>"})
     from yibao_brain.plugins import get_panel
 
     reg = SkillRegistry()
-    assert _load(tmp_path, reg) == {"webv": "ok"}  # panel 跳过不拖垮插件
-    assert get_panel("webv:list") is None
+    assert _load(tmp_path, reg) == {"webv": "ok"}
+    assert get_panel("webv:list") == {"type": "webview", "html": "<html><body>hi</body></html>"}
+
+
+def test_unknown_panel_type_skipped(data_dir, tmp_path, capsys):
+    # 独立插件 id（holo），避免与模块级 _PANELS 里其他测试注册的 webv:list 互相污染
+    manifest = NOTES_PANEL_MANIFEST.replace('type = "schema"', 'type = "hologram"').replace('id = "notes"', 'id = "holo"')
+    manifest = manifest.replace("notes:", "holo:").replace('"notes.', '"holo.').replace('table = "notes"', 'table = "holo"')
+    _write_plugin(tmp_path, "holo", manifest, {"panel/list.schema.json": LIST_SCHEMA})
+    from yibao_brain.plugins import get_panel
+
+    reg = SkillRegistry()
+    assert _load(tmp_path, reg) == {"holo": "ok"}  # panel 跳过不拖垮插件
+    assert get_panel("holo:list") is None
     assert "跳过" in capsys.readouterr().err
 
 
@@ -656,6 +668,27 @@ def test_panel_missing_src_skipped(data_dir, tmp_path, capsys):
     assert _load(tmp_path, reg) == {"nosrc": "ok"}
     assert get_panel("nosrc:list") is None
     assert "跳过" in capsys.readouterr().err
+
+
+def test_panel_payload_webview_shape(data_dir, tmp_path):
+    """webview 面板事件 payload：{panel, schema: None, webview: {html}, data}；schema 面板形状不变。"""
+    from yibao_brain.plugins import panel_payload
+
+    manifest = NOTES_PANEL_MANIFEST.replace('type = "schema"', 'type = "webview"').replace('id = "notes"', 'id = "webv"')
+    manifest = manifest.replace("notes:", "webv:").replace('"notes.', '"webv.').replace('table = "notes"', 'table = "webv"')
+    _write_plugin(tmp_path, "webv", manifest, {"panel/list.schema.json": "<html>wv</html>"})
+    reg = SkillRegistry()
+    _load(tmp_path, reg)
+
+    r = ActionResult(success=True, data={"rows": [1]}, panel="webv:list")
+    assert panel_payload(r) == {
+        "panel": "webv:list",
+        "schema": None,
+        "webview": {"html": "<html>wv</html>"},
+        "data": {"rows": [1]},
+    }
+    r2 = ActionResult(success=True, data={"x": 1})  # 无 panel 引用 → None
+    assert panel_payload(r2) is None
 
 
 # ---------- db insert auto（系统生成字段）----------
@@ -746,6 +779,49 @@ def test_api_toml_parsed(data_dir, tmp_path, capsys):
     assert get_plugin_events("notes") == ["notes.changed"]
     err = capsys.readouterr().err
     assert err.count("跳过") >= 3  # ghost/badrisk/cross 各一条
+
+
+def test_api_toml_panel_field(data_dir, tmp_path, capsys):
+    """api.toml [[method]] panel 字段：指向本插件已声明面板才受理；跨插件/未声明 → 跳过。"""
+    from yibao_brain.plugins import get_api
+
+    api_toml = """
+[[method]]
+name = "open_editor"
+handler = "notes.list"
+direct = true
+panel = "notes:list"
+
+[[method]]
+name = "cross_panel"
+handler = "notes.list"
+direct = true
+panel = "other:list"
+
+[[method]]
+name = "ghost_panel"
+handler = "notes.list"
+direct = true
+panel = "notes:ghost"
+
+[[method]]
+name = "no_panel"
+handler = "notes.list"
+direct = true
+"""
+    _write_plugin(tmp_path, "notes", NOTES_PANEL_MANIFEST, {
+        "panel/list.schema.json": LIST_SCHEMA,
+        "api.toml": api_toml,
+    })
+    reg = SkillRegistry()
+    assert _load(tmp_path, reg) == {"notes": "ok"}
+
+    assert get_api("notes.open_editor").panel == "notes:list"
+    assert get_api("notes.cross_panel") is None   # 指向别的插件面板 → 跳过
+    assert get_api("notes.ghost_panel") is None   # 面板未声明 → 跳过
+    assert get_api("notes.no_panel").panel is None  # 缺省无覆盖
+    err = capsys.readouterr().err
+    assert err.count("跳过") >= 2
 
 
 # ---------- ⑥：仓库里的真实闪念盘插件 ----------

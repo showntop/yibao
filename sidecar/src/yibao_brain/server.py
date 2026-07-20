@@ -201,6 +201,8 @@ async def handle_panel_action(msg: dict, agent: AgentLoop, write_msg: WriteMsg, 
             # 声明式刷新：删除类操作后跟一次查询，面板拿新数据而不是操作回执
             await _emit_refresh_panel(agent, emit, api.refresh)
         else:
+            if result.success and api.panel is not None:
+                result.panel = api.panel  # method 声明的面板优先于 tool 自带引用（如 webview 编辑器）
             payload = panel_payload(result)
             if payload is not None:
                 emit(Event(kind="panel", payload=payload))

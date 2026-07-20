@@ -1,8 +1,9 @@
 """zimeiti 插件（自媒体：选题+写作）端到端测试：加载真实 plugins/zimeiti/（数据目录重定向到 tmp）。
 
 覆盖：声明式 CRUD/状态流转全链 + 代码 tool（guide/article_save/article_read 版本管理）
-+ api.toml 白名单 + 面板 schema 与 api 方法的一致性。
++ api.toml 白名单 + 面板 schema 与 api 方法的一致性 + webview 编辑器面板。
 """
+import asyncio
 import json
 from pathlib import Path
 
@@ -195,3 +196,71 @@ def test_panel_schemas_reference_whitelisted_methods(env):
         assert actions, f"{schema_file.name} 没有 action"
         for a in actions:
             assert get_api(a["method"]) is not None, f"{schema_file.name}: {a['method']} 不在白名单"
+
+
+# ---------- webview 写作编辑器面板 ----------
+
+
+def test_editor_webview_panel_loaded(env):
+    """manifest [[panel]] type="webview"：HTML 文本进 _PANELS；panel_payload 带 webview 形状。"""
+    _ = env
+    from yibao_brain.ipc import ActionResult
+    from yibao_brain.plugins import get_panel, panel_payload
+
+    p = get_panel("zimeiti:editor")
+    assert p is not None and p["type"] == "webview"
+    html = p["html"]
+    assert "<textarea" in html and "window.yibao =" not in html  # 桥 JS 由父侧注入，插件不自带
+    assert len(html.encode("utf-8")) < 30 * 1024  # 面板事件 size 可控
+
+    payload = panel_payload(ActionResult(success=True, data={"rows": []}, panel="zimeiti:editor"))
+    assert payload["schema"] is None
+    assert payload["webview"] == {"html": html}
+    assert payload["data"] == {"rows": []}
+
+
+def test_editor_api_methods_whitelisted(env):
+    """编辑器三方法在白名单：open_editor 带 panel 覆盖；读/存直调（存的 L2 由 tool 自身承担）。"""
+    _ = env
+    oe = get_api("zimeiti.open_editor")
+    assert oe is not None and oe.direct and oe.panel == "zimeiti:editor"
+    ra = get_api("zimeiti.read_article")
+    assert ra is not None and ra.direct and ra.handler == "zimeiti.article_read"
+    sa = get_api("zimeiti.save_article")
+    assert sa is not None and sa.direct and sa.handler == "zimeiti.article_save"
+    assert sa.panel == "zimeiti:editor"  # 保存后仍停在编辑器（回执 data 不改变编辑器状态）
+
+
+def _make_reader(msgs):
+    it = iter(msgs + [None])  # 末尾 None = stdin 结束
+    return lambda: next(it)
+
+
+def test_open_editor_panel_action_end_to_end(env, tmp_path):
+    """open_editor 通路：panel_action → zimeiti.get 直调 → api.panel 覆盖 detail → editor webview 事件。"""
+    reg, _, _ = env
+    tid = _run(reg, "zimeiti.add", {"title": "编辑器通路"}).data["id"]
+
+    from yibao_brain.server import serve_async
+
+    out = []
+    asyncio.run(
+        serve_async(
+            _make_reader([
+                {"id": 1, "type": "panel_action", "method": "zimeiti.open_editor", "params": {"id": tid}},
+            ]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+            skills_factory=lambda: reg,
+        )
+    )
+    evs = [m["event"] for m in out if m["type"] == "event"]
+    pe = next(e for e in evs if e["kind"] == "panel")
+    assert pe["payload"]["panel"] == "zimeiti:editor"
+    assert pe["payload"]["schema"] is None
+    assert "<textarea" in pe["payload"]["webview"]["html"]
+    rows = pe["payload"]["data"]["rows"]
+    assert rows[0]["id"] == tid and rows[0]["title"] == "编辑器通路"
+    assert out[-1] == {"type": "run_done", "id": 1}

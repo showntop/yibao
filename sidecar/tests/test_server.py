@@ -442,6 +442,37 @@ def test_panel_action_direct_end_to_end(tmp_path, monkeypatch):
     assert out[-1] == {"type": "run_done", "id": 1}
 
 
+def test_panel_action_api_panel_override_emits_webview(tmp_path, monkeypatch):
+    """api.toml method 声明 panel 字段：直调成功后改用该面板发事件（覆盖 tool 自带引用），
+    webview 面板 payload 带 html（schema 为 null），schema 面板 payload 形状不变。"""
+    executed = []
+    _patch_api(monkeypatch, panel="tdel:editor")
+    from yibao_brain import plugins
+
+    monkeypatch.setitem(plugins._PANELS, "tdel:list", {"type": "list"})
+    monkeypatch.setitem(plugins._PANELS, "tdel:editor", {"type": "webview", "html": "<html>编辑器</html>"})
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([{"id": 1, "type": "panel_action", "method": "tdel.delete", "params": {"id": "r1"}}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+            skills_factory=_pa_factory(executed, ref="tdel:list"),  # tool 自带 tdel:list，应被 api.panel 覆盖
+        )
+    )
+    evs = [m["event"] for m in out if m["type"] == "event"]
+    pe = next(e for e in evs if e["kind"] == "panel")
+    assert pe["payload"] == {
+        "panel": "tdel:editor",
+        "schema": None,
+        "webview": {"html": "<html>编辑器</html>"},
+        "data": {"deleted": "r1"},
+    }
+    assert out[-1] == {"type": "run_done", "id": 1}
+
+
 def test_panel_action_not_in_whitelist_rejected(tmp_path):
     executed = []
     out = []
