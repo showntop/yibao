@@ -283,6 +283,23 @@ onUnmounted(() => {
   left: 34px;
   top: 12px;
   z-index: 3;
+  animation: fade-in 0.18s var(--yb-ease) both;
+}
+/* 展开内容渐入：配合窗口补间，不突兀 */
+.shell.exp .chat-header,
+.shell.exp .bubbles,
+.shell.exp .input-slot {
+  animation: fade-in 0.22s var(--yb-ease) 0.06s both;
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 .chat-header {
   display: flex;
@@ -353,6 +370,7 @@ onUnmounted(() => {
   text-align: center;
   font-size: var(--yb-fs-sm);
   color: var(--yb-text-dim);
+  animation: fade-in 0.18s var(--yb-ease) both;
 }
 .status-collapsed.think,
 .status-collapsed.work {

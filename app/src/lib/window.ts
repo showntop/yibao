@@ -31,10 +31,8 @@ export async function resetCollapsedSize(): Promise<void> {
   await getCurrentWindow().setSize(new LogicalSize(COLLAPSE_W, COLLAPSE_H));
 }
 
-/**
- * 展开：以形象当前屏幕位置为锚，按屏幕剩余空间选择展开方向，
- * setPosition + setSize，返回方向供前端布局镜像。
- */
+/** 展开：以形象当前屏幕位置为锚，按屏幕剩余空间选择展开方向，
+ * setPosition + setSize（缓动补间），返回方向供前端布局镜像。 */
 export async function expand(): Promise<Dir> {
   const win = getCurrentWindow();
   const mon = await currentMonitor();
@@ -52,12 +50,11 @@ export async function expand(): Promise<Dir> {
   const goDown = Py + (EXP_H - PET_OFF_Y) <= my + sh;
   const dir = `${goDown ? "n" : "s"}${goRight ? "w" : "e"}` as Dir;
   const off = petOffset(dir);
-  await win.setSize(new LogicalSize(EXP_W, EXP_H));
-  await win.setPosition(new LogicalPosition(Px - off.x, Py - off.y));
+  await tween(win, { w: COLLAPSE_W, h: COLLAPSE_H, x: Px - PET_OFF_X, y: Py - PET_OFF_Y }, { w: EXP_W, h: EXP_H, x: Px - off.x, y: Py - off.y });
   return dir;
 }
 
-/** 收起：沿同一锚点缩回，形象屏幕位置不变。 */
+/** 收起：沿同一锚点缩回（缓动补间），形象屏幕位置不变。 */
 export async function collapse(dir: Dir): Promise<void> {
   const win = getCurrentWindow();
   const mon = await currentMonitor();
@@ -66,8 +63,29 @@ export async function collapse(dir: Dir): Promise<void> {
   const off = petOffset(dir);
   const Px = pos.x / s + off.x;
   const Py = pos.y / s + off.y;
-  await win.setSize(new LogicalSize(COLLAPSE_W, COLLAPSE_H));
-  await win.setPosition(new LogicalPosition(Px - PET_OFF_X, Py - PET_OFF_Y));
+  await tween(
+    win,
+    { w: EXP_W, h: EXP_H, x: Px - off.x, y: Py - off.y },
+    { w: COLLAPSE_W, h: COLLAPSE_H, x: Px - PET_OFF_X, y: Py - PET_OFF_Y },
+  );
+}
+
+/** 窗口尺寸/位置缓动补间（ease-out cubic）：收放不再瞬间跳变。 */
+async function tween(
+  win: ReturnType<typeof getCurrentWindow>,
+  from: { w: number; h: number; x: number; y: number },
+  to: { w: number; h: number; x: number; y: number },
+  durMs = 180,
+): Promise<void> {
+  const steps = 10;
+  for (let i = 1; i <= steps; i++) {
+    const t = i / steps;
+    const e = 1 - Math.pow(1 - t, 3);
+    const lerp = (a: number, b: number) => a + (b - a) * e;
+    await win.setSize(new LogicalSize(Math.round(lerp(from.w, to.w)), Math.round(lerp(from.h, to.h))));
+    await win.setPosition(new LogicalPosition(Math.round(lerp(from.x, to.x)), Math.round(lerp(from.y, to.y))));
+    if (i < steps) await new Promise((r) => setTimeout(r, durMs / steps));
+  }
 }
 
 export const startDrag = (): Promise<void> => getCurrentWindow().startDragging();

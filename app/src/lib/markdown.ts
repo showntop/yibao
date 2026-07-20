@@ -61,7 +61,8 @@ export function renderMarkdownLite(src: string): string {
     if (h) {
       out.push(`<div class="md-h">${inline(h[2])}</div>`);
     } else if (/^\s*[-*]\s+/.test(line)) {
-      out.push(`<div class="md-li">${inline(line.replace(/^\s*[-*]\s+/, ""))}</div>`);
+      // 列表保留原标记（多是「- emoji 文字」，再叠项目符号会显脏），仅收窄缩进
+      out.push(`<div class="md-li">${inline(line.trim())}</div>`);
     } else if (/^\s*\|?\s*-{3,}/.test(line) || /^\s*-{3,}\s*$/.test(line)) {
       out.push('<div class="md-hr"></div>');
     } else if (line.trim() === "") {

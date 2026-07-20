@@ -41,13 +41,7 @@ const html = computed(() => (props.role === "ai" ? renderMarkdownLite(props.text
   margin: 2px 0;
 }
 .ai :deep(.md-li) {
-  padding-left: 14px;
-  position: relative;
-}
-.ai :deep(.md-li)::before {
-  content: "·";
-  position: absolute;
-  left: 4px;
+  padding-left: 2px;
 }
 .ai :deep(.md-kv) {
   padding-left: 2px;
