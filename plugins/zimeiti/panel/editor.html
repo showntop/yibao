@@ -20,6 +20,11 @@
     padding: 10px 14px; border-bottom: 1px solid #f3e7d9; flex-shrink: 0;
   }
   #title { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #back {
+    border: none; border-radius: 8px; background: transparent; color: #b3a08d;
+    font-size: 13px; padding: 4px 8px; cursor: pointer; flex-shrink: 0; font-family: inherit;
+  }
+  #back:hover { color: #ff8a5c; background: rgba(62, 50, 41, 0.07); }
   #note {
     width: 160px; border: 1px solid #f3e7d9; border-radius: 10px; padding: 5px 10px;
     font-size: 13px; background: #fff; color: inherit; outline: none; font-family: inherit;
@@ -54,6 +59,7 @@
 </head>
 <body>
 <header>
+  <button id="back" title="返回选题详情">‹ 返回</button>
   <span id="title">写作编辑器</span>
   <input id="note" placeholder="版本备注（可选）">
   <button id="save">保存为新版本</button>
@@ -111,6 +117,14 @@
 
   $("editor").addEventListener("input", function () {
     $("preview").innerHTML = md($("editor").value);
+  });
+
+  // ---- 返回详情（zimeiti.get 直调，结果带 detail 面板引用 → 面板窗切回详情页）----
+  $("back").addEventListener("click", function () {
+    if (!topicId) { setStatus("还没有选题数据", true); return; }
+    window.yibao.invoke("zimeiti.get", { id: topicId }).catch(function (e) {
+      setStatus("返回失败：" + (e && e.message ? e.message : e), true);
+    });
   });
 
   // ---- 加载最新稿（read_article 在 api.toml 白名单内；无稿报错属正常起点）----
