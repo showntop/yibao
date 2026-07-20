@@ -325,7 +325,7 @@ fn open_panel_window(app: AppHandle) -> Result<(), String> {
             .transparent(true)
             .decorations(false)
             .resizable(true)
-            .inner_size(680.0, 540.0)
+            .inner_size(780.0, 580.0)
             .build()
             .map_err(|e| format!("创建面板窗失败：{e}"))?;
     if let Ok(Some(mon)) = win.current_monitor() {
@@ -335,8 +335,8 @@ fn open_panel_window(app: AppHandle) -> Result<(), String> {
         let sw = mon.size().width as f64 / s;
         let sh = mon.size().height as f64 / s;
         // 屏幕中央偏右：宠物球多在屏幕角落，面板居中偏右避让
-        let x = mx + (sw - 680.0) / 2.0 + 80.0;
-        let y = my + (sh - 540.0) / 2.0;
+        let x = mx + (sw - 780.0) / 2.0 + 80.0;
+        let y = my + (sh - 580.0) / 2.0;
         let _ = win.set_position(tauri::LogicalPosition::new(x, y));
     }
     Ok(())

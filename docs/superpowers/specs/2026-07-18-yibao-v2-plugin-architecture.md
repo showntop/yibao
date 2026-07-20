@@ -236,6 +236,8 @@ panel schema 是一个 JSON 文件（manifest `[[panel]] src` 指向），描述
 
 顶层：`{"version": 1, "type": "list" | "detail" | "form" | "board", ...}`。
 
+任意 type 可声明 `back: {label, method, params?}`：面板左上角渲染「‹ 返回」链接，本质是一个 action（走 api.toml 白名单 + 闸门），用于详情 → 看板这类回跳（2026-07-20 实装）。board 的 `columns[]` 可带 `color`（CSS 色值），渲染为标签前的标识色点。
+
 ### 四个组件
 
 - **list**：列表。`bind.items` 绑定数组数据；`item` 描述每行：`title` / `subtitle`（可绑定）+ `actions`（行级操作数组）。

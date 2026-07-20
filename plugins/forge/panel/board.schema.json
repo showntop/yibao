@@ -3,12 +3,12 @@
   "type": "board",
   "bind": {"items": "$data.rows", "column": "$item.status"},
   "columns": [
-    {"key": "灵感", "label": "灵感"},
-    {"key": "快筛过", "label": "快筛过"},
-    {"key": "挑战中", "label": "挑战中"},
-    {"key": "已立项", "label": "已立项"},
-    {"key": "已搁置", "label": "已搁置"},
-    {"key": "已否决", "label": "已否决"}
+    {"key": "灵感", "label": "灵感", "color": "#9c8b7a"},
+    {"key": "快筛过", "label": "快筛过", "color": "#5b8def"},
+    {"key": "挑战中", "label": "挑战中", "color": "#ff8a5c"},
+    {"key": "已立项", "label": "已立项", "color": "#58b368"},
+    {"key": "已搁置", "label": "已搁置", "color": "#b8a88f"},
+    {"key": "已否决", "label": "已否决", "color": "#e5484d"}
   ],
   "card": {
     "title": "$item.title",

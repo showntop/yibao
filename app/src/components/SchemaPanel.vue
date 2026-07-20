@@ -15,6 +15,8 @@ const emit = defineEmits<{
 
 const kind = computed<string | undefined>(() => props.schema?.type);
 const ctx = computed<BindCtx>(() => ({ data: props.data }));
+/** 返回导航（协议：任意 type 可声明 back，渲染为左上角「‹ 返回」链接，本质是一个 action） */
+const backDecl = computed<ActionDecl | undefined>(() => props.schema?.back);
 
 /** 展示用文本：绑定解析后转字符串（undefined/null → 空串）。 */
 function text(v: unknown, item?: Record<string, unknown>): string {
@@ -25,6 +27,11 @@ function text(v: unknown, item?: Record<string, unknown>): string {
 /** 触发 action：params 里的绑定按当前上下文解析后上抛。 */
 function fire(a: ActionDecl, item?: Record<string, unknown>) {
   emit("action", { method: a.method, params: resolveParams(a.params, { data: props.data, item }) });
+}
+
+/** 返回导航点击（backDecl 存在才渲染按钮，这里只是收窄类型）。 */
+function fireBack() {
+  if (backDecl.value) fire(backDecl.value);
 }
 
 // ---- list ----
@@ -117,8 +124,13 @@ const fallbackJson = computed(() =>
 
 <template>
   <div class="panel">
+    <!-- 返回导航（可选）：回到上一级面板，本质是一个 action（走正常白名单/闸门） -->
+    <div v-if="backDecl" class="back-row">
+      <button class="back" @click="fireBack">‹ {{ backDecl.label || "返回" }}</button>
+    </div>
+
     <!-- list：卡片列表 + 行级 action -->
-    <div v-if="kind === 'list'" class="list">
+    <div v-if="kind === 'list'" class="list body-scroll">
       <div v-if="!listItems.length" class="empty">还没有内容，来一条？</div>
       <div v-for="(it, i) in listItems" :key="i" class="card">
         <div class="card-main">
@@ -138,7 +150,8 @@ const fallbackJson = computed(() =>
       </div>
     </div>
 
-    <!-- board：分列看板，卡片纵向堆叠 + 卡级 action；可选拖拽流转/快捷新增 -->
+    <!-- board：全高分列看板。列 = 头部（色点+计数徽标）/ 卡片滚动区 / 底部快捷新增；
+         卡片点击 = 首个卡级 action（通常进详情），悬停浮出全部 action -->
     <div v-else-if="kind === 'board'" class="board">
       <div v-if="!boardGroups.length" class="empty">还没有内容，来一条？</div>
       <div
@@ -151,9 +164,44 @@ const fallbackJson = computed(() =>
         @drop.prevent="dropOn(g.column.key)"
       >
         <div class="board-head">
+          <span class="col-dot" :style="g.column.color ? { background: g.column.color } : {}" />
           <span class="board-label">{{ g.column.label }}</span>
           <span class="board-count">{{ g.items.length }}</span>
         </div>
+        <TransitionGroup name="card-move" tag="div" class="board-cards">
+          <div
+            v-for="it in g.items"
+            :key="String(it.id ?? JSON.stringify(it))"
+            class="card"
+            :class="{
+              draggable: !!dragDecl,
+              dragging: draggingItem === it,
+              clickable: !!cardTpl.actions?.length,
+            }"
+            :draggable="!!dragDecl"
+            @dragstart="draggingItem = it"
+            @dragend="draggingItem = null; dragOverCol = null"
+            @click="cardTpl.actions?.length && fire(cardTpl.actions[0], it)"
+          >
+            <div class="card-main">
+              <div class="card-title">{{ text(cardTpl.title, it) }}</div>
+              <div v-if="cardTpl.subtitle" class="card-sub">{{ text(cardTpl.subtitle, it) }}</div>
+            </div>
+            <div v-if="cardTpl.actions?.length" class="card-hover-acts" @click.stop>
+              <button
+                v-for="a in cardTpl.actions"
+                :key="a.method + a.label"
+                class="act mini"
+                @click="fire(a, it)"
+              >
+                {{ a.label }}
+              </button>
+            </div>
+          </div>
+          <div v-if="!g.items.length" key="__empty__" class="board-empty">
+            {{ dragDecl ? "拖卡片到这里" : "空" }}
+          </div>
+        </TransitionGroup>
         <input
           v-if="quickAddDecl && (!quickAddDecl.column || quickAddDecl.column === g.column.key)"
           v-model="quickAddText"
@@ -161,38 +209,11 @@ const fallbackJson = computed(() =>
           :placeholder="quickAddDecl.placeholder ?? '快速记一条…'"
           @keyup.enter="quickAdd"
         />
-        <div v-if="!g.items.length" class="board-empty">空</div>
-        <TransitionGroup name="card-move">
-          <div
-            v-for="it in g.items"
-            :key="String(it.id ?? JSON.stringify(it))"
-            class="card"
-            :class="{ draggable: !!dragDecl, dragging: draggingItem === it }"
-            :draggable="!!dragDecl"
-            @dragstart="draggingItem = it"
-            @dragend="draggingItem = null; dragOverCol = null"
-          >
-            <div class="card-main">
-              <div class="card-title">{{ text(cardTpl.title, it) }}</div>
-              <div v-if="cardTpl.subtitle" class="card-sub">{{ text(cardTpl.subtitle, it) }}</div>
-            </div>
-            <div v-if="cardTpl.actions?.length" class="card-actions">
-              <button
-                v-for="a in cardTpl.actions"
-                :key="a.method + a.label"
-                class="act"
-                @click="fire(a, it)"
-              >
-                {{ a.label }}
-              </button>
-            </div>
-          </div>
-        </TransitionGroup>
       </div>
     </div>
 
     <!-- detail：字段表 + 底部 action 按钮行 -->
-    <div v-else-if="kind === 'detail'" class="detail">
+    <div v-else-if="kind === 'detail'" class="detail body-scroll">
       <div v-for="(f, i) in detailFields" :key="i" class="row">
         <span class="k">{{ f.label }}</span>
         <span class="v">{{ text(f.value) }}</span>
@@ -211,7 +232,7 @@ const fallbackJson = computed(() =>
     </div>
 
     <!-- form：输入收集 + submit action -->
-    <form v-else-if="kind === 'form'" class="form" @submit.prevent="onSubmit">
+    <form v-else-if="kind === 'form'" class="form body-scroll" @submit.prevent="onSubmit">
       <label v-for="f in formFields" :key="f.name" class="field">
         <span class="k">{{ f.label }}</span>
         <textarea v-if="f.input === 'textarea'" v-model="formValues[f.name]" rows="3" />
@@ -224,7 +245,7 @@ const fallbackJson = computed(() =>
     </form>
 
     <!-- 未知降级：折叠 JSON，不报错 -->
-    <details v-else class="fallback">
+    <details v-else class="fallback body-scroll">
       <summary>未知面板（{{ kind ?? "schema 缺失" }}），展开查看原始数据</summary>
       <pre>{{ fallbackJson }}</pre>
     </details>
@@ -235,10 +256,35 @@ const fallbackJson = computed(() =>
 .panel {
   height: 100%;
   box-sizing: border-box;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   padding: var(--yb-space-3);
   font-size: var(--yb-fs-lg);
   color: var(--yb-text);
+}
+.body-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+/* 返回导航 */
+.back-row {
+  flex-shrink: 0;
+  margin: calc(-1 * var(--yb-space-1)) 0 var(--yb-space-1) calc(-1 * var(--yb-space-1));
+}
+.back {
+  border: none;
+  background: transparent;
+  color: var(--yb-text-dim);
+  font-size: var(--yb-fs-md);
+  cursor: pointer;
+  padding: 3px 10px;
+  border-radius: var(--yb-radius-sm);
+}
+.back:hover {
+  color: var(--yb-accent);
+  background: var(--yb-btn-neutral);
 }
 .empty {
   color: var(--yb-text-dim);
@@ -274,17 +320,21 @@ const fallbackJson = computed(() =>
   gap: 6px;
   flex-shrink: 0;
 }
+/* ---- 看板：全高列布局 ---- */
 .board {
+  flex: 1;
+  min-height: 0;
   display: flex;
-  align-items: flex-start;
   gap: var(--yb-space-2);
-  height: 100%;
   overflow-x: auto;
 }
 .board-col {
-  flex: 1 0 160px;
-  min-width: 160px;
+  flex: 1 0 168px;
+  min-width: 168px;
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   padding: var(--yb-space-2);
   border-radius: var(--yb-radius-md);
   background: var(--yb-well);
@@ -292,20 +342,47 @@ const fallbackJson = computed(() =>
 .board-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--yb-space-2);
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 2px 4px var(--yb-space-2);
+}
+.col-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--yb-text-dim);
+  flex-shrink: 0;
+}
+.board-label {
   font-size: var(--yb-fs-md);
+  font-weight: 600;
   color: var(--yb-text-dim);
 }
 .board-count {
+  margin-left: auto;
   font-size: var(--yb-fs-sm);
+  color: var(--yb-text-dim);
+  background: var(--yb-btn-neutral);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.board-cards {
+  flex: 1;
+  min-height: 40px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px;
 }
 .board-empty {
+  border: 1.5px dashed var(--yb-surface-border);
+  border-radius: var(--yb-radius-sm);
   color: var(--yb-text-dim);
   text-align: center;
   font-size: var(--yb-fs-sm);
-  padding: var(--yb-space-3) 0;
-  opacity: 0.7;
+  padding: var(--yb-space-4) var(--yb-space-2);
+  opacity: 0.8;
 }
 /* 拖拽流转：可拖卡片 / 拖动中 / 目标列高亮 */
 .card.draggable {
@@ -319,20 +396,30 @@ const fallbackJson = computed(() =>
   outline-offset: -2px;
   background: var(--yb-accent-soft);
 }
-/* 快捷新增输入框 */
+/* 快捷新增：钉在列底部，平时低调、聚焦才显形 */
 .quick-add {
+  flex-shrink: 0;
   width: 100%;
   box-sizing: border-box;
-  margin-bottom: var(--yb-space-2);
+  margin-top: 6px;
   padding: 6px 10px;
-  border: 1px solid var(--yb-surface-border);
+  border: 1px solid transparent;
   border-radius: var(--yb-radius-sm);
-  background: var(--yb-surface);
+  background: transparent;
   color: var(--yb-text);
   font-size: var(--yb-fs-md);
   outline: none;
+  transition: background 0.15s, border-color 0.15s;
+}
+.quick-add::placeholder {
+  color: var(--yb-text-dim);
+  opacity: 0.75;
+}
+.quick-add:hover {
+  background: var(--yb-surface);
 }
 .quick-add:focus {
+  background: var(--yb-surface);
   border-color: var(--yb-accent);
 }
 /* 卡片跨列移动过渡（视觉回响） */
@@ -349,18 +436,46 @@ const fallbackJson = computed(() =>
 .card-move-leave-active {
   display: none;
 }
-/* board 内卡片：纵向堆叠、宽度撑满列 */
+/* board 内卡片：纵向堆叠、宽度撑满列；点击进详情，悬停浮出 action */
 .board .card {
   flex-direction: column;
   align-items: stretch;
   width: 100%;
   box-sizing: border-box;
-}
-.board .card:last-child {
+  position: relative;
   margin-bottom: 0;
+  padding: 10px 12px;
+  background: var(--yb-surface-solid);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.board .card.clickable:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--yb-shadow-soft), 0 4px 14px rgba(120, 72, 40, 0.1);
+}
+.board .card.clickable {
+  cursor: pointer;
+}
+.board .card.clickable.draggable {
+  cursor: grab;
+}
+.card-hover-acts {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  display: none;
+  gap: 4px;
+}
+.board .card:hover .card-hover-acts {
+  display: flex;
+}
+.act.mini {
+  padding: 2px 8px;
+  font-size: var(--yb-fs-sm);
+  background: var(--yb-accent-soft);
 }
 .detail-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   margin-top: var(--yb-space-3);
 }
