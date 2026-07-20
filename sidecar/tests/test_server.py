@@ -650,3 +650,64 @@ def test_serve_async_tts_cancelled_error_does_not_crash_brain(tmp_path):
 
     _run_async(_go())  # 不抛即过
     assert out[-1] == {"type": "run_done", "id": 1}
+
+
+def test_serve_async_panel_context_sets_focus(tmp_path):
+    """panel_context 消息更新焦点，随后的 run 把它注入 LLM 上下文；结束后复位防串测试。"""
+    import yibao_brain.server as srv
+
+    provider = FakeProvider(chunks=["在看 K3 那条"])
+    focus = {
+        "plugin": "zimeiti",
+        "panel": "detail",
+        "item": {"id": "abc123", "title": "K3 是垃圾", "status": "writing"},
+    }
+    out = []
+    old = srv._FOCUS["value"]
+    try:
+        _run_async(
+            serve_async(
+                make_reader([
+                    {"type": "panel_context", "focus": focus},
+                    {"id": 1, "type": "run", "text": "这个怎么样"},
+                ]),
+                lambda m: out.append(m),
+                use_real=False,
+                db_path=str(tmp_path / "a.db"),
+                provider=provider,
+            )
+        )
+        messages = provider.astream_calls[0]["messages"]
+        focus_msgs = [m for m in messages if m["role"] == "system" and "用户当前正在看" in m["content"]]
+        assert len(focus_msgs) == 1
+        assert "K3 是垃圾" in focus_msgs[0]["content"]
+        assert out[-1] == {"type": "run_done", "id": 1}
+    finally:
+        srv._FOCUS["value"] = old
+
+
+def test_serve_async_panel_context_clear(tmp_path):
+    """面板关闭（focus=null）后 run 不带焦点消息。"""
+    import yibao_brain.server as srv
+
+    provider = FakeProvider(chunks=["你好"])
+    out = []
+    old = srv._FOCUS["value"]
+    try:
+        _run_async(
+            serve_async(
+                make_reader([
+                    {"type": "panel_context", "focus": {"plugin": "zimeiti", "panel": "board"}},
+                    {"type": "panel_context", "focus": None},
+                    {"id": 1, "type": "run", "text": "你好"},
+                ]),
+                lambda m: out.append(m),
+                use_real=False,
+                db_path=str(tmp_path / "a.db"),
+                provider=provider,
+            )
+        )
+        messages = provider.astream_calls[0]["messages"]
+        assert not any("用户当前正在看" in m["content"] for m in messages if m["role"] == "system")
+    finally:
+        srv._FOCUS["value"] = old

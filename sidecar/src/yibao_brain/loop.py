@@ -52,6 +52,7 @@ class AgentLoop:
         max_steps: int = 8,
         host: Host | None = None,
         history: ConversationHistory | None = None,
+        focus_provider=None,
     ):
         self.provider = provider
         self.host = host
@@ -61,8 +62,31 @@ class AgentLoop:
         self.user_id = user_id
         self.max_steps = max_steps
         self.history = history
+        # 面板焦点（v2 §5 focus）：() -> {"plugin","panel","item"} | None，由壳侧 panel_context 维护
+        self.focus_provider = focus_provider
         # tool 执行收编到唯一执行器；loop 只留事件路由与 LLM 往返
         self.invoker = ToolInvoker(skills, classifier, gate, log, self.confirmer, host)
+
+    def _focus_message(self) -> dict | None:
+        """当前面板焦点 → system 消息（无焦点/异常 → None，不打扰对话）。"""
+        if self.focus_provider is None:
+            return None
+        try:
+            focus = self.focus_provider()
+        except Exception:
+            return None
+        if not focus or not focus.get("plugin"):
+            return None
+        item = focus.get("item") or {}
+        text = f"用户当前正在看「{focus['plugin']}」插件的 {focus.get('panel', '?')} 面板"
+        if item.get("title"):
+            text += f"，选中条目「{item['title']}」"
+        if item.get("id"):
+            text += f"（id={item['id']}" + (f"，状态={item['status']}" if item.get("status") else "") + "）"
+        if item.get("title") or item.get("id"):
+            text += "。用户说的「这个/它/当前这条」默认指该条目"
+        text += "；用户没问到时不要主动提及此上下文。"
+        return {"role": "system", "content": text}
 
     @property
     def skills(self) -> SkillRegistry:
@@ -99,6 +123,9 @@ class AgentLoop:
         messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
         if memories:
             messages.append({"role": "system", "content": "关于用户的记忆：\n" + "\n".join(memories)})
+        focus_msg = self._focus_message()
+        if focus_msg:
+            messages.append(focus_msg)
         if self.history:
             messages.extend(self.history.messages())
         messages.append({"role": "user", "content": user_text})
@@ -157,6 +184,9 @@ class AgentLoop:
         messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
         if memories:
             messages.append({"role": "system", "content": "关于用户的记忆：\n" + "\n".join(memories)})
+        focus_msg = self._focus_message()
+        if focus_msg:
+            messages.append(focus_msg)
         if self.history:
             messages.extend(self.history.messages())
         messages.append({"role": "user", "content": user_text})

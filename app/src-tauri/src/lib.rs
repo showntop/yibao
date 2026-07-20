@@ -369,6 +369,15 @@ fn interrupt(state: tauri::State<Brain>) -> Result<(), String> {
     write_to_brain(&state, serde_json::json!({ "id": 0, "type": "interrupt" }))
 }
 
+/// 面板焦点上报（v2 §5 focus）：壳面板窗内容变化时透传给大脑，run 时注入 LLM 上下文。
+#[tauri::command]
+fn report_panel_context(state: tauri::State<Brain>, focus: Value) -> Result<(), String> {
+    write_to_brain(
+        &state,
+        serde_json::json!({ "id": 0, "type": "panel_context", "focus": focus }),
+    )
+}
+
 /// 重新检测 macOS 权限（辅助功能/屏幕录制），结果经 brain-permissions 事件回前端。
 #[tauri::command]
 fn check_permissions(state: tauri::State<Brain>) -> Result<(), String> {
@@ -503,6 +512,7 @@ pub fn run() {
             get_current_panel,
             voice_start,
             interrupt,
+            report_panel_context,
             check_permissions,
             prompt_permission
         ])

@@ -241,7 +241,7 @@ panel schema 是一个 JSON 文件（manifest `[[panel]] src` 指向），描述
 - **list**：列表。`bind.items` 绑定数组数据；`item` 描述每行：`title` / `subtitle`（可绑定）+ `actions`（行级操作数组）。
 - **detail**：详情。`fields: [{label, value}]`，`value` 可绑定；可选 `actions`（操作数组，params 走 `$data` 上下文）。
 - **form**：表单。`fields: [{name, label, input: "text" | "textarea" | "number"}]`；`submit` 是一个 action，提交时把表单值并入 params。
-- **board**：看板（2026-07-19 随 forge 插件引入）。`bind.items` 绑定数组；`bind.column` 对每行求值得列归属（如 `$item.status`）；`columns: [{key, label}]` 声明列（按顺序渲染，值不匹配任何列的行归入首列，不丢数据）；`card` 描述卡片：`title` / `subtitle` + `actions`（同 list 的 `item`）。
+- **board**：看板（2026-07-19 随 forge 插件引入）。`bind.items` 绑定数组；`bind.column` 对每行求值得列归属（如 `$item.status`）；`columns: [{key, label}]` 声明列（按顺序渲染，值不匹配任何列的行归入首列，不丢数据）；`card` 描述卡片：`title` / `subtitle` + `actions`（同 list 的 `item`）。可选 `drag: {method, params}` 声明拖拽换列触发的 action（params 里 `$column` = 目标列 key），`quick_add: {method, params, column?}` 声明列内快捷新增（params 里 `$text` = 输入内容，`column` 指定落入列）——两者本质都是 action 声明，走同一 api.toml 白名单校验（2026-07-20 实装）。
 
 ### 绑定语法
 
@@ -261,3 +261,18 @@ panel schema 是一个 JSON 文件（manifest `[[panel]] src` 指向），描述
 ### 降级
 
 未知 `type`（或 schema 缺失/`version` 更高）：前端降级为 JSON 展示，不报错。
+
+
+## 附录 B：focus 协议与工作台条（2026-07-20 实装）
+
+定位：**面板是手、译宝是脑**——面板管确定性操作（direct action），译宝是唯一智能体；工作台里跟译宝说话走同一大脑，不引入第二个助手。
+
+### focus 协议
+
+- 壳面板窗内容变化（panel 事件刷新 / 补拉缓存）时，前端从面板数据推导焦点并上报：`{plugin, panel, item?}`。`data.rows` 恰好一条 → 该条为选中条目 `item = {id, title, status}`；多条/无 → 只有面板无条目。面板关闭/窗口销毁上报 `focus = null`。
+- 通道：壳→脑新增 `panel_context` 消息（`report_panel_context` 命令透传）；脑侧存于 `_FOCUS`，`AgentLoop.focus_provider` 惰性取用。
+- 注入：每次 run 把焦点渲染成一条 system 消息（「用户当前正在看「插件」的 X 面板，选中条目…；『这个/它』默认指该条目；用户没问到时不要主动提及」）。无焦点/异常 → 不注入。有条目才给指代提示，避免指代落空。
+
+### 工作台条
+
+面板窗底部常驻：团子（Avatar，状态经 brain-event 同步，可拖动面板窗/长按语音）+ 上下文 chip（有选中条目时显示「在看：{title}」）+ InputBar（文字/语音/打断）。提交走同一 `runInput`；流式回复在条上方浮气泡展示，final 后 ~6s 淡出，完整历史留在宠物窗。面板内确认仍走内嵌确认条，不打断对话。

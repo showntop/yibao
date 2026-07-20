@@ -81,6 +81,17 @@ export function panelAction(
   return invoke("panel_action", { id: id ?? Date.now() % 2 ** 31, method, params });
 }
 
+/** 面板焦点（v2 §5 focus）：面板内容/选中条目变化时上报，null = 面板关闭。
+ *  大脑把它注入 LLM 上下文，「这个/它」等指代有解。 */
+export interface PanelFocus {
+  plugin: string;
+  panel: string;
+  item?: { id?: unknown; title?: unknown; status?: unknown } | null;
+}
+export function reportPanelContext(focus: PanelFocus | null): Promise<void> {
+  return invoke("report_panel_context", { focus });
+}
+
 /** 订阅大脑事件流，返回取消监听函数。 */
 export function onBrainEvent(cb: (e: BrainEvent) => void): Promise<UnlistenFn> {
   return listen<BrainEvent>("brain-event", (ev) => cb(ev.payload));

@@ -456,3 +456,81 @@ def test_loop_executes_plugin_tool_called_by_safe_name(tmp_path):
     ar = next(e for e in events if e.kind == "action_result")
     assert ar.result.success and ar.result.data == {"kept": "hi"}
     assert kinds[-1] == "final_reply"
+
+
+def _build_focus_loop(tmp_path, provider, focus):
+    reg = SkillRegistry()
+    reg.register(EchoSkill())
+    return AgentLoop(
+        provider=provider,
+        skills=reg,
+        classifier=RiskClassifier(),
+        gate=Gate(GatePolicy()),
+        memory=FakeMemory(),
+        log=AuditLog(tmp_path / "a.db"),
+        focus_provider=lambda: focus,
+    )
+
+
+def test_focus_injected_as_system_message(tmp_path):
+    """面板焦点存在时，run 的消息里带一条「用户当前正在看」的 system 消息。"""
+    provider = FakeProvider(text="这条选题角度可以")
+    focus = {
+        "plugin": "zimeiti",
+        "panel": "detail",
+        "item": {"id": "abc123", "title": "K3 是垃圾", "status": "writing"},
+    }
+    loop = _build_focus_loop(tmp_path, provider, focus)
+    list(loop.run("这个怎么样"))
+    messages = provider.calls[0]["messages"]
+    focus_msgs = [m for m in messages if m["role"] == "system" and "用户当前正在看" in m["content"]]
+    assert len(focus_msgs) == 1
+    content = focus_msgs[0]["content"]
+    assert "zimeiti" in content and "detail" in content
+    assert "K3 是垃圾" in content and "abc123" in content and "writing" in content
+    assert "这个/它" in content
+
+
+def test_focus_none_injects_nothing(tmp_path):
+    """无焦点（None / 空 dict / 缺 plugin）时不注入额外 system 消息。"""
+    for focus in (None, {}, {"panel": "board"}):
+        provider = FakeProvider(text="你好")
+        loop = _build_focus_loop(tmp_path, provider, focus)
+        list(loop.run("你好"))
+        messages = provider.calls[0]["messages"]
+        assert not any("用户当前正在看" in m["content"] for m in messages if m["role"] == "system")
+
+
+def test_focus_without_item_has_no_pronoun_hint(tmp_path):
+    """焦点只有面板没有选中条目时，不出现「这个/它」指代提示。"""
+    provider = FakeProvider(text="看板上有 3 条")
+    loop = _build_focus_loop(tmp_path, provider, {"plugin": "zimeiti", "panel": "board"})
+    list(loop.run("有几条选题"))
+    messages = provider.calls[0]["messages"]
+    focus_msg = next(m for m in messages if m["role"] == "system" and "用户当前正在看" in m["content"])
+    assert "zimeiti" in focus_msg["content"] and "board" in focus_msg["content"]
+    assert "这个/它" not in focus_msg["content"]
+
+
+def test_focus_provider_exception_is_ignored(tmp_path):
+    """focus_provider 抛异常时对话照常，不注入焦点消息。"""
+    provider = FakeProvider(text="ok")
+
+    def boom():
+        raise RuntimeError("focus gone")
+
+    reg = SkillRegistry()
+    reg.register(EchoSkill())
+    loop = AgentLoop(
+        provider=provider,
+        skills=reg,
+        classifier=RiskClassifier(),
+        gate=Gate(GatePolicy()),
+        memory=FakeMemory(),
+        log=AuditLog(tmp_path / "a.db"),
+        focus_provider=boom,
+    )
+    events = list(loop.run("你好"))
+    assert events[-1].kind == "final_reply"
+    messages = provider.calls[0]["messages"]
+    assert not any("用户当前正在看" in m["content"] for m in messages if m["role"] == "system")

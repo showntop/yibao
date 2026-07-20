@@ -1,7 +1,7 @@
 """stdio 行分隔 JSON 服务：把 AgentLoop 接到桌面壳（Phase B 的 Tauri 侧）。
 
 协议（脑→壳）：hello（启动握手，含权限状态）、pong、permissions、event、run_done。
-协议（壳→脑）：run、confirm、voice_start、interrupt、ping、check_permissions、prompt_permission。
+协议（壳→脑）：run、confirm、voice_start、interrupt、ping、check_permissions、prompt_permission、panel_context。
 """
 from __future__ import annotations
 
@@ -29,6 +29,9 @@ from .skills_real import ComputerUseSkill, register_real_skills
 
 ReadMsg = Callable[[], dict | None]
 WriteMsg = Callable[[dict], None]
+
+# 面板焦点（v2 §5）：壳侧 panel_context 消息维护，run 时注入 LLM 上下文（「这个/它」有解）
+_FOCUS: dict = {"value": None}
 
 
 def _permissions_status() -> dict:
@@ -104,6 +107,7 @@ def build_loop(
         confirmer=confirmer or default_confirmer,
         host=host,
         history=ConversationHistory(hist) if hist else None,
+        focus_provider=lambda: _FOCUS["value"],
     )
 
 
@@ -482,6 +486,9 @@ async def serve_async(
             )
         elif rtype == "interrupt":
             _preempt_current()
+        elif rtype == "panel_context":
+            # 壳上面板焦点变化：存下来，下次 run 注入 LLM 上下文
+            _FOCUS["value"] = msg.get("focus")
         elif rtype == "confirm":
             fut = pending_confirm["future"]
             if fut is not None and not fut.done():
