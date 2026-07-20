@@ -16,7 +16,10 @@ const stateLabel: Record<string, string> = {
 
 const chat: Array<{ role: "user" | "ai"; text: string }> = [
   { role: "user", text: "帮我把这个点子记下来：给播客做一期「AI 桌宠的一天」" },
-  { role: "ai", text: "记好啦 ✏️ 已存进闪念，标签 #播客 #选题。要现在展开成大纲吗？" },
+  {
+    role: "ai",
+    text: '### ✅ 选题已记录！\n| 项目 | 内容 |\n|------|------|\n| 📌 **标题** | AI 桌宠的一天 |\n| 🗂 **状态** | 🟡 候选 |\n\n想补充一下吗：\n- 🎯 **切入角度** — 从哪个点写？\n- 📱 **目标平台** — 发在哪？\n\n或者直接说「写初稿」也行～',
+  },
   { role: "user", text: "先不用，我自己再看看" },
   { role: "ai", text: "好嘞，它在闪念里等你。随时喊我。" },
 ];
