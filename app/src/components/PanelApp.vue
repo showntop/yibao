@@ -1,14 +1,20 @@
 <script setup lang="ts">
 // 面板窗根组件：标题栏（可拖动 + 面板名 + 关闭）/ 内嵌确认条 / 错误细条 / SchemaPanel 撑满。
 // 事件与命令复用 app 级 brain-event / invoke（与宠物窗同通道，无新协议）。
-import { onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import SchemaPanel from "./SchemaPanel.vue";
+import WebviewPanel from "./WebviewPanel.vue";
 import { onBrainEvent, panelAction, sendConfirm, type BrainEvent } from "../lib/brain";
 
-// 当前面板：kind="panel" 事件整体替换刷新
-const current = ref<{ panel: string; schema: any; data: Record<string, unknown> } | null>(null);
+// 当前面板：kind="panel" 事件整体替换刷新（webview 非空 → webview 面板，否则 schema 面板）
+const current = ref<{
+  panel: string;
+  schema: any;
+  webview: { html?: string } | null;
+  data: Record<string, unknown>;
+} | null>(null);
 const errorText = ref(""); // 面板内顶部错误细条（不进对话气泡）
 const pending = ref<{ id: string; skill: string; desc: string } | null>(null); // 内嵌确认条
 let unlisten: (() => void) | null = null;
@@ -20,6 +26,7 @@ function onEvent(e: BrainEvent) {
       current.value = {
         panel: e.payload?.panel ?? "",
         schema: (e.payload?.schema as any) ?? null,
+        webview: (e.payload?.webview as { html?: string } | null) ?? null,
         data: e.payload?.data ?? {},
       };
       break;
@@ -67,15 +74,21 @@ function close() {
 
 async function pullCache() {
   try {
-    const cached = await invoke<{ panel: string; schema: any; data: Record<string, unknown> } | null>(
-      "get_current_panel"
-    );
+    const cached = await invoke<{
+      panel: string;
+      schema: any;
+      webview: { html?: string } | null;
+      data: Record<string, unknown>;
+    } | null>("get_current_panel");
     if (cached && current.value === null) current.value = cached;
   } catch (err) {
     // 命令缺失（旧壳进程）等问题要看得见，不能静默停在占位页
     errorText.value = "面板数据拉取失败：" + String(err);
   }
 }
+
+// webview 面板 html（空串 → 走 schema 面板/占位）
+const webviewHtml = computed(() => current.value?.webview?.html ?? "");
 
 onMounted(async () => {
   unlisten = await onBrainEvent(onEvent);
@@ -110,8 +123,15 @@ onUnmounted(() => {
     <div v-if="errorText" class="error-bar">⚠️ {{ errorText }}</div>
 
     <div class="content">
+      <WebviewPanel
+        v-if="current && webviewHtml"
+        :key="current.panel"
+        :panel="current.panel"
+        :html="webviewHtml"
+        :data="current.data"
+      />
       <SchemaPanel
-        v-if="current"
+        v-else-if="current"
         :panel="current.panel"
         :schema="current.schema"
         :data="current.data"

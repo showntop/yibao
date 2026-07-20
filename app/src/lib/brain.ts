@@ -32,10 +32,12 @@ export interface BrainResult {
   panel?: string | null;
 }
 
-/** kind="panel" 事件的 payload：面板引用 + schema（找不到为 null，前端降级）+ 注入数据。 */
+/** kind="panel" 事件的 payload：面板引用 + schema（找不到为 null，前端降级）+ webview HTML + 注入数据。 */
 export interface PanelPayload {
   panel?: string;
   schema?: unknown;
+  /** webview 面板：插件 HTML 文本（父侧注入桥 JS 后以 iframe srcdoc 渲染）；schema 面板无此字段 */
+  webview?: { html?: string } | null;
   data?: Record<string, unknown>;
 }
 
@@ -68,9 +70,13 @@ export function interrupt(): Promise<void> {
   return invoke("interrupt");
 }
 
-/** 面板动作：调 api.toml 白名单内的方法（id 毫秒取模，一次请求一个够唯一）。 */
-export function panelAction(method: string, params: Record<string, unknown>): Promise<void> {
-  return invoke("panel_action", { id: Date.now() % 2 ** 31, method, params });
+/** 面板动作：调 api.toml 白名单内的方法（id 毫秒取模，一次请求一个够唯一；webview 桥传自有 id 做回包关联）。 */
+export function panelAction(
+  method: string,
+  params: Record<string, unknown>,
+  id?: number,
+): Promise<void> {
+  return invoke("panel_action", { id: id ?? Date.now() % 2 ** 31, method, params });
 }
 
 /** 订阅大脑事件流，返回取消监听函数。 */
