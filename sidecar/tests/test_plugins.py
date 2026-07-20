@@ -634,6 +634,17 @@ def test_tool_required_params_in_schema(data_dir, tmp_path):
     assert schema["parameters"]["required"] == ["text"]
 
 
+def test_tool_with_panel_advertises_panel_opening(data_dir, tmp_path):
+    """声明 panel 的 tool，LLM 可见描述尾部带「会打开面板」提示——模型本不知道面板存在，
+    不告诉它，「打开看板」这类请求它只会用文字列数据、不调工具。"""
+    _write_plugin(tmp_path, "notes", NOTES_PANEL_MANIFEST, {"panel/list.schema.json": LIST_SCHEMA})
+    reg = SkillRegistry()
+    _load(tmp_path, reg)
+    schema = reg.get("notes.list").openai_schema()
+    assert schema["description"] == "列出闪念（调用成功会在屏幕面板窗打开「notes · list」）"
+    # 未声明 panel 的 tool 描述保持原样（由 test_db_tool_openai_schema_uses_manifest 覆盖）
+
+
 def test_webview_panel_loaded_as_html(data_dir, tmp_path):
     # 独立插件 id，避免与模块级 _PANELS 里其他测试注册的 notes:list 互相污染
     manifest = NOTES_PANEL_MANIFEST.replace('type = "schema"', 'type = "webview"').replace('id = "notes"', 'id = "webv"')

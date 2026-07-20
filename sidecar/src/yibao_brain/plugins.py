@@ -151,10 +151,17 @@ class DeclarativeTool(Skill):
         self._registry = registry  # composite 顺序调用同 registry 的其他 tool
 
     def openai_schema(self) -> dict:
-        """用 manifest 的 description 和 [tool.params]（required 列出必填参数）。"""
+        """用 manifest 的 description 和 [tool.params]（required 列出必填参数）。
+
+        声明了 panel 的 tool 在描述尾部追加「会打开面板」提示：模型不知道面板存在，
+        不告诉它，「打开看板」这类请求它只会用文字列数据、不调工具。
+        """
+        desc = self.description
+        if self._panel_ref:
+            desc += f"（调用成功会在屏幕面板窗打开「{get_panel_title(self._panel_ref)}」）"
         return {
             "name": self.id,
-            "description": self.description,
+            "description": desc,
             "parameters": {"type": "object", "properties": self._params_schema, "required": self._required},
         }
 
