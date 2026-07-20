@@ -437,7 +437,7 @@ def test_panel_action_direct_end_to_end(tmp_path, monkeypatch):
     ar = next(e for e in evs if e["kind"] == "action_result")
     assert ar["result"]["success"] and ar["result"]["data"] == {"deleted": "r1"}
     pe = next(e for e in evs if e["kind"] == "panel")       # 带 panel 引用 → panel 事件
-    assert pe["payload"] == {"panel": "tdel:list", "schema": {"type": "list"}, "data": {"deleted": "r1"}}
+    assert pe["payload"] == {"panel": "tdel:list", "title": "tdel:list", "schema": {"type": "list"}, "data": {"deleted": "r1"}}
     assert kinds.index("panel") > kinds.index("action_result")
     assert out[-1] == {"type": "run_done", "id": 1}
 
@@ -466,6 +466,7 @@ def test_panel_action_api_panel_override_emits_webview(tmp_path, monkeypatch):
     pe = next(e for e in evs if e["kind"] == "panel")
     assert pe["payload"] == {
         "panel": "tdel:editor",
+        "title": "tdel:editor",
         "schema": None,
         "webview": {"html": "<html>编辑器</html>"},
         "data": {"deleted": "r1"},

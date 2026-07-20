@@ -108,14 +108,17 @@ table = "topics"
 [[panel]]
 type = "schema"
 name = "board"
+label = "选题看板"
 src = "panel/board.schema.json"
 
 [[panel]]
 type = "schema"
 name = "detail"
+label = "选题详情"
 src = "panel/detail.schema.json"
 
 [[panel]]
 type = "webview"
 name = "editor"
+label = "写作编辑器"
 src = "panel/editor.html"

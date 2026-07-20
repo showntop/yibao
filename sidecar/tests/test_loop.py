@@ -354,6 +354,7 @@ def test_run_emits_panel_event_after_action_result(tmp_path, monkeypatch):
     from yibao_brain import plugins
 
     monkeypatch.setitem(plugins._PANELS, "notes:list", {"type": "list"})
+    monkeypatch.delitem(plugins._PANEL_TITLES, "notes:list", raising=False)  # 全局注册表可能被其他测试写入，隔离为缺省 ref
     provider = _TwoStepProvider(
         first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="paneldemo", params={})]),
         second=FakeProvider(text="done"),
@@ -363,13 +364,14 @@ def test_run_emits_panel_event_after_action_result(tmp_path, monkeypatch):
     kinds = [e.kind for e in events]
     assert kinds.index("panel") == kinds.index("action_result") + 1  # 紧跟其后
     pe = next(e for e in events if e.kind == "panel")
-    assert pe.payload == {"panel": "notes:list", "schema": {"type": "list"}, "data": {"rows": [1]}}
+    assert pe.payload == {"panel": "notes:list", "title": "notes:list", "schema": {"type": "list"}, "data": {"rows": [1]}}
 
 
 def test_arun_emits_panel_event_after_action_result(tmp_path, monkeypatch):
     from yibao_brain import plugins
 
     monkeypatch.setitem(plugins._PANELS, "notes:list", {"type": "list"})
+    monkeypatch.delitem(plugins._PANEL_TITLES, "notes:list", raising=False)  # 全局注册表可能被其他测试写入，隔离为缺省 ref
     provider = _TwoStepProvider(
         first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="paneldemo", params={})]),
         second=FakeProvider(text="done"),
@@ -391,7 +393,7 @@ def test_panel_event_unknown_schema_gives_none(tmp_path):
     loop = _build_panel_loop(tmp_path, provider, _PanelSkill(ref="zz:ghost"))
     events = list(loop.run("go"))
     pe = next(e for e in events if e.kind == "panel")
-    assert pe.payload == {"panel": "zz:ghost", "schema": None, "data": {"rows": [1]}}
+    assert pe.payload == {"panel": "zz:ghost", "title": "zz:ghost", "schema": None, "data": {"rows": [1]}}
 
 
 def test_no_panel_event_without_ref(tmp_path):

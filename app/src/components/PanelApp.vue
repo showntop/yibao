@@ -11,6 +11,7 @@ import { onBrainEvent, panelAction, sendConfirm, type BrainEvent } from "../lib/
 // 当前面板：kind="panel" 事件整体替换刷新（webview 非空 → webview 面板，否则 schema 面板）
 const current = ref<{
   panel: string;
+  title: string;
   schema: any;
   webview: { html?: string } | null;
   data: Record<string, unknown>;
@@ -25,6 +26,7 @@ function onEvent(e: BrainEvent) {
     case "panel":
       current.value = {
         panel: e.payload?.panel ?? "",
+        title: e.payload?.title ?? e.payload?.panel ?? "",
         schema: (e.payload?.schema as any) ?? null,
         webview: (e.payload?.webview as { html?: string } | null) ?? null,
         data: e.payload?.data ?? {},
@@ -76,11 +78,14 @@ async function pullCache() {
   try {
     const cached = await invoke<{
       panel: string;
+      title?: string;
       schema: any;
       webview: { html?: string } | null;
       data: Record<string, unknown>;
     } | null>("get_current_panel");
-    if (cached && current.value === null) current.value = cached;
+    if (cached && current.value === null) {
+      current.value = { ...cached, title: cached.title ?? cached.panel };
+    }
   } catch (err) {
     // 命令缺失（旧壳进程）等问题要看得见，不能静默停在占位页
     errorText.value = "面板数据拉取失败：" + String(err);
@@ -108,7 +113,7 @@ onUnmounted(() => {
 <template>
   <div class="panel-shell">
     <div class="titlebar" data-tauri-drag-region>
-      <span class="name">{{ current?.panel ?? "面板" }}</span>
+      <span class="name">{{ current?.title ?? "面板" }}</span>
       <button class="x" title="关闭" @click="close">×</button>
     </div>
 

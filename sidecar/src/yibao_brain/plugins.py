@@ -270,6 +270,7 @@ class DeclarativeTool(Skill):
 # ---------- panel schema 注册表（⑤a） ----------
 
 _PANELS: dict[str, dict] = {}
+_PANEL_TITLES: dict[str, str] = {}
 
 
 def get_panel(ref: str) -> dict | None:
@@ -277,22 +278,29 @@ def get_panel(ref: str) -> dict | None:
     return _PANELS.get(ref)
 
 
+def get_panel_title(ref: str) -> str:
+    """面板显示名（插件名 · 面板 label）；未加载时退化为 ref。"""
+    return _PANEL_TITLES.get(ref, ref)
+
+
 def panel_payload(result) -> dict | None:
     """result.panel 非空时构造 panel 事件 payload（loop 与 panel_action 共用）。
 
-    schema 面板：{panel, schema, data}；webview 面板：{panel, schema: None, webview: {html}, data}
-    （html 随事件发出，前端 iframe srcdoc 渲染；schema 面板 payload 形状保持不变）。
+    schema 面板：{panel, title, schema, data}；webview 面板：{panel, title, schema: None, webview: {html}, data}
+    （html 随事件发出，前端 iframe srcdoc 渲染；schema 面板 payload 其余形状保持不变）。
     """
     if not result.panel:
         return None
+    title = get_panel_title(result.panel)
     panel = get_panel(result.panel)
     if isinstance(panel, dict) and panel.get("type") == "webview" and "html" in panel:
-        return {"panel": result.panel, "schema": None, "webview": {"html": panel["html"]}, "data": result.data}
-    return {"panel": result.panel, "schema": panel, "data": result.data}
+        return {"panel": result.panel, "title": title, "schema": None, "webview": {"html": panel["html"]}, "data": result.data}
+    return {"panel": result.panel, "title": title, "schema": panel, "data": result.data}
 
 
 def _load_panels(child: Path, pid: str, manifest: dict) -> None:
-    """解析 manifest [[panel]]：schema 读 JSON、webview 读 HTML 文本存注册表；未知类型记错误跳过。"""
+    """解析 manifest [[panel]]：schema 读 JSON、webview 读 HTML 文本存注册表；未知类型记错误跳过。
+    显示名 = 插件 name · 面板 label（label 缺省用面板 name）。"""
     for p in manifest.get("panel") or []:
         name = p.get("name") or "main"
         ref = f"{pid}:{name}"
@@ -300,6 +308,7 @@ def _load_panels(child: Path, pid: str, manifest: dict) -> None:
         if ptype not in ("schema", "webview"):
             print(f"[yibao] 插件 {pid} panel {ref} 类型 {ptype!r} 暂不支持（已跳过）", file=sys.stderr)
             continue
+        _PANEL_TITLES[ref] = f"{manifest.get('name') or pid} · {p.get('label') or name}"
         try:
             text = (child / p["src"]).read_text(encoding="utf-8")
             _PANELS[ref] = {"type": "webview", "html": text} if ptype == "webview" else json.loads(text)

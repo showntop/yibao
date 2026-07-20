@@ -683,6 +683,7 @@ def test_panel_payload_webview_shape(data_dir, tmp_path):
     r = ActionResult(success=True, data={"rows": [1]}, panel="webv:list")
     assert panel_payload(r) == {
         "panel": "webv:list",
+        "title": "webv · list",
         "schema": None,
         "webview": {"html": "<html>wv</html>"},
         "data": {"rows": [1]},

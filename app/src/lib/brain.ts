@@ -35,6 +35,8 @@ export interface BrainResult {
 /** kind="panel" 事件的 payload：面板引用 + schema（找不到为 null，前端降级）+ webview HTML + 注入数据。 */
 export interface PanelPayload {
   panel?: string;
+  /** 面板显示名（插件名 · 面板 label，sidecar 注入；缺省退化用 panel ref） */
+  title?: string;
   schema?: unknown;
   /** webview 面板：插件 HTML 文本（父侧注入桥 JS 后以 iframe srcdoc 渲染）；schema 面板无此字段 */
   webview?: { html?: string } | null;
