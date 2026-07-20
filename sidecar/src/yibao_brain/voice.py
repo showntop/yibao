@@ -32,6 +32,12 @@ class VoiceCapability:
         pcm = self.recorder.record_until_silence()
         return self.recognizer.transcribe(pcm)
 
+    def stop_listen(self) -> None:
+        """请求停止进行中的录音（interrupt 通路）；recorder 不支持则静默忽略。"""
+        stop = getattr(self.recorder, "stop", None)
+        if callable(stop):
+            stop()
+
     def speak(self, text: str) -> None:
         if text:
             self.speaker.speak(text)
@@ -95,12 +101,18 @@ class SounddeviceRecorder:
         self._vad_model = vad_model
         self._max = max_seconds
         self._min_silence = min_silence
+        self._stop = threading.Event()
+
+    def stop(self) -> None:
+        """外部打断（interrupt）：录音循环下一拍退出，返回空段（= 未识别到语音）。"""
+        self._stop.set()
 
     def record_until_silence(self):
         import numpy as np
         import sherpa_onnx
         import sounddevice as sd
 
+        self._stop.clear()
         cfg = sherpa_onnx.VadModelConfig()
         cfg.silero_vad.model = self._vad_model
         cfg.silero_vad.min_silence_duration = self._min_silence
@@ -112,7 +124,7 @@ class SounddeviceRecorder:
         buf = np.array([], dtype=np.float32)
         total = 0
         with sd.InputStream(channels=1, dtype="float32", samplerate=SR) as s:
-            while total < SR * self._max:
+            while total < SR * self._max and not self._stop.is_set():
                 samples, _ = s.read(int(0.1 * SR))  # 每 100ms 读一批
                 if len(samples):
                     buf = np.concatenate([buf, samples.reshape(-1)])
@@ -125,7 +137,7 @@ class SounddeviceRecorder:
                         seg = np.array(vad.front.samples, dtype=np.float32)
                         vad.pop()
                         return seg
-        return np.zeros(SR, dtype=np.float32)  # 超时无语音
+        return np.zeros(SR, dtype=np.float32)  # 超时/被打断：无语音
 
 
 class EdgeTtsSpeaker:

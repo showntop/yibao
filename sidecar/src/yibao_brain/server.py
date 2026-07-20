@@ -384,10 +384,22 @@ async def serve_async(
 
     async def _drive_voice_start(rid, cancel: asyncio.Event):
         write_msg({"type": "event", "event": {"kind": "listening"}})
+
+        async def _watch_cancel():
+            await cancel.wait()
+            voice.stop_listen()  # 打断（interrupt）→ 录音循环下一拍退出
+
+        watcher = asyncio.ensure_future(_watch_cancel())
         try:
             text = await ai_loop.run_in_executor(None, voice.listen)
         except Exception as e:
             write_msg({"type": "event", "event": {"kind": "error", "text": f"语音识别失败：{e}"}})
+            write_msg({"type": "run_done", "id": rid})
+            return
+        finally:
+            watcher.cancel()
+        if cancel.is_set():  # 聆听被打断：不走 listening_done（避免误进 think 态）
+            write_msg({"type": "event", "event": {"kind": "interrupted"}})
             write_msg({"type": "run_done", "id": rid})
             return
         write_msg({"type": "event", "event": {"kind": "listening_done", "text": text}})

@@ -163,6 +163,52 @@ def test_serve_async_voice_interrupt_stops_speaking(tmp_path):
     assert "speaking_done" not in kinds  # 被打断，无正常收尾
 
 
+def test_serve_async_voice_interrupt_cancels_listening(tmp_path):
+    # 聆听中 interrupt → stop_listen 打断录音，回 interrupted（而非 listening_done 误进 think 态）
+    import time
+
+    def _delayed_reader(specs):
+        it = iter(specs)
+
+        def _r():
+            try:
+                msg, delay = next(it)
+            except StopIteration:
+                return None
+            if delay:
+                time.sleep(delay)
+            return msg
+
+        return _r
+
+    provider = FakeProvider(chunks=["不该出现"])
+    voice = FakeVoice(listen_block=True)  # listen 挂起，直到 stop_listen
+    out = []
+
+    async def _go():
+        await serve_async(
+            _delayed_reader(
+                [
+                    ({"id": 1, "type": "voice_start"}, 0.0),
+                    ({"type": "interrupt"}, 0.1),
+                ]
+            ),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=provider,
+            voice=voice,
+        )
+
+    asyncio.run(_go())
+    kinds = [m["event"]["kind"] for m in out if m["type"] == "event"]
+    assert voice.listen_stopped
+    assert "interrupted" in kinds
+    assert "listening_done" not in kinds
+    assert "final_reply_chunk" not in kinds  # 没进 agent 生成
+    assert out[-1] == {"type": "run_done", "id": 1}
+
+
 # ---------- Plan 5 修复：TTS 合成/播放管道化 + VAD 阈值可配 ----------
 
 

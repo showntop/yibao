@@ -43,7 +43,8 @@ let unlistenPerms: (() => void) | null = null;
 const statusText = computed(
   () => ({ idle: "待命中", listen: "聆听中", think: "思考中…", work: "操作中…", say: "说话中…" }[state.value]),
 );
-const busy = computed(() => state.value === "think" || state.value === "work" || state.value === "say");
+const busy = computed(() => state.value !== "idle"); // listen/think/work/say 都可打断（聆听=取消录音）
+const suggestions = ["记一条闪念", "看看选题看板", "帮我写点什么"];
 const missingPerms = computed(() => perms.value !== null && (!perms.value.ax || !perms.value.screen));
 
 async function expand() {
@@ -231,7 +232,7 @@ onUnmounted(() => {
         <Avatar :state="state" :size="44" @click="collapse" />
         <div class="meta">
           <span class="name">译宝</span>
-          <span class="status" :class="state">{{ statusText }}</span>
+          <span class="status" :class="state"><i class="dot" />{{ statusText }}</span>
         </div>
         <button class="collapse-btn" title="收起" @click="collapse">—</button>
       </header>
@@ -239,6 +240,12 @@ onUnmounted(() => {
       <PermissionsBanner v-if="missingPerms && perms" :perms="perms" />
 
       <div class="bubbles">
+        <div v-if="!bubbles.length" class="empty-hint">
+          <p>叫我做什么都行～</p>
+          <div class="chips">
+            <button v-for="c in suggestions" :key="c" class="chip" @click="submit(c)">{{ c }}</button>
+          </div>
+        </div>
         <Bubble v-for="(b, i) in bubbles" :key="i" :role="b.role" :text="b.text" />
       </div>
 
@@ -326,6 +333,31 @@ onUnmounted(() => {
 .status {
   font-size: var(--yb-fs-sm);
   color: var(--yb-text-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+/* 状态点：颜色跟团子状态色环同源 */
+.status .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dot, var(--yb-idle));
+}
+.status.idle {
+  --dot: var(--yb-idle);
+}
+.status.listen {
+  --dot: var(--yb-listen);
+}
+.status.think {
+  --dot: var(--yb-think);
+}
+.status.work {
+  --dot: var(--yb-work);
+}
+.status.say {
+  --dot: var(--yb-say);
 }
 .status.think,
 .status.work {
@@ -361,6 +393,37 @@ onUnmounted(() => {
 .bubbles::-webkit-scrollbar-thumb {
   background: var(--yb-surface-border);
   border-radius: 3px;
+}
+/* 空状态：气泡区占位引导 */
+.empty-hint {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--yb-space-3);
+  color: var(--yb-text-dim);
+  font-size: var(--yb-fs-md);
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--yb-space-2);
+}
+.chip {
+  padding: 5px 12px;
+  border: 1px solid var(--yb-surface-border);
+  border-radius: 999px;
+  background: var(--yb-surface);
+  color: var(--yb-text-dim);
+  font-size: var(--yb-fs-md);
+  cursor: pointer;
+  transition: color var(--yb-dur) var(--yb-ease), border-color var(--yb-dur) var(--yb-ease);
+}
+.chip:hover {
+  color: var(--yb-accent);
+  border-color: var(--yb-accent);
 }
 .status-collapsed {
   position: absolute;
