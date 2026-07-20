@@ -40,6 +40,10 @@ export interface BoardSchema {
   bind?: { items?: string; column?: string };
   columns?: BoardColumn[];
   card?: { title?: string; subtitle?: string; actions?: ActionDecl[] };
+  /** 拖拽流转（可选）：卡片拖入目标列时触发；params 里 $column = 目标列 key */
+  drag?: { method: string; params?: Record<string, unknown> };
+  /** 快捷新增（可选）：指定列顶部输入框，Enter 触发；params 里 $text = 输入内容 */
+  quick_add?: { method: string; params?: Record<string, unknown>; column?: string; placeholder?: string };
 }
 
 export type SchemaDoc = ListSchema | DetailSchema | FormSchema | BoardSchema;

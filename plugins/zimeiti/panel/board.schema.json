@@ -14,5 +14,7 @@
     "actions": [
       {"label": "详情", "method": "zimeiti.get", "params": {"id": "$item.id"}}
     ]
-  }
+  },
+  "drag": {"method": "zimeiti.move", "params": {"id": "$item.id", "status": "$column"}},
+  "quick_add": {"method": "zimeiti.add", "params": {"title": "$text"}, "column": "候选", "placeholder": "快速记一条选题…"}
 }

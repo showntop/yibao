@@ -5,6 +5,12 @@ handler = "zimeiti.list"
 direct = true
 
 [[method]]
+name = "add"
+handler = "zimeiti.add"
+direct = true
+refresh = "zimeiti.list"   # 快捷新增后跟一次看板查询
+
+[[method]]
 name = "get"
 handler = "zimeiti.get"
 direct = true

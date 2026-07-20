@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // schema 面板（协议 v1 附录 A）：白名单渲染 list/detail/form/board；未知 type 或无 schema → 折叠 JSON 降级。
 // 标题栏/关闭由外层容器（PanelApp）负责；本组件只管内容，撑满容器高度、内部滚动。
-import { computed, reactive, watchEffect } from "vue";
+import { computed, reactive, ref, watchEffect } from "vue";
 import { resolve, resolveParams, type ActionDecl, type BindCtx, type BoardColumn } from "../lib/schema";
 
 const props = defineProps<{
@@ -38,6 +38,37 @@ const itemTpl = computed(() => props.schema?.item ?? {});
 // ---- board（items 解析复用 list 的 listItems）----
 const boardColumns = computed<BoardColumn[]>(() => props.schema?.columns ?? []);
 const cardTpl = computed(() => props.schema?.card ?? {});
+const dragDecl = computed(() => props.schema?.drag);
+const quickAddDecl = computed(() => props.schema?.quick_add);
+/** 拖拽中的卡片 + 悬停目标列（drag-over 高亮用）。 */
+const draggingItem = ref<Record<string, unknown> | null>(null);
+const dragOverCol = ref<string | null>(null);
+const quickAddText = ref("");
+
+/** 触发拖拽流转：$column 解析为目标列 key，其余绑定照旧。 */
+function dropOn(colKey: string) {
+  const d = dragDecl.value;
+  const it = draggingItem.value;
+  draggingItem.value = null;
+  dragOverCol.value = null;
+  if (!d || !it) return;
+  const params = resolveParams(d.params, { data: props.data, item: it });
+  for (const k of Object.keys(params)) {
+    if (params[k] === "$column") params[k] = colKey;
+  }
+  emit("action", { method: d.method, params });
+}
+
+/** 快捷新增：Enter 提交，$text 解析为输入内容。 */
+function quickAdd() {
+  const q = quickAddDecl.value;
+  const t = quickAddText.value.trim();
+  if (!q || !t) return;
+  quickAddText.value = "";
+  const params: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(q.params ?? {})) params[k] = v === "$text" ? t : v;
+  emit("action", { method: q.method, params });
+}
 /** 按 bind.column 求值分组；不匹配任何声明列的行归入第一列（不丢数据）。 */
 const boardGroups = computed<{ column: BoardColumn; items: Record<string, unknown>[] }[]>(() => {
   const groups = boardColumns.value.map((column) => ({
@@ -107,31 +138,56 @@ const fallbackJson = computed(() =>
       </div>
     </div>
 
-    <!-- board：分列看板，卡片纵向堆叠 + 卡级 action -->
+    <!-- board：分列看板，卡片纵向堆叠 + 卡级 action；可选拖拽流转/快捷新增 -->
     <div v-else-if="kind === 'board'" class="board">
       <div v-if="!boardGroups.length" class="empty">还没有内容，来一条？</div>
-      <div v-for="g in boardGroups" :key="g.column.key" class="board-col">
+      <div
+        v-for="g in boardGroups"
+        :key="g.column.key"
+        class="board-col"
+        :class="{ 'drag-over': dragOverCol === g.column.key }"
+        @dragover.prevent="dragOverCol = g.column.key"
+        @dragleave="dragOverCol === g.column.key && (dragOverCol = null)"
+        @drop.prevent="dropOn(g.column.key)"
+      >
         <div class="board-head">
           <span class="board-label">{{ g.column.label }}</span>
           <span class="board-count">{{ g.items.length }}</span>
         </div>
+        <input
+          v-if="quickAddDecl && (!quickAddDecl.column || quickAddDecl.column === g.column.key)"
+          v-model="quickAddText"
+          class="quick-add"
+          :placeholder="quickAddDecl.placeholder ?? '快速记一条…'"
+          @keyup.enter="quickAdd"
+        />
         <div v-if="!g.items.length" class="board-empty">空</div>
-        <div v-for="(it, i) in g.items" :key="i" class="card">
-          <div class="card-main">
-            <div class="card-title">{{ text(cardTpl.title, it) }}</div>
-            <div v-if="cardTpl.subtitle" class="card-sub">{{ text(cardTpl.subtitle, it) }}</div>
+        <TransitionGroup name="card-move">
+          <div
+            v-for="it in g.items"
+            :key="String(it.id ?? JSON.stringify(it))"
+            class="card"
+            :class="{ draggable: !!dragDecl, dragging: draggingItem === it }"
+            :draggable="!!dragDecl"
+            @dragstart="draggingItem = it"
+            @dragend="draggingItem = null; dragOverCol = null"
+          >
+            <div class="card-main">
+              <div class="card-title">{{ text(cardTpl.title, it) }}</div>
+              <div v-if="cardTpl.subtitle" class="card-sub">{{ text(cardTpl.subtitle, it) }}</div>
+            </div>
+            <div v-if="cardTpl.actions?.length" class="card-actions">
+              <button
+                v-for="a in cardTpl.actions"
+                :key="a.method + a.label"
+                class="act"
+                @click="fire(a, it)"
+              >
+                {{ a.label }}
+              </button>
+            </div>
           </div>
-          <div v-if="cardTpl.actions?.length" class="card-actions">
-            <button
-              v-for="a in cardTpl.actions"
-              :key="a.method + a.label"
-              class="act"
-              @click="fire(a, it)"
-            >
-              {{ a.label }}
-            </button>
-          </div>
-        </div>
+        </TransitionGroup>
       </div>
     </div>
 
@@ -250,6 +306,48 @@ const fallbackJson = computed(() =>
   font-size: var(--yb-fs-sm);
   padding: var(--yb-space-3) 0;
   opacity: 0.7;
+}
+/* 拖拽流转：可拖卡片 / 拖动中 / 目标列高亮 */
+.card.draggable {
+  cursor: grab;
+}
+.card.dragging {
+  opacity: 0.45;
+}
+.board-col.drag-over {
+  outline: 2px dashed var(--yb-accent);
+  outline-offset: -2px;
+  background: var(--yb-accent-soft);
+}
+/* 快捷新增输入框 */
+.quick-add {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: var(--yb-space-2);
+  padding: 6px 10px;
+  border: 1px solid var(--yb-surface-border);
+  border-radius: var(--yb-radius-sm);
+  background: var(--yb-surface);
+  color: var(--yb-text);
+  font-size: var(--yb-fs-md);
+  outline: none;
+}
+.quick-add:focus {
+  border-color: var(--yb-accent);
+}
+/* 卡片跨列移动过渡（视觉回响） */
+.card-move-move {
+  transition: transform 0.25s var(--yb-ease);
+}
+.card-move-enter-active {
+  transition: opacity 0.2s var(--yb-ease), transform 0.25s var(--yb-ease);
+}
+.card-move-enter-from {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+.card-move-leave-active {
+  display: none;
 }
 /* board 内卡片：纵向堆叠、宽度撑满列 */
 .board .card {

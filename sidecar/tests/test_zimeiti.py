@@ -172,7 +172,7 @@ def test_article_read_latest_and_specific_version(env):
 
 def test_api_whitelist(env):
     _ = env
-    for name in ("zimeiti.list", "zimeiti.get", "zimeiti.move", "zimeiti.delete"):
+    for name in ("zimeiti.list", "zimeiti.add", "zimeiti.get", "zimeiti.move", "zimeiti.delete"):
         api = get_api(name)
         assert api is not None and api.direct, name
     for name in ("zimeiti.draft", "zimeiti.revise", "zimeiti.read"):
@@ -193,6 +193,9 @@ def test_panel_schemas_reference_whitelisted_methods(env):
         actions += doc.get("actions") or []
         if doc.get("submit"):
             actions.append(doc["submit"])
+        for extra in (doc.get("drag"), doc.get("quick_add")):  # 拖拽/快捷新增同样走白名单
+            if extra:
+                actions.append(extra)
         assert actions, f"{schema_file.name} 没有 action"
         for a in actions:
             assert get_api(a["method"]) is not None, f"{schema_file.name}: {a['method']} 不在白名单"
