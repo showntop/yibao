@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "type": "board",
+  "bind": {"items": "$data.rows", "column": "$item.status"},
+  "columns": [
+    {"key": "候选", "label": "候选"},
+    {"key": "写作中", "label": "写作中"},
+    {"key": "待发布", "label": "待发布"},
+    {"key": "已发布", "label": "已发布"}
+  ],
+  "card": {
+    "title": "$item.title",
+    "subtitle": "$item.angle",
+    "actions": [
+      {"label": "详情", "method": "zimeiti.get", "params": {"id": "$item.id"}}
+    ]
+  }
+}
