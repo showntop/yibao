@@ -413,6 +413,17 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            // 主窗默认停靠屏幕右上角（菜单栏下方留边距）；用户可拖动，展开方向自适应
+            if let Some(win) = app.get_webview_window("main") {
+                if let Ok(Some(mon)) = win.current_monitor() {
+                    let s = mon.scale_factor();
+                    let mx = mon.position().x as f64 / s;
+                    let my = mon.position().y as f64 / s;
+                    let sw = mon.size().width as f64 / s;
+                    let _ = win.set_position(tauri::LogicalPosition::new(mx + sw - 132.0 - 24.0, my + 40.0));
+                }
+            }
+
             // 注册全局热键：Super+Shift+Y 显隐主窗（macOS 上 Super=Cmd）
             #[cfg(desktop)]
             if let Err(e) = app.global_shortcut().register("Super+Shift+Y") {

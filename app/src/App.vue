@@ -221,13 +221,13 @@ onUnmounted(() => {
   <div class="shell" :class="{ exp: expanded }">
     <!-- 常态：宠物球 + 状态文字 -->
     <template v-if="!expanded">
-      <Avatar class="pet" :state="state" @click="toggleExpand" />
+      <Avatar class="pet" :state="state" @click="toggleExpand" @longpress="onMic" />
       <div class="status-collapsed" :class="state">{{ statusText }}</div>
     </template>
 
     <!-- 对话：header（头像+名称+状态+收起）/ (权限引导) / 气泡流 / 输入条 -->
     <template v-else>
-      <header class="chat-header">
+      <header class="chat-header" :class="{ flip: dir.endsWith('e') }">
         <Avatar :state="state" :size="44" @click="collapse" />
         <div class="meta">
           <span class="name">译宝</span>
@@ -288,6 +288,13 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+/* 锚点在右侧时（dir=ne/se）镜像头部，头像与收起锚点同侧 */
+.chat-header.flip {
+  flex-direction: row-reverse;
+}
+.chat-header.flip .meta {
+  align-items: flex-end;
 }
 .meta {
   flex: 1;

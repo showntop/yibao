@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref } from "vue";
 import { startDrag } from "../lib/window";
 
 // 抽象团子：SVG 角色。身体渐变 + 呼吸 squash-stretch + 周期眨眼；表情按 state 切换。
@@ -7,40 +8,65 @@ const props = withDefaults(
   defineProps<{ state: "idle" | "listen" | "think" | "work" | "say"; size?: number }>(),
   { size: 64 },
 );
-const emit = defineEmits<{ (e: "click"): void }>();
+const emit = defineEmits<{ (e: "click"): void; (e: "longpress"): void }>();
 
-// 拖动 vs 点击：pointerdown 记坐标，移动 >4px 触发 startDragging，否则 pointerup 算 click。
+// 拖动 vs 点击 vs 长按：pointerdown 记坐标并起 450ms 计时；
+// 移动 >4px 触发 startDragging（取消计时）；到点未动未抬 = 长按（voice）；提前抬起且未拖 = click。
 // 不用 data-tauri-drag-region（它会吞掉 click）。
 const THRESHOLD = 4;
+const LONGPRESS_MS = 450;
 let down: { x: number; y: number } | null = null;
 let dragging = false;
+let longFired = false;
+let timer: ReturnType<typeof setTimeout> | null = null;
+const holding = ref(false);
+
+function cancelTimer() {
+  if (timer !== null) {
+    clearTimeout(timer);
+    timer = null;
+  }
+  holding.value = false;
+}
 
 function onPointerDown(e: PointerEvent) {
   if (e.button !== 0) return;
   down = { x: e.clientX, y: e.clientY };
   dragging = false;
+  longFired = false;
+  holding.value = true;
   (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+  timer = setTimeout(() => {
+    if (down && !dragging) {
+      longFired = true;
+      emit("longpress");
+    }
+    cancelTimer();
+  }, LONGPRESS_MS);
 }
 
 async function onPointerMove(e: PointerEvent) {
   if (!down || dragging) return;
   if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > THRESHOLD) {
     dragging = true;
+    cancelTimer();
     await startDrag(); // 必须在用户手势链内调用
   }
 }
 
 function onPointerUp() {
-  if (down && !dragging) emit("click");
+  cancelTimer();
+  if (down && !dragging && !longFired) emit("click");
   down = null;
   dragging = false;
+  longFired = false;
 }
 </script>
 
 <template>
   <div
     class="av"
-    :class="state"
+    :class="[state, { holding }]"
     :style="{ width: props.size + 'px', height: props.size + 'px' }"
     @pointerdown.prevent="onPointerDown"
     @pointermove="onPointerMove"
@@ -116,6 +142,14 @@ function onPointerUp() {
 }
 .av:active {
   cursor: grabbing;
+}
+/* 按住反馈：团子微微变大，提示继续按住 = 语音 */
+.av.holding .dumpling {
+  transform: scale(1.08);
+  transition: transform 0.45s var(--yb-ease);
+}
+.av .dumpling {
+  transition: transform 0.15s var(--yb-ease);
 }
 .dumpling {
   width: 100%;
