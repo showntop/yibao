@@ -180,6 +180,14 @@ name = "sync_done"
 
 铁律：LLM 不生成宿主可执行代码；本机操作 = tool 白名单 + L0–L4 + 审计。
 
+### 实装记录（webview，2026-07-20）
+
+- **面板类型**：manifest `[[panel]] type = "webview" src = "panel/x.html"`；`_load_panels` 读 HTML 文本存 `_PANELS["pid:name"] = {"type": "webview", "html": …}`（schema 面板仍是 JSON dict，靠 `type=="webview" and "html" in` 区分）。`panel_payload` 对 webview 面板发 `{panel, schema: null, webview: {html}, data}`，schema 面板 payload 不变。
+- **沙箱宿主**：`WebviewPanel.vue` 用 `<iframe sandbox="allow-scripts">` + `srcdoc`（禁 allow-same-origin，iframe 内无 Tauri IPC）。桥 JS 由父侧注入到插件 HTML 的 `<head>` 后（须在插件自有脚本前，否则 `window.yibao` 未定义），提供 `yibao.invoke(method, params) → Promise` 与 `yibao.onInit(cb)`。
+- **桥协议**（postMessage）：iframe→父 `{src:"yibao-webview", id, method, params}`；父→iframe 回包 `{src:"yibao-host", id, ok, result|error}` + 初始化 `{src:"yibao-host", type:"init", data}`。父侧校验 `event.source === iframe.contentWindow`，并粗筛 method 须以当前面板插件 id 开头（如 `zimeiti.`）；最终裁决仍在 sidecar api.toml 白名单 + L0–L4 闸门（L2 确认条由 PanelApp 闭环）。回包经 `action_result` 的 action.id（`pa_<rid>`）关联；sidecar 拒绝/超时 reject 给 iframe。
+- **api.toml `panel` 字段**：`[[method]] panel = "pid:name"`（可选，须指向本插件已声明面板，跨插件/未声明则 method 跳过）。direct 直调成功后 sidecar 用该面板发 panel 事件，覆盖 tool 自带 `result.panel`——用于 `zimeiti.open_editor`（handler 复用 `zimeiti.get`，面板引到 `zimeiti:editor`）与 `save_article`（保存后停在编辑器，回执 data 经桥回包给 iframe，重发的同面板事件不重建 iframe）。
+- 首个实例：`plugins/zimeiti/panel/editor.html`（手写模板，单文件无外部依赖，<30KB）。
+
 ## 9. 数据存储
 
 | 类型 | 存储 | 规则 |
