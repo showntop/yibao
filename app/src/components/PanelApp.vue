@@ -287,7 +287,7 @@ onUnmounted(() => {
       <div class="bench-bar">
         <Avatar class="pet" :state="state" :size="30" @click="focusInput" @longpress="onMic" />
         <span v-if="chipText" class="chip" :title="chipText">{{ chipText }}</span>
-        <InputBar class="bench-input" :busy="busy" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
+        <InputBar class="bench-input" :busy="busy" :listening="state === 'listen'" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
       </div>
     </div>
   </div>

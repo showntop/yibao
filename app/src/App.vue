@@ -250,7 +250,7 @@ onUnmounted(() => {
       </div>
 
       <div class="input-slot">
-        <InputBar v-if="!pending" :busy="busy" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
+        <InputBar v-if="!pending" :busy="busy" :listening="state === 'listen'" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
         <ConfirmDialog
           v-else
           :skill="pending.skill"
