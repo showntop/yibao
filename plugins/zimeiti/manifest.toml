@@ -71,6 +71,8 @@ type = "db"
 description = "查看一条选题的详情（运行时 where 由调用方传，如 {where: {id: …}}）"
 risk = "L0"
 panel = "zimeiti:detail"
+[tool.params]
+id = {type = "string", description = "选题 id（传了就按 id 查；同时是 refresh 传参交集的依据）"}
 [tool.db]
 op = "query"
 table = "topics"

@@ -33,6 +33,9 @@ WriteMsg = Callable[[dict], None]
 # 面板焦点（v2 §5）：壳侧 panel_context 消息维护，run 时注入 LLM 上下文（「这个/它」有解）
 _FOCUS: dict = {"value": None}
 
+# 被抢占任务的收尾宽限（秒）：超时强制取消，防 hung 任务把槽位卡死（「点了没反应」的根）
+_PREEMPT_GRACE_S = 8.0
+
 
 def _permissions_status() -> dict:
     """检测辅助功能/屏幕录制权限；检测本身失败时乐观返回 True（不出误报 banner）。"""
@@ -421,14 +424,24 @@ async def serve_async(
         """槽位串行：等上一任务收尾再启动；主循环不在这里阻塞（ping 照答，看门狗不误杀）。
 
         排队期间又来了更新的请求（preempt_gen 前进）→ 本任务一启动即置 cancel 快速跳过。
+        上一任务被抢占后超过 _PREEMPT_GRACE_S 仍不收尾（LLM/TTS hung 等）→ 强制取消，
+        槽位必须自愈，否则后续所有请求都静默排队（「点了没反应」）。
         """
         if prev is not None and not prev.done():
             t0 = time.monotonic()
             print("[yibao] 新请求排队，等上一任务收尾…", file=sys.stderr)
             try:
-                await prev
-            except Exception:
-                pass
+                # shield：wait_for 超时不许连带取消 prev，强制取消由我们自己控制
+                await asyncio.wait_for(asyncio.shield(prev), timeout=_PREEMPT_GRACE_S)
+            except asyncio.TimeoutError:
+                print(f"[yibao] 上一任务 {_PREEMPT_GRACE_S:.0f}s 未收尾，强制取消", file=sys.stderr)
+                prev.cancel()
+                try:
+                    await prev
+                except (asyncio.CancelledError, Exception):
+                    pass
+            except (asyncio.CancelledError, Exception):
+                pass  # prev 自身异常/被取消都算已收尾
             print(f"[yibao] 上一任务收尾完成（{time.monotonic() - t0:.1f}s）", file=sys.stderr)
         cancel = asyncio.Event()
         if run_state["preempt_gen"] > queued_gen:

@@ -12,7 +12,7 @@ from .invoker import ToolInvoker
 from .ipc import Action, Event
 from .llm import LLMProvider, LLMResponse, ToolCall, merge_tool_call_deltas
 from .memory import Memory
-from .plugins import panel_payload
+from .plugins import get_panel, get_panel_title, panel_payload
 from .safety import Decision, Gate, RiskClassifier
 from .skills import SkillRegistry
 
@@ -105,20 +105,66 @@ class AgentLoop:
         写操作（insert/delete 等）的 result.data 是回执 {"id":…}，直接喂面板会显示空；
         声明 refresh（如 notes.list）则面板事件携带查询结果。刷新意外需确认/失败 →
         回退原数据（刷新不该弹确认打断用户，与 server._emit_refresh_panel 同一策略）。
+
+        refresh 传参取「action 入参 ∩ refresh tool 声明参数」（如 save{id,content} → get{id}），
+        无交集传 {}（list 类刷新不带条件）。最后做 focus 重定向：用户正盯着同插件 webview
+        面板（如写作编辑器）的同一条目时，回跳面板落在该 webview 上而不是硬切走——
+        编辑器收到 rows 重推后自行刷新稿件，对话改稿不打断工作台。
         """
         payload = panel_payload(result)
         if payload is None or not result.success:
             return payload
         refresh_id = getattr(self.skills.get(action.skill_id), "refresh", None)
         if not refresh_id:
-            return payload
+            return self._redirect_to_focused_webview(payload)
+        r_params: dict = {}
+        try:
+            props = (
+                self.skills.get(refresh_id).openai_schema().get("parameters", {}).get("properties", {})
+            )
+            r_params = {k: action.params[k] for k in props if k in action.params}
+        except Exception:
+            r_params = {}
         r_action = self.invoker.propose(
-            ToolCall(id=f"refresh_{action.id}", skill_id=refresh_id, params={})
+            ToolCall(id=f"refresh_{action.id}", skill_id=refresh_id, params=r_params)
         )
         if self.invoker.decide(r_action) != Decision.AUTO:
+            return self._redirect_to_focused_webview(payload)
+        r_result = self.invoker.execute(r_action, r_params)
+        payload = panel_payload(r_result) or payload
+        return self._redirect_to_focused_webview(payload)
+
+    def _redirect_to_focused_webview(self, payload: dict) -> dict:
+        """用户正盯着同插件 webview 面板的同一条目（focus）→ 回跳改落到该 webview。
+
+        编辑器/工作台类 webview 面板靠 rows 重推自刷新；无 focus、跨插件、非同一条目、
+        或 focus 面板不是 webview 时原样返回。
+        """
+        if self.focus_provider is None:
             return payload
-        r_result = self.invoker.execute(r_action, {})
-        return panel_payload(r_result) or payload
+        try:
+            focus = self.focus_provider()
+        except Exception:
+            return payload
+        if not focus or not focus.get("plugin") or not focus.get("panel"):
+            return payload
+        ref = f"{focus['plugin']}:{focus['panel']}"
+        if not str(payload.get("panel", "")).startswith(f"{focus['plugin']}:"):
+            return payload
+        rows = (payload.get("data") or {}).get("rows") or []
+        item = focus.get("item") or {}
+        if not rows or item.get("id") is None or str(rows[0].get("id")) != str(item["id"]):
+            return payload
+        panel = get_panel(ref)
+        if not (isinstance(panel, dict) and panel.get("type") == "webview" and "html" in panel):
+            return payload
+        return {
+            "panel": ref,
+            "title": get_panel_title(ref),
+            "schema": None,
+            "webview": {"html": panel["html"]},
+            "data": payload["data"],
+        }
 
     def run(self, user_text: str) -> Iterator[Event]:
         memories = self.memory.recall(user_text, self.user_id)

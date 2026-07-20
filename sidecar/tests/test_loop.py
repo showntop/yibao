@@ -534,3 +534,106 @@ def test_focus_provider_exception_is_ignored(tmp_path):
     assert events[-1].kind == "final_reply"
     messages = provider.calls[0]["messages"]
     assert not any("用户当前正在看" in m["content"] for m in messages if m["role"] == "system")
+
+
+# ---------- refresh 传参交集 + focus 重定向到 webview ----------
+
+
+class _SaveSkill(Skill):
+    """写操作：panel=detail、refresh=get，入参 {id, content}。"""
+
+    id = "w.save"
+    description = "保存"
+    refresh = "w.get"
+
+    def run(self, params, ctx):
+        return ActionResult(success=True, data={"id": params.get("id")}, panel="w:detail")
+
+
+class _GetSkill(Skill):
+    """只读查询：声明接受 {id, version}；记录实际收到的 params。"""
+
+    id = "w.get"
+    description = "查询"
+    default_risk = RiskLevel.L0_READONLY
+
+    def __init__(self):
+        self.seen: list[dict] = []
+
+    def openai_schema(self):
+        return {
+            "name": self.id,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {"id": {"type": "string"}, "version": {"type": "integer"}},
+                "required": [],
+            },
+        }
+
+    def run(self, params, ctx):
+        self.seen.append(dict(params))
+        return ActionResult(success=True, data={"rows": [{"id": "t1", "status": "写作中"}]}, panel="w:detail")
+
+
+def _build_w_loop(tmp_path, get_skill, focus=None):
+    reg = SkillRegistry()
+    reg.register(_SaveSkill(), plugin="w")
+    reg.register(get_skill, plugin="w")
+    return AgentLoop(
+        provider=_TwoStepProvider(
+            first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="w.save", params={"id": "t1", "content": "正文"})]),
+            second=FakeProvider(text="已保存"),
+        ),
+        skills=reg,
+        classifier=RiskClassifier(),
+        gate=Gate(GatePolicy()),
+        memory=FakeMemory(),
+        log=AuditLog(tmp_path / "a.db"),
+        focus_provider=lambda: focus,
+    )
+
+
+def test_refresh_receives_param_intersection(tmp_path, monkeypatch):
+    """refresh 传参 = action 入参 ∩ refresh tool 声明参数（save{id,content} → get{id}，content 不透）。"""
+    from yibao_brain import plugins
+
+    monkeypatch.setitem(plugins._PANELS, "w:detail", {"type": "detail"})
+    get = _GetSkill()
+    loop = _build_w_loop(tmp_path, get)
+    events = list(loop.run("存一下"))
+    pe = next(e for e in events if e.kind == "panel")
+    assert pe.payload["data"] == {"rows": [{"id": "t1", "status": "写作中"}]}
+    assert get.seen == [{"id": "t1"}]  # content 不透传
+
+
+def test_focus_redirects_panel_to_webview_editor(tmp_path, monkeypatch):
+    """用户正盯着 w:editor（webview）的条目 t1：写操作回跳改落 w:editor，不硬切 detail。"""
+    from yibao_brain import plugins
+
+    monkeypatch.setitem(plugins._PANELS, "w:detail", {"type": "detail"})
+    monkeypatch.setitem(plugins._PANELS, "w:editor", {"type": "webview", "html": "<html>editor</html>"})
+    monkeypatch.setitem(plugins._PANEL_TITLES, "w:editor", "W · 编辑器")
+    get = _GetSkill()
+    focus = {"plugin": "w", "panel": "editor", "item": {"id": "t1", "title": "选题"}}
+    loop = _build_w_loop(tmp_path, get, focus=focus)
+    events = list(loop.run("改一下"))
+    pe = next(e for e in events if e.kind == "panel")
+    assert pe.payload["panel"] == "w:editor"
+    assert pe.payload["webview"] == {"html": "<html>editor</html>"}
+    assert pe.payload["schema"] is None
+    assert pe.payload["data"] == {"rows": [{"id": "t1", "status": "写作中"}]}
+
+
+def test_focus_other_item_does_not_redirect(tmp_path, monkeypatch):
+    """focus 是另一条目（t9）时不动：回跳仍是 detail。"""
+    from yibao_brain import plugins
+
+    monkeypatch.setitem(plugins._PANELS, "w:detail", {"type": "detail"})
+    monkeypatch.setitem(plugins._PANELS, "w:editor", {"type": "webview", "html": "<html>editor</html>"})
+    get = _GetSkill()
+    focus = {"plugin": "w", "panel": "editor", "item": {"id": "t9", "title": "别的"}}
+    loop = _build_w_loop(tmp_path, get, focus=focus)
+    events = list(loop.run("改一下"))
+    pe = next(e for e in events if e.kind == "panel")
+    assert pe.payload["panel"] == "w:detail"

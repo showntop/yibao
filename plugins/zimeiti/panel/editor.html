@@ -65,7 +65,7 @@
   <button id="save">保存为新版本</button>
 </header>
 <main>
-  <textarea id="editor" placeholder="在这里写稿（markdown）…" spellcheck="false"></textarea>
+  <textarea id="editor" placeholder="在这里写稿（markdown）；也可以对译宝说「写初稿 / 改稿 / 读稿」，它会直接改这里" spellcheck="false"></textarea>
   <div id="preview"></div>
 </main>
 <div id="status">等待面板数据…</div>
@@ -119,16 +119,17 @@
     $("preview").innerHTML = md($("editor").value);
   });
 
-  // ---- 返回详情（zimeiti.get 直调，结果带 detail 面板引用 → 面板窗切回详情页）----
+  // ---- 返回详情（zimeiti.get 直调回详情页；还没载入选题时退回看板）----
   $("back").addEventListener("click", function () {
-    if (!topicId) { setStatus("还没有选题数据", true); return; }
-    window.yibao.invoke("zimeiti.get", { id: topicId }).catch(function (e) {
+    var method = topicId ? "zimeiti.get" : "zimeiti.list";
+    var params = topicId ? { id: topicId } : {};
+    window.yibao.invoke(method, params).catch(function (e) {
       setStatus("返回失败：" + (e && e.message ? e.message : e), true);
     });
   });
 
   // ---- 加载最新稿（read_article 在 api.toml 白名单内；无稿报错属正常起点）----
-  function loadArticle() {
+  function loadArticle(prefix) {
     if (!topicId) { setStatus("没有选题数据", true); return; }
     setStatus("加载稿件…");
     window.yibao.invoke("zimeiti.read_article", { id: topicId }).then(function (r) {
@@ -136,22 +137,25 @@
       $("editor").value = (r && r.content) || "";
       $("editor").dispatchEvent(new Event("input"));
       var note = r && r.note;
-      setStatus("已加载 v" + version + (note ? " · " + note : ""));
+      setStatus((prefix || "已加载") + " v" + version + (note ? " · " + note : ""));
     }).catch(function () {
       version = 0;
       $("editor").value = "";
       $("editor").dispatchEvent(new Event("input"));
-      setStatus("还没有稿件，直接开写吧");
+      setStatus("还没有稿件，喊译宝「写初稿」或直接开写");
     });
   }
 
-  // 面板事件 data：打开编辑器时是 zimeiti.get 的 {rows:[选题]}；保存回执等其他形状忽略（不动当前编辑状态）
+  // 面板事件 data：打开编辑器时是 zimeiti.get 的 {rows:[选题]}。
+  // 同选题 rows 重推 = 译宝在对话里保存了新版本（focus 重定向，loop._panel_with_refresh）→ 刷新稿件。
+  // 保存回执等无 rows 形状忽略（不动当前编辑状态）。
   window.yibao.onInit(function (data) {
     var row = data && data.rows && data.rows[0];
-    if (!row || !row.id || String(row.id) === topicId) return;
+    if (!row || !row.id) return;
+    var sameTopic = String(row.id) === topicId;
     topicId = String(row.id);
     $("title").textContent = String(row.title || "写作编辑器");
-    loadArticle();
+    loadArticle(sameTopic ? "译宝更新到" : undefined);
   });
 
   // ---- 保存为新版本（article_save 为 L2，确认条在面板窗顶部弹出，允许后才会执行）----

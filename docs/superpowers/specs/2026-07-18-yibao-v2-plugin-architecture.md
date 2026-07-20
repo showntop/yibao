@@ -278,3 +278,11 @@ panel schema 是一个 JSON 文件（manifest `[[panel]] src` 指向），描述
 ### 工作台条
 
 面板窗底部常驻：团子（Avatar，状态经 brain-event 同步，可拖动面板窗/长按语音）+ 上下文 chip（有选中条目时显示「在看：{title}」）+ InputBar（文字/语音/打断）。提交走同一 `runInput`；流式回复在条上方浮气泡展示，final 后 ~6s 淡出，完整历史留在宠物窗。面板内确认仍走内嵌确认条，不打断对话。
+
+### 协作回响（2026-07-20）
+
+在工作台里边看边让译宝改，闭环不靠人来回切：
+
+- **focus 重定向**：写操作（如 article_save）成功后的回跳面板，若用户正盯着同插件某 webview 面板（如写作编辑器）的同一条目（focus.item.id 匹配），改落到该 webview 而不是硬切 detail——编辑器收到 rows 重推自行刷新稿件（`loop._redirect_to_focused_webview`）。
+- **refresh 传参交集**：tool 声明的 refresh 执行时，参数取「action 入参 ∩ refresh tool 声明参数」（save{id,content} → get{id}）；无交集传 {}（list 类刷新不带条件）。
+- **槽位自愈**：新请求排队等上一任务的宽限为 `_PREEMPT_GRACE_S`（8s），超时强制取消——hung 任务不会把后续所有请求静默堵死（「点了没反应」类故障的根）。

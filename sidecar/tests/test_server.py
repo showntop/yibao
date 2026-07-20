@@ -711,3 +711,46 @@ def test_serve_async_panel_context_clear(tmp_path):
         assert not any("用户当前正在看" in m["content"] for m in messages if m["role"] == "system")
     finally:
         srv._FOCUS["value"] = old
+
+
+def test_serve_async_stalled_task_is_force_cancelled(tmp_path, monkeypatch):
+    """上一任务 hung 在 provider 里（cancel 事件只在 chunk 间检查，叫不醒它）：
+    超过宽限被强制取消，后续请求照常受理。"""
+    import time
+
+    import yibao_brain.server as srv
+
+    monkeypatch.setattr(srv, "_PREEMPT_GRACE_S", 0.3)
+    state = {"n": 0}
+
+    class _HangThenFast:
+        async def astream(self, messages, tools=None):
+            state["n"] += 1
+            if state["n"] == 1:
+                await asyncio.sleep(60)  # hung：只能靠强制 cancel 收场
+                return
+            async for d in FakeProvider(chunks=["第二个好了"]).astream(messages, tools):
+                yield d
+
+    msgs = [{"id": 1, "type": "run", "text": "卡死"}, {"id": 2, "type": "run", "text": "再来"}, None]
+    it = iter(msgs)
+
+    def slow_reader():
+        m = next(it)
+        if m is not None and m.get("id") == 2:
+            time.sleep(0.5)  # 让 run1 先真进 astream 挂起，再来第二个请求（读者线程内 sleep 无碍）
+        return m
+
+    out = []
+    _run_async(
+        serve_async(
+            slow_reader,
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=_HangThenFast(),
+        )
+    )
+    # run2 正常完成并出了最终回复（没有被 run1 的 hung 永久排队）
+    assert {"type": "run_done", "id": 2} in out
+    assert any(m["type"] == "event" and m["event"].get("kind") == "final_reply" for m in out)
