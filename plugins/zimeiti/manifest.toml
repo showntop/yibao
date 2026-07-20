@@ -114,3 +114,8 @@ src = "panel/board.schema.json"
 type = "schema"
 name = "detail"
 src = "panel/detail.schema.json"
+
+[[panel]]
+type = "webview"
+name = "editor"
+src = "panel/editor.html"

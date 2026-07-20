@@ -11,6 +11,7 @@
     {"label": "更新", "value": "$data.rows.0.updated_at|date"}
   ],
   "actions": [
+    {"label": "打开编辑器", "method": "zimeiti.open_editor", "params": {"id": "$data.rows.0.id", "title": "$data.rows.0.title"}},
     {"label": "写初稿", "method": "zimeiti.draft", "params": {"id": "$data.rows.0.id", "title": "$data.rows.0.title"}},
     {"label": "改稿", "method": "zimeiti.revise", "params": {"id": "$data.rows.0.id", "title": "$data.rows.0.title"}},
     {"label": "读稿", "method": "zimeiti.read", "params": {"id": "$data.rows.0.id", "title": "$data.rows.0.title"}},

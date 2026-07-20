@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<!-- zimeiti 写作编辑器（webview 面板）：跑在 iframe sandbox + srcdoc 里，无 Tauri IPC、无网络。
+     能力调用全部经 window.yibao.invoke（postMessage 桥 → api.toml 白名单 + 风险闸门）。
+     桥 JS 由父侧注入（提供 window.yibao.invoke/onInit），本文件不自带。 -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>写作编辑器</title>
+<style>
+  /* 治愈系取值内联写死（iframe 沙箱内吃不到 tokens.css）：暖白底 #fffaf4 / 杏橙 #ff8a5c / 圆角 10px / 13-14px */
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; display: flex; flex-direction: column;
+    font: 14px/1.6 -apple-system, "PingFang SC", system-ui, sans-serif;
+    background: #fffaf4; color: #4a4036;
+  }
+  header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 14px; border-bottom: 1px solid #f3e7d9; flex-shrink: 0;
+  }
+  #title { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #note {
+    width: 160px; border: 1px solid #f3e7d9; border-radius: 10px; padding: 5px 10px;
+    font-size: 13px; background: #fff; color: inherit; outline: none; font-family: inherit;
+  }
+  #note:focus { border-color: #ff8a5c; }
+  #save {
+    border: none; border-radius: 10px; background: #ff8a5c; color: #fff;
+    font-size: 13px; font-weight: 500; padding: 6px 14px; cursor: pointer; flex-shrink: 0;
+  }
+  #save:hover { filter: brightness(0.96); }
+  #save:disabled { opacity: 0.5; cursor: default; }
+  main { flex: 1; display: flex; min-height: 0; }
+  #editor {
+    flex: 1; border: none; outline: none; resize: none; padding: 14px;
+    font: 13px/1.7 ui-monospace, "SF Mono", Menlo, monospace;
+    background: transparent; color: inherit;
+  }
+  #preview {
+    flex: 1; overflow-y: auto; padding: 14px; border-left: 1px solid #f3e7d9; font-size: 14px;
+  }
+  #preview h1 { font-size: 20px; margin: 0.6em 0 0.4em; }
+  #preview h2 { font-size: 17px; margin: 0.6em 0 0.4em; }
+  #preview h3 { font-size: 15px; margin: 0.6em 0 0.4em; }
+  #preview p { margin: 0.5em 0; }
+  #preview ul { margin: 0.5em 0; padding-left: 1.4em; }
+  #status {
+    padding: 4px 14px; font-size: 13px; color: #b3a08d;
+    border-top: 1px solid #f3e7d9; min-height: 26px; flex-shrink: 0;
+  }
+  #status.err { color: #d06a5a; }
+</style>
+</head>
+<body>
+<header>
+  <span id="title">写作编辑器</span>
+  <input id="note" placeholder="版本备注（可选）">
+  <button id="save">保存为新版本</button>
+</header>
+<main>
+  <textarea id="editor" placeholder="在这里写稿（markdown）…" spellcheck="false"></textarea>
+  <div id="preview"></div>
+</main>
+<div id="status">等待面板数据…</div>
+
+<script>
+(function () {
+  var topicId = "";
+  var version = 0;
+  var saving = false;
+  var $ = function (id) { return document.getElementById(id); };
+
+  function setStatus(text, isErr) {
+    var s = $("status");
+    s.textContent = text;
+    s.className = isErr ? "err" : "";
+  }
+
+  // ---- 极简 markdown 渲染（标题/粗体/列表/段落；先转义 HTML，不引库）----
+  function esc(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function inline(s) {
+    return esc(s).replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  }
+  function md(src) {
+    var out = [], para = [], inList = false;
+    function flushPara() { if (para.length) { out.push("<p>" + para.join("<br>") + "</p>"); para = []; } }
+    function flushList() { if (inList) { out.push("</ul>"); inList = false; } }
+    src.split(/\r?\n/).forEach(function (line) {
+      var t = line.trim(), m;
+      if ((m = t.match(/^(#{1,3})\s+(.*)$/))) {
+        flushPara(); flushList();
+        var lv = m[1].length;
+        out.push("<h" + lv + ">" + inline(m[2]) + "</h" + lv + ">");
+      } else if ((m = t.match(/^[-*]\s+(.*)$/))) {
+        flushPara();
+        if (!inList) { out.push("<ul>"); inList = true; }
+        out.push("<li>" + inline(m[1]) + "</li>");
+      } else if (!t) {
+        flushPara(); flushList();
+      } else {
+        flushList();
+        para.push(inline(t));
+      }
+    });
+    flushPara(); flushList();
+    return out.join("") || "<p style=\"color:#cdbfab\">（预览为空）</p>";
+  }
+
+  $("editor").addEventListener("input", function () {
+    $("preview").innerHTML = md($("editor").value);
+  });
+
+  // ---- 加载最新稿（read_article 在 api.toml 白名单内；无稿报错属正常起点）----
+  function loadArticle() {
+    if (!topicId) { setStatus("没有选题数据", true); return; }
+    setStatus("加载稿件…");
+    window.yibao.invoke("zimeiti.read_article", { id: topicId }).then(function (r) {
+      version = (r && r.version) || 0;
+      $("editor").value = (r && r.content) || "";
+      $("editor").dispatchEvent(new Event("input"));
+      var note = r && r.note;
+      setStatus("已加载 v" + version + (note ? " · " + note : ""));
+    }).catch(function () {
+      version = 0;
+      $("editor").value = "";
+      $("editor").dispatchEvent(new Event("input"));
+      setStatus("还没有稿件，直接开写吧");
+    });
+  }
+
+  // 面板事件 data：打开编辑器时是 zimeiti.get 的 {rows:[选题]}；保存回执等其他形状忽略（不动当前编辑状态）
+  window.yibao.onInit(function (data) {
+    var row = data && data.rows && data.rows[0];
+    if (!row || !row.id || String(row.id) === topicId) return;
+    topicId = String(row.id);
+    $("title").textContent = String(row.title || "写作编辑器");
+    loadArticle();
+  });
+
+  // ---- 保存为新版本（article_save 为 L2，确认条在面板窗顶部弹出，允许后才会执行）----
+  $("save").addEventListener("click", function () {
+    if (!topicId || saving) return;
+    var content = $("editor").value;
+    if (!content.trim()) { setStatus("内容为空，没有保存", true); return; }
+    saving = true;
+    $("save").disabled = true;
+    setStatus("保存中…（如弹出确认条请点「允许」）");
+    window.yibao.invoke("zimeiti.save_article", {
+      id: topicId, content: content, note: $("note").value.trim()
+    }).then(function (r) {
+      version = (r && r.version) || (version + 1);
+      $("note").value = "";
+      setStatus("已保存为 v" + version);
+    }).catch(function (e) {
+      setStatus("保存失败：" + (e && e.message ? e.message : e), true);
+    }).finally(function () {
+      saving = false;
+      $("save").disabled = false;
+    });
+  });
+})();
+</script>
+</body>
+</html>
