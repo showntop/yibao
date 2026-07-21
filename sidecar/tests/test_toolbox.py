@@ -50,6 +50,17 @@ def test_plugin_loads(env):
     assert results.get("toolbox") == "ok"
 
 
+def test_api_methods_registered_with_full_prefix(env):
+    """面板桥以完整名（toolbox.xxx）调用，api.toml 必须能查到。"""
+    from yibao_brain.plugins import get_api
+
+    env[0]  # 触发加载
+    for name in ("toolbox.list", "toolbox.json_format", "toolbox.text_diff"):
+        api = get_api(name)
+        assert api is not None and api.direct, name
+    assert get_api("toolbox.list").panel == "toolbox:main"
+
+
 def test_open_defaults_to_json_tab(env):
     reg, _ = env
     r = _run(reg, "toolbox.open", {})

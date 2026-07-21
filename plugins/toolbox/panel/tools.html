@@ -110,7 +110,7 @@
   function runJson(mode) {
     var text = $("json-in").value;
     $("json-err").textContent = "";
-    window.yibao.invoke("json_format", {
+    window.yibao.invoke("toolbox.json_format", {
       text: text, mode: mode,
       indent: parseInt($("json-indent").value, 10),
       sort_keys: $("json-sort").checked
@@ -155,7 +155,7 @@
   }
   $("diff-run").addEventListener("click", function () {
     $("diff-stat").textContent = "";
-    window.yibao.invoke("text_diff", {
+    window.yibao.invoke("toolbox.text_diff", {
       old: $("diff-old").value, new: $("diff-new").value
     }).then(function (r) {
       renderDiff(r || {});
