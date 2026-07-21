@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from "vue";
+import { invoke } from "@tauri-apps/api/core";
 import Avatar from "./components/Avatar.vue";
 import InputBar from "./components/InputBar.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
@@ -13,6 +14,7 @@ import {
   sendConfirm,
   voiceStart,
   interrupt,
+  panelAction,
   type BrainEvent,
   type BrainStatusMsg,
   type BrainPermissions,
@@ -56,9 +58,54 @@ async function collapse() {
   expanded.value = false;
   await collapseWin(d);
 }
-async function toggleExpand() {
-  if (expanded.value) await collapse();
-  else await expand();
+
+// ---- 插件启动器（双击团子）----
+type PetView = "chat" | "plugins";
+interface PluginInfo { id: string; name: string }
+const view = ref<PetView>("chat");
+const plugins = ref<PluginInfo[]>([]);
+const pluginErr = ref("");
+let clickTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** 单击=展开对话；双击=插件启动器（220ms 内第二次点击判双击，单击稍延迟是消歧代价）。 */
+function onPetClick() {
+  if (clickTimer !== null) {
+    clearTimeout(clickTimer);
+    clickTimer = null;
+    void expandTo("plugins");
+    return;
+  }
+  clickTimer = setTimeout(() => {
+    clickTimer = null;
+    void expandTo("chat");
+  }, 220);
+}
+
+async function expandTo(v: PetView) {
+  view.value = v;
+  if (v === "plugins") void loadPlugins();
+  if (!expanded.value) await expand();
+}
+
+async function loadPlugins() {
+  pluginErr.value = "";
+  try {
+    // 上限 8 个：插件是精选的，不会多；超出说明该做设置页了
+    plugins.value = (await invoke<PluginInfo[]>("list_plugins")).slice(0, 8);
+  } catch (err) {
+    plugins.value = [];
+    pluginErr.value = String(err);
+  }
+}
+
+/** 点插件 → 调它的 list 直调（约定的主面板入口）；panel 事件回来会自动 openPanel + 收起对话。 */
+async function launchPlugin(p: PluginInfo) {
+  pluginErr.value = "";
+  try {
+    await panelAction(`${p.id}.list`, {});
+  } catch (err) {
+    pluginErr.value = "启动失败：" + String(err);
+  }
 }
 
 function onEvent(e: BrainEvent) {
@@ -215,6 +262,7 @@ onUnmounted(() => {
   unlistenStatus?.();
   unlistenPerms?.();
   window.removeEventListener("keydown", onKeydown);
+  if (clickTimer !== null) clearTimeout(clickTimer);
 });
 </script>
 
@@ -222,7 +270,7 @@ onUnmounted(() => {
   <div class="shell" :class="{ exp: expanded }">
     <!-- 常态：宠物球 + 状态文字 -->
     <template v-if="!expanded">
-      <Avatar class="pet" :state="state" @click="toggleExpand" @longpress="onMic" />
+      <Avatar class="pet" :state="state" @click="onPetClick" @longpress="onMic" />
       <div class="status-collapsed" :class="state">{{ statusText }}</div>
     </template>
 
@@ -239,7 +287,21 @@ onUnmounted(() => {
 
       <PermissionsBanner v-if="missingPerms && perms" :perms="perms" />
 
-      <div class="bubbles">
+      <!-- 插件启动器视图（双击团子进来）：列出插件，点击直达它的主面板 -->
+      <div v-if="view === 'plugins'" class="bubbles">
+        <div class="pl-head">
+          <span class="pl-title">插件</span>
+          <button class="pl-back" @click="view = 'chat'">‹ 对话</button>
+        </div>
+        <div v-if="pluginErr" class="pl-err">⚠️ {{ pluginErr }}</div>
+        <button v-for="p in plugins" :key="p.id" class="pl-row" @click="launchPlugin(p)">
+          <span class="pl-name">{{ p.name }}</span>
+          <span class="pl-id">{{ p.id }}</span>
+        </button>
+        <div v-if="!plugins.length && !pluginErr" class="pl-empty">没有发现插件</div>
+      </div>
+
+      <div v-else class="bubbles">
         <div v-if="!bubbles.length" class="empty-hint">
           <p>叫我做什么都行～</p>
           <div class="chips">
@@ -249,7 +311,7 @@ onUnmounted(() => {
         <Bubble v-for="(b, i) in bubbles" :key="i" :role="b.role" :text="b.text" />
       </div>
 
-      <div class="input-slot">
+      <div v-if="view === 'chat'" class="input-slot">
         <InputBar v-if="!pending" :busy="busy" :listening="state === 'listen'" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
         <ConfirmDialog
           v-else
@@ -438,5 +500,71 @@ onUnmounted(() => {
 .status-collapsed.think,
 .status-collapsed.work {
   color: var(--yb-accent);
+}
+
+/* ---- 插件启动器 ---- */
+.pl-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 4px;
+}
+.pl-title {
+  font-size: var(--yb-fs-lg);
+  font-weight: 600;
+}
+.pl-back {
+  border: none;
+  background: transparent;
+  color: var(--yb-text-dim);
+  font-size: var(--yb-fs-md);
+  cursor: pointer;
+  padding: 3px 8px;
+  border-radius: var(--yb-radius-sm);
+}
+.pl-back:hover {
+  color: var(--yb-accent);
+  background: var(--yb-btn-neutral);
+}
+.pl-err {
+  padding: 6px var(--yb-space-3);
+  border-radius: var(--yb-radius-sm);
+  background: var(--yb-danger-soft);
+  color: var(--yb-danger);
+  font-size: var(--yb-fs-md);
+}
+.pl-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--yb-space-2);
+  padding: var(--yb-space-3) var(--yb-space-4);
+  border: 1px solid var(--yb-surface-border);
+  border-radius: var(--yb-radius-md);
+  background: var(--yb-surface);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  transition: border-color var(--yb-dur) var(--yb-ease), transform var(--yb-dur) var(--yb-ease);
+}
+.pl-row:hover {
+  border-color: var(--yb-accent);
+  transform: translateY(-1px);
+}
+.pl-name {
+  font-size: var(--yb-fs-lg);
+  font-weight: 500;
+  color: var(--yb-text);
+}
+.pl-id {
+  font-size: var(--yb-fs-sm);
+  color: var(--yb-text-dim);
+}
+.pl-empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  color: var(--yb-text-dim);
+  font-size: var(--yb-fs-md);
 }
 </style>
