@@ -133,7 +133,8 @@ function onEvent(e: BrainEvent) {
       state.value = "listen";
       break;
     case "listening_done":
-      state.value = "think";
+      // 空识别不进 think（run_done 不复位状态，会卡「思考中」）
+      state.value = e.text ? "think" : "idle";
       replyText.value = "";
       replyVisible.value = false;
       break;
@@ -192,6 +193,12 @@ function onMic() {
 function onInterrupt() {
   if (!busy.value) return;
   void interrupt().catch(() => {});
+}
+
+/** 聆听中点团子 = 取消录音；否则聚焦输入框。 */
+function onPetTap() {
+  if (state.value === "listen") onInterrupt();
+  else focusInput();
 }
 
 function focusInput() {
@@ -285,7 +292,7 @@ onUnmounted(() => {
         </div>
       </transition>
       <div class="bench-bar">
-        <Avatar class="pet" :state="state" :size="30" @click="focusInput" @longpress="onMic" />
+        <Avatar class="pet" :state="state" :size="30" @click="onPetTap" @longpress="onMic" />
         <span v-if="chipText" class="chip" :title="chipText">{{ chipText }}</span>
         <InputBar class="bench-input" :busy="busy" :listening="state === 'listen'" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
       </div>

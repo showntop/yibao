@@ -426,6 +426,7 @@ async def serve_async(
             voice.stop_listen()  # 打断（interrupt）→ 录音循环下一拍退出
 
         watcher = asyncio.ensure_future(_watch_cancel())
+        t0 = time.monotonic()
         try:
             text = await ai_loop.run_in_executor(None, voice.listen)
         except Exception as e:
@@ -434,6 +435,7 @@ async def serve_async(
             return
         finally:
             watcher.cancel()
+        print(f"[yibao] 聆听结束（{time.monotonic() - t0:.1f}s）：{text[:30]!r}", file=sys.stderr)
         if cancel.is_set():  # 聆听被打断：不走 listening_done（避免误进 think 态）
             write_msg({"type": "event", "event": {"kind": "interrupted"}})
             write_msg({"type": "run_done", "id": rid})
@@ -506,6 +508,13 @@ async def serve_async(
             return
         rtype = msg.get("type")
         if rtype in ("run", "voice_start"):
+            if rtype == "voice_start" and voice is None:
+                # 语音不可用（未启用/初始化失败）：不许静默吞掉——前端会永远卡「聆听中」
+                rid = msg.get("id")
+                print("[yibao] voice_start 收到但语音栈不可用", file=sys.stderr)
+                write_msg({"type": "event", "event": {"kind": "error", "text": "语音不可用：麦克风初始化失败或被禁用"}})
+                write_msg({"type": "run_done", "id": rid})
+                continue
             _preempt_current()
             prev = run_state["task"]
             if rtype == "run":

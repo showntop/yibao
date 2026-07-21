@@ -67,8 +67,13 @@ const plugins = ref<PluginInfo[]>([]);
 const pluginErr = ref("");
 let clickTimer: ReturnType<typeof setTimeout> | null = null;
 
-/** 单击=展开对话；双击=插件启动器（220ms 内第二次点击判双击，单击稍延迟是消歧代价）。 */
+/** 单击=展开对话；双击=插件启动器（220ms 内第二次点击判双击，单击稍延迟是消歧代价）。
+ *  聆听中单击团子 = 取消录音（收缩态唯一的取消入口），不进消歧计时。 */
 function onPetClick() {
+  if (state.value === "listen") {
+    onInterrupt();
+    return;
+  }
   if (clickTimer !== null) {
     clearTimeout(clickTimer);
     clickTimer = null;
@@ -168,8 +173,14 @@ function onEvent(e: BrainEvent) {
       state.value = "listen";
       break;
     case "listening_done":
-      state.value = "think";
-      if (e.text) bubbles.value.push({ role: "user", text: e.text });
+      // 空识别（超时/没说话）：回 idle 并提示——不能进 think，run_done 不复位状态，会永远卡「思考中」
+      if (e.text) {
+        state.value = "think";
+        bubbles.value.push({ role: "user", text: e.text });
+      } else {
+        state.value = "idle";
+        bubbles.value.push({ role: "ai", text: "没听清，再试一次？" });
+      }
       break;
     case "speaking":
       state.value = "say";
@@ -235,8 +246,10 @@ async function decide(approved: boolean) {
 }
 
 function onMic() {
-  state.value = "listen";
-  void voiceStart();
+  // 不乐观置 listen：等大脑 listening 事件确认（语音栈不可用时大脑会回 error，别自欺卡死）
+  void voiceStart().catch((err) => {
+    bubbles.value.push({ role: "ai", text: "⚠️ 语音启动失败：" + String(err) });
+  });
 }
 
 function onInterrupt() {
