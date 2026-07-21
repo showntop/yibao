@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator, Callable, Iterator
+from datetime import datetime
 
 from .audit import AuditLog
 from .history import ConversationHistory
@@ -174,6 +175,7 @@ class AgentLoop:
         focus_msg = self._focus_message()
         if focus_msg:
             messages.append(focus_msg)
+        messages.append(_now_message())
         if self.history:
             messages.extend(self.history.messages())
         messages.append({"role": "user", "content": user_text})
@@ -237,6 +239,7 @@ class AgentLoop:
         focus_msg = self._focus_message()
         if focus_msg:
             messages.append(focus_msg)
+        messages.append(_now_message())
         if self.history:
             messages.extend(self.history.messages())
         messages.append({"role": "user", "content": user_text})
@@ -307,6 +310,18 @@ class AgentLoop:
             if not proceeded:
                 continue
         yield Event(kind="error", text="达到最大步数仍未完成")
+
+
+_WEEKDAYS = "一二三四五六日"
+
+
+def _now_message() -> dict:
+    """当前本地时间 → system 消息（LLM 要把「明早 9 点」翻成绝对时间，必须知道现在几点）。"""
+    now = datetime.now()
+    return {
+        "role": "system",
+        "content": f"当前本地时间：{now.strftime('%Y-%m-%d %H:%M')}（星期{_WEEKDAYS[now.weekday()]}）",
+    }
 
 
 def _tag_surface(user_msg: dict, surface: str | None) -> dict:

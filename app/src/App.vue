@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import Avatar from "./components/Avatar.vue";
 import InputBar from "./components/InputBar.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
@@ -168,6 +169,18 @@ function onEvent(e: BrainEvent) {
     case "speaking_done":
       state.value = "idle";
       break;
+    case "reminder": {
+      // 主动提醒：宠物可能收起/隐藏 → 亮窗 + 展开，确保被看见（不抢焦点）
+      bubbles.value.push({ role: "ai", text: "⏰ " + (e.text ?? "到点了") });
+      void (async () => {
+        try {
+          const win = getCurrentWindow();
+          if (!(await win.isVisible())) await win.show();
+          if (!expanded.value) await expand();
+        } catch { /* 亮窗失败也至少留了气泡 */ }
+      })();
+      break;
+    }
     case "error":
       state.value = "idle";
       streamingIdx.value = null;

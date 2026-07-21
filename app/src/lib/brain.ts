@@ -15,6 +15,7 @@ export type BrainEventKind =
   | "listening_done"
   | "speaking"
   | "speaking_done"
+  | "reminder"
   | "panel";
 
 export interface BrainAction {

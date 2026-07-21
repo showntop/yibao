@@ -97,6 +97,12 @@ def build_loop(
 
     if use_real and not skills_factory:
         _load_plugins_safe(reg, memory, prov, host)
+        # 底座：主动提醒（store 挂到 agent，serve 的调度循环取它触发）
+        from .reminders import ReminderStore, make_skills
+
+        reminder_store = ReminderStore(os.path.join(os.path.dirname(db_path), "reminders.json"))
+        for sk in make_skills(reminder_store):
+            reg.register(sk)
 
     def default_confirmer(action) -> bool:
         # 由 serve 在 confirmation_needed 事件之后触发；阻塞读壳的回答
@@ -106,7 +112,7 @@ def build_loop(
     # 会话历史：仅真实模式默认落盘（fake/测试模式不污染本地文件）
     hist = history_file or (history_path() if use_real else None)
 
-    return AgentLoop(
+    agent = AgentLoop(
         provider=prov,
         skills=reg,
         classifier=RiskClassifier(),
@@ -118,6 +124,9 @@ def build_loop(
         history=ConversationHistory(hist) if hist else None,
         focus_provider=lambda: _FOCUS["value"],
     )
+    if use_real and not skills_factory:
+        agent.reminder_store = reminder_store  # serve 的调度循环经它触发提醒
+    return agent
 
 
 def _load_plugins_safe(reg, memory, prov, host) -> None:
@@ -371,6 +380,43 @@ async def serve_async(
     # 启动握手：壳靠它确认大脑上线（守护重启后也靠它判断已恢复）
     write_msg({"type": "hello", "version": 1, "permissions": _permissions_status()})
 
+    async def _reminder_loop() -> None:
+        """主动能力：每 10s 扫到期提醒 → 推 reminder 事件到壳；空闲时顺手语音播报。"""
+        store = getattr(agent, "reminder_store", None)
+        if store is None:
+            return
+        while True:
+            await asyncio.sleep(10)
+            try:
+                due = await _offload(store.pop_due, time.time())
+            except Exception as e:
+                print(f"[yibao] 提醒扫描失败：{e}", file=sys.stderr)
+                continue
+            for r in due:
+                text = str(r.get("text", ""))
+                print(f"[yibao] 提醒触发 id={r.get('id')}：{text[:30]!r}", file=sys.stderr)
+                write_msg({"type": "event", "surface": "pet",
+                           "event": {"kind": "reminder", "text": text}})
+                if agent.history:  # 落历史：用户回「知道了」时大脑有上下文
+                    try:
+                        await _offload(agent.history.record_messages,
+                                       [{"role": "assistant", "content": f"⏰ 到点提醒：{text}"}])
+                    except Exception:
+                        pass
+                # 有任务在跑就只在气泡里提醒，不打断在播的语音
+                task = run_state["task"]
+                if voice is not None and (task is None or task.done()):
+                    async def _once(t=text):
+                        yield f"提醒：{t}"
+                    try:
+                        write_msg({"type": "event", "surface": "pet", "event": {"kind": "speaking"}})
+                        await voice.speak_stream(_once(), asyncio.Event())
+                    except Exception as e:
+                        print(f"[yibao] 提醒播报失败：{e}", file=sys.stderr)
+                    write_msg({"type": "event", "surface": "pet", "event": {"kind": "speaking_done"}})
+
+    reminder_task = asyncio.ensure_future(_reminder_loop())
+
     def _reader():
         while True:
             msg = read_msg()
@@ -532,6 +578,7 @@ async def serve_async(
                 for t in pending_ro:
                     t.cancel()
             tick_task.cancel()
+            reminder_task.cancel()
             return
         rtype = msg.get("type")
         if rtype in ("run", "voice_start"):
