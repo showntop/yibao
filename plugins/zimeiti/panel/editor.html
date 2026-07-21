@@ -141,12 +141,15 @@
       dirty = false; // 程序性加载不算用户修改（input 事件把 dirty 置了 true，这里归位）
       var note = r && r.note;
       setStatus((prefix || "已加载") + " v" + version + (note ? " · " + note : ""));
-    }).catch(function () {
+    }).catch(function (e) {
+      var msg = e && e.message ? e.message : String(e || "");
       version = 0;
       $("editor").value = "";
       $("editor").dispatchEvent(new Event("input"));
       dirty = false;
-      setStatus("还没有稿件，喊译宝「写初稿」或直接开写");
+      // 「还没有稿件」是正常起点；其余失败（桥/白名单/超时）必须看得见，别装成空稿
+      if (msg.indexOf("还没有稿件") >= 0) setStatus("还没有稿件，喊译宝「写初稿」或直接开写");
+      else setStatus("稿件加载失败：" + msg, true);
     });
   }
 
