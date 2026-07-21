@@ -1,0 +1,16 @@
+# 面板可调方法白名单（v2 §7）：纯函数直调，L0 不占对话槽位、可并发
+[[method]]
+name = "list"
+handler = "toolbox.open"
+direct = true
+panel = "toolbox:main"
+
+[[method]]
+name = "json_format"
+handler = "toolbox.json_format"
+direct = true
+
+[[method]]
+name = "text_diff"
+handler = "toolbox.text_diff"
+direct = true

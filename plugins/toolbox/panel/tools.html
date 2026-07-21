@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<!-- 工具箱面板：JSON 格式化 / 文本对比。
+     能力调用全部经 window.yibao.invoke（postMessage 桥 → api.toml 白名单 + 风险闸门）。
+     桥 JS 由父侧注入（提供 window.yibao.invoke/onInit），本文件不自带。 -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font: 13px/1.6 -apple-system, "PingFang SC", sans-serif;
+    background: #fffaf4; color: #4a4036; padding: 12px;
+  }
+  .tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+  .tabs button {
+    border: 1px solid #f3e7d9; background: #fff; color: #b3a08d;
+    border-radius: 999px; padding: 4px 14px; cursor: pointer; font-size: 12px;
+  }
+  .tabs button.on { background: #ff8a5c; border-color: #ff8a5c; color: #fff; }
+  .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+  button.act {
+    border: none; border-radius: 10px; padding: 6px 14px; cursor: pointer;
+    background: #ff8a5c; color: #fff; font-size: 12px;
+  }
+  button.ghost { background: #fff; color: #ff8a5c; border: 1px solid #ff8a5c; }
+  select, label.opt { font-size: 12px; color: #4a4036; }
+  textarea, pre {
+    width: 100%; border: 1px solid #f3e7d9; border-radius: 10px; padding: 8px 10px;
+    font: 12px/1.5 ui-monospace, Menlo, monospace; background: #fff; color: #4a4036;
+    resize: vertical;
+  }
+  textarea:focus { outline: 1px solid #ff8a5c; }
+  pre { white-space: pre-wrap; word-break: break-all; min-height: 60px; }
+  .err { color: #d9534f; font-size: 12px; margin: 4px 0; min-height: 18px; }
+  .stat { color: #b3a08d; font-size: 12px; margin: 4px 0; min-height: 18px; }
+  .diff-line { padding: 0 8px; white-space: pre-wrap; word-break: break-all;
+    font: 12px/1.5 ui-monospace, Menlo, monospace; }
+  .add { background: #e3f1e4; }
+  .del { background: #fbe4e0; }
+  .diff-box { border: 1px solid #f3e7d9; border-radius: 10px; background: #fff;
+    max-height: 46vh; overflow: auto; }
+  .cols { display: flex; gap: 8px; }
+  .cols > div { flex: 1; }
+  .cols .cap { font-size: 12px; color: #b3a08d; margin-bottom: 4px; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="tabs">
+  <button id="tab-json" class="on">JSON 格式化</button>
+  <button id="tab-diff">文本对比</button>
+</div>
+
+<!-- JSON -->
+<div id="page-json">
+  <textarea id="json-in" rows="6" placeholder="粘贴 JSON，或对译宝说「格式化这段 JSON」"></textarea>
+  <div class="row" style="margin-top:8px">
+    <button class="act" id="json-pretty">格式化</button>
+    <button class="act ghost" id="json-minify">压缩</button>
+    <label class="opt">缩进
+      <select id="json-indent"><option>2</option><option>4</option></select>
+    </label>
+    <label class="opt"><input type="checkbox" id="json-sort"> 键排序</label>
+    <button class="act ghost" id="json-copy">复制结果</button>
+    <button class="act ghost" id="json-clear">清空</button>
+  </div>
+  <div class="err" id="json-err"></div>
+  <pre id="json-out" class="hidden"></pre>
+</div>
+
+<!-- Diff -->
+<div id="page-diff" class="hidden">
+  <div class="cols">
+    <div><div class="cap">原文</div><textarea id="diff-old" rows="6"></textarea></div>
+    <div><div class="cap">新文</div><textarea id="diff-new" rows="6"></textarea></div>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <button class="act" id="diff-run">对比</button>
+    <button class="act ghost" id="diff-swap">交换</button>
+    <button class="act ghost" id="diff-clear">清空</button>
+  </div>
+  <div class="stat" id="diff-stat"></div>
+  <div class="diff-box hidden" id="diff-out"></div>
+</div>
+
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+
+  // ---- 页签 ----
+  var tool = "json";
+  function show(t) {
+    tool = t;
+    $("tab-json").className = t === "json" ? "on" : "";
+    $("tab-diff").className = t === "diff" ? "on" : "";
+    $("page-json").className = t === "json" ? "" : "hidden";
+    $("page-diff").className = t === "diff" ? "" : "hidden";
+  }
+  $("tab-json").addEventListener("click", function () { show("json"); });
+  $("tab-diff").addEventListener("click", function () { show("diff"); });
+
+  // ---- JSON ----
+  var lastJsonOut = "";
+  function renderJson(out) {
+    lastJsonOut = out;
+    $("json-err").textContent = "";
+    $("json-out").textContent = out;
+    $("json-out").className = "";
+  }
+  function runJson(mode) {
+    var text = $("json-in").value;
+    $("json-err").textContent = "";
+    window.yibao.invoke("json_format", {
+      text: text, mode: mode,
+      indent: parseInt($("json-indent").value, 10),
+      sort_keys: $("json-sort").checked
+    }).then(function (r) {
+      renderJson((r && r.output) || "");
+    }).catch(function (e) {
+      $("json-out").className = "hidden";
+      $("json-err").textContent = e && e.message ? e.message : String(e || "失败");
+    });
+  }
+  $("json-pretty").addEventListener("click", function () { runJson("pretty"); });
+  $("json-minify").addEventListener("click", function () { runJson("minify"); });
+  $("json-clear").addEventListener("click", function () {
+    $("json-in").value = ""; $("json-err").textContent = "";
+    $("json-out").className = "hidden"; lastJsonOut = "";
+  });
+  $("json-copy").addEventListener("click", function () {
+    copyText(lastJsonOut || $("json-out").textContent, $("json-err"));
+  });
+
+  // ---- Diff ----
+  function renderDiff(data) {
+    var stat = $("diff-stat");
+    var box = $("diff-out");
+    box.innerHTML = "";
+    if (data.identical) {
+      stat.textContent = "两段文本一致";
+      box.className = "diff-box hidden";
+      return;
+    }
+    stat.textContent = "+" + data.added + "  −" + data.removed +
+      (data.truncated ? "（结果过大，已截断）" : "");
+    var frag = document.createDocumentFragment();
+    (data.lines || []).forEach(function (l) {
+      var div = document.createElement("div");
+      div.className = "diff-line " + l.t;
+      div.textContent = (l.t === "add" ? "+ " : l.t === "del" ? "− " : "  ") + l.s;
+      frag.appendChild(div);
+    });
+    box.appendChild(frag);
+    box.className = "diff-box";
+  }
+  $("diff-run").addEventListener("click", function () {
+    $("diff-stat").textContent = "";
+    window.yibao.invoke("text_diff", {
+      old: $("diff-old").value, new: $("diff-new").value
+    }).then(function (r) {
+      renderDiff(r || {});
+    }).catch(function (e) {
+      $("diff-out").className = "diff-box hidden";
+      $("diff-stat").textContent = e && e.message ? e.message : String(e || "失败");
+    });
+  });
+  $("diff-swap").addEventListener("click", function () {
+    var t = $("diff-old").value;
+    $("diff-old").value = $("diff-new").value;
+    $("diff-new").value = t;
+  });
+  $("diff-clear").addEventListener("click", function () {
+    $("diff-old").value = ""; $("diff-new").value = "";
+    $("diff-stat").textContent = ""; $("diff-out").className = "diff-box hidden";
+  });
+
+  function copyText(text, errEl) {
+    if (!text) { errEl.textContent = "没有可复制的内容"; return; }
+    function ok() { errEl.textContent = "已复制"; setTimeout(function () { errEl.textContent = ""; }, 1200); }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(ok, function () { fallback(); });
+    } else { fallback(); }
+    function fallback() {
+      var ta = document.createElement("textarea");
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); ok(); } catch (e) { errEl.textContent = "复制失败"; }
+      document.body.removeChild(ta);
+    }
+  }
+
+  // ---- 面板事件：对话流（LLM 调 skill 带 panel）打开时已带数据 ----
+  // 桥内直调也会重发同样的 panel 事件：与当前渲染一致则跳过，避免覆盖用户后续编辑。
+  window.yibao.onInit(function (data) {
+    if (!data || !data.tool) return;
+    show(data.tool === "diff" ? "diff" : "json");
+    if (data.tool === "json") {
+      if (typeof data.input === "string" && data.input !== $("json-in").value) {
+        $("json-in").value = data.input;
+      }
+      if (typeof data.output === "string" && data.output !== lastJsonOut) {
+        renderJson(data.output);
+      } else if (data.error && !data.output) {
+        $("json-err").textContent = String(data.error);
+      }
+    } else if (data.tool === "diff") {
+      if (typeof data.old === "string") $("diff-old").value = data.old;
+      if (typeof data.new === "string") $("diff-new").value = data.new;
+      if (data.lines) renderDiff(data);
+    }
+  });
+})();
+</script>
+</body>
+</html>
