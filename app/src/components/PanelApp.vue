@@ -2,7 +2,7 @@
 // 面板窗根组件：标题栏（可拖动 + 面板名 + 关闭）/ 内嵌确认条 / 错误细条 / SchemaPanel 撑满。
 // 工作台条（v2 §5）：面板是手、译宝是脑——条上有团子（状态同步）+ 上下文 chip + 输入条，
 // 对话走同一大脑；面板内容作为 focus 上报，注入 LLM 上下文（「这个/它」有解）。
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import SchemaPanel from "./SchemaPanel.vue";
@@ -44,25 +44,43 @@ const chipText = computed(() => {
   const t = focus.value?.item?.title;
   return t ? `在看：${t}` : "";
 });
-// 流式回复气泡：浮在工作台条上方，final 后几秒淡出；完整历史留在宠物窗
-const replyText = ref("");
-const replyVisible = ref(false);
-let fadeTimer: ReturnType<typeof setTimeout> | null = null;
+// ---- 对话浮层（工作台条上方）：输入/回复都留痕成时间线；一轮结束几秒后自动收起，角标可重开 ----
+type ThreadMsg = { role: "user" | "ai" | "hint"; text: string };
+const msgs = ref<ThreadMsg[]>([]);
+const streamingIdx = ref<number | null>(null); // 正在接收 chunk 的 ai 气泡下标
+const layerVisible = ref(false);
+const listeningHint = ref(false); // 聆听占位行（识别完替换为用户气泡）
+const layerRef = ref<HTMLElement | null>(null);
+let collapseTimer: ReturnType<typeof setTimeout> | null = null;
 
-function showReply() {
-  replyVisible.value = true;
-  if (fadeTimer !== null) {
-    clearTimeout(fadeTimer);
-    fadeTimer = null;
+function openLayer() {
+  layerVisible.value = true;
+  if (collapseTimer !== null) {
+    clearTimeout(collapseTimer);
+    collapseTimer = null;
   }
 }
 
-function fadeReply(ms: number) {
-  if (fadeTimer !== null) clearTimeout(fadeTimer);
-  fadeTimer = setTimeout(() => {
-    replyVisible.value = false;
-    fadeTimer = null;
+/** 一轮结束后自动收起：浮层是干活时的环境反馈，不是常驻聊天窗。 */
+function scheduleCollapse(ms: number) {
+  if (collapseTimer !== null) clearTimeout(collapseTimer);
+  collapseTimer = setTimeout(() => {
+    layerVisible.value = false;
+    collapseTimer = null;
   }, ms);
+}
+
+function pushMsg(role: ThreadMsg["role"], text: string) {
+  msgs.value.push({ role, text });
+  openLayer();
+  scrollSoon();
+}
+
+function scrollSoon() {
+  void nextTick(() => {
+    const el = layerRef.value;
+    if (el) el.scrollTop = el.scrollHeight;
+  });
 }
 
 /** 面板内容 → 焦点：rows 恰好一条 = 选中条目（详情页）；多条/没有 = 只有面板。 */
@@ -116,37 +134,61 @@ function onEvent(e: BrainEvent) {
       pending.value = null; // 确认流结束（批准路径：执行结果回来了）
       break;
     case "final_reply_chunk":
-      replyText.value += e.text ?? "";
-      showReply();
+      // 流式增量：拼到当前 streaming 气泡（首片时新建）
+      if (streamingIdx.value === null) {
+        msgs.value.push({ role: "ai", text: e.text ?? "" });
+        streamingIdx.value = msgs.value.length - 1;
+        openLayer();
+      } else {
+        msgs.value[streamingIdx.value].text += e.text ?? "";
+      }
+      scrollSoon();
       break;
     case "final_reply":
-      replyText.value = e.text ?? replyText.value;
-      showReply();
-      fadeReply(6000);
-      if (state.value !== "say") state.value = "idle";
+      // 以完整文本为准收尾（兜底 chunk 丢失）
+      if (streamingIdx.value !== null) {
+        msgs.value[streamingIdx.value].text = e.text ?? "";
+        streamingIdx.value = null;
+      } else {
+        pushMsg("ai", e.text ?? "");
+      }
+      scrollSoon();
+      if (state.value !== "say") {
+        state.value = "idle";
+        scheduleCollapse(6000);
+      }
       break;
     case "interrupted":
-      if (replyText.value) {
-        replyText.value += " ⛔";
-        showReply();
-        fadeReply(3000);
+      listeningHint.value = false;
+      if (streamingIdx.value !== null) {
+        msgs.value[streamingIdx.value].text += " ⛔";
+        streamingIdx.value = null;
       }
       state.value = "idle";
+      scheduleCollapse(3000);
       break;
     case "listening":
+      listeningHint.value = true; // 占位行：识别中先给个看得着的反馈
+      openLayer();
       state.value = "listen";
       break;
     case "listening_done":
-      // 空识别不进 think（run_done 不复位状态，会卡「思考中」）
-      state.value = e.text ? "think" : "idle";
-      replyText.value = "";
-      replyVisible.value = false;
+      listeningHint.value = false;
+      if (e.text) {
+        pushMsg("user", e.text); // 语音转文字落气泡：识别错了能看出来
+        state.value = "think";
+      } else {
+        pushMsg("hint", "没听清，再试一次？");
+        state.value = "idle";
+        scheduleCollapse(4000);
+      }
       break;
     case "speaking":
       state.value = "say";
       break;
     case "speaking_done":
       state.value = "idle";
+      scheduleCollapse(4000);
       break;
     case "error":
       pending.value = null; // 确认流结束（拒绝路径）或执行失败
@@ -181,8 +223,7 @@ const barRef = ref<HTMLElement | null>(null);
 
 function submit(text: string) {
   errorText.value = "";
-  replyText.value = "";
-  replyVisible.value = false;
+  pushMsg("user", text); // 输入立刻有落点（浮层时间线）
   void runInput(text).catch((err) => {
     errorText.value = "发送失败：" + String(err);
   });
@@ -247,7 +288,7 @@ onMounted(async () => {
 onUnmounted(() => {
   unlisten?.();
   unlistenFocus?.();
-  if (fadeTimer !== null) clearTimeout(fadeTimer);
+  if (collapseTimer !== null) clearTimeout(collapseTimer);
   // 窗口销毁（重载等）也清焦点，避免大脑留着旧上下文
   void reportPanelContext(null).catch(() => {});
 });
@@ -288,15 +329,31 @@ onUnmounted(() => {
       <div v-else class="placeholder">这里还空空的，喊我一声试试？</div>
     </div>
 
-    <!-- 工作台条：流式回复浮气泡 + 团子 + 上下文 chip + 输入条 -->
+    <!-- 工作台条：对话浮层（输入/回复时间线）+ 团子 + 上下文 chip + 输入条 -->
     <div ref="barRef" class="bench">
       <transition name="pop">
-        <div v-if="replyVisible && replyText" class="reply-bubble" @click="replyVisible = false">
-          {{ replyText }}
+        <div v-if="layerVisible && (msgs.length || listeningHint)" ref="layerRef" class="thread">
+          <button class="thread-x" title="收起" @click="layerVisible = false">×</button>
+          <div
+            v-for="(m, i) in msgs"
+            :key="i"
+            class="t-row"
+            :class="m.role"
+            :title="m.role === 'user' ? m.text : undefined"
+          >
+            {{ m.text }}
+          </div>
+          <div v-if="listeningHint" class="t-row hint">🎙 聆听中…（点团子取消）</div>
         </div>
       </transition>
       <div class="bench-bar">
         <Avatar class="pet" :state="state" :size="30" @click="onPetTap" @longpress="onMic" />
+        <button v-if="!layerVisible && msgs.length" class="thread-open" title="查看对话" @click="openLayer">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          </svg>
+        </button>
         <span v-if="chipText" class="chip" :title="chipText">{{ chipText }}</span>
         <InputBar class="bench-input" :busy="busy" :listening="state === 'listen'" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
       </div>
@@ -408,23 +465,89 @@ onUnmounted(() => {
   position: relative;
   margin: 0 var(--yb-space-2) var(--yb-space-2);
 }
-.reply-bubble {
+.thread {
   position: absolute;
   left: 4px;
   right: 4px;
   bottom: calc(100% + 6px);
-  max-height: 200px;
+  max-height: 260px;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   padding: var(--yb-space-3) var(--yb-space-4);
   border-radius: var(--yb-radius-lg);
   background: var(--yb-surface-solid);
   border: 1px solid var(--yb-surface-border);
   box-shadow: var(--yb-shadow-soft);
+  scrollbar-width: thin;
+}
+.thread-x {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  border: none;
+  background: transparent;
+  color: var(--yb-text-dim);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--yb-radius-sm);
+}
+.thread-x:hover {
+  background: var(--yb-btn-neutral);
+}
+.t-row {
+  padding: 4px 10px;
+  border-radius: var(--yb-radius-md);
   font-size: var(--yb-fs-md);
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
+}
+/* 用户输入：小气泡靠右、最多两行（全文在 title），回复才是主角 */
+.t-row.user {
+  align-self: flex-end;
+  max-width: 82%;
+  background: var(--yb-accent-soft);
+  color: var(--yb-accent);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* 回复：字幕感——大一号、宽松行距、无边框 */
+.t-row.ai {
+  align-self: stretch;
+  font-size: var(--yb-fs-lg);
+  line-height: 1.7;
+}
+.t-row.hint {
+  align-self: center;
+  color: var(--yb-text-dim);
+  font-size: var(--yb-fs-sm);
+}
+.thread-open {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--yb-btn-neutral);
+  color: var(--yb-text-dim);
   cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: filter 0.15s, color 0.15s;
+}
+.thread-open:hover {
+  color: var(--yb-text);
+  filter: brightness(0.96);
+}
+.thread-open svg {
+  width: 14px;
+  height: 14px;
 }
 .pop-enter-active,
 .pop-leave-active {
