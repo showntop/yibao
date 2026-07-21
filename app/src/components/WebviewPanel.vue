@@ -77,8 +77,9 @@ function replyToIframe(msg: Record<string, unknown>) {
   // postMessage 走结构化克隆：msg 里混着 Vue 响应式 Proxy（如 props.data）时
   // WebKit 抛 DataCloneError——消息静默丢失，编辑器永远「等待面板数据…」。
   // 桥消息本就源自 JSON IPC，先 JSON 往返退化成纯数据再发。
+  // 注意 src 必须在往返后补上（iframe 桥按 src==="yibao-host" 过滤，丢了全被吃掉）。
   const plain = JSON.parse(JSON.stringify(msg)) as Record<string, unknown>;
-  iframeEl.value?.contentWindow?.postMessage(plain, "*");
+  iframeEl.value?.contentWindow?.postMessage({ src: "yibao-host", ...plain }, "*");
 }
 
 function settle(bid: number, result?: unknown, error?: Error) {
