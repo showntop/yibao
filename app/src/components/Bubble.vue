@@ -15,25 +15,26 @@ const html = computed(() => (props.role === "ai" ? renderMarkdownLite(props.text
 <style scoped>
 .bubble {
   padding: var(--yb-space-2) var(--yb-space-3);
-  border-radius: var(--yb-radius-lg);
+  border-radius: 14px;
   max-width: 88%;
-  font-size: var(--yb-fs-lg);
-  line-height: 1.45;
+  font-size: 13px;
+  line-height: 1.6;
   word-break: break-word;
-  box-shadow: var(--yb-shadow-soft);
-  animation: pop var(--yb-dur) var(--yb-ease);
+  animation: pop 0.15s ease;
 }
 .ai {
-  background: var(--yb-bubble-ai);
-  color: var(--yb-text);
+  background: #ffffff;
+  border: 1px solid #eee4d6;
+  color: #3f372e;
   align-self: flex-start;
-  border-bottom-left-radius: 4px;
+  box-shadow: 0 1px 2px rgba(90, 70, 50, 0.04), 0 6px 16px rgba(90, 70, 50, 0.05);
 }
 .user {
-  background: var(--yb-bubble-user);
-  color: var(--yb-text);
+  background: #fff0e8;
+  border: 1px solid #eee4d6;
+  color: #3f372e;
   align-self: flex-end;
-  border-bottom-right-radius: 4px;
+  box-shadow: 0 1px 2px rgba(90, 70, 50, 0.04), 0 6px 16px rgba(90, 70, 50, 0.05);
 }
 /* markdown-lite 块样式（v-html 内容，需 :deep） */
 .ai :deep(.md-h) {
@@ -47,20 +48,20 @@ const html = computed(() => (props.role === "ai" ? renderMarkdownLite(props.text
   padding-left: 2px;
 }
 .ai :deep(.md-kv-h) {
-  color: var(--yb-text-dim);
+  color: #a89a86;
   font-size: var(--yb-fs-md);
 }
 .ai :deep(.md-gap) {
   height: 6px;
 }
 .ai :deep(.md-hr) {
-  border-top: 1px solid var(--yb-surface-border);
+  border-top: 1px solid #f3ecdf;
   margin: 6px 0;
 }
 .ai :deep(code) {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
   font-size: 0.92em;
-  background: var(--yb-well);
+  background: #f3ecdf;
   border-radius: 4px;
   padding: 0 4px;
 }

@@ -146,16 +146,18 @@ function onPointerUp() {
 /* 按住反馈：团子微微变大，提示继续按住 = 语音 */
 .av.holding .dumpling {
   transform: scale(1.08);
-  transition: transform 0.45s var(--yb-ease);
+  transition: all 0.45s ease;
 }
 .av .dumpling {
-  transition: transform 0.15s var(--yb-ease);
+  transition: all 0.15s ease;
 }
 .dumpling {
   width: 100%;
   height: 100%;
   display: block;
   overflow: visible;
+  /* 柔和投影：让团子从毛玻璃底上轻轻浮起 */
+  filter: drop-shadow(0 1px 2px rgba(90, 70, 50, 0.06)) drop-shadow(0 6px 16px rgba(90, 70, 50, 0.08));
 }
 
 /* ---- 颜色映射 ---- */
@@ -168,6 +170,7 @@ function onPointerUp() {
 .halo {
   fill: var(--ring, var(--yb-idle));
   opacity: 0.14;
+  transition: fill 0.15s ease;
 }
 .eye,
 .think-dots circle {
@@ -196,6 +199,7 @@ function onPointerUp() {
   stroke-width: 2.4;
   stroke-linecap: round;
   fill: none;
+  transition: stroke 0.15s ease;
 }
 
 /* ---- 状态色 ---- */
@@ -252,7 +256,7 @@ function onPointerUp() {
 
 /* think：双眼上移 */
 .eyes {
-  transition: transform var(--yb-dur) var(--yb-ease);
+  transition: transform 0.15s ease;
 }
 .eyes-up {
   transform: translateY(-2.5px);

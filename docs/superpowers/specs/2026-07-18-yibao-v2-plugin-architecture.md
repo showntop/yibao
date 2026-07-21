@@ -188,6 +188,13 @@ name = "sync_done"
 - **api.toml `panel` 字段**：`[[method]] panel = "pid:name"`（可选，须指向本插件已声明面板，跨插件/未声明则 method 跳过）。direct 直调成功后 sidecar 用该面板发 panel 事件，覆盖 tool 自带 `result.panel`——用于 `zimeiti.open_editor`（handler 复用 `zimeiti.get`，面板引到 `zimeiti:editor`）与 `save_article`（保存后停在编辑器，回执 data 经桥回包给 iframe，重发的同面板事件不重建 iframe）。
 - 首个实例：`plugins/zimeiti/panel/editor.html`（手写模板，单文件无外部依赖，<30KB）。
 
+### 实装记录（设计语言统一，2026-07-22）
+
+- **面板/webview 设计标杆**：`plugins/toolbox/panel/tools.html`——卡片式布局（白卡 14px 圆角 + `0 1px 2px rgba(90,70,50,.04), 0 6px 16px rgba(90,70,50,.05)`）、分段控制器页签、徽章统计、toast 反馈、主/ghost 两级按钮（`#ff8a5c`/`#f2703f` + `#e3d7c4` 边）。新 webview 面板照抄其 `:root` token 块。
+- **已对齐**：SchemaPanel（list/board/detail/form 全部卡片化 + 两级按钮）、主对话框（Bubble/InputBar/头部/启动器）、zimeiti 编辑器；`app/src/assets/tokens.css` 关键值已回填（`--yb-text #3f372e`、`--yb-bg #f6f1ea`、默认圆角 14px、新增 `--yb-accent-deep`）。
+- **空态规范**：双行结构（主句 600 次要色 + 引导句淡色），引导用户回对话（如「去跟译宝说一句试试」），不硬编码插件名；webview 面板可用 `:placeholder-shown` 纯 CSS 做空态显隐（editor.html 先例）。
+- **提醒**：底座技能 `reminder_set/list/cancel`（下划线命名——底座 id 禁点号），`reminders.json` 落盘，serve 调度循环 10s 一拍，到期亮窗 + 气泡 + 空闲 TTS；LLM 时间语义靠 loop 注入的当前时间 system 消息。
+
 ## 9. 数据存储
 
 | 类型 | 存储 | 规则 |

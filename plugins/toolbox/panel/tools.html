@@ -148,6 +148,7 @@
       JSON <span class="muted" id="json-in-count"></span>
       <span class="spacer"></span>
       <button class="mini" id="json-paste">⧉ 粘贴</button>
+      <button class="mini" id="json-sample">示例</button>
       <button class="mini" id="json-copy">⧉ 复制</button>
     </div>
     <div class="editor">
@@ -176,14 +177,14 @@
       <div class="card-head">原文 <span class="muted" id="diff-old-count"></span></div>
       <div class="editor" id="ed-old">
         <div class="hl hidden" id="hl-old"></div>
-        <textarea id="diff-old" rows="9" spellcheck="false" placeholder="旧文本"></textarea>
+        <textarea id="diff-old" rows="9" spellcheck="false" placeholder="粘贴旧文本，如 v1 草稿"></textarea>
       </div>
     </div>
     <div class="card">
       <div class="card-head">新文 <span class="muted" id="diff-new-count"></span></div>
       <div class="editor" id="ed-new">
         <div class="hl hidden" id="hl-new"></div>
-        <textarea id="diff-new" rows="9" spellcheck="false" placeholder="新文本"></textarea>
+        <textarea id="diff-new" rows="9" spellcheck="false" placeholder="粘贴新文本，如 v2 修改稿"></textarea>
       </div>
     </div>
   </div>
@@ -282,6 +283,12 @@
     navigator.clipboard.readText().then(function (s) {
       if (s) { $("json-in").value = s; updJsonIn(); toast("已粘贴"); }
     }, function () { toast("读不到剪贴板"); });
+  });
+  $("json-sample").addEventListener("click", function () {
+    $("json-in").value = '{"name":"译宝","tags":["桌宠","AI"],"meta":{"version":2,"plugins":4}}';
+    updJsonIn();
+    hide($("json-err"));
+    toast("已填入示例，点「格式化」试试");
   });
 
   // ---- Diff：两个编辑框内高亮（底层 .hl 染行，上层文字透明）----

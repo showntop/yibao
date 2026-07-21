@@ -78,21 +78,25 @@ function onMain() {
   gap: var(--yb-space-2);
   align-items: center;
   padding: 6px 6px 6px var(--yb-space-3);
-  border-radius: var(--yb-radius-lg);
-  background: var(--yb-surface);
-  border: 1px solid var(--yb-surface-border);
-  box-shadow: var(--yb-shadow-soft);
+  border-radius: 14px;
+  background: #ffffff;
+  border: 1px solid #eee4d6;
+  box-shadow: 0 1px 2px rgba(90, 70, 50, 0.04), 0 6px 16px rgba(90, 70, 50, 0.05);
+  transition: all 0.15s ease;
+}
+.bar:focus-within {
+  border-color: #ff8a5c;
 }
 input {
   flex: 1;
   border: none;
   background: transparent;
-  font-size: var(--yb-fs-lg);
+  font-size: 13px;
   outline: none;
-  color: var(--yb-text);
+  color: #3f372e;
 }
 input::placeholder {
-  color: var(--yb-text-dim);
+  color: #c9bcab;
 }
 .mic,
 .main {
@@ -100,27 +104,28 @@ input::placeholder {
   height: 30px;
   flex-shrink: 0;
   border-radius: 50%;
-  border: none;
   cursor: pointer;
   display: grid;
   place-items: center;
-  transition: filter 0.15s, opacity 0.15s, background 0.15s;
+  transition: all 0.15s ease;
 }
 .icon {
   width: 15px;
   height: 15px;
 }
 .mic {
-  background: var(--yb-btn-neutral);
-  color: var(--yb-text-dim);
+  background: transparent;
+  border: 1px solid #e3d7c4;
+  color: #8a7a66;
 }
 .mic:hover {
-  filter: brightness(0.96);
-  color: var(--yb-text);
+  background: #faf3ea;
+  color: #3f372e;
 }
 /* 聆听中：红底 + 脉动光环 + 声波动画（明确的「正在听」状态） */
 .mic.listening {
   background: var(--yb-danger);
+  border-color: transparent;
   color: #fff;
   animation: mic-pulse 1.6s ease-out infinite;
 }
@@ -163,29 +168,33 @@ input::placeholder {
     height: 13px;
   }
 }
-/* 主按钮：常态=发送（杏橙），打断态=红色方块；图标交叉淡入淡出切换 */
+/* 主按钮：常态=发送（主色实底），打断态=失败色浅底；图标交叉淡入淡出切换 */
 .main {
-  background: var(--yb-accent);
+  border: none;
+  background: #ff8a5c;
   color: #fff;
+  box-shadow: 0 2px 6px rgba(242, 112, 63, 0.3);
 }
 .main:hover:not(:disabled) {
-  filter: brightness(1.06);
+  background: #f2703f;
+}
+.main:active:not(:disabled) {
+  transform: scale(0.97);
 }
 .main:disabled {
   opacity: 0.4;
   cursor: default;
+  box-shadow: none;
 }
 .main.stopping {
-  background: var(--yb-danger-soft);
-  color: var(--yb-danger);
+  background: #fce7e3;
+  color: #c0574b;
+  box-shadow: none;
   opacity: 1;
-}
-.main.stopping:hover {
-  filter: brightness(1.04);
 }
 .swap-enter-active,
 .swap-leave-active {
-  transition: opacity 0.12s ease, transform 0.12s ease;
+  transition: opacity 0.15s ease, transform 0.15s ease;
 }
 .swap-enter-from,
 .swap-leave-to {

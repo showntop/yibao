@@ -326,7 +326,11 @@ onUnmounted(() => {
         :data="current.data"
         @action="onAction"
       />
-      <div v-else class="placeholder">这里还空空的，喊我一声试试？</div>
+      <div v-else class="placeholder">
+        <div class="ph-icon">🍡</div>
+        <div class="ph-title">这里还空空的</div>
+        <div class="ph-hint">去跟译宝说一句试试，让它帮你打开想看的面板</div>
+      </div>
     </div>
 
     <!-- 工作台条：对话浮层（输入/回复时间线）+ 团子 + 上下文 chip + 输入条 -->
@@ -454,10 +458,34 @@ onUnmounted(() => {
 }
 .placeholder {
   height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 24px;
+  text-align: center;
+  background: #f6f1ea;
+  border-radius: inherit;
+}
+.ph-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: #fff0e8;
   display: grid;
   place-items: center;
-  color: var(--yb-text-dim);
-  font-size: var(--yb-fs-lg);
+  font-size: 24px;
+  margin-bottom: 4px;
+}
+.ph-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #a89a86;
+}
+.ph-hint {
+  font-size: 12px;
+  color: #c9bcab;
 }
 
 /* ---- 工作台条 ---- */

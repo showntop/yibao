@@ -7,68 +7,104 @@
 <meta charset="utf-8">
 <title>写作编辑器</title>
 <style>
-  /* 治愈系取值内联写死（iframe 沙箱内吃不到 tokens.css）：暖白底 #fffaf4 / 杏橙 #ff8a5c / 圆角 10px / 13-14px */
-  * { box-sizing: border-box; }
+  /* 设计 token 整段照抄 tools.html（iframe 沙箱内吃不到 tokens.css，内联写死） */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #f6f1ea; --card: #ffffff; --border: #eee4d6; --border-soft: #f3ecdf;
+    --text: #3f372e; --muted: #a89a86; --faint: #c9bcab;
+    --accent: #ff8a5c; --accent-deep: #f2703f; --accent-soft: #fff0e8;
+    --green-bg: #dcf0e2; --green: #3e8e5a; --green-bar: #8fd0a6;
+    --red-bg: #fce7e3; --red: #c0574b; --red-bar: #f0aaa1;
+    --mono: 12.5px/1.6 "SF Mono", ui-monospace, Menlo, monospace;
+  }
   html, body { height: 100%; }
   body {
-    margin: 0; display: flex; flex-direction: column;
-    font: 14px/1.6 -apple-system, "PingFang SC", system-ui, sans-serif;
-    background: #fffaf4; color: #4a4036;
+    font: 13px/1.6 -apple-system, "PingFang SC", sans-serif;
+    background: var(--bg); color: var(--text); padding: 14px;
+    display: flex; flex-direction: column;
   }
-  header {
-    display: flex; align-items: center; gap: 8px;
-    padding: 10px 14px; border-bottom: 1px solid #f3e7d9; flex-shrink: 0;
-  }
+
+  /* ---- 头部工具条（按钮分 主/ghost 两级，同 tools.html）---- */
+  header { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex: none; }
   #title { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #back {
-    border: none; border-radius: 8px; background: transparent; color: #b3a08d;
-    font-size: 13px; padding: 4px 8px; cursor: pointer; flex-shrink: 0; font-family: inherit;
+  button.act {
+    border: none; border-radius: 10px; padding: 6px 16px; cursor: pointer;
+    background: var(--accent); color: #fff; font-size: 12.5px; font-weight: 600;
+    box-shadow: 0 2px 6px rgba(242, 112, 63, .3); transition: all .15s ease;
+    flex: none;
   }
-  #back:hover { color: #ff8a5c; background: rgba(62, 50, 41, 0.07); }
+  button.act:hover { background: var(--accent-deep); }
+  button.act:active { transform: scale(.97); }
+  button.act:disabled { opacity: .5; cursor: default; }
+  button.ghost {
+    background: transparent; color: #8a7a66; border: 1px solid #e3d7c4;
+    box-shadow: none; font-weight: 500;
+  }
+  button.ghost:hover { background: #faf3ea; color: var(--text); border-color: #d8c9b2; }
   #note {
-    width: 160px; border: 1px solid #f3e7d9; border-radius: 10px; padding: 5px 10px;
-    font-size: 13px; background: #fff; color: inherit; outline: none; font-family: inherit;
+    width: 160px; flex: none; border: 1px solid #e3d7c4; border-radius: 10px; padding: 5px 10px;
+    font-size: 12.5px; background: #fff; color: var(--text); outline: none; font-family: inherit;
+    transition: border-color .15s ease;
   }
-  #note:focus { border-color: #ff8a5c; }
-  #save {
-    border: none; border-radius: 10px; background: #ff8a5c; color: #fff;
-    font-size: 13px; font-weight: 500; padding: 6px 14px; cursor: pointer; flex-shrink: 0;
+  #note:focus { border-color: var(--accent); }
+  #note::placeholder { color: var(--faint); }
+
+  /* ---- 编辑区 / 预览区（一张卡片，中间细分隔线）---- */
+  main {
+    flex: 1; display: flex; min-height: 0;
+    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+    box-shadow: 0 1px 2px rgba(90, 70, 50, .04), 0 6px 16px rgba(90, 70, 50, .05);
+    overflow: hidden; margin-bottom: 10px;
   }
-  #save:hover { filter: brightness(0.96); }
-  #save:disabled { opacity: 0.5; cursor: default; }
-  main { flex: 1; display: flex; min-height: 0; }
   #editor {
-    flex: 1; border: none; outline: none; resize: none; padding: 14px;
-    font: 13px/1.7 ui-monospace, "SF Mono", Menlo, monospace;
-    background: transparent; color: inherit;
+    flex: 1; min-width: 0; border: none; outline: none; resize: none; padding: 12px 14px;
+    font: var(--mono); background: transparent; color: var(--text);
   }
-  #preview {
-    flex: 1; overflow-y: auto; padding: 14px; border-left: 1px solid #f3e7d9; font-size: 14px;
+  #editor::placeholder { color: var(--faint); }
+  #preview-wrap {
+    flex: 1; min-width: 0; position: relative; display: flex;
+    border-left: 1px solid var(--border-soft);
   }
-  #preview h1 { font-size: 20px; margin: 0.6em 0 0.4em; }
-  #preview h2 { font-size: 17px; margin: 0.6em 0 0.4em; }
-  #preview h3 { font-size: 15px; margin: 0.6em 0 0.4em; }
+  #preview { flex: 1; overflow-y: auto; padding: 12px 14px; font-size: 13px; }
+  #preview h1 { font-size: 18px; margin: 0.6em 0 0.4em; }
+  #preview h2 { font-size: 16px; margin: 0.6em 0 0.4em; }
+  #preview h3 { font-size: 14.5px; margin: 0.6em 0 0.4em; }
   #preview p { margin: 0.5em 0; }
   #preview ul { margin: 0.5em 0; padding-left: 1.4em; }
-  #status {
-    padding: 4px 14px; font-size: 13px; color: #b3a08d;
-    border-top: 1px solid #f3e7d9; min-height: 26px; flex-shrink: 0;
+
+  /* ---- 空态（纯 CSS：编辑区为空、placeholder 可见时盖住预览区；不挡点击）---- */
+  #empty-state {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 6px; text-align: center;
+    padding: 18px; pointer-events: none; background: var(--card);
   }
-  #status.err { color: #d06a5a; }
+  #empty-state .t { font-size: 14px; font-weight: 600; color: var(--muted); }
+  #empty-state .s { font-size: 12px; color: var(--faint); line-height: 1.7; }
+  #editor:not(:placeholder-shown) ~ #preview-wrap #empty-state { display: none; }
+
+  /* ---- 状态栏 ---- */
+  #status { padding: 0 4px; font-size: 11.5px; color: var(--muted); min-height: 22px; flex: none; }
+  #status.err { color: var(--red); }
 </style>
 </head>
 <body>
 <header>
-  <button id="back" title="返回选题详情">‹ 返回</button>
+  <button id="back" class="act ghost" title="返回选题详情">‹ 返回</button>
   <span id="title">写作编辑器</span>
   <input id="note" placeholder="版本备注（可选）">
-  <button id="save">保存为新版本</button>
+  <button id="save" class="act">保存为新版本</button>
 </header>
 <main>
   <textarea id="editor" placeholder="在这里写稿（markdown）；也可以对译宝说「写初稿 / 改稿 / 读稿」，它会直接改这里" spellcheck="false"></textarea>
-  <div id="preview"></div>
+  <div id="preview-wrap">
+    <div id="preview"></div>
+    <div id="empty-state">
+      <div class="t">还没有稿件</div>
+      <div class="s">对译宝说「写初稿」，或直接在左侧开写</div>
+    </div>
+  </div>
 </main>
-<div id="status">等待面板数据…</div>
+<div id="status">正在等译宝把选题送过来…</div>
 
 <script>
 (function () {

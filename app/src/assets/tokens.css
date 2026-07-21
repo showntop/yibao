@@ -17,16 +17,17 @@
 
 /* ============ 治愈系：暖奶油底 + 杏子橙 + 大圆角 + 弹簧动效 ============ */
 :root {
-  --yb-bg: #fff6ee;
+  --yb-bg: #f6f1ea;
   --yb-shell-bg: rgba(255, 251, 246, 0.86);
   --yb-glass-border: rgba(255, 255, 255, 0.7);
   --yb-blur: saturate(150%) blur(20px);
   --yb-shadow: 0 10px 32px rgba(120, 72, 40, 0.16);
 
-  --yb-text: #3e3229;
-  --yb-text-dim: #9c8b7a;
+  --yb-text: #3f372e;
+  --yb-text-dim: #a89a86;
   --yb-accent: #ff8a5c;
-  --yb-accent-soft: rgba(255, 138, 92, 0.15);
+  --yb-accent-deep: #f2703f;
+  --yb-accent-soft: #fff0e8;
   --yb-bubble-ai: rgba(255, 255, 255, 0.94);
   --yb-bubble-user: rgba(255, 227, 210, 0.9);
   --yb-danger: #e5484d;
@@ -39,12 +40,12 @@
   --yb-work: #ff8a5c;
   --yb-say: #58b368;
 
-  /* 圆角梯度（大圆角；--yb-radius 为旧名保留） */
+  /* 圆角梯度（大圆角；--yb-radius 为旧名保留。2026-07-22 起默认对齐新视觉 14px） */
   --yb-radius-sm: 10px;
   --yb-radius-md: 14px;
   --yb-radius-lg: 18px;
   --yb-radius-xl: 24px;
-  --yb-radius: var(--yb-radius-lg);
+  --yb-radius: var(--yb-radius-md);
 
   /* 动效：弹簧曲线 */
   --yb-ease: cubic-bezier(0.34, 1.56, 0.64, 1);
