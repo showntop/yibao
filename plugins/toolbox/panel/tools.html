@@ -15,11 +15,14 @@
     --red-bg: #fce7e3; --red: #c0574b; --red-bar: #f0aaa1;
     --mono: 12.5px/1.6 "SF Mono", ui-monospace, Menlo, monospace;
   }
+  html, body { height: 100%; }
   body {
     font: 13px/1.6 -apple-system, "PingFang SC", sans-serif;
     background: var(--bg); color: var(--text); padding: 14px;
+    display: flex; flex-direction: column;
   }
   .hidden { display: none !important; }
+  #page-json, #page-diff { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 
   /* ---- 分段控制器 ---- */
   .seg {
@@ -57,10 +60,10 @@
   button.mini:hover { background: var(--accent-soft); color: var(--accent-deep); }
 
   /* ---- 编辑框（textarea + 底层高亮层；平时就是普通 textarea）---- */
-  .editor { position: relative; }
+  .editor { position: relative; flex: 1; min-height: 0; display: flex; }
   .editor textarea {
-    position: relative; z-index: 1;
-    display: block; width: 100%; border: none; outline: none; resize: vertical;
+    position: relative; z-index: 1; flex: 1;
+    display: block; width: 100%; height: 100%; border: none; outline: none; resize: none;
     padding: 10px 12px; background: transparent; color: var(--text);
     font: var(--mono); overflow: auto;
   }
@@ -116,8 +119,11 @@
   .chip.eq { background: #e9f3ec; color: var(--green); }
   .chip.warn { background: #fdf3e0; color: #b98a2f; }
 
-  .cols { display: flex; gap: 10px; }
-  .cols > .card { flex: 1; min-width: 0; }
+  .cols { display: flex; gap: 10px; flex: 1; min-height: 0; }
+  .cols > .card { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  #page-json > .card { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .card-head { flex: none; }
+  .toolbar, .chips, .banner, .seg { flex: none; }
 
   /* ---- toast ---- */
   #toast {
