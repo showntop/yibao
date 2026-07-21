@@ -309,6 +309,50 @@ fn panel_action(
     )
 }
 
+/// 插件目录：YIBAO_PLUGINS_DIR 优先，否则 <repo>/plugins（与 brain 加载同源）。
+fn plugins_dir() -> std::path::PathBuf {
+    if let Ok(dir) = std::env::var("YIBAO_PLUGINS_DIR") {
+        return std::path::PathBuf::from(dir);
+    }
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("plugins")
+}
+
+/// 插件启动器（双击团子）：扫各插件 manifest.toml 拿 id/name。
+/// 行级解析、只取首个 section 之前的顶层键（[[tool]] 里也有 id，不能误抓），不引 toml 依赖。
+#[tauri::command]
+fn list_plugins() -> Result<Vec<Value>, String> {
+    let rd = std::fs::read_dir(plugins_dir()).map_err(|e| format!("读插件目录失败：{e}"))?;
+    let mut out = Vec::new();
+    for entry in rd.flatten() {
+        let path = entry.path().join("manifest.toml");
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let pick = |key: &str| {
+            for line in text.lines() {
+                let l = line.trim();
+                if l.starts_with('[') {
+                    break; // 进了 section 就停（顶层键只在文件头）
+                }
+                if let Some(rest) = l.strip_prefix(key) {
+                    if let Some(v) = rest.trim_start().strip_prefix('=') {
+                        return Some(v.trim().trim_matches('"').to_string());
+                    }
+                }
+            }
+            None
+        };
+        if let (Some(id), Some(name)) = (pick("id"), pick("name")) {
+            out.push(serde_json::json!({ "id": id, "name": name }));
+        }
+    }
+    out.sort_by(|a, b| {
+        a["id"].as_str().unwrap_or("").cmp(b["id"].as_str().unwrap_or(""))
+    });
+    Ok(out)
+}
+
 /// 打开/聚焦面板窗：已存在则 show+focus（关闭只是隐藏，状态保留）；
 /// 首次用 builder 创建（无装饰+透明与主窗一致，不需 always_on_top），位置取屏幕中央偏右（避开宠物球常驻角）。
 /// 注：CloseRequested → hide 由全局 on_window_event 统一拦截（对所有窗生效，面板窗同享）。
@@ -437,6 +481,8 @@ pub fn run() {
                     let sw = mon.size().width as f64 / s;
                     let _ = win.set_position(tauri::LogicalPosition::new(mx + sw - 132.0 - 24.0, my + 40.0));
                 }
+                // 启动即显示（conf 里 visible:false 只是避免定位前闪屏，别让用户按热键找宠物）
+                let _ = win.show();
             }
 
             // 注册全局热键：Super+Shift+Y 显隐主窗（macOS 上 Super=Cmd）
@@ -513,6 +559,7 @@ pub fn run() {
             run_input,
             confirm,
             panel_action,
+            list_plugins,
             open_panel_window,
             close_panel_window,
             get_current_panel,
