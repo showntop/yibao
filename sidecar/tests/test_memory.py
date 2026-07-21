@@ -96,11 +96,44 @@ def test_lazy_memory_failure_degrades():
     def factory():
         raise RuntimeError("no torch")
 
-    m = LazyMem0Memory(factory=factory)
+    m = LazyMem0Memory(factory=factory, init_attempts=1)  # 测降级路径，不等重试
     assert _wait(lambda: m.failed)
     assert not m.ready
     assert m.recall("x", "u") == []
     m.add("y", "u")  # 降级后静默丢弃，不抛异常
+
+
+def test_lazy_memory_retries_before_failure():
+    from yibao_brain.memory import LazyMem0Memory
+
+    calls = []
+
+    def factory():
+        calls.append(1)
+        raise RuntimeError("lock held")
+
+    m = LazyMem0Memory(factory=factory, init_attempts=3, init_delay_s=0.05)
+    assert _wait(lambda: m.failed)
+    assert len(calls) == 3  # 按次数重试后才降级
+
+
+def test_lazy_memory_retry_recovers():
+    from yibao_brain.memory import LazyMem0Memory
+
+    calls = []
+    real = FakeMemory()
+
+    def factory():
+        calls.append(1)
+        if len(calls) < 3:
+            raise RuntimeError("lock held")  # 前两次模拟旧实例锁未释
+        return real
+
+    m = LazyMem0Memory(factory=factory, init_attempts=3, init_delay_s=0.05)
+    assert _wait(lambda: m.ready)
+    assert not m.failed
+    m.add("恢复后的记忆", "u")
+    assert "恢复后的记忆" in real.recall("恢复", "u")
 
 
 def test_lazy_memory_failure_notifies_callback():
@@ -115,7 +148,7 @@ def test_lazy_memory_failure_notifies_callback():
         gate.wait(5)
         raise RuntimeError("no torch")
 
-    m = LazyMem0Memory(factory=factory)
+    m = LazyMem0Memory(factory=factory, init_attempts=1)
     m.set_status_callback(seen.append)  # 先注入：失败时回调
     gate.set()
     assert _wait(lambda: bool(seen))
@@ -128,7 +161,7 @@ def test_lazy_memory_callback_set_after_failure_fires_immediately():
     def factory():
         raise RuntimeError("no torch")
 
-    m = LazyMem0Memory(factory=factory)
+    m = LazyMem0Memory(factory=factory, init_attempts=1)
     assert _wait(lambda: m.failed)
     seen: list[str] = []
     m.set_status_callback(seen.append)  # 失败后才注入：立即补发，不错过

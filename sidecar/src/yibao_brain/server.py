@@ -642,6 +642,15 @@ def main() -> int:
 
     _cfg.migrate_legacy_data(os.path.join(os.path.dirname(__file__), "..", ".."))
     os.makedirs(_cfg.data_dir(), exist_ok=True)  # sqlite/qdrant 不会自建父目录
+    # 单实例锁 + 孤儿回收：壳被强杀时旧大脑可能活着独占 qdrant 锁，
+    # 新大脑取锁前先把它们收掉；锁 fd 活到进程结束（OS 级，死即释）
+    from .instance import ensure_single_instance
+
+    try:
+        _instance_lock_fd = ensure_single_instance(os.path.join(_cfg.data_dir(), "brain.lock"))
+    except Exception as e:
+        print(f"[yibao] 大脑单实例锁获取失败：{e}", file=sys.stderr)
+        return 1
     asyncio.run(
         serve_async(
             reader,
