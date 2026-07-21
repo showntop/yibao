@@ -36,6 +36,12 @@ _FOCUS: dict = {"value": None}
 # 被抢占任务的收尾宽限（秒）：超时强制取消，防 hung 任务把槽位卡死（「点了没反应」的根）
 _PREEMPT_GRACE_S = 8.0
 
+# 看门狗心跳：pong 改由读线程直接应答（见 serve_async._reader），不经事件循环——
+# 循环被长任务占住时照样 pong（忙 ≠ 死，历史误杀的根）；
+# 但循环 _TICK_FRESH_S 秒没调度（真卡死）→ 扣住 pong，让看门狗杀掉重启。
+_LOOP_TICK = {"t": 0.0}
+_TICK_FRESH_S = 12.0
+
 
 def _permissions_status() -> dict:
     """检测辅助功能/屏幕录制权限；检测本身失败时乐观返回 True（不出误报 banner）。"""
@@ -300,6 +306,15 @@ async def serve_async(
     新 run 到来会抢占并打断未完成的旧 run。
     """
     ai_loop = asyncio.get_running_loop()
+    _LOOP_TICK["t"] = time.monotonic()
+
+    async def _tick() -> None:
+        """主循环存活刻度：只要循环还能调度就每秒前进；读线程据此判断忙/死。"""
+        while True:
+            _LOOP_TICK["t"] = time.monotonic()
+            await asyncio.sleep(1)
+
+    tick_task = asyncio.ensure_future(_tick())
     queue: asyncio.Queue = asyncio.Queue()
     # 确认单槽 + 早到缓存：confirm 可能先于 confirmer 注册 future 到达
     # （读线程瞬时投递 run+confirm，主循环先处理 confirm），直接丢会死锁。
@@ -359,6 +374,15 @@ async def serve_async(
     def _reader():
         while True:
             msg = read_msg()
+            # 看门狗心跳：读线程直接答 pong（循环被长任务占住时也不误杀）；
+            # 循环 _TICK_FRESH_S 秒未调度 = 真卡死 → 扣住 pong 让看门狗杀掉重启
+            if isinstance(msg, dict) and msg.get("type") == "ping":
+                lag = time.monotonic() - _LOOP_TICK["t"]
+                if lag < _TICK_FRESH_S:
+                    write_msg({"type": "pong"})
+                else:
+                    print(f"[yibao] 主循环 {lag:.0f}s 未调度，扣住 pong 待看门狗处置", file=sys.stderr)
+                continue
             try:
                 ai_loop.call_soon_threadsafe(queue.put_nowait, msg)
             except RuntimeError:
@@ -507,6 +531,7 @@ async def serve_async(
                 _, pending_ro = await asyncio.wait(readonly_tasks, timeout=3)
                 for t in pending_ro:
                     t.cancel()
+            tick_task.cancel()
             return
         rtype = msg.get("type")
         if rtype in ("run", "voice_start"):
@@ -568,9 +593,6 @@ async def serve_async(
             else:
                 # confirmer 还没注册（消息先于 run 任务到达）→ 缓存，由 confirmer 兑现
                 pending_confirm["early"] = bool(msg.get("approved", False))
-        elif rtype == "ping":
-            # 壳侧看门狗心跳：run 进行中主循环也停在 queue.get()，总能即时应答
-            write_msg({"type": "pong"})
         elif rtype == "check_permissions":
             write_msg({"type": "permissions", "permissions": _permissions_status()})
         elif rtype == "prompt_permission":
@@ -595,9 +617,13 @@ def _line_reader() -> ReadMsg:
 
 
 def _line_writer() -> WriteMsg:
+    lock = threading.Lock()  # pong 由读线程直发，与主循环消息共享 stdout，防行交错
+
     def _w(msg: dict) -> None:
-        sys.stdout.write(json.dumps(msg, ensure_ascii=False) + "\n")
-        sys.stdout.flush()
+        with lock:
+            sys.stdout.write(json.dumps(msg, ensure_ascii=False) + "\n")
+            sys.stdout.flush()
+
     return _w
 
 

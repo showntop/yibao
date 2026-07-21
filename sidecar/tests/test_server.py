@@ -297,6 +297,44 @@ def test_serve_async_ping_pong(tmp_path):
     assert len(pongs) == 1
 
 
+def test_serve_async_ping_answered_while_run_busy(tmp_path):
+    """长任务占住主循环时，ping 由读线程即时应答（看门狗不误杀，2026-07-21 误杀根治）。"""
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([
+                {"type": "run", "id": "r1", "text": "hi"},
+                {"type": "ping"},
+            ]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(text="ok", delay=0.5),
+        )
+    )
+    types = [m["type"] for m in out]
+    assert "pong" in types
+    assert types.index("pong") < types.index("run_done")  # 不等长任务收尾就答了
+
+
+def test_serve_async_ping_suppressed_when_loop_dead(tmp_path, monkeypatch):
+    """主循环真卡死（tick 停滞）→ 扣住 pong，让看门狗杀掉重启。"""
+    from yibao_brain import server as srv
+
+    monkeypatch.setattr(srv, "_TICK_FRESH_S", -1.0)  # 任何 lag 都算「循环已死」
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([{"type": "ping"}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+        )
+    )
+    assert not [m for m in out if m["type"] == "pong"]
+
+
 def test_serve_async_check_permissions(tmp_path):
     out = []
     _run_async(
