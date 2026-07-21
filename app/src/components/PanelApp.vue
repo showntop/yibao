@@ -17,6 +17,7 @@ import {
   voiceStart,
   interrupt,
   reportPanelContext,
+  setSurface,
   type BrainEvent,
   type PanelFocus,
 } from "../lib/brain";
@@ -78,14 +79,17 @@ function computeFocus(cur: typeof current.value): PanelFocus | null {
   };
 }
 
-/** 面板内容统一入口：赋值 + 重算焦点 + 上报大脑。 */
+/** 面板内容统一入口：赋值 + 重算焦点 + 上报大脑 + 会话分流 surface 随插件切换。 */
 function setCurrent(v: typeof current.value) {
   current.value = v;
   focus.value = computeFocus(v);
+  if (focus.value) setSurface(`panel:${focus.value.plugin}`);
   void reportPanelContext(focus.value).catch(() => {});
 }
 
 function onEvent(e: BrainEvent) {
+  // 会话分流：宠物窗的对话事件不归这里；panel 事件例外（新面板内容必须接）
+  if (e.kind !== "panel" && e.surface === "pet") return;
   switch (e.kind) {
     case "panel":
       setCurrent({

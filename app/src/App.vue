@@ -10,6 +10,7 @@ import {
   onBrainEvent,
   onBrainStatus,
   onBrainPermissions,
+  onPanelClosed,
   runInput,
   sendConfirm,
   voiceStart,
@@ -38,9 +39,11 @@ const brainDown = ref(false); // 大脑掉线/重启中（守护在恢复）
 const perms = ref<BrainPermissions | null>(null); // macOS 权限状态（null=未收到）
 const expanded = ref(false);
 const dir = ref<Dir>("nw"); // 展开方向（collapse 沿同一锚点缩回要用）
+const panelOpen = ref(false); // 面板协作会话进行中（关联气泡只插一次，panel 刷新不重复插）
 let unlisten: (() => void) | null = null;
 let unlistenStatus: (() => void) | null = null;
 let unlistenPerms: (() => void) | null = null;
+let unlistenPanelClosed: (() => void) | null = null;
 
 const statusText = computed(
   () => ({ idle: "待命中", listen: "聆听中", think: "思考中…", work: "操作中…", say: "说话中…" }[state.value]),
@@ -114,6 +117,8 @@ async function launchPlugin(p: PluginInfo) {
 }
 
 function onEvent(e: BrainEvent) {
+  // 会话分流：面板场景的对话事件只归面板窗；panel 事件例外（管开窗 + 关联气泡，两窗都收）
+  if (e.surface && e.surface !== "pet" && e.kind !== "panel") return;
   switch (e.kind) {
     case "action_proposed":
       state.value = "work";
@@ -185,11 +190,18 @@ function onEvent(e: BrainEvent) {
     case "speaking":
       state.value = "say";
       break;
-    case "panel":
-      // 面板 = 独立浮窗（工作模式）：交给面板窗，宠物窗收回球形态
+    case "panel": {
+      // 面板 = 独立浮窗（工作模式）：交给面板窗，宠物窗收回球形态；
+      // 主对话框只留一条「派生」关联气泡，协作过程不镜像（会话分流）
+      const title = e.payload?.title || e.payload?.panel || "插件面板";
+      if (!panelOpen.value) {
+        panelOpen.value = true;
+        bubbles.value.push({ role: "ai", text: `⇢ 正在和「${title}」协作` });
+      }
       void openPanel();
       if (expanded.value) void collapse();
       break;
+    }
   }
 }
 
@@ -268,12 +280,18 @@ onMounted(async () => {
   unlisten = await onBrainEvent(onEvent);
   unlistenStatus = await onBrainStatus(onStatus);
   unlistenPerms = await onBrainPermissions(onPerms);
+  unlistenPanelClosed = await onPanelClosed(() => {
+    if (!panelOpen.value) return;
+    panelOpen.value = false;
+    bubbles.value.push({ role: "ai", text: "⇠ 协作结束" });
+  });
   window.addEventListener("keydown", onKeydown);
 });
 onUnmounted(() => {
   unlisten?.();
   unlistenStatus?.();
   unlistenPerms?.();
+  unlistenPanelClosed?.();
   window.removeEventListener("keydown", onKeydown);
   if (clickTimer !== null) clearTimeout(clickTimer);
 });

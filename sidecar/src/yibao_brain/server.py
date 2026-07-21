@@ -172,8 +172,10 @@ async def handle_panel_action(msg: dict, agent: AgentLoop, write_msg: WriteMsg, 
     direct=true：invoker 直调（propose → api.risk 只许收紧 → decide → 确认/执行 → 审计）；
     direct=false：intent 渲染后交给 run_text（与 type="run" 同路径的 agent 流程）。
     """
+    surface = str(msg.get("surface") or "pet")  # 会话分流：事件随发起场景标记，壳侧各窗按 surface 过滤
+
     def emit(event: Event) -> None:
-        write_msg({"type": "event", "event": event.model_dump(mode="json")})
+        write_msg({"type": "event", "surface": surface, "event": event.model_dump(mode="json")})
 
     rid = msg.get("id")
     method = ""
@@ -373,7 +375,7 @@ async def serve_async(
                 return
             yield item
 
-    async def _pump_tts(tts_q: asyncio.Queue, cancel: asyncio.Event):
+    async def _pump_tts(tts_q: asyncio.Queue, cancel: asyncio.Event, surface: str = "pet"):
         if voice is None:
             return
         try:
@@ -381,19 +383,19 @@ async def serve_async(
         except asyncio.CancelledError:
             return  # 打断命中合成/播放的正常取消，不是播报失败
         except Exception as e:
-            write_msg({"type": "event", "event": {"kind": "error", "text": f"语音播报失败：{e}"}})
+            write_msg({"type": "event", "surface": surface, "event": {"kind": "error", "text": f"语音播报失败：{e}"}})
             return
         if not cancel.is_set():
-            write_msg({"type": "event", "event": {"kind": "speaking_done"}})
+            write_msg({"type": "event", "surface": surface, "event": {"kind": "speaking_done"}})
 
-    async def _stream_agent(text: str, rid, cancel: asyncio.Event):
+    async def _stream_agent(text: str, rid, cancel: asyncio.Event, surface: str = "pet"):
         t0 = time.monotonic()
         tts_q: asyncio.Queue | None = asyncio.Queue() if voice is not None else None
-        tts_task = asyncio.create_task(_pump_tts(tts_q, cancel)) if tts_q is not None else None
+        tts_task = asyncio.create_task(_pump_tts(tts_q, cancel, surface)) if tts_q is not None else None
         started_speaking = False
         try:
-            async for event in agent.arun(text, cancel):
-                write_msg({"type": "event", "event": event.model_dump(mode="json")})
+            async for event in agent.arun(text, cancel, surface=surface):
+                write_msg({"type": "event", "surface": surface, "event": event.model_dump(mode="json")})
                 if (
                     tts_q is not None
                     and event.kind == "final_reply_chunk"
@@ -401,12 +403,12 @@ async def serve_async(
                 ):
                     if not started_speaking:
                         started_speaking = True
-                        write_msg({"type": "event", "event": {"kind": "speaking"}})
+                        write_msg({"type": "event", "surface": surface, "event": {"kind": "speaking"}})
                     await tts_q.put(event.text)
         except Exception as e:
             # arun 抛异常（如 provider 400）→ 发 error + 停 TTS，别让前端卡死
             cancel.set()
-            write_msg({"type": "event", "event": {"kind": "error", "text": f"大脑出错：{e}"}})
+            write_msg({"type": "event", "surface": surface, "event": {"kind": "error", "text": f"大脑出错：{e}"}})
         finally:
             if tts_q is not None:
                 await tts_q.put(None)  # 收尾哨兵，唤醒可能在 get() 上等待的 _pump_tts
@@ -415,11 +417,11 @@ async def serve_async(
             write_msg({"type": "run_done", "id": rid})
             print(f"[yibao] run 完成 rid={rid}（{time.monotonic() - t0:.1f}s）", file=sys.stderr)
 
-    async def _drive_run(text: str, rid, cancel: asyncio.Event):
-        await _stream_agent(text, rid, cancel)
+    async def _drive_run(text: str, rid, cancel: asyncio.Event, surface: str = "pet"):
+        await _stream_agent(text, rid, cancel, surface)
 
-    async def _drive_voice_start(rid, cancel: asyncio.Event):
-        write_msg({"type": "event", "event": {"kind": "listening"}})
+    async def _drive_voice_start(rid, cancel: asyncio.Event, surface: str = "pet"):
+        write_msg({"type": "event", "surface": surface, "event": {"kind": "listening"}})
 
         async def _watch_cancel():
             await cancel.wait()
@@ -430,19 +432,19 @@ async def serve_async(
         try:
             text = await ai_loop.run_in_executor(None, voice.listen)
         except Exception as e:
-            write_msg({"type": "event", "event": {"kind": "error", "text": f"语音识别失败：{e}"}})
+            write_msg({"type": "event", "surface": surface, "event": {"kind": "error", "text": f"语音识别失败：{e}"}})
             write_msg({"type": "run_done", "id": rid})
             return
         finally:
             watcher.cancel()
         print(f"[yibao] 聆听结束（{time.monotonic() - t0:.1f}s）：{text[:30]!r}", file=sys.stderr)
         if cancel.is_set():  # 聆听被打断：不走 listening_done（避免误进 think 态）
-            write_msg({"type": "event", "event": {"kind": "interrupted"}})
+            write_msg({"type": "event", "surface": surface, "event": {"kind": "interrupted"}})
             write_msg({"type": "run_done", "id": rid})
             return
-        write_msg({"type": "event", "event": {"kind": "listening_done", "text": text}})
+        write_msg({"type": "event", "surface": surface, "event": {"kind": "listening_done", "text": text}})
         if text:
-            await _stream_agent(text, rid, cancel)
+            await _stream_agent(text, rid, cancel, surface)
         else:
             write_msg({"type": "run_done", "id": rid})
 
@@ -517,14 +519,15 @@ async def serve_async(
                 continue
             _preempt_current()
             prev = run_state["task"]
+            surface = str(msg.get("surface") or "pet")  # 会话分流：随 run 贯穿事件流与历史
             if rtype == "run":
                 text, rid = msg.get("text", ""), msg.get("id")
-                start = lambda c, t=text, r=rid: _drive_run(t, r, c)
-                print(f"[yibao] run 受理 rid={rid}：{text[:30]!r}", file=sys.stderr)
+                start = lambda c, t=text, r=rid, s=surface: _drive_run(t, r, c, s)
+                print(f"[yibao] run 受理 rid={rid} surface={surface}：{text[:30]!r}", file=sys.stderr)
             elif voice is not None:
                 rid = msg.get("id")
-                start = lambda c, r=rid: _drive_voice_start(r, c)
-                print(f"[yibao] voice_start 受理 rid={rid}", file=sys.stderr)
+                start = lambda c, r=rid, s=surface: _drive_voice_start(r, c, s)
+                print(f"[yibao] voice_start 受理 rid={rid} surface={surface}", file=sys.stderr)
             else:
                 continue
             run_state["task"] = asyncio.ensure_future(
@@ -546,8 +549,9 @@ async def serve_async(
             # 面板写操作/意图方法：与 run 同槽位（抢占 + 链式排队，主循环不阻塞）
             _preempt_current()
             prev = run_state["task"]
-            start = lambda c, m=msg: handle_panel_action(
-                m, agent, write_msg, run_text=lambda text, rid: _stream_agent(text, rid, c)
+            surface = str(msg.get("surface") or "pet")
+            start = lambda c, m=msg, s=surface: handle_panel_action(
+                m, agent, write_msg, run_text=lambda text, rid: _stream_agent(text, rid, c, s)
             )
             run_state["task"] = asyncio.ensure_future(
                 _chain_start(prev, start, run_state["preempt_gen"])

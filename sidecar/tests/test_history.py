@@ -181,3 +181,44 @@ def test_load_drops_orphan_head(tmp_path):
     ], ensure_ascii=False), encoding="utf-8")
     msgs = ConversationHistory(path).messages()
     assert [m["content"] for m in msgs] == ["u", "a"]
+
+
+def test_panel_surface_tagged_in_history(tmp_path):
+    """会话分流：面板场景的轮次落史带 surface 标签；喂模型时剥标签、加【xx 面板】标记。"""
+    history = ConversationHistory(tmp_path / "h.json")
+    provider = FakeProvider(text="好")
+    loop = build_loop(tmp_path, provider, history)
+    list(loop.run("记一条选题", surface="panel:zimeiti"))
+    list(loop.run("刚才那条呢"))
+    msgs = provider.calls[1]["messages"]
+    assert all("surface" not in m for m in msgs)  # provider 不认的字段不许漏过去
+    assert {"role": "user", "content": "【zimeiti 面板】记一条选题"} in msgs
+
+
+def test_pet_surface_not_tagged(tmp_path):
+    """pet 是默认场景：不打标签、不加标记（历史与现状一致）。"""
+    history = ConversationHistory(tmp_path / "h.json")
+    provider = FakeProvider(text="好")
+    loop = build_loop(tmp_path, provider, history)
+    list(loop.run("你好", surface="pet"))
+    list(loop.run("再说一遍"))
+    msgs = provider.calls[1]["messages"]
+    assert {"role": "user", "content": "你好"} in msgs
+
+
+def test_arun_panel_surface_tagged(tmp_path):
+    """异步路径同样打标签（voice/panel 走的都是 arun）。"""
+    history = ConversationHistory(tmp_path / "h.json")
+    provider = FakeProvider(text="好")
+    loop = build_loop(tmp_path, provider, history)
+
+    async def twice():
+        async for _ in loop.arun("写初稿", surface="panel:zimeiti"):
+            pass
+        async for _ in loop.arun("继续"):
+            pass
+
+    asyncio.run(twice())
+    msgs = provider.astream_calls[1]["messages"]
+    assert all("surface" not in m for m in msgs)
+    assert {"role": "user", "content": "【zimeiti 面板】写初稿"} in msgs

@@ -166,7 +166,7 @@ class AgentLoop:
             "data": payload["data"],
         }
 
-    def run(self, user_text: str) -> Iterator[Event]:
+    def run(self, user_text: str, surface: str | None = None) -> Iterator[Event]:
         memories = self.memory.recall(user_text, self.user_id)
         messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
         if memories:
@@ -186,6 +186,7 @@ class AgentLoop:
                 self.memory.add(user_text, self.user_id)
                 if self.history:
                     span = messages[run_start:] + [{"role": "assistant", "content": resp.text}]
+                    span[0] = _tag_surface(span[0], surface)
                     self.history.record_messages(span)
                 yield Event(kind="final_reply", text=resp.text)
                 return
@@ -221,12 +222,13 @@ class AgentLoop:
         yield Event(kind="error", text="达到最大步数仍未完成")
 
     async def arun(
-        self, user_text: str, cancel=None
+        self, user_text: str, cancel=None, surface: str | None = None
     ) -> AsyncIterator[Event]:
         """流式异步回路：LLM 边生成边吐 final_reply_chunk；cancel.is_set() 随时打断。
 
         cancel 为 asyncio.Event（或任何带 is_set() 的对象）。打断时产出 interrupted 并返回。
         confirmer 可同步也可异步（返回协程则 await）。
+        surface 为会话分流标签（pet / panel:<plugin>）：只落历史，不进发给 provider 的消息。
         """
         memories = await _offload(self.memory.recall, user_text, self.user_id)
         messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -264,6 +266,7 @@ class AgentLoop:
                 await _offload(self.memory.add, user_text, self.user_id)
                 if self.history:
                     span = messages[run_start:] + [{"role": "assistant", "content": text_buf}]
+                    span[0] = _tag_surface(span[0], surface)
                     self.history.record_messages(span)
                 yield Event(kind="final_reply", text=text_buf)
                 return
@@ -304,6 +307,17 @@ class AgentLoop:
             if not proceeded:
                 continue
         yield Event(kind="error", text="达到最大步数仍未完成")
+
+
+def _tag_surface(user_msg: dict, surface: str | None) -> dict:
+    """落史前给本轮 user 消息打 surface 标签（pet / panel:<plugin>）。
+
+    只存在于历史层：喂 provider 的 messages 列表不受影响（严格校验的 provider 遇未知字段会 400）。
+    history.messages() 渲染上下文时剥掉标签、给面板轮加【xx 面板】标记。
+    """
+    if not surface or surface == "pet":
+        return user_msg
+    return {**user_msg, "surface": surface}
 
 
 def _assistant_with_tools(content: str, tool_calls) -> dict:

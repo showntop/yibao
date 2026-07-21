@@ -105,7 +105,11 @@ fn spawn_bridge(app: AppHandle, mut rx: tauri::async_runtime::Receiver<CommandEv
                     match serde_json::from_str::<Value>(&line) {
                         Ok(v) => match v.get("type").and_then(|t| t.as_str()) {
                             Some("event") => {
-                                let payload = v.get("event").cloned().unwrap_or(Value::Null);
+                                let mut payload = v.get("event").cloned().unwrap_or(Value::Null);
+                                // 会话分流：surface 提到事件顶层随广播走，各窗按自身场景过滤
+                                if let Some(s) = v.get("surface") {
+                                    payload["surface"] = s.clone();
+                                }
                                 // panel 事件顺带缓存载荷，供面板窗首开竞态下补拉
                                 if payload.get("kind").and_then(|k| k.as_str()) == Some("panel") {
                                     if let Some(p) = payload.get("payload") {
@@ -280,10 +284,10 @@ fn spawn_watchdog(app: AppHandle) {
 }
 
 #[tauri::command]
-fn run_input(state: tauri::State<Brain>, text: String) -> Result<(), String> {
+fn run_input(state: tauri::State<Brain>, text: String, surface: Option<String>) -> Result<(), String> {
     write_to_brain(
         &state,
-        serde_json::json!({ "id": 0, "type": "run", "text": text }),
+        serde_json::json!({ "id": 0, "type": "run", "text": text, "surface": surface.unwrap_or_else(|| "pet".into()) }),
     )
 }
 
@@ -302,10 +306,11 @@ fn panel_action(
     id: i64,
     method: String,
     params: Value,
+    surface: Option<String>,
 ) -> Result<(), String> {
     write_to_brain(
         &state,
-        serde_json::json!({ "id": id, "type": "panel_action", "method": method, "params": params }),
+        serde_json::json!({ "id": id, "type": "panel_action", "method": method, "params": params, "surface": surface.unwrap_or_else(|| "pet".into()) }),
     )
 }
 
@@ -387,10 +392,12 @@ fn open_panel_window(app: AppHandle) -> Result<(), String> {
 }
 
 /// 关闭面板窗 = 隐藏（不销毁，保状态、二次打开快）。
+/// 顺带广播 panel-closed：宠物窗靠它给「⇢ 协作中」的气泡收尾（⇠ 协作结束）。
 #[tauri::command]
 fn close_panel_window(app: AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("panel") {
         win.hide().map_err(|e| e.to_string())?;
+        let _ = app.emit("panel-closed", ());
     }
     Ok(())
 }
@@ -403,8 +410,11 @@ fn get_current_panel(state: tauri::State<Brain>) -> Result<Option<Value>, String
 }
 
 #[tauri::command]
-fn voice_start(state: tauri::State<Brain>) -> Result<(), String> {
-    write_to_brain(&state, serde_json::json!({ "id": 0, "type": "voice_start" }))
+fn voice_start(state: tauri::State<Brain>, surface: Option<String>) -> Result<(), String> {
+    write_to_brain(
+        &state,
+        serde_json::json!({ "id": 0, "type": "voice_start", "surface": surface.unwrap_or_else(|| "pet".into()) }),
+    )
 }
 
 /// 打断当前进行中的生成/播报（Plan 4b 三连取消：停 TTS + 终止 LLM + 清队列）。
@@ -469,6 +479,9 @@ pub fn run() {
                 // 桌宠常驻：关窗只隐藏，真正退出走托盘菜单
                 api.prevent_close();
                 let _ = window.hide();
+                if window.label() == "panel" {
+                    let _ = window.app_handle().emit("panel-closed", ());
+                }
             }
         })
         .setup(|app| {

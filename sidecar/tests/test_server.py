@@ -810,3 +810,37 @@ def test_serve_async_stalled_task_is_force_cancelled(tmp_path, monkeypatch):
     # run2 正常完成并出了最终回复（没有被 run1 的 hung 永久排队）
     assert {"type": "run_done", "id": 2} in out
     assert any(m["type"] == "event" and m["event"].get("kind") == "final_reply" for m in out)
+
+
+def test_serve_async_events_carry_surface(tmp_path):
+    # 会话分流：run 带 surface 时，该 run 的所有事件都带同一标签（壳侧各窗按它过滤）
+    provider = FakeProvider(chunks=["你好"])
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([{"id": 1, "type": "run", "text": "你好", "surface": "panel:zimeiti"}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=provider,
+        )
+    )
+    events = [m for m in out if m["type"] == "event"]
+    assert events and all(m.get("surface") == "panel:zimeiti" for m in events)
+
+
+def test_serve_async_default_surface_is_pet(tmp_path):
+    # 不带 surface 的老客户端：事件 surface = pet，宠物窗照单全收
+    provider = FakeProvider(chunks=["你好"])
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([{"id": 1, "type": "run", "text": "你好"}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=provider,
+        )
+    )
+    events = [m for m in out if m["type"] == "event"]
+    assert events and all(m.get("surface") == "pet" for m in events)
