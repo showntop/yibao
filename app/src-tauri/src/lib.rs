@@ -410,6 +410,12 @@ pub fn run() {
         .build();
 
     tauri::Builder::default()
+        // 单实例：第二个实例拉起时聚焦既有窗口并退出（防多实例 → 多 brain → qdrant 锁互踩）
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show().and_then(|_| w.set_focus());
+            }
+        }))
         .plugin(shortcuts)
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())

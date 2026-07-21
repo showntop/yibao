@@ -560,9 +560,24 @@ def _build_voice_or_none():
         return None
 
 
+def _watch_parent() -> None:
+    """父进程存活看门狗（守护线程）：ppid 变化（壳死后被 reparent 到 launchd）→ 自我了断。
+
+    覆盖壳被 kill -9/崩溃时 stdin EOF 之外的遗漏路径——孤儿 brain 会长期占着 qdrant 锁，
+    新 brain 被迫记忆降级（2026-07-21 实测两个昨日孤儿并存）。os._exit 保证循环卡死时也能死。
+    """
+    parent = os.getppid()
+    while True:
+        time.sleep(10)
+        if os.getppid() != parent:
+            print("[yibao] 父进程已退出（ppid 变化），自我了断", file=sys.stderr)
+            os._exit(0)
+
+
 def main() -> int:
     reader, writer = _line_reader(), _line_writer()
     voice = _build_voice_or_none()
+    threading.Thread(target=_watch_parent, daemon=True).start()
     # 数据目录分离：仓库时代的用户数据一次性迁走（sidecar/ → 应用数据目录）
     from . import config as _cfg
 
