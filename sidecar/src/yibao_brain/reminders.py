@@ -1,4 +1,4 @@
-"""主动提醒：存储（JSON 落盘）+ reminder.set/list/cancel 三个底座技能 + 时间解析。
+"""主动提醒：存储（JSON 落盘）+ reminder_set/list/cancel 三个底座技能 + 时间解析。
 
 设计要点：
 - 存储是 data_dir/reminders.json（原子写：tmp + rename），大脑重启后未到期的提醒不丢；
@@ -120,7 +120,7 @@ def _parse_at(raw: str) -> float | None:
 
 
 class ReminderSetSkill(Skill):
-    id = "reminder.set"
+    id = "reminder_set"
     description = (
         "设置定时提醒：到点后译宝会主动找用户说话（气泡 + 语音）。"
         "用户说「X 分钟/小时后提醒我…」「明天 X 点叫我…」「每天…（不支持重复，说明即可）」时用。"
@@ -182,7 +182,7 @@ class ReminderSetSkill(Skill):
 
 
 class ReminderListSkill(Skill):
-    id = "reminder.list"
+    id = "reminder_list"
     description = "列出还没触发的提醒（用户问「我有什么提醒/闹钟」时用）。"
     default_risk = RiskLevel.L0_READONLY
 
@@ -207,8 +207,8 @@ class ReminderListSkill(Skill):
 
 
 class ReminderCancelSkill(Skill):
-    id = "reminder.cancel"
-    description = "取消一个待触发的提醒（先 reminder.list 拿 id；用户说「取消那个提醒」时用）。"
+    id = "reminder_cancel"
+    description = "取消一个待触发的提醒（先 reminder_list 拿 id；用户说「取消那个提醒」时用）。"
     default_risk = RiskLevel.L1_LOW
 
     def __init__(self, store: ReminderStore) -> None:

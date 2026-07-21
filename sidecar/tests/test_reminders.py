@@ -84,7 +84,7 @@ def test_parse_at_garbage():
 # ---------- 技能 ----------
 
 def test_set_with_delay(store):
-    r = _skill(store, "reminder.set").run({"text": "关火", "delay_minutes": 60}, None)
+    r = _skill(store, "reminder_set").run({"text": "关火", "delay_minutes": 60}, None)
     assert r.success and r.data["fire_at"] > time.time() + 3500
     assert "关火" in r.data["human"]
 
@@ -93,12 +93,12 @@ def test_set_with_at(store):
     from datetime import datetime, timedelta
 
     at = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d %H:%M")
-    r = _skill(store, "reminder.set").run({"text": "开会", "at": at}, None)
+    r = _skill(store, "reminder_set").run({"text": "开会", "at": at}, None)
     assert r.success
 
 
 def test_set_rejects_bad_input(store):
-    sk = _skill(store, "reminder.set")
+    sk = _skill(store, "reminder_set")
     assert not sk.run({"text": ""}, None).success                       # 空内容
     assert not sk.run({"text": "x"}, None).success                      # 没时间
     assert not sk.run({"text": "x", "delay_minutes": "abc"}, None).success  # 非数字
@@ -110,18 +110,28 @@ def test_set_rejects_bad_input(store):
 
 
 def test_list_and_cancel_skills(store):
-    _skill(store, "reminder.set").run({"text": "A", "delay_minutes": 30}, None)
-    _skill(store, "reminder.set").run({"text": "B", "delay_minutes": 60}, None)
-    r = _skill(store, "reminder.list").run({}, None)
+    _skill(store, "reminder_set").run({"text": "A", "delay_minutes": 30}, None)
+    _skill(store, "reminder_set").run({"text": "B", "delay_minutes": 60}, None)
+    r = _skill(store, "reminder_list").run({}, None)
     assert r.success and r.data["count"] == 2
     assert "A" in r.data["human"] and "B" in r.data["human"]
     rid = store.list_pending()[0]["id"]
-    r = _skill(store, "reminder.cancel").run({"id": rid}, None)
+    r = _skill(store, "reminder_cancel").run({"id": rid}, None)
     assert r.success and "已取消" in r.data["human"]
-    assert _skill(store, "reminder.list").run({}, None).data["count"] == 1
-    assert not _skill(store, "reminder.cancel").run({"id": rid}, None).success  # 已取消的不能再取消
+    assert _skill(store, "reminder_list").run({}, None).data["count"] == 1
+    assert not _skill(store, "reminder_cancel").run({"id": rid}, None).success  # 已取消的不能再取消
 
 
 def test_list_empty(store):
-    r = _skill(store, "reminder.list").run({}, None)
+    r = _skill(store, "reminder_list").run({}, None)
     assert r.success and r.data["count"] == 0 and "没有" in r.data["human"]
+
+
+def test_reminder_skills_registerable_as_base_skills(store):
+    """底座技能注册契约：id 禁点号（防伪装插件）——点号命名曾把大脑启动直接干崩。"""
+    from yibao_brain.skills import SkillRegistry
+
+    reg = SkillRegistry()
+    for sk in make_skills(store):
+        reg.register(sk)
+    assert reg.get("reminder_set") is not None
