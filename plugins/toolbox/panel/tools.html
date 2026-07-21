@@ -11,8 +11,9 @@
     --bg: #f6f1ea; --card: #ffffff; --border: #eee4d6; --border-soft: #f3ecdf;
     --text: #3f372e; --muted: #a89a86; --faint: #c9bcab;
     --accent: #ff8a5c; --accent-deep: #f2703f; --accent-soft: #fff0e8;
-    --green-bg: #e7f3ea; --green: #3e8e5a; --green-bar: #9ed6b0;
-    --red-bg: #fdecea; --red: #c0574b; --red-bar: #f0aaa1;
+    --green-bg: #dcf0e2; --green: #3e8e5a; --green-bar: #8fd0a6;
+    --red-bg: #fce7e3; --red: #c0574b; --red-bar: #f0aaa1;
+    --mono: 12.5px/1.6 "SF Mono", ui-monospace, Menlo, monospace;
   }
   body {
     font: 13px/1.6 -apple-system, "PingFang SC", sans-serif;
@@ -49,23 +50,31 @@
   }
   .card-head .muted { font-weight: 400; color: var(--muted); font-size: 11.5px; }
   .card-head .spacer { flex: 1; }
-  .card textarea {
-    display: block; width: 100%; border: none; outline: none; resize: vertical;
-    padding: 10px 12px; background: transparent; color: var(--text);
-    font: 12.5px/1.6 "SF Mono", ui-monospace, Menlo, monospace;
-  }
-  .card pre {
-    padding: 10px 12px; white-space: pre-wrap; word-break: break-all;
-    font: 12.5px/1.6 "SF Mono", ui-monospace, Menlo, monospace;
-    max-height: 44vh; overflow: auto;
-  }
-
-  /* ---- 小图标按钮（卡片头里） ---- */
   button.mini {
     border: none; background: transparent; color: var(--muted); cursor: pointer;
     font-size: 11.5px; padding: 2px 8px; border-radius: 7px; transition: all .15s ease;
   }
   button.mini:hover { background: var(--accent-soft); color: var(--accent-deep); }
+
+  /* ---- 编辑框（textarea + 底层高亮层；平时就是普通 textarea）---- */
+  .editor { position: relative; }
+  .editor textarea {
+    position: relative; z-index: 1;
+    display: block; width: 100%; border: none; outline: none; resize: vertical;
+    padding: 10px 12px; background: transparent; color: var(--text);
+    font: var(--mono); overflow: auto;
+  }
+  .editor .hl {
+    position: absolute; inset: 0; z-index: 0;
+    padding: 10px 12px; overflow: hidden; pointer-events: none;
+    font: var(--mono); white-space: pre-wrap; word-break: break-all;
+  }
+  .editor .hl .l { min-height: 1.6em; }
+  .editor .hl .l.add { background: var(--green-bg); box-shadow: inset 3px 0 var(--green-bar); }
+  .editor .hl .l.del { background: var(--red-bg); box-shadow: inset 3px 0 var(--red-bar); }
+  /* 高亮模式：文字透明、光标保留，让底层高亮透出来；一开始输入就退出该模式 */
+  .editor.hl-mode textarea { color: transparent; caret-color: var(--text); }
+  .editor.hl-mode textarea::selection { background: rgba(255, 138, 92, .25); }
 
   /* ---- 工具条 ---- */
   .toolbar { display: flex; align-items: center; gap: 8px; margin: 2px 0 10px; flex-wrap: wrap; }
@@ -96,38 +105,17 @@
     border-radius: 11px; padding: 8px 12px; margin-bottom: 10px;
     font-size: 12.5px; line-height: 1.5;
   }
-  .banner.err { background: var(--red-bg); color: var(--red); border: 1px solid #f5d5d0; }
+  .banner.err { background: #fdecea; color: var(--red); border: 1px solid #f5d5d0; }
   .banner.err::before { content: "⚠"; flex: none; }
 
   /* ---- 统计徽章 ---- */
   .chips { display: flex; gap: 6px; align-items: center; margin: 2px 0 10px; min-height: 24px; }
-  .chip {
-    border-radius: 999px; padding: 2px 11px; font-size: 12px; font-weight: 600;
-  }
+  .chip { border-radius: 999px; padding: 2px 11px; font-size: 12px; font-weight: 600; }
   .chip.add { background: var(--green-bg); color: var(--green); }
   .chip.del { background: var(--red-bg); color: var(--red); }
-  .chip.eq { background: #f0e9de; color: #8a7a66; }
+  .chip.eq { background: #e9f3ec; color: var(--green); }
   .chip.warn { background: #fdf3e0; color: #b98a2f; }
 
-  /* ---- diff 行（gutter 行号） ---- */
-  .diff-box { max-height: 44vh; overflow: auto; }
-  .dline {
-    display: grid; grid-template-columns: 3.2em 3.2em 1.2em 1fr;
-    font: 12px/1.55 "SF Mono", ui-monospace, Menlo, monospace;
-  }
-  .dline .no {
-    text-align: right; padding: 0 8px; color: var(--faint); background: #faf6ef;
-    user-select: none;
-  }
-  .dline .sign { text-align: center; color: var(--faint); user-select: none; }
-  .dline .txt { white-space: pre-wrap; word-break: break-all; padding-right: 10px; }
-  .dline.add { background: var(--green-bg); box-shadow: inset 3px 0 var(--green-bar); }
-  .dline.add .sign { color: var(--green); }
-  .dline.del { background: var(--red-bg); box-shadow: inset 3px 0 var(--red-bar); }
-  .dline.del .sign { color: var(--red); }
-  .dline.same .txt { color: #6b5f52; }
-
-  /* ---- 双列 ---- */
   .cols { display: flex; gap: 10px; }
   .cols > .card { flex: 1; min-width: 0; }
 
@@ -151,11 +139,15 @@
 <div id="page-json">
   <div class="card">
     <div class="card-head">
-      输入 <span class="muted" id="json-in-count"></span>
+      JSON <span class="muted" id="json-in-count"></span>
       <span class="spacer"></span>
       <button class="mini" id="json-paste">⧉ 粘贴</button>
+      <button class="mini" id="json-copy">⧉ 复制</button>
     </div>
-    <textarea id="json-in" rows="7" placeholder="粘贴 JSON，或对译宝说「格式化这段 JSON」"></textarea>
+    <div class="editor">
+      <textarea id="json-in" rows="12" spellcheck="false"
+        placeholder="粘贴 JSON，或对译宝说「格式化这段 JSON」；点「格式化」后就地美化"></textarea>
+    </div>
   </div>
   <div class="toolbar">
     <button class="act" id="json-pretty">格式化</button>
@@ -169,14 +161,6 @@
     <button class="act ghost" id="json-clear">清空</button>
   </div>
   <div class="banner err hidden" id="json-err"></div>
-  <div class="card hidden" id="json-out-card">
-    <div class="card-head">
-      结果 <span class="muted" id="json-out-count"></span>
-      <span class="spacer"></span>
-      <button class="mini" id="json-copy">⧉ 复制</button>
-    </div>
-    <pre id="json-out"></pre>
-  </div>
 </div>
 
 <!-- Diff -->
@@ -184,24 +168,27 @@
   <div class="cols">
     <div class="card">
       <div class="card-head">原文 <span class="muted" id="diff-old-count"></span></div>
-      <textarea id="diff-old" rows="7" placeholder="旧文本"></textarea>
+      <div class="editor" id="ed-old">
+        <div class="hl hidden" id="hl-old"></div>
+        <textarea id="diff-old" rows="9" spellcheck="false" placeholder="旧文本"></textarea>
+      </div>
     </div>
     <div class="card">
       <div class="card-head">新文 <span class="muted" id="diff-new-count"></span></div>
-      <textarea id="diff-new" rows="7" placeholder="新文本"></textarea>
+      <div class="editor" id="ed-new">
+        <div class="hl hidden" id="hl-new"></div>
+        <textarea id="diff-new" rows="9" spellcheck="false" placeholder="新文本"></textarea>
+      </div>
     </div>
   </div>
   <div class="toolbar">
     <button class="act" id="diff-run">对比</button>
     <button class="act ghost" id="diff-swap">⇄ 交换</button>
     <span class="spacer"></span>
-    <span class="hint">⌘⏎ 对比</span>
+    <span class="hint">⌘⏎ 对比 · 改动任意内容即还原高亮</span>
     <button class="act ghost" id="diff-clear">清空</button>
   </div>
   <div class="chips" id="diff-stat"></div>
-  <div class="card hidden" id="diff-out-card">
-    <div class="diff-box" id="diff-out"></div>
-  </div>
 </div>
 
 <div id="toast"></div>
@@ -247,17 +234,20 @@
   $("tab-json").addEventListener("click", function () { showTab("json"); });
   $("tab-diff").addEventListener("click", function () { showTab("diff"); });
 
-  // ---- JSON ----
-  var lastJsonOut = "";
-  function renderJson(out) {
-    lastJsonOut = out;
-    hide($("json-err"));
-    $("json-out").textContent = out;
-    var kb = (new Blob([out]).size / 1024);
-    $("json-out-count").textContent =
-      out.split("\n").length + " 行 · " + (kb >= 1 ? kb.toFixed(1) + " KB" : Math.round(kb * 1024) + " B");
-    show($("json-out-card"));
+  // ---- 编辑框内替换文本（尽量走 insertText 保留撤销栈）----
+  function replaceText(ta, text) {
+    ta.focus();
+    ta.setSelectionRange(0, ta.value.length);
+    var ok = false;
+    try { ok = document.execCommand("insertText", false, text); } catch (e) { /* 忽略 */ }
+    if (!ok) {
+      ta.value = text;
+      ta.dispatchEvent(new Event("input"));
+    }
+    ta.setSelectionRange(0, 0);
   }
+
+  // ---- JSON：就地格式化 ----
   function runJson(mode) {
     hide($("json-err"));
     window.yibao.invoke("toolbox.json_format", {
@@ -265,9 +255,10 @@
       indent: parseInt($("json-indent").value, 10),
       sort_keys: $("json-sort").checked
     }).then(function (r) {
-      renderJson((r && r.output) || "");
+      var out = (r && r.output) || "";
+      if (out && out !== $("json-in").value) replaceText($("json-in"), out);
+      toast(mode === "minify" ? "已压缩" : "已格式化");
     }).catch(function (e) {
-      hide($("json-out-card"));
       $("json-err").textContent = e && e.message ? e.message : String(e || "失败");
       show($("json-err"));
     });
@@ -275,11 +266,10 @@
   $("json-pretty").addEventListener("click", function () { runJson("pretty"); });
   $("json-minify").addEventListener("click", function () { runJson("minify"); });
   $("json-clear").addEventListener("click", function () {
-    $("json-in").value = ""; updJsonIn();
-    hide($("json-err")); hide($("json-out-card")); lastJsonOut = "";
+    $("json-in").value = ""; updJsonIn(); hide($("json-err"));
   });
   $("json-copy").addEventListener("click", function () {
-    copyText(lastJsonOut || $("json-out").textContent);
+    copyText($("json-in").value);
   });
   $("json-paste").addEventListener("click", function () {
     if (!navigator.clipboard || !navigator.clipboard.readText) { toast("读不到剪贴板"); return; }
@@ -288,12 +278,50 @@
     }, function () { toast("读不到剪贴板"); });
   });
 
-  // ---- Diff ----
+  // ---- Diff：两个编辑框内高亮（底层 .hl 染行，上层文字透明）----
+  // 编辑框的 .hl 层逐行染红（原文被删行）/绿（新文新增行）；滚动与 textarea 同步。
+  function syncScroll(ta, hl) {
+    hl.scrollTop = ta.scrollTop;
+    hl.scrollLeft = ta.scrollLeft;
+  }
+  function clearHl(ed, hl) {
+    ed.classList.remove("hl-mode");
+    hl.innerHTML = "";
+    hide(hl);
+  }
+  // marks: 与 textarea 行一一对应的 "add"|"del"|null 数组
+  function paintHl(ed, ta, hl, marks) {
+    var lines = ta.value.split("\n");
+    var frag = document.createDocumentFragment();
+    var any = false;
+    for (var i = 0; i < lines.length; i++) {
+      var div = document.createElement("div");
+      div.className = "l" + (marks[i] ? " " + marks[i] : "");
+      if (marks[i]) any = true;
+      div.textContent = lines[i] || " ";
+      frag.appendChild(div);
+    }
+    hl.innerHTML = "";
+    hl.appendChild(frag);
+    if (any) {
+      show(hl);
+      ed.classList.add("hl-mode");
+      syncScroll(ta, hl);
+    } else {
+      clearHl(ed, hl);
+    }
+  }
+  var edOld = $("ed-old"), edNew = $("ed-new");
+  var hlOld = $("hl-old"), hlNew = $("hl-new");
+  var taOld = $("diff-old"), taNew = $("diff-new");
+  taOld.addEventListener("scroll", function () { syncScroll(taOld, hlOld); });
+  taNew.addEventListener("scroll", function () { syncScroll(taNew, hlNew); });
+  taOld.addEventListener("input", function () { clearHl(edOld, hlOld); clearHl(edNew, hlNew); });
+  taNew.addEventListener("input", function () { clearHl(edOld, hlOld); clearHl(edNew, hlNew); });
+
   function renderDiff(data) {
     var stat = $("diff-stat");
-    var box = $("diff-out");
     stat.innerHTML = "";
-    box.innerHTML = "";
     function chip(cls, text) {
       var s = document.createElement("span");
       s.className = "chip " + cls;
@@ -302,58 +330,49 @@
     }
     if (data.identical) {
       chip("eq", "✓ 两段文本一致");
-      hide($("diff-out-card"));
+      clearHl(edOld, hlOld); clearHl(edNew, hlNew);
       return;
     }
     chip("add", "+" + data.added);
     chip("del", "−" + data.removed);
     if (data.truncated) chip("warn", "结果过大，已截断");
-    var frag = document.createDocumentFragment();
-    var noOld = 1, noNew = 1;
+    // 把顺序 lines 折算成两侧各自的行标记
+    var marksOld = [], marksNew = [];
     (data.lines || []).forEach(function (l) {
-      var div = document.createElement("div");
-      div.className = "dline " + l.t;
-      var o = l.t === "add" ? "" : String(noOld++);
-      var n = l.t === "del" ? "" : String(noNew++);
-      var sign = l.t === "add" ? "+" : l.t === "del" ? "−" : "";
-      div.innerHTML =
-        '<span class="no"></span><span class="no"></span><span class="sign"></span><span class="txt"></span>';
-      div.children[0].textContent = o;
-      div.children[1].textContent = n;
-      div.children[2].textContent = sign;
-      div.children[3].textContent = l.s || " ";
-      frag.appendChild(div);
+      if (l.t === "del") marksOld.push("del");
+      else if (l.t === "add") marksNew.push("add");
+      else { marksOld.push(null); marksNew.push(null); }
     });
-    box.appendChild(frag);
-    show($("diff-out-card"));
+    paintHl(edOld, taOld, hlOld, marksOld);
+    paintHl(edNew, taNew, hlNew, marksNew);
   }
   function runDiff() {
     $("diff-stat").innerHTML = "";
     window.yibao.invoke("toolbox.text_diff", {
-      old: $("diff-old").value, new: $("diff-new").value
+      old: taOld.value, new: taNew.value
     }).then(function (r) {
       renderDiff(r || {});
     }).catch(function (e) {
-      hide($("diff-out-card"));
-      var stat = $("diff-stat");
-      stat.innerHTML = "";
       var s = document.createElement("span");
       s.className = "chip del";
       s.textContent = e && e.message ? e.message : String(e || "失败");
-      stat.appendChild(s);
+      $("diff-stat").innerHTML = "";
+      $("diff-stat").appendChild(s);
     });
   }
   $("diff-run").addEventListener("click", runDiff);
   $("diff-swap").addEventListener("click", function () {
-    var t = $("diff-old").value;
-    $("diff-old").value = $("diff-new").value;
-    $("diff-new").value = t;
+    var t = taOld.value;
+    taOld.value = taNew.value;
+    taNew.value = t;
     updOld(); updNew();
+    clearHl(edOld, hlOld); clearHl(edNew, hlNew);
   });
   $("diff-clear").addEventListener("click", function () {
-    $("diff-old").value = ""; $("diff-new").value = "";
+    taOld.value = ""; taNew.value = "";
     updOld(); updNew();
-    $("diff-stat").innerHTML = ""; hide($("diff-out-card"));
+    $("diff-stat").innerHTML = "";
+    clearHl(edOld, hlOld); clearHl(edNew, hlNew);
   });
 
   // ---- 快捷键：⌘/Ctrl + Enter 执行当前页主操作 ----
@@ -379,22 +398,29 @@
   }
 
   // ---- 面板事件：对话流（LLM 调 skill 带 panel）打开时已带数据 ----
-  // 桥内直调也会重发同样的 panel 事件：与当前渲染一致则跳过，避免覆盖用户后续编辑。
+  // 桥内直调也会重发同样的 panel 事件：仅在编辑框未偏离 skill 输入时应用结果，
+  // 避免覆盖用户后续编辑。
   window.yibao.onInit(function (data) {
     if (!data || !data.tool) return;
     showTab(data.tool === "diff" ? "diff" : "json");
     if (data.tool === "json") {
-      if (typeof data.input === "string" && data.input !== $("json-in").value) {
+      var cur = $("json-in").value;
+      if (typeof data.output === "string" && data.output &&
+          (cur === "" || cur === data.input)) {
+        // 空框（对话流带入）或仍停留在待格式化的原文（直调回显）→ 就地应用结果
+        $("json-in").value = data.output;
+        updJsonIn();
+        hide($("json-err"));
+      } else if (typeof data.input === "string" && cur === "") {
         $("json-in").value = data.input;
         updJsonIn();
       }
-      if (typeof data.output === "string" && data.output !== lastJsonOut) {
-        renderJson(data.output);
-      }
     } else if (data.tool === "diff") {
-      if (typeof data.old === "string") { $("diff-old").value = data.old; updOld(); }
-      if (typeof data.new === "string") { $("diff-new").value = data.new; updNew(); }
-      if (data.lines) renderDiff(data);
+      if (typeof data.old === "string" && taOld.value === "") { taOld.value = data.old; updOld(); }
+      if (typeof data.new === "string" && taNew.value === "") { taNew.value = data.new; updNew(); }
+      if (data.lines && taOld.value === (data.old || "") && taNew.value === (data.new || "")) {
+        renderDiff(data); // 内容未偏离才画高亮，否则丢掉过时结果
+      }
     }
   });
 })();
