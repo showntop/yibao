@@ -490,6 +490,7 @@ def test_panel_action_not_in_whitelist_rejected(tmp_path):
     evs = [m["event"] for m in out if m["type"] == "event"]
     err = next(e for e in evs if e["kind"] == "error")
     assert "白名单" in err["text"] and "tdel.ghost" in err["text"]
+    assert err["action"]["id"] == "pa_1"                     # 错误带 rid 标签（壳侧桥按标签认领）
     assert executed == []                                    # 未执行
     assert out[-1] == {"type": "run_done", "id": 1}
 
@@ -518,6 +519,7 @@ def test_panel_action_confirm_flow_rejected(tmp_path, monkeypatch):
     assert "action_result" not in kinds and executed == []   # 拒绝了就没执行
     err = next(e for e in evs if e["kind"] == "error")
     assert "拒绝" in err["text"]
+    assert err["action"]["id"] == "pa_1"                     # 错误带 rid 标签（壳侧桥按标签认领）
     assert out[-1] == {"type": "run_done", "id": 1}
 
 
@@ -542,6 +544,60 @@ def test_panel_action_confirm_flow_approved_executes(tmp_path, monkeypatch):
     assert "confirmation_needed" in [e["kind"] for e in evs]
     assert executed == [{"id": "r1"}]
     assert out[-1] == {"type": "run_done", "id": 1}
+
+
+def test_panel_action_write_still_preempts_run(tmp_path, monkeypatch):
+    """L1+ 直调仍占槽位：到达时抢占在跑的 run（面板写操作 = 用户最新意图，对话让路）。"""
+    executed = []
+    _patch_api(monkeypatch)  # tdel.delete 直调，tool 默认 L1
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([
+                {"id": 1, "type": "run", "text": "hi"},
+                {"id": 2, "type": "panel_action", "method": "tdel.delete", "params": {"id": "r1"}},
+            ]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(text="你好"),
+            skills_factory=_pa_factory(executed),
+        )
+    )
+    evs = [m["event"] for m in out if m["type"] == "event"]
+    kinds = [e["kind"] for e in evs]
+    assert executed == [{"id": "r1"}]                        # 写操作执行了
+    assert "interrupted" in kinds                            # run 被抢占
+    assert "final_reply" not in kinds                        # 没出回复
+
+
+def test_panel_action_readonly_bypasses_slot_no_preempt(tmp_path, monkeypatch):
+    """L0 只读直调不占槽位、不抢占：run 在跑时到达，run 完整收尾，直调并发执行。
+
+    回归：面板数据加载（read_article 等）与对话 run 互相抢占 → 回复截断 + 编辑器「没反应」。
+    """
+    executed = []
+    _patch_api(monkeypatch, name="tread.get", handler="tdel.delete")
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([
+                {"id": 1, "type": "run", "text": "hi"},
+                {"id": 2, "type": "panel_action", "method": "tread.get", "params": {"id": "r1"}},
+            ]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(text="你好"),
+            skills_factory=_pa_factory(executed, risk=RiskLevel.L0_READONLY),
+        )
+    )
+    evs = [m["event"] for m in out if m["type"] == "event"]
+    assert executed == [{"id": "r1"}]                        # 只读直调并发执行了
+    reply = next(e for e in evs if e["kind"] == "final_reply")
+    assert reply["text"] == "你好"                            # run 没被抢占，完整收尾
+    assert not any(e["kind"] == "interrupted" for e in evs)
+    assert {"type": "run_done", "id": 1} in out and {"type": "run_done", "id": 2} in out
 
 
 def test_panel_action_intent_goes_to_agent(tmp_path, monkeypatch):

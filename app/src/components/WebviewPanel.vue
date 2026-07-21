@@ -121,9 +121,13 @@ function onEvent(e: BrainEvent) {
       }
     }
   } else if (e.kind === "error") {
-    // sidecar 拒绝/执行失败：面板 action 单槽串行，最老的在途请求即当前执行者
-    const oldest = pending.keys().next();
-    if (!oldest.done) settle(oldest.value, undefined, new Error(e.text || "出错了"));
+    // 只结算带本桥 rid 标签的错误（sidecar 给面板直调的错误带 action.id = pa_<rid>）；
+    // 无关错误（TTS/记忆降级/对话 run 出错等）不许杀 pending——否则编辑器加载被误清
+    const aid = e.action?.id ?? "";
+    if (!aid) return;
+    for (const [bid, p] of [...pending]) {
+      if (aid === `pa_${p.rid}`) settle(bid, undefined, new Error(e.text || "出错了"));
+    }
   }
 }
 

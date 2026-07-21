@@ -17,7 +17,7 @@ from . import permissions
 from .audit import AuditLog
 from .config import a11y_enabled, computer_use_enabled, history_path, llm_api_key, screenshot_dir, stt_model_dir, tts_voice, vad_max_seconds, vad_min_silence, vad_model_path, voice_enabled
 from .history import ConversationHistory
-from .ipc import Event, RiskLevel
+from .ipc import Action, Event, RiskLevel
 from .llm import FakeProvider, GLMProvider, ToolCall
 from .loop import AgentLoop, _offload
 from .memory import FakeMemory, LazyMem0Memory
@@ -176,12 +176,15 @@ async def handle_panel_action(msg: dict, agent: AgentLoop, write_msg: WriteMsg, 
         write_msg({"type": "event", "event": event.model_dump(mode="json")})
 
     rid = msg.get("id")
+    method = ""
+    tag = Action(id=f"pa_{rid}", skill_id="?")  # 错误事件归属标签：壳侧桥按 pa_<rid> 认领，不误杀其他调用
     try:
         method = str(msg.get("method", ""))
+        tag = Action(id=f"pa_{rid}", skill_id=method or "?")
         params = msg.get("params") or {}
         api = get_api(method)
         if api is None:  # 白名单外：拒绝执行
-            emit(Event(kind="error", text=f"面板方法未在白名单：{method}"))
+            emit(Event(kind="error", text=f"面板方法未在白名单：{method}", action=tag))
             write_msg({"type": "run_done", "id": rid})
             return
         if not api.direct:
@@ -189,17 +192,18 @@ async def handle_panel_action(msg: dict, agent: AgentLoop, write_msg: WriteMsg, 
             return
 
         action = agent.invoker.propose(ToolCall(id=f"pa_{rid}", skill_id=api.handler, params=params))
+        action.id = f"pa_{rid}"  # propose 会重新发 id；壳侧桥靠 pa_<rid> 关联回包/确认/错误，必须保留
         if api.risk is not None:
             action.risk = max(action.risk, api.risk)  # api.toml 只许收紧，不许放宽
         decision = agent.invoker.decide(action)
         if decision == Decision.DENY:
-            emit(Event(kind="error", text=f"策略禁止执行 {api.handler}（风险过高）"))
+            emit(Event(kind="error", text=f"策略禁止执行 {api.handler}（风险过高）", action=action))
             write_msg({"type": "run_done", "id": rid})
             return
         if decision == Decision.CONFIRM:
             emit(Event(kind="confirmation_needed", action=action, confirmation_id=action.id))
             if not await agent.invoker.confirm(action):  # 等壳 confirm 消息（复用单槽确认流）
-                emit(Event(kind="error", text=f"用户拒绝执行 {api.handler}"))
+                emit(Event(kind="error", text=f"用户拒绝执行 {api.handler}", action=action))
                 write_msg({"type": "run_done", "id": rid})
                 return
         result = await _offload(agent.invoker.execute, action, params)  # 与 arun 一致挪线程池
@@ -215,8 +219,31 @@ async def handle_panel_action(msg: dict, agent: AgentLoop, write_msg: WriteMsg, 
                 emit(Event(kind="panel", payload=payload))
         write_msg({"type": "run_done", "id": rid})
     except Exception as e:  # 兜底：任何意外都要给壳一个交代，别让面板卡死
-        emit(Event(kind="error", text=f"面板操作失败：{e}"))
+        emit(Event(kind="error", text=f"面板操作失败：{e}", action=tag))
         write_msg({"type": "run_done", "id": rid})
+
+
+async def _readonly_no_run(text: str, rid) -> None:
+    """L0 只读直调永远不会走 agent 路径（direct=true 才并发）；防御性兜底。"""
+    raise RuntimeError("只读直调不应进入 agent 路径")
+
+
+def _is_readonly_direct(msg: dict, agent: AgentLoop) -> bool:
+    """L0 只读直调（get/list/article_read 等纯查询）→ 不占槽位、不抢占。
+
+    面板/编辑器的数据加载与在跑的对话是并行关系：互相抢占会让 read_article 顶掉
+    写稿 run（回复截断），也让 run 期间的面板加载被排队/取消（「编辑器没反应」）。
+    db 层单连接+锁，并发读安全。
+    """
+    api = get_api(str(msg.get("method", "")))
+    if api is None or not api.direct:
+        return False
+    action = agent.invoker.propose(
+        ToolCall(id=f"pa_{msg.get('id')}", skill_id=api.handler, params=msg.get("params") or {})
+    )
+    if api.risk is not None:
+        action.risk = max(action.risk, api.risk)
+    return action.risk <= RiskLevel.L0_READONLY
 
 
 def _run_and_emit(loop: AgentLoop, text: str, write_msg: WriteMsg, rid, voice=None) -> None:
@@ -278,6 +305,8 @@ async def serve_async(
     # preempt_gen：抢占代数。新请求到来即 +1；排队中的任务启动时发现自己落后 →
     # 一启动即置 cancel（快速跳过），保证「只有最新请求真正执行」。
     run_state: dict = {"task": None, "cancel": None, "preempt_gen": 0}
+    # 并发的 L0 只读面板调用（不占槽位）：跟踪起来，stdin 关闭时一起收尾
+    readonly_tasks: set[asyncio.Task] = set()
 
     async def confirmer(action) -> bool:
         # 早到的 confirm 直接兑现
@@ -469,6 +498,11 @@ async def serve_async(
                     done, _ = await asyncio.wait({task}, timeout=2)
                     if not done:
                         task.cancel()
+            # 并发的只读面板调用都是快查询，给 3s 收尾；超时直接取消（进程要退了）
+            if readonly_tasks:
+                _, pending_ro = await asyncio.wait(readonly_tasks, timeout=3)
+                for t in pending_ro:
+                    t.cancel()
             return
         rtype = msg.get("type")
         if rtype in ("run", "voice_start"):
@@ -488,7 +522,19 @@ async def serve_async(
                 _chain_start(prev, start, run_state["preempt_gen"])
             )
         elif rtype == "panel_action":
-            # 面板直调/意图方法：与 run 同槽位（抢占 + 链式排队，主循环不阻塞）
+            if _is_readonly_direct(msg, agent):
+                # L0 只读直调：独立任务并发跑，不占槽位、不抢占在跑的 run（编辑器/面板加载数据不该踩对话）
+                async def _ro(m=msg):
+                    try:
+                        await handle_panel_action(m, agent, write_msg, run_text=_readonly_no_run)
+                    except Exception as e:
+                        print(f"[yibao] 只读面板调用异常：{type(e).__name__}: {e}", file=sys.stderr)
+
+                t = asyncio.ensure_future(_ro())
+                readonly_tasks.add(t)
+                t.add_done_callback(readonly_tasks.discard)
+                continue
+            # 面板写操作/意图方法：与 run 同槽位（抢占 + 链式排队，主循环不阻塞）
             _preempt_current()
             prev = run_state["task"]
             start = lambda c, m=msg: handle_panel_action(

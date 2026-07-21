@@ -75,6 +75,7 @@
   var topicId = "";
   var version = 0;
   var saving = false;
+  var dirty = false; // 有未保存修改：译宝的版本更新不直接冲掉编辑区
   var $ = function (id) { return document.getElementById(id); };
 
   function setStatus(text, isErr) {
@@ -116,6 +117,7 @@
   }
 
   $("editor").addEventListener("input", function () {
+    dirty = true;
     $("preview").innerHTML = md($("editor").value);
   });
 
@@ -136,23 +138,29 @@
       version = (r && r.version) || 0;
       $("editor").value = (r && r.content) || "";
       $("editor").dispatchEvent(new Event("input"));
+      dirty = false; // 程序性加载不算用户修改（input 事件把 dirty 置了 true，这里归位）
       var note = r && r.note;
       setStatus((prefix || "已加载") + " v" + version + (note ? " · " + note : ""));
     }).catch(function () {
       version = 0;
       $("editor").value = "";
       $("editor").dispatchEvent(new Event("input"));
+      dirty = false;
       setStatus("还没有稿件，喊译宝「写初稿」或直接开写");
     });
   }
 
   // 面板事件 data：打开编辑器时是 zimeiti.get 的 {rows:[选题]}。
-  // 同选题 rows 重推 = 译宝在对话里保存了新版本（focus 重定向，loop._panel_with_refresh）→ 刷新稿件。
-  // 保存回执等无 rows 形状忽略（不动当前编辑状态）。
+  // 同选题 rows 重推 = 译宝在对话里保存了新版本（focus 重定向，loop._panel_with_refresh）→ 刷新稿件；
+  // 但编辑区有未保存修改时不冲掉，只在状态栏提示。保存回执等无 rows 形状忽略（不动当前编辑状态）。
   window.yibao.onInit(function (data) {
     var row = data && data.rows && data.rows[0];
     if (!row || !row.id) return;
     var sameTopic = String(row.id) === topicId;
+    if (sameTopic && dirty) {
+      setStatus("译宝在对话里存了新版本；你有未保存修改，先保存或清空后再载入");
+      return;
+    }
     topicId = String(row.id);
     $("title").textContent = String(row.title || "写作编辑器");
     loadArticle(sameTopic ? "译宝更新到" : undefined);
@@ -171,6 +179,7 @@
     }).then(function (r) {
       version = (r && r.version) || (version + 1);
       $("note").value = "";
+      dirty = false; // 已落盘，不再是未保存修改
       setStatus("已保存为 v" + version);
     }).catch(function (e) {
       setStatus("保存失败：" + (e && e.message ? e.message : e), true);
