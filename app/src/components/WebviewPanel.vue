@@ -74,7 +74,11 @@ const pending = new Map<number, Pending>();
 let ridBase = Math.floor(Math.random() * 1e9);
 
 function replyToIframe(msg: Record<string, unknown>) {
-  iframeEl.value?.contentWindow?.postMessage({ src: "yibao-host", ...msg }, "*");
+  // postMessage 走结构化克隆：msg 里混着 Vue 响应式 Proxy（如 props.data）时
+  // WebKit 抛 DataCloneError——消息静默丢失，编辑器永远「等待面板数据…」。
+  // 桥消息本就源自 JSON IPC，先 JSON 往返退化成纯数据再发。
+  const plain = JSON.parse(JSON.stringify(msg)) as Record<string, unknown>;
+  iframeEl.value?.contentWindow?.postMessage(plain, "*");
 }
 
 function settle(bid: number, result?: unknown, error?: Error) {
