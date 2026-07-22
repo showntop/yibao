@@ -95,8 +95,16 @@ def build_loop(
         except Exception as e:  # pyobjc 未装 / 非 mac → 回退无基座（技能会优雅报错）
             print(f"[yibao] MacHost 不可用，回退无基座：{e}", file=sys.stderr)
 
+    active_plugins: set | None = None  # None=全量暴露（测试/兼容）；集合=路由式暴露
     if use_real and not skills_factory:
         _load_plugins_safe(reg, memory, prov, host)
+        # 路由式暴露（§12-2）：插件 tool 默认隐藏，use_plugin 按需展开；
+        # active 集合与 AgentLoop 共享（技能执行即改，下一步 LLM 调用即见新工具）
+        from .plugins import get_plugin_summaries
+        from .skills import UsePluginSkill
+
+        active_plugins = set()
+        reg.register(UsePluginSkill(reg, active_plugins, get_plugin_summaries()))
         # 底座：主动提醒（store 挂到 agent，serve 的调度循环取它触发）
         from .reminders import ReminderStore, make_skills
 
@@ -123,6 +131,7 @@ def build_loop(
         host=host,
         history=ConversationHistory(hist) if hist else None,
         focus_provider=lambda: _FOCUS["value"],
+        active_plugins=active_plugins,
     )
     if use_real and not skills_factory:
         agent.reminder_store = reminder_store  # serve 的调度循环经它触发提醒

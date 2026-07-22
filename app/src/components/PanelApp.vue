@@ -186,6 +186,11 @@ function onEvent(e: BrainEvent) {
     case "speaking":
       state.value = "say";
       break;
+    case "notice":
+      // 轻提示（插件展开等，§12-2 要知情）：hint 行展示，不改变状态
+      pushMsg("hint", e.text ?? "");
+      openLayer();
+      break;
     case "speaking_done":
       state.value = "idle";
       scheduleCollapse(4000);

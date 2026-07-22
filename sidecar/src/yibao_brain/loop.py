@@ -29,7 +29,9 @@ SYSTEM_PROMPT = (
     "用户说「打开/看看某看板、面板、详情」时调用对应工具即可，不要只在对话里列数据。\n"
     "只有纯闲聊/知识问答才直接用自然语言回复。\n"
     "回复风格：聊天气泡很窄，回复要口语化、简短直接；不要用表格（改成每行一条「键：值」），"
-    "不要用 # 标题，emoji 一条回复最多 2 个，列表不超过 5 条。"
+    "不要用 # 标题，emoji 一条回复最多 2 个，列表不超过 5 条。\n"
+    "很多能力按插件组织且默认隐藏；需要的能力不在工具列表里时，先调 use_plugin 展开对应插件"
+    "（可用插件清单见该工具描述），再继续。"
 )
 
 
@@ -56,6 +58,7 @@ class AgentLoop:
         host: Host | None = None,
         history: ConversationHistory | None = None,
         focus_provider=None,
+        active_plugins: set | None = None,
     ):
         self.provider = provider
         self.host = host
@@ -67,6 +70,8 @@ class AgentLoop:
         self.history = history
         # 面板焦点（v2 §5 focus）：() -> {"plugin","panel","item"} | None，由壳侧 panel_context 维护
         self.focus_provider = focus_provider
+        # 路由式暴露（§12-2）：None=全量暴露（测试/兼容）；集合=仅暴露已激活插件（use_plugin 激活）
+        self._active = active_plugins
         # tool 执行收编到唯一执行器；loop 只留事件路由与 LLM 往返
         self.invoker = ToolInvoker(skills, classifier, gate, log, self.confirmer, host)
 
@@ -95,6 +100,28 @@ class AgentLoop:
     def skills(self) -> SkillRegistry:
         """委托给 invoker：替换 registry 时执行器同步生效（测试/运行期换注册表）。"""
         return self.invoker.skills
+
+    def _visible_tools(self) -> list[dict]:
+        """本步发给 LLM 的工具清单：全量（_active 为 None）或 底座 + 已激活插件 + 焦点插件。
+
+        用户正盯着某插件面板（focus）时该插件视为激活——面板场景的对话必须能用它的工具。
+        """
+        if self._active is None:
+            return self.skills.openai_tools()
+        active = set(self._active)
+        if self.focus_provider is not None:
+            try:
+                focus = self.focus_provider()
+            except Exception:
+                focus = None
+            if focus and focus.get("plugin"):
+                active.add(focus["plugin"])
+        return self.skills.openai_tools(active_plugins=active)
+
+    def _auto_activate(self, skill_id: str) -> None:
+        """插件 tool 被执行过 → 该插件激活（直接点名调用也算展开，后续步骤工具可见）。"""
+        if self._active is not None and "." in skill_id:
+            self._active.add(skill_id.split(".", 1)[0])
 
     @skills.setter
     def skills(self, reg: SkillRegistry) -> None:
@@ -180,10 +207,9 @@ class AgentLoop:
             messages.extend(self.history.messages())
         messages.append({"role": "user", "content": user_text})
         run_start = len(messages) - 1  # 本轮轨迹起点（user 消息），成功收尾时整轮入史（含工具调用）
-        tools = self.skills.openai_tools()
 
         for _ in range(self.max_steps):
-            resp: LLMResponse = self.provider.chat(messages, tools=tools)
+            resp: LLMResponse = self.provider.chat(messages, tools=self._visible_tools())
             if not resp.tool_calls:
                 self.memory.add(user_text, self.user_id)
                 if self.history:
@@ -210,7 +236,11 @@ class AgentLoop:
                     messages.append({"role": "tool", "tool_call_id": tc.id, "content": "策略禁止该操作"})
                     continue
                 result = self.invoker.execute(action, tc.params)
+                self._auto_activate(action.skill_id)
                 yield Event(kind="action_result", action=action, result=result)
+                if action.skill_id == "use_plugin" and result.success and not (result.data or {}).get("already"):
+                    # 插件展开要知情（§12-2 已定）：轻提示，不弹窗不打断
+                    yield Event(kind="notice", text=(result.data or {}).get("human", "插件已展开"))
                 payload = self._panel_with_refresh(action, result)  # 声明 refresh 则面板拿刷新数据
                 if payload is not None:
                     yield Event(kind="panel", payload=payload)
@@ -244,7 +274,6 @@ class AgentLoop:
             messages.extend(self.history.messages())
         messages.append({"role": "user", "content": user_text})
         run_start = len(messages) - 1  # 本轮轨迹起点（user 消息），成功收尾时整轮入史（含工具调用）
-        tools = self.skills.openai_tools()
 
         def cancelled() -> bool:
             return bool(cancel and cancel.is_set())
@@ -255,7 +284,7 @@ class AgentLoop:
                 return
             text_buf = ""
             delta_acc: list = []
-            async for delta in self.provider.astream(messages, tools=tools):
+            async for delta in self.provider.astream(messages, tools=self._visible_tools()):
                 if cancelled():
                     yield Event(kind="interrupted")
                     return
@@ -299,7 +328,11 @@ class AgentLoop:
                     )
                     continue
                 result = await _offload(self.invoker.execute, action, tc.params)
+                self._auto_activate(action.skill_id)
                 yield Event(kind="action_result", action=action, result=result)
+                if action.skill_id == "use_plugin" and result.success and not (result.data or {}).get("already"):
+                    # 插件展开要知情（§12-2 已定）：轻提示，不弹窗不打断
+                    yield Event(kind="notice", text=(result.data or {}).get("human", "插件已展开"))
                 payload = await _offload(self._panel_with_refresh, action, result)  # 声明 refresh 则面板拿刷新数据
                 if payload is not None:
                     yield Event(kind="panel", payload=payload)

@@ -1,6 +1,7 @@
 # 闪念盘（全声明式插件，v2 方案 §3.4 第一档）
 id = "notes"
 name = "闪念盘"
+description = "闪念笔记：快速记录与查询"
 capabilities = ["db", "memory"]
 mem_namespace = "notes"
 

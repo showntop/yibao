@@ -3,6 +3,7 @@
 # 声明式 tool 管 topics CRUD/流转；方法论加载/文章版本落盘走 tools/ 代码 tool。
 id = "zimeiti"
 name = "自媒体"
+description = "自媒体选题与写作：选题看板、写稿改稿、版本管理"
 capabilities = ["db", "memory"]
 mem_namespace = "zimeiti"
 

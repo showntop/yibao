@@ -278,6 +278,12 @@ class DeclarativeTool(Skill):
 
 _PANELS: dict[str, dict] = {}
 _PANEL_TITLES: dict[str, str] = {}
+_PLUGIN_INFO: dict[str, dict] = {}
+
+
+def get_plugin_summaries() -> dict[str, dict]:
+    """已加载插件摘要：pid → {name, description}（use_plugin 路由暴露用）。"""
+    return {pid: dict(info) for pid, info in _PLUGIN_INFO.items()}
 
 
 def get_panel(ref: str) -> dict | None:
@@ -427,6 +433,11 @@ def _load_one(child: Path, registry: SkillRegistry, *, memory, http, llm, emit_p
     pid = manifest["id"]  # id 必填；min_engine_version 只解析暂不校验（阶段 0）
     if not _PLUGIN_ID.match(pid):
         raise ValueError(f"非法插件 id：{pid!r}")
+    # 插件摘要（use_plugin 路由暴露：LLM 靠它知道有哪些插件可展开）
+    _PLUGIN_INFO[pid] = {
+        "name": manifest.get("name") or pid,
+        "description": manifest.get("description") or "",
+    }
 
     caps = set(manifest.get("capabilities") or [])
     unknown = caps - CAPABILITIES
