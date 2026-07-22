@@ -105,7 +105,11 @@ fn spawn_bridge(app: AppHandle, mut rx: tauri::async_runtime::Receiver<CommandEv
                     match serde_json::from_str::<Value>(&line) {
                         Ok(v) => match v.get("type").and_then(|t| t.as_str()) {
                             Some("event") => {
-                                let payload = v.get("event").cloned().unwrap_or(Value::Null);
+                                let mut payload = v.get("event").cloned().unwrap_or(Value::Null);
+                                // 会话分流：surface 提到事件顶层随广播走，各窗按自身场景过滤
+                                if let Some(s) = v.get("surface") {
+                                    payload["surface"] = s.clone();
+                                }
                                 // panel 事件顺带缓存载荷，供面板窗首开竞态下补拉
                                 if payload.get("kind").and_then(|k| k.as_str()) == Some("panel") {
                                     if let Some(p) = payload.get("payload") {
@@ -280,10 +284,10 @@ fn spawn_watchdog(app: AppHandle) {
 }
 
 #[tauri::command]
-fn run_input(state: tauri::State<Brain>, text: String) -> Result<(), String> {
+fn run_input(state: tauri::State<Brain>, text: String, surface: Option<String>) -> Result<(), String> {
     write_to_brain(
         &state,
-        serde_json::json!({ "id": 0, "type": "run", "text": text }),
+        serde_json::json!({ "id": 0, "type": "run", "text": text, "surface": surface.unwrap_or_else(|| "pet".into()) }),
     )
 }
 
@@ -302,11 +306,56 @@ fn panel_action(
     id: i64,
     method: String,
     params: Value,
+    surface: Option<String>,
 ) -> Result<(), String> {
     write_to_brain(
         &state,
-        serde_json::json!({ "id": id, "type": "panel_action", "method": method, "params": params }),
+        serde_json::json!({ "id": id, "type": "panel_action", "method": method, "params": params, "surface": surface.unwrap_or_else(|| "pet".into()) }),
     )
+}
+
+/// 插件目录：YIBAO_PLUGINS_DIR 优先，否则 <repo>/plugins（与 brain 加载同源）。
+fn plugins_dir() -> std::path::PathBuf {
+    if let Ok(dir) = std::env::var("YIBAO_PLUGINS_DIR") {
+        return std::path::PathBuf::from(dir);
+    }
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("plugins")
+}
+
+/// 插件启动器（双击团子）：扫各插件 manifest.toml 拿 id/name。
+/// 行级解析、只取首个 section 之前的顶层键（[[tool]] 里也有 id，不能误抓），不引 toml 依赖。
+#[tauri::command]
+fn list_plugins() -> Result<Vec<Value>, String> {
+    let rd = std::fs::read_dir(plugins_dir()).map_err(|e| format!("读插件目录失败：{e}"))?;
+    let mut out = Vec::new();
+    for entry in rd.flatten() {
+        let path = entry.path().join("manifest.toml");
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let pick = |key: &str| {
+            for line in text.lines() {
+                let l = line.trim();
+                if l.starts_with('[') {
+                    break; // 进了 section 就停（顶层键只在文件头）
+                }
+                if let Some(rest) = l.strip_prefix(key) {
+                    if let Some(v) = rest.trim_start().strip_prefix('=') {
+                        return Some(v.trim().trim_matches('"').to_string());
+                    }
+                }
+            }
+            None
+        };
+        if let (Some(id), Some(name)) = (pick("id"), pick("name")) {
+            out.push(serde_json::json!({ "id": id, "name": name }));
+        }
+    }
+    out.sort_by(|a, b| {
+        a["id"].as_str().unwrap_or("").cmp(b["id"].as_str().unwrap_or(""))
+    });
+    Ok(out)
 }
 
 /// 打开/聚焦面板窗：已存在则 show+focus（关闭只是隐藏，状态保留）；
@@ -325,7 +374,7 @@ fn open_panel_window(app: AppHandle) -> Result<(), String> {
             .transparent(true)
             .decorations(false)
             .resizable(true)
-            .inner_size(680.0, 540.0)
+            .inner_size(780.0, 580.0)
             .build()
             .map_err(|e| format!("创建面板窗失败：{e}"))?;
     if let Ok(Some(mon)) = win.current_monitor() {
@@ -335,18 +384,20 @@ fn open_panel_window(app: AppHandle) -> Result<(), String> {
         let sw = mon.size().width as f64 / s;
         let sh = mon.size().height as f64 / s;
         // 屏幕中央偏右：宠物球多在屏幕角落，面板居中偏右避让
-        let x = mx + (sw - 680.0) / 2.0 + 80.0;
-        let y = my + (sh - 540.0) / 2.0;
+        let x = mx + (sw - 780.0) / 2.0 + 80.0;
+        let y = my + (sh - 580.0) / 2.0;
         let _ = win.set_position(tauri::LogicalPosition::new(x, y));
     }
     Ok(())
 }
 
 /// 关闭面板窗 = 隐藏（不销毁，保状态、二次打开快）。
+/// 顺带广播 panel-closed：宠物窗靠它给「⇢ 协作中」的气泡收尾（⇠ 协作结束）。
 #[tauri::command]
 fn close_panel_window(app: AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("panel") {
         win.hide().map_err(|e| e.to_string())?;
+        let _ = app.emit("panel-closed", ());
     }
     Ok(())
 }
@@ -359,14 +410,26 @@ fn get_current_panel(state: tauri::State<Brain>) -> Result<Option<Value>, String
 }
 
 #[tauri::command]
-fn voice_start(state: tauri::State<Brain>) -> Result<(), String> {
-    write_to_brain(&state, serde_json::json!({ "id": 0, "type": "voice_start" }))
+fn voice_start(state: tauri::State<Brain>, surface: Option<String>) -> Result<(), String> {
+    write_to_brain(
+        &state,
+        serde_json::json!({ "id": 0, "type": "voice_start", "surface": surface.unwrap_or_else(|| "pet".into()) }),
+    )
 }
 
 /// 打断当前进行中的生成/播报（Plan 4b 三连取消：停 TTS + 终止 LLM + 清队列）。
 #[tauri::command]
 fn interrupt(state: tauri::State<Brain>) -> Result<(), String> {
     write_to_brain(&state, serde_json::json!({ "id": 0, "type": "interrupt" }))
+}
+
+/// 面板焦点上报（v2 §5 focus）：壳面板窗内容变化时透传给大脑，run 时注入 LLM 上下文。
+#[tauri::command]
+fn report_panel_context(state: tauri::State<Brain>, focus: Value) -> Result<(), String> {
+    write_to_brain(
+        &state,
+        serde_json::json!({ "id": 0, "type": "panel_context", "focus": focus }),
+    )
 }
 
 /// 重新检测 macOS 权限（辅助功能/屏幕录制），结果经 brain-permissions 事件回前端。
@@ -401,6 +464,12 @@ pub fn run() {
         .build();
 
     tauri::Builder::default()
+        // 单实例：第二个实例拉起时聚焦既有窗口并退出（防多实例 → 多 brain → qdrant 锁互踩）
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show().and_then(|_| w.set_focus());
+            }
+        }))
         .plugin(shortcuts)
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
@@ -410,9 +479,25 @@ pub fn run() {
                 // 桌宠常驻：关窗只隐藏，真正退出走托盘菜单
                 api.prevent_close();
                 let _ = window.hide();
+                if window.label() == "panel" {
+                    let _ = window.app_handle().emit("panel-closed", ());
+                }
             }
         })
         .setup(|app| {
+            // 主窗默认停靠屏幕右上角（菜单栏下方留边距）；用户可拖动，展开方向自适应
+            if let Some(win) = app.get_webview_window("main") {
+                if let Ok(Some(mon)) = win.current_monitor() {
+                    let s = mon.scale_factor();
+                    let mx = mon.position().x as f64 / s;
+                    let my = mon.position().y as f64 / s;
+                    let sw = mon.size().width as f64 / s;
+                    let _ = win.set_position(tauri::LogicalPosition::new(mx + sw - 132.0 - 24.0, my + 40.0));
+                }
+                // 启动即显示（conf 里 visible:false 只是避免定位前闪屏，别让用户按热键找宠物）
+                let _ = win.show();
+            }
+
             // 注册全局热键：Super+Shift+Y 显隐主窗（macOS 上 Super=Cmd）
             #[cfg(desktop)]
             if let Err(e) = app.global_shortcut().register("Super+Shift+Y") {
@@ -487,11 +572,13 @@ pub fn run() {
             run_input,
             confirm,
             panel_action,
+            list_plugins,
             open_panel_window,
             close_panel_window,
             get_current_panel,
             voice_start,
             interrupt,
+            report_panel_context,
             check_permissions,
             prompt_permission
         ])

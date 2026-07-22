@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sys
 import threading
+import time
 import warnings
 from abc import ABC, abstractmethod
 
@@ -95,13 +96,17 @@ class LazyMem0Memory(Memory):
     """mem0 后台懒加载：构造秒回（不 import torch/mem0），真实实例在后台线程初始化。
 
     就绪前 recall 返回空、add 进缓冲（上限 buffer_max 条）；就绪后回放缓冲并直通真实实例；
-    初始化失败永久降级为空记忆（不阻断回路）。解决 torch/sentence-transformers
-    冷加载把 sidecar 启动拖慢的问题（大脑先上线，记忆随后接入）。
+    初始化失败会按 init_attempts 次重试（间隔 init_delay_s 秒）——旧大脑刚被回收、
+    qdrant 锁尚未释放是常态竞态，重试覆盖它；最终失败才永久降级为空记忆（不阻断回路）。
+    解决 torch/sentence-transformers 冷加载把 sidecar 启动拖慢的问题（大脑先上线，记忆随后接入）。
     """
 
-    def __init__(self, factory=None, buffer_max: int = 50) -> None:
+    def __init__(self, factory=None, buffer_max: int = 50,
+                 init_attempts: int = 3, init_delay_s: float = 2.0) -> None:
         self._factory = factory or Mem0Memory
         self._buf_max = buffer_max
+        self._attempts = max(1, init_attempts)
+        self._delay = max(0.0, init_delay_s)
         self._real = None
         self._failed = False
         self._fail_msg: str | None = None
@@ -129,13 +134,23 @@ class LazyMem0Memory(Memory):
             cb(msg)
 
     def _init(self) -> None:
-        try:
-            real = self._factory()
-        except Exception as e:
-            print(f"[yibao] mem0 后台初始化失败，记忆降级为空：{e}", file=sys.stderr)
+        real = None
+        err: Exception | None = None
+        for attempt in range(1, self._attempts + 1):
+            try:
+                real = self._factory()
+                break
+            except Exception as e:
+                err = e
+                if attempt < self._attempts:
+                    print(f"[yibao] mem0 初始化失败（第 {attempt}/{self._attempts} 次），"
+                          f"{self._delay:.0f}s 后重试：{e}", file=sys.stderr)
+                    time.sleep(self._delay)
+        if real is None:
+            print(f"[yibao] mem0 后台初始化失败，记忆降级为空：{err}", file=sys.stderr)
             with self._lock:
                 self._failed = True
-                self._fail_msg = f"长期记忆不可用（{e}），本次运行将记不住事"
+                self._fail_msg = f"长期记忆不可用（{err}），本次运行将记不住事"
                 cb = self._on_status
                 self._buf.clear()
             if cb is not None:

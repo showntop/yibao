@@ -297,6 +297,44 @@ def test_serve_async_ping_pong(tmp_path):
     assert len(pongs) == 1
 
 
+def test_serve_async_ping_answered_while_run_busy(tmp_path):
+    """长任务占住主循环时，ping 由读线程即时应答（看门狗不误杀，2026-07-21 误杀根治）。"""
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([
+                {"type": "run", "id": "r1", "text": "hi"},
+                {"type": "ping"},
+            ]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(text="ok", delay=0.5),
+        )
+    )
+    types = [m["type"] for m in out]
+    assert "pong" in types
+    assert types.index("pong") < types.index("run_done")  # 不等长任务收尾就答了
+
+
+def test_serve_async_ping_suppressed_when_loop_dead(tmp_path, monkeypatch):
+    """主循环真卡死（tick 停滞）→ 扣住 pong，让看门狗杀掉重启。"""
+    from yibao_brain import server as srv
+
+    monkeypatch.setattr(srv, "_TICK_FRESH_S", -1.0)  # 任何 lag 都算「循环已死」
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([{"type": "ping"}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+        )
+    )
+    assert not [m for m in out if m["type"] == "pong"]
+
+
 def test_serve_async_check_permissions(tmp_path):
     out = []
     _run_async(
@@ -437,8 +475,40 @@ def test_panel_action_direct_end_to_end(tmp_path, monkeypatch):
     ar = next(e for e in evs if e["kind"] == "action_result")
     assert ar["result"]["success"] and ar["result"]["data"] == {"deleted": "r1"}
     pe = next(e for e in evs if e["kind"] == "panel")       # 带 panel 引用 → panel 事件
-    assert pe["payload"] == {"panel": "tdel:list", "schema": {"type": "list"}, "data": {"deleted": "r1"}}
+    assert pe["payload"] == {"panel": "tdel:list", "title": "tdel:list", "schema": {"type": "list"}, "data": {"deleted": "r1"}}
     assert kinds.index("panel") > kinds.index("action_result")
+    assert out[-1] == {"type": "run_done", "id": 1}
+
+
+def test_panel_action_api_panel_override_emits_webview(tmp_path, monkeypatch):
+    """api.toml method 声明 panel 字段：直调成功后改用该面板发事件（覆盖 tool 自带引用），
+    webview 面板 payload 带 html（schema 为 null），schema 面板 payload 形状不变。"""
+    executed = []
+    _patch_api(monkeypatch, panel="tdel:editor")
+    from yibao_brain import plugins
+
+    monkeypatch.setitem(plugins._PANELS, "tdel:list", {"type": "list"})
+    monkeypatch.setitem(plugins._PANELS, "tdel:editor", {"type": "webview", "html": "<html>编辑器</html>"})
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([{"id": 1, "type": "panel_action", "method": "tdel.delete", "params": {"id": "r1"}}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+            skills_factory=_pa_factory(executed, ref="tdel:list"),  # tool 自带 tdel:list，应被 api.panel 覆盖
+        )
+    )
+    evs = [m["event"] for m in out if m["type"] == "event"]
+    pe = next(e for e in evs if e["kind"] == "panel")
+    assert pe["payload"] == {
+        "panel": "tdel:editor",
+        "title": "tdel:editor",
+        "schema": None,
+        "webview": {"html": "<html>编辑器</html>"},
+        "data": {"deleted": "r1"},
+    }
     assert out[-1] == {"type": "run_done", "id": 1}
 
 
@@ -458,6 +528,7 @@ def test_panel_action_not_in_whitelist_rejected(tmp_path):
     evs = [m["event"] for m in out if m["type"] == "event"]
     err = next(e for e in evs if e["kind"] == "error")
     assert "白名单" in err["text"] and "tdel.ghost" in err["text"]
+    assert err["action"]["id"] == "pa_1"                     # 错误带 rid 标签（壳侧桥按标签认领）
     assert executed == []                                    # 未执行
     assert out[-1] == {"type": "run_done", "id": 1}
 
@@ -486,6 +557,7 @@ def test_panel_action_confirm_flow_rejected(tmp_path, monkeypatch):
     assert "action_result" not in kinds and executed == []   # 拒绝了就没执行
     err = next(e for e in evs if e["kind"] == "error")
     assert "拒绝" in err["text"]
+    assert err["action"]["id"] == "pa_1"                     # 错误带 rid 标签（壳侧桥按标签认领）
     assert out[-1] == {"type": "run_done", "id": 1}
 
 
@@ -510,6 +582,60 @@ def test_panel_action_confirm_flow_approved_executes(tmp_path, monkeypatch):
     assert "confirmation_needed" in [e["kind"] for e in evs]
     assert executed == [{"id": "r1"}]
     assert out[-1] == {"type": "run_done", "id": 1}
+
+
+def test_panel_action_write_still_preempts_run(tmp_path, monkeypatch):
+    """L1+ 直调仍占槽位：到达时抢占在跑的 run（面板写操作 = 用户最新意图，对话让路）。"""
+    executed = []
+    _patch_api(monkeypatch)  # tdel.delete 直调，tool 默认 L1
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([
+                {"id": 1, "type": "run", "text": "hi"},
+                {"id": 2, "type": "panel_action", "method": "tdel.delete", "params": {"id": "r1"}},
+            ]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(text="你好"),
+            skills_factory=_pa_factory(executed),
+        )
+    )
+    evs = [m["event"] for m in out if m["type"] == "event"]
+    kinds = [e["kind"] for e in evs]
+    assert executed == [{"id": "r1"}]                        # 写操作执行了
+    assert "interrupted" in kinds                            # run 被抢占
+    assert "final_reply" not in kinds                        # 没出回复
+
+
+def test_panel_action_readonly_bypasses_slot_no_preempt(tmp_path, monkeypatch):
+    """L0 只读直调不占槽位、不抢占：run 在跑时到达，run 完整收尾，直调并发执行。
+
+    回归：面板数据加载（read_article 等）与对话 run 互相抢占 → 回复截断 + 编辑器「没反应」。
+    """
+    executed = []
+    _patch_api(monkeypatch, name="tread.get", handler="tdel.delete")
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([
+                {"id": 1, "type": "run", "text": "hi"},
+                {"id": 2, "type": "panel_action", "method": "tread.get", "params": {"id": "r1"}},
+            ]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(text="你好"),
+            skills_factory=_pa_factory(executed, risk=RiskLevel.L0_READONLY),
+        )
+    )
+    evs = [m["event"] for m in out if m["type"] == "event"]
+    assert executed == [{"id": "r1"}]                        # 只读直调并发执行了
+    reply = next(e for e in evs if e["kind"] == "final_reply")
+    assert reply["text"] == "你好"                            # run 没被抢占，完整收尾
+    assert not any(e["kind"] == "interrupted" for e in evs)
+    assert {"type": "run_done", "id": 1} in out and {"type": "run_done", "id": 2} in out
 
 
 def test_panel_action_intent_goes_to_agent(tmp_path, monkeypatch):
@@ -618,3 +744,141 @@ def test_serve_async_tts_cancelled_error_does_not_crash_brain(tmp_path):
 
     _run_async(_go())  # 不抛即过
     assert out[-1] == {"type": "run_done", "id": 1}
+
+
+def test_serve_async_panel_context_sets_focus(tmp_path):
+    """panel_context 消息更新焦点，随后的 run 把它注入 LLM 上下文；结束后复位防串测试。"""
+    import yibao_brain.server as srv
+
+    provider = FakeProvider(chunks=["在看 K3 那条"])
+    focus = {
+        "plugin": "zimeiti",
+        "panel": "detail",
+        "item": {"id": "abc123", "title": "K3 是垃圾", "status": "writing"},
+    }
+    out = []
+    old = srv._FOCUS["value"]
+    try:
+        _run_async(
+            serve_async(
+                make_reader([
+                    {"type": "panel_context", "focus": focus},
+                    {"id": 1, "type": "run", "text": "这个怎么样"},
+                ]),
+                lambda m: out.append(m),
+                use_real=False,
+                db_path=str(tmp_path / "a.db"),
+                provider=provider,
+            )
+        )
+        messages = provider.astream_calls[0]["messages"]
+        focus_msgs = [m for m in messages if m["role"] == "system" and "用户当前正在看" in m["content"]]
+        assert len(focus_msgs) == 1
+        assert "K3 是垃圾" in focus_msgs[0]["content"]
+        assert out[-1] == {"type": "run_done", "id": 1}
+    finally:
+        srv._FOCUS["value"] = old
+
+
+def test_serve_async_panel_context_clear(tmp_path):
+    """面板关闭（focus=null）后 run 不带焦点消息。"""
+    import yibao_brain.server as srv
+
+    provider = FakeProvider(chunks=["你好"])
+    out = []
+    old = srv._FOCUS["value"]
+    try:
+        _run_async(
+            serve_async(
+                make_reader([
+                    {"type": "panel_context", "focus": {"plugin": "zimeiti", "panel": "board"}},
+                    {"type": "panel_context", "focus": None},
+                    {"id": 1, "type": "run", "text": "你好"},
+                ]),
+                lambda m: out.append(m),
+                use_real=False,
+                db_path=str(tmp_path / "a.db"),
+                provider=provider,
+            )
+        )
+        messages = provider.astream_calls[0]["messages"]
+        assert not any("用户当前正在看" in m["content"] for m in messages if m["role"] == "system")
+    finally:
+        srv._FOCUS["value"] = old
+
+
+def test_serve_async_stalled_task_is_force_cancelled(tmp_path, monkeypatch):
+    """上一任务 hung 在 provider 里（cancel 事件只在 chunk 间检查，叫不醒它）：
+    超过宽限被强制取消，后续请求照常受理。"""
+    import time
+
+    import yibao_brain.server as srv
+
+    monkeypatch.setattr(srv, "_PREEMPT_GRACE_S", 0.3)
+    state = {"n": 0}
+
+    class _HangThenFast:
+        async def astream(self, messages, tools=None):
+            state["n"] += 1
+            if state["n"] == 1:
+                await asyncio.sleep(60)  # hung：只能靠强制 cancel 收场
+                return
+            async for d in FakeProvider(chunks=["第二个好了"]).astream(messages, tools):
+                yield d
+
+    msgs = [{"id": 1, "type": "run", "text": "卡死"}, {"id": 2, "type": "run", "text": "再来"}, None]
+    it = iter(msgs)
+
+    def slow_reader():
+        m = next(it)
+        if m is not None and m.get("id") == 2:
+            time.sleep(0.5)  # 让 run1 先真进 astream 挂起，再来第二个请求（读者线程内 sleep 无碍）
+        return m
+
+    out = []
+    _run_async(
+        serve_async(
+            slow_reader,
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=_HangThenFast(),
+        )
+    )
+    # run2 正常完成并出了最终回复（没有被 run1 的 hung 永久排队）
+    assert {"type": "run_done", "id": 2} in out
+    assert any(m["type"] == "event" and m["event"].get("kind") == "final_reply" for m in out)
+
+
+def test_serve_async_events_carry_surface(tmp_path):
+    # 会话分流：run 带 surface 时，该 run 的所有事件都带同一标签（壳侧各窗按它过滤）
+    provider = FakeProvider(chunks=["你好"])
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([{"id": 1, "type": "run", "text": "你好", "surface": "panel:zimeiti"}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=provider,
+        )
+    )
+    events = [m for m in out if m["type"] == "event"]
+    assert events and all(m.get("surface") == "panel:zimeiti" for m in events)
+
+
+def test_serve_async_default_surface_is_pet(tmp_path):
+    # 不带 surface 的老客户端：事件 surface = pet，宠物窗照单全收
+    provider = FakeProvider(chunks=["你好"])
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([{"id": 1, "type": "run", "text": "你好"}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=provider,
+        )
+    )
+    events = [m for m in out if m["type"] == "event"]
+    assert events and all(m.get("surface") == "pet" for m in events)

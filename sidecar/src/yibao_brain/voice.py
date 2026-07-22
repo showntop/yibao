@@ -12,6 +12,7 @@ import asyncio
 import re
 import sys
 import threading
+import time
 import warnings
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -31,6 +32,12 @@ class VoiceCapability:
     def listen(self) -> str:
         pcm = self.recorder.record_until_silence()
         return self.recognizer.transcribe(pcm)
+
+    def stop_listen(self) -> None:
+        """请求停止进行中的录音（interrupt 通路）；recorder 不支持则静默忽略。"""
+        stop = getattr(self.recorder, "stop", None)
+        if callable(stop):
+            stop()
 
     def speak(self, text: str) -> None:
         if text:
@@ -89,18 +96,29 @@ class SounddeviceRecorder:
     """sounddevice 录音 + Silero VAD：说完一句（静音 min_silence）自动停，返回该段 PCM。
 
     min_silence 默认 0.9s：说话中途的自然停顿（<0.9s）不会被误判为说完。
+    采集走回调+队列（不是阻塞 s.read）：旧实现设备停发帧时 read 永不返回，
+    录音循环与 stop() 信号一起卡死（「一直聆听中、无法取消」的根因）。
     """
 
-    def __init__(self, vad_model: str, max_seconds: int = 30, min_silence: float = 0.9):
+    def __init__(self, vad_model: str, max_seconds: int = 30, min_silence: float = 0.9, no_frame_timeout: float = 3.0):
         self._vad_model = vad_model
         self._max = max_seconds
         self._min_silence = min_silence
+        self._no_frame_timeout = no_frame_timeout  # 开局这么久一帧都没有 = 设备被占用/掉线
+        self._stop = threading.Event()
+
+    def stop(self) -> None:
+        """外部打断（interrupt）：录音循环下一拍退出，返回空段（= 未识别到语音）。"""
+        self._stop.set()
 
     def record_until_silence(self):
+        import queue
+
         import numpy as np
         import sherpa_onnx
         import sounddevice as sd
 
+        self._stop.clear()
         cfg = sherpa_onnx.VadModelConfig()
         cfg.silero_vad.model = self._vad_model
         cfg.silero_vad.min_silence_duration = self._min_silence
@@ -109,23 +127,51 @@ class SounddeviceRecorder:
         window = cfg.silero_vad.window_size  # Silero 每次喂的样本数（512）
 
         SR = 16000
+        q: queue.Queue = queue.Queue()
+        stats = {"frames": 0}
+
+        def _on_audio(indata, frames, time_info, status):
+            try:
+                stats["frames"] += frames
+                q.put_nowait(indata.reshape(-1).copy())
+            except Exception:  # 回调里任何异常都会让 CoreAudio 停流，宁丢帧不炸流
+                pass
+
         buf = np.array([], dtype=np.float32)
         total = 0
-        with sd.InputStream(channels=1, dtype="float32", samplerate=SR) as s:
-            while total < SR * self._max:
-                samples, _ = s.read(int(0.1 * SR))  # 每 100ms 读一批
-                if len(samples):
-                    buf = np.concatenate([buf, samples.reshape(-1)])
-                    total += len(samples)
-                    while len(buf) >= window:
-                        vad.accept_waveform(buf[:window])
-                        buf = buf[window:]
-                    while not vad.empty():
-                        # VAD 切出一段完整语音（说完一句）→ 返回
-                        seg = np.array(vad.front.samples, dtype=np.float32)
-                        vad.pop()
-                        return seg
-        return np.zeros(SR, dtype=np.float32)  # 超时无语音
+        t0 = time.monotonic()
+        speech_logged = False
+        print("[yibao] 录音开始", file=sys.stderr)
+        with sd.InputStream(
+            channels=1, dtype="float32", samplerate=SR, blocksize=int(0.1 * SR), callback=_on_audio
+        ):
+            while total < SR * self._max and not self._stop.is_set():
+                try:
+                    samples = q.get(timeout=0.1)  # 带超时取：stop 信号 100ms 内必被看到
+                except queue.Empty:
+                    if stats["frames"] == 0 and time.monotonic() - t0 > self._no_frame_timeout:
+                        print("[yibao] 麦克风一直无音频帧（被占用/掉线？），放弃录音", file=sys.stderr)
+                        break
+                    continue
+                if not len(samples):
+                    continue
+                buf = np.concatenate([buf, samples])
+                total += len(samples)
+                while len(buf) >= window:
+                    vad.accept_waveform(buf[:window])
+                    buf = buf[window:]
+                if not speech_logged and vad.is_speech_detected():
+                    speech_logged = True
+                    print("[yibao] VAD 检测到语音", file=sys.stderr)
+                while not vad.empty():
+                    # VAD 切出一段完整语音（说完一句）→ 返回
+                    seg = np.array(vad.front.samples, dtype=np.float32)
+                    vad.pop()
+                    print(f"[yibao] 识别到完整语句（{time.monotonic() - t0:.1f}s），结束录音", file=sys.stderr)
+                    return seg
+        why = "被打断" if self._stop.is_set() else "超时/无语音"
+        print(f"[yibao] 录音结束：{why}（{time.monotonic() - t0:.1f}s，{stats['frames']} 帧）", file=sys.stderr)
+        return np.zeros(SR, dtype=np.float32)  # 超时/被打断：无语音
 
 
 class EdgeTtsSpeaker:

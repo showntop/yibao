@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from "vue";
+import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import Avatar from "./components/Avatar.vue";
 import InputBar from "./components/InputBar.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
@@ -9,10 +11,12 @@ import {
   onBrainEvent,
   onBrainStatus,
   onBrainPermissions,
+  onPanelClosed,
   runInput,
   sendConfirm,
   voiceStart,
   interrupt,
+  panelAction,
   type BrainEvent,
   type BrainStatusMsg,
   type BrainPermissions,
@@ -36,14 +40,17 @@ const brainDown = ref(false); // 大脑掉线/重启中（守护在恢复）
 const perms = ref<BrainPermissions | null>(null); // macOS 权限状态（null=未收到）
 const expanded = ref(false);
 const dir = ref<Dir>("nw"); // 展开方向（collapse 沿同一锚点缩回要用）
+const panelOpen = ref(false); // 面板协作会话进行中（关联气泡只插一次，panel 刷新不重复插）
 let unlisten: (() => void) | null = null;
 let unlistenStatus: (() => void) | null = null;
 let unlistenPerms: (() => void) | null = null;
+let unlistenPanelClosed: (() => void) | null = null;
 
 const statusText = computed(
   () => ({ idle: "待命中", listen: "聆听中", think: "思考中…", work: "操作中…", say: "说话中…" }[state.value]),
 );
-const busy = computed(() => state.value === "think" || state.value === "work" || state.value === "say");
+const busy = computed(() => state.value !== "idle"); // listen/think/work/say 都可打断（聆听=取消录音）
+const suggestions = ["记一条闪念", "看看选题看板", "帮我写点什么"];
 const missingPerms = computed(() => perms.value !== null && (!perms.value.ax || !perms.value.screen));
 
 async function expand() {
@@ -55,12 +62,64 @@ async function collapse() {
   expanded.value = false;
   await collapseWin(d);
 }
-async function toggleExpand() {
-  if (expanded.value) await collapse();
-  else await expand();
+
+// ---- 插件启动器（双击团子）----
+type PetView = "chat" | "plugins";
+interface PluginInfo { id: string; name: string }
+const view = ref<PetView>("chat");
+const plugins = ref<PluginInfo[]>([]);
+const pluginErr = ref("");
+let clickTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** 单击=展开对话；双击=插件启动器（220ms 内第二次点击判双击，单击稍延迟是消歧代价）。
+ *  聆听中单击团子 = 取消录音（收缩态唯一的取消入口），不进消歧计时。 */
+function onPetClick() {
+  if (state.value === "listen") {
+    onInterrupt();
+    return;
+  }
+  if (clickTimer !== null) {
+    clearTimeout(clickTimer);
+    clickTimer = null;
+    void expandTo("plugins");
+    return;
+  }
+  clickTimer = setTimeout(() => {
+    clickTimer = null;
+    void expandTo("chat");
+  }, 220);
+}
+
+async function expandTo(v: PetView) {
+  view.value = v;
+  if (v === "plugins") void loadPlugins();
+  if (!expanded.value) await expand();
+}
+
+async function loadPlugins() {
+  pluginErr.value = "";
+  try {
+    // 上限 8 个：插件是精选的，不会多；超出说明该做设置页了
+    plugins.value = (await invoke<PluginInfo[]>("list_plugins")).slice(0, 8);
+  } catch (err) {
+    plugins.value = [];
+    pluginErr.value = String(err);
+  }
+}
+
+/** 点插件 → 调它的 list 直调（约定的主面板入口）；panel 事件回来会自动 openPanel + 收起对话。 */
+async function launchPlugin(p: PluginInfo) {
+  pluginErr.value = "";
+  try {
+    await panelAction(`${p.id}.list`, {});
+  } catch (err) {
+    pluginErr.value = "启动失败：" + String(err);
+  }
 }
 
 function onEvent(e: BrainEvent) {
+  // 会话分流：面板场景的对话事件只归面板窗；panel 事件例外（管开窗 + 关联气泡，两窗都收）
+  if (e.surface && e.surface !== "pet" && e.kind !== "panel") return;
   switch (e.kind) {
     case "action_proposed":
       state.value = "work";
@@ -110,6 +169,18 @@ function onEvent(e: BrainEvent) {
     case "speaking_done":
       state.value = "idle";
       break;
+    case "reminder": {
+      // 主动提醒：宠物可能收起/隐藏 → 亮窗 + 展开，确保被看见（不抢焦点）
+      bubbles.value.push({ role: "ai", text: "⏰ " + (e.text ?? "到点了") });
+      void (async () => {
+        try {
+          const win = getCurrentWindow();
+          if (!(await win.isVisible())) await win.show();
+          if (!expanded.value) await expand();
+        } catch { /* 亮窗失败也至少留了气泡 */ }
+      })();
+      break;
+    }
     case "error":
       state.value = "idle";
       streamingIdx.value = null;
@@ -120,17 +191,30 @@ function onEvent(e: BrainEvent) {
       state.value = "listen";
       break;
     case "listening_done":
-      state.value = "think";
-      if (e.text) bubbles.value.push({ role: "user", text: e.text });
+      // 空识别（超时/没说话）：回 idle 并提示——不能进 think，run_done 不复位状态，会永远卡「思考中」
+      if (e.text) {
+        state.value = "think";
+        bubbles.value.push({ role: "user", text: e.text });
+      } else {
+        state.value = "idle";
+        bubbles.value.push({ role: "ai", text: "没听清，再试一次？" });
+      }
       break;
     case "speaking":
       state.value = "say";
       break;
-    case "panel":
-      // 面板 = 独立浮窗（工作模式）：交给面板窗，宠物窗收回球形态
+    case "panel": {
+      // 面板 = 独立浮窗（工作模式）：交给面板窗，宠物窗收回球形态；
+      // 主对话框只留一条「派生」关联气泡，协作过程不镜像（会话分流）
+      const title = e.payload?.title || e.payload?.panel || "插件面板";
+      if (!panelOpen.value) {
+        panelOpen.value = true;
+        bubbles.value.push({ role: "ai", text: `⇢ 正在和「${title}」协作` });
+      }
       void openPanel();
       if (expanded.value) void collapse();
       break;
+    }
   }
 }
 
@@ -187,8 +271,10 @@ async function decide(approved: boolean) {
 }
 
 function onMic() {
-  state.value = "listen";
-  void voiceStart();
+  // 不乐观置 listen：等大脑 listening 事件确认（语音栈不可用时大脑会回 error，别自欺卡死）
+  void voiceStart().catch((err) => {
+    bubbles.value.push({ role: "ai", text: "⚠️ 语音启动失败：" + String(err) });
+  });
 }
 
 function onInterrupt() {
@@ -207,13 +293,20 @@ onMounted(async () => {
   unlisten = await onBrainEvent(onEvent);
   unlistenStatus = await onBrainStatus(onStatus);
   unlistenPerms = await onBrainPermissions(onPerms);
+  unlistenPanelClosed = await onPanelClosed(() => {
+    if (!panelOpen.value) return;
+    panelOpen.value = false;
+    bubbles.value.push({ role: "ai", text: "⇠ 协作结束" });
+  });
   window.addEventListener("keydown", onKeydown);
 });
 onUnmounted(() => {
   unlisten?.();
   unlistenStatus?.();
   unlistenPerms?.();
+  unlistenPanelClosed?.();
   window.removeEventListener("keydown", onKeydown);
+  if (clickTimer !== null) clearTimeout(clickTimer);
 });
 </script>
 
@@ -221,29 +314,49 @@ onUnmounted(() => {
   <div class="shell" :class="{ exp: expanded }">
     <!-- 常态：宠物球 + 状态文字 -->
     <template v-if="!expanded">
-      <Avatar class="pet" :state="state" @click="toggleExpand" />
+      <Avatar class="pet" :state="state" @click="onPetClick" @longpress="onMic" />
       <div class="status-collapsed" :class="state">{{ statusText }}</div>
     </template>
 
     <!-- 对话：header（头像+名称+状态+收起）/ (权限引导) / 气泡流 / 输入条 -->
     <template v-else>
-      <header class="chat-header">
+      <header class="chat-header" :class="{ flip: dir.endsWith('e') }">
         <Avatar :state="state" :size="44" @click="collapse" />
         <div class="meta">
           <span class="name">译宝</span>
-          <span class="status" :class="state">{{ statusText }}</span>
+          <span class="status" :class="state"><i class="dot" />{{ statusText }}</span>
         </div>
         <button class="collapse-btn" title="收起" @click="collapse">—</button>
       </header>
 
       <PermissionsBanner v-if="missingPerms && perms" :perms="perms" />
 
-      <div class="bubbles">
+      <!-- 插件启动器视图（双击团子进来）：列出插件，点击直达它的主面板 -->
+      <div v-if="view === 'plugins'" class="bubbles">
+        <div class="pl-head">
+          <span class="pl-title">插件</span>
+          <button class="pl-back" @click="view = 'chat'">‹ 对话</button>
+        </div>
+        <div v-if="pluginErr" class="pl-err">⚠️ {{ pluginErr }}</div>
+        <button v-for="p in plugins" :key="p.id" class="pl-row" @click="launchPlugin(p)">
+          <span class="pl-name">{{ p.name }}</span>
+          <span class="pl-id">{{ p.id }}</span>
+        </button>
+        <div v-if="!plugins.length && !pluginErr" class="pl-empty">没有发现插件</div>
+      </div>
+
+      <div v-else class="bubbles">
+        <div v-if="!bubbles.length" class="empty-hint">
+          <p>叫我做什么都行～</p>
+          <div class="chips">
+            <button v-for="c in suggestions" :key="c" class="chip" @click="submit(c)">{{ c }}</button>
+          </div>
+        </div>
         <Bubble v-for="(b, i) in bubbles" :key="i" :role="b.role" :text="b.text" />
       </div>
 
-      <div class="input-slot">
-        <InputBar v-if="!pending" :busy="busy" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
+      <div v-if="view === 'chat'" class="input-slot">
+        <InputBar v-if="!pending" :busy="busy" :listening="state === 'listen'" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
         <ConfirmDialog
           v-else
           :skill="pending.skill"
@@ -262,14 +375,16 @@ onUnmounted(() => {
   height: 100vh;
   box-sizing: border-box;
   overflow: hidden;
-  font-family: -apple-system, "PingFang SC", system-ui, sans-serif;
-  color: var(--yb-text);
+  font-family: -apple-system, "PingFang SC", sans-serif;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #3f372e;
 }
 .shell.exp {
   padding: var(--yb-space-3);
   display: flex;
   flex-direction: column;
-  gap: var(--yb-space-2);
+  gap: var(--yb-space-3);
   background: var(--yb-shell-bg);
   -webkit-backdrop-filter: var(--yb-blur);
   backdrop-filter: var(--yb-blur);
@@ -283,11 +398,40 @@ onUnmounted(() => {
   left: 34px;
   top: 12px;
   z-index: 3;
+  animation: fade-in 0.18s var(--yb-ease) both;
+}
+/* 展开内容渐入：配合窗口补间，不突兀 */
+.shell.exp .chat-header,
+.shell.exp .bubbles,
+.shell.exp .input-slot {
+  animation: fade-in 0.22s var(--yb-ease) 0.06s both;
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 .chat-header {
   display: flex;
   align-items: center;
   gap: 10px;
+  padding: var(--yb-space-2) var(--yb-space-3);
+  background: #ffffff;
+  border: 1px solid #eee4d6;
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(90, 70, 50, 0.04), 0 6px 16px rgba(90, 70, 50, 0.05);
+}
+/* 锚点在右侧时（dir=ne/se）镜像头部，头像与收起锚点同侧 */
+.chat-header.flip {
+  flex-direction: row-reverse;
+}
+.chat-header.flip .meta {
+  align-items: flex-end;
 }
 .meta {
   flex: 1;
@@ -301,26 +445,52 @@ onUnmounted(() => {
 }
 .status {
   font-size: var(--yb-fs-sm);
-  color: var(--yb-text-dim);
+  color: #a89a86;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+/* 状态点：颜色跟团子状态色环同源 */
+.status .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dot, var(--yb-idle));
+}
+.status.idle {
+  --dot: var(--yb-idle);
+}
+.status.listen {
+  --dot: var(--yb-listen);
+}
+.status.think {
+  --dot: var(--yb-think);
+}
+.status.work {
+  --dot: var(--yb-work);
+}
+.status.say {
+  --dot: var(--yb-say);
 }
 .status.think,
 .status.work {
-  color: var(--yb-accent);
+  color: #f2703f;
 }
 .collapse-btn {
   width: 26px;
   height: 26px;
   flex-shrink: 0;
-  border: none;
-  border-radius: var(--yb-radius-sm);
-  background: var(--yb-btn-neutral);
-  color: var(--yb-text-dim);
+  border: 1px solid #e3d7c4;
+  border-radius: 10px;
+  background: transparent;
+  color: #8a7a66;
   cursor: pointer;
   font-size: 14px;
   line-height: 1;
+  transition: all 0.15s ease;
 }
 .collapse-btn:hover {
-  filter: brightness(0.96);
+  background: #faf3ea;
 }
 .bubbles {
   flex: 1;
@@ -335,8 +505,40 @@ onUnmounted(() => {
   width: 6px;
 }
 .bubbles::-webkit-scrollbar-thumb {
-  background: var(--yb-surface-border);
+  background: #eee4d6;
   border-radius: 3px;
+}
+/* 空状态：气泡区占位引导 */
+.empty-hint {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--yb-space-3);
+  color: #a89a86;
+  font-size: 13px;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--yb-space-2);
+}
+.chip {
+  padding: 5px 12px;
+  border: 1px solid #eee4d6;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #a89a86;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.chip:hover {
+  background: #fff0e8;
+  border-color: #ff8a5c;
+  color: #f2703f;
 }
 .status-collapsed {
   position: absolute;
@@ -345,10 +547,79 @@ onUnmounted(() => {
   top: 86px;
   text-align: center;
   font-size: var(--yb-fs-sm);
-  color: var(--yb-text-dim);
+  color: #a89a86;
+  animation: fade-in 0.18s var(--yb-ease) both;
 }
 .status-collapsed.think,
 .status-collapsed.work {
-  color: var(--yb-accent);
+  color: #f2703f;
+}
+
+/* ---- 插件启动器 ---- */
+.pl-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 4px;
+}
+.pl-title {
+  font-size: var(--yb-fs-lg);
+  font-weight: 600;
+}
+.pl-back {
+  border: none;
+  background: transparent;
+  color: #8a7a66;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 3px 8px;
+  border-radius: 10px;
+  transition: all 0.15s ease;
+}
+.pl-back:hover {
+  color: #f2703f;
+  background: #faf3ea;
+}
+.pl-err {
+  padding: 6px var(--yb-space-3);
+  border-radius: 10px;
+  background: #fce7e3;
+  color: #c0574b;
+  font-size: 13px;
+}
+.pl-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--yb-space-2);
+  padding: var(--yb-space-3) var(--yb-space-4);
+  border: 1px solid #eee4d6;
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(90, 70, 50, 0.04), 0 6px 16px rgba(90, 70, 50, 0.05);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  transition: all 0.15s ease;
+}
+.pl-row:hover {
+  border-color: #ff8a5c;
+  transform: translateY(-1px);
+}
+.pl-name {
+  font-size: var(--yb-fs-lg);
+  font-weight: 500;
+  color: #3f372e;
+}
+.pl-id {
+  font-size: var(--yb-fs-sm);
+  color: #c9bcab;
+}
+.pl-empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  color: #a89a86;
+  font-size: 13px;
 }
 </style>

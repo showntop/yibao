@@ -107,6 +107,11 @@ class SkillRegistry:
         out = []
         for s in self._skills.values():
             schema = s.openai_schema()
-            schema["name"] = self.llm_name(s.id)  # LLM 只见安全名；回调经 resolve_llm_name 映射回
+            safe = self.llm_name(s.id)  # LLM 只见安全名；回调经 resolve_llm_name 映射回
+            if "function" in schema:
+                # 嵌套 OpenAI 格式（code skill 自带）：名字在 function.name 里
+                schema["function"]["name"] = safe
+            else:
+                schema["name"] = safe
             out.append(schema)
         return out

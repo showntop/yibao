@@ -56,7 +56,20 @@ class ConversationHistory:
         return msgs
 
     def messages(self) -> list[dict]:
-        return list(self._messages)
+        """喂给 LLM 的上下文：剥掉 surface 元数据（provider 不认的字段），
+        面板场景的 user 轮加【xx 面板】标记——「刚才在面板里做的」这类指代有解。"""
+        out: list[dict] = []
+        for m in self._messages:
+            surface = m.get("surface")
+            if not surface:
+                out.append(m)
+                continue
+            m = {k: v for k, v in m.items() if k != "surface"}
+            if surface != "pet" and m.get("role") == "user":
+                label = surface.split(":", 1)[-1] or surface
+                m["content"] = f"【{label} 面板】{m['content']}"
+            out.append(m)
+        return out
 
     def record_turn(self, user_text: str, assistant_text: str) -> None:
         """纯对话轮（无工具调用）。"""

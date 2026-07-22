@@ -1,0 +1,64 @@
+# 面板可调方法白名单（v2 §7）：direct 直调过闸门不过 LLM；intent 渲染后走 agent 流程
+[[method]]
+name = "list"
+handler = "zimeiti.list"
+direct = true
+
+[[method]]
+name = "add"
+handler = "zimeiti.add"
+direct = true
+refresh = "zimeiti.list"   # 快捷新增后跟一次看板查询
+
+[[method]]
+name = "get"
+handler = "zimeiti.get"
+direct = true
+
+[[method]]
+name = "move"
+handler = "zimeiti.move"
+direct = true
+refresh = "zimeiti.list"   # 流转后跟一次看板查询，卡片落到新状态列
+
+[[method]]
+name = "delete"
+handler = "zimeiti.delete"
+direct = true
+refresh = "zimeiti.list"
+
+# webview 写作编辑器：打开（panel 字段把直调结果引到编辑器面板，覆盖 zimeiti.get 自带的 detail 引用）
+# 与编辑器内的读稿/保存；保存成功仍停在编辑器（回执 data 由桥回包带给 iframe，panel 重发不改变编辑器状态）
+[[method]]
+name = "open_editor"
+handler = "zimeiti.get"
+direct = true
+panel = "zimeiti:editor"
+
+[[method]]
+name = "read_article"
+handler = "zimeiti.article_read"
+direct = true
+
+[[method]]
+name = "save_article"
+handler = "zimeiti.article_save"
+direct = true
+panel = "zimeiti:editor"
+
+# 以下为 intent 方法（direct=false）：{title}/{id} 占位由面板 action 参数渲染，
+# 交给 agent 多步完成（加载方法论 → 生成/改写 → 落盘存版本），handler 仅作注册校验锚点
+[[method]]
+name = "draft"
+handler = "zimeiti.guide"
+intent = "为选题「{title}」写初稿：先调 zimeiti.guide 加载 write 方法论，成稿后用 zimeiti.article_save 落盘存版本（id={id}）"
+
+[[method]]
+name = "revise"
+handler = "zimeiti.guide"
+intent = "修改选题「{title}」的稿件：先用 zimeiti.article_read 读最新稿（id={id}），问我修改意见或直接按对话里的意见改写，用 zimeiti.article_save 存新版本"
+
+[[method]]
+name = "read"
+handler = "zimeiti.article_read"
+intent = "读选题「{title}」的最新稿（id={id}）：用 zimeiti.article_read 读出来，给我展示全文或要点"

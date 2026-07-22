@@ -102,14 +102,17 @@ table = "requirements"
 [[panel]]
 type = "schema"
 name = "board"
+label = "需求看板"
 src = "panel/board.schema.json"
 
 [[panel]]
 type = "schema"
 name = "detail"
+label = "需求详情"
 src = "panel/detail.schema.json"
 
 [[panel]]
 type = "schema"
 name = "verdict_form"
+label = "需求裁决"
 src = "panel/verdict_form.schema.json"

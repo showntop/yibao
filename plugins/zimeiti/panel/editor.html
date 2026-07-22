@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<!-- zimeiti 写作编辑器（webview 面板）：跑在 iframe sandbox + srcdoc 里，无 Tauri IPC、无网络。
+     能力调用全部经 window.yibao.invoke（postMessage 桥 → api.toml 白名单 + 风险闸门）。
+     桥 JS 由父侧注入（提供 window.yibao.invoke/onInit），本文件不自带。 -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>写作编辑器</title>
+<style>
+  /* 设计 token 整段照抄 tools.html（iframe 沙箱内吃不到 tokens.css，内联写死） */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #f6f1ea; --card: #ffffff; --border: #eee4d6; --border-soft: #f3ecdf;
+    --text: #3f372e; --muted: #a89a86; --faint: #c9bcab;
+    --accent: #ff8a5c; --accent-deep: #f2703f; --accent-soft: #fff0e8;
+    --green-bg: #dcf0e2; --green: #3e8e5a; --green-bar: #8fd0a6;
+    --red-bg: #fce7e3; --red: #c0574b; --red-bar: #f0aaa1;
+    --mono: 12.5px/1.6 "SF Mono", ui-monospace, Menlo, monospace;
+  }
+  html, body { height: 100%; }
+  body {
+    font: 13px/1.6 -apple-system, "PingFang SC", sans-serif;
+    background: var(--bg); color: var(--text); padding: 14px;
+    display: flex; flex-direction: column;
+  }
+
+  /* ---- 头部工具条（按钮分 主/ghost 两级，同 tools.html）---- */
+  header { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex: none; }
+  #title { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  button.act {
+    border: none; border-radius: 10px; padding: 6px 16px; cursor: pointer;
+    background: var(--accent); color: #fff; font-size: 12.5px; font-weight: 600;
+    box-shadow: 0 2px 6px rgba(242, 112, 63, .3); transition: all .15s ease;
+    flex: none;
+  }
+  button.act:hover { background: var(--accent-deep); }
+  button.act:active { transform: scale(.97); }
+  button.act:disabled { opacity: .5; cursor: default; }
+  button.ghost {
+    background: transparent; color: #8a7a66; border: 1px solid #e3d7c4;
+    box-shadow: none; font-weight: 500;
+  }
+  button.ghost:hover { background: #faf3ea; color: var(--text); border-color: #d8c9b2; }
+  #note {
+    width: 160px; flex: none; border: 1px solid #e3d7c4; border-radius: 10px; padding: 5px 10px;
+    font-size: 12.5px; background: #fff; color: var(--text); outline: none; font-family: inherit;
+    transition: border-color .15s ease;
+  }
+  #note:focus { border-color: var(--accent); }
+  #note::placeholder { color: var(--faint); }
+
+  /* ---- 编辑区 / 预览区（一张卡片，中间细分隔线）---- */
+  main {
+    flex: 1; display: flex; min-height: 0;
+    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+    box-shadow: 0 1px 2px rgba(90, 70, 50, .04), 0 6px 16px rgba(90, 70, 50, .05);
+    overflow: hidden; margin-bottom: 10px;
+  }
+  #editor {
+    flex: 1; min-width: 0; border: none; outline: none; resize: none; padding: 12px 14px;
+    font: var(--mono); background: transparent; color: var(--text);
+  }
+  #editor::placeholder { color: var(--faint); }
+  #preview-wrap {
+    flex: 1; min-width: 0; position: relative; display: flex;
+    border-left: 1px solid var(--border-soft);
+  }
+  #preview { flex: 1; overflow-y: auto; padding: 12px 14px; font-size: 13px; }
+  #preview h1 { font-size: 18px; margin: 0.6em 0 0.4em; }
+  #preview h2 { font-size: 16px; margin: 0.6em 0 0.4em; }
+  #preview h3 { font-size: 14.5px; margin: 0.6em 0 0.4em; }
+  #preview p { margin: 0.5em 0; }
+  #preview ul { margin: 0.5em 0; padding-left: 1.4em; }
+
+  /* ---- 空态（纯 CSS：编辑区为空、placeholder 可见时盖住预览区；不挡点击）---- */
+  #empty-state {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 6px; text-align: center;
+    padding: 18px; pointer-events: none; background: var(--card);
+  }
+  #empty-state .t { font-size: 14px; font-weight: 600; color: var(--muted); }
+  #empty-state .s { font-size: 12px; color: var(--faint); line-height: 1.7; }
+  #editor:not(:placeholder-shown) ~ #preview-wrap #empty-state { display: none; }
+
+  /* ---- 状态栏 ---- */
+  #status { padding: 0 4px; font-size: 11.5px; color: var(--muted); min-height: 22px; flex: none; }
+  #status.err { color: var(--red); }
+</style>
+</head>
+<body>
+<header>
+  <button id="back" class="act ghost" title="返回选题详情">‹ 返回</button>
+  <span id="title">写作编辑器</span>
+  <input id="note" placeholder="版本备注（可选）">
+  <button id="save" class="act">保存为新版本</button>
+</header>
+<main>
+  <textarea id="editor" placeholder="在这里写稿（markdown）；也可以对译宝说「写初稿 / 改稿 / 读稿」，它会直接改这里" spellcheck="false"></textarea>
+  <div id="preview-wrap">
+    <div id="preview"></div>
+    <div id="empty-state">
+      <div class="t">还没有稿件</div>
+      <div class="s">对译宝说「写初稿」，或直接在左侧开写</div>
+    </div>
+  </div>
+</main>
+<div id="status">正在等译宝把选题送过来…</div>
+
+<script>
+(function () {
+  var topicId = "";
+  var version = 0;
+  var saving = false;
+  var dirty = false; // 有未保存修改：译宝的版本更新不直接冲掉编辑区
+  var $ = function (id) { return document.getElementById(id); };
+
+  function setStatus(text, isErr) {
+    var s = $("status");
+    s.textContent = text;
+    s.className = isErr ? "err" : "";
+  }
+
+  // ---- 极简 markdown 渲染（标题/粗体/列表/段落；先转义 HTML，不引库）----
+  function esc(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function inline(s) {
+    return esc(s).replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  }
+  function md(src) {
+    var out = [], para = [], inList = false;
+    function flushPara() { if (para.length) { out.push("<p>" + para.join("<br>") + "</p>"); para = []; } }
+    function flushList() { if (inList) { out.push("</ul>"); inList = false; } }
+    src.split(/\r?\n/).forEach(function (line) {
+      var t = line.trim(), m;
+      if ((m = t.match(/^(#{1,3})\s+(.*)$/))) {
+        flushPara(); flushList();
+        var lv = m[1].length;
+        out.push("<h" + lv + ">" + inline(m[2]) + "</h" + lv + ">");
+      } else if ((m = t.match(/^[-*]\s+(.*)$/))) {
+        flushPara();
+        if (!inList) { out.push("<ul>"); inList = true; }
+        out.push("<li>" + inline(m[1]) + "</li>");
+      } else if (!t) {
+        flushPara(); flushList();
+      } else {
+        flushList();
+        para.push(inline(t));
+      }
+    });
+    flushPara(); flushList();
+    return out.join("") || "<p style=\"color:#cdbfab\">（预览为空）</p>";
+  }
+
+  $("editor").addEventListener("input", function () {
+    dirty = true;
+    $("preview").innerHTML = md($("editor").value);
+  });
+
+  // ---- 返回详情（zimeiti.get 直调回详情页；还没载入选题时退回看板）----
+  $("back").addEventListener("click", function () {
+    var method = topicId ? "zimeiti.get" : "zimeiti.list";
+    var params = topicId ? { id: topicId } : {};
+    window.yibao.invoke(method, params).catch(function (e) {
+      setStatus("返回失败：" + (e && e.message ? e.message : e), true);
+    });
+  });
+
+  // ---- 加载最新稿（read_article 在 api.toml 白名单内；无稿报错属正常起点）----
+  function loadArticle(prefix) {
+    if (!topicId) { setStatus("没有选题数据", true); return; }
+    setStatus("加载稿件…");
+    window.yibao.invoke("zimeiti.read_article", { id: topicId }).then(function (r) {
+      version = (r && r.version) || 0;
+      $("editor").value = (r && r.content) || "";
+      $("editor").dispatchEvent(new Event("input"));
+      dirty = false; // 程序性加载不算用户修改（input 事件把 dirty 置了 true，这里归位）
+      var note = r && r.note;
+      setStatus((prefix || "已加载") + " v" + version + (note ? " · " + note : ""));
+    }).catch(function (e) {
+      var msg = e && e.message ? e.message : String(e || "");
+      version = 0;
+      $("editor").value = "";
+      $("editor").dispatchEvent(new Event("input"));
+      dirty = false;
+      // 「还没有稿件」是正常起点；其余失败（桥/白名单/超时）必须看得见，别装成空稿
+      if (msg.indexOf("还没有稿件") >= 0) setStatus("还没有稿件，喊译宝「写初稿」或直接开写");
+      else setStatus("稿件加载失败：" + msg, true);
+    });
+  }
+
+  // 面板事件 data：打开编辑器时是 zimeiti.get 的 {rows:[选题]}。
+  // 同选题 rows 重推 = 译宝在对话里保存了新版本（focus 重定向，loop._panel_with_refresh）→ 刷新稿件；
+  // 但编辑区有未保存修改时不冲掉，只在状态栏提示。保存回执等无 rows 形状忽略（不动当前编辑状态）。
+  window.yibao.onInit(function (data) {
+    var row = data && data.rows && data.rows[0];
+    if (!row || !row.id) return;
+    var sameTopic = String(row.id) === topicId;
+    if (sameTopic && dirty) {
+      setStatus("译宝在对话里存了新版本；你有未保存修改，先保存或清空后再载入");
+      return;
+    }
+    topicId = String(row.id);
+    $("title").textContent = String(row.title || "写作编辑器");
+    loadArticle(sameTopic ? "译宝更新到" : undefined);
+  });
+
+  // ---- 保存为新版本（article_save 为 L2，确认条在面板窗顶部弹出，允许后才会执行）----
+  $("save").addEventListener("click", function () {
+    if (!topicId || saving) return;
+    var content = $("editor").value;
+    if (!content.trim()) { setStatus("内容为空，没有保存", true); return; }
+    saving = true;
+    $("save").disabled = true;
+    setStatus("保存中…（如弹出确认条请点「允许」）");
+    window.yibao.invoke("zimeiti.save_article", {
+      id: topicId, content: content, note: $("note").value.trim()
+    }).then(function (r) {
+      version = (r && r.version) || (version + 1);
+      $("note").value = "";
+      dirty = false; // 已落盘，不再是未保存修改
+      setStatus("已保存为 v" + version);
+    }).catch(function (e) {
+      setStatus("保存失败：" + (e && e.message ? e.message : e), true);
+    }).finally(function () {
+      saving = false;
+      $("save").disabled = false;
+    });
+  });
+})();
+</script>
+</body>
+</html>

@@ -13,6 +13,8 @@ export interface ListSchema {
   type: "list";
   bind?: { items?: string };
   item?: { title?: string; subtitle?: string; actions?: ActionDecl[] };
+  /** 返回导航（可选）：左上角「‹ label」链接，本质是一个 action */
+  back?: ActionDecl;
 }
 
 export interface DetailSchema {
@@ -20,6 +22,8 @@ export interface DetailSchema {
   type: "detail";
   fields?: { label: string; value: string }[];
   actions?: ActionDecl[];
+  /** 返回导航（可选）：左上角「‹ label」链接，本质是一个 action */
+  back?: ActionDecl;
 }
 
 export interface FormSchema {
@@ -27,11 +31,15 @@ export interface FormSchema {
   type: "form";
   fields?: { name: string; label: string; input?: "text" | "textarea" | "number" }[];
   submit?: ActionDecl;
+  /** 返回导航（可选）：左上角「‹ label」链接，本质是一个 action */
+  back?: ActionDecl;
 }
 
 export interface BoardColumn {
   key: string;
   label: string;
+  /** 列标识色（可选）：渲染为标签前的小圆点，看板更可扫读 */
+  color?: string;
 }
 
 export interface BoardSchema {
@@ -40,6 +48,12 @@ export interface BoardSchema {
   bind?: { items?: string; column?: string };
   columns?: BoardColumn[];
   card?: { title?: string; subtitle?: string; actions?: ActionDecl[] };
+  /** 拖拽流转（可选）：卡片拖入目标列时触发；params 里 $column = 目标列 key */
+  drag?: { method: string; params?: Record<string, unknown> };
+  /** 快捷新增（可选）：指定列底部输入框，Enter 触发；params 里 $text = 输入内容 */
+  quick_add?: { method: string; params?: Record<string, unknown>; column?: string; placeholder?: string };
+  /** 返回导航（可选）：面板左上角渲染「‹ label」返回链接，本质是一个 action */
+  back?: ActionDecl;
 }
 
 export type SchemaDoc = ListSchema | DetailSchema | FormSchema | BoardSchema;

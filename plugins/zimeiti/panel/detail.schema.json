@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "type": "detail",
+  "back": {"label": "返回看板", "method": "zimeiti.list"},
+  "fields": [
+    {"label": "标题", "value": "$data.rows.0.title"},
+    {"label": "角度", "value": "$data.rows.0.angle"},
+    {"label": "平台", "value": "$data.rows.0.platform"},
+    {"label": "来源", "value": "$data.rows.0.source"},
+    {"label": "状态", "value": "$data.rows.0.status"},
+    {"label": "创建", "value": "$data.rows.0.created_at|date"},
+    {"label": "更新", "value": "$data.rows.0.updated_at|date"}
+  ],
+  "actions": [
+    {"label": "打开编辑器", "method": "zimeiti.open_editor", "params": {"id": "$data.rows.0.id", "title": "$data.rows.0.title"}},
+    {"label": "写初稿", "method": "zimeiti.draft", "params": {"id": "$data.rows.0.id", "title": "$data.rows.0.title"}},
+    {"label": "改稿", "method": "zimeiti.revise", "params": {"id": "$data.rows.0.id", "title": "$data.rows.0.title"}},
+    {"label": "读稿", "method": "zimeiti.read", "params": {"id": "$data.rows.0.id", "title": "$data.rows.0.title"}},
+    {"label": "待发布", "method": "zimeiti.move", "params": {"id": "$data.rows.0.id", "status": "待发布"}},
+    {"label": "已发布", "method": "zimeiti.move", "params": {"id": "$data.rows.0.id", "status": "已发布"}},
+    {"label": "删除", "method": "zimeiti.delete", "params": {"id": "$data.rows.0.id"}}
+  ]
+}

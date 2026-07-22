@@ -1,0 +1,126 @@
+# 自媒体（阶段 2 第二垂直：选题+写作尖刀）
+# 对话式工作流：录选题 → 看板管理 →（对话）写初稿/改稿 → 版本落盘 → 待发布/已发布。
+# 声明式 tool 管 topics CRUD/流转；方法论加载/文章版本落盘走 tools/ 代码 tool。
+id = "zimeiti"
+name = "自媒体"
+capabilities = ["db", "memory"]
+mem_namespace = "zimeiti"
+
+[code]
+entry = "tools"
+
+[[table]]
+name = "topics"
+columns = [
+  {name = "id", type = "text", pk = true},
+  {name = "title", type = "text"},
+  {name = "angle", type = "text", default = ""},
+  {name = "platform", type = "text", default = ""},
+  {name = "source", type = "text", default = ""},
+  {name = "status", type = "text", default = "候选"},
+  {name = "created_at", type = "integer"},
+  {name = "updated_at", type = "integer"},
+]
+indexes = ["status", "updated_at"]
+
+[[table]]
+name = "articles"
+columns = [
+  {name = "id", type = "text", pk = true},
+  {name = "topic_id", type = "text"},
+  {name = "version", type = "integer"},
+  {name = "content_path", type = "text"},
+  {name = "note", type = "text", default = ""},
+  {name = "created_at", type = "integer"},
+]
+indexes = ["topic_id"]
+
+[[tool]]
+id = "add"
+type = "db"
+description = "记录一条新选题（标题必填），初始状态为「候选」进看板"
+risk = "L1"
+panel = "zimeiti:board"
+refresh = "list"   # 写入后面板拿刷新后的看板，而非回执 {"id":…}
+required = ["title"]
+[tool.params]
+title = {type = "string", description = "选题标题（一句话说清要写什么）"}
+angle = {type = "string", description = "切入角度：从哪个点写、给谁看"}
+platform = {type = "string", description = "目标平台（如公众号/小红书/播客）"}
+source = {type = "string", description = "选题来源（如灵感/读者反馈/热点）"}
+[tool.db]
+op = "insert"
+table = "topics"
+auto = {created_at = "unixts", updated_at = "unixts"}   # 时间戳由系统生成（unix 秒）
+
+[[tool]]
+id = "list"
+type = "db"
+description = "列出选题看板（按更新时间倒序，最多 100 条）"
+risk = "L0"
+panel = "zimeiti:board"
+[tool.db]
+op = "query"
+table = "topics"
+order = "updated_at DESC"
+limit = 100
+
+[[tool]]
+id = "get"
+type = "db"
+description = "查看一条选题的详情（运行时 where 由调用方传，如 {where: {id: …}}）"
+risk = "L0"
+panel = "zimeiti:detail"
+[tool.params]
+id = {type = "string", description = "选题 id（传了就按 id 查；同时是 refresh 传参交集的依据）"}
+[tool.db]
+op = "query"
+table = "topics"
+
+[[tool]]
+id = "move"
+type = "db"
+description = "选题状态流转：候选/写作中/待发布/已发布"
+risk = "L1"
+panel = "zimeiti:detail"
+refresh = "get"
+required = ["id", "status"]
+[tool.params]
+id = {type = "string", description = "选题 id"}
+status = {type = "string", description = "目标状态：候选 / 写作中 / 待发布 / 已发布"}
+[tool.db]
+op = "update"
+table = "topics"
+auto = {updated_at = "unixts"}
+
+[[tool]]
+id = "delete"
+type = "db"
+description = "删除一条选题"
+risk = "L2"
+panel = "zimeiti:board"
+refresh = "list"
+required = ["id"]
+[tool.params]
+id = {type = "string", description = "选题 id"}
+[tool.db]
+op = "delete"
+table = "topics"
+
+[[panel]]
+type = "schema"
+name = "board"
+label = "选题看板"
+src = "panel/board.schema.json"
+
+[[panel]]
+type = "schema"
+name = "detail"
+label = "选题详情"
+src = "panel/detail.schema.json"
+
+[[panel]]
+type = "webview"
+name = "editor"
+label = "写作编辑器"
+src = "panel/editor.html"

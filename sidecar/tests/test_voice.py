@@ -163,6 +163,52 @@ def test_serve_async_voice_interrupt_stops_speaking(tmp_path):
     assert "speaking_done" not in kinds  # 被打断，无正常收尾
 
 
+def test_serve_async_voice_interrupt_cancels_listening(tmp_path):
+    # 聆听中 interrupt → stop_listen 打断录音，回 interrupted（而非 listening_done 误进 think 态）
+    import time
+
+    def _delayed_reader(specs):
+        it = iter(specs)
+
+        def _r():
+            try:
+                msg, delay = next(it)
+            except StopIteration:
+                return None
+            if delay:
+                time.sleep(delay)
+            return msg
+
+        return _r
+
+    provider = FakeProvider(chunks=["不该出现"])
+    voice = FakeVoice(listen_block=True)  # listen 挂起，直到 stop_listen
+    out = []
+
+    async def _go():
+        await serve_async(
+            _delayed_reader(
+                [
+                    ({"id": 1, "type": "voice_start"}, 0.0),
+                    ({"type": "interrupt"}, 0.1),
+                ]
+            ),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=provider,
+            voice=voice,
+        )
+
+    asyncio.run(_go())
+    kinds = [m["event"]["kind"] for m in out if m["type"] == "event"]
+    assert voice.listen_stopped
+    assert "interrupted" in kinds
+    assert "listening_done" not in kinds
+    assert "final_reply_chunk" not in kinds  # 没进 agent 生成
+    assert out[-1] == {"type": "run_done", "id": 1}
+
+
 # ---------- Plan 5 修复：TTS 合成/播放管道化 + VAD 阈值可配 ----------
 
 
@@ -372,6 +418,111 @@ def test_synth_pcm_speaks_cleaned_text(monkeypatch):
     monkeypatch.setattr("yibao_brain.voice._decode_mp3", lambda b: [0.0])
     asyncio.run(speaker._synth_pcm("**记好了** ✅"))
     assert got == ["记好了"]
+
+
+def test_serve_async_voice_start_without_voice_emits_error(tmp_path):
+    """语音栈不可用（voice=None）时 voice_start 不许静默吞掉——否则前端永远卡「聆听中」。"""
+    provider = FakeProvider(text="x")
+    out = []
+
+    async def _go():
+        await serve_async(
+            _reader([{"id": 1, "type": "voice_start"}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=provider,
+            voice=None,
+        )
+
+    asyncio.run(_go())
+    kinds = [m["event"]["kind"] for m in out if m["type"] == "event"]
+    assert "error" in kinds
+    assert "listening" not in kinds
+    assert out[-1] == {"type": "run_done", "id": 1}
+
+
+# ---------- 录音卡死回归：SounddeviceRecorder 回调+队列采集 ----------
+
+
+class _SilentStream:
+    """开流但永不投递音频帧（模拟设备被占用/掉线/权限缺失）。"""
+
+    def __init__(self, **_kw):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_a):
+        return False
+
+
+def _fake_sherpa():
+    """最小 sherpa_onnx 替身：VAD 永不检测到语音、永不出段（脱离真实模型文件）。"""
+    import types
+
+    cfg = types.SimpleNamespace(silero_vad=types.SimpleNamespace(window_size=512), sample_rate=0)
+
+    class _Vad:
+        def __init__(self, _cfg, buffer_size_in_seconds):
+            pass
+
+        def accept_waveform(self, _samples):
+            pass
+
+        def is_speech_detected(self):
+            return False
+
+        def empty(self):
+            return True
+
+    return types.SimpleNamespace(VadModelConfig=lambda: cfg, VoiceActivityDetector=_Vad)
+
+
+def _patch_audio_stack(monkeypatch):
+    import sys
+    import types
+
+    monkeypatch.setitem(sys.modules, "sounddevice", types.SimpleNamespace(InputStream=_SilentStream))
+    monkeypatch.setitem(sys.modules, "sherpa_onnx", _fake_sherpa())
+
+
+def test_recorder_stop_unblocks_when_device_silent(monkeypatch):
+    """回归：旧实现用阻塞 s.read 采集——设备停发帧时录音循环永不退出，
+    stop() 也没机会被看到（「一直聆听中、无法取消」的根因）。
+    回调+队列超时改造后：一帧没有也要能随时停下。"""
+    import threading
+    import time
+
+    from yibao_brain.voice import SounddeviceRecorder
+
+    _patch_audio_stack(monkeypatch)
+    rec = SounddeviceRecorder(vad_model="x", max_seconds=60, no_frame_timeout=60)  # 关掉无帧超时，专测 stop
+    out = []
+    t = threading.Thread(target=lambda: out.append(rec.record_until_silence()))
+    t.start()
+    time.sleep(0.3)
+    t0 = time.monotonic()
+    rec.stop()
+    t.join(timeout=3)
+    assert not t.is_alive(), "stop() 后录音仍未退出（阻塞读回归）"
+    assert time.monotonic() - t0 < 1
+    assert len(out) == 1 and not out[0].any()
+
+
+def test_recorder_no_frame_timeout(monkeypatch):
+    """设备一直不投递帧：no_frame_timeout 后自动放弃，不许无限卡「聆听中」。"""
+    import time
+
+    from yibao_brain.voice import SounddeviceRecorder
+
+    _patch_audio_stack(monkeypatch)
+    rec = SounddeviceRecorder(vad_model="x", max_seconds=60, no_frame_timeout=0.3)
+    t0 = time.monotonic()
+    pcm = rec.record_until_silence()
+    assert time.monotonic() - t0 < 3
+    assert not pcm.any()
 
 
 def test_lazy_recognizer_loads_on_first_transcribe(monkeypatch):

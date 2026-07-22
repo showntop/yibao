@@ -58,4 +58,5 @@ table = "notes"
 [[panel]]
 type = "schema"
 name = "list"
+label = "闪念列表"
 src = "panel/list.schema.json"

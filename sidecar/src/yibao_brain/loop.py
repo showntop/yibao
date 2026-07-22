@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator, Callable, Iterator
+from datetime import datetime
 
 from .audit import AuditLog
 from .history import ConversationHistory
@@ -12,7 +13,7 @@ from .invoker import ToolInvoker
 from .ipc import Action, Event
 from .llm import LLMProvider, LLMResponse, ToolCall, merge_tool_call_deltas
 from .memory import Memory
-from .plugins import panel_payload
+from .plugins import get_panel, get_panel_title, panel_payload
 from .safety import Decision, Gate, RiskClassifier
 from .skills import SkillRegistry
 
@@ -24,7 +25,11 @@ SYSTEM_PROMPT = (
     "都必须调用工具完成；只有工具执行成功后，才能告诉用户「已完成」。\n"
     "禁止在未调用工具的情况下声称做了任何事，禁止编造执行结果（条数、内容、时间等）；"
     "没有对应工具就如实说做不到。\n"
-    "只有纯闲聊/知识问答才直接用自然语言回复。"
+    "描述里带「会打开面板」的工具被调用后会在用户屏幕上弹出对应面板窗；"
+    "用户说「打开/看看某看板、面板、详情」时调用对应工具即可，不要只在对话里列数据。\n"
+    "只有纯闲聊/知识问答才直接用自然语言回复。\n"
+    "回复风格：聊天气泡很窄，回复要口语化、简短直接；不要用表格（改成每行一条「键：值」），"
+    "不要用 # 标题，emoji 一条回复最多 2 个，列表不超过 5 条。"
 )
 
 
@@ -50,6 +55,7 @@ class AgentLoop:
         max_steps: int = 8,
         host: Host | None = None,
         history: ConversationHistory | None = None,
+        focus_provider=None,
     ):
         self.provider = provider
         self.host = host
@@ -59,8 +65,31 @@ class AgentLoop:
         self.user_id = user_id
         self.max_steps = max_steps
         self.history = history
+        # 面板焦点（v2 §5 focus）：() -> {"plugin","panel","item"} | None，由壳侧 panel_context 维护
+        self.focus_provider = focus_provider
         # tool 执行收编到唯一执行器；loop 只留事件路由与 LLM 往返
         self.invoker = ToolInvoker(skills, classifier, gate, log, self.confirmer, host)
+
+    def _focus_message(self) -> dict | None:
+        """当前面板焦点 → system 消息（无焦点/异常 → None，不打扰对话）。"""
+        if self.focus_provider is None:
+            return None
+        try:
+            focus = self.focus_provider()
+        except Exception:
+            return None
+        if not focus or not focus.get("plugin"):
+            return None
+        item = focus.get("item") or {}
+        text = f"用户当前正在看「{focus['plugin']}」插件的 {focus.get('panel', '?')} 面板"
+        if item.get("title"):
+            text += f"，选中条目「{item['title']}」"
+        if item.get("id"):
+            text += f"（id={item['id']}" + (f"，状态={item['status']}" if item.get("status") else "") + "）"
+        if item.get("title") or item.get("id"):
+            text += "。用户说的「这个/它/当前这条」默认指该条目"
+        text += "；用户没问到时不要主动提及此上下文。"
+        return {"role": "system", "content": text}
 
     @property
     def skills(self) -> SkillRegistry:
@@ -77,26 +106,76 @@ class AgentLoop:
         写操作（insert/delete 等）的 result.data 是回执 {"id":…}，直接喂面板会显示空；
         声明 refresh（如 notes.list）则面板事件携带查询结果。刷新意外需确认/失败 →
         回退原数据（刷新不该弹确认打断用户，与 server._emit_refresh_panel 同一策略）。
+
+        refresh 传参取「action 入参 ∩ refresh tool 声明参数」（如 save{id,content} → get{id}），
+        无交集传 {}（list 类刷新不带条件）。最后做 focus 重定向：用户正盯着同插件 webview
+        面板（如写作编辑器）的同一条目时，回跳面板落在该 webview 上而不是硬切走——
+        编辑器收到 rows 重推后自行刷新稿件，对话改稿不打断工作台。
         """
         payload = panel_payload(result)
         if payload is None or not result.success:
             return payload
         refresh_id = getattr(self.skills.get(action.skill_id), "refresh", None)
         if not refresh_id:
-            return payload
+            return self._redirect_to_focused_webview(payload)
+        r_params: dict = {}
+        try:
+            props = (
+                self.skills.get(refresh_id).openai_schema().get("parameters", {}).get("properties", {})
+            )
+            r_params = {k: action.params[k] for k in props if k in action.params}
+        except Exception:
+            r_params = {}
         r_action = self.invoker.propose(
-            ToolCall(id=f"refresh_{action.id}", skill_id=refresh_id, params={})
+            ToolCall(id=f"refresh_{action.id}", skill_id=refresh_id, params=r_params)
         )
         if self.invoker.decide(r_action) != Decision.AUTO:
-            return payload
-        r_result = self.invoker.execute(r_action, {})
-        return panel_payload(r_result) or payload
+            return self._redirect_to_focused_webview(payload)
+        r_result = self.invoker.execute(r_action, r_params)
+        payload = panel_payload(r_result) or payload
+        return self._redirect_to_focused_webview(payload)
 
-    def run(self, user_text: str) -> Iterator[Event]:
+    def _redirect_to_focused_webview(self, payload: dict) -> dict:
+        """用户正盯着同插件 webview 面板的同一条目（focus）→ 回跳改落到该 webview。
+
+        编辑器/工作台类 webview 面板靠 rows 重推自刷新；无 focus、跨插件、非同一条目、
+        或 focus 面板不是 webview 时原样返回。
+        """
+        if self.focus_provider is None:
+            return payload
+        try:
+            focus = self.focus_provider()
+        except Exception:
+            return payload
+        if not focus or not focus.get("plugin") or not focus.get("panel"):
+            return payload
+        ref = f"{focus['plugin']}:{focus['panel']}"
+        if not str(payload.get("panel", "")).startswith(f"{focus['plugin']}:"):
+            return payload
+        rows = (payload.get("data") or {}).get("rows") or []
+        item = focus.get("item") or {}
+        if not rows or item.get("id") is None or str(rows[0].get("id")) != str(item["id"]):
+            return payload
+        panel = get_panel(ref)
+        if not (isinstance(panel, dict) and panel.get("type") == "webview" and "html" in panel):
+            return payload
+        return {
+            "panel": ref,
+            "title": get_panel_title(ref),
+            "schema": None,
+            "webview": {"html": panel["html"]},
+            "data": payload["data"],
+        }
+
+    def run(self, user_text: str, surface: str | None = None) -> Iterator[Event]:
         memories = self.memory.recall(user_text, self.user_id)
         messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
         if memories:
             messages.append({"role": "system", "content": "关于用户的记忆：\n" + "\n".join(memories)})
+        focus_msg = self._focus_message()
+        if focus_msg:
+            messages.append(focus_msg)
+        messages.append(_now_message())
         if self.history:
             messages.extend(self.history.messages())
         messages.append({"role": "user", "content": user_text})
@@ -109,6 +188,7 @@ class AgentLoop:
                 self.memory.add(user_text, self.user_id)
                 if self.history:
                     span = messages[run_start:] + [{"role": "assistant", "content": resp.text}]
+                    span[0] = _tag_surface(span[0], surface)
                     self.history.record_messages(span)
                 yield Event(kind="final_reply", text=resp.text)
                 return
@@ -144,17 +224,22 @@ class AgentLoop:
         yield Event(kind="error", text="达到最大步数仍未完成")
 
     async def arun(
-        self, user_text: str, cancel=None
+        self, user_text: str, cancel=None, surface: str | None = None
     ) -> AsyncIterator[Event]:
         """流式异步回路：LLM 边生成边吐 final_reply_chunk；cancel.is_set() 随时打断。
 
         cancel 为 asyncio.Event（或任何带 is_set() 的对象）。打断时产出 interrupted 并返回。
         confirmer 可同步也可异步（返回协程则 await）。
+        surface 为会话分流标签（pet / panel:<plugin>）：只落历史，不进发给 provider 的消息。
         """
         memories = await _offload(self.memory.recall, user_text, self.user_id)
         messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
         if memories:
             messages.append({"role": "system", "content": "关于用户的记忆：\n" + "\n".join(memories)})
+        focus_msg = self._focus_message()
+        if focus_msg:
+            messages.append(focus_msg)
+        messages.append(_now_message())
         if self.history:
             messages.extend(self.history.messages())
         messages.append({"role": "user", "content": user_text})
@@ -184,6 +269,7 @@ class AgentLoop:
                 await _offload(self.memory.add, user_text, self.user_id)
                 if self.history:
                     span = messages[run_start:] + [{"role": "assistant", "content": text_buf}]
+                    span[0] = _tag_surface(span[0], surface)
                     self.history.record_messages(span)
                 yield Event(kind="final_reply", text=text_buf)
                 return
@@ -224,6 +310,29 @@ class AgentLoop:
             if not proceeded:
                 continue
         yield Event(kind="error", text="达到最大步数仍未完成")
+
+
+_WEEKDAYS = "一二三四五六日"
+
+
+def _now_message() -> dict:
+    """当前本地时间 → system 消息（LLM 要把「明早 9 点」翻成绝对时间，必须知道现在几点）。"""
+    now = datetime.now()
+    return {
+        "role": "system",
+        "content": f"当前本地时间：{now.strftime('%Y-%m-%d %H:%M')}（星期{_WEEKDAYS[now.weekday()]}）",
+    }
+
+
+def _tag_surface(user_msg: dict, surface: str | None) -> dict:
+    """落史前给本轮 user 消息打 surface 标签（pet / panel:<plugin>）。
+
+    只存在于历史层：喂 provider 的 messages 列表不受影响（严格校验的 provider 遇未知字段会 400）。
+    history.messages() 渲染上下文时剥掉标签、给面板轮加【xx 面板】标记。
+    """
+    if not surface or surface == "pet":
+        return user_msg
+    return {**user_msg, "surface": surface}
 
 
 def _assistant_with_tools(content: str, tool_calls) -> dict:

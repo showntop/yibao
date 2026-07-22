@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "type": "board",
+  "bind": {"items": "$data.rows", "column": "$item.status"},
+  "columns": [
+    {"key": "候选", "label": "候选", "color": "#9c8b7a"},
+    {"key": "写作中", "label": "写作中", "color": "#ff8a5c"},
+    {"key": "待发布", "label": "待发布", "color": "#5b8def"},
+    {"key": "已发布", "label": "已发布", "color": "#58b368"}
+  ],
+  "card": {
+    "title": "$item.title",
+    "subtitle": "$item.angle",
+    "actions": [
+      {"label": "详情", "method": "zimeiti.get", "params": {"id": "$item.id"}}
+    ]
+  },
+  "drag": {"method": "zimeiti.move", "params": {"id": "$item.id", "status": "$column"}},
+  "quick_add": {"method": "zimeiti.add", "params": {"title": "$text"}, "column": "候选", "placeholder": "快速记一条选题…"}
+}

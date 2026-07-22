@@ -1,6 +1,7 @@
 {
   "version": 1,
   "type": "detail",
+  "back": {"label": "返回看板", "method": "forge.list"},
   "fields": [
     {"label": "标题", "value": "$data.rows.0.title"},
     {"label": "痛点", "value": "$data.rows.0.pain"},

@@ -1,0 +1,14 @@
+# 工具箱（常用小工具：JSON 格式化 / 文本对比 …）
+# 纯函数 code tool（L0 只读）+ webview 面板；对话与面板同走 skill 单路径，不依赖 db/memory。
+id = "toolbox"
+name = "工具箱"
+capabilities = []
+
+[code]
+entry = "tools"
+
+[[panel]]
+type = "webview"
+name = "main"
+label = "工具箱"
+src = "panel/tools.html"

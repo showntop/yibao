@@ -219,6 +219,9 @@ def test_panel_schemas_reference_whitelisted_methods(env):
         actions += doc.get("actions") or []
         if doc.get("submit"):
             actions.append(doc["submit"])
+        for extra in (doc.get("drag"), doc.get("quick_add")):  # 拖拽/快捷新增同样走白名单
+            if extra:
+                actions.append(extra)
         assert actions, f"{schema_file.name} 没有 action"
         for a in actions:
             assert get_api(a["method"]) is not None, f"{schema_file.name}: {a['method']} 不在白名单"

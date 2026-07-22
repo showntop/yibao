@@ -1,7 +1,7 @@
 """stdio 行分隔 JSON 服务：把 AgentLoop 接到桌面壳（Phase B 的 Tauri 侧）。
 
 协议（脑→壳）：hello（启动握手，含权限状态）、pong、permissions、event、run_done。
-协议（壳→脑）：run、confirm、voice_start、interrupt、ping、check_permissions、prompt_permission。
+协议（壳→脑）：run、confirm、voice_start、interrupt、ping、check_permissions、prompt_permission、panel_context。
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from . import permissions
 from .audit import AuditLog
 from .config import a11y_enabled, computer_use_enabled, history_path, llm_api_key, screenshot_dir, stt_model_dir, tts_voice, vad_max_seconds, vad_min_silence, vad_model_path, voice_enabled
 from .history import ConversationHistory
-from .ipc import Event, RiskLevel
+from .ipc import Action, Event, RiskLevel
 from .llm import FakeProvider, GLMProvider, ToolCall
 from .loop import AgentLoop, _offload
 from .memory import FakeMemory, LazyMem0Memory
@@ -29,6 +29,18 @@ from .skills_real import ComputerUseSkill, register_real_skills
 
 ReadMsg = Callable[[], dict | None]
 WriteMsg = Callable[[dict], None]
+
+# 面板焦点（v2 §5）：壳侧 panel_context 消息维护，run 时注入 LLM 上下文（「这个/它」有解）
+_FOCUS: dict = {"value": None}
+
+# 被抢占任务的收尾宽限（秒）：超时强制取消，防 hung 任务把槽位卡死（「点了没反应」的根）
+_PREEMPT_GRACE_S = 8.0
+
+# 看门狗心跳：pong 改由读线程直接应答（见 serve_async._reader），不经事件循环——
+# 循环被长任务占住时照样 pong（忙 ≠ 死，历史误杀的根）；
+# 但循环 _TICK_FRESH_S 秒没调度（真卡死）→ 扣住 pong，让看门狗杀掉重启。
+_LOOP_TICK = {"t": 0.0}
+_TICK_FRESH_S = 12.0
 
 
 def _permissions_status() -> dict:
@@ -85,6 +97,12 @@ def build_loop(
 
     if use_real and not skills_factory:
         _load_plugins_safe(reg, memory, prov, host)
+        # 底座：主动提醒（store 挂到 agent，serve 的调度循环取它触发）
+        from .reminders import ReminderStore, make_skills
+
+        reminder_store = ReminderStore(os.path.join(os.path.dirname(db_path), "reminders.json"))
+        for sk in make_skills(reminder_store):
+            reg.register(sk)
 
     def default_confirmer(action) -> bool:
         # 由 serve 在 confirmation_needed 事件之后触发；阻塞读壳的回答
@@ -94,7 +112,7 @@ def build_loop(
     # 会话历史：仅真实模式默认落盘（fake/测试模式不污染本地文件）
     hist = history_file or (history_path() if use_real else None)
 
-    return AgentLoop(
+    agent = AgentLoop(
         provider=prov,
         skills=reg,
         classifier=RiskClassifier(),
@@ -104,7 +122,11 @@ def build_loop(
         confirmer=confirmer or default_confirmer,
         host=host,
         history=ConversationHistory(hist) if hist else None,
+        focus_provider=lambda: _FOCUS["value"],
     )
+    if use_real and not skills_factory:
+        agent.reminder_store = reminder_store  # serve 的调度循环经它触发提醒
+    return agent
 
 
 def _load_plugins_safe(reg, memory, prov, host) -> None:
@@ -165,16 +187,21 @@ async def handle_panel_action(msg: dict, agent: AgentLoop, write_msg: WriteMsg, 
     direct=true：invoker 直调（propose → api.risk 只许收紧 → decide → 确认/执行 → 审计）；
     direct=false：intent 渲染后交给 run_text（与 type="run" 同路径的 agent 流程）。
     """
+    surface = str(msg.get("surface") or "pet")  # 会话分流：事件随发起场景标记，壳侧各窗按 surface 过滤
+
     def emit(event: Event) -> None:
-        write_msg({"type": "event", "event": event.model_dump(mode="json")})
+        write_msg({"type": "event", "surface": surface, "event": event.model_dump(mode="json")})
 
     rid = msg.get("id")
+    method = ""
+    tag = Action(id=f"pa_{rid}", skill_id="?")  # 错误事件归属标签：壳侧桥按 pa_<rid> 认领，不误杀其他调用
     try:
         method = str(msg.get("method", ""))
+        tag = Action(id=f"pa_{rid}", skill_id=method or "?")
         params = msg.get("params") or {}
         api = get_api(method)
         if api is None:  # 白名单外：拒绝执行
-            emit(Event(kind="error", text=f"面板方法未在白名单：{method}"))
+            emit(Event(kind="error", text=f"面板方法未在白名单：{method}", action=tag))
             write_msg({"type": "run_done", "id": rid})
             return
         if not api.direct:
@@ -182,17 +209,18 @@ async def handle_panel_action(msg: dict, agent: AgentLoop, write_msg: WriteMsg, 
             return
 
         action = agent.invoker.propose(ToolCall(id=f"pa_{rid}", skill_id=api.handler, params=params))
+        action.id = f"pa_{rid}"  # propose 会重新发 id；壳侧桥靠 pa_<rid> 关联回包/确认/错误，必须保留
         if api.risk is not None:
             action.risk = max(action.risk, api.risk)  # api.toml 只许收紧，不许放宽
         decision = agent.invoker.decide(action)
         if decision == Decision.DENY:
-            emit(Event(kind="error", text=f"策略禁止执行 {api.handler}（风险过高）"))
+            emit(Event(kind="error", text=f"策略禁止执行 {api.handler}（风险过高）", action=action))
             write_msg({"type": "run_done", "id": rid})
             return
         if decision == Decision.CONFIRM:
             emit(Event(kind="confirmation_needed", action=action, confirmation_id=action.id))
             if not await agent.invoker.confirm(action):  # 等壳 confirm 消息（复用单槽确认流）
-                emit(Event(kind="error", text=f"用户拒绝执行 {api.handler}"))
+                emit(Event(kind="error", text=f"用户拒绝执行 {api.handler}", action=action))
                 write_msg({"type": "run_done", "id": rid})
                 return
         result = await _offload(agent.invoker.execute, action, params)  # 与 arun 一致挪线程池
@@ -201,13 +229,38 @@ async def handle_panel_action(msg: dict, agent: AgentLoop, write_msg: WriteMsg, 
             # 声明式刷新：删除类操作后跟一次查询，面板拿新数据而不是操作回执
             await _emit_refresh_panel(agent, emit, api.refresh)
         else:
+            if result.success and api.panel is not None:
+                result.panel = api.panel  # method 声明的面板优先于 tool 自带引用（如 webview 编辑器）
             payload = panel_payload(result)
             if payload is not None:
                 emit(Event(kind="panel", payload=payload))
         write_msg({"type": "run_done", "id": rid})
     except Exception as e:  # 兜底：任何意外都要给壳一个交代，别让面板卡死
-        emit(Event(kind="error", text=f"面板操作失败：{e}"))
+        emit(Event(kind="error", text=f"面板操作失败：{e}", action=tag))
         write_msg({"type": "run_done", "id": rid})
+
+
+async def _readonly_no_run(text: str, rid) -> None:
+    """L0 只读直调永远不会走 agent 路径（direct=true 才并发）；防御性兜底。"""
+    raise RuntimeError("只读直调不应进入 agent 路径")
+
+
+def _is_readonly_direct(msg: dict, agent: AgentLoop) -> bool:
+    """L0 只读直调（get/list/article_read 等纯查询）→ 不占槽位、不抢占。
+
+    面板/编辑器的数据加载与在跑的对话是并行关系：互相抢占会让 read_article 顶掉
+    写稿 run（回复截断），也让 run 期间的面板加载被排队/取消（「编辑器没反应」）。
+    db 层单连接+锁，并发读安全。
+    """
+    api = get_api(str(msg.get("method", "")))
+    if api is None or not api.direct:
+        return False
+    action = agent.invoker.propose(
+        ToolCall(id=f"pa_{msg.get('id')}", skill_id=api.handler, params=msg.get("params") or {})
+    )
+    if api.risk is not None:
+        action.risk = max(action.risk, api.risk)
+    return action.risk <= RiskLevel.L0_READONLY
 
 
 def _run_and_emit(loop: AgentLoop, text: str, write_msg: WriteMsg, rid, voice=None) -> None:
@@ -262,6 +315,15 @@ async def serve_async(
     新 run 到来会抢占并打断未完成的旧 run。
     """
     ai_loop = asyncio.get_running_loop()
+    _LOOP_TICK["t"] = time.monotonic()
+
+    async def _tick() -> None:
+        """主循环存活刻度：只要循环还能调度就每秒前进；读线程据此判断忙/死。"""
+        while True:
+            _LOOP_TICK["t"] = time.monotonic()
+            await asyncio.sleep(1)
+
+    tick_task = asyncio.ensure_future(_tick())
     queue: asyncio.Queue = asyncio.Queue()
     # 确认单槽 + 早到缓存：confirm 可能先于 confirmer 注册 future 到达
     # （读线程瞬时投递 run+confirm，主循环先处理 confirm），直接丢会死锁。
@@ -269,6 +331,8 @@ async def serve_async(
     # preempt_gen：抢占代数。新请求到来即 +1；排队中的任务启动时发现自己落后 →
     # 一启动即置 cancel（快速跳过），保证「只有最新请求真正执行」。
     run_state: dict = {"task": None, "cancel": None, "preempt_gen": 0}
+    # 并发的 L0 只读面板调用（不占槽位）：跟踪起来，stdin 关闭时一起收尾
+    readonly_tasks: set[asyncio.Task] = set()
 
     async def confirmer(action) -> bool:
         # 早到的 confirm 直接兑现
@@ -316,9 +380,55 @@ async def serve_async(
     # 启动握手：壳靠它确认大脑上线（守护重启后也靠它判断已恢复）
     write_msg({"type": "hello", "version": 1, "permissions": _permissions_status()})
 
+    async def _reminder_loop() -> None:
+        """主动能力：每 10s 扫到期提醒 → 推 reminder 事件到壳；空闲时顺手语音播报。"""
+        store = getattr(agent, "reminder_store", None)
+        if store is None:
+            return
+        while True:
+            await asyncio.sleep(10)
+            try:
+                due = await _offload(store.pop_due, time.time())
+            except Exception as e:
+                print(f"[yibao] 提醒扫描失败：{e}", file=sys.stderr)
+                continue
+            for r in due:
+                text = str(r.get("text", ""))
+                print(f"[yibao] 提醒触发 id={r.get('id')}：{text[:30]!r}", file=sys.stderr)
+                write_msg({"type": "event", "surface": "pet",
+                           "event": {"kind": "reminder", "text": text}})
+                if agent.history:  # 落历史：用户回「知道了」时大脑有上下文
+                    try:
+                        await _offload(agent.history.record_messages,
+                                       [{"role": "assistant", "content": f"⏰ 到点提醒：{text}"}])
+                    except Exception:
+                        pass
+                # 有任务在跑就只在气泡里提醒，不打断在播的语音
+                task = run_state["task"]
+                if voice is not None and (task is None or task.done()):
+                    async def _once(t=text):
+                        yield f"提醒：{t}"
+                    try:
+                        write_msg({"type": "event", "surface": "pet", "event": {"kind": "speaking"}})
+                        await voice.speak_stream(_once(), asyncio.Event())
+                    except Exception as e:
+                        print(f"[yibao] 提醒播报失败：{e}", file=sys.stderr)
+                    write_msg({"type": "event", "surface": "pet", "event": {"kind": "speaking_done"}})
+
+    reminder_task = asyncio.ensure_future(_reminder_loop())
+
     def _reader():
         while True:
             msg = read_msg()
+            # 看门狗心跳：读线程直接答 pong（循环被长任务占住时也不误杀）；
+            # 循环 _TICK_FRESH_S 秒未调度 = 真卡死 → 扣住 pong 让看门狗杀掉重启
+            if isinstance(msg, dict) and msg.get("type") == "ping":
+                lag = time.monotonic() - _LOOP_TICK["t"]
+                if lag < _TICK_FRESH_S:
+                    write_msg({"type": "pong"})
+                else:
+                    print(f"[yibao] 主循环 {lag:.0f}s 未调度，扣住 pong 待看门狗处置", file=sys.stderr)
+                continue
             try:
                 ai_loop.call_soon_threadsafe(queue.put_nowait, msg)
             except RuntimeError:
@@ -335,7 +445,7 @@ async def serve_async(
                 return
             yield item
 
-    async def _pump_tts(tts_q: asyncio.Queue, cancel: asyncio.Event):
+    async def _pump_tts(tts_q: asyncio.Queue, cancel: asyncio.Event, surface: str = "pet"):
         if voice is None:
             return
         try:
@@ -343,19 +453,19 @@ async def serve_async(
         except asyncio.CancelledError:
             return  # 打断命中合成/播放的正常取消，不是播报失败
         except Exception as e:
-            write_msg({"type": "event", "event": {"kind": "error", "text": f"语音播报失败：{e}"}})
+            write_msg({"type": "event", "surface": surface, "event": {"kind": "error", "text": f"语音播报失败：{e}"}})
             return
         if not cancel.is_set():
-            write_msg({"type": "event", "event": {"kind": "speaking_done"}})
+            write_msg({"type": "event", "surface": surface, "event": {"kind": "speaking_done"}})
 
-    async def _stream_agent(text: str, rid, cancel: asyncio.Event):
+    async def _stream_agent(text: str, rid, cancel: asyncio.Event, surface: str = "pet"):
         t0 = time.monotonic()
         tts_q: asyncio.Queue | None = asyncio.Queue() if voice is not None else None
-        tts_task = asyncio.create_task(_pump_tts(tts_q, cancel)) if tts_q is not None else None
+        tts_task = asyncio.create_task(_pump_tts(tts_q, cancel, surface)) if tts_q is not None else None
         started_speaking = False
         try:
-            async for event in agent.arun(text, cancel):
-                write_msg({"type": "event", "event": event.model_dump(mode="json")})
+            async for event in agent.arun(text, cancel, surface=surface):
+                write_msg({"type": "event", "surface": surface, "event": event.model_dump(mode="json")})
                 if (
                     tts_q is not None
                     and event.kind == "final_reply_chunk"
@@ -363,12 +473,12 @@ async def serve_async(
                 ):
                     if not started_speaking:
                         started_speaking = True
-                        write_msg({"type": "event", "event": {"kind": "speaking"}})
+                        write_msg({"type": "event", "surface": surface, "event": {"kind": "speaking"}})
                     await tts_q.put(event.text)
         except Exception as e:
             # arun 抛异常（如 provider 400）→ 发 error + 停 TTS，别让前端卡死
             cancel.set()
-            write_msg({"type": "event", "event": {"kind": "error", "text": f"大脑出错：{e}"}})
+            write_msg({"type": "event", "surface": surface, "event": {"kind": "error", "text": f"大脑出错：{e}"}})
         finally:
             if tts_q is not None:
                 await tts_q.put(None)  # 收尾哨兵，唤醒可能在 get() 上等待的 _pump_tts
@@ -377,20 +487,34 @@ async def serve_async(
             write_msg({"type": "run_done", "id": rid})
             print(f"[yibao] run 完成 rid={rid}（{time.monotonic() - t0:.1f}s）", file=sys.stderr)
 
-    async def _drive_run(text: str, rid, cancel: asyncio.Event):
-        await _stream_agent(text, rid, cancel)
+    async def _drive_run(text: str, rid, cancel: asyncio.Event, surface: str = "pet"):
+        await _stream_agent(text, rid, cancel, surface)
 
-    async def _drive_voice_start(rid, cancel: asyncio.Event):
-        write_msg({"type": "event", "event": {"kind": "listening"}})
+    async def _drive_voice_start(rid, cancel: asyncio.Event, surface: str = "pet"):
+        write_msg({"type": "event", "surface": surface, "event": {"kind": "listening"}})
+
+        async def _watch_cancel():
+            await cancel.wait()
+            voice.stop_listen()  # 打断（interrupt）→ 录音循环下一拍退出
+
+        watcher = asyncio.ensure_future(_watch_cancel())
+        t0 = time.monotonic()
         try:
             text = await ai_loop.run_in_executor(None, voice.listen)
         except Exception as e:
-            write_msg({"type": "event", "event": {"kind": "error", "text": f"语音识别失败：{e}"}})
+            write_msg({"type": "event", "surface": surface, "event": {"kind": "error", "text": f"语音识别失败：{e}"}})
             write_msg({"type": "run_done", "id": rid})
             return
-        write_msg({"type": "event", "event": {"kind": "listening_done", "text": text}})
+        finally:
+            watcher.cancel()
+        print(f"[yibao] 聆听结束（{time.monotonic() - t0:.1f}s）：{text[:30]!r}", file=sys.stderr)
+        if cancel.is_set():  # 聆听被打断：不走 listening_done（避免误进 think 态）
+            write_msg({"type": "event", "surface": surface, "event": {"kind": "interrupted"}})
+            write_msg({"type": "run_done", "id": rid})
+            return
+        write_msg({"type": "event", "surface": surface, "event": {"kind": "listening_done", "text": text}})
         if text:
-            await _stream_agent(text, rid, cancel)
+            await _stream_agent(text, rid, cancel, surface)
         else:
             write_msg({"type": "run_done", "id": rid})
 
@@ -403,14 +527,24 @@ async def serve_async(
         """槽位串行：等上一任务收尾再启动；主循环不在这里阻塞（ping 照答，看门狗不误杀）。
 
         排队期间又来了更新的请求（preempt_gen 前进）→ 本任务一启动即置 cancel 快速跳过。
+        上一任务被抢占后超过 _PREEMPT_GRACE_S 仍不收尾（LLM/TTS hung 等）→ 强制取消，
+        槽位必须自愈，否则后续所有请求都静默排队（「点了没反应」）。
         """
         if prev is not None and not prev.done():
             t0 = time.monotonic()
             print("[yibao] 新请求排队，等上一任务收尾…", file=sys.stderr)
             try:
-                await prev
-            except Exception:
-                pass
+                # shield：wait_for 超时不许连带取消 prev，强制取消由我们自己控制
+                await asyncio.wait_for(asyncio.shield(prev), timeout=_PREEMPT_GRACE_S)
+            except asyncio.TimeoutError:
+                print(f"[yibao] 上一任务 {_PREEMPT_GRACE_S:.0f}s 未收尾，强制取消", file=sys.stderr)
+                prev.cancel()
+                try:
+                    await prev
+                except (asyncio.CancelledError, Exception):
+                    pass
+            except (asyncio.CancelledError, Exception):
+                pass  # prev 自身异常/被取消都算已收尾
             print(f"[yibao] 上一任务收尾完成（{time.monotonic() - t0:.1f}s）", file=sys.stderr)
         cancel = asyncio.Event()
         if run_state["preempt_gen"] > queued_gen:
@@ -438,36 +572,67 @@ async def serve_async(
                     done, _ = await asyncio.wait({task}, timeout=2)
                     if not done:
                         task.cancel()
+            # 并发的只读面板调用都是快查询，给 3s 收尾；超时直接取消（进程要退了）
+            if readonly_tasks:
+                _, pending_ro = await asyncio.wait(readonly_tasks, timeout=3)
+                for t in pending_ro:
+                    t.cancel()
+            tick_task.cancel()
+            reminder_task.cancel()
             return
         rtype = msg.get("type")
         if rtype in ("run", "voice_start"):
+            if rtype == "voice_start" and voice is None:
+                # 语音不可用（未启用/初始化失败）：不许静默吞掉——前端会永远卡「聆听中」
+                rid = msg.get("id")
+                print("[yibao] voice_start 收到但语音栈不可用", file=sys.stderr)
+                write_msg({"type": "event", "event": {"kind": "error", "text": "语音不可用：麦克风初始化失败或被禁用"}})
+                write_msg({"type": "run_done", "id": rid})
+                continue
             _preempt_current()
             prev = run_state["task"]
+            surface = str(msg.get("surface") or "pet")  # 会话分流：随 run 贯穿事件流与历史
             if rtype == "run":
                 text, rid = msg.get("text", ""), msg.get("id")
-                start = lambda c, t=text, r=rid: _drive_run(t, r, c)
-                print(f"[yibao] run 受理 rid={rid}：{text[:30]!r}", file=sys.stderr)
+                start = lambda c, t=text, r=rid, s=surface: _drive_run(t, r, c, s)
+                print(f"[yibao] run 受理 rid={rid} surface={surface}：{text[:30]!r}", file=sys.stderr)
             elif voice is not None:
                 rid = msg.get("id")
-                start = lambda c, r=rid: _drive_voice_start(r, c)
-                print(f"[yibao] voice_start 受理 rid={rid}", file=sys.stderr)
+                start = lambda c, r=rid, s=surface: _drive_voice_start(r, c, s)
+                print(f"[yibao] voice_start 受理 rid={rid} surface={surface}", file=sys.stderr)
             else:
                 continue
             run_state["task"] = asyncio.ensure_future(
                 _chain_start(prev, start, run_state["preempt_gen"])
             )
         elif rtype == "panel_action":
-            # 面板直调/意图方法：与 run 同槽位（抢占 + 链式排队，主循环不阻塞）
+            if _is_readonly_direct(msg, agent):
+                # L0 只读直调：独立任务并发跑，不占槽位、不抢占在跑的 run（编辑器/面板加载数据不该踩对话）
+                async def _ro(m=msg):
+                    try:
+                        await handle_panel_action(m, agent, write_msg, run_text=_readonly_no_run)
+                    except Exception as e:
+                        print(f"[yibao] 只读面板调用异常：{type(e).__name__}: {e}", file=sys.stderr)
+
+                t = asyncio.ensure_future(_ro())
+                readonly_tasks.add(t)
+                t.add_done_callback(readonly_tasks.discard)
+                continue
+            # 面板写操作/意图方法：与 run 同槽位（抢占 + 链式排队，主循环不阻塞）
             _preempt_current()
             prev = run_state["task"]
-            start = lambda c, m=msg: handle_panel_action(
-                m, agent, write_msg, run_text=lambda text, rid: _stream_agent(text, rid, c)
+            surface = str(msg.get("surface") or "pet")
+            start = lambda c, m=msg, s=surface: handle_panel_action(
+                m, agent, write_msg, run_text=lambda text, rid: _stream_agent(text, rid, c, s)
             )
             run_state["task"] = asyncio.ensure_future(
                 _chain_start(prev, start, run_state["preempt_gen"])
             )
         elif rtype == "interrupt":
             _preempt_current()
+        elif rtype == "panel_context":
+            # 壳上面板焦点变化：存下来，下次 run 注入 LLM 上下文
+            _FOCUS["value"] = msg.get("focus")
         elif rtype == "confirm":
             fut = pending_confirm["future"]
             if fut is not None and not fut.done():
@@ -475,9 +640,6 @@ async def serve_async(
             else:
                 # confirmer 还没注册（消息先于 run 任务到达）→ 缓存，由 confirmer 兑现
                 pending_confirm["early"] = bool(msg.get("approved", False))
-        elif rtype == "ping":
-            # 壳侧看门狗心跳：run 进行中主循环也停在 queue.get()，总能即时应答
-            write_msg({"type": "pong"})
         elif rtype == "check_permissions":
             write_msg({"type": "permissions", "permissions": _permissions_status()})
         elif rtype == "prompt_permission":
@@ -502,9 +664,13 @@ def _line_reader() -> ReadMsg:
 
 
 def _line_writer() -> WriteMsg:
+    lock = threading.Lock()  # pong 由读线程直发，与主循环消息共享 stdout，防行交错
+
     def _w(msg: dict) -> None:
-        sys.stdout.write(json.dumps(msg, ensure_ascii=False) + "\n")
-        sys.stdout.flush()
+        with lock:
+            sys.stdout.write(json.dumps(msg, ensure_ascii=False) + "\n")
+            sys.stdout.flush()
+
     return _w
 
 
@@ -526,14 +692,38 @@ def _build_voice_or_none():
         return None
 
 
+def _watch_parent() -> None:
+    """父进程存活看门狗（守护线程）：ppid 变化（壳死后被 reparent 到 launchd）→ 自我了断。
+
+    覆盖壳被 kill -9/崩溃时 stdin EOF 之外的遗漏路径——孤儿 brain 会长期占着 qdrant 锁，
+    新 brain 被迫记忆降级（2026-07-21 实测两个昨日孤儿并存）。os._exit 保证循环卡死时也能死。
+    """
+    parent = os.getppid()
+    while True:
+        time.sleep(10)
+        if os.getppid() != parent:
+            print("[yibao] 父进程已退出（ppid 变化），自我了断", file=sys.stderr)
+            os._exit(0)
+
+
 def main() -> int:
     reader, writer = _line_reader(), _line_writer()
     voice = _build_voice_or_none()
+    threading.Thread(target=_watch_parent, daemon=True).start()
     # 数据目录分离：仓库时代的用户数据一次性迁走（sidecar/ → 应用数据目录）
     from . import config as _cfg
 
     _cfg.migrate_legacy_data(os.path.join(os.path.dirname(__file__), "..", ".."))
     os.makedirs(_cfg.data_dir(), exist_ok=True)  # sqlite/qdrant 不会自建父目录
+    # 单实例锁 + 孤儿回收：壳被强杀时旧大脑可能活着独占 qdrant 锁，
+    # 新大脑取锁前先把它们收掉；锁 fd 活到进程结束（OS 级，死即释）
+    from .instance import ensure_single_instance
+
+    try:
+        _instance_lock_fd = ensure_single_instance(os.path.join(_cfg.data_dir(), "brain.lock"))
+    except Exception as e:
+        print(f"[yibao] 大脑单实例锁获取失败：{e}", file=sys.stderr)
+        return 1
     asyncio.run(
         serve_async(
             reader,

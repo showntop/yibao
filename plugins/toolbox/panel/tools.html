@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<!-- 工具箱面板：JSON 格式化 / 文本对比。
+     能力调用全部经 window.yibao.invoke（postMessage 桥 → api.toml 白名单 + 风险闸门）。
+     桥 JS 由父侧注入（提供 window.yibao.invoke/onInit），本文件不自带。 -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #f6f1ea; --card: #ffffff; --border: #eee4d6; --border-soft: #f3ecdf;
+    --text: #3f372e; --muted: #a89a86; --faint: #c9bcab;
+    --accent: #ff8a5c; --accent-deep: #f2703f; --accent-soft: #fff0e8;
+    --green-bg: #dcf0e2; --green: #3e8e5a; --green-bar: #8fd0a6;
+    --red-bg: #fce7e3; --red: #c0574b; --red-bar: #f0aaa1;
+    --mono: 12.5px/1.6 "SF Mono", ui-monospace, Menlo, monospace;
+  }
+  html, body { height: 100%; }
+  body {
+    font: 13px/1.6 -apple-system, "PingFang SC", sans-serif;
+    background: var(--bg); color: var(--text); padding: 14px;
+    display: flex; flex-direction: column;
+  }
+  .hidden { display: none !important; }
+  #page-json, #page-diff { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+
+  /* ---- 分段控制器 ---- */
+  .seg {
+    display: inline-flex; gap: 2px; padding: 3px; margin-bottom: 14px;
+    background: #eae1d3; border-radius: 11px;
+  }
+  .seg button {
+    border: none; background: transparent; color: #8a7a66; cursor: pointer;
+    border-radius: 8px; padding: 5px 18px; font-size: 12.5px; font-weight: 500;
+    transition: all .15s ease;
+  }
+  .seg button:hover { color: var(--text); }
+  .seg button.on {
+    background: #fff; color: var(--accent-deep); font-weight: 600;
+    box-shadow: 0 1px 3px rgba(90, 70, 50, .15);
+  }
+
+  /* ---- 卡片 ---- */
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+    box-shadow: 0 1px 2px rgba(90, 70, 50, .04), 0 6px 16px rgba(90, 70, 50, .05);
+    overflow: hidden; margin-bottom: 10px;
+  }
+  .card-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; border-bottom: 1px solid var(--border-soft);
+    font-size: 12px; font-weight: 600; color: var(--text);
+  }
+  .card-head .muted { font-weight: 400; color: var(--muted); font-size: 11.5px; }
+  .card-head .spacer { flex: 1; }
+  button.mini {
+    border: none; background: transparent; color: var(--muted); cursor: pointer;
+    font-size: 11.5px; padding: 2px 8px; border-radius: 7px; transition: all .15s ease;
+  }
+  button.mini:hover { background: var(--accent-soft); color: var(--accent-deep); }
+
+  /* ---- 编辑框（textarea + 底层高亮层；平时就是普通 textarea）---- */
+  .editor { position: relative; flex: 1; min-height: 0; display: flex; }
+  .editor textarea {
+    position: relative; z-index: 1; flex: 1;
+    display: block; width: 100%; height: 100%; border: none; outline: none; resize: none;
+    padding: 10px 12px; background: transparent; color: var(--text);
+    font: var(--mono); overflow: auto;
+  }
+  .editor .hl {
+    position: absolute; inset: 0; z-index: 0;
+    padding: 10px 12px; overflow: hidden; pointer-events: none;
+    font: var(--mono); white-space: pre-wrap; word-break: break-all;
+  }
+  .editor .hl .l { min-height: 1.6em; }
+  .editor .hl .l.add { background: var(--green-bg); box-shadow: inset 3px 0 var(--green-bar); }
+  .editor .hl .l.del { background: var(--red-bg); box-shadow: inset 3px 0 var(--red-bar); }
+  /* 高亮模式：文字透明、光标保留，让底层高亮透出来；一开始输入就退出该模式 */
+  .editor.hl-mode textarea { color: transparent; caret-color: var(--text); }
+  .editor.hl-mode textarea::selection { background: rgba(255, 138, 92, .25); }
+
+  /* ---- 工具条 ---- */
+  .toolbar { display: flex; align-items: center; gap: 8px; margin: 2px 0 10px; flex-wrap: wrap; }
+  .toolbar .spacer { flex: 1; }
+  button.act {
+    border: none; border-radius: 10px; padding: 6px 16px; cursor: pointer;
+    background: var(--accent); color: #fff; font-size: 12.5px; font-weight: 600;
+    box-shadow: 0 2px 6px rgba(242, 112, 63, .3); transition: all .15s ease;
+  }
+  button.act:hover { background: var(--accent-deep); }
+  button.act:active { transform: scale(.97); }
+  button.ghost {
+    background: transparent; color: #8a7a66; border: 1px solid #e3d7c4;
+    box-shadow: none; font-weight: 500;
+  }
+  button.ghost:hover { background: #faf3ea; color: var(--text); border-color: #d8c9b2; }
+  .opt { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
+  .opt select {
+    border: 1px solid #e3d7c4; border-radius: 8px; background: #fff; color: var(--text);
+    font-size: 12px; padding: 3px 6px; outline: none;
+  }
+  .opt input[type="checkbox"] { accent-color: var(--accent); }
+  .hint { font-size: 11px; color: var(--faint); }
+
+  /* ---- 错误横幅 ---- */
+  .banner {
+    display: flex; align-items: flex-start; gap: 7px;
+    border-radius: 11px; padding: 8px 12px; margin-bottom: 10px;
+    font-size: 12.5px; line-height: 1.5;
+  }
+  .banner.err { background: #fdecea; color: var(--red); border: 1px solid #f5d5d0; }
+  .banner.err::before { content: "⚠"; flex: none; }
+
+  /* ---- 统计徽章 ---- */
+  .chips { display: flex; gap: 6px; align-items: center; margin: 2px 0 10px; min-height: 24px; }
+  .chip { border-radius: 999px; padding: 2px 11px; font-size: 12px; font-weight: 600; }
+  .chip.add { background: var(--green-bg); color: var(--green); }
+  .chip.del { background: var(--red-bg); color: var(--red); }
+  .chip.eq { background: #e9f3ec; color: var(--green); }
+  .chip.warn { background: #fdf3e0; color: #b98a2f; }
+
+  .cols { display: flex; gap: 10px; flex: 1; min-height: 0; }
+  .cols > .card { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  #page-json > .card { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .card-head { flex: none; }
+  .toolbar, .chips, .banner, .seg { flex: none; }
+
+  /* ---- toast ---- */
+  #toast {
+    position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%) translateY(8px);
+    background: rgba(63, 55, 46, .92); color: #fff; font-size: 12px;
+    padding: 6px 16px; border-radius: 999px; opacity: 0; pointer-events: none;
+    transition: all .2s ease;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+<div class="seg">
+  <button id="tab-json" class="on">JSON 格式化</button>
+  <button id="tab-diff">文本对比</button>
+</div>
+
+<!-- JSON -->
+<div id="page-json">
+  <div class="card">
+    <div class="card-head">
+      JSON <span class="muted" id="json-in-count"></span>
+      <span class="spacer"></span>
+      <button class="mini" id="json-paste">⧉ 粘贴</button>
+      <button class="mini" id="json-sample">示例</button>
+      <button class="mini" id="json-copy">⧉ 复制</button>
+    </div>
+    <div class="editor">
+      <textarea id="json-in" rows="12" spellcheck="false"
+        placeholder="粘贴 JSON，或对译宝说「格式化这段 JSON」；点「格式化」后就地美化"></textarea>
+    </div>
+  </div>
+  <div class="toolbar">
+    <button class="act" id="json-pretty">格式化</button>
+    <button class="act ghost" id="json-minify">压缩</button>
+    <label class="opt">缩进
+      <select id="json-indent"><option>2</option><option>4</option></select>
+    </label>
+    <label class="opt"><input type="checkbox" id="json-sort"> 键排序</label>
+    <span class="spacer"></span>
+    <span class="hint">⌘⏎ 格式化</span>
+    <button class="act ghost" id="json-clear">清空</button>
+  </div>
+  <div class="banner err hidden" id="json-err"></div>
+</div>
+
+<!-- Diff -->
+<div id="page-diff" class="hidden">
+  <div class="cols">
+    <div class="card">
+      <div class="card-head">原文 <span class="muted" id="diff-old-count"></span></div>
+      <div class="editor" id="ed-old">
+        <div class="hl hidden" id="hl-old"></div>
+        <textarea id="diff-old" rows="9" spellcheck="false" placeholder="粘贴旧文本，如 v1 草稿"></textarea>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head">新文 <span class="muted" id="diff-new-count"></span></div>
+      <div class="editor" id="ed-new">
+        <div class="hl hidden" id="hl-new"></div>
+        <textarea id="diff-new" rows="9" spellcheck="false" placeholder="粘贴新文本，如 v2 修改稿"></textarea>
+      </div>
+    </div>
+  </div>
+  <div class="toolbar">
+    <button class="act" id="diff-run">对比</button>
+    <button class="act ghost" id="diff-swap">⇄ 交换</button>
+    <span class="spacer"></span>
+    <span class="hint">⌘⏎ 对比 · 改动任意内容即还原高亮</span>
+    <button class="act ghost" id="diff-clear">清空</button>
+  </div>
+  <div class="chips" id="diff-stat"></div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+  function show(el) { el.classList.remove("hidden"); }
+  function hide(el) { el.classList.add("hidden"); }
+
+  // ---- toast ----
+  var toastTimer = null;
+  function toast(msg) {
+    var t = $("toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.classList.remove("show"); }, 1400);
+  }
+
+  // ---- 字数统计 ----
+  function bindCount(taId, labelId) {
+    var ta = $(taId);
+    function upd() {
+      $(labelId).textContent = ta.value ? ta.value.length + " 字" : "";
+    }
+    ta.addEventListener("input", upd);
+    return upd;
+  }
+  var updJsonIn = bindCount("json-in", "json-in-count");
+  var updOld = bindCount("diff-old", "diff-old-count");
+  var updNew = bindCount("diff-new", "diff-new-count");
+
+  // ---- 页签 ----
+  var tool = "json";
+  function showTab(t) {
+    tool = t;
+    $("tab-json").className = t === "json" ? "on" : "";
+    $("tab-diff").className = t === "diff" ? "on" : "";
+    t === "json" ? show($("page-json")) : hide($("page-json"));
+    t === "diff" ? show($("page-diff")) : hide($("page-diff"));
+  }
+  $("tab-json").addEventListener("click", function () { showTab("json"); });
+  $("tab-diff").addEventListener("click", function () { showTab("diff"); });
+
+  // ---- 编辑框内替换文本（尽量走 insertText 保留撤销栈）----
+  function replaceText(ta, text) {
+    ta.focus();
+    ta.setSelectionRange(0, ta.value.length);
+    var ok = false;
+    try { ok = document.execCommand("insertText", false, text); } catch (e) { /* 忽略 */ }
+    if (!ok) {
+      ta.value = text;
+      ta.dispatchEvent(new Event("input"));
+    }
+    ta.setSelectionRange(0, 0);
+  }
+
+  // ---- JSON：就地格式化 ----
+  function runJson(mode) {
+    hide($("json-err"));
+    window.yibao.invoke("toolbox.json_format", {
+      text: $("json-in").value, mode: mode,
+      indent: parseInt($("json-indent").value, 10),
+      sort_keys: $("json-sort").checked
+    }).then(function (r) {
+      var out = (r && r.output) || "";
+      if (out && out !== $("json-in").value) replaceText($("json-in"), out);
+      toast(mode === "minify" ? "已压缩" : "已格式化");
+    }).catch(function (e) {
+      $("json-err").textContent = e && e.message ? e.message : String(e || "失败");
+      show($("json-err"));
+    });
+  }
+  $("json-pretty").addEventListener("click", function () { runJson("pretty"); });
+  $("json-minify").addEventListener("click", function () { runJson("minify"); });
+  $("json-clear").addEventListener("click", function () {
+    $("json-in").value = ""; updJsonIn(); hide($("json-err"));
+  });
+  $("json-copy").addEventListener("click", function () {
+    copyText($("json-in").value);
+  });
+  $("json-paste").addEventListener("click", function () {
+    if (!navigator.clipboard || !navigator.clipboard.readText) { toast("读不到剪贴板"); return; }
+    navigator.clipboard.readText().then(function (s) {
+      if (s) { $("json-in").value = s; updJsonIn(); toast("已粘贴"); }
+    }, function () { toast("读不到剪贴板"); });
+  });
+  $("json-sample").addEventListener("click", function () {
+    $("json-in").value = '{"name":"译宝","tags":["桌宠","AI"],"meta":{"version":2,"plugins":4}}';
+    updJsonIn();
+    hide($("json-err"));
+    toast("已填入示例，点「格式化」试试");
+  });
+
+  // ---- Diff：两个编辑框内高亮（底层 .hl 染行，上层文字透明）----
+  // 编辑框的 .hl 层逐行染红（原文被删行）/绿（新文新增行）；滚动与 textarea 同步。
+  function syncScroll(ta, hl) {
+    hl.scrollTop = ta.scrollTop;
+    hl.scrollLeft = ta.scrollLeft;
+  }
+  function clearHl(ed, hl) {
+    ed.classList.remove("hl-mode");
+    hl.innerHTML = "";
+    hide(hl);
+  }
+  // marks: 与 textarea 行一一对应的 "add"|"del"|null 数组
+  function paintHl(ed, ta, hl, marks) {
+    var lines = ta.value.split("\n");
+    var frag = document.createDocumentFragment();
+    var any = false;
+    for (var i = 0; i < lines.length; i++) {
+      var div = document.createElement("div");
+      div.className = "l" + (marks[i] ? " " + marks[i] : "");
+      if (marks[i]) any = true;
+      div.textContent = lines[i] || " ";
+      frag.appendChild(div);
+    }
+    hl.innerHTML = "";
+    hl.appendChild(frag);
+    if (any) {
+      show(hl);
+      ed.classList.add("hl-mode");
+      syncScroll(ta, hl);
+    } else {
+      clearHl(ed, hl);
+    }
+  }
+  var edOld = $("ed-old"), edNew = $("ed-new");
+  var hlOld = $("hl-old"), hlNew = $("hl-new");
+  var taOld = $("diff-old"), taNew = $("diff-new");
+  taOld.addEventListener("scroll", function () { syncScroll(taOld, hlOld); });
+  taNew.addEventListener("scroll", function () { syncScroll(taNew, hlNew); });
+  taOld.addEventListener("input", function () { clearHl(edOld, hlOld); clearHl(edNew, hlNew); });
+  taNew.addEventListener("input", function () { clearHl(edOld, hlOld); clearHl(edNew, hlNew); });
+
+  function renderDiff(data) {
+    var stat = $("diff-stat");
+    stat.innerHTML = "";
+    function chip(cls, text) {
+      var s = document.createElement("span");
+      s.className = "chip " + cls;
+      s.textContent = text;
+      stat.appendChild(s);
+    }
+    if (data.identical) {
+      chip("eq", "✓ 两段文本一致");
+      clearHl(edOld, hlOld); clearHl(edNew, hlNew);
+      return;
+    }
+    chip("add", "+" + data.added);
+    chip("del", "−" + data.removed);
+    if (data.truncated) chip("warn", "结果过大，已截断");
+    // 把顺序 lines 折算成两侧各自的行标记
+    var marksOld = [], marksNew = [];
+    (data.lines || []).forEach(function (l) {
+      if (l.t === "del") marksOld.push("del");
+      else if (l.t === "add") marksNew.push("add");
+      else { marksOld.push(null); marksNew.push(null); }
+    });
+    paintHl(edOld, taOld, hlOld, marksOld);
+    paintHl(edNew, taNew, hlNew, marksNew);
+  }
+  function runDiff() {
+    $("diff-stat").innerHTML = "";
+    window.yibao.invoke("toolbox.text_diff", {
+      old: taOld.value, new: taNew.value
+    }).then(function (r) {
+      renderDiff(r || {});
+    }).catch(function (e) {
+      var s = document.createElement("span");
+      s.className = "chip del";
+      s.textContent = e && e.message ? e.message : String(e || "失败");
+      $("diff-stat").innerHTML = "";
+      $("diff-stat").appendChild(s);
+    });
+  }
+  $("diff-run").addEventListener("click", runDiff);
+  $("diff-swap").addEventListener("click", function () {
+    var t = taOld.value;
+    taOld.value = taNew.value;
+    taNew.value = t;
+    updOld(); updNew();
+    clearHl(edOld, hlOld); clearHl(edNew, hlNew);
+  });
+  $("diff-clear").addEventListener("click", function () {
+    taOld.value = ""; taNew.value = "";
+    updOld(); updNew();
+    $("diff-stat").innerHTML = "";
+    clearHl(edOld, hlOld); clearHl(edNew, hlNew);
+  });
+
+  // ---- 快捷键：⌘/Ctrl + Enter 执行当前页主操作 ----
+  document.addEventListener("keydown", function (e) {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      tool === "json" ? runJson("pretty") : runDiff();
+    }
+  });
+
+  function copyText(text) {
+    if (!text) { toast("没有可复制的内容"); return; }
+    function ok() { toast("已复制"); }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(ok, fallback);
+    } else { fallback(); }
+    function fallback() {
+      var ta = document.createElement("textarea");
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); ok(); } catch (e) { toast("复制失败"); }
+      document.body.removeChild(ta);
+    }
+  }
+
+  // ---- 面板事件：对话流（LLM 调 skill 带 panel）打开时已带数据 ----
+  // 桥内直调也会重发同样的 panel 事件：仅在编辑框未偏离 skill 输入时应用结果，
+  // 避免覆盖用户后续编辑。
+  window.yibao.onInit(function (data) {
+    if (!data || !data.tool) return;
+    showTab(data.tool === "diff" ? "diff" : "json");
+    if (data.tool === "json") {
+      var cur = $("json-in").value;
+      if (typeof data.output === "string" && data.output &&
+          (cur === "" || cur === data.input)) {
+        // 空框（对话流带入）或仍停留在待格式化的原文（直调回显）→ 就地应用结果
+        $("json-in").value = data.output;
+        updJsonIn();
+        hide($("json-err"));
+      } else if (typeof data.input === "string" && cur === "") {
+        $("json-in").value = data.input;
+        updJsonIn();
+      }
+    } else if (data.tool === "diff") {
+      if (typeof data.old === "string" && taOld.value === "") { taOld.value = data.old; updOld(); }
+      if (typeof data.new === "string" && taNew.value === "") { taNew.value = data.new; updNew(); }
+      if (data.lines && taOld.value === (data.old || "") && taNew.value === (data.new || "")) {
+        renderDiff(data); // 内容未偏离才画高亮，否则丢掉过时结果
+      }
+    }
+  });
+})();
+</script>
+</body>
+</html>

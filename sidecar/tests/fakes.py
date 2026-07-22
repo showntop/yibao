@@ -109,15 +109,28 @@ class FakeVoice:
     期间轮询 cancel（模拟真实现的 sd 非阻塞播放 + 30ms 轮询）。
     """
 
-    def __init__(self, text: str = "你好", stream_delay: float = 0.0):
+    def __init__(self, text: str = "你好", stream_delay: float = 0.0, listen_block: bool = False):
         self._text = text
         self.stream_delay = stream_delay
+        self.listen_block = listen_block  # True 时 listen 挂起直到 stop_listen（模拟录音中）
+        self.listen_stopped = False
         self.speak_calls: list[str] = []
         self.stream_chunks: list[str] = []
         self.stream_interrupted: bool = False
 
     def listen(self) -> str:
+        if self.listen_block:
+            import time
+
+            for _ in range(100):  # 最多 5s，等 stop_listen 打断
+                if self.listen_stopped:
+                    return ""
+                time.sleep(0.05)
+            return ""
         return self._text
+
+    def stop_listen(self) -> None:
+        self.listen_stopped = True
 
     def speak(self, text: str) -> None:
         self.speak_calls.append(text)

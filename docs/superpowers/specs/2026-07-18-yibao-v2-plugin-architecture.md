@@ -180,6 +180,21 @@ name = "sync_done"
 
 铁律：LLM 不生成宿主可执行代码；本机操作 = tool 白名单 + L0–L4 + 审计。
 
+### 实装记录（webview，2026-07-20）
+
+- **面板类型**：manifest `[[panel]] type = "webview" src = "panel/x.html"`；`_load_panels` 读 HTML 文本存 `_PANELS["pid:name"] = {"type": "webview", "html": …}`（schema 面板仍是 JSON dict，靠 `type=="webview" and "html" in` 区分）。`panel_payload` 对 webview 面板发 `{panel, schema: null, webview: {html}, data}`，schema 面板 payload 不变。
+- **沙箱宿主**：`WebviewPanel.vue` 用 `<iframe sandbox="allow-scripts">` + `srcdoc`（禁 allow-same-origin，iframe 内无 Tauri IPC）。桥 JS 由父侧注入到插件 HTML 的 `<head>` 后（须在插件自有脚本前，否则 `window.yibao` 未定义），提供 `yibao.invoke(method, params) → Promise` 与 `yibao.onInit(cb)`。
+- **桥协议**（postMessage）：iframe→父 `{src:"yibao-webview", id, method, params}`；父→iframe 回包 `{src:"yibao-host", id, ok, result|error}` + 初始化 `{src:"yibao-host", type:"init", data}`。父侧校验 `event.source === iframe.contentWindow`，并粗筛 method 须以当前面板插件 id 开头（如 `zimeiti.`）；最终裁决仍在 sidecar api.toml 白名单 + L0–L4 闸门（L2 确认条由 PanelApp 闭环）。回包经 `action_result` 的 action.id（`pa_<rid>`）关联；sidecar 拒绝/超时 reject 给 iframe。
+- **api.toml `panel` 字段**：`[[method]] panel = "pid:name"`（可选，须指向本插件已声明面板，跨插件/未声明则 method 跳过）。direct 直调成功后 sidecar 用该面板发 panel 事件，覆盖 tool 自带 `result.panel`——用于 `zimeiti.open_editor`（handler 复用 `zimeiti.get`，面板引到 `zimeiti:editor`）与 `save_article`（保存后停在编辑器，回执 data 经桥回包给 iframe，重发的同面板事件不重建 iframe）。
+- 首个实例：`plugins/zimeiti/panel/editor.html`（手写模板，单文件无外部依赖，<30KB）。
+
+### 实装记录（设计语言统一，2026-07-22）
+
+- **面板/webview 设计标杆**：`plugins/toolbox/panel/tools.html`——卡片式布局（白卡 14px 圆角 + `0 1px 2px rgba(90,70,50,.04), 0 6px 16px rgba(90,70,50,.05)`）、分段控制器页签、徽章统计、toast 反馈、主/ghost 两级按钮（`#ff8a5c`/`#f2703f` + `#e3d7c4` 边）。新 webview 面板照抄其 `:root` token 块。
+- **已对齐**：SchemaPanel（list/board/detail/form 全部卡片化 + 两级按钮）、主对话框（Bubble/InputBar/头部/启动器）、zimeiti 编辑器；`app/src/assets/tokens.css` 关键值已回填（`--yb-text #3f372e`、`--yb-bg #f6f1ea`、默认圆角 14px、新增 `--yb-accent-deep`）。
+- **空态规范**：双行结构（主句 600 次要色 + 引导句淡色），引导用户回对话（如「去跟译宝说一句试试」），不硬编码插件名；webview 面板可用 `:placeholder-shown` 纯 CSS 做空态显隐（editor.html 先例）。
+- **提醒**：底座技能 `reminder_set/list/cancel`（下划线命名——底座 id 禁点号），`reminders.json` 落盘，serve 调度循环 10s 一拍，到期亮窗 + 气泡 + 空闲 TTS；LLM 时间语义靠 loop 注入的当前时间 system 消息。
+
 ## 9. 数据存储
 
 | 类型 | 存储 | 规则 |
@@ -209,12 +224,12 @@ name = "sync_done"
 ## 12. 终审待决项
 
 1. ~~面板形态：独立浮窗 vs 小窗抽屉？~~ **已定：独立浮窗**（2026-07-19 实装：面板事件 → 开面板窗 + 宠物收球；关闭只 hide 保状态；面板内闭环确认/报错）
-2. `use_plugin` 展开未激活插件时，对话里要不要让用户知情？
-3. webview 协议留口时机：阶段 0 留（不实现）还是阶段 2 再说？
-4. 自媒体第一尖刀：选题+写作 / 剪辑+素材 / 都要？
-5. schema 协议 v1：bind + 开放 type + 未知降级，够吗？
-6. 「找类似旧选题」业务数据语义搜索：v1 不做还是单列底座方案？
-7. MCP 接入算不算 v2 方向？
+2. ~~`use_plugin` 展开未激活插件时，对话里要不要让用户知情？~~ **已定：要知情**（2026-07-20）：展开时回一句轻量提示（如「我打开了 xx 插件」），不弹窗不打断。注：use_plugin 本身尚未实现，当前全量暴露 18 个 tool ≈ 2k tokens/调用（2026-07-20 实测）；tool 数 <40 前不做路由式暴露（原则 1 别过早实现）
+3. ~~webview 协议留口时机~~ **已定：阶段 2 随自媒体写作编辑器引入**（2026-07-20）——schema 组件做不动富文本编辑器，这是第一个真实重 UI 需求
+4. ~~自媒体第一尖刀~~ **已定：选题+写作**（2026-07-20）——对话流天然契合；剪辑+素材太重，后续阶段再看
+5. ~~schema 协议 v1 够吗~~ **已定：够用，继续**（2026-07-20）——阶段 0/1 验证：4 组件（list/detail/form/board）+ bind + 开放 type + 未知降级覆盖了闪念与 forge 全部面板
+6. ~~业务数据语义搜索~~ **已定：v1/v2 不做**（2026-07-20）——等真需要「按意思找旧选题」的场景出现再单列底座方案（原则 3 先场景后抽象）
+7. ~~MCP 接入算不算 v2 方向~~ **已定：不算**（2026-07-20）——留 v3 再评估；当前先把自有 tool 体系跑顺
 
 ### 实装踩坑记录（Tauri 侧）
 
@@ -228,12 +243,14 @@ panel schema 是一个 JSON 文件（manifest `[[panel]] src` 指向），描述
 
 顶层：`{"version": 1, "type": "list" | "detail" | "form" | "board", ...}`。
 
+任意 type 可声明 `back: {label, method, params?}`：面板左上角渲染「‹ 返回」链接，本质是一个 action（走 api.toml 白名单 + 闸门），用于详情 → 看板这类回跳（2026-07-20 实装）。board 的 `columns[]` 可带 `color`（CSS 色值），渲染为标签前的标识色点。
+
 ### 四个组件
 
 - **list**：列表。`bind.items` 绑定数组数据；`item` 描述每行：`title` / `subtitle`（可绑定）+ `actions`（行级操作数组）。
 - **detail**：详情。`fields: [{label, value}]`，`value` 可绑定；可选 `actions`（操作数组，params 走 `$data` 上下文）。
 - **form**：表单。`fields: [{name, label, input: "text" | "textarea" | "number"}]`；`submit` 是一个 action，提交时把表单值并入 params。
-- **board**：看板（2026-07-19 随 forge 插件引入）。`bind.items` 绑定数组；`bind.column` 对每行求值得列归属（如 `$item.status`）；`columns: [{key, label}]` 声明列（按顺序渲染，值不匹配任何列的行归入首列，不丢数据）；`card` 描述卡片：`title` / `subtitle` + `actions`（同 list 的 `item`）。
+- **board**：看板（2026-07-19 随 forge 插件引入）。`bind.items` 绑定数组；`bind.column` 对每行求值得列归属（如 `$item.status`）；`columns: [{key, label}]` 声明列（按顺序渲染，值不匹配任何列的行归入首列，不丢数据）；`card` 描述卡片：`title` / `subtitle` + `actions`（同 list 的 `item`）。可选 `drag: {method, params}` 声明拖拽换列触发的 action（params 里 `$column` = 目标列 key），`quick_add: {method, params, column?}` 声明列内快捷新增（params 里 `$text` = 输入内容，`column` 指定落入列）——两者本质都是 action 声明，走同一 api.toml 白名单校验（2026-07-20 实装）。
 
 ### 绑定语法
 
@@ -253,3 +270,26 @@ panel schema 是一个 JSON 文件（manifest `[[panel]] src` 指向），描述
 ### 降级
 
 未知 `type`（或 schema 缺失/`version` 更高）：前端降级为 JSON 展示，不报错。
+
+
+## 附录 B：focus 协议与工作台条（2026-07-20 实装）
+
+定位：**面板是手、译宝是脑**——面板管确定性操作（direct action），译宝是唯一智能体；工作台里跟译宝说话走同一大脑，不引入第二个助手。
+
+### focus 协议
+
+- 壳面板窗内容变化（panel 事件刷新 / 补拉缓存）时，前端从面板数据推导焦点并上报：`{plugin, panel, item?}`。`data.rows` 恰好一条 → 该条为选中条目 `item = {id, title, status}`；多条/无 → 只有面板无条目。面板关闭/窗口销毁上报 `focus = null`。
+- 通道：壳→脑新增 `panel_context` 消息（`report_panel_context` 命令透传）；脑侧存于 `_FOCUS`，`AgentLoop.focus_provider` 惰性取用。
+- 注入：每次 run 把焦点渲染成一条 system 消息（「用户当前正在看「插件」的 X 面板，选中条目…；『这个/它』默认指该条目；用户没问到时不要主动提及」）。无焦点/异常 → 不注入。有条目才给指代提示，避免指代落空。
+
+### 工作台条
+
+面板窗底部常驻：团子（Avatar，状态经 brain-event 同步，可拖动面板窗/长按语音）+ 上下文 chip（有选中条目时显示「在看：{title}」）+ InputBar（文字/语音/打断）。提交走同一 `runInput`；流式回复在条上方浮气泡展示，final 后 ~6s 淡出，完整历史留在宠物窗。面板内确认仍走内嵌确认条，不打断对话。
+
+### 协作回响（2026-07-20）
+
+在工作台里边看边让译宝改，闭环不靠人来回切：
+
+- **focus 重定向**：写操作（如 article_save）成功后的回跳面板，若用户正盯着同插件某 webview 面板（如写作编辑器）的同一条目（focus.item.id 匹配），改落到该 webview 而不是硬切 detail——编辑器收到 rows 重推自行刷新稿件（`loop._redirect_to_focused_webview`）。
+- **refresh 传参交集**：tool 声明的 refresh 执行时，参数取「action 入参 ∩ refresh tool 声明参数」（save{id,content} → get{id}）；无交集传 {}（list 类刷新不带条件）。
+- **槽位自愈**：新请求排队等上一任务的宽限为 `_PREEMPT_GRACE_S`（8s），超时强制取消——hung 任务不会把后续所有请求静默堵死（「点了没反应」类故障的根）。
