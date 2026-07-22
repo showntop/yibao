@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "type": "list",
+  "bind": {"items": "$data.rows"},
+  "item": {
+    "title": "$item.text",
+    "subtitle": "$item.when",
+    "actions": [
+      {"label": "取消", "method": "reminders.cancel", "params": {"id": "$item.id"}}
+    ]
+  }
+}

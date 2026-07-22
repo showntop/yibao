@@ -135,3 +135,93 @@ def test_reminder_skills_registerable_as_base_skills(store):
     for sk in make_skills(store):
         reg.register(sk)
     assert reg.get("reminder_set") is not None
+
+
+# ---------- 提醒管理插件（reminders capability 共享底座 store） ----------
+
+from pathlib import Path  # noqa: E402
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+class _Http:
+    def get(self, url, **kw):
+        return {}
+
+    def post(self, url, **kw):
+        return {}
+
+
+def _load(tmp_path, monkeypatch, store):
+    monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path))
+    from yibao_brain.llm import FakeProvider
+    from yibao_brain.memory import FakeMemory
+    from yibao_brain.plugins import LlmChat, load_plugins
+    from yibao_brain.skills import SkillRegistry
+
+    reg = SkillRegistry()
+    results = load_plugins(
+        REPO_ROOT / "plugins", reg,
+        memory=FakeMemory(), http=_Http(), llm=LlmChat(FakeProvider()),
+        reminders=store,
+    )
+    return reg, results
+
+
+def _run(reg, sid, params):
+    t = reg.get(sid)
+    assert t is not None, f"技能未注册: {sid}"
+    return t.run(params, t.plugin_ctx)
+
+
+def test_reminders_plugin_loads(tmp_path, monkeypatch):
+    store = ReminderStore(str(tmp_path / "reminders.json"))
+    _, results = _load(tmp_path, monkeypatch, store)
+    assert results.get("reminders") == "ok"
+
+
+def test_reminders_plugin_loads_without_store(tmp_path, monkeypatch):
+    """底座未注入 store 时插件照常加载（ok），运行时才优雅报错。"""
+    _, results = _load(tmp_path, monkeypatch, None)
+    assert results.get("reminders") == "ok"
+
+
+def test_reminders_api_registered(tmp_path, monkeypatch):
+    from yibao_brain.plugins import get_api
+
+    store = ReminderStore(str(tmp_path / "reminders.json"))
+    _load(tmp_path, monkeypatch, store)
+    lst = get_api("reminders.list")
+    assert lst is not None and lst.direct and lst.panel == "reminders:main"
+    cancel = get_api("reminders.cancel")
+    assert cancel is not None and cancel.direct and cancel.refresh == "reminders.list"
+
+
+def test_reminders_list_rows_sorted(tmp_path, monkeypatch):
+    store = ReminderStore(str(tmp_path / "reminders.json"))
+    later = store.add("晚点", time.time() + 7200)
+    sooner = store.add("早点", time.time() + 600)
+    reg, _ = _load(tmp_path, monkeypatch, store)
+    r = _run(reg, "reminders.list", {})
+    assert r.success and r.panel == "reminders:main"
+    assert [row["id"] for row in r.data["rows"]] == [sooner["id"], later["id"]]
+    assert all(row["text"] and row["when"] for row in r.data["rows"])
+
+
+def test_reminders_cancel_by_prefix(tmp_path, monkeypatch):
+    store = ReminderStore(str(tmp_path / "reminders.json"))
+    item = store.add("关火", time.time() + 3600)
+    reg, _ = _load(tmp_path, monkeypatch, store)
+    r = _run(reg, "reminders.cancel", {"id": item["id"][:4]})
+    assert r.success and "已取消" in r.data["human"]
+    assert store.list_pending() == []
+    assert not _run(reg, "reminders.cancel", {"id": item["id"]}).success  # 不能再取消
+
+
+def test_reminders_tools_fail_gracefully_without_store(tmp_path, monkeypatch):
+    reg, results = _load(tmp_path, monkeypatch, None)
+    assert results["reminders"] == "ok"
+    r = _run(reg, "reminders.list", {})
+    assert not r.success and "底座未提供提醒存储" in r.error
+    r = _run(reg, "reminders.cancel", {"id": "abcdef12"})
+    assert not r.success and "底座未提供提醒存储" in r.error

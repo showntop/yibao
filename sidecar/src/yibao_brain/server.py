@@ -96,8 +96,13 @@ def build_loop(
             print(f"[yibao] MacHost 不可用，回退无基座：{e}", file=sys.stderr)
 
     active_plugins: set | None = None  # None=全量暴露（测试/兼容）；集合=路由式暴露
+    reminder_store = None
     if use_real and not skills_factory:
-        _load_plugins_safe(reg, memory, prov, host)
+        # 底座提醒存储先建：提醒管理插件（reminders capability）与底座技能共享同一实例
+        from .reminders import ReminderStore, make_skills
+
+        reminder_store = ReminderStore(os.path.join(os.path.dirname(db_path), "reminders.json"))
+        _load_plugins_safe(reg, memory, prov, host, reminders=reminder_store)
         # 路由式暴露（§12-2）：插件 tool 默认隐藏，use_plugin 按需展开；
         # active 集合与 AgentLoop 共享（技能执行即改，下一步 LLM 调用即见新工具）
         from .plugins import get_plugin_summaries
@@ -105,10 +110,6 @@ def build_loop(
 
         active_plugins = set()
         reg.register(UsePluginSkill(reg, active_plugins, get_plugin_summaries()))
-        # 底座：主动提醒（store 挂到 agent，serve 的调度循环取它触发）
-        from .reminders import ReminderStore, make_skills
-
-        reminder_store = ReminderStore(os.path.join(os.path.dirname(db_path), "reminders.json"))
         for sk in make_skills(reminder_store):
             reg.register(sk)
 
@@ -138,7 +139,7 @@ def build_loop(
     return agent
 
 
-def _load_plugins_safe(reg, memory, prov, host) -> None:
+def _load_plugins_safe(reg, memory, prov, host, reminders=None) -> None:
     """加载 <repo>/plugins 下的插件（env YIBAO_PLUGINS_DIR 可覆盖）。
 
     只在 use_real 且无自定义 skills_factory 时调用（测试不碰真实文件系统）；

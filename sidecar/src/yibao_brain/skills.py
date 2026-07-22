@@ -27,6 +27,7 @@ class SkillContext:
     llm: Any = None  # plugins.LlmChat
     db: PluginDb | None = None
     emit_panel: Callable[[dict], None] | None = None
+    reminders: Any = None  # reminders.ReminderStore（提醒管理插件与底座技能共享同一实例）
 
 
 class Skill(ABC):

@@ -1,0 +1,16 @@
+# 提醒管理（code tool + schema 面板）
+# 提醒本身由底座技能（reminder_set/list/cancel）负责；本插件只做面板管理：
+# 共享底座 ReminderStore（reminders capability 注入同一实例），查看/取消走面板。
+id = "reminders"
+name = "提醒"
+description = "定时提醒管理：查看、取消"
+capabilities = ["reminders"]
+
+[code]
+entry = "tools"
+
+[[panel]]
+type = "schema"
+name = "main"
+label = "提醒"
+src = "panel/list.schema.json"
