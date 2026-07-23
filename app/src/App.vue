@@ -27,7 +27,6 @@ import {
   collapse as collapseWin,
   resetCollapsedSize,
   openPanel,
-  setClickThrough,
   type Dir,
 } from "./lib/window";
 
@@ -351,21 +350,6 @@ function onKeydown(e: KeyboardEvent) {
   if (e.key === "Escape" && expanded.value) void collapse();
 }
 
-/** 鼠标穿透调度：收起态默认透明区穿透；光标进入团子屏幕区域才切回可交互。
- *  expanded 整窗可交互；mousemove 先于 click，进入团子后随后的 click 能落上。 */
-function onPetHover(e: MouseEvent) {
-  if (expanded.value) {
-    void setClickThrough(false); // 展开态整窗可交互
-    return;
-  }
-  const el = document.querySelector(".pet-wrap");
-  if (!el) return;
-  const r = el.getBoundingClientRect();
-  const inside = e.clientX >= r.left && e.clientX <= r.right &&
-                 e.clientY >= r.top && e.clientY <= r.bottom;
-  void setClickThrough(!inside);
-}
-
 onMounted(async () => {
   await resetCollapsedSize();
   unlisten = await onBrainEvent(onEvent);
@@ -377,9 +361,6 @@ onMounted(async () => {
     bubbles.value.push({ role: "ai", text: "⇠ 协作结束" });
   });
   window.addEventListener("keydown", onKeydown);
-  // 收起态默认让透明区穿透；光标进入团子区才切回可交互
-  await setClickThrough(true);
-  window.addEventListener("mousemove", onPetHover);
 });
 onUnmounted(() => {
   unlisten?.();
@@ -387,7 +368,6 @@ onUnmounted(() => {
   unlistenPerms?.();
   unlistenPanelClosed?.();
   window.removeEventListener("keydown", onKeydown);
-  window.removeEventListener("mousemove", onPetHover);
   if (clickTimer !== null) clearTimeout(clickTimer);
   if (peekTimer !== null) clearTimeout(peekTimer);
   if (valenceTimer !== null) clearTimeout(valenceTimer);

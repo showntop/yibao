@@ -92,19 +92,3 @@ export const startDrag = (): Promise<void> => getCurrentWindow().startDragging()
 
 /** 打开/聚焦面板窗（窗不存在由 Rust 侧创建；大脑 panel 事件触发）。 */
 export const openPanel = (): Promise<void> => invoke("open_panel_window");
-
-/** 鼠标穿透开关：on=true 透明区穿透，on=false 团子区可交互。
- *
- * NOTE: Tauri v2 已将 v1 的 `setIgnoreMouseEvents(ignore, {forward})` 改为
- * `setIgnoreCursorEvents(ignore)`——仅一个布尔，不再支持 `{forward:true}`。
- * 原 BongoCat 方案靠 forward 让穿透态仍收 mousemove 来切回可交互，v2 下不可用：
- * 一旦 ignore=true，本窗不再收到任何鼠标事件（含 mousemove），故 onPetHover
- * 无法在光标进入团子区时把 ignore 切回 false。此处保留 toggle 契约供上层调用，
- * 真机表现以 macOS NSWindow.setIgnoresMouseEvents 语义为准（待人工验证）。 */
-export async function setClickThrough(on: boolean): Promise<void> {
-  try {
-    await getCurrentWindow().setIgnoreCursorEvents(on);
-  } catch {
-    /* Linux Wayland 等不支持则忽略，退化普通窗 */
-  }
-}
