@@ -540,11 +540,11 @@ git commit -m "feat(avatar): 重写角色——天青鹅蛋+立体光影+小手+
 // 收起态回复气泡：短回复直接显示；长内容给摘要 + 预览 +「点开看」。
 // 仅展示；显隐与自动收起计时由父组件 App.vue 拥有。点整体 = 展开。
 defineProps<{ text: string; preview?: string; long?: boolean }>();
-defineEmits<{ (e: "expand"): void }>();
+defineEmits<{ (e: "expand"): void; (e: "hover"): void; (e: "leave"): void }>();
 </script>
 
 <template>
-  <div class="peek" @click="$emit('expand')">
+  <div class="peek" @click="$emit('expand')" @mouseenter="$emit('hover')" @mouseleave="$emit('leave')">
     <div class="who">译宝</div>
     <div v-if="long" class="digest">{{ text }}</div>
     <div v-else class="short">{{ text }}</div>
@@ -629,14 +629,25 @@ function buildPeek(raw: string): Peek {
   const rest = raw.split("\n").filter((l) => l.trim() && !/^[#>\-\*]/.test(l)).slice(0, 3).join("　");
   return { text, preview: rest ? rest.slice(0, 60) : undefined, long: true };
 }
+let peekDeadline = 0; // 自动收起时刻（ms），用于 hover 暂停后恢复剩余时间
 function showPeek(raw: string) {
-  if (peekTimer) clearTimeout(peekTimer);
+  clearPeekTimer();
   peek.value = buildPeek(raw);
-  peekTimer = setTimeout(() => { peek.value = null; }, 6000);
+  peekDeadline = Date.now() + 6000;
+  peekTimer = setTimeout(() => { peek.value = null; peekTimer = null; }, 6000);
+}
+function clearPeekTimer() {
+  if (peekTimer) { clearTimeout(peekTimer); peekTimer = null; }
 }
 function clearPeek() {
-  if (peekTimer) clearTimeout(peekTimer);
+  clearPeekTimer();
   peek.value = null;
+}
+function pausePeek() { clearPeekTimer(); } // hover 冻结：气泡保留、不计时
+function resumePeek() {
+  if (!peek.value || peekTimer) return;
+  const remain = Math.max(1000, peekDeadline - Date.now());
+  peekTimer = setTimeout(() => { peek.value = null; peekTimer = null; }, remain);
 }
 ```
 
@@ -689,6 +700,8 @@ function flashValence(v: "success" | "error") {
       :preview="peek.preview"
       :long="peek.long"
       @expand="expand"
+      @hover="pausePeek"
+      @leave="resumePeek"
     />
     <Avatar class="pet" :state="state" @click="onPetClick" @longpress="onMic" />
   </div>
@@ -729,7 +742,7 @@ Expected: 无错误。
 Run: `cd app && npm run tauri dev`。
 验证：
 1. 对译宝说句话，回复到达 → 团子左侧升起气泡，显示回复文本（短）或摘要+「点开看」（长，如让它列看板）。
-2. 约 6 秒气泡自动消失；鼠标悬停期间不消失（注：hover 暂停需额外加 `@mouseenter` 清计时 / `@mouseleave` 重启——若 Step 3 未做，作为可接受 v1 行为，或补：PeekBubble 加 `@mouseenter="$emit('hover')" / @mouseleave="$emit('leave')"`，App 维护计时暂停。本步先验证自动消失即可）。
+2. 约 6 秒气泡自动消失；鼠标悬停期间冻结不消失，移开后按剩余时间继续倒计时（hover 暂停由 Step 3/5 实现）。
 3. 点气泡 → 展开完整聊天窗。
 4. 触发一个成功操作（如记闪念）→ 团子 success 笑脸+星星闪 0.4s 回 idle；触发报错 → error 垂脸闪 0.4s。
 
@@ -896,7 +909,7 @@ git commit -m "feat(avatar): 托盘图标 template 化，适配 macOS 暗色菜�
 **Type 一致性：** `AvatarState` 七态在 Task 2（Avatar 定义）与 Task 3（App 同步）一致；`Peek` 类型、`buildPeek/showPeek/clearPeek/flashValence` 命名在 Step 3/4/5 自洽；`setClickThrough(on)` 定义（Task 4 Step 1）与调用（Step 2）签名一致。
 
 **已知遗留（非阻塞，实现期定）：**
-- peek hover 暂停计时：spec 要求"hover 保持"，计划 Step 7 标注为可补；若严格遵循 spec，在 PeekBubble 加 hover 事件、App 暂停/重启计时器。
+- peek hover 暂停：已在 Task 3 实现（pausePeek/resumePeek，满足 spec "hover 保持"）。
 - success 触发用 spec 选项 ①（action_result 无后续 error 推断），Task 3 用 400ms 短闪实现；若后续要更准，给 `action_result` 加 `success` 标志（大脑侧小改，另议）。
 
 ---
