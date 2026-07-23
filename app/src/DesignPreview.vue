@@ -5,13 +5,15 @@ import Bubble from "./components/Bubble.vue";
 import InputBar from "./components/InputBar.vue";
 import SchemaPanel from "./components/SchemaPanel.vue";
 
-const states = ["idle", "listen", "think", "work", "say"] as const;
+const states = ["idle", "listen", "think", "work", "say", "success", "error"] as const;
 const stateLabel: Record<string, string> = {
   idle: "待机",
   listen: "聆听",
   think: "思考",
   work: "干活",
   say: "说话",
+  success: "成功",
+  error: "出错",
 };
 
 const chat: Array<{ role: "user" | "ai"; text: string }> = [
