@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import Avatar from "./components/Avatar.vue";
+import PeekBubble from "./components/PeekBubble.vue";
 import InputBar from "./components/InputBar.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
 import Bubble from "./components/Bubble.vue";
@@ -29,7 +30,7 @@ import {
   type Dir,
 } from "./lib/window";
 
-type AvatarState = "idle" | "listen" | "think" | "work" | "say";
+type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
 type BubbleMsg = { role: "user" | "ai" | "sys"; text: string };
 
 const state = ref<AvatarState>("idle");
@@ -41,19 +42,62 @@ const perms = ref<BrainPermissions | null>(null); // macOS 权限状态（null=�
 const expanded = ref(false);
 const dir = ref<Dir>("nw"); // 展开方向（collapse 沿同一锚点缩回要用）
 const panelOpen = ref(false); // 面板协作会话进行中（关联气泡只插一次，panel 刷新不重复插）
+
+// ---- 收起态回复气泡（peek）：短回复直显，长内容给摘要 +「点开看」；hover 暂停 ----
+type Peek = { text: string; preview?: string; long: boolean };
+const peek = ref<Peek | null>(null);
+let peekTimer: ReturnType<typeof setTimeout> | null = null;
+let peekDeadline = 0; // 自动收起时刻（ms），用于 hover 暂停后恢复剩余时间
+
+/** 长内容判定：含表格/标题/代码块，或多段、超长。摘要取首段。 */
+function buildPeek(raw: string): Peek {
+  const long = /(^|\n)\s*(\||#|```|>)|\n\s*\n/.test(raw) || raw.length > 120;
+  if (!long) return { text: raw, long: false };
+  const firstPara = raw.split(/\n\s*\n/)[0].replace(/^[#>\-\*\d.\s]+/, "").trim();
+  const text = firstPara.slice(0, 24) || "已整理好";
+  const rest = raw.split("\n").filter((l) => l.trim() && !/^[#>\-\*]/.test(l)).slice(0, 3).join("　");
+  return { text, preview: rest ? rest.slice(0, 60) : undefined, long: true };
+}
+function showPeek(raw: string) {
+  clearPeekTimer();
+  peek.value = buildPeek(raw);
+  peekDeadline = Date.now() + 6000;
+  peekTimer = setTimeout(() => { peek.value = null; peekTimer = null; }, 6000);
+}
+function clearPeekTimer() {
+  if (peekTimer) { clearTimeout(peekTimer); peekTimer = null; }
+}
+function clearPeek() {
+  clearPeekTimer();
+  peek.value = null;
+}
+function pausePeek() { clearPeekTimer(); } // hover 冻结：气泡保留、不计时
+function resumePeek() {
+  if (!peek.value || peekTimer) return;
+  const remain = Math.max(1000, peekDeadline - Date.now());
+  peekTimer = setTimeout(() => { peek.value = null; peekTimer = null; }, remain);
+}
 let unlisten: (() => void) | null = null;
 let unlistenStatus: (() => void) | null = null;
 let unlistenPerms: (() => void) | null = null;
 let unlistenPanelClosed: (() => void) | null = null;
 
 const statusText = computed(
-  () => ({ idle: "待命中", listen: "聆听中", think: "思考中…", work: "操作中…", say: "说话中…" }[state.value]),
+  () => ({
+    idle: "待命中", listen: "聆听中", think: "思考中…", work: "操作中…", say: "说话中…",
+    success: "完成", error: "出错了",
+  }[state.value]),
 );
-const busy = computed(() => state.value !== "idle"); // listen/think/work/say 都可打断（聆听=取消录音）
+// success/error 是短暂 valence（不可打断），不算 busy
+const busy = computed(() =>
+  state.value === "listen" || state.value === "think" ||
+  state.value === "work" || state.value === "say",
+);
 const suggestions = ["记一条闪念", "看看选题看板", "帮我写点什么"];
 const missingPerms = computed(() => perms.value !== null && (!perms.value.ax || !perms.value.screen));
 
 async function expand() {
+  clearPeek(); // 展开即清气泡
   expanded.value = true;
   dir.value = await expandWin();
 }
@@ -134,8 +178,9 @@ function onEvent(e: BrainEvent) {
       if (!expanded.value) void expand(); // 高风险确认必须可见
       break;
     case "action_result":
-      // 双窗口：确认可能在面板窗作答，结果回来即收尾（成功不再刷 ✓ 气泡）
+      // 双窗口：确认可能在面板窗作答，结果回来即收尾（成功短闪 400ms，spec 选项 ①）
       pending.value = null;
+      flashValence("success");
       break;
     case "final_reply_chunk": {
       // 流式增量：拼到当前 streaming bubble（首片时新建）
@@ -156,6 +201,7 @@ function onEvent(e: BrainEvent) {
         bubbles.value.push({ role: "ai", text: e.text ?? "" });
       }
       if (state.value !== "say") state.value = "idle";
+      if (e.text) showPeek(e.text);
       break;
     case "interrupted":
       if (streamingIdx.value !== null) {
@@ -176,6 +222,7 @@ function onEvent(e: BrainEvent) {
     case "reminder": {
       // 主动提醒：宠物可能收起/隐藏 → 亮窗 + 展开，确保被看见（不抢焦点）
       bubbles.value.push({ role: "ai", text: "⏰ " + (e.text ?? "到点了") });
+      showPeek("⏰ " + (e.text ?? "到点了"));
       void (async () => {
         try {
           const win = getCurrentWindow();
@@ -190,6 +237,7 @@ function onEvent(e: BrainEvent) {
       streamingIdx.value = null;
       pending.value = null; // 确认被拒（任一窗口作答）或出错
       bubbles.value.push({ role: "ai", text: "⚠️ " + (e.text ?? "出错了") });
+      flashValence("error");
       break;
     case "listening":
       state.value = "listen";
@@ -288,6 +336,16 @@ function onInterrupt() {
   });
 }
 
+// ---- 短暂 valence（success/error）：400ms 闪现后回 idle，期间不可打断 ----
+let valenceTimer: ReturnType<typeof setTimeout> | null = null;
+function flashValence(v: "success" | "error") {
+  if (valenceTimer) clearTimeout(valenceTimer);
+  state.value = v;
+  valenceTimer = setTimeout(() => {
+    if (state.value === v) state.value = "idle";
+  }, 400);
+}
+
 function onKeydown(e: KeyboardEvent) {
   if (e.key === "Escape" && expanded.value) void collapse();
 }
@@ -311,6 +369,8 @@ onUnmounted(() => {
   unlistenPanelClosed?.();
   window.removeEventListener("keydown", onKeydown);
   if (clickTimer !== null) clearTimeout(clickTimer);
+  if (peekTimer !== null) clearTimeout(peekTimer);
+  if (valenceTimer !== null) clearTimeout(valenceTimer);
 });
 </script>
 
@@ -318,7 +378,18 @@ onUnmounted(() => {
   <div class="shell" :class="{ exp: expanded }">
     <!-- 常态：宠物球 + 状态文字 -->
     <template v-if="!expanded">
-      <Avatar class="pet" :state="state" @click="onPetClick" @longpress="onMic" />
+      <div class="pet-wrap">
+        <PeekBubble
+          v-if="peek"
+          :text="peek.text"
+          :preview="peek.preview"
+          :long="peek.long"
+          @expand="expand"
+          @hover="pausePeek"
+          @leave="resumePeek"
+        />
+        <Avatar class="pet" :state="state" @click="onPetClick" @longpress="onMic" />
+      </div>
       <div class="status-collapsed" :class="state">{{ statusText }}</div>
     </template>
 
@@ -396,13 +467,22 @@ onUnmounted(() => {
   border-radius: var(--yb-radius-xl);
   box-shadow: var(--yb-shadow);
 }
-/* 常态：宠物球（可拖可点开） */
-.pet {
+/* 常态：团子定位容器（承担原 .pet 的绝对定位）+ 收起态气泡 */
+.pet-wrap {
   position: absolute;
   left: 34px;
   top: 12px;
   z-index: 3;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  /* 团子默认 dock 右上：气泡在左、团子在右 */
+  flex-direction: row-reverse;
   animation: fade-in 0.18s var(--yb-ease) both;
+}
+.pet-wrap .pet {
+  position: static;
+  animation: none;
 }
 /* 展开内容渐入：配合窗口补间，不突兀 */
 .shell.exp .chat-header,
