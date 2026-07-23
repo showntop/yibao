@@ -467,11 +467,11 @@ fn spawn_click_through(handle: tauri::AppHandle) {
                     let ww = size.width as f64 / scale;
                     let wh = size.height as f64 / scale;
                     let (cx, cy) = (mx as f64, my as f64);
-                    // 收起（窄窗 ≤150）：团子 right:34 锚 → x[wx+ww-98, wx+ww-34], y[wy+12, wy+76]；
+                    // 收起（窄窗 ≤150）：团子 right:22 锚、88px → x[wx+ww-110, wx+ww-22], y[wy+12, wy+100]；
                     // 展开/气泡（宽窗）：整窗可交互
                     let inside = if ww <= 150.0 {
-                        cx >= wx + ww - 98.0 && cx <= wx + ww - 34.0
-                            && cy >= wy + 12.0 && cy <= wy + 76.0
+                        cx >= wx + ww - 110.0 && cx <= wx + ww - 22.0
+                            && cy >= wy + 12.0 && cy <= wy + 100.0
                     } else {
                         cx >= wx && cx <= wx + ww && cy >= wy && cy <= wy + wh
                     };

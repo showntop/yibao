@@ -12,9 +12,9 @@ const COLLAPSE_W = 132;
 const COLLAPSE_H = 140;
 const EXP_W = 360;
 const EXP_H = 520;
-const BUBBLE_W = 300; // 说话态窗口宽：左气泡 + 右团子（高度不变 = COLLAPSE_H，团子纵向不动）
-const PET = 64;
-const PET_OFF_X = 34; // 形象在收起窗内的左偏移（132 宽居中 64 → 34）
+const BUBBLE_W = 320; // 说话态窗口宽：左气泡 + 右团子（88）；高度不变 = COLLAPSE_H
+const PET = 88;
+const PET_OFF_X = 22; // 形象在收起窗内的偏移（132 宽居中 88 → 22）
 const PET_OFF_Y = 12; // 形象在收起窗内的上偏移
 
 /** 形象在展开面板的哪个角（= 面板展开的反方向角）。 */

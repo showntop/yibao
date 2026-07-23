@@ -395,7 +395,7 @@ onUnmounted(() => {
         <SpeechBubble :text="bubbleText" :streaming="streamingIdx !== null" @expand="expand" />
       </div>
       <div class="pet-wrap">
-        <Avatar class="pet" :state="state" @click="onPetClick" @longpress="onMic" />
+        <Avatar class="pet" :state="state" :size="88" @click="onPetClick" @longpress="onMic" />
       </div>
       <div class="status-collapsed" :class="state">{{ statusText }}</div>
     </template>
@@ -477,24 +477,22 @@ onUnmounted(() => {
 /* 常态：团子锚到右沿（right:34）——窗口向左撑开时团子原地不动；132 窗内 ≡ 居中 */
 .pet-wrap {
   position: absolute;
-  right: 34px;
+  right: 22px;
   top: 12px;
   z-index: 3;
 }
 .pet-wrap .pet {
   position: static;
-  animation: fade-in 0.18s var(--yb-ease) both;
 }
 /* 说话态气泡槽：团子左侧（窗口撑开后腾出的空间） */
 .speech-slot {
   position: absolute;
   left: 8px;
   top: 14px;
-  width: 182px;
+  width: 188px;
   z-index: 3;
 }
 /* 展开内容渐入：配合窗口补间，不突兀 */
-.shell.exp .chat-header,
 .shell.exp .bubbles,
 .shell.exp .input-slot {
   animation: fade-in 0.22s var(--yb-ease) 0.06s both;
@@ -637,7 +635,7 @@ onUnmounted(() => {
   position: absolute;
   left: 0;
   right: 0;
-  top: 86px;
+  top: 106px;
   text-align: center;
   font-size: var(--yb-fs-sm);
   color: #a89a86;
