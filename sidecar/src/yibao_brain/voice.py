@@ -18,7 +18,16 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 # sounddevice 在 NumPy 2.5+ 下每次播放刷 4 行 DeprecationWarning（库内旧用法，非我们能修），压住
-warnings.filterwarnings("ignore", message="Setting the shape on a NumPy array.*", category=DeprecationWarning)
+_SD_WARN_MSG = "Setting the shape on a NumPy array.*"
+warnings.filterwarnings("ignore", message=_SD_WARN_MSG, category=DeprecationWarning)
+
+
+def _silence_sd_warnings() -> None:
+    """调用点补压一次：模块级过滤可能被后到的第三方 reset/simplefilter 盖掉（幂等，不重复堆过滤器）。"""
+    for f in warnings.filters:
+        if f[1] is not None and f[1].pattern == _SD_WARN_MSG:
+            return
+    warnings.filterwarnings("ignore", message=_SD_WARN_MSG, category=DeprecationWarning)
 
 
 class VoiceCapability:
@@ -118,6 +127,7 @@ class SounddeviceRecorder:
         import sherpa_onnx
         import sounddevice as sd
 
+        _silence_sd_warnings()
         self._stop.clear()
         cfg = sherpa_onnx.VadModelConfig()
         cfg.silero_vad.model = self._vad_model
@@ -264,6 +274,7 @@ class EdgeTtsSpeaker:
         """非阻塞播放一段 PCM + 30ms 轮询 cancel（命中即 stop）。"""
         import sounddevice as sd
 
+        _silence_sd_warnings()
         sd.play(pcm, samplerate=24000)
         try:
             while True:

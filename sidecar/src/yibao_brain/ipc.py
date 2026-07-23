@@ -46,6 +46,8 @@ EventKind = Literal[
     "speaking",
     "speaking_done",
     "panel",
+    "reminder",  # 主动提醒触发（server 调度循环发出）
+    "notice",  # 轻提示（插件展开等，§12-2 要知情；前端居中淡色小字）
 ]
 
 

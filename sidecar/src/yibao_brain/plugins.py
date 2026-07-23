@@ -23,7 +23,7 @@ from .plugindb import PluginDb
 from .skills import Skill, SkillContext, SkillRegistry
 
 # 合法 capability 集合（v2 §3.3）；host 不由加载器注入（invoker 执行时嫁接）
-CAPABILITIES = {"db", "memory", "http", "llm", "host"}
+CAPABILITIES = {"db", "memory", "http", "llm", "host", "reminders"}
 # 声明式 tool 类型 → 所需 capability（加载期校验，manifest 未声明即加载失败）
 TOOL_TYPE_CAPABILITY = {"db": "db", "http": "http", "prompt": "llm"}
 
@@ -278,6 +278,12 @@ class DeclarativeTool(Skill):
 
 _PANELS: dict[str, dict] = {}
 _PANEL_TITLES: dict[str, str] = {}
+_PLUGIN_INFO: dict[str, dict] = {}
+
+
+def get_plugin_summaries() -> dict[str, dict]:
+    """已加载插件摘要：pid → {name, description}（use_plugin 路由暴露用）。"""
+    return {pid: dict(info) for pid, info in _PLUGIN_INFO.items()}
 
 
 def get_panel(ref: str) -> dict | None:
@@ -402,6 +408,7 @@ def load_plugins(
     llm,
     emit_panel=None,
     host_available: bool = True,
+    reminders=None,
 ) -> dict[str, str]:
     """扫描加载所有插件，返回 {插件标识: "ok" 或错误信息}（失败插件的标识为目录名）。"""
     results: dict[str, str] = {}
@@ -415,18 +422,25 @@ def load_plugins(
             continue
         try:
             pid = _load_one(child, registry, memory=memory, http=http, llm=llm,
-                            emit_panel=emit_panel, host_available=host_available)
+                            emit_panel=emit_panel, host_available=host_available,
+                            reminders=reminders)
             results[pid] = "ok"
         except Exception as e:  # 失败隔离：坏插件不拖累其他插件/底座
             results[child.name] = f"{type(e).__name__}: {e}"
     return results
 
 
-def _load_one(child: Path, registry: SkillRegistry, *, memory, http, llm, emit_panel, host_available) -> str:
+def _load_one(child: Path, registry: SkillRegistry, *, memory, http, llm, emit_panel, host_available,
+              reminders=None) -> str:
     manifest = tomllib.loads((child / "manifest.toml").read_text(encoding="utf-8"))
     pid = manifest["id"]  # id 必填；min_engine_version 只解析暂不校验（阶段 0）
     if not _PLUGIN_ID.match(pid):
         raise ValueError(f"非法插件 id：{pid!r}")
+    # 插件摘要（use_plugin 路由暴露：LLM 靠它知道有哪些插件可展开）
+    _PLUGIN_INFO[pid] = {
+        "name": manifest.get("name") or pid,
+        "description": manifest.get("description") or "",
+    }
 
     caps = set(manifest.get("capabilities") or [])
     unknown = caps - CAPABILITIES
@@ -449,6 +463,8 @@ def _load_one(child: Path, registry: SkillRegistry, *, memory, http, llm, emit_p
         ctx.http = http
     if "llm" in caps:
         ctx.llm = llm
+    if "reminders" in caps:
+        ctx.reminders = reminders  # 共享底座提醒存储；未提供时为 None（tool 运行时优雅报错）
 
     # 先收齐全部 tool，最后统一注册：任何一步失败都不留半成品
     skills: list[Skill] = []

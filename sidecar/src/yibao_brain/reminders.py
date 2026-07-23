@@ -24,6 +24,8 @@ from .skills import Skill
 _MIN_DELAY_S = 10  # 太短没意义（调度 10s 一拍），也防 LLM 给出 0/负数
 _MAX_DELAY_S = 366 * 24 * 3600  # 一年以上不收
 
+_RRULE_STEP = {"daily": 86400, "weekly": 7 * 86400}
+
 
 class ReminderStore:
     """提醒存取：[{id, text, fire_at(epoch), created_at, fired}]。线程安全，落盘原子。"""
@@ -54,7 +56,9 @@ class ReminderStore:
             except OSError:
                 pass
 
-    def add(self, text: str, fire_at: float) -> dict:
+    def add(self, text: str, fire_at: float, rrule: str | None = None) -> dict:
+        if rrule is not None and rrule not in _RRULE_STEP:
+            raise ValueError(f"未知重复规则：{rrule!r}")
         with self._lock:
             item = {
                 "id": uuid.uuid4().hex[:8],
@@ -63,6 +67,8 @@ class ReminderStore:
                 "created_at": time.time(),
                 "fired": False,
             }
+            if rrule:
+                item["rrule"] = rrule
             self._items.append(item)
             self._save()
             return dict(item)
@@ -82,13 +88,21 @@ class ReminderStore:
             return None
 
     def pop_due(self, now: float) -> list[dict]:
-        """取走到期项并标 fired 落盘；调度循环定期调用。"""
+        """取走到期项：一次性项标 fired 落盘；重复项（rrule）重排到下一个未来时点再触发。"""
         with self._lock:
             due = [r for r in self._items if not r.get("fired") and float(r.get("fire_at", 0)) <= now]
             if not due:
                 return []
             for r in due:
-                r["fired"] = True
+                step = _RRULE_STEP.get(r.get("rrule") or "")
+                if step is None:
+                    r["fired"] = True
+                else:
+                    # 重排到下一个未来时点（关机错过好几天也只补到将来，不补刷屏）
+                    fire_at = float(r["fire_at"]) + step
+                    while fire_at <= now:
+                        fire_at += step
+                    r["fire_at"] = fire_at
             self._save()
             return [dict(r) for r in due]
 
@@ -97,8 +111,21 @@ def _fmt_ts(ts: float) -> str:
     return datetime.fromtimestamp(ts).strftime("%m月%d日 %H:%M")
 
 
+_WEEKDAYS = "一二三四五六日"
+
+
+def _fmt_when(ts: float, rrule: str | None) -> str:
+    """提醒时点的人话：一次性=「MM月DD日 HH:MM」，每天=「每天 HH:MM」，每周=「每周X HH:MM」。"""
+    dt = datetime.fromtimestamp(ts)
+    if rrule == "daily":
+        return dt.strftime("每天 %H:%M")
+    if rrule == "weekly":
+        return f"每周{_WEEKDAYS[dt.weekday()]} " + dt.strftime("%H:%M")
+    return _fmt_ts(ts)
+
+
 def _fmt_item(r: dict) -> str:
-    return f"{r['id']}：{_fmt_ts(float(r['fire_at']))} · {r['text']}"
+    return f"{r['id']}：{_fmt_when(float(r['fire_at']), r.get('rrule'))} · {r['text']}"
 
 
 def _parse_at(raw: str) -> float | None:
@@ -123,8 +150,9 @@ class ReminderSetSkill(Skill):
     id = "reminder_set"
     description = (
         "设置定时提醒：到点后译宝会主动找用户说话（气泡 + 语音）。"
-        "用户说「X 分钟/小时后提醒我…」「明天 X 点叫我…」「每天…（不支持重复，说明即可）」时用。"
-        "二选一给时间：delay_minutes（相对，如「1 小时后」→60）或 at（绝对，ISO8601 或 HH:MM）。"
+        "用户说「X 分钟/小时后提醒我…」「明天 X 点叫我…」「每天/每周 X 点提醒我…」时用。"
+        "二选一给时间：delay_minutes（相对，如「1 小时后」→60）或 at（绝对，ISO8601 或 HH:MM）；"
+        "「每天/每周」开头的重复提醒再给 repeat=daily/weekly。"
     )
     default_risk = RiskLevel.L1_LOW
 
@@ -143,6 +171,8 @@ class ReminderSetSkill(Skill):
                         "text": {"type": "string", "description": "提醒内容（到点原样说给用户）"},
                         "delay_minutes": {"type": "number", "description": "多少分钟后触发"},
                         "at": {"type": "string", "description": "绝对触发时间（ISO8601 或 HH:MM）"},
+                        "repeat": {"type": "string", "enum": ["daily", "weekly"],
+                                   "description": "重复规则：daily=每天，weekly=每周；不填=一次性"},
                     },
                     "required": ["text"],
                 },
@@ -173,11 +203,16 @@ class ReminderSetSkill(Skill):
             return ActionResult(success=False, error="没说什么时候提醒（给 delay_minutes 或 at）")
         if fire_at - now > _MAX_DELAY_S:
             return ActionResult(success=False, error="时间太远（超过一年）")
-        item = self._store.add(text, fire_at)
+        repeat = params.get("repeat")
+        if repeat is not None:
+            repeat = str(repeat)
+            if repeat not in _RRULE_STEP:
+                return ActionResult(success=False, error=f"未知重复规则：{repeat}（只支持 daily/weekly）")
+        item = self._store.add(text, fire_at, rrule=repeat)
         return ActionResult(
             success=True,
-            data={"id": item["id"], "fire_at": fire_at,
-                  "human": f"好的，{_fmt_ts(fire_at)} 提醒你：{text}"},
+            data={"id": item["id"], "fire_at": fire_at, "rrule": repeat,
+                  "human": f"好的，{_fmt_when(fire_at, repeat)} 提醒你：{text}"},
         )
 
 

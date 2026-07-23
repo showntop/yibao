@@ -30,7 +30,7 @@ import {
 } from "./lib/window";
 
 type AvatarState = "idle" | "listen" | "think" | "work" | "say";
-type BubbleMsg = { role: "user" | "ai"; text: string };
+type BubbleMsg = { role: "user" | "ai" | "sys"; text: string };
 
 const state = ref<AvatarState>("idle");
 const bubbles = ref<BubbleMsg[]>([]);
@@ -168,6 +168,10 @@ function onEvent(e: BrainEvent) {
       break;
     case "speaking_done":
       state.value = "idle";
+      break;
+    case "notice":
+      // 轻提示（插件展开等，§12-2 要知情）：居中淡色小字，不弹窗不打断
+      bubbles.value.push({ role: "sys", text: e.text ?? "" });
       break;
     case "reminder": {
       // 主动提醒：宠物可能收起/隐藏 → 亮窗 + 展开，确保被看见（不抢焦点）

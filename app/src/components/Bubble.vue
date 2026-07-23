@@ -2,8 +2,8 @@
 import { computed } from "vue";
 import { renderMarkdownLite } from "../lib/markdown";
 
-const props = defineProps<{ role: "user" | "ai"; text: string }>();
-// 用户消息原样纯文本；AI 消息走 markdown-lite（转义在前，安全）
+const props = defineProps<{ role: "user" | "ai" | "sys"; text: string }>();
+// 用户消息原样纯文本；AI 消息走 markdown-lite（转义在前，安全）；sys 是轻提示（插件展开等）
 const html = computed(() => (props.role === "ai" ? renderMarkdownLite(props.text) : null));
 </script>
 
@@ -35,6 +35,15 @@ const html = computed(() => (props.role === "ai" ? renderMarkdownLite(props.text
   color: #3f372e;
   align-self: flex-end;
   box-shadow: 0 1px 2px rgba(90, 70, 50, 0.04), 0 6px 16px rgba(90, 70, 50, 0.05);
+}
+/* 轻提示（插件展开等 notice）：居中淡色小字，不拟气泡、不打断阅读 */
+.sys {
+  background: transparent;
+  color: #c9bcab;
+  font-size: 11.5px;
+  align-self: center;
+  padding: 0 var(--yb-space-3);
+  box-shadow: none;
 }
 /* markdown-lite 块样式（v-html 内容，需 :deep） */
 .ai :deep(.md-h) {

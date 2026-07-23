@@ -27,6 +27,7 @@ class SkillContext:
     llm: Any = None  # plugins.LlmChat
     db: PluginDb | None = None
     emit_panel: Callable[[dict], None] | None = None
+    reminders: Any = None  # reminders.ReminderStore（提醒管理插件与底座技能共享同一实例）
 
 
 class Skill(ABC):
@@ -60,9 +61,71 @@ class EchoSkill(Skill):
         return ActionResult(success=True, data={"echo": params.get("text", "")})
 
 
+class UsePluginSkill(Skill):
+    """路由式暴露（规格 §12-2）：插件 tool 默认隐藏，LLM 按需展开。
+
+    active 是与 AgentLoop 共享的可变集合（激活即生效，下一步 LLM 调用就能看到新工具）；
+    summaries 来自插件 manifest（id → {name, description}），写进描述让 LLM 知道有哪些插件。
+    """
+
+    id = "use_plugin"
+    default_risk = RiskLevel.L0_READONLY
+
+    def __init__(self, registry: "SkillRegistry", active: set, summaries: dict) -> None:
+        self._reg = registry
+        self._active = active
+        self._summaries = summaries
+        listing = "；".join(
+            f"{pid}（{info.get('name', pid)}{'：' + info['description'] if info.get('description') else ''}）"
+            for pid, info in summaries.items()
+        )
+        self.description = (
+            "展开一个插件的能力（插件的工具默认隐藏以省上下文，展开后立即可用）。"
+            "用户的请求需要某插件功能而工具列表里没有时，先调本工具再继续。"
+            + (f"可用插件：{listing}" if listing else "当前没有已加载的插件。")
+        )
+
+    def openai_schema(self) -> dict:
+        return {
+            "name": self.id,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "plugin": {
+                        "type": "string",
+                        "enum": list(self._summaries) or ["(无插件)"],
+                        "description": "插件 id",
+                    }
+                },
+                "required": ["plugin"],
+            },
+        }
+
+    def run(self, params: dict, ctx: SkillContext) -> ActionResult:
+        pid = str(params.get("plugin", "")).strip()
+        if pid not in self._summaries:
+            return ActionResult(
+                success=False,
+                error=f"没有这个插件：{pid or '(空)'}（可用：{', '.join(self._summaries) or '无'}）",
+            )
+        name = self._summaries[pid].get("name", pid)
+        if pid in self._active:
+            return ActionResult(success=True, data={"plugin": pid, "already": True,
+                                                    "human": f"「{name}」插件本来就是打开状态"})
+        self._active.add(pid)
+        tools = self._reg.plugin_tools().get(pid, [])
+        return ActionResult(
+            success=True,
+            data={"plugin": pid, "already": False, "tools": tools,
+                  "human": f"我打开了「{name}」插件，{len(tools)} 个能力可用了"},
+        )
+
+
 class SkillRegistry:
     def __init__(self) -> None:
         self._skills: dict[str, Skill] = {}
+        self._by_plugin: dict[str, list[str]] = {}  # 插件 id → 其 tool id 列表（路由暴露用）
 
     @staticmethod
     def llm_name(skill_id: str) -> str:
@@ -96,6 +159,12 @@ class SkillRegistry:
         if skill.id in self._skills:
             raise ValueError(f"技能 id 重复注册：{skill.id!r}")
         self._skills[skill.id] = skill
+        if plugin is not None:
+            self._by_plugin.setdefault(plugin, []).append(skill.id)
+
+    def plugin_tools(self) -> dict[str, list[str]]:
+        """插件 id → 其 tool id 列表（use_plugin 展开时告知 LLM 新可用能力）。"""
+        return {pid: list(ids) for pid, ids in self._by_plugin.items()}
 
     def get(self, skill_id: str) -> Skill:
         return self._skills[skill_id]
@@ -103,9 +172,15 @@ class SkillRegistry:
     def list(self) -> list[Skill]:
         return list(self._skills.values())
 
-    def openai_tools(self) -> list[dict]:
+    def openai_tools(self, active_plugins: set[str] | None = None) -> list[dict]:
+        """LLM 工具清单。active_plugins 为 None 时全量（测试/兼容路径）；
+        否则插件 tool 只暴露已激活插件的——底座技能（id 无点号）始终可见。"""
         out = []
         for s in self._skills.values():
+            if active_plugins is not None and "." in s.id:
+                pid = s.id.split(".", 1)[0]
+                if pid not in active_plugins:
+                    continue
             schema = s.openai_schema()
             safe = self.llm_name(s.id)  # LLM 只见安全名；回调经 resolve_llm_name 映射回
             if "function" in schema:

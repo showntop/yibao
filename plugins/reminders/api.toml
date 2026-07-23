@@ -1,0 +1,12 @@
+# 面板可调方法白名单（v2 §7）：直调方法不过 LLM，过闸门
+[[method]]
+name = "list"
+handler = "reminders.list"
+direct = true
+panel = "reminders:main"
+
+[[method]]
+name = "cancel"
+handler = "reminders.cancel"
+direct = true
+refresh = "reminders.list"   # 取消成功后跟一次查询，面板拿刷新后的列表
