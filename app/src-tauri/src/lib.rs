@@ -488,6 +488,11 @@ fn spawn_click_through(handle: tauri::AppHandle) {
                     if last_inside != Some(inside) {
                         let _ = win.set_ignore_cursor_events(!inside);
                         last_inside = Some(inside);
+                        eprintln!(
+                            "[yibao-ct] inside={} cur=({},{}) win=({:.0},{:.0})+({:.0},{:.0}) scale={:.2} rect=x[{:.0},{:.0}]y[{:.0},{:.0}]",
+                            inside, mx, my, wx, wy, ww, wh, scale,
+                            wx + ww - 110.0, wx + ww - 22.0, wy + 12.0, wy + 100.0,
+                        );
                     }
                 }
             }
