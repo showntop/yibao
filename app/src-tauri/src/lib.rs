@@ -509,11 +509,11 @@ pub fn run() {
             let hide_item = MenuItem::with_id(app, "hide", "隐藏译宝", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "退出译宝", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_item, &hide_item, &quit_item])?;
-            let tray_img = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))
+            let tray_img = tauri::image::Image::from_bytes(include_bytes!("../icons/icon-tray.png"))
                 .expect("加载托盘图标失败");
             TrayIconBuilder::with_id("main-tray")
                 .icon(tray_img)
-                .icon_as_template(false)
+                .icon_as_template(true)
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .tooltip("译宝")
