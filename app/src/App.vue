@@ -96,8 +96,9 @@ async function expand() {
     bubbleText.value = "";
     await speakCloseWin();
   }
-  expanded.value = true;
+  // 先把窗口补间到大尺寸（期间仍显示收起态团子；团子 right 锚→补间中屏幕位置恒定、不重排→不闪），再切到聊天视图
   dir.value = await expandWin();
+  expanded.value = true;
 }
 async function collapse() {
   const d = dir.value;
@@ -397,7 +398,6 @@ onUnmounted(() => {
       <div class="pet-wrap">
         <Avatar class="pet" :state="state" :size="88" @click="onPetClick" @longpress="onMic" />
       </div>
-      <div class="status-collapsed" :class="state">{{ statusText }}</div>
     </template>
 
     <!-- 对话：header（头像+名称+状态+收起）/ (权限引导) / 气泡流 / 输入条 -->
@@ -631,21 +631,6 @@ onUnmounted(() => {
   border-color: #ff8a5c;
   color: #f2703f;
 }
-.status-collapsed {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 106px;
-  text-align: center;
-  font-size: var(--yb-fs-sm);
-  color: #a89a86;
-  animation: fade-in 0.18s var(--yb-ease) both;
-}
-.status-collapsed.think,
-.status-collapsed.work {
-  color: #f2703f;
-}
-
 /* ---- 插件启动器 ---- */
 .pl-head {
   display: flex;

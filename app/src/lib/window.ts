@@ -9,7 +9,7 @@ import {
 } from "@tauri-apps/api/window";
 
 const COLLAPSE_W = 132;
-const COLLAPSE_H = 140;
+const COLLAPSE_H = 120;
 const EXP_W = 360;
 const EXP_H = 520;
 const BUBBLE_W = 320; // 说话态窗口宽：左气泡 + 右团子（88）；高度不变 = COLLAPSE_H
@@ -76,9 +76,9 @@ async function tween(
   win: ReturnType<typeof getCurrentWindow>,
   from: { w: number; h: number; x: number; y: number },
   to: { w: number; h: number; x: number; y: number },
-  durMs = 180,
+  durMs = 150,
 ): Promise<void> {
-  const steps = 10;
+  const steps = 6;
   for (let i = 1; i <= steps; i++) {
     const t = i / steps;
     const e = 1 - Math.pow(1 - t, 3);
