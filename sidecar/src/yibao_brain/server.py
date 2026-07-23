@@ -156,7 +156,7 @@ def _load_plugins_safe(reg, memory, prov, host, reminders=None) -> None:
         results = load_plugins(
             plugins_dir, reg,
             memory=memory, http=HttpClient(), llm=LlmChat(prov),
-            host_available=host is not None,
+            host_available=host is not None, reminders=reminders,
         )
         for pid, status in results.items():
             print(f"[yibao] 插件 {pid}: {status}", file=sys.stderr)

@@ -403,6 +403,45 @@ def test_load_plugins_safe_never_raises(tmp_path, monkeypatch):
     _load_plugins_safe(SkillRegistry(), FakeMemory(), FakeProvider(), None)  # 不抛
 
 
+def test_load_plugins_safe_passes_reminders_store(tmp_path, monkeypatch):
+    """回归：_load_plugins_safe 必须把 reminders 透传给 load_plugins——
+    漏传时 reminders 插件 ctx.reminders=None，面板直调全报「底座未提供提醒存储」，面板打不开。"""
+    from yibao_brain.memory import FakeMemory
+    from yibao_brain.reminders import ReminderStore
+    from yibao_brain.server import _load_plugins_safe
+    from yibao_brain.skills import SkillRegistry
+
+    plugin = tmp_path / "rem"
+    (plugin / "tools").mkdir(parents=True)
+    (plugin / "manifest.toml").write_text(
+        'id = "rem"\ncapabilities = ["reminders"]\n[code]\nentry = "tools"\n',
+        encoding="utf-8",
+    )
+    (plugin / "tools" / "x.py").write_text(
+        "from yibao_brain.ipc import ActionResult, RiskLevel\n"
+        "from yibao_brain.skills import Skill\n"
+        "class X(Skill):\n"
+        '    id = "rem.x"\n'
+        '    description = "x"\n'
+        "    default_risk = RiskLevel.L0_READONLY\n"
+        "    def openai_schema(self):\n"
+        '        return {"type": "function", "function": {"name": self.id, "description": "x",'
+        ' "parameters": {"type": "object", "properties": {}}}}\n'
+        "    def run(self, params, ctx):\n"
+        "        return ActionResult(success=True, data={})\n"
+        "def make_tools(ctx):\n"
+        "    return [X()]\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("YIBAO_PLUGINS_DIR", str(tmp_path))
+    monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path / "data"))
+    reg = SkillRegistry()
+    store = ReminderStore(str(tmp_path / "data" / "reminders.json"))
+    _load_plugins_safe(reg, FakeMemory(), FakeProvider(), None, reminders=store)
+    sk = reg.get("rem.x")
+    assert sk is not None and sk.plugin_ctx.reminders is store
+
+
 # ---------- ⑦py：panel_action（面板直调方法，过白名单 + 闸门）----------
 
 
