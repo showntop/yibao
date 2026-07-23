@@ -22,8 +22,8 @@
         "resizable": true,
         "shadow": false,
         "visible": false,
-        "width": 132,
-        "height": 140
+        "width": 360,
+        "height": 520
       }
     ],
     "security": {

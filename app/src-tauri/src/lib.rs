@@ -9,6 +9,15 @@ use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 #[cfg(desktop)]
 use device_query::{DeviceQuery, DeviceState};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// 前端通知点击穿透模式：true=整窗可交互（展开/气泡中），false=仅团子热区可交互、其余穿透到桌面。
+static PET_INTERACTIVE_FULL: AtomicBool = AtomicBool::new(false);
+
+#[tauri::command]
+fn set_interactive_full(full: bool) {
+    PET_INTERACTIVE_FULL.store(full, Ordering::Relaxed);
+}
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
@@ -467,13 +476,13 @@ fn spawn_click_through(handle: tauri::AppHandle) {
                     let ww = size.width as f64 / scale;
                     let wh = size.height as f64 / scale;
                     let (cx, cy) = (mx as f64, my as f64);
-                    // 收起（窄窗 ≤150）：团子 right:22 锚、88px → x[wx+ww-110, wx+ww-22], y[wy+12, wy+100]；
-                    // 展开/气泡（宽窗）：整窗可交互
-                    let inside = if ww <= 150.0 {
+                    // PET_INTERACTIVE_FULL（展开/气泡中）= true → 整窗可交互；false → 仅团子热区、其余穿透
+                    let full = PET_INTERACTIVE_FULL.load(Ordering::Relaxed);
+                    let inside = if full {
+                        cx >= wx && cx <= wx + ww && cy >= wy && cy <= wy + wh
+                    } else {
                         cx >= wx + ww - 110.0 && cx <= wx + ww - 22.0
                             && cy >= wy + 12.0 && cy <= wy + 100.0
-                    } else {
-                        cx >= wx && cx <= wx + ww && cy >= wy && cy <= wy + wh
                     };
                     // 仅在进出热区时切换，避免每帧重设触发闪烁
                     if last_inside != Some(inside) {
@@ -532,7 +541,7 @@ pub fn run() {
                     let mx = mon.position().x as f64 / s;
                     let my = mon.position().y as f64 / s;
                     let sw = mon.size().width as f64 / s;
-                    let _ = win.set_position(tauri::LogicalPosition::new(mx + sw - 132.0 - 24.0, my + 40.0));
+                    let _ = win.set_position(tauri::LogicalPosition::new(mx + sw - 360.0 - 24.0, my + 40.0));
                 }
                 // 启动即显示（conf 里 visible:false 只是避免定位前闪屏，别让用户按热键找宠物）
                 let _ = win.show();
@@ -624,7 +633,8 @@ pub fn run() {
             interrupt,
             report_panel_context,
             check_permissions,
-            prompt_permission
+            prompt_permission,
+            set_interactive_full
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

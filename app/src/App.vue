@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import Avatar from "./components/Avatar.vue";
@@ -22,15 +22,7 @@ import {
   type BrainStatusMsg,
   type BrainPermissions,
 } from "./lib/brain";
-import {
-  expand as expandWin,
-  collapse as collapseWin,
-  resetCollapsedSize,
-  openPanel,
-  speakOpen as speakOpenWin,
-  speakClose as speakCloseWin,
-  type Dir,
-} from "./lib/window";
+import { resetWindowSize, openPanel, setInteractiveFull } from "./lib/window";
 
 type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
 type BubbleMsg = { role: "user" | "ai" | "sys"; text: string };
@@ -42,7 +34,6 @@ const pending = ref<{ id: string; skill: string; desc: string } | null>(null);
 const brainDown = ref(false); // 大脑掉线/重启中（守护在恢复）
 const perms = ref<BrainPermissions | null>(null); // macOS 权限状态（null=未收到）
 const expanded = ref(false);
-const dir = ref<Dir>("nw"); // 展开方向（collapse 沿同一锚点缩回要用）
 const panelOpen = ref(false); // 面板协作会话进行中（关联气泡只插一次，panel 刷新不重复插）
 
 // ---- 说话态气泡（B）：流式 chunk 拼到 bubbleText（天然打字机）；说话时窗口撑出，说完缩回 ----
@@ -54,15 +45,13 @@ let bubbleTimer: ReturnType<typeof setTimeout> | null = null;
 function openBubble() {
   if (expanded.value || bubbleOn.value) return;
   bubbleOn.value = true;
-  void speakOpenWin();
 }
-/** 立刻收起气泡（清计时 + 缩回窗口）。 */
+/** 立刻收起气泡（清计时）。 */
 function closeBubbleNow() {
   if (bubbleTimer) { clearTimeout(bubbleTimer); bubbleTimer = null; }
   if (!bubbleOn.value) return;
   bubbleOn.value = false;
   bubbleText.value = "";
-  void speakCloseWin();
 }
 /** 延迟收起（读完再看一会儿）。 */
 function scheduleBubbleClose(ms: number) {
@@ -89,21 +78,14 @@ const suggestions = ["记一条闪念", "看看选题看板", "帮我写点什�
 const missingPerms = computed(() => perms.value !== null && (!perms.value.ax || !perms.value.screen));
 
 async function expand() {
-  // 先收气泡（缩回 132）再展开：保持 expand 锚点计算正确，团子不跳位
-  if (bubbleOn.value) {
-    if (bubbleTimer) { clearTimeout(bubbleTimer); bubbleTimer = null; }
-    bubbleOn.value = false;
-    bubbleText.value = "";
-    await speakCloseWin();
-  }
-  // 先把窗口补间到大尺寸（期间仍显示收起态团子；团子 right 锚→补间中屏幕位置恒定、不重排→不闪），再切到聊天视图
-  dir.value = await expandWin();
+  // 固定窗口方案：不缩放。先收气泡（仅切内容），再切聊天视图
+  if (bubbleTimer) { clearTimeout(bubbleTimer); bubbleTimer = null; }
+  bubbleOn.value = false;
+  bubbleText.value = "";
   expanded.value = true;
 }
 async function collapse() {
-  const d = dir.value;
   expanded.value = false;
-  await collapseWin(d);
 }
 
 // ---- 插件启动器（双击团子）----
@@ -364,8 +346,14 @@ function onKeydown(e: KeyboardEvent) {
   if (e.key === "Escape" && expanded.value) void collapse();
 }
 
+// 展开或说话气泡时整窗可交互；否则仅团子热区可交互、其余穿透
+watch([expanded, bubbleOn], () => {
+  void setInteractiveFull(expanded.value || bubbleOn.value);
+});
+
 onMounted(async () => {
-  await resetCollapsedSize();
+  await resetWindowSize();
+  void setInteractiveFull(false);
   unlisten = await onBrainEvent(onEvent);
   unlistenStatus = await onBrainStatus(onStatus);
   unlistenPerms = await onBrainPermissions(onPerms);
@@ -402,7 +390,7 @@ onUnmounted(() => {
 
     <!-- 对话：header（头像+名称+状态+收起）/ (权限引导) / 气泡流 / 输入条 -->
     <template v-else>
-      <header class="chat-header" :class="{ flip: dir.endsWith('e') }">
+      <header class="chat-header flip">
         <Avatar :state="state" :size="44" @click="collapse" />
         <div class="meta">
           <span class="name">译宝</span>
