@@ -7,6 +7,8 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+#[cfg(desktop)]
+use device_query::{DeviceQuery, DeviceState};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
@@ -447,6 +449,44 @@ fn prompt_permission(state: tauri::State<Brain>, which: String) -> Result<(), St
     )
 }
 
+/// 鼠标穿透轮询：Tauri v2 的 JS API 无 forward，无法在忽略事件后收到 mousemove 切回；
+/// 改由 Rust 侧每 40ms 读全局光标位置，落在团子区/展开窗内 = 可交互，否则 set_ignore_cursor_events(true) 穿透到桌面。
+/// ⚠️ device_query 与 Tauri 的坐标单位（macOS 点 vs 物理像素）已按 scale 换算；首次真机需核对团子热区。
+#[cfg(desktop)]
+fn spawn_click_through(handle: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        let dev = DeviceState::new();
+        let mut last_inside: Option<bool> = None;
+        loop {
+            let (mx, my) = dev.get_mouse().coords;
+            if let Some(win) = handle.get_webview_window("main") {
+                let scale = win.scale_factor().unwrap_or(1.0);
+                if let (Ok(pos), Ok(size)) = (win.outer_position(), win.outer_size()) {
+                    let wx = pos.x as f64 / scale;
+                    let wy = pos.y as f64 / scale;
+                    let ww = size.width as f64 / scale;
+                    let wh = size.height as f64 / scale;
+                    let (cx, cy) = (mx as f64, my as f64);
+                    // 收起（窄窗 ≤150）：团子 right:34 锚 → x[wx+ww-98, wx+ww-34], y[wy+12, wy+76]；
+                    // 展开/气泡（宽窗）：整窗可交互
+                    let inside = if ww <= 150.0 {
+                        cx >= wx + ww - 98.0 && cx <= wx + ww - 34.0
+                            && cy >= wy + 12.0 && cy <= wy + 76.0
+                    } else {
+                        cx >= wx && cx <= wx + ww && cy >= wy && cy <= wy + wh
+                    };
+                    // 仅在进出热区时切换，避免每帧重设触发闪烁
+                    if last_inside != Some(inside) {
+                        let _ = win.set_ignore_cursor_events(!inside);
+                        last_inside = Some(inside);
+                    }
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(40));
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let shortcuts = tauri_plugin_global_shortcut::Builder::new()
@@ -565,6 +605,10 @@ pub fn run() {
             app.state::<Brain>().0.lock().unwrap().child = Some(child);
             spawn_bridge(app.handle().clone(), rx);
             spawn_watchdog(app.handle().clone());
+
+            // 鼠标穿透轮询（Tauri v2 JS API 无 forward，Rust 侧读全局光标切换 set_ignore_cursor_events）
+            #[cfg(desktop)]
+            spawn_click_through(app.handle().clone());
 
             Ok(())
         })
