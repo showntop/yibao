@@ -476,23 +476,19 @@ fn spawn_click_through(handle: tauri::AppHandle) {
                     let ww = size.width as f64 / scale;
                     let wh = size.height as f64 / scale;
                     let (cx, cy) = (mx as f64, my as f64);
-                    // PET_INTERACTIVE_FULL（展开/气泡中）= true → 整窗可交互；false → 仅团子热区、其余穿透
+                    // PET_INTERACTIVE_FULL（展开/气泡中）= true → 整窗可交互；
+                    // false → 仅团子可视热区（56×56，约贴身体、留小余量；团子中心≈winW-66,56）、其余穿透。
+                    // 不用整个 88px 元素框——那圈透明边会拦住桌面点击。
                     let full = PET_INTERACTIVE_FULL.load(Ordering::Relaxed);
                     let inside = if full {
                         cx >= wx && cx <= wx + ww && cy >= wy && cy <= wy + wh
                     } else {
-                        cx >= wx + ww - 110.0 && cx <= wx + ww - 22.0
-                            && cy >= wy + 12.0 && cy <= wy + 100.0
+                        cx >= wx + ww - 94.0 && cx <= wx + ww - 38.0
+                            && cy >= wy + 28.0 && cy <= wy + 84.0
                     };
-                    // 仅在进出热区时切换，避免每帧重设触发闪烁
                     if last_inside != Some(inside) {
                         let _ = win.set_ignore_cursor_events(!inside);
                         last_inside = Some(inside);
-                        eprintln!(
-                            "[yibao-ct] inside={} cur=({},{}) win=({:.0},{:.0})+({:.0},{:.0}) scale={:.2} rect=x[{:.0},{:.0}]y[{:.0},{:.0}]",
-                            inside, mx, my, wx, wy, ww, wh, scale,
-                            wx + ww - 110.0, wx + ww - 22.0, wy + 12.0, wy + 100.0,
-                        );
                     }
                 }
             }
