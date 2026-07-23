@@ -12,6 +12,7 @@ const COLLAPSE_W = 132;
 const COLLAPSE_H = 140;
 const EXP_W = 360;
 const EXP_H = 520;
+const BUBBLE_W = 300; // 说话态窗口宽：左气泡 + 右团子（高度不变 = COLLAPSE_H，团子纵向不动）
 const PET = 64;
 const PET_OFF_X = 34; // 形象在收起窗内的左偏移（132 宽居中 64 → 34）
 const PET_OFF_Y = 12; // 形象在收起窗内的上偏移
@@ -86,6 +87,31 @@ async function tween(
     await win.setPosition(new LogicalPosition(Math.round(lerp(from.x, to.x)), Math.round(lerp(from.y, to.y))));
     if (i < steps) await new Promise((r) => setTimeout(r, durMs / steps));
   }
+}
+
+/** 说话态：窗口向左撑宽到 BUBBLE_W（右沿屏幕坐标固定 → 团子原地不动），左侧腾出气泡位。 */
+export async function speakOpen(): Promise<void> {
+  await bubbleTween(BUBBLE_W);
+}
+
+/** 收起气泡：沿同一右沿缩回 COLLAPSE_W（团子回到 132 居中位）。 */
+export async function speakClose(): Promise<void> {
+  await bubbleTween(COLLAPSE_W);
+}
+
+/** 右沿固定的宽度补间：从当前宽 → targetW，保持窗口右沿屏幕坐标不变，
+ *  这样 CSS 上团子（right:34 锚到右沿）在撑开/收回全程原地不动。 */
+async function bubbleTween(targetW: number): Promise<void> {
+  const win = getCurrentWindow();
+  const mon = await currentMonitor();
+  const s = mon?.scaleFactor ?? 1;
+  const pos = await win.outerPosition();
+  const sz = await win.outerSize();
+  const x = pos.x / s;
+  const y = pos.y / s;
+  const w = sz.width / s;
+  const rightEdge = x + w;
+  await tween(win, { w, h: COLLAPSE_H, x, y }, { w: targetW, h: COLLAPSE_H, x: rightEdge - targetW, y });
 }
 
 export const startDrag = (): Promise<void> => getCurrentWindow().startDragging();

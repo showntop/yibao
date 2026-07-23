@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import Avatar from "./components/Avatar.vue";
-import PeekBubble from "./components/PeekBubble.vue";
+import SpeechBubble from "./components/SpeechBubble.vue";
 import InputBar from "./components/InputBar.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
 import Bubble from "./components/Bubble.vue";
@@ -27,6 +27,8 @@ import {
   collapse as collapseWin,
   resetCollapsedSize,
   openPanel,
+  speakOpen as speakOpenWin,
+  speakClose as speakCloseWin,
   type Dir,
 } from "./lib/window";
 
@@ -43,39 +45,29 @@ const expanded = ref(false);
 const dir = ref<Dir>("nw"); // 展开方向（collapse 沿同一锚点缩回要用）
 const panelOpen = ref(false); // 面板协作会话进行中（关联气泡只插一次，panel 刷新不重复插）
 
-// ---- 收起态回复气泡（peek）：短回复直显，长内容给摘要 +「点开看」；hover 暂停 ----
-type Peek = { text: string; preview?: string; long: boolean };
-const peek = ref<Peek | null>(null);
-let peekTimer: ReturnType<typeof setTimeout> | null = null;
-let peekDeadline = 0; // 自动收起时刻（ms），用于 hover 暂停后恢复剩余时间
+// ---- 说话态气泡（B）：流式 chunk 拼到 bubbleText（天然打字机）；说话时窗口撑出，说完缩回 ----
+const bubbleOn = ref(false);
+const bubbleText = ref("");
+let bubbleTimer: ReturnType<typeof setTimeout> | null = null;
 
-/** 长内容判定：含表格/标题/代码块，或多段、超长。摘要取首段。 */
-function buildPeek(raw: string): Peek {
-  const long = /(^|\n)\s*(\||#|```|>)|\n\s*\n/.test(raw) || raw.length > 120;
-  if (!long) return { text: raw, long: false };
-  const firstPara = raw.split(/\n\s*\n/)[0].replace(/^[#>\-\*\d.\s]+/, "").trim();
-  const text = firstPara.slice(0, 24) || "已整理好";
-  const rest = raw.split("\n").filter((l) => l.trim() && !/^[#>\-\*]/.test(l)).slice(0, 3).join("　");
-  return { text, preview: rest ? rest.slice(0, 60) : undefined, long: true };
+/** 打开气泡（仅收起态）：撑宽窗口 + 置位。 */
+function openBubble() {
+  if (expanded.value || bubbleOn.value) return;
+  bubbleOn.value = true;
+  void speakOpenWin();
 }
-function showPeek(raw: string) {
-  clearPeekTimer();
-  peek.value = buildPeek(raw);
-  peekDeadline = Date.now() + 6000;
-  peekTimer = setTimeout(() => { peek.value = null; peekTimer = null; }, 6000);
+/** 立刻收起气泡（清计时 + 缩回窗口）。 */
+function closeBubbleNow() {
+  if (bubbleTimer) { clearTimeout(bubbleTimer); bubbleTimer = null; }
+  if (!bubbleOn.value) return;
+  bubbleOn.value = false;
+  bubbleText.value = "";
+  void speakCloseWin();
 }
-function clearPeekTimer() {
-  if (peekTimer) { clearTimeout(peekTimer); peekTimer = null; }
-}
-function clearPeek() {
-  clearPeekTimer();
-  peek.value = null;
-}
-function pausePeek() { clearPeekTimer(); } // hover 冻结：气泡保留、不计时
-function resumePeek() {
-  if (!peek.value || peekTimer) return;
-  const remain = Math.max(1000, peekDeadline - Date.now());
-  peekTimer = setTimeout(() => { peek.value = null; peekTimer = null; }, remain);
+/** 延迟收起（读完再看一会儿）。 */
+function scheduleBubbleClose(ms: number) {
+  if (bubbleTimer) clearTimeout(bubbleTimer);
+  bubbleTimer = setTimeout(() => { closeBubbleNow(); }, ms);
 }
 let unlisten: (() => void) | null = null;
 let unlistenStatus: (() => void) | null = null;
@@ -97,7 +89,13 @@ const suggestions = ["记一条闪念", "看看选题看板", "帮我写点什�
 const missingPerms = computed(() => perms.value !== null && (!perms.value.ax || !perms.value.screen));
 
 async function expand() {
-  clearPeek(); // 展开即清气泡
+  // 先收气泡（缩回 132）再展开：保持 expand 锚点计算正确，团子不跳位
+  if (bubbleOn.value) {
+    if (bubbleTimer) { clearTimeout(bubbleTimer); bubbleTimer = null; }
+    bubbleOn.value = false;
+    bubbleText.value = "";
+    await speakCloseWin();
+  }
   expanded.value = true;
   dir.value = await expandWin();
 }
@@ -190,19 +188,31 @@ function onEvent(e: BrainEvent) {
       } else {
         bubbles.value[streamingIdx.value].text += e.text ?? "";
       }
+      // 收起态：撑出气泡，镜像流式文本（打字机效果）
+      if (!expanded.value) {
+        openBubble();
+        bubbleText.value = bubbles.value[streamingIdx.value].text;
+      }
       break;
     }
-    case "final_reply":
+    case "final_reply": {
       // 以完整文本为准收尾（兜底 chunk 丢失）；语音中保持 say 等 speaking_done
+      const full = e.text ?? "";
       if (streamingIdx.value !== null) {
-        bubbles.value[streamingIdx.value].text = e.text ?? "";
+        bubbles.value[streamingIdx.value].text = full;
         streamingIdx.value = null;
       } else {
-        bubbles.value.push({ role: "ai", text: e.text ?? "" });
+        bubbles.value.push({ role: "ai", text: full });
       }
       if (state.value !== "say") state.value = "idle";
-      if (e.text && !expanded.value) showPeek(e.text);
+      // 收起态：兜底显示完整文本；若无语音（非 say），读完即收
+      if (!expanded.value) {
+        openBubble();
+        bubbleText.value = full;
+        if (state.value !== "say") scheduleBubbleClose(2200);
+      }
       break;
+    }
     case "interrupted":
       if (streamingIdx.value !== null) {
         bubbles.value[streamingIdx.value].text += " ⛔";
@@ -211,9 +221,11 @@ function onEvent(e: BrainEvent) {
         bubbles.value.push({ role: "ai", text: "⛔ 已打断" });
       }
       state.value = "idle";
+      closeBubbleNow();
       break;
     case "speaking_done":
       state.value = "idle";
+      if (bubbleOn.value && !expanded.value) scheduleBubbleClose(1600); // 说完，留 1.6s 读完再收
       break;
     case "notice":
       // 轻提示（插件展开等，§12-2 要知情）：居中淡色小字，不弹窗不打断
@@ -237,6 +249,7 @@ function onEvent(e: BrainEvent) {
       pending.value = null; // 确认被拒（任一窗口作答）或出错
       bubbles.value.push({ role: "ai", text: "⚠️ " + (e.text ?? "出错了") });
       flashValence("error");
+      closeBubbleNow();
       break;
     case "listening":
       state.value = "listen";
@@ -369,7 +382,7 @@ onUnmounted(() => {
   unlistenPanelClosed?.();
   window.removeEventListener("keydown", onKeydown);
   if (clickTimer !== null) clearTimeout(clickTimer);
-  if (peekTimer !== null) clearTimeout(peekTimer);
+  if (bubbleTimer !== null) clearTimeout(bubbleTimer);
   if (valenceTimer !== null) clearTimeout(valenceTimer);
 });
 </script>
@@ -378,16 +391,10 @@ onUnmounted(() => {
   <div class="shell" :class="{ exp: expanded }">
     <!-- 常态：宠物球 + 状态文字 -->
     <template v-if="!expanded">
+      <div class="speech-slot" v-if="bubbleOn">
+        <SpeechBubble :text="bubbleText" :streaming="streamingIdx !== null" @expand="expand" />
+      </div>
       <div class="pet-wrap">
-        <PeekBubble
-          v-if="peek"
-          :text="peek.text"
-          :preview="peek.preview"
-          :long="peek.long"
-          @expand="expand"
-          @hover="pausePeek"
-          @leave="resumePeek"
-        />
         <Avatar class="pet" :state="state" @click="onPetClick" @longpress="onMic" />
       </div>
       <div class="status-collapsed" :class="state">{{ statusText }}</div>
@@ -467,21 +474,24 @@ onUnmounted(() => {
   border-radius: var(--yb-radius-xl);
   box-shadow: var(--yb-shadow);
 }
-/* 常态：团子定位容器（承担原 .pet 的绝对定位）+ 收起态气泡 */
+/* 常态：团子锚到右沿（right:34）——窗口向左撑开时团子原地不动；132 窗内 ≡ 居中 */
 .pet-wrap {
   position: absolute;
-  left: 34px;
+  right: 34px;
   top: 12px;
   z-index: 3;
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  /* DOM 顺序 [气泡, 团子]：气泡左、团子右；tail 指向右侧团子 */
-  animation: fade-in 0.18s var(--yb-ease) both;
 }
 .pet-wrap .pet {
   position: static;
-  animation: none;
+  animation: fade-in 0.18s var(--yb-ease) both;
+}
+/* 说话态气泡槽：团子左侧（窗口撑开后腾出的空间） */
+.speech-slot {
+  position: absolute;
+  left: 8px;
+  top: 14px;
+  width: 182px;
+  z-index: 3;
 }
 /* 展开内容渐入：配合窗口补间，不突兀 */
 .shell.exp .chat-header,
