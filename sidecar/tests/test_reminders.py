@@ -225,3 +225,56 @@ def test_reminders_tools_fail_gracefully_without_store(tmp_path, monkeypatch):
     assert not r.success and "底座未提供提醒存储" in r.error
     r = _run(reg, "reminders.cancel", {"id": "abcdef12"})
     assert not r.success and "底座未提供提醒存储" in r.error
+
+
+# ---------- 重复提醒（daily/weekly） ----------
+
+def test_store_add_rejects_unknown_rrule(store):
+    with pytest.raises(ValueError):
+        store.add("x", time.time() + 60, rrule="hourly")
+
+
+def test_pop_due_daily_reschedules_instead_of_firing_out(store):
+    r = store.add("喝水", time.time() - 1, rrule="daily")
+    due = store.pop_due(time.time())
+    assert [x["text"] for x in due] == ["喝水"]  # 本次照样触发
+    pending = store.list_pending()
+    assert len(pending) == 1 and pending[0]["id"] == r["id"]  # 不标 fired，还在待触发里
+    assert pending[0]["fire_at"] > time.time()  # 重排到未来
+    assert store.pop_due(time.time()) == []  # 不会立刻再触发
+
+
+def test_pop_due_daily_missed_days_skips_to_future(store):
+    store.add("晨练", time.time() - 3 * 86400 - 60, rrule="daily")
+    due = store.pop_due(time.time())
+    assert len(due) == 1  # 关机错过的日子只补一次，不刷屏
+    assert store.list_pending()[0]["fire_at"] > time.time()
+
+
+def test_pop_due_weekly_reschedules_a_week_later(store):
+    store.add("周报", time.time() - 1, rrule="weekly")
+    store.pop_due(time.time())
+    nxt = store.list_pending()[0]["fire_at"]
+    assert time.time() + 6 * 86400 < nxt <= time.time() + 7 * 86400 + 1
+
+
+def test_set_with_repeat_daily(store):
+    r = _skill(store, "reminder_set").run({"text": "站会", "at": "09:30", "repeat": "daily"}, None)
+    assert r.success and r.data["rrule"] == "daily" and "每天" in r.data["human"]
+    assert store.list_pending()[0]["rrule"] == "daily"
+
+
+def test_set_with_repeat_weekly_human(store):
+    r = _skill(store, "reminder_set").run({"text": "周报", "delay_minutes": 60, "repeat": "weekly"}, None)
+    assert r.success and "每周" in r.data["human"]
+
+
+def test_set_repeat_invalid(store):
+    r = _skill(store, "reminder_set").run({"text": "x", "delay_minutes": 60, "repeat": "hourly"}, None)
+    assert not r.success
+
+
+def test_list_shows_repeat_marker(store):
+    store.add("喝水", time.time() + 600, rrule="daily")
+    r = _skill(store, "reminder_list").run({}, None)
+    assert "每天" in r.data["items"][0]

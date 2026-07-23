@@ -8,8 +8,17 @@ from yibao_brain.ipc import ActionResult, RiskLevel
 from yibao_brain.skills import Skill
 
 
-def _fmt_ts(ts: float) -> str:
-    return datetime.fromtimestamp(ts).strftime("%m月%d日 %H:%M")
+_WEEKDAYS = "一二三四五六日"
+
+
+def _fmt_when(ts: float, rrule) -> str:
+    """面板「when」列：一次性=「MM月DD日 HH:MM」，每天=「每天 HH:MM」，每周=「每周X HH:MM」。"""
+    dt = datetime.fromtimestamp(ts)
+    if rrule == "daily":
+        return dt.strftime("每天 %H:%M")
+    if rrule == "weekly":
+        return f"每周{_WEEKDAYS[dt.weekday()]} " + dt.strftime("%H:%M")
+    return dt.strftime("%m月%d日 %H:%M")
 
 
 class RemindersListSkill(Skill):
@@ -29,7 +38,8 @@ class RemindersListSkill(Skill):
         if store is None:
             return ActionResult(success=False, error="底座未提供提醒存储")
         items = sorted(store.list_pending(), key=lambda r: r["fire_at"])
-        rows = [{"id": r["id"], "text": r["text"], "when": _fmt_ts(float(r["fire_at"]))}
+        rows = [{"id": r["id"], "text": r["text"],
+                 "when": _fmt_when(float(r["fire_at"]), r.get("rrule"))}
                 for r in items]
         return ActionResult(success=True, data={"rows": rows}, panel="reminders:main")
 
