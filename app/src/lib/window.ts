@@ -83,8 +83,9 @@ async function tween(
     const t = i / steps;
     const e = 1 - Math.pow(1 - t, 3);
     const lerp = (a: number, b: number) => a + (b - a) * e;
-    await win.setSize(new LogicalSize(Math.round(lerp(from.w, to.w)), Math.round(lerp(from.h, to.h))));
-    await win.setPosition(new LogicalPosition(Math.round(lerp(from.x, to.x)), Math.round(lerp(from.y, to.y))));
+    // 不取整：x 与 w 线性补间时和（=窗口右沿）恒定，右锚团子才不会逐帧 ±1px 抖动。
+    await win.setSize(new LogicalSize(lerp(from.w, to.w), lerp(from.h, to.h)));
+    await win.setPosition(new LogicalPosition(lerp(from.x, to.x), lerp(from.y, to.y)));
     if (i < steps) await new Promise((r) => setTimeout(r, durMs / steps));
   }
 }
