@@ -201,7 +201,7 @@ function onEvent(e: BrainEvent) {
         bubbles.value.push({ role: "ai", text: e.text ?? "" });
       }
       if (state.value !== "say") state.value = "idle";
-      if (e.text) showPeek(e.text);
+      if (e.text && !expanded.value) showPeek(e.text);
       break;
     case "interrupted":
       if (streamingIdx.value !== null) {
@@ -222,7 +222,6 @@ function onEvent(e: BrainEvent) {
     case "reminder": {
       // 主动提醒：宠物可能收起/隐藏 → 亮窗 + 展开，确保被看见（不抢焦点）
       bubbles.value.push({ role: "ai", text: "⏰ " + (e.text ?? "到点了") });
-      showPeek("⏰ " + (e.text ?? "到点了"));
       void (async () => {
         try {
           const win = getCurrentWindow();
@@ -343,6 +342,7 @@ function flashValence(v: "success" | "error") {
   state.value = v;
   valenceTimer = setTimeout(() => {
     if (state.value === v) state.value = "idle";
+    valenceTimer = null;
   }, 400);
 }
 
@@ -476,8 +476,7 @@ onUnmounted(() => {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  /* 团子默认 dock 右上：气泡在左、团子在右 */
-  flex-direction: row-reverse;
+  /* DOM 顺序 [气泡, 团子]：气泡左、团子右；tail 指向右侧团子 */
   animation: fade-in 0.18s var(--yb-ease) both;
 }
 .pet-wrap .pet {
