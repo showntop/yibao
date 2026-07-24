@@ -71,6 +71,9 @@ def test_all_tools_registered_with_risks(env):
         "zimeiti.guide": RiskLevel.L0_READONLY,
         "zimeiti.article_save": RiskLevel.L2_MEDIUM,
         "zimeiti.article_read": RiskLevel.L0_READONLY,
+        "zimeiti.ai_edit": RiskLevel.L1_LOW,
+        "zimeiti.set_status": RiskLevel.L1_LOW,
+        "zimeiti.versions": RiskLevel.L0_READONLY,
     }
     for tid, risk in expected.items():
         assert reg.get(tid).default_risk == risk, tid
@@ -267,3 +270,142 @@ def test_open_editor_panel_action_end_to_end(env, tmp_path):
     rows = pe["payload"]["data"]["rows"]
     assert rows[0]["id"] == tid and rows[0]["title"] == "编辑器通路"
     assert out[-1] == {"type": "run_done", "id": 1}
+
+
+# ---------- ai_edit（编辑器选段 AI 协作：直调返回 replacement，不落盘不发面板） ----------
+
+
+def _ai_skill(reg, text="改写后的表达"):
+    t = reg.get("zimeiti.ai_edit")
+    t.plugin_ctx.llm = LlmChat(FakeProvider(text=text))
+    return t
+
+
+def test_ai_edit_api_registered_direct_no_panel(env):
+    env  # 触发加载
+    api = get_api("zimeiti.ai_edit")
+    assert api is not None and api.direct and api.panel is None and api.refresh is None
+
+
+def test_ai_edit_happy_rewrite(env):
+    reg, _, _ = env
+    t = _ai_skill(reg, "  改写后的表达  ")
+    r = t.run({"selection": "原文片段", "mode": "rewrite"}, t.plugin_ctx)
+    assert r.success and r.data["replacement"] == "改写后的表达" and r.data["mode"] == "rewrite"
+    assert r.panel is None  # 不发面板事件：结果经桥回包给编辑器 iframe 做 diff
+
+
+def test_ai_edit_unwraps_code_fence(env):
+    reg, _, _ = env
+    t = _ai_skill(reg, "```markdown\n更通顺的句子\n```")
+    r = t.run({"selection": "原文"}, t.plugin_ctx)
+    assert r.success and r.data["replacement"] == "更通顺的句子"
+
+
+def test_ai_edit_prompt_carries_mode_and_context(env):
+    reg, _, _ = env
+    prov = FakeProvider(text="x")
+    t = reg.get("zimeiti.ai_edit")
+    t.plugin_ctx.llm = LlmChat(prov)
+    t.run({"selection": "片段", "mode": "expand", "context": "全文内容"}, t.plugin_ctx)
+    prompt = prov.calls[0]["messages"][0]["content"]
+    assert "扩写" in prompt and "全文内容" in prompt and "片段" in prompt
+
+
+def test_ai_edit_default_mode_is_rewrite(env):
+    reg, _, _ = env
+    prov = FakeProvider(text="x")
+    t = reg.get("zimeiti.ai_edit")
+    t.plugin_ctx.llm = LlmChat(prov)
+    t.run({"selection": "片段"}, t.plugin_ctx)
+    assert "改写" in prov.calls[0]["messages"][0]["content"]
+
+
+def test_ai_edit_rejects_bad_input(env):
+    reg, _, _ = env
+    t = _ai_skill(reg)
+    assert not t.run({"selection": "  "}, t.plugin_ctx).success  # 空选段
+    assert not t.run({"selection": "x", "mode": "wat"}, t.plugin_ctx).success  # 未知模式
+    assert not t.run({"selection": "x", "mode": "custom"}, t.plugin_ctx).success  # 自定义缺指令
+    assert not t.run({"selection": "x" * 4001}, t.plugin_ctx).success  # 片段过长
+
+
+def test_ai_edit_empty_llm_output_errors(env):
+    reg, _, _ = env
+    t = _ai_skill(reg, "   ")
+    r = t.run({"selection": "原文"}, t.plugin_ctx)
+    assert not r.success and "空" in r.error
+
+
+def test_ai_edit_without_llm_capability_fails_gracefully(env):
+    reg, _, _ = env
+    t = reg.get("zimeiti.ai_edit")
+    t.plugin_ctx.llm = None
+    r = t.run({"selection": "原文"}, t.plugin_ctx)
+    assert not r.success and "LLM" in r.error
+
+
+def test_ai_edit_llm_exception_becomes_error(env):
+    reg, _, _ = env
+
+    class _Boom:
+        def chat(self, prompt):
+            raise RuntimeError("网络炸了")
+
+    t = reg.get("zimeiti.ai_edit")
+    t.plugin_ctx.llm = _Boom()
+    r = t.run({"selection": "原文"}, t.plugin_ctx)
+    assert not r.success and "AI 处理失败" in r.error
+
+
+# ---------- set_status（编辑器内「标为已发布」：静默流转，不发面板事件） ----------
+
+
+def test_set_status_flows_without_panel(env):
+    reg, _, _ = env
+    tid = _run(reg, "zimeiti.add", {"title": "T"}).data["id"]
+    r = _run(reg, "zimeiti.set_status", {"id": tid, "status": "已发布"})
+    assert r.success and r.data["status"] == "已发布"
+    assert r.panel is None  # 编辑器内调用不许把面板跳走
+    row = _run(reg, "zimeiti.get", {"id": tid}).data["rows"][0]
+    assert row["status"] == "已发布"
+
+
+def test_set_status_api_registered_direct_no_panel(env):
+    env  # 触发加载
+    api = get_api("zimeiti.set_status")
+    assert api is not None and api.direct and api.panel is None and api.refresh is None
+
+
+def test_set_status_rejects_bad_input(env):
+    reg, _, _ = env
+    tid = _run(reg, "zimeiti.add", {"title": "T"}).data["id"]
+    assert not _run(reg, "zimeiti.set_status", {"id": tid, "status": "火星"}).success  # 未知状态
+    assert not _run(reg, "zimeiti.set_status", {"id": "不存在", "status": "已发布"}).success
+    assert not _run(reg, "zimeiti.set_status", {"status": "已发布"}).success  # 缺 id
+
+
+# ---------- versions（编辑器版本历史） ----------
+
+
+def test_versions_lists_newest_first(env):
+    reg, _, _ = env
+    tid = _run(reg, "zimeiti.add", {"title": "T"}).data["id"]
+    assert _run(reg, "zimeiti.versions", {"id": tid}).data["rows"] == []  # 无稿时空列表
+    _run(reg, "zimeiti.article_save", {"id": tid, "content": "一", "note": "初稿"})
+    _run(reg, "zimeiti.article_save", {"id": tid, "content": "二"})
+    rows = _run(reg, "zimeiti.versions", {"id": tid}).data["rows"]
+    assert [r["version"] for r in rows] == [2, 1]
+    assert rows[1]["note"] == "初稿" and rows[0]["created_at"] > 0
+    assert "content" not in rows[0]  # 列表不带正文（正文走 article_read?version=N）
+
+
+def test_versions_api_registered_direct_no_panel(env):
+    env  # 触发加载
+    api = get_api("zimeiti.versions")
+    assert api is not None and api.direct and api.panel is None and api.refresh is None
+
+
+def test_versions_rejects_missing_id(env):
+    reg, _, _ = env
+    assert not _run(reg, "zimeiti.versions", {}).success

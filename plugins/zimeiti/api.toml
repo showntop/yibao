@@ -46,6 +46,24 @@ handler = "zimeiti.article_save"
 direct = true
 panel = "zimeiti:editor"
 
+# 编辑器选段 AI 协作：直调返回 {replacement} 给 iframe 做 diff 预览，不落盘、不发 panel 事件
+[[method]]
+name = "ai_edit"
+handler = "zimeiti.ai_edit"
+direct = true
+
+# 编辑器内「标为已发布」：静默流转（无 panel/refresh，编辑器不跳转看板/详情）
+[[method]]
+name = "set_status"
+handler = "zimeiti.set_status"
+direct = true
+
+# 编辑器版本历史：直调返回 {rows} 给 iframe；具体某版正文走 read_article?version=N
+[[method]]
+name = "versions"
+handler = "zimeiti.versions"
+direct = true
+
 # 以下为 intent 方法（direct=false）：{title}/{id} 占位由面板 action 参数渲染，
 # 交给 agent 多步完成（加载方法论 → 生成/改写 → 落盘存版本），handler 仅作注册校验锚点
 [[method]]
