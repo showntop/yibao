@@ -76,7 +76,7 @@ const BLUSH = "var(--yb-body-blush)";
     @pointerup="onPointerUp"
     @pointercancel="onPointerUp"
   >
-    <svg viewBox="0 0 120 128" class="yb" aria-hidden="true">
+    <svg viewBox="-10 -6 120 120" class="yb" aria-hidden="true">
       <defs>
         <linearGradient id="yb-body" x1="34%" y1="6%" x2="66%" y2="100%">
           <stop offset="0%" stop-color="var(--yb-body-hi)" />
@@ -96,8 +96,8 @@ const BLUSH = "var(--yb-body-blush)";
           <stop offset="100%" stop-color="var(--dot)" stop-opacity="0" />
         </radialGradient>
         <radialGradient id="yb-aura" cx="50%" cy="50%" r="50%">
-          <stop offset="0%" stop-color="var(--yb-accent)" stop-opacity="0.55" />
-          <stop offset="65%" stop-color="var(--yb-accent)" stop-opacity="0.32" />
+          <stop offset="0%" stop-color="var(--yb-accent)" stop-opacity="0.75" />
+          <stop offset="60%" stop-color="var(--yb-accent)" stop-opacity="0.55" />
           <stop offset="100%" stop-color="var(--yb-accent)" stop-opacity="0" />
         </radialGradient>
         <clipPath id="yb-clip">
@@ -303,8 +303,8 @@ const BLUSH = "var(--yb-body-blush)";
 
 @keyframes dim { 0%, 100% { opacity: 0.5; } 50% { opacity: 0.85; } }
 @keyframes aura-breathe {
-  0%, 100% { transform: scale(0.93); opacity: 0.75; }
-  50% { transform: scale(1.08); opacity: 1; }
+  0%, 100% { transform: scale(0.9); opacity: 0.5; }
+  50% { transform: scale(1.12); opacity: 1; }
 }
 @keyframes pulse {
   0%, 100% { transform: scale(0.8); opacity: 0.6; }
