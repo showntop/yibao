@@ -96,8 +96,8 @@ const BLUSH = "var(--yb-body-blush)";
           <stop offset="100%" stop-color="var(--dot)" stop-opacity="0" />
         </radialGradient>
         <radialGradient id="yb-aura" cx="50%" cy="50%" r="50%">
-          <stop offset="0%" stop-color="var(--yb-accent)" stop-opacity="0.18" />
-          <stop offset="55%" stop-color="var(--yb-accent)" stop-opacity="0.06" />
+          <stop offset="0%" stop-color="var(--yb-accent)" stop-opacity="0.55" />
+          <stop offset="65%" stop-color="var(--yb-accent)" stop-opacity="0.32" />
           <stop offset="100%" stop-color="var(--yb-accent)" stop-opacity="0" />
         </radialGradient>
         <clipPath id="yb-clip">
@@ -112,7 +112,7 @@ const BLUSH = "var(--yb-body-blush)";
       <ellipse cx="63" cy="112" rx="33" ry="6.5" fill="#3f372e" opacity="0.16" filter="url(#yb-b3)" />
 
       <!-- 氛围光晕：团子背后的淡淡天青底，idle 时缓慢呼吸（给存在感） -->
-      <circle class="aura" cx="50" cy="54" r="52" fill="url(#yb-aura)" />
+      <circle class="aura" cx="50" cy="54" r="58" fill="url(#yb-aura)" />
 
       <!-- 身体（呼吸在这层） -->
       <g class="body-grp">
@@ -303,8 +303,8 @@ const BLUSH = "var(--yb-body-blush)";
 
 @keyframes dim { 0%, 100% { opacity: 0.5; } 50% { opacity: 0.85; } }
 @keyframes aura-breathe {
-  0%, 100% { transform: scale(0.94); opacity: 0.65; }
-  50% { transform: scale(1.07); opacity: 1; }
+  0%, 100% { transform: scale(0.93); opacity: 0.75; }
+  50% { transform: scale(1.08); opacity: 1; }
 }
 @keyframes pulse {
   0%, 100% { transform: scale(0.8); opacity: 0.6; }
