@@ -85,6 +85,50 @@
   /* ---- 状态栏 ---- */
   #status { padding: 0 4px; font-size: 11.5px; color: var(--muted); min-height: 22px; flex: none; }
   #status.err { color: var(--red); }
+
+  /* ---- 选段浮动条（选中文字后浮出：AI 改写/扩写/缩写/自定义）---- */
+  [hidden] { display: none !important; }
+  #selbar {
+    position: fixed; z-index: 30; display: flex; align-items: center; gap: 4px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 5px 6px; box-shadow: 0 4px 16px rgba(90, 70, 50, .16);
+  }
+  #selbar button {
+    border: none; border-radius: 8px; padding: 4px 10px; cursor: pointer;
+    background: transparent; color: var(--text); font-size: 12px; font-weight: 500;
+    transition: background .12s ease;
+  }
+  #selbar button:hover { background: var(--accent-soft); color: var(--accent-deep); }
+  #selbar button:disabled { opacity: .45; cursor: default; }
+  #selbar .sep { width: 1px; height: 14px; background: var(--border); margin: 0 2px; }
+  #custom-inst {
+    width: 130px; border: 1px solid #e3d7c4; border-radius: 8px; padding: 3px 8px;
+    font-size: 12px; background: #fff; color: var(--text); outline: none; font-family: inherit;
+  }
+  #custom-inst:focus { border-color: var(--accent); }
+
+  /* ---- AI 建议 diff 预览（确认才落稿）---- */
+  #diff-overlay {
+    position: fixed; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center;
+    background: rgba(63, 55, 46, .28); backdrop-filter: blur(2px);
+  }
+  #diff-card {
+    width: min(680px, 92%); max-height: 82%; display: flex; flex-direction: column;
+    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+    box-shadow: 0 12px 40px rgba(90, 70, 50, .25); overflow: hidden;
+  }
+  #diff-card header {
+    display: flex; align-items: center; gap: 8px; padding: 10px 14px; margin: 0;
+    border-bottom: 1px solid var(--border-soft); flex: none; font-size: 12.5px; font-weight: 600;
+  }
+  #diff-card header .sp { flex: 1; }
+  #diff-body {
+    flex: 1; overflow-y: auto; padding: 10px 14px; font: var(--mono); white-space: pre-wrap;
+    word-break: break-word;
+  }
+  #diff-body .d { background: var(--red-bg); color: var(--red); border-radius: 6px; padding: 1px 6px; margin: 1px 0; text-decoration: line-through; }
+  #diff-body .a { background: var(--green-bg); color: var(--green); border-radius: 6px; padding: 1px 6px; margin: 1px 0; }
+  #diff-body .s { color: var(--muted); padding: 1px 6px; margin: 1px 0; }
 </style>
 </head>
 <body>
@@ -105,6 +149,31 @@
   </div>
 </main>
 <div id="status">正在等译宝把选题送过来…</div>
+
+<!-- 选段 AI 浮动条 -->
+<div id="selbar" hidden>
+  <button data-mode="rewrite">改写</button>
+  <button data-mode="expand">扩写</button>
+  <button data-mode="condense">缩写</button>
+  <span class="sep"></span>
+  <span id="selbar-custom" hidden>
+    <input id="custom-inst" placeholder="想怎么处理？">
+  </span>
+  <button data-mode="custom">自定义…</button>
+</div>
+
+<!-- AI 建议 diff 预览 -->
+<div id="diff-overlay" hidden>
+  <div id="diff-card">
+    <header>
+      AI 建议 · <span id="diff-mode"></span>
+      <span class="sp"></span>
+      <button id="diff-cancel" class="act ghost">取消</button>
+      <button id="diff-apply" class="act">应用替换</button>
+    </header>
+    <div id="diff-body"></div>
+  </div>
+</div>
 
 <script>
 (function () {
@@ -226,6 +295,124 @@
       saving = false;
       $("save").disabled = false;
     });
+  });
+  // ---- 选段 AI 协作：浮动条 → ai_edit 直调 → diff 预览 → 应用落稿 ----
+  var selRange = null;        // {start, end, text}
+  var aiBusy = false;
+  var pendingReplacement = null;
+  var MODE_LABEL = { rewrite: "改写", expand: "扩写", condense: "缩写", custom: "自定义" };
+
+  function hideSelbar() {
+    $("selbar").hidden = true;
+    $("selbar-custom").hidden = true;
+  }
+
+  function onSelect(ev) {
+    if (aiBusy || !$("diff-overlay").hidden) return;
+    var el = $("editor");
+    var s = el.selectionStart, e = el.selectionEnd;
+    if (s === e || !el.value.slice(s, e).trim()) { hideSelbar(); selRange = null; return; }
+    selRange = { start: s, end: e, text: el.value.slice(s, e) };
+    var bar = $("selbar");
+    bar.hidden = false;
+    if (ev && ev.clientX) {  // 鼠标选中：跟手；键盘 shift 选中：钉在编辑器上方
+      bar.style.left = Math.min(ev.clientX, window.innerWidth - 300) + "px";
+      bar.style.top = Math.max(8, ev.clientY - 46) + "px";
+      bar.style.right = "auto";
+    } else {
+      bar.style.right = "20px";
+      bar.style.top = "56px";
+      bar.style.left = "auto";
+    }
+  }
+  $("editor").addEventListener("mouseup", onSelect);
+  $("editor").addEventListener("keyup", function (ev) {
+    if (ev.key === "Escape") { hideSelbar(); return; }
+    if (ev.shiftKey || ev.key === "Shift") onSelect(ev);
+  });
+  $("editor").addEventListener("input", hideSelbar);
+
+  function setBusy(b) {
+    aiBusy = b;
+    var btns = $("selbar").querySelectorAll("button");
+    for (var i = 0; i < btns.length; i++) btns[i].disabled = b;
+  }
+
+  function aiEdit(mode) {
+    if (!selRange || aiBusy) return;
+    var instruction = mode === "custom" ? $("custom-inst").value.trim() : "";
+    if (mode === "custom" && !instruction) {
+      $("selbar-custom").hidden = false;
+      $("custom-inst").focus();
+      return;
+    }
+    setBusy(true);
+    setStatus("AI 正在" + MODE_LABEL[mode] + "…");
+    window.yibao.invoke("zimeiti.ai_edit", {
+      selection: selRange.text, mode: mode, instruction: instruction,
+      context: $("editor").value.slice(0, 3000)
+    }).then(function (r) {
+      pendingReplacement = (r && r.replacement) || "";
+      if (!pendingReplacement) { setStatus("AI 返回了空内容", true); return; }
+      showDiff(mode, selRange.text, pendingReplacement);
+      setStatus("确认后应用替换");
+    }).catch(function (e) {
+      setStatus("AI 处理失败：" + (e && e.message ? e.message : e), true);
+    }).finally(function () { setBusy(false); });
+  }
+
+  Array.prototype.forEach.call($("selbar").querySelectorAll("button[data-mode]"), function (btn) {
+    btn.addEventListener("click", function () { aiEdit(btn.getAttribute("data-mode")); });
+  });
+  $("custom-inst").addEventListener("keydown", function (ev) {
+    if (ev.key === "Enter") aiEdit("custom");
+  });
+
+  // 行级 LCS diff（片段不大，O(n·m) 够用）
+  function diffLines(a, b) {
+    var A = a.split("\n"), B = b.split("\n"), n = A.length, m = B.length;
+    var dp = [], i, j;
+    for (i = 0; i <= n; i++) { dp.push([]); for (j = 0; j <= m; j++) dp[i].push(0); }
+    for (i = n - 1; i >= 0; i--) for (j = m - 1; j >= 0; j--)
+      dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    var out = [];
+    i = 0; j = 0;
+    while (i < n && j < m) {
+      if (A[i] === B[j]) { out.push({ t: "s", s: A[i] }); i++; j++; }
+      else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ t: "d", s: A[i] }); i++; }
+      else { out.push({ t: "a", s: B[j] }); j++; }
+    }
+    for (; i < n; i++) out.push({ t: "d", s: A[i] });
+    for (; j < m; j++) out.push({ t: "a", s: B[j] });
+    return out;
+  }
+
+  function showDiff(mode, oldText, newText) {
+    $("diff-mode").textContent = MODE_LABEL[mode] || mode;
+    var html = diffLines(oldText, newText).map(function (r) {
+      return "<div class=\"" + r.t + "\">" + (esc(r.s) || " ") + "</div>";
+    }).join("");
+    $("diff-body").innerHTML = html;
+    $("diff-overlay").hidden = false;
+    hideSelbar();
+  }
+
+  function closeDiff() {
+    $("diff-overlay").hidden = true;
+    pendingReplacement = null;
+  }
+  $("diff-cancel").addEventListener("click", function () { closeDiff(); setStatus("已取消，原文未动"); });
+  $("diff-apply").addEventListener("click", function () {
+    if (!pendingReplacement || !selRange) { closeDiff(); return; }
+    var el = $("editor");
+    el.setRangeText(pendingReplacement, selRange.start, selRange.end, "end");
+    el.dispatchEvent(new Event("input"));
+    el.focus();
+    closeDiff();
+    setStatus("已替换为 AI 建议 · 满意的话「保存为新版本」");
+  });
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape" && !$("diff-overlay").hidden) closeDiff();
   });
 })();
 </script>

@@ -71,6 +71,7 @@ def test_all_tools_registered_with_risks(env):
         "zimeiti.guide": RiskLevel.L0_READONLY,
         "zimeiti.article_save": RiskLevel.L2_MEDIUM,
         "zimeiti.article_read": RiskLevel.L0_READONLY,
+        "zimeiti.ai_edit": RiskLevel.L1_LOW,
     }
     for tid, risk in expected.items():
         assert reg.get(tid).default_risk == risk, tid
@@ -267,3 +268,89 @@ def test_open_editor_panel_action_end_to_end(env, tmp_path):
     rows = pe["payload"]["data"]["rows"]
     assert rows[0]["id"] == tid and rows[0]["title"] == "编辑器通路"
     assert out[-1] == {"type": "run_done", "id": 1}
+
+
+# ---------- ai_edit（编辑器选段 AI 协作：直调返回 replacement，不落盘不发面板） ----------
+
+
+def _ai_skill(reg, text="改写后的表达"):
+    t = reg.get("zimeiti.ai_edit")
+    t.plugin_ctx.llm = LlmChat(FakeProvider(text=text))
+    return t
+
+
+def test_ai_edit_api_registered_direct_no_panel(env):
+    env  # 触发加载
+    api = get_api("zimeiti.ai_edit")
+    assert api is not None and api.direct and api.panel is None and api.refresh is None
+
+
+def test_ai_edit_happy_rewrite(env):
+    reg, _, _ = env
+    t = _ai_skill(reg, "  改写后的表达  ")
+    r = t.run({"selection": "原文片段", "mode": "rewrite"}, t.plugin_ctx)
+    assert r.success and r.data["replacement"] == "改写后的表达" and r.data["mode"] == "rewrite"
+    assert r.panel is None  # 不发面板事件：结果经桥回包给编辑器 iframe 做 diff
+
+
+def test_ai_edit_unwraps_code_fence(env):
+    reg, _, _ = env
+    t = _ai_skill(reg, "```markdown\n更通顺的句子\n```")
+    r = t.run({"selection": "原文"}, t.plugin_ctx)
+    assert r.success and r.data["replacement"] == "更通顺的句子"
+
+
+def test_ai_edit_prompt_carries_mode_and_context(env):
+    reg, _, _ = env
+    prov = FakeProvider(text="x")
+    t = reg.get("zimeiti.ai_edit")
+    t.plugin_ctx.llm = LlmChat(prov)
+    t.run({"selection": "片段", "mode": "expand", "context": "全文内容"}, t.plugin_ctx)
+    prompt = prov.calls[0]["messages"][0]["content"]
+    assert "扩写" in prompt and "全文内容" in prompt and "片段" in prompt
+
+
+def test_ai_edit_default_mode_is_rewrite(env):
+    reg, _, _ = env
+    prov = FakeProvider(text="x")
+    t = reg.get("zimeiti.ai_edit")
+    t.plugin_ctx.llm = LlmChat(prov)
+    t.run({"selection": "片段"}, t.plugin_ctx)
+    assert "改写" in prov.calls[0]["messages"][0]["content"]
+
+
+def test_ai_edit_rejects_bad_input(env):
+    reg, _, _ = env
+    t = _ai_skill(reg)
+    assert not t.run({"selection": "  "}, t.plugin_ctx).success  # 空选段
+    assert not t.run({"selection": "x", "mode": "wat"}, t.plugin_ctx).success  # 未知模式
+    assert not t.run({"selection": "x", "mode": "custom"}, t.plugin_ctx).success  # 自定义缺指令
+    assert not t.run({"selection": "x" * 4001}, t.plugin_ctx).success  # 片段过长
+
+
+def test_ai_edit_empty_llm_output_errors(env):
+    reg, _, _ = env
+    t = _ai_skill(reg, "   ")
+    r = t.run({"selection": "原文"}, t.plugin_ctx)
+    assert not r.success and "空" in r.error
+
+
+def test_ai_edit_without_llm_capability_fails_gracefully(env):
+    reg, _, _ = env
+    t = reg.get("zimeiti.ai_edit")
+    t.plugin_ctx.llm = None
+    r = t.run({"selection": "原文"}, t.plugin_ctx)
+    assert not r.success and "LLM" in r.error
+
+
+def test_ai_edit_llm_exception_becomes_error(env):
+    reg, _, _ = env
+
+    class _Boom:
+        def chat(self, prompt):
+            raise RuntimeError("网络炸了")
+
+    t = reg.get("zimeiti.ai_edit")
+    t.plugin_ctx.llm = _Boom()
+    r = t.run({"selection": "原文"}, t.plugin_ctx)
+    assert not r.success and "AI 处理失败" in r.error
