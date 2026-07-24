@@ -171,11 +171,6 @@ onUnmounted(() => { if (blinkTimer) clearTimeout(blinkTimer); });
             </g>
           </g>
           <path d="M55 69 Q60 72 65 69" fill="none" :stroke="INK" stroke-width="2.4" stroke-linecap="round" />
-          <!-- 偶尔打个哈欠：竖长嘴 + 小舌头，从上往下缓慢张合 -->
-          <g class="yawn">
-            <ellipse cx="60" cy="71" rx="3.3" ry="6" :fill="INK" />
-            <ellipse cx="60" cy="75" rx="2" ry="1.7" fill="#e89a9a" />
-          </g>
         </g>
         <!-- listen -->
         <g v-else-if="state === 'listen'">
@@ -333,7 +328,6 @@ onUnmounted(() => { if (blinkTimer) clearTimeout(blinkTimer); });
 .av.idle .eyes-look { transform-box: fill-box; transform-origin: center; animation: yb-look 13s infinite ease-in-out; }
 .eyes { transform-box: fill-box; transform-origin: center; transition: transform 0.09s ease; }
 .eyes.blinking { transform: scaleY(0.08); }
-.av.idle .yawn { transform-box: fill-box; transform-origin: 50% 25%; animation: yb-yawn 22s infinite ease-in-out; }
 .av.listen .dot-grp { animation: pulse 1.2s infinite ease-in-out; }
 .av.think .ring { animation: spin 2.4s linear infinite; }
 .av.work .dot-grp { animation: pulse 1.7s infinite ease-in-out; }
@@ -358,11 +352,6 @@ onUnmounted(() => { if (blinkTimer) clearTimeout(blinkTimer); });
   34%, 52% { transform: translateX(0); }
   56%, 66% { transform: translateX(-2.4px); }
   70%, 100% { transform: translateX(0); }
-}
-@keyframes yb-yawn {
-  0%, 82% { opacity: 0; transform: scaleY(0.15); }
-  90%, 94% { opacity: 1; transform: scaleY(1); }
-  100% { opacity: 0; transform: scaleY(0.15); }
 }
 @keyframes pulse {
   0%, 100% { transform: scale(0.8); opacity: 0.6; }
