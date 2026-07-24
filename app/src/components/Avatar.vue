@@ -76,7 +76,7 @@ const BLUSH = "var(--yb-body-blush)";
     @pointerup="onPointerUp"
     @pointercancel="onPointerUp"
   >
-    <svg viewBox="-10 -6 120 120" class="yb" aria-hidden="true">
+    <svg viewBox="0 0 120 120" class="yb" aria-hidden="true">
       <defs>
         <linearGradient id="yb-body" x1="34%" y1="6%" x2="66%" y2="100%">
           <stop offset="0%" stop-color="var(--yb-body-hi)" />
@@ -112,7 +112,7 @@ const BLUSH = "var(--yb-body-blush)";
       <ellipse cx="63" cy="112" rx="33" ry="6.5" fill="#3f372e" opacity="0.16" filter="url(#yb-b3)" />
 
       <!-- 氛围光晕：团子背后的淡淡天青底，idle 时缓慢呼吸（给存在感） -->
-      <circle class="aura" cx="50" cy="54" r="58" fill="url(#yb-aura)" />
+      <circle class="aura" cx="60" cy="60" r="58" fill="url(#yb-aura)" />
 
       <!-- 身体（呼吸在这层） -->
       <g class="body-grp">
