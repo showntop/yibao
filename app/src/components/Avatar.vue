@@ -142,10 +142,12 @@ const BLUSH = "var(--yb-body-blush)";
         <!-- 眼睛 / 嘴：按状态 -->
         <!-- idle -->
         <g v-if="state === 'idle'">
-          <ellipse cx="51" cy="60" rx="3.2" ry="4.5" :fill="INK" />
-          <ellipse cx="69" cy="60" rx="3.2" ry="4.5" :fill="INK" />
-          <circle cx="52.2" cy="58.4" r="1.05" fill="#fff" />
-          <circle cx="70.2" cy="58.4" r="1.05" fill="#fff" />
+          <g class="eyes">
+            <ellipse cx="51" cy="60" rx="3.2" ry="4.5" :fill="INK" />
+            <ellipse cx="69" cy="60" rx="3.2" ry="4.5" :fill="INK" />
+            <circle cx="52.2" cy="58.4" r="1.05" fill="#fff" />
+            <circle cx="70.2" cy="58.4" r="1.05" fill="#fff" />
+          </g>
           <path d="M55 69 Q60 72 65 69" fill="none" :stroke="INK" stroke-width="2.4" stroke-linecap="round" />
         </g>
         <!-- listen -->
@@ -301,6 +303,7 @@ const BLUSH = "var(--yb-body-blush)";
 .av.idle .dot-grp { animation: dim 3s infinite ease-in-out; }
 .aura { transform-box: fill-box; transform-origin: center; }
 .av.idle .aura { animation: aura-breathe 4.8s infinite ease-in-out; }
+.av.idle .eyes { transform-box: fill-box; transform-origin: center; animation: yb-blink 4.6s infinite ease-in-out; }
 .av.listen .dot-grp { animation: pulse 1.2s infinite ease-in-out; }
 .av.think .ring { animation: spin 2.4s linear infinite; }
 .av.work .dot-grp { animation: pulse 1.7s infinite ease-in-out; }
@@ -318,6 +321,10 @@ const BLUSH = "var(--yb-body-blush)";
 @keyframes aura-breathe {
   0%, 100% { transform: scale(0.9); opacity: 0.5; }
   50% { transform: scale(1.12); opacity: 1; }
+}
+@keyframes yb-blink {
+  0%, 90%, 100% { transform: scaleY(1); }
+  93%, 96% { transform: scaleY(0.08); }
 }
 @keyframes pulse {
   0%, 100% { transform: scale(0.8); opacity: 0.6; }
