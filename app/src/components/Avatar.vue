@@ -133,6 +133,8 @@ const BLUSH = "var(--yb-body-blush)";
         <path d="M46 42 Q60 50 74 42" fill="none" stroke="var(--yb-accent)" stroke-width="3.2" stroke-linecap="round" />
         <path d="M46 41 Q60 49 74 41" fill="none" stroke="#ffffff" stroke-opacity="0.5" stroke-width="1" stroke-linecap="round" />
 
+        <!-- 脸（反向缩放：身体 scaleY0.78 压扁时，脸抵消回原比例，保持圆不变形） -->
+        <g class="face" transform="matrix(1,0,0,1.282,0,-16.9)">
         <!-- 腮红（轻） -->
         <ellipse cx="47" cy="66" rx="4.2" ry="2.5" :fill="BLUSH" opacity="0.24" />
         <ellipse cx="73" cy="66" rx="4.2" ry="2.5" :fill="BLUSH" opacity="0.24" />
@@ -190,6 +192,7 @@ const BLUSH = "var(--yb-body-blush)";
           <path d="M47 61.5 Q51 64 55 61.5" fill="none" :stroke="INK" stroke-width="2.4" stroke-linecap="round" />
           <path d="M65 61.5 Q69 64 73 61.5" fill="none" :stroke="INK" stroke-width="2.4" stroke-linecap="round" />
           <path d="M55 71.5 Q60 69.2 65 71.5" fill="none" :stroke="INK" stroke-width="2.4" stroke-linecap="round" />
+        </g>
         </g>
       </g>
 
