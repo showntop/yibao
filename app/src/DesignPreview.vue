@@ -60,10 +60,10 @@ const boardData = {
 
 <template>
   <div class="design-root">
-    <h1 class="page-title">译宝 UI 预览 · 治愈系</h1>
+    <h1 class="page-title">译宝 UI 预览 · 天青</h1>
 
     <section class="block">
-      <h2>团子 · 五状态</h2>
+      <h2>团子 · 七状态</h2>
       <div class="avatar-row">
         <div v-for="s in states" :key="s" class="avatar-cell">
           <Avatar :state="s" :size="88" />

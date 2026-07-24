@@ -448,7 +448,7 @@ onUnmounted(() => {
   font-family: -apple-system, "PingFang SC", sans-serif;
   font-size: 13px;
   line-height: 1.6;
-  color: #3f372e;
+  color: var(--yb-text);
 }
 .shell.exp {
   padding: var(--yb-space-3);
@@ -500,8 +500,8 @@ onUnmounted(() => {
   align-items: center;
   gap: 10px;
   padding: var(--yb-space-2) var(--yb-space-3);
-  background: #ffffff;
-  border: 1px solid #eee4d6;
+  background: var(--yb-surface-solid);
+  border: 1px solid var(--yb-surface-border);
   border-radius: 14px;
   box-shadow: 0 1px 2px rgba(90, 70, 50, 0.04), 0 6px 16px rgba(90, 70, 50, 0.05);
 }
@@ -524,7 +524,7 @@ onUnmounted(() => {
 }
 .status {
   font-size: var(--yb-fs-sm);
-  color: #a89a86;
+  color: var(--yb-text-dim);
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -551,25 +551,31 @@ onUnmounted(() => {
 .status.say {
   --dot: var(--yb-say);
 }
+.status.success {
+  --dot: var(--yb-state-success);
+}
+.status.error {
+  --dot: var(--yb-state-error);
+}
 .status.think,
 .status.work {
-  color: #f2703f;
+  color: var(--yb-accent-deep);
 }
 .collapse-btn {
   width: 26px;
   height: 26px;
   flex-shrink: 0;
-  border: 1px solid #e3d7c4;
+  border: 1px solid var(--yb-surface-border);
   border-radius: 10px;
   background: transparent;
-  color: #8a7a66;
+  color: var(--yb-text-dim);
   cursor: pointer;
   font-size: 14px;
   line-height: 1;
   transition: all 0.15s ease;
 }
 .collapse-btn:hover {
-  background: #faf3ea;
+  background: var(--yb-surface-solid);
 }
 .bubbles {
   flex: 1;
@@ -584,7 +590,7 @@ onUnmounted(() => {
   width: 6px;
 }
 .bubbles::-webkit-scrollbar-thumb {
-  background: #eee4d6;
+  background: var(--yb-surface-border);
   border-radius: 3px;
 }
 /* 空状态：气泡区占位引导 */
@@ -595,7 +601,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   gap: var(--yb-space-3);
-  color: #a89a86;
+  color: var(--yb-text-dim);
   font-size: 13px;
 }
 .chips {
@@ -606,18 +612,18 @@ onUnmounted(() => {
 }
 .chip {
   padding: 5px 12px;
-  border: 1px solid #eee4d6;
+  border: 1px solid var(--yb-surface-border);
   border-radius: 999px;
-  background: #ffffff;
-  color: #a89a86;
+  background: var(--yb-surface-solid);
+  color: var(--yb-text-dim);
   font-size: 13px;
   cursor: pointer;
   transition: all 0.15s ease;
 }
 .chip:hover {
-  background: #fff0e8;
-  border-color: #ff8a5c;
-  color: #f2703f;
+  background: var(--yb-accent-soft);
+  border-color: var(--yb-accent);
+  color: var(--yb-accent-deep);
 }
 /* ---- 插件启动器 ---- */
 .pl-head {
@@ -633,7 +639,7 @@ onUnmounted(() => {
 .pl-back {
   border: none;
   background: transparent;
-  color: #8a7a66;
+  color: var(--yb-text-dim);
   font-size: 13px;
   cursor: pointer;
   padding: 3px 8px;
@@ -641,14 +647,14 @@ onUnmounted(() => {
   transition: all 0.15s ease;
 }
 .pl-back:hover {
-  color: #f2703f;
-  background: #faf3ea;
+  color: var(--yb-accent-deep);
+  background: var(--yb-surface-solid);
 }
 .pl-err {
   padding: 6px var(--yb-space-3);
   border-radius: 10px;
-  background: #fce7e3;
-  color: #c0574b;
+  background: var(--yb-danger-soft);
+  color: var(--yb-danger);
   font-size: 13px;
 }
 .pl-row {
@@ -657,9 +663,9 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: var(--yb-space-2);
   padding: var(--yb-space-3) var(--yb-space-4);
-  border: 1px solid #eee4d6;
+  border: 1px solid var(--yb-surface-border);
   border-radius: 14px;
-  background: #ffffff;
+  background: var(--yb-surface-solid);
   box-shadow: 0 1px 2px rgba(90, 70, 50, 0.04), 0 6px 16px rgba(90, 70, 50, 0.05);
   cursor: pointer;
   font-family: inherit;
@@ -667,23 +673,23 @@ onUnmounted(() => {
   transition: all 0.15s ease;
 }
 .pl-row:hover {
-  border-color: #ff8a5c;
+  border-color: var(--yb-accent);
   transform: translateY(-1px);
 }
 .pl-name {
   font-size: var(--yb-fs-lg);
   font-weight: 500;
-  color: #3f372e;
+  color: var(--yb-text);
 }
 .pl-id {
   font-size: var(--yb-fs-sm);
-  color: #c9bcab;
+  color: var(--yb-text-dim);
 }
 .pl-empty {
   flex: 1;
   display: grid;
   place-items: center;
-  color: #a89a86;
+  color: var(--yb-text-dim);
   font-size: 13px;
 }
 </style>

@@ -10,16 +10,18 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 #[cfg(desktop)]
 use device_query::{DeviceQuery, DeviceState};
 use std::sync::atomic::{AtomicBool, Ordering};
+use tauri_plugin_shell::process::{CommandChild, CommandEvent};
+use tauri_plugin_shell::ShellExt;
 
 /// 前端通知点击穿透模式：true=整窗可交互（展开/气泡中），false=仅团子热区可交互、其余穿透到桌面。
-static PET_INTERACTIVE_FULL: AtomicBool = AtomicBool::new(false);
+/// 启动默认 true（整窗可交互）：前端挂载前若辅助功能未授权、读不到光标，收起态分支会回退为「不穿透」，
+/// 避免团子被锁死点不到；前端 onMounted 后由 setInteractiveFull 按需切到 false。
+static PET_INTERACTIVE_FULL: AtomicBool = AtomicBool::new(true);
 
 #[tauri::command]
 fn set_interactive_full(full: bool) {
     PET_INTERACTIVE_FULL.store(full, Ordering::Relaxed);
 }
-use tauri_plugin_shell::process::{CommandChild, CommandEvent};
-use tauri_plugin_shell::ShellExt;
 
 /// sidecar 守护状态：子进程句柄 + 心跳/重启计数/退出标记。
 struct BrainState {
@@ -482,6 +484,9 @@ fn spawn_click_through(handle: tauri::AppHandle) {
                     let full = PET_INTERACTIVE_FULL.load(Ordering::Relaxed);
                     let inside = if full {
                         cx >= wx && cx <= wx + ww && cy >= wy && cy <= wy + wh
+                    } else if mx == 0 && my == 0 {
+                        // 读不到光标（多半辅助功能未授权）→ 不穿透，避免团子点不到
+                        true
                     } else {
                         cx >= wx + ww - 94.0 && cx <= wx + ww - 38.0
                             && cy >= wy + 28.0 && cy <= wy + 84.0
