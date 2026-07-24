@@ -235,7 +235,7 @@ const BLUSH = "var(--yb-body-blush)";
   cursor: grab;
   user-select: none;
   touch-action: none;
-  transform: scaleY(0.84);
+  transform: scaleY(0.78);
   transform-origin: 50% 50%;
 }
 .av:active {
