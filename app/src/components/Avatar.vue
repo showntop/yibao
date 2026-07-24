@@ -95,6 +95,11 @@ const BLUSH = "var(--yb-body-blush)";
           <stop offset="0%" stop-color="var(--dot)" stop-opacity="0.55" />
           <stop offset="100%" stop-color="var(--dot)" stop-opacity="0" />
         </radialGradient>
+        <radialGradient id="yb-aura" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stop-color="var(--yb-accent)" stop-opacity="0.18" />
+          <stop offset="55%" stop-color="var(--yb-accent)" stop-opacity="0.06" />
+          <stop offset="100%" stop-color="var(--yb-accent)" stop-opacity="0" />
+        </radialGradient>
         <clipPath id="yb-clip">
           <path d="M60 18 C76 18 84 34 84 57 C84 84 74 102 60 102 C46 102 36 84 36 57 C36 34 44 18 60 18 Z" />
         </clipPath>
@@ -105,6 +110,9 @@ const BLUSH = "var(--yb-body-blush)";
 
       <!-- 落地投影 -->
       <ellipse cx="63" cy="112" rx="33" ry="6.5" fill="#3f372e" opacity="0.16" filter="url(#yb-b3)" />
+
+      <!-- 氛围光晕：团子背后的淡淡天青底，idle 时缓慢呼吸（给存在感） -->
+      <circle class="aura" cx="50" cy="54" r="52" fill="url(#yb-aura)" />
 
       <!-- 身体（呼吸在这层） -->
       <g class="body-grp">
@@ -278,6 +286,8 @@ const BLUSH = "var(--yb-body-blush)";
 
 /* ---- 各态灯动效 ---- */
 .av.idle .dot-grp { animation: dim 3s infinite ease-in-out; }
+.aura { transform-box: fill-box; transform-origin: center; }
+.av.idle .aura { animation: aura-breathe 4.8s infinite ease-in-out; }
 .av.listen .dot-grp { animation: pulse 1.2s infinite ease-in-out; }
 .av.think .ring { animation: spin 2.4s linear infinite; }
 .av.work .dot-grp { animation: pulse 1.7s infinite ease-in-out; }
@@ -292,6 +302,10 @@ const BLUSH = "var(--yb-body-blush)";
 .av.say .wave:nth-child(2) { animation-delay: 0.2s; }
 
 @keyframes dim { 0%, 100% { opacity: 0.5; } 50% { opacity: 0.85; } }
+@keyframes aura-breathe {
+  0%, 100% { transform: scale(0.94); opacity: 0.65; }
+  50% { transform: scale(1.07); opacity: 1; }
+}
 @keyframes pulse {
   0%, 100% { transform: scale(0.8); opacity: 0.6; }
   50% { transform: scale(1.2); opacity: 1; }
