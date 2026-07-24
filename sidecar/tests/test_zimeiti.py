@@ -72,6 +72,7 @@ def test_all_tools_registered_with_risks(env):
         "zimeiti.article_save": RiskLevel.L2_MEDIUM,
         "zimeiti.article_read": RiskLevel.L0_READONLY,
         "zimeiti.ai_edit": RiskLevel.L1_LOW,
+        "zimeiti.set_status": RiskLevel.L1_LOW,
     }
     for tid, risk in expected.items():
         assert reg.get(tid).default_risk == risk, tid
@@ -354,3 +355,30 @@ def test_ai_edit_llm_exception_becomes_error(env):
     t.plugin_ctx.llm = _Boom()
     r = t.run({"selection": "原文"}, t.plugin_ctx)
     assert not r.success and "AI 处理失败" in r.error
+
+
+# ---------- set_status（编辑器内「标为已发布」：静默流转，不发面板事件） ----------
+
+
+def test_set_status_flows_without_panel(env):
+    reg, _, _ = env
+    tid = _run(reg, "zimeiti.add", {"title": "T"}).data["id"]
+    r = _run(reg, "zimeiti.set_status", {"id": tid, "status": "已发布"})
+    assert r.success and r.data["status"] == "已发布"
+    assert r.panel is None  # 编辑器内调用不许把面板跳走
+    row = _run(reg, "zimeiti.get", {"id": tid}).data["rows"][0]
+    assert row["status"] == "已发布"
+
+
+def test_set_status_api_registered_direct_no_panel(env):
+    env  # 触发加载
+    api = get_api("zimeiti.set_status")
+    assert api is not None and api.direct and api.panel is None and api.refresh is None
+
+
+def test_set_status_rejects_bad_input(env):
+    reg, _, _ = env
+    tid = _run(reg, "zimeiti.add", {"title": "T"}).data["id"]
+    assert not _run(reg, "zimeiti.set_status", {"id": tid, "status": "火星"}).success  # 未知状态
+    assert not _run(reg, "zimeiti.set_status", {"id": "不存在", "status": "已发布"}).success
+    assert not _run(reg, "zimeiti.set_status", {"status": "已发布"}).success  # 缺 id
