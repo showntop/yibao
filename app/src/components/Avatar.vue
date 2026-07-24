@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, watch, onUnmounted } from "vue";
 import { startDrag } from "../lib/window";
 
 // 译宝 · 天青鹅蛋角色：立体光影 + 小手 + 天线（兼状态灯）。
@@ -64,6 +64,26 @@ function onPointerUp() {
 
 const INK = "var(--yb-body-ink)";
 const BLUSH = "var(--yb-body-blush)";
+
+// idle 随机眨眼：JS 随机间隔触发（2.2–5.8s），比固定周期自然；仅 idle 时跑
+const blinking = ref(false);
+let blinkTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleBlink() {
+  blinkTimer = setTimeout(() => {
+    blinking.value = true;
+    setTimeout(() => { blinking.value = false; }, 130);
+    scheduleBlink();
+  }, 2200 + Math.random() * 3600);
+}
+watch(
+  () => props.state,
+  (s) => {
+    if (s === "idle") scheduleBlink();
+    else if (blinkTimer) { clearTimeout(blinkTimer); blinkTimer = null; blinking.value = false; }
+  },
+  { immediate: true },
+);
+onUnmounted(() => { if (blinkTimer) clearTimeout(blinkTimer); });
 </script>
 
 <template>
@@ -142,13 +162,17 @@ const BLUSH = "var(--yb-body-blush)";
         <!-- 眼睛 / 嘴：按状态 -->
         <!-- idle -->
         <g v-if="state === 'idle'">
-          <g class="eyes">
-            <ellipse cx="51" cy="60" rx="3.2" ry="4.5" :fill="INK" />
-            <ellipse cx="69" cy="60" rx="3.2" ry="4.5" :fill="INK" />
-            <circle cx="52.2" cy="58.4" r="1.05" fill="#fff" />
-            <circle cx="70.2" cy="58.4" r="1.05" fill="#fff" />
+          <g class="eyes-look">
+            <g class="eyes" :class="{ blinking: blinking }">
+              <ellipse cx="51" cy="60" rx="3.2" ry="4.5" :fill="INK" />
+              <ellipse cx="69" cy="60" rx="3.2" ry="4.5" :fill="INK" />
+              <circle cx="52.2" cy="58.4" r="1.05" fill="#fff" />
+              <circle cx="70.2" cy="58.4" r="1.05" fill="#fff" />
+            </g>
           </g>
           <path d="M55 69 Q60 72 65 69" fill="none" :stroke="INK" stroke-width="2.4" stroke-linecap="round" />
+          <!-- 偶尔打个哈欠 -->
+          <ellipse class="yawn" cx="60" cy="70" rx="3.8" ry="4.6" :fill="INK" />
         </g>
         <!-- listen -->
         <g v-else-if="state === 'listen'">
@@ -303,7 +327,10 @@ const BLUSH = "var(--yb-body-blush)";
 .av.idle .dot-grp { animation: dim 3s infinite ease-in-out; }
 .aura { transform-box: fill-box; transform-origin: center; }
 .av.idle .aura { animation: aura-breathe 4.8s infinite ease-in-out; }
-.av.idle .eyes { transform-box: fill-box; transform-origin: center; animation: yb-blink 4.6s infinite ease-in-out; }
+.av.idle .eyes-look { transform-box: fill-box; transform-origin: center; animation: yb-look 13s infinite ease-in-out; }
+.eyes { transform-box: fill-box; transform-origin: center; transition: transform 0.09s ease; }
+.eyes.blinking { transform: scaleY(0.08); }
+.av.idle .yawn { transform-box: fill-box; transform-origin: center; animation: yb-yawn 12s infinite ease-in-out; }
 .av.listen .dot-grp { animation: pulse 1.2s infinite ease-in-out; }
 .av.think .ring { animation: spin 2.4s linear infinite; }
 .av.work .dot-grp { animation: pulse 1.7s infinite ease-in-out; }
@@ -322,9 +349,17 @@ const BLUSH = "var(--yb-body-blush)";
   0%, 100% { transform: scale(0.9); opacity: 0.5; }
   50% { transform: scale(1.12); opacity: 1; }
 }
-@keyframes yb-blink {
-  0%, 90%, 100% { transform: scaleY(1); }
-  93%, 96% { transform: scaleY(0.08); }
+@keyframes yb-look {
+  0%, 16% { transform: translateX(0); }
+  20%, 30% { transform: translateX(2.4px); }
+  34%, 52% { transform: translateX(0); }
+  56%, 66% { transform: translateX(-2.4px); }
+  70%, 100% { transform: translateX(0); }
+}
+@keyframes yb-yawn {
+  0%, 72% { opacity: 0; transform: scaleY(0.4); }
+  78%, 84% { opacity: 1; transform: scaleY(1); }
+  90%, 100% { opacity: 0; transform: scaleY(0.4); }
 }
 @keyframes pulse {
   0%, 100% { transform: scale(0.8); opacity: 0.6; }
