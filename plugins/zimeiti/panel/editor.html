@@ -158,6 +158,34 @@
     display: flex; justify-content: space-between; align-items: center; gap: 8px;
   }
   #pub-card footer .hint { font-size: 11px; color: var(--faint); }
+
+  /* ---- 版本历史弹层 ---- */
+  #hist-overlay {
+    position: fixed; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center;
+    background: rgba(63, 55, 46, .28); backdrop-filter: blur(2px);
+  }
+  #hist-card {
+    width: min(520px, 92%); max-height: 76%; display: flex; flex-direction: column;
+    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+    box-shadow: 0 12px 40px rgba(90, 70, 50, .25); overflow: hidden;
+  }
+  #hist-card header {
+    display: flex; align-items: center; gap: 8px; padding: 10px 14px;
+    border-bottom: 1px solid var(--border-soft); font-size: 12.5px; font-weight: 600; flex: none;
+  }
+  #hist-card header .sp { flex: 1; }
+  #hist-body { flex: 1; overflow-y: auto; padding: 6px 14px 10px; }
+  .hrow { display: flex; align-items: center; gap: 10px; padding: 9px 2px; border-bottom: 1px solid var(--border-soft); }
+  .hrow:last-child { border-bottom: none; }
+  .hrow .v { font: 600 12.5px "SF Mono", ui-monospace, Menlo, monospace; color: var(--accent-deep); flex: none; }
+  .hrow .n { flex: 1; min-width: 0; font-size: 12.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hrow .t { font-size: 11px; color: var(--faint); flex: none; }
+  .hrow .hcmp {
+    flex: none; border: 1px solid #e3d7c4; border-radius: 8px; padding: 3px 10px; cursor: pointer;
+    background: transparent; color: #8a7a66; font-size: 11.5px; font-family: inherit; transition: all .15s ease;
+  }
+  .hrow .hcmp:hover { background: var(--accent-soft); color: var(--accent-deep); border-color: var(--accent); }
+  .hempty { padding: 26px 0; text-align: center; font-size: 12px; color: var(--faint); }
 </style>
 </head>
 <body>
@@ -165,6 +193,7 @@
   <button id="back" class="act ghost" title="返回选题详情">‹ 返回</button>
   <span id="title">写作编辑器</span>
   <input id="note" placeholder="版本备注（可选）">
+  <button id="history" class="act ghost">历史</button>
   <button id="publish" class="act ghost">发布…</button>
   <button id="save" class="act">保存为新版本</button>
 </header>
@@ -223,6 +252,14 @@
       <span class="hint">发完了？</span>
       <button id="pub-done" class="act ghost">标记为「已发布」</button>
     </footer>
+  </div>
+</div>
+
+<!-- 版本历史弹层 -->
+<div id="hist-overlay" hidden>
+  <div id="hist-card">
+    <header>版本历史<span class="sp"></span><button id="hist-close" class="act ghost">关闭</button></header>
+    <div id="hist-body"></div>
   </div>
 </div>
 
@@ -425,7 +462,14 @@
     }).then(function (r) {
       pendingReplacement = (r && r.replacement) || "";
       if (!pendingReplacement) { setStatus("AI 返回了空内容", true); return; }
-      showDiff(mode, selRange.text, pendingReplacement);
+      var range = { start: selRange.start, end: selRange.end };
+      showDiff(MODE_LABEL[mode] || mode, selRange.text, pendingReplacement, "应用替换", function (text) {
+        var el = $("editor");
+        el.setRangeText(text, range.start, range.end, "end");
+        el.dispatchEvent(new Event("input"));
+        el.focus();
+        setStatus("已替换为 AI 建议 · 满意的话「保存为新版本」");
+      });
       setStatus("确认后应用替换");
     }).catch(function (e) {
       setStatus("AI 处理失败：" + (e && e.message ? e.message : e), true);
@@ -458,35 +502,91 @@
     return out;
   }
 
-  function showDiff(mode, oldText, newText) {
-    $("diff-mode").textContent = MODE_LABEL[mode] || mode;
+  var diffApplyFn = null;
+
+  function showDiff(label, oldText, newText, applyLabel, applyFn) {
+    $("diff-mode").textContent = label;
+    $("diff-apply").textContent = applyLabel;
     var html = diffLines(oldText, newText).map(function (r) {
       return "<div class=\"" + r.t + "\">" + (esc(r.s) || " ") + "</div>";
     }).join("");
     $("diff-body").innerHTML = html;
     $("diff-overlay").hidden = false;
+    diffApplyFn = applyFn;
     hideSelbar();
   }
 
   function closeDiff() {
     $("diff-overlay").hidden = true;
     pendingReplacement = null;
+    diffApplyFn = null;
+    $("diff-apply").textContent = "应用替换";
   }
   $("diff-cancel").addEventListener("click", function () { closeDiff(); setStatus("已取消，原文未动"); });
   $("diff-apply").addEventListener("click", function () {
-    if (!pendingReplacement || !selRange) { closeDiff(); return; }
-    var el = $("editor");
-    el.setRangeText(pendingReplacement, selRange.start, selRange.end, "end");
-    el.dispatchEvent(new Event("input"));
-    el.focus();
+    var fn = diffApplyFn, text = pendingReplacement;
     closeDiff();
-    setStatus("已替换为 AI 建议 · 满意的话「保存为新版本」");
+    if (fn && text !== null) fn(text);
   });
   document.addEventListener("keydown", function (ev) {
     if (ev.key !== "Escape") return;
     if (!$("diff-overlay").hidden) closeDiff();
     if (!$("pub-overlay").hidden) $("pub-overlay").hidden = true;
+    if (!$("hist-overlay").hidden) $("hist-overlay").hidden = true;
   });
+
+  // ---- 版本历史：列表 → 对比当前稿 → 一键恢复（保存后成为新版本，历史不可变） ----
+  function _fmtTs(ts) {
+    if (!ts) return "";
+    var d = new Date(ts * 1000);
+    function p(n) { return (n < 10 ? "0" : "") + n; }
+    return (d.getMonth() + 1) + "月" + d.getDate() + "日 " + p(d.getHours()) + ":" + p(d.getMinutes());
+  }
+
+  function compareVersion(v) {
+    setStatus("加载 v" + v + " …");
+    window.yibao.invoke("zimeiti.read_article", { id: topicId, version: v }).then(function (r) {
+      var content = (r && r.content) || "";
+      if (!content.trim()) { setStatus("v" + v + " 内容为空", true); return; }
+      pendingReplacement = content;
+      showDiff("v" + v + " ↔ 当前稿", $("editor").value, content, "恢复为 v" + v, function (text) {
+        var el = $("editor");
+        el.value = text;
+        el.dispatchEvent(new Event("input"));
+        el.focus();
+        setStatus("已恢复为 v" + v + " · 保存后成为新版本（历史版不会丢）");
+      });
+      $("hist-overlay").hidden = true;
+      setStatus("v" + v + " 与当前稿的差异如下，确认后恢复");
+    }).catch(function (e) {
+      setStatus("加载 v" + v + " 失败：" + (e && e.message ? e.message : e), true);
+    });
+  }
+
+  $("history").addEventListener("click", function () {
+    if (!topicId) { setStatus("还没有选题数据", true); return; }
+    $("hist-overlay").hidden = false;
+    $("hist-body").innerHTML = "<div class=\"hempty\">加载中…</div>";
+    window.yibao.invoke("zimeiti.versions", { id: topicId }).then(function (r) {
+      var rows = (r && r.rows) || [];
+      if (!rows.length) {
+        $("hist-body").innerHTML = "<div class=\"hempty\">还没有保存过版本</div>";
+        return;
+      }
+      $("hist-body").innerHTML = rows.map(function (row) {
+        return "<div class=\"hrow\"><span class=\"v\">v" + row.version + "</span>" +
+          "<span class=\"n\">" + esc(row.note || "（无备注）") + "</span>" +
+          "<span class=\"t\">" + _fmtTs(row.created_at) + "</span>" +
+          "<button class=\"hcmp\" data-v=\"" + row.version + "\">对比/恢复</button></div>";
+      }).join("");
+      Array.prototype.forEach.call($("hist-body").querySelectorAll(".hcmp"), function (btn) {
+        btn.addEventListener("click", function () { compareVersion(parseInt(btn.getAttribute("data-v"), 10)); });
+      });
+    }).catch(function (e) {
+      $("hist-body").innerHTML = "<div class=\"hempty\">加载失败：" + esc(e && e.message ? e.message : String(e)) + "</div>";
+    });
+  });
+  $("hist-close").addEventListener("click", function () { $("hist-overlay").hidden = true; });
 
   // ---- 发布：格式化复制（公众号富文本 / 小红书纯文本）+ 标为已发布 ----
   function copyRich(html) {

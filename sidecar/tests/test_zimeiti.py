@@ -73,6 +73,7 @@ def test_all_tools_registered_with_risks(env):
         "zimeiti.article_read": RiskLevel.L0_READONLY,
         "zimeiti.ai_edit": RiskLevel.L1_LOW,
         "zimeiti.set_status": RiskLevel.L1_LOW,
+        "zimeiti.versions": RiskLevel.L0_READONLY,
     }
     for tid, risk in expected.items():
         assert reg.get(tid).default_risk == risk, tid
@@ -382,3 +383,29 @@ def test_set_status_rejects_bad_input(env):
     assert not _run(reg, "zimeiti.set_status", {"id": tid, "status": "火星"}).success  # 未知状态
     assert not _run(reg, "zimeiti.set_status", {"id": "不存在", "status": "已发布"}).success
     assert not _run(reg, "zimeiti.set_status", {"status": "已发布"}).success  # 缺 id
+
+
+# ---------- versions（编辑器版本历史） ----------
+
+
+def test_versions_lists_newest_first(env):
+    reg, _, _ = env
+    tid = _run(reg, "zimeiti.add", {"title": "T"}).data["id"]
+    assert _run(reg, "zimeiti.versions", {"id": tid}).data["rows"] == []  # 无稿时空列表
+    _run(reg, "zimeiti.article_save", {"id": tid, "content": "一", "note": "初稿"})
+    _run(reg, "zimeiti.article_save", {"id": tid, "content": "二"})
+    rows = _run(reg, "zimeiti.versions", {"id": tid}).data["rows"]
+    assert [r["version"] for r in rows] == [2, 1]
+    assert rows[1]["note"] == "初稿" and rows[0]["created_at"] > 0
+    assert "content" not in rows[0]  # 列表不带正文（正文走 article_read?version=N）
+
+
+def test_versions_api_registered_direct_no_panel(env):
+    env  # 触发加载
+    api = get_api("zimeiti.versions")
+    assert api is not None and api.direct and api.panel is None and api.refresh is None
+
+
+def test_versions_rejects_missing_id(env):
+    reg, _, _ = env
+    assert not _run(reg, "zimeiti.versions", {}).success

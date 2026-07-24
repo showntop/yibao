@@ -58,6 +58,12 @@ name = "set_status"
 handler = "zimeiti.set_status"
 direct = true
 
+# 编辑器版本历史：直调返回 {rows} 给 iframe；具体某版正文走 read_article?version=N
+[[method]]
+name = "versions"
+handler = "zimeiti.versions"
+direct = true
+
 # 以下为 intent 方法（direct=false）：{title}/{id} 占位由面板 action 参数渲染，
 # 交给 agent 多步完成（加载方法论 → 生成/改写 → 落盘存版本），handler 仅作注册校验锚点
 [[method]]
