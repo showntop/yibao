@@ -129,3 +129,38 @@
 - **Live2D**：远期。当前 SVG 方案作为低功耗 fallback 长期保留；仅当需要口型同步 / 细腻情绪时再引入 Live2D，届时 SVG 降为 fallback。
 - **三主题切换器**：v1.5。
 - **交互侧重构**（review 第二节）：另开设计。
+
+---
+
+## 7. 实现现状（as-built，2026-07-24）
+
+实现过程对原计划有几处关键调整（真机反馈 + Tauri v2 实测驱动）。**实际建成以本节为准**，上方 §3 为初版设计、保留作背景。
+
+### 7.1 固定窗口（替代 resize）——根治 resize 闪烁
+原计划收起/展开/气泡走窗口 resize 补间；真机实测透明无边框窗 resize 会闪（macOS 合成器绘中间帧，且 setSize/setPosition 非原子）。**改为固定窗口**：主窗恒为 360×520、透明、置顶、永不缩放。收起态只渲染团子（右上角），其余透明 + 点击穿透放行桌面；展开态渲染聊天。**无 resize → 无闪烁**。代价：收起时窗口占位变大，靠点击穿透消化。
+
+### 7.2 打字机气泡（替代 peek）——说话时逐字
+原 §3.5 的 peek（短/长摘要 + 点开看）改为**说话态打字机气泡**：AI 回复流式 chunk 进气泡、天然逐字 + 闪烁光标；说话时显示，说完/展开即收。固定窗口下气泡出现在团子左侧，无需 resize。
+
+### 7.3 点击穿透（Rust 全局光标追踪）——替代 JS setIgnoreMouseEvents
+原 §3.6 借鉴 Electron 的 `setIgnoreMouseEvents(on,{forward})`；**实测 Tauri v2 JS API 只有 `setIgnoreCursorEvents(boolean)`、无 forward**，忽略后收不到 mousemove 切不回。改由 Rust 侧 `device_query` 每 40ms 读全局光标，落在团子热区 / 展开窗内 = 可交互、否则 `set_ignore_cursor_events` 穿透。前端用 `set_interactive_full` 标志位告知 Rust 当前整窗可交互（展开 / 气泡）还是仅团子热区。坐标单位按 scale 换算，首次真机已核对。
+
+### 7.4 角色最终造型
+天青鹅蛋（身形 `scaleY 0.78` 压扁、脸反向缩放保持圆）+ 立体光影 + 小手 + 小短腿 + 天青领巾 + 天线（兼七态状态灯）+ idle 氛围光晕。**无帽子、无头发**——试过赤陶斜帽、深棕短发均被否（与极简天青风冲突），方向收敛起"极简、同色、贴身"（见偏好记忆）。落地投影等少量字面色留待 token 化清理。
+
+### 7.5 idle 生气
+随机眨眼（JS 随机间隔 2.2–5.8s）+ 东张西望（眼区缓慢左右瞥）+ 身体呼吸 + 天线灯慢脉冲 + 氛围光晕呼吸。哈欠试两版不像、已移除。
+
+### 7.6 文件（最终）
+- `tokens.css`：暖 → 天青 + 身体 / 七态灯令牌。
+- `Avatar.vue`：鹅蛋角色（立体 + 小手 + 腿 + 领巾 + 天线状态灯 + 七态 / idle 生气）；scaleY 压扁身形、脸反向缩放。
+- `SpeechBubble.vue`：说话态打字机气泡（新建；PeekBubble 已删）。
+- `App.vue`：固定窗口下说话气泡接入（流式 → 气泡、说完 / 展开即收）；expand/collapse 不再 resize。
+- `window.ts`：固定窗口（resetWindowSize）；setInteractiveFull 通知 Rust 穿透模式（expand/collapse/tween/speakOpen/speakClose 已移除）。
+- `lib.rs`：托盘 `icon_as_template(true)` + 单色图标；`device_query` 光标轮询线程 + `set_interactive_full` 命令。
+- `tauri.conf.json`：主窗 360×520 固定。
+
+### 7.7 已知待办
+- 落地投影等字面色 → 收进 token（Minor）。
+- 交互侧重构（hover 快捷钮 / 右键菜单 / 热键升级）→ 另开。
+- Live2D → 远期。
