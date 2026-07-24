@@ -193,6 +193,14 @@ const BLUSH = "var(--yb-body-blush)";
         </g>
       </g>
 
+      <!-- 小短腿（破上下对称：底部两只小脚，一前一后略错开） -->
+      <g class="feet">
+        <ellipse cx="47" cy="104" rx="7.5" ry="5" fill="url(#yb-body)" transform="rotate(-9 47 104)" />
+        <ellipse cx="73" cy="106" rx="7.5" ry="5" fill="url(#yb-body)" transform="rotate(11 73 106)" />
+        <path d="M41 106 Q47 109 53 106" fill="none" stroke="var(--yb-body-core-shadow)" stroke-opacity="0.4" stroke-width="1.5" stroke-linecap="round" />
+        <path d="M67 108 Q73 111 79 108" fill="none" stroke="var(--yb-body-core-shadow)" stroke-opacity="0.4" stroke-width="1.5" stroke-linecap="round" />
+      </g>
+
       <!-- 天线 -->
       <line x1="60" y1="20" x2="60" y2="11" stroke="var(--yb-body-stem)" stroke-width="2" stroke-linecap="round" />
       <circle v-if="state === 'think'" class="ring" cx="60" cy="8" r="6.5" fill="none" stroke="var(--dot)" stroke-width="1.6" stroke-dasharray="3 3" />
