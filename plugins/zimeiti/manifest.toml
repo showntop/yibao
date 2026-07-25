@@ -36,6 +36,21 @@ columns = [
 ]
 indexes = ["topic_id"]
 
+[[table]]
+name = "materials"
+columns = [
+  {name = "id", type = "text", pk = true},
+  {name = "title", type = "text"},
+  {name = "url", type = "text", default = ""},
+  {name = "kind", type = "text", default = "note"},
+  {name = "summary", type = "text", default = ""},
+  {name = "tags", type = "text", default = ""},
+  {name = "content", type = "text", default = ""},
+  {name = "created_at", type = "integer"},
+  {name = "updated_at", type = "integer"},
+]
+indexes = ["updated_at"]
+
 [[tool]]
 id = "add"
 type = "db"
@@ -108,6 +123,44 @@ id = {type = "string", description = "选题 id"}
 op = "delete"
 table = "topics"
 
+[[tool]]
+id = "mat_list"
+type = "db"
+description = "列出素材库（标题/摘要/标签，按更新时间倒序，最多 100 条）。写稿前先看有没有可当论据的素材，有就 mat_get 取正文"
+risk = "L0"
+panel = "zimeiti:materials"
+[tool.db]
+op = "query"
+table = "materials"
+order = "updated_at DESC"
+limit = 100
+
+[[tool]]
+id = "mat_get"
+type = "db"
+description = "取一条素材的全文（写作引用论据时用；mat_list 里挑中后调它）"
+risk = "L0"
+required = ["id"]
+[tool.params]
+id = {type = "string", description = "素材 id"}
+[tool.db]
+op = "query"
+table = "materials"
+
+[[tool]]
+id = "mat_delete"
+type = "db"
+description = "删除一条素材"
+risk = "L2"
+panel = "zimeiti:materials"
+refresh = "mat_list"
+required = ["id"]
+[tool.params]
+id = {type = "string", description = "素材 id"}
+[tool.db]
+op = "delete"
+table = "materials"
+
 [[panel]]
 type = "schema"
 name = "board"
@@ -125,3 +178,9 @@ type = "webview"
 name = "editor"
 label = "写作编辑器"
 src = "panel/editor.html"
+
+[[panel]]
+type = "schema"
+name = "materials"
+label = "素材库"
+src = "panel/materials.schema.json"

@@ -27,6 +27,18 @@ handler = "zimeiti.delete"
 direct = true
 refresh = "zimeiti.list"
 
+# 素材库面板：列表与删除（存素材走对话 zimeiti.mat_save，LLM 摘要打标）
+[[method]]
+name = "mat_list"
+handler = "zimeiti.mat_list"
+direct = true
+
+[[method]]
+name = "mat_delete"
+handler = "zimeiti.mat_delete"
+direct = true
+refresh = "zimeiti.mat_list"
+
 # webview 写作编辑器：打开（panel 字段把直调结果引到编辑器面板，覆盖 zimeiti.get 自带的 detail 引用）
 # 与编辑器内的读稿/保存；保存成功仍停在编辑器（回执 data 由桥回包带给 iframe，panel 重发不改变编辑器状态）
 [[method]]

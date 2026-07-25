@@ -194,6 +194,7 @@ def test_panel_schemas_reference_whitelisted_methods(env):
         if doc.get("type") == "board":
             actions += (doc.get("card") or {}).get("actions") or []
         actions += doc.get("actions") or []
+        actions += (doc.get("item") or {}).get("actions") or []  # list 面板的条目级 action
         if doc.get("submit"):
             actions.append(doc["submit"])
         for extra in (doc.get("drag"), doc.get("quick_add")):  # 拖拽/快捷新增同样走白名单
@@ -409,3 +410,89 @@ def test_versions_api_registered_direct_no_panel(env):
 def test_versions_rejects_missing_id(env):
     reg, _, _ = env
     assert not _run(reg, "zimeiti.versions", {}).success
+
+
+# ---------- 素材库（mat_save 存素材 + mat_list/mat_get/mat_delete） ----------
+
+
+def _mat_skill(reg, text='{"title": "K3 评测", "summary": "三点硬伤。", "tags": ["AI", "硬件"]}'):
+    t = reg.get("zimeiti.mat_save")
+    t.plugin_ctx.llm = LlmChat(FakeProvider(text=text))
+    return t
+
+
+def test_mat_save_from_text_happy(env):
+    reg, _, _ = env
+    t = _mat_skill(reg)
+    r = t.run({"text": "一段关于 K3 的评测原文……"}, t.plugin_ctx)
+    assert r.success and r.data["title"] == "K3 评测" and r.data["tags"] == ["AI", "硬件"]
+    assert r.panel == "zimeiti:materials"
+    rows = _run(reg, "zimeiti.mat_list", {}).data["rows"]
+    assert len(rows) == 1 and rows[0]["summary"] == "三点硬伤。" and rows[0]["kind"] == "note"
+    got = _run(reg, "zimeiti.mat_get", {"id": r.data["id"]}).data["rows"][0]
+    assert got["content"].startswith("一段关于 K3")
+
+
+def test_mat_save_strips_code_fence(env):
+    reg, _, _ = env
+    t = _mat_skill(reg, '```json\n{"title": "T", "summary": "S", "tags": []}\n```')
+    r = t.run({"text": "内容"}, t.plugin_ctx)
+    assert r.success and r.data["title"] == "T"
+
+
+def test_mat_save_bad_json_fallback(env):
+    reg, _, _ = env
+    t = _mat_skill(reg, "这不是 JSON")
+    r = t.run({"text": "首句当标题用。后面是正文"}, t.plugin_ctx)
+    assert r.success and r.data["title"].startswith("首句") and r.data["summary"]
+
+
+def test_mat_save_rejects_empty_and_bad_url(env):
+    reg, _, _ = env
+    t = _mat_skill(reg)
+    assert not t.run({}, t.plugin_ctx).success
+    assert not t.run({"url": "ftp://x"}, t.plugin_ctx).success
+
+
+def test_mat_save_without_llm_fails_gracefully(env):
+    reg, _, _ = env
+    t = reg.get("zimeiti.mat_save")
+    t.plugin_ctx.llm = None
+    assert not t.run({"text": "x"}, t.plugin_ctx).success
+
+
+def test_mat_save_fetch_url(env, monkeypatch):
+    import urllib.request
+
+    class _Headers:
+        def get_content_charset(self):
+            return None  # -> utf-8
+
+    class _Resp:
+        headers = _Headers()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self, n=-1):
+            return "<html><style>x</style><body><p>网页正文内容</p><script>y</script></body></html>".encode()
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **kw: _Resp())
+    reg, _, _ = env
+    t = _mat_skill(reg)
+    r = t.run({"url": "https://example.com/a"}, t.plugin_ctx)
+    assert r.success and r.data["title"] == "K3 评测"
+    row = _run(reg, "zimeiti.mat_get", {"id": r.data["id"]}).data["rows"][0]
+    assert row["kind"] == "link" and "网页正文内容" in row["content"] and "script" not in row["content"]
+
+
+def test_mat_delete_flow(env):
+    reg, _, _ = env
+    t = _mat_skill(reg)
+    rid = t.run({"text": "x"}, t.plugin_ctx).data["id"]
+    r = _run(reg, "zimeiti.mat_delete", {"id": rid})
+    assert r.success
+    assert _run(reg, "zimeiti.mat_list", {}).data["rows"] == []
