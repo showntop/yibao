@@ -200,6 +200,13 @@ function onEvent(e: BrainEvent) {
       errorText.value = e.text ?? "出错了";
       state.value = "idle";
       break;
+    case "action_result":
+      // 直调失败（如「看 PRD」但还没生成）：结果不是 error 事件，得在这儿亮出来，否则点了没反应
+      pending.value = null;
+      if (e.result && !e.result.success) {
+        errorText.value = e.result.error || "操作失败";
+      }
+      break;
   }
 }
 
