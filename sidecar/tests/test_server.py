@@ -159,6 +159,84 @@ def test_serve_async_new_run_preempts_old(tmp_path):
     assert dones[-1] == {"type": "run_done", "id": 2}
 
 
+def test_serve_async_cross_surface_run_queues_not_preempts(tmp_path):
+    # 跨 surface（主窗 pet 在跑 → 面板来新 run）：不抢占，排队等它说完；
+    # 面板侧应收到 notice 轻提示，两个 run 都完整完成（先 1 后 2）。
+    slow = FakeProvider(chunks=["A", "B"], delay=0.05)
+    fast = FakeProvider(chunks=["ok"])
+    state = {"n": 0}
+
+    class _Switch:
+        async def astream(self, messages, tools=None):
+            state["n"] += 1
+            src = slow if state["n"] == 1 else fast
+            async for d in src.astream(messages, tools):
+                yield d
+
+    out = []
+    _run_async(
+        serve_async(
+            make_reader(
+                [
+                    {"id": 1, "type": "run", "text": "slow"},  # 默认 surface=pet
+                    {"id": 2, "type": "run", "text": "fast", "surface": "panel:zimeiti"},
+                ]
+            ),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=_Switch(),
+        )
+    )
+    kinds = [m["event"]["kind"] for m in out if m["type"] == "event"]
+    # 谁都不被打断：两个 run 都完整说完
+    assert "interrupted" not in kinds
+    assert kinds.count("final_reply") == 2
+    # 新 run 的 surface 收到排队提示
+    assert any(
+        m["type"] == "event" and m.get("surface") == "panel:zimeiti" and m["event"]["kind"] == "notice"
+        for m in out
+    )
+    # 先来的先说完，排队的后说
+    dones = [m["id"] for m in out if m["type"] == "run_done"]
+    assert dones == [1, 2]
+
+
+def test_serve_async_same_surface_run_still_preempts(tmp_path):
+    # 同 surface（面板里连续发问）：维持抢占语义——新话顶掉旧话
+    slow = FakeProvider(chunks=["A", "B", "C", "D"], delay=0.05)
+    fast = FakeProvider(chunks=["ok"])
+    state = {"n": 0}
+
+    class _Switch:
+        async def astream(self, messages, tools=None):
+            state["n"] += 1
+            src = slow if state["n"] == 1 else fast
+            async for d in src.astream(messages, tools):
+                yield d
+
+    out = []
+    _run_async(
+        serve_async(
+            make_reader(
+                [
+                    {"id": 1, "type": "run", "text": "slow", "surface": "panel:zimeiti"},
+                    {"id": 2, "type": "run", "text": "fast", "surface": "panel:zimeiti"},
+                ]
+            ),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=_Switch(),
+        )
+    )
+    kinds = [m["event"]["kind"] for m in out if m["type"] == "event"]
+    assert "interrupted" in kinds
+    assert "final_reply" in kinds
+    dones = [m for m in out if m["type"] == "run_done"]
+    assert dones[-1] == {"type": "run_done", "id": 2}
+
+
 def test_serve_async_provider_error_emits_error_and_run_done(tmp_path):
     # arun 抛异常（如 provider 400）→ 必须发 error + run_done，不能让前端卡死
     class _Boom:
