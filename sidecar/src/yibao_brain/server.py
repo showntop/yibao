@@ -340,7 +340,10 @@ async def serve_async(
     pending_confirm: dict = {"future": None, "early": None}
     # preempt_gen：抢占代数。新请求到来即 +1；排队中的任务启动时发现自己落后 →
     # 一启动即置 cancel（快速跳过），保证「只有最新请求真正执行」。
-    run_state: dict = {"task": None, "cancel": None, "preempt_gen": 0}
+    # surface：最近一次受理请求的窗口（pet=主窗 / 面板 id，dispatch 受理即写入）。
+    # 同 surface 新请求抢占；跨 surface 不抢占，排队等对方说完
+    # （子 agent 在面板里干活不该被主窗一句话顶掉）。
+    run_state: dict = {"task": None, "cancel": None, "preempt_gen": 0, "surface": None}
     # 并发的 L0 只读面板调用（不占槽位）：跟踪起来，stdin 关闭时一起收尾
     readonly_tasks: set[asyncio.Task] = set()
 
@@ -533,12 +536,40 @@ async def serve_async(
         if run_state["cancel"] is not None:
             run_state["cancel"].set()
 
+    def _preempt_if_same_surface(surface: str) -> None:
+        """同 surface 新请求 → 抢占在跑任务；跨 surface → 不抢占，走链式排队。
+
+        跨 surface 排队时给新请求的 surface 发个轻提示（notice），
+        让用户知道「受理了，在等另一个窗口那轮说完」，而不是点了没反应。
+
+        比较对象是 run_state["surface"] = 最近一次受理的 surface（dispatch 时即写入，
+        无「chain 任务还没跑起来」的调度竞态）。取舍：A(pet) 在跑、B(panel) 排队中又来
+        C(pet) 时，C 会被判成跨 surface 而排队而非顶掉 A——三消息交替跨窗的极端场景，
+        排队自愈、不会卡死，不为它引入 per-surface 代数。
+        """
+        prev = run_state["task"]
+        if prev is None or prev.done():
+            return
+        if run_state["surface"] == surface:
+            _preempt_current()
+        else:
+            print(f"[yibao] 跨 surface 请求排队（在跑={run_state['surface']}，新={surface}）", file=sys.stderr)
+            write_msg({"type": "event", "surface": surface, "event": {
+                "kind": "notice", "text": "另一个窗口还在说，等它说完就轮到你…"}})
+
     async def _chain_start(prev, start, queued_gen: int) -> None:
         """槽位串行：等上一任务收尾再启动；主循环不在这里阻塞（ping 照答，看门狗不误杀）。
 
         排队期间又来了更新的请求（preempt_gen 前进）→ 本任务一启动即置 cancel 快速跳过。
         上一任务被抢占后超过 _PREEMPT_GRACE_S 仍不收尾（LLM/TTS hung 等）→ 强制取消，
         槽位必须自愈，否则后续所有请求都静默排队（「点了没反应」）。
+
+        注意：run_state["task"] 只在 dispatch 处写入（= 最新受理的 chain）。
+        这里绝不能再写——chain 启动晚于 dispatch，旧 chain 后启动会把 task 回写成自己，
+        stdin 清理/打断看到的就是已收尾的旧任务，排队中的新任务被孤儿化（2026-07-25
+        实测：测试里 asyncio.run 收尾顺手 cancel 孤儿 chain → 偶发丢 final_reply）。
+        run_state["cancel"] 由这里写（= 当前真正在跑任务的取消闸）：抢占经 gen 代数
+        传导，写晚了对齐的是「在跑」语义，不会误伤排队任务。
         """
         if prev is not None and not prev.done():
             t0 = time.monotonic()
@@ -560,7 +591,6 @@ async def serve_async(
         if run_state["preempt_gen"] > queued_gen:
             cancel.set()
         run_state["cancel"] = cancel
-        run_state["task"] = asyncio.current_task()
         try:
             await start(cancel)
         except Exception as e:  # 兜底：任务未预期的异常不能毒死槽位
@@ -599,9 +629,10 @@ async def serve_async(
                 write_msg({"type": "event", "event": {"kind": "error", "text": "语音不可用：麦克风初始化失败或被禁用"}})
                 write_msg({"type": "run_done", "id": rid})
                 continue
-            _preempt_current()
-            prev = run_state["task"]
             surface = str(msg.get("surface") or "pet")  # 会话分流：随 run 贯穿事件流与历史
+            _preempt_if_same_surface(surface)
+            prev = run_state["task"]
+            run_state["surface"] = surface  # 受理即记录：下次 dispatch 判断同/跨 surface 无调度竞态
             if rtype == "run":
                 text, rid = msg.get("text", ""), msg.get("id")
                 start = lambda c, t=text, r=rid, s=surface: _drive_run(t, r, c, s)
@@ -628,10 +659,11 @@ async def serve_async(
                 readonly_tasks.add(t)
                 t.add_done_callback(readonly_tasks.discard)
                 continue
-            # 面板写操作/意图方法：与 run 同槽位（抢占 + 链式排队，主循环不阻塞）
-            _preempt_current()
-            prev = run_state["task"]
+            # 面板写操作/意图方法：与 run 同槽位（同 surface 抢占 / 跨 surface 排队，主循环不阻塞）
             surface = str(msg.get("surface") or "pet")
+            _preempt_if_same_surface(surface)
+            prev = run_state["task"]
+            run_state["surface"] = surface
             start = lambda c, m=msg, s=surface: handle_panel_action(
                 m, agent, write_msg, run_text=lambda text, rid: _stream_agent(text, rid, c, s)
             )
@@ -639,6 +671,8 @@ async def serve_async(
                 _chain_start(prev, start, run_state["preempt_gen"])
             )
         elif rtype == "interrupt":
+            # 用户主动打断：无条件停一切。interrupt 消息不带 surface（壳上只有一个打断入口），
+            # 跨 surface 排队中的任务也会被 gen 前进顶掉——取舍：打断就是「全都停」。
             _preempt_current()
         elif rtype == "panel_context":
             # 壳上面板焦点变化：存下来，下次 run 注入 LLM 上下文
