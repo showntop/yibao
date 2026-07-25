@@ -27,4 +27,4 @@ UV_EXTRACTED="$(find "$TMP" -name uv -type f -perm +111 | head -1)"
 [ -n "$UV_EXTRACTED" ] || { echo "解压后找不到 uv 二进制" >&2; exit 1; }
 install -m 755 "$UV_EXTRACTED" "$UV_BIN"
 UV_VER="$("$UV_BIN" --version)"
-echo "uv 就绪：$UV_BIN（$UV_VER）"
+echo "uv 就绪：${UV_BIN}（${UV_VER}）"
