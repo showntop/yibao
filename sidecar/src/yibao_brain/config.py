@@ -138,7 +138,7 @@ def tts_voice() -> str:
 
 
 def mem0_embedder_model() -> str:
-    """mem0 本地 embedding 模型（默认 BAAI/bge-small-zh-v1.5，中文 512 维 ~100MB）。"""
+    """mem0 本地 embedding 模型（fastembed/ONNX 跑 BAAI/bge-small-zh-v1.5，中文 512 维，量化版 ~50MB）。"""
     return os.environ.get("YIBAO_MEM0_EMBEDDER", "BAAI/bge-small-zh-v1.5")
 
 
