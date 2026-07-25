@@ -36,16 +36,21 @@ npm run tauri build              # release 打包
 npm run tauri -- build --debug   # debug 打包（较快）
 ```
 
-产物在 `src-tauri/target/release/bundle/`（macOS 为 `.app` / `.dmg`）。bundle 标识 `com.dennyxiao.yibao`。
+产物在 `src-tauri/target/release/bundle/macos/译宝.app`（当前仅 `.app`；DMG 因中文 productName 与 create-dmg 脚本不兼容暂未出）。bundle 标识 `com.dennyxiao.yibao`。
 
-### ⚠️ sidecar 打包（生产，尚未实现）
+### sidecar 打包（生产，uv 运行时方案）
 
-当前打包出的 app **不含** Python sidecar，启动后大脑拉起会失败。生产分发需：
-1. 用 PyInstaller 把 `sidecar` 打成单可执行（含 Python 解释器与依赖）。
-2. 在 `tauri.conf.json` 配 `bundle.externalBin` 指向该二进制（按 target-triple 命名）。
-3. Rust 侧改用 `app.shell().sidecar("yibao-brain")` 拉起，取代 dev 期的 `.venv/bin/python -m ...`。
+打包版把 sidecar **工程源码**和 `uv` 单二进制打进 bundle（`tauri.conf.json` 的 `bundle.resources`），不用 PyInstaller：
 
-见设计文档第 3 节「故障隔离」与 Plan 2 Task B4。
+1. 打包前跑 `scripts/prepare-dist.sh`，下载 uv 到 `src-tauri/resources/bin/uv`（幂等，已 gitignore）。
+2. 生产启动时（无 `YIBAO_SIDECAR_DIR` 的 release 版）Rust 侧做首启引导（`lib.rs` 的 `ensure_runtime`）：
+   - 把 sidecar 工程拷到可写的 `~/Library/Application Support/yibao/runtime/sidecar/`；
+   - 用 bundle 内 `uv sync --extra memory` 建 venv（首启下载依赖，约 300MB）；
+   - 缺语音模型则跑 `scripts/download_models.py` 下载到数据目录 `models/`（约 234MB）；
+   - 全程向前端发 `setup-progress` 事件，前端气泡显示进度；失败可重进自动续做（幂等）。
+3. 拉起大脑时注入 `YIBAO_PLUGINS_DIR`（bundle 内插件）与 `YIBAO_STT_MODEL_DIR` / `YIBAO_VAD_MODEL`（数据目录模型）。
+
+分发给他人：未签名公证，对方需 `xattr -dr com.apple.quarantine 译宝.app` 绕过 Gatekeeper；签名公证留待后续。
 
 ## 平台踩坑
 
@@ -67,4 +72,3 @@ npm run tauri -- build --debug   # debug 打包（较快）
 ## 已知限制（v1 范围）
 - 一次只处理一个 `run`（单对话）；并发对话需改 server。
 - 形象为状态驱动 emoji 占位；Live2D 留待后续 Plan。
-- sidecar 打包未接入（见上）。
