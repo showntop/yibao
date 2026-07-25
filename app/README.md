@@ -13,6 +13,7 @@
 ## 开发
 
 前置：Node、Rust（`cargo`）、Tauri v2 CLI（随依赖安装）、以及 sidecar 的 `.venv`（在 `../sidecar` 执行 `uv sync --extra dev`）。
+另需一次性跑 `./scripts/prepare-dist.sh` 下载 uv 二进制到 `src-tauri/resources/bin/`（tauri.conf.json 的 bundle.resources 引用了它，dev/build 都会校验存在性）。
 
 ```bash
 npm install
