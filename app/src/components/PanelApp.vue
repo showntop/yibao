@@ -384,7 +384,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  font-family: -apple-system, "PingFang SC", system-ui, sans-serif;
+  font-family: var(--yb-font);
   color: var(--yb-text);
   background: var(--yb-shell-bg);
   -webkit-backdrop-filter: var(--yb-blur);
@@ -477,14 +477,14 @@ onUnmounted(() => {
   gap: 6px;
   padding: 0 24px;
   text-align: center;
-  background: #f6f1ea;
+  background: var(--yb-surface-2);
   border-radius: inherit;
 }
 .ph-icon {
   width: 52px;
   height: 52px;
   border-radius: 50%;
-  background: #fff0e8;
+  background: var(--yb-accent-soft);
   display: grid;
   place-items: center;
   font-size: 24px;
@@ -493,11 +493,11 @@ onUnmounted(() => {
 .ph-title {
   font-size: 13px;
   font-weight: 600;
-  color: #a89a86;
+  color: var(--yb-text-dim);
 }
 .ph-hint {
   font-size: 12px;
-  color: #c9bcab;
+  color: var(--yb-text-dim);
 }
 
 /* ---- 工作台条 ---- */

@@ -79,13 +79,14 @@ function onMain() {
   align-items: center;
   padding: 6px 6px 6px var(--yb-space-3);
   border-radius: 14px;
-  background: #ffffff;
-  border: 1px solid #eee4d6;
-  box-shadow: 0 1px 2px rgba(90, 70, 50, 0.04), 0 6px 16px rgba(90, 70, 50, 0.05);
+  background: var(--yb-surface-solid);
+  border: 1px solid var(--yb-surface-border);
+  box-shadow: var(--yb-shadow);
   transition: all 0.15s ease;
 }
 .bar:focus-within {
-  border-color: #ff8a5c;
+  border-color: var(--yb-accent);
+  box-shadow: var(--yb-shadow), 0 0 0 3px var(--yb-accent-soft);
 }
 input {
   flex: 1;
@@ -93,10 +94,10 @@ input {
   background: transparent;
   font-size: 13px;
   outline: none;
-  color: #3f372e;
+  color: var(--yb-text);
 }
 input::placeholder {
-  color: #c9bcab;
+  color: var(--yb-text-dim);
 }
 .mic,
 .main {
@@ -115,12 +116,12 @@ input::placeholder {
 }
 .mic {
   background: transparent;
-  border: 1px solid #e3d7c4;
-  color: #8a7a66;
+  border: 1px solid var(--yb-surface-border);
+  color: var(--yb-text-dim);
 }
 .mic:hover {
-  background: #faf3ea;
-  color: #3f372e;
+  background: var(--yb-btn-neutral);
+  color: var(--yb-text);
 }
 /* 聆听中：红底 + 脉动光环 + 声波动画（明确的「正在听」状态） */
 .mic.listening {
@@ -171,12 +172,12 @@ input::placeholder {
 /* 主按钮：常态=发送（主色实底），打断态=失败色浅底；图标交叉淡入淡出切换 */
 .main {
   border: none;
-  background: #ff8a5c;
+  background: var(--yb-accent);
   color: #fff;
-  box-shadow: 0 2px 6px rgba(242, 112, 63, 0.3);
+  box-shadow: 0 2px 6px rgba(77, 144, 196, 0.35);
 }
 .main:hover:not(:disabled) {
-  background: #f2703f;
+  background: var(--yb-accent-deep);
 }
 .main:active:not(:disabled) {
   transform: scale(0.97);
@@ -187,8 +188,8 @@ input::placeholder {
   box-shadow: none;
 }
 .main.stopping {
-  background: #fce7e3;
-  color: #c0574b;
+  background: var(--yb-danger-soft);
+  color: var(--yb-danger);
   box-shadow: none;
   opacity: 1;
 }

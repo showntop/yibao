@@ -14,6 +14,10 @@
   --yb-fs-md: 12.5px;
   --yb-fs-lg: 13.5px;
   --yb-fs-xl: 15px;
+
+  /* 字体族：全局统一引用，组件不再各自声明 */
+  --yb-font: -apple-system, "PingFang SC", sans-serif;
+  --yb-mono: ui-monospace, "SF Mono", Menlo, monospace;
 }
 
 /* ============ 天青 Sky：清爽白底 + 天青蓝 + 大圆角 + 弹簧动效 ============ */
@@ -71,10 +75,16 @@
   /* 组件表面（输入条/卡片/次级按钮） */
   --yb-surface: rgba(255, 255, 255, 0.78);
   --yb-surface-solid: #fbfdff;
+  --yb-surface-2: #f3f6fa; /* 次要表面（面板底/嵌套卡），替代旧暖奶油 #f6f1ea */
   --yb-surface-border: rgba(40, 60, 90, 0.1);
+  --yb-line: rgba(40, 60, 90, 0.08); /* 分割线/分隔细线 */
   --yb-btn-neutral: rgba(40, 60, 90, 0.07);
   --yb-well: rgba(40, 60, 90, 0.05);
   --yb-shadow-soft: 0 2px 8px rgba(40, 60, 90, 0.08);
+
+  /* 代码：围栏块底 / 行内 code 底（accent 淡染） */
+  --yb-code-bg: rgba(40, 60, 90, 0.06);
+  --yb-code-inline-bg: rgba(77, 144, 196, 0.12);
 }
 
 /* ============ 过渡别名：Task 2 重写 Avatar 后可删 ============ */

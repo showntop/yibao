@@ -275,7 +275,7 @@ const fallbackJson = computed(() =>
 </template>
 
 <style scoped>
-/* 设计语言与 plugins/toolbox/panel/tools.html 对齐：暖奶油底 + 白卡片 + 杏子橙主按钮 */
+/* 视觉收敛到全局 token（assets/tokens.css 天青 Sky）：次要表面底 + 白卡片 + 天青主按钮 */
 .panel {
   height: 100%;
   box-sizing: border-box;
@@ -283,10 +283,10 @@ const fallbackJson = computed(() =>
   flex-direction: column;
   overflow: hidden;
   padding: 14px;
-  background: #f6f1ea;
+  background: var(--yb-surface-2);
   border-radius: inherit;
-  font: 13px/1.6 -apple-system, "PingFang SC", sans-serif;
-  color: #3f372e;
+  font: 13px/1.6 var(--yb-font);
+  color: var(--yb-text);
 }
 .body-scroll {
   flex: 1;
@@ -302,7 +302,7 @@ const fallbackJson = computed(() =>
 .back {
   border: none;
   background: transparent;
-  color: #a89a86;
+  color: var(--yb-text-dim);
   font-size: 12.5px;
   font-family: inherit;
   cursor: pointer;
@@ -311,8 +311,8 @@ const fallbackJson = computed(() =>
   transition: all 0.15s ease;
 }
 .back:hover {
-  color: #f2703f;
-  background: #fff0e8;
+  color: var(--yb-accent-deep);
+  background: var(--yb-accent-soft);
 }
 /* 空态：主句 + 引导句 */
 .empty {
@@ -328,12 +328,12 @@ const fallbackJson = computed(() =>
   flex: 1;
 }
 .empty-title {
-  color: #a89a86;
+  color: var(--yb-text-dim);
   font-size: 13px;
   font-weight: 600;
 }
 .empty-hint {
-  color: #c9bcab;
+  color: var(--yb-text-dim);
   font-size: 12px;
 }
 /* ---- 按钮两级体系：主按钮实底 / 次按钮 ghost ---- */
@@ -351,22 +351,22 @@ const fallbackJson = computed(() =>
   transform: scale(0.97);
 }
 .btn.primary {
-  background: #ff8a5c;
+  background: var(--yb-accent);
   color: #fff;
-  box-shadow: 0 2px 6px rgba(242, 112, 63, 0.3);
+  box-shadow: 0 2px 6px rgba(77, 144, 196, 0.35);
 }
 .btn.primary:hover {
-  background: #f2703f;
+  background: var(--yb-accent-deep);
 }
 .btn.ghost {
   background: transparent;
-  color: #8a7a66;
-  border: 1px solid #e3d7c4;
+  color: var(--yb-text-dim);
+  border: 1px solid var(--yb-surface-border);
   font-weight: 500;
 }
 .btn.ghost:hover {
-  background: #faf3ea;
-  color: #3f372e;
+  background: var(--yb-btn-neutral);
+  color: var(--yb-text);
 }
 .btn.sm {
   padding: 4px 12px;
@@ -384,10 +384,8 @@ const fallbackJson = computed(() =>
   padding: 11px 14px;
   border-radius: 14px;
   background: #ffffff;
-  border: 1px solid #eee4d6;
-  box-shadow:
-    0 1px 2px rgba(90, 70, 50, 0.04),
-    0 6px 16px rgba(90, 70, 50, 0.05);
+  border: 1px solid var(--yb-surface-border);
+  box-shadow: var(--yb-shadow);
   margin-bottom: 8px;
   transition: all 0.15s ease;
 }
@@ -403,7 +401,7 @@ const fallbackJson = computed(() =>
 }
 .card-sub {
   font-size: 12px;
-  color: #a89a86;
+  color: var(--yb-text-dim);
   margin-top: 2px;
 }
 .card-actions {
@@ -411,7 +409,7 @@ const fallbackJson = computed(() =>
   gap: 6px;
   flex-shrink: 0;
 }
-/* ---- 看板：列 = 白底卡片，条目 = 奶油底小卡 ---- */
+/* ---- 看板：列 = 白底卡片，条目 = 次要表面小卡 ---- */
 .board {
   flex: 1;
   min-height: 0;
@@ -430,10 +428,8 @@ const fallbackJson = computed(() =>
   padding: 10px;
   border-radius: 14px;
   background: #ffffff;
-  border: 1px solid #eee4d6;
-  box-shadow:
-    0 1px 2px rgba(90, 70, 50, 0.04),
-    0 6px 16px rgba(90, 70, 50, 0.05);
+  border: 1px solid var(--yb-surface-border);
+  box-shadow: var(--yb-shadow);
   transition: all 0.15s ease;
 }
 .board-head {
@@ -447,20 +443,20 @@ const fallbackJson = computed(() =>
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #c9bcab;
+  background: var(--yb-text-dim);
   flex-shrink: 0;
 }
 .board-label {
   font-size: 12.5px;
   font-weight: 600;
-  color: #3f372e;
+  color: var(--yb-text);
 }
 .board-count {
   margin-left: auto;
   font-size: 11.5px;
   font-weight: 600;
-  color: #a89a86;
-  background: #f3ecdf;
+  color: var(--yb-text-dim);
+  background: var(--yb-well);
   border-radius: 999px;
   padding: 1px 8px;
 }
@@ -475,9 +471,9 @@ const fallbackJson = computed(() =>
   padding: 2px;
 }
 .board-empty {
-  border: 1.5px dashed #e3d7c4;
+  border: 1.5px dashed var(--yb-surface-border);
   border-radius: 10px;
-  color: #c9bcab;
+  color: var(--yb-text-dim);
   text-align: center;
   font-size: 12px;
   padding: 18px 8px;
@@ -490,36 +486,36 @@ const fallbackJson = computed(() =>
   opacity: 0.45;
 }
 .board-col.drag-over {
-  outline: 2px dashed #ff8a5c;
+  outline: 2px dashed var(--yb-accent);
   outline-offset: -2px;
-  background: #fff0e8;
+  background: var(--yb-accent-soft);
   border-color: transparent;
 }
-/* 快捷新增：钉在列底部，奶油底、聚焦时点亮 */
+/* 快捷新增：钉在列底部，次要表面底、聚焦时点亮 */
 .quick-add {
   flex-shrink: 0;
   width: 100%;
   box-sizing: border-box;
   margin-top: 8px;
   padding: 7px 12px;
-  border: 1px solid #eee4d6;
+  border: 1px solid var(--yb-surface-border);
   border-radius: 10px;
-  background: #f6f1ea;
-  color: #3f372e;
+  background: var(--yb-surface-2);
+  color: var(--yb-text);
   font-size: 12.5px;
   font-family: inherit;
   outline: none;
   transition: all 0.15s ease;
 }
 .quick-add::placeholder {
-  color: #c9bcab;
+  color: var(--yb-text-dim);
 }
 .quick-add:hover {
-  background: #ffffff;
+  background: var(--yb-surface-solid);
 }
 .quick-add:focus {
-  background: #ffffff;
-  border-color: #ff8a5c;
+  background: var(--yb-surface-solid);
+  border-color: var(--yb-accent);
 }
 /* 卡片跨列移动过渡（视觉回响） */
 .card-move-move {
@@ -537,7 +533,7 @@ const fallbackJson = computed(() =>
 .card-move-leave-active {
   display: none;
 }
-/* board 内卡片：奶油底嵌在白列里；点击进详情，悬停浮出 action */
+/* board 内卡片：次要表面嵌在白列里；点击进详情，悬停浮出 action */
 .board .card {
   flex-direction: column;
   align-items: stretch;
@@ -546,8 +542,8 @@ const fallbackJson = computed(() =>
   position: relative;
   margin-bottom: 0;
   padding: 10px 12px;
-  background: #f6f1ea;
-  border-color: #f3ecdf;
+  background: var(--yb-surface-2);
+  border-color: var(--yb-line);
   box-shadow: none;
 }
 .board .card.clickable {
@@ -558,11 +554,9 @@ const fallbackJson = computed(() =>
 }
 .board .card.clickable:hover {
   transform: translateY(-1px);
-  background: #ffffff;
-  border-color: #eee4d6;
-  box-shadow:
-    0 1px 2px rgba(90, 70, 50, 0.04),
-    0 6px 16px rgba(90, 70, 50, 0.05);
+  background: var(--yb-surface-solid);
+  border-color: var(--yb-surface-border);
+  box-shadow: var(--yb-shadow);
 }
 .card-hover-acts {
   position: absolute;
@@ -577,11 +571,9 @@ const fallbackJson = computed(() =>
 /* ---- detail：字段卡片 + 主/次按钮行 ---- */
 .detail-card {
   background: #ffffff;
-  border: 1px solid #eee4d6;
+  border: 1px solid var(--yb-surface-border);
   border-radius: 14px;
-  box-shadow:
-    0 1px 2px rgba(90, 70, 50, 0.04),
-    0 6px 16px rgba(90, 70, 50, 0.05);
+  box-shadow: var(--yb-shadow);
   padding: 4px 14px;
 }
 .detail-card .empty {
@@ -597,7 +589,7 @@ const fallbackJson = computed(() =>
   display: flex;
   gap: 12px;
   padding: 9px 0;
-  border-bottom: 1px solid #f3ecdf;
+  border-bottom: 1px solid var(--yb-line);
 }
 .row:last-child {
   border-bottom: none;
@@ -605,7 +597,7 @@ const fallbackJson = computed(() =>
 .k {
   flex-shrink: 0;
   width: 72px;
-  color: #a89a86;
+  color: var(--yb-text-dim);
   font-size: 12.5px;
 }
 .v {
@@ -619,7 +611,7 @@ const fallbackJson = computed(() =>
 }
 .doc-body {
   background: #ffffff;
-  border: 1px solid #eee4d6;
+  border: 1px solid var(--yb-surface-border);
   border-radius: 14px;
   padding: 12px 16px;
   line-height: 1.7;
@@ -635,17 +627,30 @@ const fallbackJson = computed(() =>
   height: 8px;
 }
 .doc-body :deep(.md-hr) {
-  border-top: 1px solid #f3ecdf;
+  border-top: 1px solid var(--yb-line);
   margin: 8px 0;
 }
 .doc-body :deep(.md-kv-h) {
-  color: #a89a86;
+  color: var(--yb-text-dim);
 }
 .doc-body :deep(code) {
-  background: #f6f1ea;
+  font-family: var(--yb-mono);
+  background: var(--yb-code-inline-bg);
   border-radius: 4px;
   padding: 0 4px;
   font-size: 12px;
+}
+.doc-body :deep(pre) {
+  margin: 6px 0;
+  padding: 8px 10px;
+  background: var(--yb-code-bg);
+  border-radius: var(--yb-radius-sm);
+  overflow-x: auto;
+}
+.doc-body :deep(pre code) {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
 }
 /* ---- form ---- */
 .form .field {
@@ -660,24 +665,24 @@ const fallbackJson = computed(() =>
 }
 .form input,
 .form textarea {
-  border: 1px solid #eee4d6;
+  border: 1px solid var(--yb-surface-border);
   border-radius: 10px;
   padding: 8px 12px;
   font-size: 13px;
   font-family: inherit;
   background: #ffffff;
-  color: #3f372e;
+  color: var(--yb-text);
   outline: none;
   resize: vertical;
   transition: all 0.15s ease;
 }
 .form input:hover,
 .form textarea:hover {
-  border-color: #e3d7c4;
+  border-color: var(--yb-accent-soft);
 }
 .form input:focus,
 .form textarea:focus {
-  border-color: #ff8a5c;
+  border-color: var(--yb-accent);
 }
 .btns {
   display: flex;
@@ -687,18 +692,18 @@ const fallbackJson = computed(() =>
 /* ---- 未知降级 ---- */
 .fallback summary {
   cursor: pointer;
-  color: #a89a86;
+  color: var(--yb-text-dim);
   font-size: 12.5px;
 }
 .fallback pre {
   margin: 10px 0 0;
   padding: 12px 14px;
   background: #ffffff;
-  border: 1px solid #eee4d6;
+  border: 1px solid var(--yb-surface-border);
   border-radius: 14px;
-  font: 12.5px/1.6 "SF Mono", ui-monospace, Menlo, monospace;
+  font: 12.5px/1.6 var(--yb-mono);
   white-space: pre-wrap;
   word-break: break-all;
-  color: #3f372e;
+  color: var(--yb-text);
 }
 </style>

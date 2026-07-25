@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from "vue";
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -96,6 +96,23 @@ const busy = computed(() =>
 );
 const suggestions = ["记一条闪念", "看看选题看板", "帮我写点什么"];
 const missingPerms = computed(() => perms.value !== null && (!perms.value.ax || !perms.value.screen));
+// 「正在输入」占位：run 受理（think）到首个 chunk 之间气泡流还是空的，用三点呼吸占位；
+// 复用 state/streamingIdx 判断——首 chunk 建起 streaming 气泡即让位，终态（idle/error）自动消失
+const showTyping = computed(() => state.value === "think" && streamingIdx.value === null);
+
+// ---- 气泡流滚动：新气泡平滑到底、流式 chunk 即时跟手 ----
+const bubblesRef = ref<HTMLElement | null>(null);
+function scrollBubbles(smooth: boolean) {
+  void nextTick(() => {
+    const el = bubblesRef.value;
+    if (!el) return;
+    if (smooth) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    else el.scrollTop = el.scrollHeight;
+  });
+}
+watch(() => bubbles.value.length, () => scrollBubbles(true));
+watch(() => bubbles.value[bubbles.value.length - 1]?.text, () => scrollBubbles(false));
+watch(showTyping, () => scrollBubbles(true));
 
 async function expand() {
   // 固定窗口方案：不缩放。先收气泡（仅切内容），再切聊天视图
@@ -456,14 +473,21 @@ onUnmounted(() => {
         <div v-if="!plugins.length && !pluginErr" class="pl-empty">没有发现插件</div>
       </div>
 
-      <div v-else class="bubbles">
-        <div v-if="!bubbles.length" class="empty-hint">
+      <div v-else class="bubbles" ref="bubblesRef">
+        <div v-if="!bubbles.length && !showTyping" class="empty-hint">
           <p>叫我做什么都行～</p>
           <div class="chips">
             <button v-for="c in suggestions" :key="c" class="chip" @click="submit(c)">{{ c }}</button>
           </div>
         </div>
-        <Bubble v-for="(b, i) in bubbles" :key="i" :role="b.role" :text="b.text" />
+        <Bubble
+          v-for="(b, i) in bubbles"
+          :key="i"
+          :role="b.role"
+          :text="b.text"
+          :streaming="i === streamingIdx"
+        />
+        <Bubble v-if="showTyping" role="ai" text="" typing />
       </div>
 
       <div v-if="view === 'chat'" class="input-slot">
@@ -487,7 +511,7 @@ onUnmounted(() => {
   height: 100vh;
   box-sizing: border-box;
   overflow: hidden;
-  font-family: -apple-system, "PingFang SC", sans-serif;
+  font-family: var(--yb-font);
   font-size: 13px;
   line-height: 1.6;
   color: var(--yb-text);
@@ -545,7 +569,7 @@ onUnmounted(() => {
   background: var(--yb-surface-solid);
   border: 1px solid var(--yb-surface-border);
   border-radius: 14px;
-  box-shadow: 0 1px 2px rgba(90, 70, 50, 0.04), 0 6px 16px rgba(90, 70, 50, 0.05);
+  box-shadow: var(--yb-shadow);
 }
 /* 锚点在右侧时（dir=ne/se）镜像头部，头像与收起锚点同侧 */
 .chat-header.flip {
@@ -570,11 +594,13 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  line-height: 1.5;
 }
 /* 状态点：颜色跟团子状态色环同源 */
 .status .dot {
   width: 6px;
   height: 6px;
+  flex-shrink: 0;
   border-radius: 50%;
   background: var(--dot, var(--yb-idle));
 }
@@ -657,7 +683,7 @@ onUnmounted(() => {
   border: 1px solid var(--yb-surface-border);
   border-radius: 999px;
   background: var(--yb-surface-solid);
-  color: var(--yb-text-dim);
+  color: var(--yb-accent-deep);
   font-size: 13px;
   cursor: pointer;
   transition: all 0.15s ease;
@@ -708,7 +734,7 @@ onUnmounted(() => {
   border: 1px solid var(--yb-surface-border);
   border-radius: 14px;
   background: var(--yb-surface-solid);
-  box-shadow: 0 1px 2px rgba(90, 70, 50, 0.04), 0 6px 16px rgba(90, 70, 50, 0.05);
+  box-shadow: var(--yb-shadow);
   cursor: pointer;
   font-family: inherit;
   text-align: left;

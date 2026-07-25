@@ -24,6 +24,8 @@ const chat: Array<{ role: "user" | "ai"; text: string }> = [
   },
   { role: "user", text: "先不用，我自己再看看" },
   { role: "ai", text: "好嘞，它在闪念里等你。随时喊我。" },
+  // 代码块 + 行内 code 走查样例
+  { role: "ai", text: '顺手给了个标题生成的小脚本：\n```python\ndef title(topic: str) -> str:\n    return f"AI 桌宠的一天 · {topic}"\n```\n跑 `python title.py` 就能用。' },
 ];
 
 const boardSchema = {
@@ -84,6 +86,8 @@ const boardData = {
         </div>
         <div class="bubbles">
           <Bubble v-for="(m, i) in chat" :key="i" :role="m.role" :text="m.text" />
+          <Bubble role="ai" text="正在输出" streaming />
+          <Bubble role="ai" text="" typing />
         </div>
         <InputBar />
       </div>
@@ -110,7 +114,7 @@ const boardData = {
   padding: 24px 28px 48px;
   background: var(--yb-bg);
   color: var(--yb-text);
-  font-family: var(--yb-font, -apple-system, "PingFang SC", sans-serif);
+  font-family: var(--yb-font);
 }
 .page-title {
   margin: 0 0 20px;
@@ -144,7 +148,7 @@ const boardData = {
   width: 400px;
   border-radius: var(--yb-radius-lg, 14px);
   background: var(--yb-shell-bg, rgba(255, 255, 255, 0.7));
-  box-shadow: 0 8px 32px rgba(20, 20, 40, 0.14);
+  box-shadow: var(--yb-shadow);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -175,7 +179,7 @@ const boardData = {
   width: 860px;
   border-radius: var(--yb-radius-lg, 14px);
   background: var(--yb-shell-bg, rgba(255, 255, 255, 0.7));
-  box-shadow: 0 8px 32px rgba(20, 20, 40, 0.14);
+  box-shadow: var(--yb-shadow);
   overflow: hidden;
   display: flex;
   flex-direction: column;

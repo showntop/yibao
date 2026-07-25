@@ -1,4 +1,4 @@
-// 聊天气泡专用 markdown-lite：窄气泡里渲染常见标记，表格转「键：值」行。
+// 聊天气泡专用 markdown-lite：窄气泡里渲染常见标记（含 ``` 围栏代码块），表格转「键：值」行。
 // 安全：先整体 HTML 转义，再做标记替换，不引第三方库、不支持原始 HTML/图片/链接注入。
 
 function escapeHtml(s: string): string {
@@ -40,6 +40,19 @@ export function renderMarkdownLite(src: string): string {
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
+    // 围栏代码块：``` 起止。内容已在入口整体转义，此处原样拼出、不再做行内替换，
+    // 保证块内 **、` 等不被二次替换（XSS 面不扩大）；未闭合则收到文末
+    if (/^\s*```/.test(line)) {
+      const code: string[] = [];
+      i++;
+      while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) {
+        code.push(lines[i]);
+        i++;
+      }
+      i++; // 跳过收尾围栏（或已到文末）
+      out.push(`<pre><code>${code.join("\n")}</code></pre>`);
+      continue;
+    }
     // 表格块：连续的 | 行 → 每行一条「键：值」（两列）或「a · b · c」；
     // 紧随分隔行的首行视为表头，降灰显示（多数是「项目/内容」这类低信息行）
     if (isTableLine(line)) {
