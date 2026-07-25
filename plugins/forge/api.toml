@@ -26,6 +26,12 @@ handler = "forge.verdict"
 direct = true
 refresh = "forge.list"   # 裁决后跟一次看板查询，卡片落到新状态列
 
+# 面板内读文档（挑战/PRD 全文）：doc 面板渲染 markdown
+[[method]]
+name = "doc_read"
+handler = "forge.doc_read"
+direct = true
+
 # 以下为 intent 方法（direct=false）：{title}/{id} 占位由面板 action 参数渲染，
 # 交给 agent 多步完成（加载方法论 → 追问/搜索/生成 → 落盘），handler 仅作注册校验锚点
 [[method]]

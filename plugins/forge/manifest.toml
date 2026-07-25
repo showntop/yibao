@@ -117,3 +117,9 @@ type = "schema"
 name = "verdict_form"
 label = "需求裁决"
 src = "panel/verdict_form.schema.json"
+
+[[panel]]
+type = "schema"
+name = "doc"
+label = "文档"
+src = "panel/doc.schema.json"

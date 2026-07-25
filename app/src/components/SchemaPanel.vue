@@ -3,6 +3,7 @@
 // 标题栏/关闭由外层容器（PanelApp）负责；本组件只管内容，撑满容器高度、内部滚动。
 import { computed, reactive, ref, watchEffect } from "vue";
 import { resolve, resolveParams, type ActionDecl, type BindCtx, type BoardColumn } from "../lib/schema";
+import { renderMarkdownLite } from "../lib/markdown";
 
 const props = defineProps<{
   panel: string; // 面板引用（plugin_id:name），当前仅用于调试展示
@@ -94,6 +95,10 @@ const boardGroups = computed<{ column: BoardColumn; items: Record<string, unknow
 
 // ---- detail ----
 const detailFields = computed<{ label: string; value: string }[]>(() => props.schema?.fields ?? []);
+
+// ---- doc（markdown 文档阅读：bind.title / bind.text）----
+const docTitle = computed(() => text(props.schema?.bind?.title));
+const docHtml = computed(() => renderMarkdownLite(text(props.schema?.bind?.text)));
 
 // ---- form ----
 const formFields = computed<{ name: string; label: string; input?: string }[]>(
@@ -240,6 +245,12 @@ const fallbackJson = computed(() =>
           {{ a.label }}
         </button>
       </div>
+    </div>
+
+    <!-- doc：markdown 文档阅读（挑战/PRD 等，back 返回上一级） -->
+    <div v-else-if="kind === 'doc'" class="doc body-scroll">
+      <div class="doc-title">{{ docTitle }}</div>
+      <div class="doc-body" v-html="docHtml"></div>
     </div>
 
     <!-- form：输入收集 + submit action -->
@@ -599,6 +610,42 @@ const fallbackJson = computed(() =>
 }
 .v {
   word-break: break-word;
+}
+/* ---- doc：markdown 文档阅读 ---- */
+.doc-title {
+  font-size: 14px;
+  font-weight: 600;
+  padding: 2px 4px 10px;
+}
+.doc-body {
+  background: #ffffff;
+  border: 1px solid #eee4d6;
+  border-radius: 14px;
+  padding: 12px 16px;
+  line-height: 1.7;
+}
+.doc-body :deep(.md-h) {
+  font-weight: 600;
+  margin: 10px 0 2px;
+}
+.doc-body :deep(.md-li) {
+  padding-left: 2px;
+}
+.doc-body :deep(.md-gap) {
+  height: 8px;
+}
+.doc-body :deep(.md-hr) {
+  border-top: 1px solid #f3ecdf;
+  margin: 8px 0;
+}
+.doc-body :deep(.md-kv-h) {
+  color: #a89a86;
+}
+.doc-body :deep(code) {
+  background: #f6f1ea;
+  border-radius: 4px;
+  padding: 0 4px;
+  font-size: 12px;
 }
 /* ---- form ---- */
 .form .field {
