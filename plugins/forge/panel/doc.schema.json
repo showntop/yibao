@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "type": "doc",
+  "back": {"label": "返回详情", "method": "forge.get", "params": {"id": "$data.id"}},
+  "bind": {"title": "$data.title", "text": "$data.text"}
+}

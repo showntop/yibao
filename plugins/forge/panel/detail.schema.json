@@ -9,9 +9,6 @@
     {"label": "状态", "value": "$data.rows.0.status"},
     {"label": "快筛结论", "value": "$data.rows.0.triage"},
     {"label": "裁决理由", "value": "$data.rows.0.verdict_reason"},
-    {"label": "挑战文档", "value": "$data.rows.0.challenge_path"},
-    {"label": "PRD", "value": "$data.rows.0.prd_path"},
-    {"label": "原型", "value": "$data.rows.0.proto_path"},
     {"label": "创建", "value": "$data.rows.0.created_at|date"},
     {"label": "更新", "value": "$data.rows.0.updated_at|date"}
   ],
@@ -20,6 +17,8 @@
     {"label": "竞品扫描", "method": "forge.scan", "params": {"id": "$data.rows.0.id", "title": "$data.rows.0.title"}},
     {"label": "出 PRD", "method": "forge.prd", "params": {"id": "$data.rows.0.id", "title": "$data.rows.0.title"}},
     {"label": "出原型", "method": "forge.proto", "params": {"id": "$data.rows.0.id", "title": "$data.rows.0.title"}},
+    {"label": "看挑战文档", "method": "forge.doc_read", "params": {"id": "$data.rows.0.id", "kind": "challenge"}},
+    {"label": "看 PRD", "method": "forge.doc_read", "params": {"id": "$data.rows.0.id", "kind": "prd"}},
     {"label": "裁决", "method": "forge.verdict_form", "params": {"id": "$data.rows.0.id"}},
     {"label": "删除", "method": "forge.delete", "params": {"id": "$data.rows.0.id"}}
   ]

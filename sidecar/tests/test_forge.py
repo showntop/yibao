@@ -219,9 +219,58 @@ def test_panel_schemas_reference_whitelisted_methods(env):
         actions += doc.get("actions") or []
         if doc.get("submit"):
             actions.append(doc["submit"])
-        for extra in (doc.get("drag"), doc.get("quick_add")):  # 拖拽/快捷新增同样走白名单
+        for extra in (doc.get("drag"), doc.get("quick_add"), doc.get("back")):  # 拖拽/快捷新增/返回导航同样走白名单
             if extra:
                 actions.append(extra)
         assert actions, f"{schema_file.name} 没有 action"
         for a in actions:
             assert get_api(a["method"]) is not None, f"{schema_file.name}: {a['method']} 不在白名单"
+
+
+# ---------- doc_read（面板内读挑战/PRD 文档） ----------
+
+
+def _add_req(reg):
+    return _run(reg, "forge.add", {"title": "T", "pain": "P"}).data["id"]
+
+
+def test_doc_read_happy_after_doc_save(env):
+    reg, _, _ = env
+    rid = _add_req(reg)
+    _run(reg, "forge.doc_save", {"id": rid, "kind": "challenge", "content": "# 挑战记录\n问答正文"})
+    r = _run(reg, "forge.doc_read", {"id": rid, "kind": "challenge"})
+    assert r.success and r.panel == "forge:doc"
+    assert r.data["id"] == rid and "挑战文档" in r.data["title"]
+    assert "问答正文" in r.data["text"]
+
+
+def test_doc_read_missing_doc_errors(env):
+    reg, _, _ = env
+    rid = _add_req(reg)
+    r = _run(reg, "forge.doc_read", {"id": rid, "kind": "prd"})
+    assert not r.success and "还没有" in r.error
+
+
+def test_doc_read_rejects_bad_input(env):
+    reg, _, _ = env
+    rid = _add_req(reg)
+    assert not _run(reg, "forge.doc_read", {"id": rid, "kind": "火星"}).success
+    assert not _run(reg, "forge.doc_read", {"id": "不存在", "kind": "prd"}).success
+
+
+def test_doc_read_proto_points_to_browser(env, data_dir):
+    reg, _, _ = env
+    rid = _add_req(reg)
+    proto = data_dir / "plugins" / "forge" / "docs" / f"{rid}-proto.html"
+    proto.parent.mkdir(parents=True, exist_ok=True)
+    proto.write_text("<html></html>", encoding="utf-8")
+    t = reg.get("forge.doc_read")
+    t.plugin_ctx.db.update("requirements", rid, {"proto_path": str(proto)})
+    r = t.run({"id": rid, "kind": "proto"}, t.plugin_ctx)
+    assert not r.success and str(proto) in r.error  # HTML 不渲染源码，指路浏览器
+
+
+def test_doc_read_whitelisted(env):
+    env
+    api = get_api("forge.doc_read")
+    assert api is not None and api.direct

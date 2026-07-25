@@ -197,7 +197,7 @@ def test_panel_schemas_reference_whitelisted_methods(env):
         actions += (doc.get("item") or {}).get("actions") or []  # list 面板的条目级 action
         if doc.get("submit"):
             actions.append(doc["submit"])
-        for extra in (doc.get("drag"), doc.get("quick_add")):  # 拖拽/快捷新增同样走白名单
+        for extra in (doc.get("drag"), doc.get("quick_add"), doc.get("back")):  # 拖拽/快捷新增/返回导航同样走白名单
             if extra:
                 actions.append(extra)
         assert actions, f"{schema_file.name} 没有 action"
