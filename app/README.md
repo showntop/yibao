@@ -44,10 +44,11 @@ npm run tauri -- build --debug   # debug 打包（较快）
 
 1. 打包前跑 `scripts/prepare-dist.sh`，下载 uv 到 `src-tauri/resources/bin/uv`（幂等，已 gitignore）。
 2. 生产启动时（无 `YIBAO_SIDECAR_DIR` 的 release 版）Rust 侧做首启引导（`lib.rs` 的 `ensure_runtime`）：
-   - 把 sidecar 工程拷到可写的 `~/Library/Application Support/yibao/runtime/sidecar/`；
-   - 用 bundle 内 `uv sync --extra memory` 建 venv（首启下载依赖，约 300MB）；
+   - 把 sidecar 工程拷到可写的 `~/Library/Application Support/yibao/runtime/sidecar/`（**每次启动都重拷**，保证 runtime 跟 app 版本走；`.env` 跳过不覆盖）；
+   - 用 bundle 内 `uv sync --extra memory` 建/更新 venv（首启下载依赖约 300MB，之后是秒级空转）；
    - 缺语音模型则跑 `scripts/download_models.py` 下载到数据目录 `models/`（约 234MB）；
-   - 全程向前端发 `setup-progress` 事件，前端气泡显示进度；失败可重进自动续做（幂等）。
+   - 全程向前端发 `setup-progress` 事件，前端气泡显示进度；失败可重进自动续做。
+3. 没配 LLM key 时不启大脑，前端弹**首启设置向导**（`SetupWizard.vue`：API Key/模型/Base URL/音色），保存写入数据目录 `.env` 后自动拉起大脑。
 3. 拉起大脑时注入 `YIBAO_PLUGINS_DIR`（bundle 内插件）与 `YIBAO_STT_MODEL_DIR` / `YIBAO_VAD_MODEL`（数据目录模型）。
 4. 密钥配置：生产环境从数据目录 `~/Library/Application Support/yibao/.env` 读取（dev 仍读 `sidecar/.env`）。uv sync 默认走清华 PyPI 镜像（可用 `UV_DEFAULT_INDEX` 覆盖）。
 

@@ -92,6 +92,131 @@ fn emit_setup(app: &AppHandle, stage: &str, detail: &str) {
     );
 }
 
+/// 首启配置（LLM key/模型/音色）：缺 key 时大脑不启动，前端弹设置向导。
+#[derive(serde::Serialize, Clone)]
+struct SetupConfig {
+    has_key: bool,
+    model: String,
+    base_url: String,
+    voice: String,
+}
+
+/// 解析 .env 文件为键值对（与 Python config._load_dotenv 同规则：去引号、跳注释）。
+fn read_env_file(path: &std::path::Path) -> Vec<(String, String)> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return vec![];
+    };
+    text.lines()
+        .filter_map(|l| {
+            let s = l.trim();
+            if s.is_empty() || s.starts_with('#') {
+                return None;
+            }
+            let (k, v) = s.split_once('=')?;
+            Some((
+                k.trim().to_string(),
+                v.trim().trim_matches('"').trim_matches('\'').to_string(),
+            ))
+        })
+        .collect()
+}
+
+/// 合并配置来源：数据目录 .env < sidecar 工程 .env（dev 优先）< 真环境变量。
+fn merged_env() -> std::collections::HashMap<String, String> {
+    let mut m = std::collections::HashMap::new();
+    for (k, v) in read_env_file(&runtime_root().join(".env")) {
+        m.insert(k, v);
+    }
+    for (k, v) in read_env_file(&sidecar_dir().join(".env")) {
+        m.insert(k, v);
+    }
+    for k in [
+        "YIBAO_LLM_API_KEY",
+        "YIBAO_LLM_MODEL",
+        "YIBAO_LLM_BASE_URL",
+        "YIBAO_TTS_VOICE",
+    ] {
+        if let Ok(v) = std::env::var(k) {
+            m.insert(k.to_string(), v);
+        }
+    }
+    m
+}
+
+#[tauri::command]
+fn get_setup_config() -> SetupConfig {
+    let m = merged_env();
+    SetupConfig {
+        has_key: m.get("YIBAO_LLM_API_KEY").is_some_and(|v| !v.is_empty()),
+        model: m
+            .get("YIBAO_LLM_MODEL")
+            .filter(|v| !v.is_empty())
+            .cloned()
+            .unwrap_or_else(|| "glm-4.6".into()),
+        base_url: m.get("YIBAO_LLM_BASE_URL").cloned().unwrap_or_default(),
+        voice: m
+            .get("YIBAO_TTS_VOICE")
+            .filter(|v| !v.is_empty())
+            .cloned()
+            .unwrap_or_else(|| "zh-CN-XiaoxiaoNeural".into()),
+    }
+}
+
+/// 拉起大脑（幂等：已在跑直接返回）。setup() 与配置保存共用。
+fn boot_brain(app: &AppHandle) -> Result<(), String> {
+    if app.state::<Brain>().0.lock().unwrap().child.is_some() {
+        return Ok(());
+    }
+    let (rx, child) = spawn_brain(app)?;
+    app.state::<Brain>().0.lock().unwrap().child = Some(child);
+    spawn_bridge(app.clone(), rx);
+    spawn_watchdog(app.clone());
+    Ok(())
+}
+
+/// 保存首启配置：upsert 进数据目录 .env（保留其它行），然后拉起大脑。
+#[tauri::command]
+fn save_setup_config(
+    app: AppHandle,
+    key: String,
+    model: String,
+    base_url: String,
+    voice: String,
+) -> Result<(), String> {
+    let key = key.trim().to_string();
+    if key.is_empty() {
+        return Err("API Key 不能为空".into());
+    }
+    let path = runtime_root().join(".env");
+    let mut lines: Vec<String> = std::fs::read_to_string(&path)
+        .map(|t| t.lines().map(|l| l.to_string()).collect())
+        .unwrap_or_default();
+    for (k, v) in [
+        ("YIBAO_LLM_API_KEY", key),
+        ("YIBAO_LLM_MODEL", model.trim().to_string()),
+        ("YIBAO_LLM_BASE_URL", base_url.trim().to_string()),
+        ("YIBAO_TTS_VOICE", voice.trim().to_string()),
+    ] {
+        if v.is_empty() {
+            continue; // 可选项留空则不写（走 Python 侧默认值）
+        }
+        let prefix = format!("{k}=");
+        match lines.iter_mut().find(|l| l.starts_with(&prefix)) {
+            Some(line) => *line = format!("{k}={v}"),
+            None => lines.push(format!("{k}={v}")),
+        }
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("建数据目录失败：{e}"))?;
+    }
+    std::fs::write(&path, lines.join("\n") + "\n").map_err(|e| format!("写配置失败：{e}"))?;
+    // venv 还没备好（首启 Python 环境仍在装）时先不拉大脑——setup() 装完会再查配置并拉起
+    if sidecar_dir().join(".venv").join("bin").join("python").exists() {
+        boot_brain(&app)?;
+    }
+    Ok(())
+}
+
 /// 递归拷贝目录（跳过 .venv/__pycache__/models 大文件——Resources 里本就没有，防御而已）。
 fn copy_dir(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
     std::fs::create_dir_all(dst).map_err(|e| format!("建目录失败 {}：{e}", dst.display()))?;
@@ -124,8 +249,9 @@ fn run_cmd(mut cmd: std::process::Command, what: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// 首启引导（仅生产）：备齐 Python 运行时（uv sync，约 300MB）+ 语音模型（234MB）。
-/// 幂等：已就绪的部分直接跳过；失败返回错误，前端提示重启重试。
+/// 首启引导（仅生产）：备齐 Python 运行时（uv sync，首启约 300MB）+ 语音模型（234MB）。
+/// 每次启动都重拷源码 + sync（空转秒级）保证 runtime 跟 app 版本走；模型在则跳过。
+/// 失败返回错误，前端提示重启重试。
 fn ensure_runtime(app: &AppHandle) -> Result<(), String> {
     if !is_prod() {
         return Ok(());
@@ -135,22 +261,25 @@ fn ensure_runtime(app: &AppHandle) -> Result<(), String> {
     let venv_py = runtime.join(".venv").join("bin").join("python");
     let resource = app.path().resource_dir().map_err(|e| format!("取资源目录失败：{e}"))?;
 
-    if !venv_py.exists() {
+    // 运行时副本每次启动都刷新（源文件小、拷贝快；copy 跳过 .env，用户配置不丢），
+    // 否则 app 更新带了新 sidecar 代码而用户还跑旧的。uv sync 幂等：lock 没变是秒级空转。
+    let first_boot = !venv_py.exists();
+    if first_boot {
         emit_setup(app, "python", "首次初始化：安装 Python 环境（约 300MB，需联网，几分钟）…");
-        copy_dir(&resource.join("sidecar"), &runtime)?;
-        let mut cmd = std::process::Command::new(resource.join("bin").join("uv"));
-        cmd.arg("sync")
-            .arg("--extra")
-            .arg("memory")
-            .arg("--project")
-            .arg(&runtime)
-            .env("PYTHONUNBUFFERED", "1");
-        // 国内直连 PyPI 常超时：用户没自配 index 时默认走清华镜像
-        if std::env::var_os("UV_DEFAULT_INDEX").is_none() {
-            cmd.env("UV_DEFAULT_INDEX", "https://pypi.tuna.tsinghua.edu.cn/simple");
-        }
-        run_cmd(cmd, "Python 环境安装")?;
     }
+    copy_dir(&resource.join("sidecar"), &runtime)?;
+    let mut cmd = std::process::Command::new(resource.join("bin").join("uv"));
+    cmd.arg("sync")
+        .arg("--extra")
+        .arg("memory")
+        .arg("--project")
+        .arg(&runtime)
+        .env("PYTHONUNBUFFERED", "1");
+    // 国内直连 PyPI 常超时：用户没自配 index 时默认走清华镜像
+    if std::env::var_os("UV_DEFAULT_INDEX").is_none() {
+        cmd.env("UV_DEFAULT_INDEX", "https://pypi.tuna.tsinghua.edu.cn/simple");
+    }
+    run_cmd(cmd, "Python 环境安装")?;
 
     let models = home.join("models");
     if !models.join("paraformer-zh").join("model.int8.onnx").exists() {
@@ -746,15 +875,13 @@ pub fn run() {
                         return;
                     }
                 }
-                match spawn_brain(&handle) {
-                    Ok((rx, child)) => {
-                        handle.state::<Brain>().0.lock().unwrap().child = Some(child);
-                        spawn_bridge(handle.clone(), rx);
-                        spawn_watchdog(handle.clone());
-                    }
-                    Err(e) => {
-                        let _ = handle.emit("setup-error", format!("大脑启动失败：{e}"));
-                    }
+                // 没配 LLM key：不启大脑（起了也只会报错），前端弹设置向导，保存后由 save_setup_config 拉起
+                if !get_setup_config().has_key {
+                    let _ = handle.emit("setup-config-needed", "首次使用：请配置 LLM API Key");
+                    return;
+                }
+                if let Err(e) = boot_brain(&handle) {
+                    let _ = handle.emit("setup-error", format!("大脑启动失败：{e}"));
                 }
             });
 
@@ -777,7 +904,9 @@ pub fn run() {
             report_panel_context,
             check_permissions,
             prompt_permission,
-            set_interactive_full
+            set_interactive_full,
+            get_setup_config,
+            save_setup_config
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

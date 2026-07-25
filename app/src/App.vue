@@ -9,6 +9,7 @@ import InputBar from "./components/InputBar.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
 import Bubble from "./components/Bubble.vue";
 import PermissionsBanner from "./components/PermissionsBanner.vue";
+import SetupWizard from "./components/SetupWizard.vue";
 import {
   onBrainEvent,
   onBrainStatus,
@@ -36,6 +37,21 @@ const brainDown = ref(false); // 大脑掉线/重启中（守护在恢复）
 const perms = ref<BrainPermissions | null>(null); // macOS 权限状态（null=未收到）
 const expanded = ref(false);
 const panelOpen = ref(false); // 面板协作会话进行中（关联气泡只插一次，panel 刷新不重复插）
+
+// ---- 首启设置向导（缺 LLM key 时 Rust 发 setup-config-needed，大脑未启动）----
+const setupNeeded = ref(false);
+const setupCfg = ref({ model: "glm-4.6", baseUrl: "", voice: "zh-CN-XiaoxiaoNeural" });
+async function onSetupNeeded() {
+  setupNeeded.value = true;
+  if (!expanded.value) void expand();
+  try {
+    setupCfg.value = await invoke("get_setup_config");
+  } catch { /* 用默认值 */ }
+}
+function onSetupSaved() {
+  setupNeeded.value = false;
+  bubbles.value.push({ role: "sys", text: "配置已保存，大脑启动中…" });
+}
 
 // ---- 说话态气泡（B）：流式 chunk 拼到 bubbleText（天然打字机）；说话时窗口撑出，说完缩回 ----
 const bubbleOn = ref(false);
@@ -65,6 +81,7 @@ let unlistenPerms: (() => void) | null = null;
 let unlistenPanelClosed: (() => void) | null = null;
 let unlistenSetup: (() => void) | null = null;
 let unlistenSetupErr: (() => void) | null = null;
+let unlistenSetupCfg: (() => void) | null = null;
 
 const statusText = computed(
   () => ({
@@ -374,6 +391,12 @@ onMounted(async () => {
     if (!expanded.value) void expand();
     bubbles.value.push({ role: "ai", text: "⚠️ " + e.payload });
   });
+  unlistenSetupCfg = await listen<string>("setup-config-needed", () => void onSetupNeeded());
+  // 主动拉一次配置：首启引导若秒过（venv/模型已在），setup-config-needed 可能先于挂载发出而丢——靠拉取兜底
+  try {
+    const cfg = await invoke<{ has_key: boolean }>("get_setup_config");
+    if (!cfg.has_key) void onSetupNeeded();
+  } catch { /* 忽略，事件路径仍兜底 */ }
   window.addEventListener("keydown", onKeydown);
 });
 onUnmounted(() => {
@@ -383,6 +406,7 @@ onUnmounted(() => {
   unlistenPanelClosed?.();
   unlistenSetup?.();
   unlistenSetupErr?.();
+  unlistenSetupCfg?.();
   window.removeEventListener("keydown", onKeydown);
   if (clickTimer !== null) clearTimeout(clickTimer);
   if (bubbleTimer !== null) clearTimeout(bubbleTimer);
@@ -413,6 +437,9 @@ onUnmounted(() => {
         <button class="collapse-btn" title="收起" @click="collapse">—</button>
       </header>
 
+      <SetupWizard v-if="setupNeeded" :model="setupCfg.model" :base-url="setupCfg.baseUrl" :voice="setupCfg.voice" @saved="onSetupSaved" />
+
+      <template v-if="!setupNeeded">
       <PermissionsBanner v-if="missingPerms && perms" :perms="perms" />
 
       <!-- 插件启动器视图（双击团子进来）：列出插件，点击直达它的主面板 -->
@@ -449,6 +476,7 @@ onUnmounted(() => {
           @deny="() => decide(false)"
         />
       </div>
+      </template>
     </template>
   </div>
 </template>
