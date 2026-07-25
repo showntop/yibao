@@ -49,6 +49,7 @@ npm run tauri -- build --debug   # debug 打包（较快）
    - 缺语音模型则跑 `scripts/download_models.py` 下载到数据目录 `models/`（约 234MB）；
    - 全程向前端发 `setup-progress` 事件，前端气泡显示进度；失败可重进自动续做（幂等）。
 3. 拉起大脑时注入 `YIBAO_PLUGINS_DIR`（bundle 内插件）与 `YIBAO_STT_MODEL_DIR` / `YIBAO_VAD_MODEL`（数据目录模型）。
+4. 密钥配置：生产环境从数据目录 `~/Library/Application Support/yibao/.env` 读取（dev 仍读 `sidecar/.env`）。uv sync 默认走清华 PyPI 镜像（可用 `UV_DEFAULT_INDEX` 覆盖）。
 
 分发给他人：未签名公证，对方需 `xattr -dr com.apple.quarantine 译宝.app` 绕过 Gatekeeper；签名公证留待后续。
 

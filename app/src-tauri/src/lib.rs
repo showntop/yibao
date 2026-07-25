@@ -145,6 +145,10 @@ fn ensure_runtime(app: &AppHandle) -> Result<(), String> {
             .arg("--project")
             .arg(&runtime)
             .env("PYTHONUNBUFFERED", "1");
+        // 国内直连 PyPI 常超时：用户没自配 index 时默认走清华镜像
+        if std::env::var_os("UV_DEFAULT_INDEX").is_none() {
+            cmd.env("UV_DEFAULT_INDEX", "https://pypi.tuna.tsinghua.edu.cn/simple");
+        }
         run_cmd(cmd, "Python 环境安装")?;
     }
 
