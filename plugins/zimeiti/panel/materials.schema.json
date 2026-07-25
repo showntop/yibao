@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "type": "list",
+  "bind": {"items": "$data.rows"},
+  "item": {
+    "title": "$item.title",
+    "subtitle": "$item.summary",
+    "actions": [
+      {"label": "删除", "method": "zimeiti.mat_delete", "params": {"id": "$item.id"}}
+    ]
+  }
+}
