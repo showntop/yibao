@@ -29,7 +29,9 @@ dependencies = [
 dev = ["pytest>=8.0"]
 memory = [
     "mem0ai>=0.1.20",
-    "sentence-transformers>=5.6.0",
+    # 向量模型走 fastembed（ONNX Runtime）：与 sentence-transformers 同模型 bge-small-zh-v1.5，
+    # 但不拖 PyTorch（~500MB）——打包体积砍半的瘦身刀（2026-07-22 定）
+    "fastembed>=0.4.0",
 ]
 
 [project.scripts]

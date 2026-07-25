@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import Avatar from "./components/Avatar.vue";
 import SpeechBubble from "./components/SpeechBubble.vue";
@@ -62,6 +63,8 @@ let unlisten: (() => void) | null = null;
 let unlistenStatus: (() => void) | null = null;
 let unlistenPerms: (() => void) | null = null;
 let unlistenPanelClosed: (() => void) | null = null;
+let unlistenSetup: (() => void) | null = null;
+let unlistenSetupErr: (() => void) | null = null;
 
 const statusText = computed(
   () => ({
@@ -362,6 +365,15 @@ onMounted(async () => {
     panelOpen.value = false;
     bubbles.value.push({ role: "ai", text: "⇠ 协作结束" });
   });
+  // 首启引导（生产打包首跑：装 Python 环境/下模型，大脑还没起来，走 Tauri 事件直推）
+  unlistenSetup = await listen<{ stage: string; detail: string }>("setup-progress", (e) => {
+    if (e.payload.stage !== "done" && !expanded.value) void expand();
+    bubbles.value.push({ role: "sys", text: e.payload.detail });
+  });
+  unlistenSetupErr = await listen<string>("setup-error", (e) => {
+    if (!expanded.value) void expand();
+    bubbles.value.push({ role: "ai", text: "⚠️ " + e.payload });
+  });
   window.addEventListener("keydown", onKeydown);
 });
 onUnmounted(() => {
@@ -369,6 +381,8 @@ onUnmounted(() => {
   unlistenStatus?.();
   unlistenPerms?.();
   unlistenPanelClosed?.();
+  unlistenSetup?.();
+  unlistenSetupErr?.();
   window.removeEventListener("keydown", onKeydown);
   if (clickTimer !== null) clearTimeout(clickTimer);
   if (bubbleTimer !== null) clearTimeout(bubbleTimer);

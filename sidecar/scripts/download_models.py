@@ -1,15 +1,17 @@
 """下载 Plan 4a 语音模型：Paraformer 中文 int8 + Silero VAD。
 
 用法：uv run --directory sidecar python scripts/download_models.py
-模型落到 src/yibao_brain/models/（.gitignore 忽略大文件）。
+模型默认落到 src/yibao_brain/models/（.gitignore 忽略大文件）；
+生产打包由壳设 YIBAO_MODELS_DIR 重定向到可写的应用数据目录（.app Resources 只读）。
 """
 import os
 import shutil
 import tarfile
 import urllib.request
 
-MODELS_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "src", "yibao_brain", "models")
+MODELS_DIR = os.environ.get(
+    "YIBAO_MODELS_DIR",
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src", "yibao_brain", "models")),
 )
 
 PARAFORMER_URL = (

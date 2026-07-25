@@ -42,9 +42,11 @@ class FakeMemory(Memory):
 
 
 class Mem0Memory(Memory):
-    """mem0 封装：DeepSeek(LLM 抽取) + 本地 HF(embedder) + 本地 qdrant(vector)。
+    """mem0 封装：DeepSeek(LLM 抽取) + 本地 fastembed/ONNX(embedder) + 本地 qdrant(vector)。
 
     LLM 复用主 provider 配置（llm_api_key/model/base_url）；embedder/vector 本地，免外部服务。
+    embedder 从 sentence-transformers/torch 换成 fastembed（同模型 ONNX 量化版）——打包瘦身，
+    注意与旧 torch 实现的向量数值有微差，切换时旧 mem0_store 需重建（2026-07-22）。
     mem0 未装（optional）或初始化失败时，由调用方 try/except 降级为 FakeMemory。
     """
 
@@ -73,7 +75,7 @@ class Mem0Memory(Memory):
                 },
             },
             "embedder": {
-                "provider": "huggingface",
+                "provider": "fastembed",
                 "config": {"model": mem0_embedder_model()},
             },
         }

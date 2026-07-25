@@ -54,33 +54,143 @@ impl BrainState {
 
 struct Brain(Mutex<BrainState>);
 
-/// 解析 sidecar 目录：优先 `YIBAO_SIDECAR_DIR`，否则 dev 默认 <repo>/sidecar。
-/// 生产期应改为 PyInstaller externalBin（见 Plan 2 Task B4）。
+/// 运行时根目录：与 Python config.data_dir 一致（~/Library/Application Support/yibao）。
+/// 用户数据、Python 运行时副本、语音模型都在这里（.app Resources 只读，不能往里装 venv）。
+fn runtime_root() -> std::path::PathBuf {
+    if let Ok(d) = std::env::var("YIBAO_DATA_DIR") {
+        return std::path::PathBuf::from(d);
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    std::path::PathBuf::from(home).join("Library/Application Support/yibao")
+}
+
+/// 是否生产模式（打包 .app）：dev（debug 构建或显式 YIBAO_SIDECAR_DIR）走仓库 sidecar。
+fn is_prod() -> bool {
+    std::env::var("YIBAO_SIDECAR_DIR").is_err() && !cfg!(debug_assertions)
+}
+
+/// 解析 sidecar 工程目录：优先 `YIBAO_SIDECAR_DIR`；dev 默认 <repo>/sidecar；
+/// 生产用数据目录里的可写副本（首启 ensure_runtime 从 Resources 拷入）。
 fn sidecar_dir() -> std::path::PathBuf {
     if let Ok(dir) = std::env::var("YIBAO_SIDECAR_DIR") {
         return std::path::PathBuf::from(dir);
     }
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("sidecar")
+    if cfg!(debug_assertions) {
+        return std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("sidecar");
+    }
+    runtime_root().join("runtime").join("sidecar")
+}
+
+/// 首启引导进度事件：前端据此显示「首次初始化」状态（大脑还没起来，走 Tauri 事件而非 brain 桥）。
+fn emit_setup(app: &AppHandle, stage: &str, detail: &str) {
+    let _ = app.emit(
+        "setup-progress",
+        serde_json::json!({ "stage": stage, "detail": detail }),
+    );
+}
+
+/// 递归拷贝目录（跳过 .venv/__pycache__/models 大文件——Resources 里本就没有，防御而已）。
+fn copy_dir(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
+    std::fs::create_dir_all(dst).map_err(|e| format!("建目录失败 {}：{e}", dst.display()))?;
+    let rd = std::fs::read_dir(src).map_err(|e| format!("读目录失败 {}：{e}", src.display()))?;
+    for entry in rd.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if matches!(name.as_ref(), ".venv" | "__pycache__" | "models" | ".pytest_cache" | ".env") {
+            continue;
+        }
+        let (s, d) = (entry.path(), dst.join(name.as_ref()));
+        let ft = entry.file_type().map_err(|e| e.to_string())?;
+        if ft.is_dir() {
+            copy_dir(&s, &d)?;
+        } else if ft.is_file() {
+            std::fs::copy(&s, &d).map_err(|e| format!("拷贝失败 {}：{e}", s.display()))?;
+        }
+    }
+    Ok(())
+}
+
+/// 跑外部命令并收敛错误（带 stderr 尾部，方便定位首启失败原因）。
+fn run_cmd(mut cmd: std::process::Command, what: &str) -> Result<(), String> {
+    let out = cmd.output().map_err(|e| format!("{what} 启动失败：{e}"))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        let tail: String = err.chars().rev().take(500).collect::<String>().chars().rev().collect();
+        return Err(format!("{what} 失败（code {:?}）：{}", out.status.code(), tail.trim()));
+    }
+    Ok(())
+}
+
+/// 首启引导（仅生产）：备齐 Python 运行时（uv sync，约 300MB）+ 语音模型（234MB）。
+/// 幂等：已就绪的部分直接跳过；失败返回错误，前端提示重启重试。
+fn ensure_runtime(app: &AppHandle) -> Result<(), String> {
+    if !is_prod() {
+        return Ok(());
+    }
+    let home = runtime_root();
+    let runtime = home.join("runtime").join("sidecar");
+    let venv_py = runtime.join(".venv").join("bin").join("python");
+    let resource = app.path().resource_dir().map_err(|e| format!("取资源目录失败：{e}"))?;
+
+    if !venv_py.exists() {
+        emit_setup(app, "python", "首次初始化：安装 Python 环境（约 300MB，需联网，几分钟）…");
+        copy_dir(&resource.join("sidecar"), &runtime)?;
+        let mut cmd = std::process::Command::new(resource.join("bin").join("uv"));
+        cmd.arg("sync")
+            .arg("--extra")
+            .arg("memory")
+            .arg("--project")
+            .arg(&runtime)
+            .env("PYTHONUNBUFFERED", "1");
+        // 国内直连 PyPI 常超时：用户没自配 index 时默认走清华镜像
+        if std::env::var_os("UV_DEFAULT_INDEX").is_none() {
+            cmd.env("UV_DEFAULT_INDEX", "https://pypi.tuna.tsinghua.edu.cn/simple");
+        }
+        run_cmd(cmd, "Python 环境安装")?;
+    }
+
+    let models = home.join("models");
+    if !models.join("paraformer-zh").join("model.int8.onnx").exists() {
+        emit_setup(app, "models", "首次初始化：下载语音模型（234MB）…");
+        let mut cmd = std::process::Command::new(&venv_py);
+        cmd.arg(runtime.join("scripts").join("download_models.py"))
+            .env("YIBAO_MODELS_DIR", &models);
+        run_cmd(cmd, "语音模型下载")?;
+    }
+    emit_setup(app, "done", "初始化完成，大脑启动中…");
+    Ok(())
 }
 
 /// 拉起 Python sidecar。
 /// dev：sidecar/.venv/bin/python（绝对路径，避免 GUI 应用 PATH 缺失）
 /// 回退：uv run（依赖 PATH 能找到 uv）
+/// 生产：数据目录 runtime 副本的 venv + 插件/模型路径指到 Resources 与数据目录
 fn spawn_brain(
     app: &AppHandle,
 ) -> Result<(tauri::async_runtime::Receiver<CommandEvent>, CommandChild), String> {
     let dir = sidecar_dir();
     let python = dir.join(".venv").join("bin").join("python");
     let spawn_result = if python.exists() {
-        app.shell()
+        let mut cmd = app
+            .shell()
             .command(python.to_string_lossy().to_string())
             .args(["-u", "-m", "yibao_brain.server"])
             .current_dir(&dir)
-            .env("PYTHONUNBUFFERED", "1")
-            .spawn()
+            .env("PYTHONUNBUFFERED", "1");
+        if is_prod() {
+            let home = runtime_root();
+            if let Ok(resource) = app.path().resource_dir() {
+                // 插件随包在 Resources（只读，插件业务数据落 data_dir 不受影响）
+                cmd = cmd.env("YIBAO_PLUGINS_DIR", resource.join("plugins"));
+            }
+            cmd = cmd
+                .env("YIBAO_STT_MODEL_DIR", home.join("models").join("paraformer-zh"))
+                .env("YIBAO_VAD_MODEL", home.join("models").join("silero_vad.onnx"));
+        }
+        cmd.spawn()
     } else {
         app.shell()
             .command("uv")
@@ -615,11 +725,38 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // 拉起 Python sidecar + 守护（stdout 桥管重启、看门狗管僵死）
-            let (rx, child) = spawn_brain(&app.handle())?;
-            app.state::<Brain>().0.lock().unwrap().child = Some(child);
-            spawn_bridge(app.handle().clone(), rx);
-            spawn_watchdog(app.handle().clone());
+            // 拉起 Python sidecar + 守护（stdout 桥管重启、看门狗管僵死）。
+            // 生产首启先跑 ensure_runtime（装 Python 环境/下语音模型，可能几分钟）：
+            // 异步引导不卡 setup——窗口先出来，进度经 setup-progress 事件上前端。
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let boot = tauri::async_runtime::spawn_blocking({
+                    let h = handle.clone();
+                    move || ensure_runtime(&h)
+                })
+                .await;
+                match boot {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => {
+                        let _ = handle.emit("setup-error", format!("首次初始化失败：{e}（重启译宝可重试）"));
+                        return;
+                    }
+                    Err(e) => {
+                        let _ = handle.emit("setup-error", format!("首次初始化中断：{e}"));
+                        return;
+                    }
+                }
+                match spawn_brain(&handle) {
+                    Ok((rx, child)) => {
+                        handle.state::<Brain>().0.lock().unwrap().child = Some(child);
+                        spawn_bridge(handle.clone(), rx);
+                        spawn_watchdog(handle.clone());
+                    }
+                    Err(e) => {
+                        let _ = handle.emit("setup-error", format!("大脑启动失败：{e}"));
+                    }
+                }
+            });
 
             // 鼠标穿透轮询（Tauri v2 JS API 无 forward，Rust 侧读全局光标切换 set_ignore_cursor_events）
             #[cfg(desktop)]

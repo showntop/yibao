@@ -7,19 +7,21 @@ from pathlib import Path
 
 
 def _load_dotenv() -> None:
-    """dev 期自动加载 sidecar/.env（若存在），不覆盖已有 env（真 env 优先）。生产无此文件则跳过。"""
-    env_file = Path(__file__).resolve().parent.parent.parent / ".env"
-    if not env_file.is_file():
-        return
-    for line in env_file.read_text().splitlines():
-        s = line.strip()
-        if not s or s.startswith("#") or "=" not in s:
+    """自动加载 .env（若存在），不覆盖已有 env（真 env 优先）。
+    候选：sidecar 工程根（dev）→ 数据目录（生产，应用更新/运行时重拷后仍保留）。"""
+    candidates = [
+        Path(__file__).resolve().parent.parent.parent / ".env",
+        Path(data_dir()) / ".env",
+    ]
+    for env_file in candidates:
+        if not env_file.is_file():
             continue
-        k, v = s.split("=", 1)
-        os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
-
-
-_load_dotenv()
+        for line in env_file.read_text().splitlines():
+            s = line.strip()
+            if not s or s.startswith("#") or "=" not in s:
+                continue
+            k, v = s.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 
 
 def data_dir() -> str:
@@ -30,6 +32,9 @@ def data_dir() -> str:
     if sys.platform == "darwin":
         return os.path.expanduser("~/Library/Application Support/yibao")
     return os.path.expanduser("~/.yibao")
+
+
+_load_dotenv()
 
 
 def audit_db_path() -> str:
@@ -138,7 +143,7 @@ def tts_voice() -> str:
 
 
 def mem0_embedder_model() -> str:
-    """mem0 本地 embedding 模型（默认 BAAI/bge-small-zh-v1.5，中文 512 维 ~100MB）。"""
+    """mem0 本地 embedding 模型（fastembed/ONNX 跑 BAAI/bge-small-zh-v1.5，中文 512 维，量化版 ~50MB）。"""
     return os.environ.get("YIBAO_MEM0_EMBEDDER", "BAAI/bge-small-zh-v1.5")
 
 
