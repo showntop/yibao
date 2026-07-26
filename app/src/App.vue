@@ -597,12 +597,16 @@ onUnmounted(() => {
 .pet-wrap .pet {
   position: static;
 }
-/* 说话态气泡槽：贴着团子左沿（右锚定，tail 指着团子），向左占满腾出的空间 */
+/* 说话态气泡槽：贴着团子左沿（右锚定，tail 指着团子），向左占满腾出的空间；
+   与团子同一高度带（top/height 对齐 pet-wrap），气泡在带内垂直居中——tail 指着团子脸 */
 .speech-slot {
   position: absolute;
   left: 8px;
   right: 116px;
-  top: 14px;
+  top: 12px;
+  height: 88px;
+  display: flex;
+  align-items: center;
   z-index: 3;
 }
 /* 展开内容渐入：配合窗口补间，不突兀 */

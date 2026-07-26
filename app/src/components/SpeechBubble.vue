@@ -158,11 +158,12 @@ onUnmounted(stopRaf);
   color: var(--yb-accent);
   animation: blink 0.9s steps(2, start) infinite;
 }
-/* tail 指向右侧团子 */
+/* tail 指向右侧团子：定在气泡垂直中点（槽内居中后 = 团子脸的高度） */
 .tail {
   position: absolute;
   right: -5px;
-  top: 16px;
+  top: 50%;
+  margin-top: -5px;
   width: 10px;
   height: 10px;
   background: var(--yb-surface-solid);
