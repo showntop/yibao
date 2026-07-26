@@ -734,6 +734,17 @@ fn list_plugins() -> Result<Vec<Value>, String> {
     Ok(out)
 }
 
+/// 打开/聚焦设置大窗：home 在 setup 预创建（关闭只是隐藏，状态保留），show+focus 即可。
+/// 宠物窗 header「扩充」钮与托盘「设置…」共用本命令。
+#[tauri::command]
+fn open_home_window(app: AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("home") {
+        win.show().map_err(|e| e.to_string())?;
+        win.set_focus().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// 打开/聚焦面板窗：已存在则 show+focus（关闭只是隐藏，状态保留）；
 /// 首次用 builder 创建（无装饰+透明与主窗一致，不需 always_on_top），位置取屏幕中央偏右（避开宠物球常驻角）。
 /// 注：CloseRequested → hide 由全局 on_window_event 统一拦截（对所有窗生效，面板窗同享）。
@@ -921,6 +932,34 @@ pub fn run() {
                 let _ = win.show();
             }
 
+            // 设置大窗（home）：随 setup 预创建但隐藏——首开快、状态保留；
+            // 关窗=隐藏由全局 CloseRequested 拦截。正常窗口：不置顶、不 skipTaskbar（Dock/⌘⇥ 可切换）。
+            // 定位取主窗所在屏中央（面板窗同款算法）。
+            let home = tauri::WebviewWindowBuilder::new(
+                app,
+                "home",
+                tauri::WebviewUrl::App("home.html".into()),
+            )
+            .title("译宝设置")
+            .transparent(true)
+            .decorations(false)
+            .resizable(true)
+            .inner_size(760.0, 560.0)
+            .visible(false)
+            .build()
+            .map_err(|e| format!("创建设置窗失败：{e}"))?;
+            if let Ok(Some(mon)) = home.current_monitor() {
+                let s = mon.scale_factor();
+                let mx = mon.position().x as f64 / s;
+                let my = mon.position().y as f64 / s;
+                let sw = mon.size().width as f64 / s;
+                let sh = mon.size().height as f64 / s;
+                let _ = home.set_position(tauri::LogicalPosition::new(
+                    mx + (sw - 760.0) / 2.0,
+                    my + (sh - 560.0) / 2.0,
+                ));
+            }
+
             // 注册全局热键：Super+Shift+Y 显隐主窗（macOS 上 Super=Cmd）
             #[cfg(desktop)]
             if let Err(e) = app.global_shortcut().register("Super+Shift+Y") {
@@ -953,11 +992,8 @@ pub fn run() {
                         }
                     }
                     "settings" => {
-                        // 显示主窗并通知前端切到设置视图（前端监听 open-settings）
-                        if let Some(w) = app.get_webview_window("main") {
-                            let _ = w.show().and_then(|_| w.set_focus());
-                            let _ = w.emit("open-settings", ());
-                        }
+                        // 打开设置大窗（与宠物窗 header「扩充」钮同一命令）
+                        let _ = open_home_window(app.clone());
                     }
                     "quit" => {
                         // 标记退出，避免守护在退出途中重启大脑；顺手杀掉 sidecar
@@ -1046,7 +1082,8 @@ pub fn run() {
             save_setup_config,
             restart_brain,
             clear_brain_data,
-            open_data_dir
+            open_data_dir,
+            open_home_window
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

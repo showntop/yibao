@@ -9,12 +9,13 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [vue()],
 
-  // 多页入口：宠物窗 index.html + 面板窗 panel.html
+  // 多页入口：宠物窗 index.html + 面板窗 panel.html + 设置大窗 home.html
   build: {
     rollupOptions: {
       input: {
         main: fileURLToPath(new URL("./index.html", import.meta.url)),
         panel: fileURLToPath(new URL("./panel.html", import.meta.url)),
+        home: fileURLToPath(new URL("./home.html", import.meta.url)),
         design: fileURLToPath(new URL("./design.html", import.meta.url)),
       },
     },

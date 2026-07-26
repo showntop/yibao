@@ -1,4 +1,6 @@
 <script setup lang="ts">
+// 设置页（home 大窗唯一内容）：模型/语音（保存后重启大脑生效）+ 通用/权限/数据（即时生效）。
+// 大脑只在启动时读 .env，所以模型/语音保存链路 = save_setup_config → restart_brain。
 import { onMounted, onUnmounted, ref } from "vue";
 import { getVersion } from "@tauri-apps/api/app";
 import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
@@ -12,15 +14,10 @@ import {
   checkPermissions,
   promptPermission,
   onBrainStatus,
+  onBrainPermissions,
   type BrainPermissions,
   type ClearKind,
 } from "../lib/brain";
-
-// 设置页：模型/语音（保存后重启大脑生效）+ 通用/权限/数据（即时生效）。
-// 大脑只在启动时读 .env，所以模型/语音保存链路 = save_setup_config → restart_brain。
-defineProps<{ perms: BrainPermissions | null }>();
-const emit = defineEmits<{ back: [] }>();
-
 // ---- 模型 / 语音（写 .env，重启大脑生效）----
 const key = ref(""); // 留空 = 不改动已有 key
 const hasKey = ref(false);
@@ -80,6 +77,8 @@ async function toggleAutostart() {
 }
 
 // ---- 权限（复用引导横幅的检测/授权链路，视觉收敛为设置行）----
+// home 大窗独立挂载，收不到宠物窗的 perms prop：自行订阅 brain-permissions 广播 + 挂载时主动拉一次
+const perms = ref<BrainPermissions | null>(null);
 const SETTINGS_URLS: Record<"ax" | "screen", string> = {
   ax: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
   screen: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
@@ -118,8 +117,14 @@ async function doClear(kind: ClearKind) {
 const version = ref("…");
 
 let unlistenStatus: (() => void) | null = null;
+let unlistenPerms: (() => void) | null = null;
 
 onMounted(async () => {
+  unlistenPerms = await onBrainPermissions((p) => {
+    perms.value = p;
+  });
+  // 主动拉一次：大脑在 hello 时广播过权限，本窗可能后于 hello 挂载（大脑不在线则静默失败，等上线广播）
+  void checkPermissions().catch(() => {});
   try {
     const cfg = await getSetupConfig();
     hasKey.value = cfg.has_key;
@@ -144,16 +149,12 @@ onMounted(async () => {
 
 onUnmounted(() => {
   unlistenStatus?.();
+  unlistenPerms?.();
 });
 </script>
 
 <template>
   <div class="settings">
-    <div class="s-head">
-      <button class="s-back" @click="emit('back')">‹ 返回</button>
-      <span class="s-title">设置</span>
-    </div>
-
     <div class="s-scroll">
       <!-- 模型 -->
       <section class="s-group">
@@ -281,13 +282,12 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-/* 设置页：占满 chat-body（与插件启动器视图同挂法），内部自滚动 */
+/* 设置页：撑满 home 大窗内容区，内部自滚动；分组卡居中单列（max-width 560，宽窗不拉成长行） */
 .settings {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--yb-space-2);
   animation: fade-in 0.22s var(--yb-ease) 0.06s both;
 }
 @keyframes fade-in {
@@ -300,34 +300,6 @@ onUnmounted(() => {
     transform: none;
   }
 }
-/* 头部：返回在左、标题居中 */
-.s-head {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2px 4px;
-}
-.s-title {
-  font-size: var(--yb-fs-lg);
-  font-weight: 600;
-}
-.s-back {
-  position: absolute;
-  left: 0;
-  border: none;
-  background: transparent;
-  color: var(--yb-text-dim);
-  font-size: 13px;
-  cursor: pointer;
-  padding: 3px 8px;
-  border-radius: 10px;
-  transition: all 0.15s ease;
-}
-.s-back:hover {
-  color: var(--yb-accent-deep);
-  background: var(--yb-surface-solid);
-}
 .s-scroll {
   flex: 1;
   min-height: 0;
@@ -335,7 +307,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: var(--yb-space-3);
-  padding: 2px 2px 4px;
+  padding: var(--yb-space-3) var(--yb-space-4) var(--yb-space-4);
   scrollbar-width: thin;
 }
 .s-scroll::-webkit-scrollbar {
@@ -345,8 +317,12 @@ onUnmounted(() => {
   background: var(--yb-surface-border);
   border-radius: 3px;
 }
-/* 分组卡：与插件行/向导同款白卡 */
+/* 分组卡：与插件行/向导同款白卡；居中单列（宽窗下内容不拉成长行） */
 .s-group {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 560px;
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
   gap: var(--yb-space-2);
@@ -490,8 +466,12 @@ select:focus {
   opacity: 0.6;
   cursor: default;
 }
-/* 保存行：消息在左（弹性撑开）、主按钮在右 */
+/* 保存行：消息在左（弹性撑开）、主按钮在右；与分组卡同宽居中 */
 .s-actions {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 560px;
+  margin: 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;

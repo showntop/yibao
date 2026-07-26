@@ -199,7 +199,7 @@ export function openDataDir(): Promise<void> {
   return invoke("open_data_dir");
 }
 
-/** 订阅托盘「设置…」入口（Rust 显示主窗后发本事件，前端切设置视图）。 */
-export function onOpenSettings(cb: () => void): Promise<UnlistenFn> {
-  return listen("open-settings", () => cb());
+/** 打开/聚焦设置大窗（home；宠物窗 header「扩充」钮与托盘「设置…」共用）。 */
+export function openHomeWindow(): Promise<void> {
+  return invoke("open_home_window");
 }

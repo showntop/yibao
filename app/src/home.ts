@@ -1,0 +1,6 @@
+// 设置大窗入口（独立于宠物窗 main.ts；令牌同源，避免复制漂移）。
+import { createApp } from "vue";
+import Home from "./Home.vue";
+import "./assets/tokens.css";
+
+createApp(Home).mount("#app");
