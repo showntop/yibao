@@ -220,8 +220,9 @@ def test_editor_webview_panel_loaded(env):
     assert p is not None and p["type"] == "webview"
     html = p["html"]
     assert "<textarea" in html and "window.yibao =" not in html  # 桥 JS 由父侧注入，插件不自带
-    # 面板事件 size 可控：编辑器承载 AI diff / 版本历史 / 发布格式化 / 素材抽屉，上限放到 36KB 防失控增长
-    assert len(html.encode("utf-8")) < 36 * 1024
+    # 面板事件 size 可控：编辑器承载 AI diff（选段 + 全文三模式）/ 版本历史 / 发布格式化 / 素材抽屉
+    # / 标题候选与平台选择弹层，上限放到 40KB 防失控增长
+    assert len(html.encode("utf-8")) < 40 * 1024
 
     payload = panel_payload(ActionResult(success=True, data={"rows": []}, panel="zimeiti:editor"))
     assert payload["schema"] is None
@@ -712,3 +713,70 @@ def test_mat_link_and_topic_filtered_list(env):
     # 编辑器素材抽屉的查法：mat_list 运行时 where 按 topic_id 过滤
     rows = _run(reg, "zimeiti.mat_list", {"where": {"topic_id": tid}}).data["rows"]
     assert [r["id"] for r in rows] == [rid]
+
+
+# ---------- ai_edit 全文三模式（polish / title / platform，selection 即整文） ----------
+
+
+def test_ai_edit_polish_full_text(env):
+    reg, _, _ = env
+    t = _ai_skill(reg, "润色后的全文")
+    r = t.run({"selection": "# 全文\n正文", "mode": "polish"}, t.plugin_ctx)
+    assert r.success and r.data["replacement"] == "润色后的全文" and r.data["mode"] == "polish"
+
+
+def test_ai_edit_polish_prompt_rules(env):
+    reg, _, _ = env
+    prov = FakeProvider(text="x")
+    t = reg.get("zimeiti.ai_edit")
+    t.plugin_ctx.llm = LlmChat(prov)
+    t.run({"selection": "正文内容", "mode": "polish"}, t.plugin_ctx)
+    prompt = prov.calls[0]["messages"][0]["content"]
+    assert "润色" in prompt and "markdown" in prompt and "正文内容" in prompt
+
+
+def test_ai_edit_platform_rewrites_with_style(env):
+    reg, _, _ = env
+    prov = FakeProvider(text="小红书风")
+    t = reg.get("zimeiti.ai_edit")
+    t.plugin_ctx.llm = LlmChat(prov)
+    r = t.run({"selection": "正文", "mode": "platform", "platform": "小红书"}, t.plugin_ctx)
+    assert r.success and r.data["replacement"] == "小红书风"
+    prompt = prov.calls[0]["messages"][0]["content"]
+    assert "小红书" in prompt and "话题标签" in prompt
+
+
+def test_ai_edit_platform_requires_platform(env):
+    reg, _, _ = env
+    t = _ai_skill(reg)
+    assert not t.run({"selection": "正文", "mode": "platform"}, t.plugin_ctx).success
+
+
+def test_ai_edit_title_parses_json_array(env):
+    reg, _, _ = env
+    t = _ai_skill(reg, '["悬念", "干货", "情绪", "数字", "提问", "第六个不要"]')
+    r = t.run({"selection": "全文", "mode": "title"}, t.plugin_ctx)
+    assert r.success and r.data["titles"] == ["悬念", "干货", "情绪", "数字", "提问"]
+
+
+def test_ai_edit_title_lines_fallback(env):
+    reg, _, _ = env
+    t = _ai_skill(reg, '1. 悬念标题\n- 干货标题\n"情绪标题"\n\n4）数字标题\n提问标题\n第六条不要')
+    r = t.run({"selection": "全文", "mode": "title"}, t.plugin_ctx)
+    assert r.success and r.data["titles"] == ["悬念标题", "干货标题", "情绪标题", "数字标题", "提问标题"]
+
+
+def test_ai_edit_title_unparseable_errors(env):
+    reg, _, _ = env
+    t = _ai_skill(reg, "   ")
+    assert not t.run({"selection": "全文", "mode": "title"}, t.plugin_ctx).success
+
+
+def test_ai_edit_full_length_limits(env):
+    reg, _, _ = env
+    t = _ai_skill(reg)
+    r = t.run({"selection": "x" * 8001, "mode": "polish"}, t.plugin_ctx)
+    assert not r.success and "8001" in r.error  # 全文上限 8000
+    assert t.run({"selection": "x" * 8000, "mode": "polish"}, t.plugin_ctx).success
+    r = t.run({"selection": "x" * 4001}, t.plugin_ctx)
+    assert not r.success and "4001" in r.error  # 选段上限 4000（回归）

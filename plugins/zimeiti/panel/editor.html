@@ -136,26 +136,26 @@
   #diff-body .a { background: var(--green-bg); color: var(--green); border-radius: 6px; padding: 1px 6px; margin: 1px 0; }
   #diff-body .s { color: var(--muted); padding: 1px 6px; margin: 1px 0; }
 
-  /* ---- 发布弹层（格式化复制 + 标为已发布）---- */
-  #pub-card { width: min(400px, 92%); }
-  #pub-card .opts { padding: 12px 14px 4px; }
-  #pub-card .opt {
+  /* ---- 发布弹层（格式化复制 + 标为已发布）/ 平台选择弹层（共用 opt 选项样式）---- */
+  #pub-card, #pf-card { width: min(400px, 92%); }
+  .opts { padding: 12px 14px 4px; }
+  .opt {
     display: block; width: 100%; text-align: left; cursor: pointer; margin: 0 0 10px;
     background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 11px 13px;
     font-family: inherit; transition: all .15s ease;
   }
-  #pub-card .opt:hover { border-color: var(--accent); background: var(--accent-soft); }
-  #pub-card .opt .t { font-size: 13px; font-weight: 600; color: var(--text); }
-  #pub-card .opt .s { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
+  .opt:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .opt .t { font-size: 13px; font-weight: 600; color: var(--text); }
+  .opt .s { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
   #pub-card footer {
     padding: 10px 14px 12px; border-top: 1px solid var(--border-soft);
     display: flex; justify-content: space-between; align-items: center; gap: 8px;
   }
   #pub-card footer .hint { font-size: 11px; color: var(--faint); }
 
-  /* ---- 版本历史 / 素材弹层 ---- */
-  #hist-card, #mat-card { width: min(520px, 92%); max-height: 76%; display: flex; flex-direction: column; }
-  #hist-body, #mat-body { flex: 1; overflow-y: auto; padding: 6px 14px 10px; }
+  /* ---- 版本历史 / 素材 / 标题候选弹层 ---- */
+  #hist-card, #mat-card, #tt-card { width: min(520px, 92%); max-height: 76%; display: flex; flex-direction: column; }
+  #hist-body, #mat-body, #tt-body { flex: 1; overflow-y: auto; padding: 6px 14px 10px; }
   .hrow { display: flex; align-items: center; gap: 10px; padding: 9px 2px; border-bottom: 1px solid var(--border-soft); }
   .hrow:last-child { border-bottom: none; }
   .hrow .v { font: 600 12.5px "SF Mono", ui-monospace, Menlo, monospace; color: var(--accent-deep); flex: none; }
@@ -189,6 +189,9 @@
   <input id="note" placeholder="版本备注（可选）">
   <button id="history" class="act ghost">历史</button>
   <button id="mats" class="act ghost" title="从素材库挑一条当论据插到光标处">素材</button>
+  <button id="ai-polish" class="act ghost" title="全文润色：事实结构不变，表达更顺">润色</button>
+  <button id="ai-title" class="act ghost" title="基于全文出 5 个候选标题">标题</button>
+  <button id="ai-platform" class="act ghost" title="按目标平台风格改写全文">平台</button>
   <button id="publish" class="act ghost">发布…</button>
   <button id="save" class="act">保存为新版本</button>
 </header>
@@ -263,6 +266,26 @@
   <div id="mat-card" class="card">
     <header>插入素材 · 挑一条当论据<span class="sp"></span><button id="mat-close" class="act ghost">关闭</button></header>
     <div id="mat-body"></div>
+  </div>
+</div>
+
+<!-- 标题候选弹层 -->
+<div id="tt-overlay" class="ovl" hidden>
+  <div id="tt-card" class="card">
+    <header>选个标题<span class="sp"></span><button id="tt-close" class="act ghost">关闭</button></header>
+    <div id="tt-body"></div>
+  </div>
+</div>
+
+<!-- 平台选择弹层 -->
+<div id="pf-overlay" class="ovl" hidden>
+  <div id="pf-card" class="card">
+    <header>按哪个平台的风格改写？<span class="sp"></span><button id="pf-close" class="act ghost">关闭</button></header>
+    <div class="opts">
+      <button class="opt" data-pf="公众号"><div class="t">公众号</div><div class="s">阅读节奏 + 小标题分段</div></button>
+      <button class="opt" data-pf="知乎"><div class="t">知乎</div><div class="s">论述感 + 逻辑连接词 + 克制</div></button>
+      <button class="opt" data-pf="小红书"><div class="t">小红书</div><div class="s">短段落 + 口语 + emoji + 话题标签</div></button>
+    </div>
   </div>
 </div>
 
@@ -492,6 +515,68 @@
     if (ev.key === "Enter") aiEdit("custom");
   });
 
+  // ---- 全文级 AI 协作：润色/标题/平台改写（整文进 ai_edit，确认后才落稿）----
+  function aiFull(mode, platform) {
+    if (aiBusy) return;
+    var full = $("editor").value.trim();
+    if (!full) { setStatus("还没有内容，先写稿", true); return; }
+    if (full.length > 8000) { setStatus("文章太长（" + full.length + " 字），先拆段或走对话改稿", true); return; }
+    setBusy(true);
+    setStatus("AI 处理中…");
+    var params = { selection: full, mode: mode };
+    if (platform) params.platform = platform;
+    window.yibao.invoke("zimeiti.ai_edit", params).then(function (r) {
+      if (mode === "title") { showTitles((r && r.titles) || []); return; }
+      var rep = (r && r.replacement) || "";
+      if (!rep) { setStatus("AI 返回了空内容", true); return; }
+      pendingReplacement = rep;
+      showDiff(mode === "polish" ? "全文润色" : ("平台改写 · " + platform), full, rep, "应用替换", function (text) {
+        var el = $("editor");
+        el.value = text;
+        el.dispatchEvent(new Event("input"));
+        el.focus();
+        setStatus("已应用 · 满意的话「保存为新版本」");
+      });
+      setStatus("确认后应用替换");
+    }).catch(function (e) {
+      setStatus(emsg(e), true);
+    }).finally(function () { setBusy(false); });
+  }
+
+  // 标题候选弹层：挑一个替换文首 H1（无 H1 则插到文首）
+  function showTitles(titles) {
+    if (!titles.length) { setStatus("AI 没给出标题", true); return; }
+    $("tt-body").innerHTML = "";
+    titles.forEach(function (t) {
+      var btn = document.createElement("button");
+      btn.className = "mrow";
+      btn.innerHTML = "<div class=\"mt\">" + esc(t) + "</div>";
+      btn.addEventListener("click", function () {
+        var el = $("editor");
+        el.value = /^# /.test(el.value) ? el.value.replace(/^# [^\n]*/, "# " + t) : "# " + t + "\n\n" + el.value;
+        el.dispatchEvent(new Event("input"));
+        $("tt-overlay").hidden = true;
+        el.focus();
+        setStatus("已换标题 · 满意的话「保存为新版本」");
+      });
+      $("tt-body").appendChild(btn);
+    });
+    $("tt-overlay").hidden = false;
+    setStatus("挑一个标题，替换文首 H1");
+  }
+
+  $("ai-polish").addEventListener("click", function () { aiFull("polish"); });
+  $("ai-title").addEventListener("click", function () { aiFull("title"); });
+  $("ai-platform").addEventListener("click", function () { $("pf-overlay").hidden = false; });
+  $("pf-close").addEventListener("click", function () { $("pf-overlay").hidden = true; });
+  $("tt-close").addEventListener("click", function () { $("tt-overlay").hidden = true; });
+  Array.prototype.forEach.call(document.querySelectorAll("#pf-overlay .opt"), function (btn) {
+    btn.addEventListener("click", function () {
+      $("pf-overlay").hidden = true;
+      aiFull("platform", btn.getAttribute("data-pf"));
+    });
+  });
+
   // 行级 LCS diff（片段不大，O(n·m) 够用）
   function diffLines(a, b) {
     var A = a.split("\n"), B = b.split("\n"), n = A.length, m = B.length;
@@ -543,6 +628,8 @@
     if (!$("pub-overlay").hidden) $("pub-overlay").hidden = true;
     if (!$("hist-overlay").hidden) $("hist-overlay").hidden = true;
     if (!$("mat-overlay").hidden) $("mat-overlay").hidden = true;
+    if (!$("tt-overlay").hidden) $("tt-overlay").hidden = true;
+    if (!$("pf-overlay").hidden) $("pf-overlay").hidden = true;
   });
 
   // ---- 版本历史：列表 → 对比当前稿 → 一键恢复（保存后成为新版本，历史不可变） ----
