@@ -10,11 +10,13 @@ import ConfirmDialog from "./components/ConfirmDialog.vue";
 import Bubble from "./components/Bubble.vue";
 import PermissionsBanner from "./components/PermissionsBanner.vue";
 import SetupWizard from "./components/SetupWizard.vue";
+import SettingsView from "./components/SettingsView.vue";
 import {
   onBrainEvent,
   onBrainStatus,
   onBrainPermissions,
   onPanelClosed,
+  onOpenSettings,
   runInput,
   sendConfirm,
   voiceStart,
@@ -82,6 +84,7 @@ let unlistenPanelClosed: (() => void) | null = null;
 let unlistenSetup: (() => void) | null = null;
 let unlistenSetupErr: (() => void) | null = null;
 let unlistenSetupCfg: (() => void) | null = null;
+let unlistenOpenSettings: (() => void) | null = null;
 
 const statusText = computed(
   () => ({
@@ -125,8 +128,8 @@ async function collapse() {
   expanded.value = false;
 }
 
-// ---- 插件启动器（双击团子）----
-type PetView = "chat" | "plugins";
+// ---- 插件启动器（双击团子）/ 设置（header 齿轮、托盘「设置…」）----
+type PetView = "chat" | "plugins" | "settings";
 interface PluginInfo { id: string; name: string }
 const view = ref<PetView>("chat");
 const plugins = ref<PluginInfo[]>([]);
@@ -409,6 +412,8 @@ onMounted(async () => {
     bubbles.value.push({ role: "ai", text: "⚠️ " + e.payload });
   });
   unlistenSetupCfg = await listen<string>("setup-config-needed", () => void onSetupNeeded());
+  // 托盘「设置…」：Rust 已显示主窗，这里切到设置视图（未展开则先展开）
+  unlistenOpenSettings = await onOpenSettings(() => void expandTo("settings"));
   // 主动拉一次配置：首启引导若秒过（venv/模型已在），setup-config-needed 可能先于挂载发出而丢——靠拉取兜底
   try {
     const cfg = await invoke<{ has_key: boolean }>("get_setup_config");
@@ -424,6 +429,7 @@ onUnmounted(() => {
   unlistenSetup?.();
   unlistenSetupErr?.();
   unlistenSetupCfg?.();
+  unlistenOpenSettings?.();
   window.removeEventListener("keydown", onKeydown);
   if (clickTimer !== null) clearTimeout(clickTimer);
   if (bubbleTimer !== null) clearTimeout(bubbleTimer);
@@ -456,13 +462,19 @@ onUnmounted(() => {
             <line x1="6" y1="12" x2="18" y2="12" />
           </svg>
         </button>
+        <button class="collapse-btn gear-btn" title="设置" @click="expandTo('settings')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
+        </button>
       </header>
 
       <div class="chat-body">
       <SetupWizard v-if="setupNeeded" :model="setupCfg.model" :base-url="setupCfg.baseUrl" :voice="setupCfg.voice" @saved="onSetupSaved" />
 
       <template v-if="!setupNeeded">
-      <PermissionsBanner v-if="missingPerms && perms" :perms="perms" />
+      <PermissionsBanner v-if="missingPerms && perms && view !== 'settings'" :perms="perms" />
 
       <!-- 插件启动器视图（双击团子进来）：列出插件，点击直达它的主面板 -->
       <div v-if="view === 'plugins'" class="bubbles">
@@ -477,6 +489,9 @@ onUnmounted(() => {
         </button>
         <div v-if="!plugins.length && !pluginErr" class="pl-empty">没有发现插件</div>
       </div>
+
+      <!-- 设置视图（header 齿轮 / 托盘「设置…」进来）：与插件视图同挂法，占满 chat-body -->
+      <SettingsView v-else-if="view === 'settings'" :perms="perms" @back="view = 'chat'" />
 
       <div v-else class="bubbles" ref="bubblesRef">
         <div v-if="!bubbles.length && !showTyping" class="empty-hint">
@@ -682,6 +697,14 @@ onUnmounted(() => {
 .collapse-btn:hover {
   background: var(--yb-well);
   color: var(--yb-text);
+}
+/* 设置齿轮：与收起钮同款幽灵风，挨着它站（收起钮 left:10，齿轮紧随其后） */
+.gear-btn {
+  left: 40px;
+}
+.gear-btn svg {
+  width: 15px;
+  height: 15px;
 }
 .bubbles {
   flex: 1;

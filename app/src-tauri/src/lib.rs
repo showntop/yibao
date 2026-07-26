@@ -7,6 +7,7 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_opener::OpenerExt;
 #[cfg(desktop)]
 use device_query::{DeviceQuery, DeviceState};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -32,6 +33,12 @@ struct BrainState {
     restarts: u32, // 连续掉线次数（稳定运行 60s 后清零）
     last_restart: Option<Instant>,
     shutting_down: bool,
+    /// 计划内重启标记（设置保存/清数据前主动 kill）：桥任务收到退出后走正常拉起管线，
+    /// 但这次掉线不算「崩溃」，退避计数不升级。
+    manual_restart: bool,
+    /// 维护模式（清大脑数据）：停脑→删文件→拉起期间，掉线只清槽广播、退避管线暂停，
+    /// 防止 qdrant 锁还没释放就被重新拉起，也防与维护流程的拉起撞车。
+    hold_restart: bool,
     /// 最近一次 panel 事件载荷（panel/schema/data）：面板窗首开时事件已发完，
     /// 窗口挂载后靠 get_current_panel 拉这份缓存补渲染（解首开竞态）。
     last_panel: Option<Value>,
@@ -47,6 +54,8 @@ impl BrainState {
             restarts: 0,
             last_restart: None,
             shutting_down: false,
+            manual_restart: false,
+            hold_restart: false,
             last_panel: None,
         }
     }
@@ -92,13 +101,15 @@ fn emit_setup(app: &AppHandle, stage: &str, detail: &str) {
     );
 }
 
-/// 首启配置（LLM key/模型/音色）：缺 key 时大脑不启动，前端弹设置向导。
+/// 首启/设置配置（LLM key/模型/音色/语音开关）：缺 key 时大脑不启动，前端弹设置向导。
 #[derive(serde::Serialize, Clone)]
 struct SetupConfig {
     has_key: bool,
     model: String,
     base_url: String,
     voice: String,
+    /// 语音总开关（YIBAO_VOICE）：语义对齐 config.py——仅 "0" 为关，缺省/其它值都算开
+    voice_enabled: bool,
 }
 
 /// 解析 .env 文件为键值对（与 Python config._load_dotenv 同规则：去引号、跳注释）。
@@ -135,6 +146,7 @@ fn merged_env() -> std::collections::HashMap<String, String> {
         "YIBAO_LLM_MODEL",
         "YIBAO_LLM_BASE_URL",
         "YIBAO_TTS_VOICE",
+        "YIBAO_VOICE",
     ] {
         if let Ok(v) = std::env::var(k) {
             m.insert(k.to_string(), v);
@@ -159,6 +171,7 @@ fn get_setup_config() -> SetupConfig {
             .filter(|v| !v.is_empty())
             .cloned()
             .unwrap_or_else(|| "zh-CN-XiaoxiaoNeural".into()),
+        voice_enabled: m.get("YIBAO_VOICE").is_none_or(|v| v != "0"),
     }
 }
 
@@ -174,7 +187,9 @@ fn boot_brain(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// 保存首启配置：upsert 进数据目录 .env（保留其它行），然后拉起大脑。
+/// 保存首启/设置配置：upsert 进数据目录 .env（保留其它行），然后拉起大脑。
+/// key 留空 = 不改动已有 key（设置页复用本命令；首启向导已在前端拦空 key）。
+/// voice_enabled 为 None 时不动 YIBAO_VOICE（向导不传，保持缺省开）。
 #[tauri::command]
 fn save_setup_config(
     app: AppHandle,
@@ -182,9 +197,14 @@ fn save_setup_config(
     model: String,
     base_url: String,
     voice: String,
+    voice_enabled: Option<bool>,
 ) -> Result<(), String> {
     let key = key.trim().to_string();
-    if key.is_empty() {
+    if key.is_empty()
+        && !merged_env()
+            .get("YIBAO_LLM_API_KEY")
+            .is_some_and(|v| !v.is_empty())
+    {
         return Err("API Key 不能为空".into());
     }
     let path = runtime_root().join(".env");
@@ -204,6 +224,14 @@ fn save_setup_config(
         match lines.iter_mut().find(|l| l.starts_with(&prefix)) {
             Some(line) => *line = format!("{k}={v}"),
             None => lines.push(format!("{k}={v}")),
+        }
+    }
+    // 语音总开关：设置页显式传了才写（"0"=关 / "1"=开，语义对齐 config.py）
+    if let Some(ve) = voice_enabled {
+        let v = if ve { "1" } else { "0" };
+        match lines.iter_mut().find(|l| l.starts_with("YIBAO_VOICE=")) {
+            Some(line) => *line = format!("YIBAO_VOICE={v}"),
+            None => lines.push(format!("YIBAO_VOICE={v}")),
         }
     }
     if let Some(parent) = path.parent() {
@@ -431,28 +459,36 @@ fn spawn_bridge(app: AppHandle, mut rx: tauri::async_runtime::Receiver<CommandEv
     });
 }
 
-/// 进程掉线统一入口：清槽 → brain-status(down) → 退避重启（退出中则不动）。
+/// 进程掉线统一入口：清槽 → brain-status(down) → 退避重启（退出中/维护中则不动）。
 async fn on_brain_down(app: AppHandle, detail: Option<String>) {
-    {
+    let hold = {
         let state = app.state::<Brain>();
         let mut g = state.0.lock().unwrap();
         if g.shutting_down {
             return;
         }
         g.child = None;
-        g.restarts += 1;
+        // 计划内重启（设置保存/清数据前的主动 kill）不算崩溃，退避计数不升级
+        if !std::mem::take(&mut g.manual_restart) {
+            g.restarts += 1;
+        }
         g.last_restart = Some(Instant::now());
-    }
+        g.hold_restart
+    };
     let mut msg = serde_json::json!({"status": "down"});
     if let Some(d) = detail {
         msg["detail"] = Value::String(d);
     }
     let _ = app.emit("brain-status", msg);
-    restart_brain(app).await;
+    // 维护模式（清数据）：只广播掉线，由维护流程删完文件后自行拉起
+    if hold {
+        return;
+    }
+    restart_with_backoff(app).await;
 }
 
 /// 退避重启：1s → 2s → 5s → 10s 封顶；失败继续退避重试，永不放弃（常驻 agent）。
-async fn restart_brain(app: AppHandle) {
+async fn restart_with_backoff(app: AppHandle) {
     let attempts = app.state::<Brain>().0.lock().unwrap().restarts;
     let backoff = match attempts {
         0 | 1 => 1,
@@ -465,36 +501,124 @@ async fn restart_brain(app: AppHandle) {
         serde_json::json!({"status": "restarting", "attempt": attempts}),
     );
     tokio::time::sleep(Duration::from_secs(backoff)).await;
-    if app.state::<Brain>().0.lock().unwrap().shutting_down {
-        return;
-    }
-    match spawn_brain(&app) {
-        Ok((rx, child)) => {
-            {
-                let state = app.state::<Brain>();
-                let mut g = state.0.lock().unwrap();
+    // 睡醒后与清数据流程/退出协调，spawn 与状态登记在同一把锁内完成，防并发双拉
+    let spawned = {
+        let state = app.state::<Brain>();
+        let mut g = state.0.lock().unwrap();
+        if g.shutting_down || g.hold_restart {
+            return; // 维护模式：维护流程会自己拉起；退出中：不再复活
+        }
+        if g.child.is_some() {
+            return; // 已有人拉起（清理流程/并发路径），不重复 spawn
+        }
+        match spawn_brain(&app) {
+            Ok((rx, child)) => {
                 g.child = Some(child);
                 g.last_pong = Instant::now(); // 给新进程启动留窗口
                 g.seen_pong = false; // 启动宽限期内不启用 15s 心跳超时
                 g.warned = false;
+                Some(rx)
             }
-            spawn_bridge(app.clone(), rx);
-        }
-        Err(e) => {
-            eprintln!("[brain] 重启失败：{e}");
-            {
-                let state = app.state::<Brain>();
-                let mut g = state.0.lock().unwrap();
+            Err(e) => {
+                eprintln!("[brain] 重启失败：{e}");
                 g.restarts += 1;
                 g.last_restart = Some(Instant::now());
+                let _ = app.emit(
+                    "brain-status",
+                    serde_json::json!({"status": "down", "detail": e}),
+                );
+                None
             }
-            let _ = app.emit(
-                "brain-status",
-                serde_json::json!({"status": "down", "detail": e}),
-            );
-            Box::pin(restart_brain(app)).await;
+        }
+    };
+    match spawned {
+        Some(rx) => spawn_bridge(app.clone(), rx),
+        None => Box::pin(restart_with_backoff(app)).await,
+    }
+}
+
+/// 手动重启大脑（设置保存后让新配置当场生效）。
+/// 只负责「杀」：退出事件走桥任务 → on_brain_down → 退避管线统一拉起，
+/// manual_restart 标记让这次计划内掉线不升退避计数、1s 即回。
+/// 幂等：大脑本就不在线时退避管线本就在跑，无需插手；也不与进行中的重启打架
+///（看门狗/清理流程先把 child 取走的话，这里拿到 None 直接返回）。
+#[tauri::command]
+fn restart_brain(app: AppHandle) -> Result<(), String> {
+    let state = app.state::<Brain>();
+    let mut g = state.0.lock().map_err(|e| e.to_string())?;
+    if g.shutting_down {
+        return Ok(());
+    }
+    if let Some(child) = g.child.take() {
+        g.manual_restart = true;
+        let _ = child.kill();
+    }
+    Ok(())
+}
+
+/// 清空大脑数据：kind = "memory"（长期记忆 mem0_store/）/ "history"（对话历史 history.json）/ "all"。
+/// 顺序 = 先进维护模式停大脑 → 删 → 交还退避管线拉起。
+/// 必须停脑再删：mem0_store 有 qdrant 文件锁（活进程手里删不掉/会损坏），
+/// history.json 大脑也可能在运行中回写，删完重启才能让它以空历史重新加载。
+#[tauri::command]
+async fn clear_brain_data(app: AppHandle, kind: String) -> Result<(), String> {
+    if !matches!(kind.as_str(), "memory" | "history" | "all") {
+        return Err(format!("未知清理类型：{kind}"));
+    }
+    {
+        let state = app.state::<Brain>();
+        let mut g = state.0.lock().map_err(|e| e.to_string())?;
+        if g.shutting_down {
+            return Err("应用退出中，无法清理".into());
+        }
+        if g.hold_restart {
+            return Err("另一个清理操作进行中".into());
+        }
+        g.hold_restart = true; // 维护期：掉线只清槽广播，退避管线暂停（防与删除撞车）
+        g.manual_restart = true; // 计划内停脑，掉线计数不升级
+        if let Some(child) = g.child.take() {
+            let _ = child.kill();
         }
     }
+    // 等进程离场：文件锁/句柄随进程死亡释放（kill 为 SIGKILL，秒级；留足余量）
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let root = runtime_root();
+    let mut result: Result<(), String> = Ok(());
+    if kind != "history" {
+        let mem = root.join("mem0_store");
+        if mem.exists() {
+            result = std::fs::remove_dir_all(&mem).map_err(|e| format!("删除长期记忆失败：{e}"));
+        }
+    }
+    if result.is_ok() && kind != "memory" {
+        let hist = root.join("history.json");
+        if hist.exists() {
+            result = std::fs::remove_file(&hist).map_err(|e| format!("删除对话历史失败：{e}"));
+        }
+    }
+    // 无论删除成败都退出维护模式——回到可拉起状态优先，别把大脑卡在停止态
+    {
+        let state = app.state::<Brain>();
+        let mut g = state.0.lock().map_err(|e| e.to_string())?;
+        g.hold_restart = false;
+    }
+    result?;
+    // 交还退避重启管线统一拉起（child 槽为空，spawn 路径独享）；配置不齐（首启未配 key/venv 未备）保持停止
+    if get_setup_config().has_key && sidecar_dir().join(".venv").join("bin").join("python").exists()
+    {
+        restart_with_backoff(app).await;
+    }
+    Ok(())
+}
+
+/// 在 Finder 中打开数据目录（.env 配置 / 记忆 / 历史都在这）。
+#[tauri::command]
+fn open_data_dir(app: AppHandle) -> Result<(), String> {
+    let dir = runtime_root();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("建数据目录失败：{e}"))?;
+    app.opener()
+        .open_path(dir.to_string_lossy().as_ref(), None::<&str>)
+        .map_err(|e| format!("打开数据目录失败：{e}"))
 }
 
 /// 看门狗：每 5s 发 ping；运行中 >15s 无 pong 视为疑似僵死。
@@ -767,6 +891,11 @@ pub fn run() {
         .plugin(shortcuts)
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
+        // 开机启动（macOS LaunchAgent）；前端直接调插件 API（enable/disable/isEnabled）
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None::<Vec<&str>>,
+        ))
         .manage(Brain(Mutex::new(BrainState::new())))
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
@@ -801,8 +930,9 @@ pub fn run() {
             // 系统托盘：关窗隐藏后靠它重新显示/退出。左键点图标切换显隐，右键菜单。
             let show_item = MenuItem::with_id(app, "show", "显示译宝", true, None::<&str>)?;
             let hide_item = MenuItem::with_id(app, "hide", "隐藏译宝", true, None::<&str>)?;
+            let settings_item = MenuItem::with_id(app, "settings", "设置…", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "退出译宝", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_item, &hide_item, &quit_item])?;
+            let menu = Menu::with_items(app, &[&show_item, &hide_item, &settings_item, &quit_item])?;
             let tray_img = tauri::image::Image::from_bytes(include_bytes!("../icons/icon-tray.png"))
                 .expect("加载托盘图标失败");
             TrayIconBuilder::with_id("main-tray")
@@ -820,6 +950,13 @@ pub fn run() {
                     "hide" => {
                         if let Some(w) = app.get_webview_window("main") {
                             let _ = w.hide();
+                        }
+                    }
+                    "settings" => {
+                        // 显示主窗并通知前端切到设置视图（前端监听 open-settings）
+                        if let Some(w) = app.get_webview_window("main") {
+                            let _ = w.show().and_then(|_| w.set_focus());
+                            let _ = w.emit("open-settings", ());
                         }
                     }
                     "quit" => {
@@ -906,7 +1043,10 @@ pub fn run() {
             prompt_permission,
             set_interactive_full,
             get_setup_config,
-            save_setup_config
+            save_setup_config,
+            restart_brain,
+            clear_brain_data,
+            open_data_dir
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

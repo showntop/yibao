@@ -154,3 +154,52 @@ export function checkPermissions(): Promise<void> {
 export function promptPermission(which: "ax" | "screen"): Promise<void> {
   return invoke("prompt_permission", { which });
 }
+
+// ---- 设置页 ----
+
+export interface SetupConfig {
+  has_key: boolean;
+  model: string;
+  base_url: string;
+  voice: string;
+  /** 语音总开关（YIBAO_VOICE："0"=关，缺省=开） */
+  voice_enabled: boolean;
+}
+
+/** 读取设置（合并 数据目录.env / sidecar.env / 真环境变量）。 */
+export function getSetupConfig(): Promise<SetupConfig> {
+  return invoke("get_setup_config");
+}
+
+/** 保存设置：upsert 数据目录 .env；key 留空 = 不改动。保存后需 restartBrain 才生效（大脑只在启动时读 .env）。 */
+export function saveSetupConfig(cfg: {
+  key: string;
+  model: string;
+  baseUrl: string;
+  voice: string;
+  voiceEnabled: boolean;
+}): Promise<void> {
+  return invoke("save_setup_config", cfg);
+}
+
+/** 手动重启大脑（计划内：不退避计数升级，1s 即回；大脑掉线/上线事件照常广播）。 */
+export function restartBrain(): Promise<void> {
+  return invoke("restart_brain");
+}
+
+export type ClearKind = "memory" | "history" | "all";
+
+/** 清空大脑数据：memory=长期记忆 / history=对话历史 / all=两者。先停大脑→删→拉起，约几秒。 */
+export function clearBrainData(kind: ClearKind): Promise<void> {
+  return invoke("clear_brain_data", { kind });
+}
+
+/** 在 Finder 中打开数据目录。 */
+export function openDataDir(): Promise<void> {
+  return invoke("open_data_dir");
+}
+
+/** 订阅托盘「设置…」入口（Rust 显示主窗后发本事件，前端切设置视图）。 */
+export function onOpenSettings(cb: () => void): Promise<UnlistenFn> {
+  return listen("open-settings", () => cb());
+}
