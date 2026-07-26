@@ -83,6 +83,20 @@ name = "versions"
 handler = "zimeiti.versions"
 direct = true
 
+# 热点雷达：拉多平台热榜（L1 直调不弹确认）；「转选题」映射 zimeiti.add，
+# panel 钉在热点雷达（不跳看板），refresh 回刷热榜拿最新数据
+[[method]]
+name = "hot_topics"
+handler = "zimeiti.hot_topics"
+direct = true
+
+[[method]]
+name = "hot_add"
+handler = "zimeiti.add"
+direct = true
+panel = "zimeiti:hot"
+refresh = "zimeiti.hot_topics"
+
 # 以下为 intent 方法（direct=false）：{title}/{id} 占位由面板 action 参数渲染，
 # 交给 agent 多步完成（加载方法论 → 生成/改写 → 落盘存版本），handler 仅作注册校验锚点
 [[method]]

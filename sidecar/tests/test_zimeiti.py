@@ -75,6 +75,7 @@ def test_all_tools_registered_with_risks(env):
         "zimeiti.set_status": RiskLevel.L1_LOW,
         "zimeiti.versions": RiskLevel.L0_READONLY,
         "zimeiti.publish": RiskLevel.L2_MEDIUM,
+        "zimeiti.hot_topics": RiskLevel.L1_LOW,
     }
     for tid, risk in expected.items():
         assert reg.get(tid).default_risk == risk, tid
@@ -572,3 +573,101 @@ def test_mat_delete_flow(env):
     r = _run(reg, "zimeiti.mat_delete", {"id": rid})
     assert r.success
     assert _run(reg, "zimeiti.mat_list", {}).data["rows"] == []
+
+
+# ---------- hot_topics（热点雷达：多平台热榜聚合） ----------
+
+
+def _fake_boards(monkeypatch, reg, broken=()):
+    """按 url 分发假热榜；broken 里的平台名抛异常（模拟网络挂/结构变）。
+    加载器不把模块挂进 sys.modules，故走方法 __globals__ 拿模块命名空间。"""
+    g = type(reg.get("zimeiti.hot_topics")).run.__globals__
+    boards = {"zhihu": _ZHIHU_JSON, "toutiao": _TOUTIAO_JSON, "baidu": _BAIDU_JSON}
+
+    def _fake(url):
+        for key, payload in boards.items():
+            if key in url:
+                if key in broken:
+                    raise OSError("boom")
+                return payload
+        raise AssertionError(f"未预期的 url：{url}")
+
+    monkeypatch.setitem(g, "_fetch_json", _fake)
+
+
+_ZHIHU_JSON = {
+    "data": [
+        {   # 新结构：title_area/metrics_area/link
+            "target": {
+                "title_area": {"text": "如何看待 K3 翻车？"},
+                "metrics_area": {"text": "320 万热度"},
+                "link": {"url": "https://www.zhihu.com/question/123"},
+            }
+        },
+        {   # 老结构：target.title/detail_text + api 链接转网页链接
+            "target": {"title": "茅台价格又跌了？", "url": "https://api.zhihu.com/questions/456"},
+            "detail_text": "99 万热度",
+        },
+    ]
+}
+_TOUTIAO_JSON = {
+    "data": [{"Title": "AI 编程工具大战", "HotValue": "10000000", "Url": "https://www.toutiao.com/trending/789/"}]
+}
+_BAIDU_JSON = {
+    "data": {"cards": [{"content": [{"word": "高考分数线公布", "hotScore": "4500000", "url": "https://www.baidu.com/s?wd=x"}]}]}
+}
+
+
+def test_hot_topics_aggregates_platforms(env, monkeypatch):
+    reg, _, _ = env
+    _fake_boards(monkeypatch, reg)
+    r = _run(reg, "zimeiti.hot_topics", {})
+    assert r.success and r.panel == "zimeiti:hot" and r.data["failed"] == []
+    rows = r.data["rows"]
+    assert [row["platform"] for row in rows] == ["zhihu", "zhihu", "toutiao", "baidu"]
+    assert rows[0]["rank"] == 1 and rows[0]["title"] == "如何看待 K3 翻车？"
+    assert rows[0]["meta"] == "知乎 #1 · 320 万热度" and rows[0]["source_ref"] == "知乎热榜#1"
+    assert rows[1]["url"] == "https://www.zhihu.com/question/456"  # api 链接转网页链接
+    assert rows[2]["heat"] == "1000万热度" and rows[3]["meta"] == "百度 #1 · 450万热度"
+
+
+def test_hot_topics_platform_failure_isolated(env, monkeypatch):
+    reg, _, _ = env
+    _fake_boards(monkeypatch, reg, broken=("zhihu",))
+    r = _run(reg, "zimeiti.hot_topics", {})
+    assert r.success and r.data["failed"] == ["知乎"]
+    assert [row["platform"] for row in r.data["rows"]] == ["toutiao", "baidu"]
+
+
+def test_hot_topics_all_failed(env, monkeypatch):
+    reg, _, _ = env
+    _fake_boards(monkeypatch, reg, broken=("zhihu", "toutiao", "baidu"))
+    r = _run(reg, "zimeiti.hot_topics", {})
+    assert not r.success and "知乎" in r.error and "头条" in r.error
+
+
+def test_hot_topics_platforms_limit_and_unknown(env, monkeypatch):
+    reg, _, _ = env
+    _fake_boards(monkeypatch, reg)
+    r = _run(reg, "zimeiti.hot_topics", {"platforms": "zhihu", "limit": 1})
+    assert [row["title"] for row in r.data["rows"]] == ["如何看待 K3 翻车？"]
+    assert not _run(reg, "zimeiti.hot_topics", {"platforms": "weibo"}).success
+
+
+def test_hot_topics_api_registered(env):
+    env  # 触发加载
+    api = get_api("zimeiti.hot_topics")
+    assert api is not None and api.direct
+    add = get_api("zimeiti.hot_add")
+    assert add is not None and add.direct
+    assert add.handler == "zimeiti.add" and add.panel == "zimeiti:hot" and add.refresh == "zimeiti.hot_topics"
+
+
+def test_hot_add_creates_topic_with_source(env, monkeypatch):
+    reg, _, _ = env
+    _fake_boards(monkeypatch, reg)
+    row = _run(reg, "zimeiti.hot_topics", {"platforms": "zhihu", "limit": 1}).data["rows"][0]
+    r = _run(reg, "zimeiti.add", {"title": row["title"], "source": row["source_ref"]})
+    assert r.success
+    topic = _run(reg, "zimeiti.get", {"id": r.data["id"]}).data["rows"][0]
+    assert topic["title"] == "如何看待 K3 翻车？" and topic["source"] == "知乎热榜#1" and topic["status"] == "候选"

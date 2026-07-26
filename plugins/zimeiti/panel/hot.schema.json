@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "type": "list",
+  "bind": {"items": "$data.rows"},
+  "item": {
+    "title": "$item.title",
+    "subtitle": "$item.meta",
+    "actions": [
+      {"label": "转选题", "method": "zimeiti.hot_add", "params": {"title": "$item.title", "source": "$item.source_ref"}}
+    ]
+  }
+}

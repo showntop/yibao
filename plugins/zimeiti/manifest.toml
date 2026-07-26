@@ -185,3 +185,9 @@ type = "schema"
 name = "materials"
 label = "素材库"
 src = "panel/materials.schema.json"
+
+[[panel]]
+type = "schema"
+name = "hot"
+label = "热点雷达"
+src = "panel/hot.schema.json"
