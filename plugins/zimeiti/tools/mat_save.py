@@ -83,6 +83,7 @@ class MatSave(Skill):
                 "properties": {
                     "url": {"type": "string", "description": "网页链接（与 text 二选一，优先 url）"},
                     "text": {"type": "string", "description": "直接存的文本内容（无 url 时必填）"},
+                    "topic_id": {"type": "string", "description": "关联到某个选题时传选题 id"},
                 },
             },
         }
@@ -121,6 +122,9 @@ class MatSave(Skill):
             "created_at": now,
             "updated_at": now,
         }
+        topic_id = str(params.get("topic_id") or "").strip()
+        if topic_id:  # 关联选题（有值才写，缺省走表默认空串）
+            row["topic_id"] = topic_id
         rid = ctx.db.insert("materials", row)
         result = ActionResult(success=True, data={
             "id": rid, "title": meta["title"], "summary": meta["summary"], "tags": meta["tags"],

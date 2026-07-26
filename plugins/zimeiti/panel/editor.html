@@ -614,28 +614,40 @@
     setStatus("已插入素材《" + (row.title || "") + "》，满意的话「保存为新版本」");
   }
 
+  function renderMats(rows) {
+    if (!rows.length) {
+      $("mat-body").innerHTML = "<div class=\"mempty\">素材库还是空的——对译宝说「存一下 + 链接」就有了</div>";
+      return;
+    }
+    $("mat-body").innerHTML = "";
+    rows.forEach(function (row) {
+      var content = String(row.content || "").trim();
+      // 短素材引原文，长素材引摘要（都没有就截 300 字）
+      var quote = content && content.length <= 300 ? content
+        : (String(row.summary || "").trim() || content.slice(0, 300) + "…");
+      var btn = document.createElement("button");
+      btn.className = "mrow";
+      btn.innerHTML = "<div class=\"mt\">" + (row._linked ? "本选题 · " : "") + esc(row.title || "(无题)") + "</div>" +
+        "<div class=\"ms\">" + esc(quote) + "</div>";
+      btn.addEventListener("click", function () { insertMaterial(row, quote); });
+      $("mat-body").appendChild(btn);
+    });
+  }
+
   $("mats").addEventListener("click", function () {
     $("mat-overlay").hidden = false;
     $("mat-body").innerHTML = "<div class=\"mempty\">加载中…</div>";
-    window.yibao.invoke("zimeiti.mat_list", {}).then(function (r) {
-      var rows = (r && r.rows) || [];
-      if (!rows.length) {
-        $("mat-body").innerHTML = "<div class=\"mempty\">素材库还是空的——对译宝说「存一下 + 链接」就有了</div>";
-        return;
-      }
-      $("mat-body").innerHTML = "";
-      rows.forEach(function (row) {
-        var content = String(row.content || "").trim();
-        // 短素材引原文，长素材引摘要（都没有就截 300 字）
-        var quote = content && content.length <= 300 ? content
-          : (String(row.summary || "").trim() || content.slice(0, 300) + "…");
-        var btn = document.createElement("button");
-        btn.className = "mrow";
-        btn.innerHTML = "<div class=\"mt\">" + esc(row.title || "(无题)") + "</div>" +
-          "<div class=\"ms\">" + esc(quote) + "</div>";
-        btn.addEventListener("click", function () { insertMaterial(row, quote); });
-        $("mat-body").appendChild(btn);
-      });
+    var allP = window.yibao.invoke("zimeiti.mat_list", {});
+    // 有选题时先拉关联素材（置顶分组）；关联查询失败/为空静默回退全量
+    var linkedP = topicId
+      ? window.yibao.invoke("zimeiti.mat_list", { where: { topic_id: topicId } }).catch(function () { return null; })
+      : Promise.resolve(null);
+    Promise.all([linkedP, allP]).then(function (rs) {
+      var linked = (rs[0] && rs[0].rows) || [];
+      var rows = (rs[1] && rs[1].rows) || [];
+      var seen = {};
+      linked.forEach(function (row) { seen[row.id] = 1; row._linked = 1; });
+      renderMats(linked.concat(rows.filter(function (row) { return !seen[row.id]; })));
     }).catch(function (e) {
       $("mat-body").innerHTML = "<div class=\"mempty\">加载失败：" + esc(emsg(e)) + "</div>";
     });

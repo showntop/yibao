@@ -47,10 +47,11 @@ columns = [
   {name = "summary", type = "text", default = ""},
   {name = "tags", type = "text", default = ""},
   {name = "content", type = "text", default = ""},
+  {name = "topic_id", type = "text", default = ""},
   {name = "created_at", type = "integer"},
   {name = "updated_at", type = "integer"},
 ]
-indexes = ["updated_at"]
+indexes = ["updated_at", "topic_id"]
 
 [[tool]]
 id = "add"
@@ -161,6 +162,20 @@ id = {type = "string", description = "素材 id"}
 [tool.db]
 op = "delete"
 table = "materials"
+
+[[tool]]
+id = "mat_link"
+type = "db"
+description = "把一条已有素材关联到某个选题"
+risk = "L1"
+required = ["id", "topic_id"]
+[tool.params]
+id = {type = "string", description = "素材 id"}
+topic_id = {type = "string", description = "选题 id"}
+[tool.db]
+op = "update"
+table = "materials"
+auto = {updated_at = "unixts"}
 
 [[panel]]
 type = "schema"

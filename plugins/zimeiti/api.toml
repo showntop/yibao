@@ -97,6 +97,14 @@ direct = true
 panel = "zimeiti:hot"
 refresh = "zimeiti.hot_topics"
 
+# 热点「存素材」：链接交给 mat_save 抓正文归档，面板钉在热点雷达（不跳素材库），refresh 回刷热榜
+[[method]]
+name = "hot_mat_save"
+handler = "zimeiti.mat_save"
+direct = true
+panel = "zimeiti:hot"
+refresh = "zimeiti.hot_topics"
+
 # 以下为 intent 方法（direct=false）：{title}/{id} 占位由面板 action 参数渲染，
 # 交给 agent 多步完成（加载方法论 → 生成/改写 → 落盘存版本），handler 仅作注册校验锚点
 [[method]]

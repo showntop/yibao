@@ -671,3 +671,44 @@ def test_hot_add_creates_topic_with_source(env, monkeypatch):
     assert r.success
     topic = _run(reg, "zimeiti.get", {"id": r.data["id"]}).data["rows"][0]
     assert topic["title"] == "如何看待 K3 翻车？" and topic["source"] == "知乎热榜#1" and topic["status"] == "候选"
+
+
+# ---------- 素材打通（materials.topic_id / hot_mat_save / mat_link） ----------
+
+
+def test_hot_mat_save_api_registered(env):
+    env  # 触发加载
+    api = get_api("zimeiti.hot_mat_save")
+    assert api is not None and api.direct and api.handler == "zimeiti.mat_save"
+    assert api.panel == "zimeiti:hot" and api.refresh == "zimeiti.hot_topics"
+
+
+def test_mat_save_with_topic_id(env):
+    reg, _, _ = env
+    t = _mat_skill(reg)
+    tid = _run(reg, "zimeiti.add", {"title": "T"}).data["id"]
+    r = t.run({"text": "一段关联素材", "topic_id": tid}, t.plugin_ctx)
+    assert r.success
+    row = _run(reg, "zimeiti.mat_get", {"id": r.data["id"]}).data["rows"][0]
+    assert row["topic_id"] == tid
+    # 不传 topic_id 时落表默认空串
+    r2 = t.run({"text": "无关联素材"}, t.plugin_ctx)
+    row2 = _run(reg, "zimeiti.mat_get", {"id": r2.data["id"]}).data["rows"][0]
+    assert row2["topic_id"] == ""
+
+
+def test_mat_link_and_topic_filtered_list(env):
+    reg, _, _ = env
+    from yibao_brain.ipc import RiskLevel
+
+    assert reg.get("zimeiti.mat_link").default_risk == RiskLevel.L1_LOW
+    t = _mat_skill(reg)
+    rid = t.run({"text": "x"}, t.plugin_ctx).data["id"]
+    tid = _run(reg, "zimeiti.add", {"title": "T"}).data["id"]
+    r = _run(reg, "zimeiti.mat_link", {"id": rid, "topic_id": tid})
+    assert r.success and r.data["id"] == rid
+    row = _run(reg, "zimeiti.mat_get", {"id": rid}).data["rows"][0]
+    assert row["topic_id"] == tid
+    # 编辑器素材抽屉的查法：mat_list 运行时 where 按 topic_id 过滤
+    rows = _run(reg, "zimeiti.mat_list", {"where": {"topic_id": tid}}).data["rows"]
+    assert [r["id"] for r in rows] == [rid]
