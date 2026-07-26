@@ -3,27 +3,34 @@
 // 差异：不管窗（无展开/收起/说话气泡），「⇢ 协作」关联气泡可点击跳插件页。
 // 宠物窗隐藏时本页仍在后台收事件——同一条会话两边镜面，切回去气泡不丢。
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from "vue";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import Avatar from "./Avatar.vue";
 import InputBar from "./InputBar.vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import Bubble from "./Bubble.vue";
+import PermissionsBanner from "./PermissionsBanner.vue";
+import SetupWizard from "./SetupWizard.vue";
 import {
   onBrainEvent,
   onBrainStatus,
+  onBrainPermissions,
   onPanelClosed,
   runInput,
   sendConfirm,
   voiceStart,
   interrupt,
   type BrainEvent,
+  type BrainPermissions,
   type BrainStatusMsg,
 } from "../lib/brain";
+import { SUGGESTIONS } from "../lib/suggestions";
 
 type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
 type BubbleMsg = { role: "user" | "ai" | "sys"; text: string; panelLink?: boolean };
 
-// state：同步给父级侧边栏团子；openPanel：关联气泡点击 → 父级切插件页
-const emit = defineEmits<{ state: [AvatarState]; openPanel: [] }>();
+// state：同步给父级侧边栏团子；openPanel：关联气泡点击 → 父级切插件页；reminder：父级切回本页
+const emit = defineEmits<{ state: [AvatarState]; openPanel: []; reminder: [] }>();
 
 const state = ref<AvatarState>("idle");
 const bubbles = ref<BubbleMsg[]>([]);
@@ -31,6 +38,21 @@ const streamingIdx = ref<number | null>(null); // 正在接收 chunk 的 bubble 
 const pending = ref<{ id: string; skill: string; desc: string } | null>(null);
 const brainDown = ref(false); // 大脑掉线/重启中（守护在恢复）
 const panelOpen = ref(false); // 面板协作会话进行中（关联气泡只插一次）
+const perms = ref<BrainPermissions | null>(null); // macOS 权限状态（null=未收到）
+
+// ---- 首启设置向导（缺 LLM key 时 Rust 发 setup-config-needed，大脑未启动；逻辑同源宠物窗）----
+const setupNeeded = ref(false);
+const setupCfg = ref({ model: "glm-4.6", baseUrl: "", voice: "zh-CN-XiaoxiaoNeural" });
+async function onSetupNeeded() {
+  setupNeeded.value = true;
+  try {
+    setupCfg.value = await invoke("get_setup_config");
+  } catch { /* 用默认值 */ }
+}
+function onSetupSaved() {
+  setupNeeded.value = false;
+  bubbles.value.push({ role: "sys", text: "配置已保存，大脑启动中…" });
+}
 
 const statusText = computed(
   () => ({
@@ -43,7 +65,8 @@ const busy = computed(() =>
   state.value === "listen" || state.value === "think" ||
   state.value === "work" || state.value === "say",
 );
-const suggestions = ["记一条闪念", "看看选题看板", "帮我写点什么"];
+const suggestions = SUGGESTIONS;
+const missingPerms = computed(() => perms.value !== null && (!perms.value.ax || !perms.value.screen));
 // 「正在输入」占位：run 受理（think）到首个 chunk 之间气泡流还是空的，用三点呼吸占位
 const showTyping = computed(() => state.value === "think" && streamingIdx.value === null);
 
@@ -64,7 +87,11 @@ watch(state, (s) => emit("state", s));
 
 let unlisten: (() => void) | null = null;
 let unlistenStatus: (() => void) | null = null;
+let unlistenPerms: (() => void) | null = null;
 let unlistenPanelClosed: (() => void) | null = null;
+let unlistenSetup: (() => void) | null = null;
+let unlistenSetupErr: (() => void) | null = null;
+let unlistenSetupCfg: (() => void) | null = null;
 
 function onEvent(e: BrainEvent) {
   // 会话分流：面板场景的对话事件只归插件页；panel 事件例外（关联气泡，本页也收）
@@ -124,8 +151,9 @@ function onEvent(e: BrainEvent) {
       bubbles.value.push({ role: "sys", text: e.text ?? "" });
       break;
     case "reminder":
-      // 主动提醒：大窗模式下大窗已可见，只落气泡（宠物窗自己管亮窗，两边互不抢）
+      // 主动提醒：落气泡 + 通知父级切回本页（大窗已可见，宠物窗自己管亮窗，两边互不抢）
       bubbles.value.push({ role: "ai", text: "⏰ " + (e.text ?? "到点了") });
+      emit("reminder");
       break;
     case "error":
       state.value = "idle";
@@ -232,17 +260,35 @@ function flashValence(v: "success" | "error") {
 onMounted(async () => {
   unlisten = await onBrainEvent(onEvent);
   unlistenStatus = await onBrainStatus(onStatus);
+  unlistenPerms = await onBrainPermissions((p) => { perms.value = p; });
   unlistenPanelClosed = await onPanelClosed(() => {
     if (!panelOpen.value) return;
     panelOpen.value = false;
     bubbles.value.push({ role: "ai", text: "⇠ 协作结束" });
   });
+  // 首启引导（生产打包首跑：装 Python 环境/下模型，大脑还没起来，走 Tauri 事件直推）
+  unlistenSetup = await listen<{ stage: string; detail: string }>("setup-progress", (e) => {
+    bubbles.value.push({ role: "sys", text: e.payload.detail });
+  });
+  unlistenSetupErr = await listen<string>("setup-error", (e) => {
+    bubbles.value.push({ role: "ai", text: "⚠️ " + e.payload });
+  });
+  unlistenSetupCfg = await listen<string>("setup-config-needed", () => void onSetupNeeded());
+  // 主动拉一次配置：setup-config-needed 可能先于挂载发出而丢——靠拉取兜底
+  try {
+    const cfg = await invoke<{ has_key: boolean }>("get_setup_config");
+    if (!cfg.has_key) void onSetupNeeded();
+  } catch { /* 忽略，事件路径仍兜底 */ }
   emit("state", state.value); // 父级侧边栏团子拿初始态
 });
 onUnmounted(() => {
   unlisten?.();
   unlistenStatus?.();
+  unlistenPerms?.();
   unlistenPanelClosed?.();
+  unlistenSetup?.();
+  unlistenSetupErr?.();
+  unlistenSetupCfg?.();
   if (valenceTimer !== null) clearTimeout(valenceTimer);
 });
 </script>
@@ -253,6 +299,11 @@ onUnmounted(() => {
       <span class="pg-title" data-tauri-drag-region>对话</span>
       <span class="status" :class="state"><i class="dot" />{{ statusText }}</span>
     </header>
+
+    <SetupWizard v-if="setupNeeded" :model="setupCfg.model" :base-url="setupCfg.baseUrl" :voice="setupCfg.voice" @saved="onSetupSaved" />
+
+    <template v-if="!setupNeeded">
+    <PermissionsBanner v-if="missingPerms && perms" :perms="perms" />
 
     <div class="bubbles" ref="bubblesRef">
       <div v-if="!bubbles.length && !showTyping" class="empty-hint">
@@ -282,6 +333,7 @@ onUnmounted(() => {
         @deny="() => decide(false)"
       />
     </div>
+    </template>
   </div>
 </template>
 

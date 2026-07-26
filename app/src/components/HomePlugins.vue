@@ -5,6 +5,7 @@
 //   ② 与 HomeChat 同窗共享 JS 上下文，surface 一律显式传参（不走模块级 setSurface）。
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { emit as emitTauri } from "@tauri-apps/api/event";
 import SchemaPanel from "./SchemaPanel.vue";
 import WebviewPanel from "./WebviewPanel.vue";
 import Avatar from "./Avatar.vue";
@@ -23,7 +24,8 @@ import {
 
 type AvatarState = "idle" | "listen" | "think" | "work" | "say";
 // state：同步给父级侧边栏团子（插件页活跃时团子跟着面板会话走）
-const emit = defineEmits<{ state: [AvatarState] }>();
+// panel：新面板打开时外发（父级自动切到本页；同面板刷新/挂载补拉不发，不抢用户所在页）
+const emit = defineEmits<{ state: [AvatarState]; panel: [] }>();
 
 // ---- 插件列表 ----
 interface PluginInfo { id: string; name: string }
@@ -126,19 +128,24 @@ function computeFocus(cur: typeof current.value): PanelFocus | null {
   };
 }
 
-/** 面板内容统一入口：赋值 + 重算焦点 + 上报大脑 + 切到面板视图。 */
-function setCurrent(v: NonNullable<typeof current.value>) {
+/** 面板内容统一入口：赋值 + 重算焦点 + 上报大脑 + 切到面板视图。
+ *  silent=true（挂载补拉缓存）不外发 panel 信号——旧缓存不该把用户从别的页拽过来。 */
+function setCurrent(v: NonNullable<typeof current.value>, silent = false) {
+  const isNewPanel = current.value?.panel !== v.panel;
   current.value = v;
   viewingList.value = false;
   focus.value = computeFocus(v);
   void reportPanelContext(focus.value).catch(() => {});
+  if (isNewPanel && !silent) emit("panel");
 }
 
-/** 返回插件列表 ≈ 浮窗的关闭：清焦点上下文（大脑不再注入旧面板），面板内容留着（再进秒开）。 */
+/** 返回插件列表 ≈ 浮窗的关闭：清焦点上下文（大脑不再注入旧面板），面板内容留着（再进秒开）。
+ *  广播 panel-closed：对话页的「⇢ 协作」关联气泡收到收尾信号（浮窗模式由 Rust 窗隐发，大窗在这里发）。 */
 function backToList() {
   viewingList.value = true;
   focus.value = null;
   void reportPanelContext(null).catch(() => {});
+  void emitTauri("panel-closed").catch(() => {});
 }
 
 function onEvent(e: BrainEvent) {
@@ -306,7 +313,7 @@ async function pullCache() {
       data: Record<string, unknown>;
     } | null>("get_current_panel");
     if (cached && current.value === null) {
-      setCurrent({ ...cached, title: cached.title ?? cached.panel });
+      setCurrent({ ...cached, title: cached.title ?? cached.panel }, true);
     }
   } catch { /* 缓存缺失就停在列表页，无妨 */ }
 }

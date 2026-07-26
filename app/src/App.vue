@@ -27,6 +27,7 @@ import {
   type BrainPermissions,
 } from "./lib/brain";
 import { resetWindowSize, openPanel, setInteractiveFull, setBubbleOn } from "./lib/window";
+import { SUGGESTIONS } from "./lib/suggestions";
 
 type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
 type BubbleMsg = { role: "user" | "ai" | "sys"; text: string };
@@ -117,7 +118,7 @@ const busy = computed(() =>
   state.value === "listen" || state.value === "think" ||
   state.value === "work" || state.value === "say",
 );
-const suggestions = ["记一条闪念", "看看选题看板", "帮我写点什么"];
+const suggestions = SUGGESTIONS;
 const missingPerms = computed(() => perms.value !== null && (!perms.value.ax || !perms.value.screen));
 // 「正在输入」占位：run 受理（think）到首个 chunk 之间气泡流还是空的，用三点呼吸占位；
 // 复用 state/streamingIdx 判断——首 chunk 建起 streaming 气泡即让位，终态（idle/error）自动消失

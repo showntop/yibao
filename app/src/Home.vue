@@ -79,10 +79,11 @@ function close() {
       </div>
     </aside>
 
-    <!-- 主区：三页常驻挂载，切页只切显隐 -->
+    <!-- 主区：三页常驻挂载，切页只切显隐。
+         reminder / 新面板打开 → 自动切到对应页（提醒要看见；新面板 ≈ 小窗模式浮窗弹出） -->
     <main class="main">
-      <HomeChat v-show="tab === 'chat'" @state="chatState = $event" @open-panel="tab = 'plugins'" />
-      <HomePlugins v-show="tab === 'plugins'" @state="panelState = $event" />
+      <HomeChat v-show="tab === 'chat'" @state="chatState = $event" @open-panel="tab = 'plugins'" @reminder="tab = 'chat'" />
+      <HomePlugins v-show="tab === 'plugins'" @state="panelState = $event" @panel="tab = 'plugins'" />
       <SettingsView v-show="tab === 'settings'" />
     </main>
   </div>

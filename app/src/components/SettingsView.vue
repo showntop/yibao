@@ -155,6 +155,9 @@ onUnmounted(() => {
 
 <template>
   <div class="settings">
+    <header class="page-head" data-tauri-drag-region>
+      <span class="pg-title" data-tauri-drag-region>设置</span>
+    </header>
     <div class="s-scroll">
       <!-- 模型 -->
       <section class="s-group">
@@ -289,6 +292,19 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   animation: fade-in 0.22s var(--yb-ease) 0.06s both;
+}
+/* 页头：与对话/插件页同款（标题 + 整条兼作拖动区） */
+.page-head {
+  display: flex;
+  align-items: center;
+  gap: var(--yb-space-3);
+  padding: var(--yb-space-3) var(--yb-space-4) 0;
+  user-select: none;
+}
+.pg-title {
+  font-size: var(--yb-fs-xl);
+  font-weight: 650;
+  letter-spacing: 0.01em;
 }
 @keyframes fade-in {
   from {
