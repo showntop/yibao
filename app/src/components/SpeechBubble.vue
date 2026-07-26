@@ -51,8 +51,8 @@ function tick(now: number) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   if (now >= holdUntil) {
-    // 速度按「全程 ≤12s」反推（60–400px/s）：短文慢滚，长文加速
-    const speed = Math.min(400, Math.max(60, max / 12));
+    // 速度按「全程 ≤20s」反推（60–140px/s ≈ 5–11 字/秒）：快但跟得上，长文也不会没头
+    const speed = Math.min(140, Math.max(60, max / 20));
     offset.value = Math.min(max, offset.value + speed * dt);
   }
   raf = requestAnimationFrame(tick);
