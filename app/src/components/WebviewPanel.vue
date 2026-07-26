@@ -54,9 +54,13 @@ const BRIDGE_JS = `
 const SCRIPT_OPEN = "<scr" + "ipt>";
 const SCRIPT_CLOSE = "</scr" + "ipt>";
 
-/** 插件 HTML + 桥 JS 合成 srcdoc（桥注入到插件脚本之前）。 */
+// CSP 沙箱兜底（gen 面板等动态 HTML）：禁一切网络/外链，只放行内联脚本样式与 data: 图片字体。
+// 与 BRIDGE_JS 同位置注入（<head> 之后），对插件面板同样生效——插件面板本就要求无网络。
+const CSP_META = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:">`;
+
+/** 插件 HTML + 桥 JS 合成 srcdoc（桥注入到插件脚本之前；无 <head> 时整体放最前）。 */
 const srcdoc = computed(() => {
-  const tag = SCRIPT_OPEN + BRIDGE_JS + SCRIPT_CLOSE;
+  const tag = CSP_META + SCRIPT_OPEN + BRIDGE_JS + SCRIPT_CLOSE;
   const headAt = props.html.toLowerCase().indexOf("<head>");
   return headAt >= 0
     ? props.html.slice(0, headAt + 6) + tag + props.html.slice(headAt + 6)
