@@ -4,9 +4,11 @@ dispatch_task（L3，走用户确认）：Popen spawn 子进程后登记 db 立�
 daemon 线程 _wait 等进程结束 → 落库 → 经 ctx.emit_event 播报（前端亮窗+气泡+TTS）。
 task_status（L0）查行 + log 尾部；task_stop（L2）terminate 在跑进程。
 新智能体接入：_AGENTS 加一项（bin + argv 构造 + 结果摘要解析）即可。
+进程登记/等待收尾与 sandbox.py（code_exec 沙箱脚本）共用，见 _common.py。
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import shutil
@@ -15,31 +17,37 @@ import sys
 import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 from yibao_brain import config
 from yibao_brain.ipc import ActionResult, RiskLevel
 from yibao_brain.skills import Skill
 
-_LOG_MAX_BYTES = 10 * 1024 * 1024  # log 超过 10MB 只读尾部
-_SUMMARY_TAIL = 500  # 摘要解析失败/为空时退化为 log 尾部 500 字
+
+def _sibling(stem: str):
+    """按路径加载同目录兄弟模块并缓存进 sys.modules：全插件共享同一实例（_PROCS 唯一）。
+
+    插件加载器不把模块挂 sys.modules，普通 import 拿不到同插件兄弟模块，只能按文件路径来。
+    """
+    name = f"yibao_plugin_agents_{stem}"
+    mod = sys.modules.get(name)
+    if mod is None:
+        spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(f"{stem}.py"))
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[name] = mod  # 先挂再 exec：重复触发加载也拿到同一实例
+        spec.loader.exec_module(mod)
+    return mod
+
+
+_common = _sibling("_common")
+
+_SUMMARY_TAIL = _common._SUMMARY_TAIL  # 摘要解析失败/为空时退化为 log 尾部 500 字
 _STATUS_TAIL = 2000  # task_status 返回的 log 尾部长度
 
 # task_id → 在跑进程句柄（task_stop 用；底座重启后丢失，stop 会优雅报错）
-_PROCS: dict[str, "subprocess.Popen"] = {}
-
-
-def _tail_text(path: str, max_bytes: int) -> str:
-    """读 log（≤max_bytes 全读，超出只读尾部）。文件不存在/读失败返回空串。"""
-    try:
-        size = os.path.getsize(path)
-        with open(path, "rb") as f:
-            if size > max_bytes:
-                f.seek(-max_bytes, os.SEEK_END)
-            data = f.read()
-        return data.decode("utf-8", errors="replace")
-    except OSError:
-        return ""
+_PROCS = _common._PROCS
+_tail_text = _common._tail_text
 
 
 def _claude_argv(bin_path: str, prompt: str) -> list[str]:
@@ -100,48 +108,9 @@ def _summarize(agent: str, log: str) -> str:
 
 
 def _wait(proc, task_id: str, agent: str, prompt: str, log_path: str, timeout_s: float, ctx) -> None:
-    """daemon 线程：等进程收尾 → 落库 → emit_event 播报。任何异常只 print，不炸线程。"""
-    try:
-        timed_out = False
-        try:
-            proc.wait(timeout=timeout_s)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            proc.kill()
-            proc.wait()  # 等 kill 生效（收尸防僵尸）
-        exit_code = proc.returncode if proc.returncode is not None else -1
-        # 用户已主动停止（task_stop 先落 stopped）：保留 stopped，不被退出码翻成 failed
-        prev = ctx.db.query("tasks", where={"id": task_id})
-        stopped = bool(prev and prev[0]["status"] == "stopped")
-        if timed_out:
-            status = "failed"
-        elif stopped:
-            status = "stopped"
-        else:
-            status = "done" if exit_code == 0 else "failed"
-        try:
-            ctx.db.update("tasks", task_id, {
-                "status": status, "exit_code": exit_code, "finished_at": int(time.time()),
-            })
-        except Exception as e:
-            print(f"[agents] 任务 {task_id} 落库失败：{e}", file=sys.stderr)
-        summary = _summarize(agent, _tail_text(log_path, _LOG_MAX_BYTES))
-        head = prompt[:50] + ("…" if len(prompt) > 50 else "")
-        if timed_out:
-            text = f"⏰ {agent} 任务超时已终止：{head}\n{summary}"
-        elif stopped:
-            text = f"⏹ {agent} 任务已停止：{head}"
-        elif status == "done":
-            text = f"✅ {agent} 任务完成：{head}\n{summary}"
-        else:
-            text = f"❌ {agent} 任务失败（退出码 {exit_code}）：{head}\n{summary}"
-        emit = getattr(ctx, "emit_event", None)
-        if emit is not None:  # 测试环境未注入时静默跳过
-            emit({"kind": "reminder", "text": text})
-    except Exception as e:  # 兜底：等待线程的任何意外都不许炸出来
-        print(f"[agents] 任务 {task_id} 等待线程异常：{type(e).__name__}: {e}", file=sys.stderr)
-    finally:
-        _PROCS.pop(task_id, None)
+    """daemon 线程：等 CLI 智能体收尾 → 落库 → 播报。实现在 _common._wait（沙箱脚本复用同一套）。"""
+    _common._wait(proc, task_id, f"{agent} 任务", prompt, log_path, timeout_s, ctx,
+                  summarize=lambda log: _summarize(agent, log))
 
 
 class DispatchTaskSkill(Skill):

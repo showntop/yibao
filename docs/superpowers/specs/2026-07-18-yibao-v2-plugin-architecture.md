@@ -195,6 +195,15 @@ name = "sync_done"
 - **空态规范**：双行结构（主句 600 次要色 + 引导句淡色），引导用户回对话（如「去跟译宝说一句试试」），不硬编码插件名；webview 面板可用 `:placeholder-shown` 纯 CSS 做空态显隐（editor.html 先例）。
 - **提醒**：底座技能 `reminder_set/list/cancel`（下划线命名——底座 id 禁点号），`reminders.json` 落盘，serve 调度循环 10s 一拍，到期亮窗 + 气泡 + 空闲 TTS；LLM 时间语义靠 loop 注入的当前时间 system 消息。
 
+### 实装记录（code-exec，2026-07-26）
+
+- **④档落地形态**：agents 插件内 `code_exec` 技能（L3 走确认），LLM 生成脚本（python/node）经 macOS Seatbelt（`sandbox-exec -f policy.sb`）真沙箱执行；任务并入 agents 任务体系（tasks 表加 `kind` 列：`agent`/`script`，additive 迁移自动补列；task_status/task_stop/任务面板对两种任务通用），完成播报复用同一套 `_wait`（抽到 `skills/_common.py`，摘要抽成 callable；沙箱脚本摘要=log 尾部 500 字）。
+- **沙箱边界**：读全放 + 写限根（cwd + 任务目录 + /tmp，全部 realpath 规范化后拼进 profile；/tmp 与 /private/tmp 双写）+ 默认断网。**macOS 15.6 实测坑**：deny-default + process-exec 组合下 file-read 若加 subpath 过滤，dyld 在沙箱内加载被拒直接 SIGABRT——所以 file-read 必须全放，不能加过滤器。读全盘不构成泄露通道：无网络 + 写受限（读到的数据写不出限定目录）+ L3 审批向用户展示完整代码。
+- **.git 写保护**：每个写根追加一条 `(deny file-write* (subpath "<根>/.git"))`，脚本改不动仓库历史。
+- **可审计**：脚本本体、policy.sb（即实际执行的沙箱规则）、output.log 全部落盘在任务目录（插件数据目录 `sandbox/<task_id>/`）。
+- **网络**：v1 仅开关（`network=true` → profile 末尾追加 `(allow network-outbound)`，审批文案展示），域名白名单后续再议。
+- 解释器：python 优先 `/usr/bin/python3`（系统 3.9.6，沙箱兼容实测 ok）再 PATH；node 走 PATH；缺哪个报错哪个。非 macOS 无 sandbox-exec → 报「当前环境不支持沙箱执行」。
+
 ## 9. 数据存储
 
 | 类型 | 存储 | 规则 |

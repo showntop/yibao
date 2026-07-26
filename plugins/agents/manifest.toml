@@ -13,6 +13,7 @@ entry = "skills"
 name = "tasks"
 columns = [
   {name = "id", type = "text", pk = true},
+  {name = "kind", type = "text", default = "agent"},   # agent=CLI 智能体；script=沙箱脚本（code_exec）
   {name = "agent", type = "text"},
   {name = "prompt", type = "text"},
   {name = "cwd", type = "text"},
