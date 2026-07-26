@@ -17,6 +17,10 @@ export const startDrag = (): Promise<void> => getCurrentWindow().startDragging()
 /** 打开/聚焦面板窗（窗不存在由 Rust 侧创建；大脑 panel 事件触发）。 */
 export const openPanel = (): Promise<void> => invoke("open_panel_window");
 
-/** 通知 Rust 点击穿透模式：full=true 整窗可交互（展开/气泡中），false 仅团子热区可交互、其余穿透到桌面。 */
+/** 通知 Rust 点击穿透模式：full=true 整窗可交互（展开），false 仅团子热区可交互、其余穿透到桌面。 */
 export const setInteractiveFull = (full: boolean): Promise<void> =>
   invoke("set_interactive_full", { full });
+
+/** 通知 Rust 说话气泡显隐：气泡带成为第二热区（点气泡=展开），其余透明区照常穿透——气泡不再整窗拦点击。 */
+export const setBubbleOn = (on: boolean): Promise<void> =>
+  invoke("set_bubble_on", { on });

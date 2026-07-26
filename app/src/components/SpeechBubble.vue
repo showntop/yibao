@@ -3,7 +3,7 @@
 // 短文本：最多 3 行折行静态展示；超 3 行 → 走马灯：单行不换行，内容持续左移滚到底
 // （速度按全程 ≤12s 反推，长文也不会没头）。进走马灯发 busy（父组件暂停自动收起计时），
 // 滚到底发 settled（父组件据此收尾）。仅展示；显隐/计时由父组件 App.vue 拥有。点整体 = 展开完整聊天窗。
-import { nextTick, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onUnmounted, ref, watch } from "vue";
 
 const props = defineProps<{ text: string; streaming?: boolean }>();
 const emit = defineEmits<{
@@ -11,6 +11,9 @@ const emit = defineEmits<{
   (e: "busy"): void;
   (e: "settled"): void;
 }>();
+
+// 气泡是纯文本镜像：markdown 标记（** 加粗等）在这里只是噪音，显示前剥掉
+const displayText = computed(() => props.text.replace(/\*\*/g, ""));
 
 const marquee = ref(false); // 走马灯模式（超 3 行触发）
 const offset = ref(0); // 左移量（px）：内容不断向左展现
@@ -103,7 +106,7 @@ onUnmounted(stopRaf);
   <div class="sb" :class="{ marquee, streaming }" @click="$emit('expand')">
     <div class="who">译宝</div>
     <div class="body" ref="bodyRef">
-      <span class="txt" ref="txtRef" :style="marquee ? { transform: `translateX(-${offset}px)` } : undefined">{{ text }}<span v-if="streaming" class="cur">▍</span></span>
+      <span class="txt" ref="txtRef" :style="marquee ? { transform: `translateX(-${offset}px)` } : undefined">{{ displayText }}<span v-if="streaming" class="cur">▍</span></span>
     </div>
     <i class="tail" aria-hidden="true" />
   </div>
@@ -112,6 +115,9 @@ onUnmounted(stopRaf);
 <style scoped>
 .sb {
   position: relative;
+  /* flex 子项自保：走马灯单行内容几千 px 宽，min-width:auto 会把气泡撑爆盖住团子 */
+  min-width: 0;
+  max-width: 100%;
   background: var(--yb-surface-solid);
   border: 1px solid var(--yb-surface-border);
   border-radius: var(--yb-radius-md);

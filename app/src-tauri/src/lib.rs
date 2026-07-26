@@ -19,9 +19,18 @@ use tauri_plugin_shell::ShellExt;
 /// 避免团子被锁死点不到；前端 onMounted 后由 setInteractiveFull 按需切到 false。
 static PET_INTERACTIVE_FULL: AtomicBool = AtomicBool::new(true);
 
+/// 说话气泡显示中：气泡带（贴团子左侧一条）成为第二热区（点气泡=展开），
+/// 不像展开态那样整窗拦点击——气泡是瞬态的，透明区必须照常穿透到桌面。
+static PET_BUBBLE_ON: AtomicBool = AtomicBool::new(false);
+
 #[tauri::command]
 fn set_interactive_full(full: bool) {
     PET_INTERACTIVE_FULL.store(full, Ordering::Relaxed);
+}
+
+#[tauri::command]
+fn set_bubble_on(on: bool) {
+    PET_BUBBLE_ON.store(on, Ordering::Relaxed);
 }
 
 /// sidecar 守护状态：子进程句柄 + 心跳/重启计数/退出标记。
@@ -903,9 +912,10 @@ fn spawn_click_through(handle: tauri::AppHandle) {
                     let ww = size.width as f64 / scale;
                     let wh = size.height as f64 / scale;
                     let (cx, cy) = (mx as f64, my as f64);
-                    // PET_INTERACTIVE_FULL（展开/气泡中）= true → 整窗可交互；
-                    // false → 仅团子可视热区（56×56，约贴身体、留小余量；团子中心≈winW-66,56）、其余穿透。
-                    // 不用整个 88px 元素框——那圈透明边会拦住桌面点击。
+                    // PET_INTERACTIVE_FULL（展开）= true → 整窗可交互；
+                    // false → 团子可视热区（56×56，约贴身体、留小余量；团子中心≈winW-66,56）；
+                    //         + 说话气泡带（气泡显示中：贴团子左侧一条，点气泡=展开）；
+                    //         其余穿透。不用整个 88px 元素框——那圈透明边会拦住桌面点击。
                     let full = PET_INTERACTIVE_FULL.load(Ordering::Relaxed);
                     let inside = if full {
                         cx >= wx && cx <= wx + ww && cy >= wy && cy <= wy + wh
@@ -913,8 +923,13 @@ fn spawn_click_through(handle: tauri::AppHandle) {
                         // 读不到光标（多半辅助功能未授权）→ 不穿透，避免团子点不到
                         true
                     } else {
-                        cx >= wx + ww - 94.0 && cx <= wx + ww - 38.0
-                            && cy >= wy + 28.0 && cy <= wy + 84.0
+                        let pet = cx >= wx + ww - 94.0 && cx <= wx + ww - 38.0
+                            && cy >= wy + 28.0 && cy <= wy + 84.0;
+                        // 气泡带与前端 .speech-slot 一致：left:8 right:116 top:12 height:88
+                        let bubble = PET_BUBBLE_ON.load(Ordering::Relaxed)
+                            && cx >= wx + 8.0 && cx <= wx + ww - 116.0
+                            && cy >= wy + 12.0 && cy <= wy + 100.0;
+                        pet || bubble
                     };
                     if last_inside != Some(inside) {
                         let _ = win.set_ignore_cursor_events(!inside);
@@ -1157,6 +1172,7 @@ pub fn run() {
             check_permissions,
             prompt_permission,
             set_interactive_full,
+            set_bubble_on,
             get_setup_config,
             save_setup_config,
             restart_brain,

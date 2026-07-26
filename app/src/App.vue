@@ -26,7 +26,7 @@ import {
   type BrainStatusMsg,
   type BrainPermissions,
 } from "./lib/brain";
-import { resetWindowSize, openPanel, setInteractiveFull } from "./lib/window";
+import { resetWindowSize, openPanel, setInteractiveFull, setBubbleOn } from "./lib/window";
 
 type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
 type BubbleMsg = { role: "user" | "ai" | "sys"; text: string };
@@ -62,7 +62,7 @@ const bubbleBusy = ref(false); // 走马灯滚动中（自动收起暂停，滚�
 let bubbleTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingBubbleClose = false; // 滚动中收到收起请求：挂起，等 settled
 
-/** 打开气泡（仅收起态）：撑宽窗口 + 置位。 */
+/** 打开气泡（仅收起态）：置位即显（窗口固定不缩放，气泡在团子左侧腾出的一条里）。 */
 function openBubble() {
   if (expanded.value || bubbleOn.value) return;
   bubbleOn.value = true;
@@ -412,14 +412,18 @@ function onKeydown(e: KeyboardEvent) {
   if (e.key === "Escape" && expanded.value) void collapse();
 }
 
-// 展开或说话气泡时整窗可交互；否则仅团子热区可交互、其余穿透
-watch([expanded, bubbleOn], () => {
-  void setInteractiveFull(expanded.value || bubbleOn.value);
+// 展开时整窗可交互；说话气泡只把「气泡带」加成第二热区（点气泡=展开），其余透明区照常穿透到桌面
+watch(expanded, (v) => {
+  void setInteractiveFull(v);
+});
+watch(bubbleOn, (v) => {
+  void setBubbleOn(v);
 });
 
 onMounted(async () => {
   await resetWindowSize();
   void setInteractiveFull(false);
+  void setBubbleOn(false);
   unlisten = await onBrainEvent(onEvent);
   unlistenStatus = await onBrainStatus(onStatus);
   unlistenPerms = await onBrainPermissions(onPerms);
@@ -598,7 +602,8 @@ onUnmounted(() => {
   position: static;
 }
 /* 说话态气泡槽：贴着团子左沿（右锚定，tail 指着团子），向左占满腾出的空间；
-   与团子同一高度带（top/height 对齐 pet-wrap），气泡在带内垂直居中——tail 指着团子脸 */
+   与团子同一高度带（top/height 对齐 pet-wrap），气泡在带内垂直居中——tail 指着团子脸；
+   justify-end：气泡右沿永远钉在团子旁，短气泡也不漂走 */
 .speech-slot {
   position: absolute;
   left: 8px;
@@ -607,6 +612,7 @@ onUnmounted(() => {
   height: 88px;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   z-index: 3;
 }
 /* 展开内容渐入：配合窗口补间，不突兀 */
