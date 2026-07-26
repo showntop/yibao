@@ -50,7 +50,10 @@ class SetStatusSkill(Skill):
         rows = db.query("topics", where={"id": tid})
         if not rows:
             return ActionResult(success=False, error=f"选题不存在：{tid}")
-        db.update("topics", tid, {"status": status, "updated_at": int(time.time())})
+        fields: dict = {"status": status, "updated_at": int(time.time())}
+        if status == "已发布":
+            fields["published_at"] = fields["updated_at"]  # 发布留痕：已发布列可按时间回看
+        db.update("topics", tid, fields)
         return ActionResult(success=True, data={"id": tid, "status": status})
 
 

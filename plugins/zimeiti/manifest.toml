@@ -19,6 +19,7 @@ columns = [
   {name = "platform", type = "text", default = ""},
   {name = "source", type = "text", default = ""},
   {name = "status", type = "text", default = "候选"},
+  {name = "published_at", type = "integer", default = 0},
   {name = "created_at", type = "integer"},
   {name = "updated_at", type = "integer"},
 ]

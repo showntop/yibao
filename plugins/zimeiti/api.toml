@@ -70,6 +70,13 @@ name = "set_status"
 handler = "zimeiti.set_status"
 direct = true
 
+# 详情页「复制成稿」：标题+正文进剪贴板 + 标已发布记时间；refresh 回详情看状态变化
+[[method]]
+name = "publish"
+handler = "zimeiti.publish"
+direct = true
+refresh = "zimeiti.get"
+
 # 编辑器版本历史：直调返回 {rows} 给 iframe；具体某版正文走 read_article?version=N
 [[method]]
 name = "versions"

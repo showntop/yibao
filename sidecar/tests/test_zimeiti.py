@@ -74,6 +74,7 @@ def test_all_tools_registered_with_risks(env):
         "zimeiti.ai_edit": RiskLevel.L1_LOW,
         "zimeiti.set_status": RiskLevel.L1_LOW,
         "zimeiti.versions": RiskLevel.L0_READONLY,
+        "zimeiti.publish": RiskLevel.L2_MEDIUM,
     }
     for tid, risk in expected.items():
         assert reg.get(tid).default_risk == risk, tid
@@ -218,7 +219,8 @@ def test_editor_webview_panel_loaded(env):
     assert p is not None and p["type"] == "webview"
     html = p["html"]
     assert "<textarea" in html and "window.yibao =" not in html  # 桥 JS 由父侧注入，插件不自带
-    assert len(html.encode("utf-8")) < 30 * 1024  # 面板事件 size 可控
+    # 面板事件 size 可控：编辑器承载 AI diff / 版本历史 / 发布格式化 / 素材抽屉，上限放到 36KB 防失控增长
+    assert len(html.encode("utf-8")) < 36 * 1024
 
     payload = panel_payload(ActionResult(success=True, data={"rows": []}, panel="zimeiti:editor"))
     assert payload["schema"] is None
@@ -384,6 +386,80 @@ def test_set_status_rejects_bad_input(env):
     assert not _run(reg, "zimeiti.set_status", {"id": tid, "status": "火星"}).success  # 未知状态
     assert not _run(reg, "zimeiti.set_status", {"id": "不存在", "status": "已发布"}).success
     assert not _run(reg, "zimeiti.set_status", {"status": "已发布"}).success  # 缺 id
+
+
+def test_set_status_marks_published_at(env):
+    """进「已发布」记发布时间；其它状态不记。"""
+    reg, _, _ = env
+    tid = _run(reg, "zimeiti.add", {"title": "T"}).data["id"]
+    assert _run(reg, "zimeiti.get", {"id": tid}).data["rows"][0]["published_at"] == 0
+    _run(reg, "zimeiti.set_status", {"id": tid, "status": "写作中"})
+    assert _run(reg, "zimeiti.get", {"id": tid}).data["rows"][0]["published_at"] == 0
+    _run(reg, "zimeiti.set_status", {"id": tid, "status": "已发布"})
+    assert _run(reg, "zimeiti.get", {"id": tid}).data["rows"][0]["published_at"] > 0
+
+
+# ---------- publish（发布最新稿：复制剪贴板 + 标已发布记时间） ----------
+
+
+def test_publish_copies_and_marks(env, monkeypatch):
+    import subprocess
+
+    copied = {}
+
+    def _fake_run(cmd, input=None, check=False):
+        assert cmd == ["pbcopy"] and check
+        copied["text"] = input.decode("utf-8")
+
+        class _R:
+            returncode = 0
+
+        return _R()
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    reg, _, _ = env
+    tid = _run(reg, "zimeiti.add", {"title": "K3 是垃圾", "platform": "公众号"}).data["id"]
+
+    # 无稿时报错，引导先写稿
+    assert not _run(reg, "zimeiti.publish", {"id": tid}).success
+
+    _run(reg, "zimeiti.article_save", {"id": tid, "content": "# 正文"})
+    r = _run(reg, "zimeiti.publish", {"id": tid})
+    assert r.success and r.data["opened_url"] == ""
+    assert copied["text"] == "K3 是垃圾\n\n# 正文"
+    assert r.data["chars"] == len("K3 是垃圾\n\n# 正文")
+    row = _run(reg, "zimeiti.get", {"id": tid}).data["rows"][0]
+    assert row["status"] == "已发布" and row["published_at"] > 0
+
+
+def test_publish_open_platform(env, monkeypatch):
+    import subprocess
+    import webbrowser
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: None)
+    opened = []
+    monkeypatch.setattr(webbrowser, "open", lambda url: opened.append(url) or True)
+    reg, _, _ = env
+    tid = _run(reg, "zimeiti.add", {"title": "T", "platform": "小红书"}).data["id"]
+    _run(reg, "zimeiti.article_save", {"id": tid, "content": "x"})
+    r = _run(reg, "zimeiti.publish", {"id": tid, "open_platform": True})
+    assert r.success and r.data["opened_url"] == "https://creator.xiaohongshu.com/"
+    assert opened == ["https://creator.xiaohongshu.com/"]
+
+
+def test_publish_rejects_bad_input(env, monkeypatch):
+    import subprocess
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: None)
+    reg, _, _ = env
+    assert not _run(reg, "zimeiti.publish", {}).success  # 缺 id
+    assert not _run(reg, "zimeiti.publish", {"id": "不存在"}).success
+
+
+def test_publish_api_registered_direct(env):
+    env  # 触发加载
+    api = get_api("zimeiti.publish")
+    assert api is not None and api.direct and api.refresh == "zimeiti.get"
 
 
 # ---------- versions（编辑器版本历史） ----------
