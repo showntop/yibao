@@ -292,11 +292,11 @@ def test_vad_config_defaults_and_env(monkeypatch):
 
     monkeypatch.delenv("YIBAO_VAD_MIN_SILENCE", raising=False)
     monkeypatch.delenv("YIBAO_VAD_MAX_SECONDS", raising=False)
-    assert config.vad_min_silence() == 0.9
+    assert config.vad_min_silence() == 1.2  # 二期默认上调（0.9 抢话）
     assert config.vad_max_seconds() == 30
-    monkeypatch.setenv("YIBAO_VAD_MIN_SILENCE", "1.2")
+    monkeypatch.setenv("YIBAO_VAD_MIN_SILENCE", "1.5")
     monkeypatch.setenv("YIBAO_VAD_MAX_SECONDS", "20")
-    assert config.vad_min_silence() == 1.2
+    assert config.vad_min_silence() == 1.5
     assert config.vad_max_seconds() == 20
 
 
@@ -544,3 +544,144 @@ def test_lazy_recognizer_loads_on_first_transcribe(monkeypatch):
     assert rec.transcribe(None) == "识别文字"
     assert rec.transcribe(None) == "识别文字"
     assert constructions == ["/models/x"]  # 只加载一次
+
+
+# ---------- 语音二期①：连续对话（voice_start continuous） ----------
+
+
+def _continuous_run(tmp_path, voice, provider):
+    """喂一条 continuous voice_start，收集全部输出消息。"""
+    out = []
+
+    async def _go():
+        await serve_async(
+            _reader([{"id": 1, "type": "voice_start", "continuous": True}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=provider,
+            voice=voice,
+        )
+
+    asyncio.run(_go())
+    return out
+
+
+def _kinds(out):
+    return [m["event"]["kind"] for m in out if m["type"] == "event"]
+
+
+def test_voice_continuous_round_then_exit_phrase(tmp_path):
+    """连续会话：第一轮正常问答（LLM 跑），第二轮退出语 → 固定告别收尾，run_done 只发一次。"""
+    provider = FakeProvider(chunks=["你", "好呀"])
+    voice = FakeVoice(texts=["你好", "退出"])
+    out = _continuous_run(tmp_path, voice, provider)
+
+    kinds = _kinds(out)
+    assert kinds.count("listening") == 2  # 两轮聆听
+    assert "notice" in kinds  # 会话开场提示
+    assert voice.listen_calls == 2
+    # 第一轮 LLM 回复 + 第二轮固定告别
+    finals = [m["event"].get("text") for m in out if m["type"] == "event" and m["event"]["kind"] == "final_reply"]
+    assert finals[-1] == "好的，先聊到这儿，叫我随时来～"
+    assert any(m["type"] == "event" and m["event"]["kind"] == "final_reply_chunk" for m in out)
+    assert voice.stream_chunks == ["好的，先聊到这儿，叫我随时来～"]  # 告别走了 TTS
+    assert [m for m in out if m["type"] == "run_done"] == [{"type": "run_done", "id": 1}]  # 全程一次
+    assert out[-1] == {"type": "run_done", "id": 1}
+
+
+def test_voice_continuous_empty_listens_auto_exit(tmp_path):
+    """连续两次没听清 → 自动退（麦克风不空转），LLM 一次都不跑。"""
+    provider = FakeProvider(text="不该出现")
+    voice = FakeVoice(texts=["", ""])
+    out = _continuous_run(tmp_path, voice, provider)
+
+    kinds = _kinds(out)
+    assert kinds.count("listening") == 2
+    assert "final_reply" not in kinds
+    notices = [m["event"].get("text") for m in out if m["type"] == "event" and m["event"]["kind"] == "notice"]
+    assert any("先退下啦" in (t or "") for t in notices)
+    assert [m for m in out if m["type"] == "run_done"] == [{"type": "run_done", "id": 1}]
+
+
+def test_voice_continuous_run_done_only_at_session_end(tmp_path):
+    """问答一轮后两次没听清退出：每轮结束不单独发 run_done（前端会以为请求完结）。"""
+    provider = FakeProvider(chunks=["答", "案"])
+    voice = FakeVoice(texts=["问题", "", ""])
+    out = _continuous_run(tmp_path, voice, provider)
+
+    assert _kinds(out).count("listening") == 3  # 问答一轮 + 空两轮
+    run_dones = [i for i, m in enumerate(out) if m["type"] == "run_done"]
+    assert len(run_dones) == 1 and run_dones[0] == len(out) - 1  # 只在最后
+
+
+def test_is_exit_phrase():
+    from yibao_brain.server import _is_exit_phrase
+
+    assert _is_exit_phrase("退出")
+    assert _is_exit_phrase("退出。")
+    assert _is_exit_phrase("谢谢！")
+    assert _is_exit_phrase("先这样")
+    assert not _is_exit_phrase("先这样了谢谢")  # 混合句不拦，交给 LLM
+    assert not _is_exit_phrase("退出了")  # 只整句命中，防误杀
+    assert not _is_exit_phrase("好的")
+
+
+def test_voice_one_shot_unaffected(tmp_path):
+    """单轮语音（无 continuous）：行为照旧——run 完即 run_done，不进入第二轮聆听。"""
+    provider = FakeProvider(chunks=["你", "好"])
+    voice = FakeVoice(texts=["你好", "不该被听到"])
+    out = []
+
+    async def _go():
+        await serve_async(
+            _reader([{"id": 1, "type": "voice_start"}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=provider,
+            voice=voice,
+        )
+
+    asyncio.run(_go())
+    assert _kinds(out).count("listening") == 1
+    assert voice.listen_calls == 1
+    assert out[-1] == {"type": "run_done", "id": 1}
+
+
+# ---------- 语音二期③：子句级软切（首句更早出声） ----------
+
+
+def test_take_sentence_soft_cut_before_terminator():
+    """终止标点未出现、够长且遇中等停顿 → 先切下来开播（首句不等完整句号）。"""
+    from yibao_brain.voice import _take_sentence
+
+    s, rest = _take_sentence("好的，我来看一下这个问题，然后回答你")
+    assert s == "好的，我来看一下这个问题，"
+    assert rest == "然后回答你"
+
+
+def test_take_sentence_terminator_still_wins():
+    """终止标点已在缓冲里：整句完整，不被软切碎拆。"""
+    from yibao_brain.voice import _take_sentence
+
+    s, rest = _take_sentence("你好，世界。下一句")
+    assert s == "你好，世界。"
+    assert rest == "下一句"
+
+
+def test_take_sentence_soft_cut_too_short_waits():
+    """软切点太靠前（切碎片不值当）→ 不切，等更多内容。"""
+    from yibao_brain.voice import _take_sentence
+
+    assert _take_sentence("嗯，好的，") == (None, "嗯，好的，")
+    assert _take_sentence("你好世界") == (None, "你好世界")
+
+
+def test_take_sentence_force_cut_unchanged():
+    """无标点长文照旧按 max_len 强切。"""
+    from yibao_brain.voice import _take_sentence
+
+    buf = "啊" * 90
+    s, rest = _take_sentence(buf)
+    assert s is not None and len(s) <= 90 and rest == buf[len(s):]

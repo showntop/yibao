@@ -104,12 +104,13 @@ class LazySherpaRecognizer:
 class SounddeviceRecorder:
     """sounddevice 录音 + Silero VAD：说完一句（静音 min_silence）自动停，返回该段 PCM。
 
-    min_silence 默认 0.9s：说话中途的自然停顿（<0.9s）不会被误判为说完。
+    min_silence 默认 1.2s：说话中途的自然停顿（<1.2s）不会被误判为说完
+    （0.9s 对「边想边说」的停顿仍偏短，二期上调）。
     采集走回调+队列（不是阻塞 s.read）：旧实现设备停发帧时 read 永不返回，
     录音循环与 stop() 信号一起卡死（「一直聆听中、无法取消」的根因）。
     """
 
-    def __init__(self, vad_model: str, max_seconds: int = 30, min_silence: float = 0.9, no_frame_timeout: float = 3.0):
+    def __init__(self, vad_model: str, max_seconds: int = 30, min_silence: float = 1.2, no_frame_timeout: float = 3.0):
         self._vad_model = vad_model
         self._max = max_seconds
         self._min_silence = min_silence
@@ -336,14 +337,21 @@ def _speech_text(text: str) -> str:
     return re.sub(r"\s+", " ", t).strip()
 
 
-def _take_sentence(buf: str, max_len: int = 80):
+def _take_sentence(buf: str, max_len: int = 80, min_soft: int = 12):
     """从 buf 头部切一句（到终止标点）；无标点但超 max_len 则按最近逗号/空格强切。
+
+    软切（二期）：终止标点还没出现时，buf 已够 min_soft 且遇到中等停顿（，；：、），
+    先切下来开播——首句不再等完整句号，首音明显提前；终止标点优先（整句完整不硬拆）。
 
     返回 (sentence, rest)；无可切返回 (None, buf)。
     """
     m = _SENT_RE.search(buf)
     if m:
         return buf[: m.end()], buf[m.end():]
+    if len(buf) >= min_soft:
+        cut = max(buf.rfind("，"), buf.rfind("；"), buf.rfind("："), buf.rfind("、"))
+        if cut >= min_soft - 1:
+            return buf[: cut + 1], buf[cut + 1:]
     if len(buf) >= max_len:
         cut = max(buf.rfind("，"), buf.rfind("、"), buf.rfind(" "))
         if cut <= 0:
@@ -372,7 +380,7 @@ def build_voice(
     model_dir: str,
     vad_model: str,
     voice_name: str,
-    min_silence: float = 0.9,
+    min_silence: float = 1.2,
     max_seconds: int = 30,
 ) -> VoiceCapability:
     """生产装配：sherpa STT（懒加载）+ sounddevice 录 + edge-tts 播。"""

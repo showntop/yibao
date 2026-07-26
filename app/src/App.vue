@@ -391,6 +391,13 @@ function onMic() {
   });
 }
 
+function onMicContinuous() {
+  // 长按团子 = 连续对话：答完接着听，说「退出」或点团子结束（会话提示由大脑 notice 落气泡）
+  void voiceStart(undefined, true).catch((err) => {
+    bubbles.value.push({ role: "ai", text: "⚠️ 语音启动失败：" + String(err) });
+  });
+}
+
 function onInterrupt() {
   if (!busy.value) return;
   void interrupt().catch((err) => {
@@ -479,7 +486,7 @@ onUnmounted(() => {
         />
       </div>
       <div class="pet-wrap">
-        <Avatar class="pet" :state="state" :size="88" @click="onPetClick" @longpress="onMic" />
+        <Avatar class="pet" :state="state" :size="88" @click="onPetClick" @longpress="onMicContinuous" />
       </div>
     </template>
 

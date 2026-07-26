@@ -105,12 +105,15 @@ class FakeComputerUseClient:
 class FakeVoice:
     """listen 返 canned text；记录 speak/speak_stream 调用。
 
-    speak_stream 模拟边收边播：每 chunk 先记录后按 stream_delay"播放"，
+    texts 给序列则每次 listen 弹出下一个（模拟连续会话多轮），耗尽返 ""；
+    否则单值 _text 恒返。speak_stream 模拟边收边播：每 chunk 先记录后按 stream_delay"播放"，
     期间轮询 cancel（模拟真实现的 sd 非阻塞播放 + 30ms 轮询）。
     """
 
-    def __init__(self, text: str = "你好", stream_delay: float = 0.0, listen_block: bool = False):
+    def __init__(self, text: str = "你好", stream_delay: float = 0.0, listen_block: bool = False, texts: list | None = None):
         self._text = text
+        self._texts = list(texts) if texts is not None else None
+        self.listen_calls = 0
         self.stream_delay = stream_delay
         self.listen_block = listen_block  # True 时 listen 挂起直到 stop_listen（模拟录音中）
         self.listen_stopped = False
@@ -119,6 +122,7 @@ class FakeVoice:
         self.stream_interrupted: bool = False
 
     def listen(self) -> str:
+        self.listen_calls += 1
         if self.listen_block:
             import time
 
@@ -127,6 +131,8 @@ class FakeVoice:
                     return ""
                 time.sleep(0.05)
             return ""
+        if self._texts is not None:
+            return self._texts.pop(0) if self._texts else ""
         return self._text
 
     def stop_listen(self) -> None:

@@ -857,10 +857,19 @@ fn get_current_panel(state: tauri::State<Brain>) -> Result<Option<Value>, String
 }
 
 #[tauri::command]
-fn voice_start(state: tauri::State<Brain>, surface: Option<String>) -> Result<(), String> {
+fn voice_start(
+    state: tauri::State<Brain>,
+    surface: Option<String>,
+    continuous: Option<bool>,
+) -> Result<(), String> {
     write_to_brain(
         &state,
-        serde_json::json!({ "id": 0, "type": "voice_start", "surface": surface.unwrap_or_else(|| "pet".into()) }),
+        serde_json::json!({
+            "id": 0,
+            "type": "voice_start",
+            "surface": surface.unwrap_or_else(|| "pet".into()),
+            "continuous": continuous.unwrap_or(false),
+        }),
     )
 }
 
