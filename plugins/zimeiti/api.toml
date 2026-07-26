@@ -121,3 +121,8 @@ intent = "修改选题「{title}」的稿件：先用 zimeiti.article_read 读�
 name = "read"
 handler = "zimeiti.article_read"
 intent = "读选题「{title}」的最新稿（id={id}）：用 zimeiti.article_read 读出来，给我展示全文或要点"
+
+[[method]]
+name = "review"
+handler = "zimeiti.stat_list"
+intent = "复盘选题「{title}」（id={id}）：先用 zimeiti.stat_list 查它的发布数据（where 按 topic_id 过滤；没有数据就先问我数据或跳过），再用 zimeiti.article_read 读最新稿（id={id}），然后给我一份复盘：这篇内容好在哪、差在哪、数据反映了什么、下次同方向选题怎么改进。复盘要点存进长期记忆。"

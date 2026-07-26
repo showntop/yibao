@@ -17,6 +17,7 @@
     {"label": "写初稿", "method": "zimeiti.draft", "params": {"id": "$data.rows.0.id", "title": "$data.rows.0.title"}},
     {"label": "改稿", "method": "zimeiti.revise", "params": {"id": "$data.rows.0.id", "title": "$data.rows.0.title"}},
     {"label": "读稿", "method": "zimeiti.read", "params": {"id": "$data.rows.0.id", "title": "$data.rows.0.title"}},
+    {"label": "复盘", "method": "zimeiti.review", "params": {"title": "$data.rows.0.title", "id": "$data.rows.0.id"}},
     {"label": "复制成稿", "method": "zimeiti.publish", "params": {"id": "$data.rows.0.id"}},
     {"label": "待发布", "method": "zimeiti.move", "params": {"id": "$data.rows.0.id", "status": "待发布"}},
     {"label": "已发布", "method": "zimeiti.move", "params": {"id": "$data.rows.0.id", "status": "已发布"}},

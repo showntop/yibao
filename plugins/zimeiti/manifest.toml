@@ -53,6 +53,19 @@ columns = [
 ]
 indexes = ["updated_at", "topic_id"]
 
+[[table]]
+name = "post_stats"
+columns = [
+  {name = "id", type = "text", pk = true},
+  {name = "topic_id", type = "text"},
+  {name = "platform", type = "text", default = ""},
+  {name = "views", type = "integer", default = 0},
+  {name = "likes", type = "integer", default = 0},
+  {name = "comments", type = "integer", default = 0},
+  {name = "recorded_at", type = "integer"},
+]
+indexes = ["topic_id"]
+
 [[tool]]
 id = "add"
 type = "db"
@@ -176,6 +189,34 @@ topic_id = {type = "string", description = "选题 id"}
 op = "update"
 table = "materials"
 auto = {updated_at = "unixts"}
+
+[[tool]]
+id = "stat_add"
+type = "db"
+description = "记录某选题在某平台的发布数据（阅读/赞/评论），用于复盘"
+risk = "L1"
+required = ["topic_id", "platform"]
+[tool.params]
+topic_id = {type = "string", description = "选题 id"}
+platform = {type = "string", description = "发布平台（如 公众号/小红书/知乎）"}
+views = {type = "integer", description = "阅读数，没有就 0"}
+likes = {type = "integer", description = "点赞数，没有就 0"}
+comments = {type = "integer", description = "评论数，没有就 0"}
+[tool.db]
+op = "insert"
+table = "post_stats"
+auto = {recorded_at = "unixts"}
+
+[[tool]]
+id = "stat_list"
+type = "db"
+description = "列出发布数据（按记录时间倒序，最多 50 条）。运行时 where 由调用方传，如 {where: {topic_id: …}} 按选题过滤；不传则列全部"
+risk = "L0"
+[tool.db]
+op = "query"
+table = "post_stats"
+order = "recorded_at DESC"
+limit = 50
 
 [[panel]]
 type = "schema"

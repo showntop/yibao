@@ -780,3 +780,36 @@ def test_ai_edit_full_length_limits(env):
     assert t.run({"selection": "x" * 8000, "mode": "polish"}, t.plugin_ctx).success
     r = t.run({"selection": "x" * 4001}, t.plugin_ctx)
     assert not r.success and "4001" in r.error  # 选段上限 4000（回归）
+
+
+# ---------- 发布复盘（post_stats + stat_add/stat_list + review intent） ----------
+
+
+def test_stat_add_and_list(env):
+    reg, _, _ = env
+    from yibao_brain.ipc import RiskLevel
+
+    assert reg.get("zimeiti.stat_add").default_risk == RiskLevel.L1_LOW
+    assert reg.get("zimeiti.stat_list").default_risk == RiskLevel.L0_READONLY
+    tid = _run(reg, "zimeiti.add", {"title": "T"}).data["id"]
+    other = _run(reg, "zimeiti.add", {"title": "U"}).data["id"]
+    r = _run(reg, "zimeiti.stat_add", {"topic_id": tid, "platform": "公众号", "views": 1200, "likes": 30, "comments": 5})
+    assert r.success and r.data["id"]
+    assert _run(reg, "zimeiti.stat_add", {"topic_id": tid, "platform": "小红书"}).success  # 数字缺省落表默认 0
+    _run(reg, "zimeiti.stat_add", {"topic_id": other, "platform": "知乎", "views": 10})
+
+    rows = _run(reg, "zimeiti.stat_list", {"where": {"topic_id": tid}}).data["rows"]  # 运行时 where 按选题过滤
+    assert len(rows) == 2 and all(row["topic_id"] == tid for row in rows)
+    first = next(row for row in rows if row["platform"] == "公众号")
+    assert first["views"] == 1200 and first["likes"] == 30 and first["comments"] == 5 and first["recorded_at"] > 0
+    second = next(row for row in rows if row["platform"] == "小红书")
+    assert second["views"] == 0 and second["likes"] == 0 and second["comments"] == 0
+    assert len(_run(reg, "zimeiti.stat_list", {}).data["rows"]) == 3  # 不传 where 列全部
+
+
+def test_review_api_registered_intent(env):
+    env  # 触发加载
+    api = get_api("zimeiti.review")
+    assert api is not None and not api.direct and api.handler == "zimeiti.stat_list"
+    assert "{title}" in api.intent and "{id}" in api.intent
+    assert "zimeiti.stat_list" in api.intent and "zimeiti.article_read" in api.intent
