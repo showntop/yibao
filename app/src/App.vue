@@ -3,6 +3,7 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import Avatar from "./components/Avatar.vue";
 import SpeechBubble from "./components/SpeechBubble.vue";
 import InputBar from "./components/InputBar.vue";
@@ -180,7 +181,7 @@ async function launchPlugin(p: PluginInfo) {
   }
 }
 
-/** header「扩充」钮 → 打开设置大窗（设置已搬进独立 home 窗，宠物窗保持纯粹）。 */
+/** header「扩充」钮 → 打开大窗（完整 APP 主界面，与小窗互斥，宠物窗保持纯粹）。 */
 function openHome() {
   void openHomeWindow().catch(() => {});
 }
@@ -262,6 +263,9 @@ function onEvent(e: BrainEvent) {
       bubbles.value.push({ role: "ai", text: "⏰ " + (e.text ?? "到点了") });
       void (async () => {
         try {
+          // 大小窗互斥：大窗开着时提醒由大窗呈现，别把宠物窗再弹出来
+          const home = await WebviewWindow.getByLabel("home");
+          if (home && (await home.isVisible())) return;
           const win = getCurrentWindow();
           if (!(await win.isVisible())) await win.show();
           if (!expanded.value) await expand();
@@ -462,7 +466,7 @@ onUnmounted(() => {
             <line x1="6" y1="12" x2="18" y2="12" />
           </svg>
         </button>
-        <button class="collapse-btn expand-btn" title="打开设置大窗" @click="openHome">
+        <button class="collapse-btn expand-btn" title="打开大窗（完整界面）" @click="openHome">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M15 3h6v6" />
             <path d="M9 21H3v-6" />

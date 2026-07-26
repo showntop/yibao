@@ -65,9 +65,9 @@ export function setSurface(s: string): void {
   _surface = s;
 }
 
-/** 发送用户输入，触发大脑一次 run。 */
-export function runInput(text: string): Promise<void> {
-  return invoke("run_input", { text, surface: _surface });
+/** 发送用户输入，触发大脑一次 run。surface 显式传参优先（大窗多页共享 JS 上下文，模块级 _surface 不够分）。 */
+export function runInput(text: string, surface?: string): Promise<void> {
+  return invoke("run_input", { text, surface: surface ?? _surface });
 }
 
 /** 回复高风险确认（Rust 命令参数 confirmation_id 在 JS 侧为 camelCase）。 */
@@ -76,8 +76,8 @@ export function sendConfirm(confirmationId: string, approved: boolean): Promise<
 }
 
 /** 触发语音输入：sidecar 录音→STT→run→TTS 播报（Plan 4a 最小语音）。 */
-export function voiceStart(): Promise<void> {
-  return invoke("voice_start", { surface: _surface });
+export function voiceStart(surface?: string): Promise<void> {
+  return invoke("voice_start", { surface: surface ?? _surface });
 }
 
 /** 打断进行中的生成/播报（Plan 4b：停 TTS + 终止 LLM + 清队列）。 */
@@ -90,8 +90,9 @@ export function panelAction(
   method: string,
   params: Record<string, unknown>,
   id?: number,
+  surface?: string,
 ): Promise<void> {
-  return invoke("panel_action", { id: id ?? Date.now() % 2 ** 31, method, params, surface: _surface });
+  return invoke("panel_action", { id: id ?? Date.now() % 2 ** 31, method, params, surface: surface ?? _surface });
 }
 
 /** 面板焦点（v2 §5 focus）：面板内容/选中条目变化时上报，null = 面板关闭。

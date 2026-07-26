@@ -42,6 +42,8 @@ struct BrainState {
     /// 最近一次 panel 事件载荷（panel/schema/data）：面板窗首开时事件已发完，
     /// 窗口挂载后靠 get_current_panel 拉这份缓存补渲染（解首开竞态）。
     last_panel: Option<Value>,
+    /// 面板浮窗被大窗临时藏起（大小窗互斥）：关大窗时凭它还原。
+    panel_hidden_by_home: bool,
 }
 
 impl BrainState {
@@ -57,6 +59,7 @@ impl BrainState {
             manual_restart: false,
             hold_restart: false,
             last_panel: None,
+            panel_hidden_by_home: false,
         }
     }
 }
@@ -734,22 +737,70 @@ fn list_plugins() -> Result<Vec<Value>, String> {
     Ok(out)
 }
 
-/// 打开/聚焦设置大窗：home 在 setup 预创建（关闭只是隐藏，状态保留），show+focus 即可。
-/// 宠物窗 header「扩充」钮与托盘「设置…」共用本命令。
+/// 打开/聚焦大窗（home）：与小窗互斥——藏宠物窗；面板浮窗若开着也临时藏起
+///（记 panel_hidden_by_home，关大窗时还原）。宠物窗 header「扩充」钮与托盘「设置…」共用本命令。
 #[tauri::command]
 fn open_home_window(app: AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("home") {
         win.show().map_err(|e| e.to_string())?;
         win.set_focus().map_err(|e| e.to_string())?;
     }
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.hide();
+    }
+    if let Some(panel) = app.get_webview_window("panel") {
+        let was_visible = panel.is_visible().unwrap_or(false);
+        if was_visible {
+            let _ = panel.hide();
+        }
+        let state = app.state::<Brain>();
+        if let Ok(mut g) = state.0.lock() {
+            g.panel_hidden_by_home = was_visible;
+        };
+    }
+    Ok(())
+}
+
+/// 大窗收起后还原小窗模式：亮宠物窗；面板浮窗若是被大窗临时藏起的，一并还原。
+fn restore_after_home(app: &AppHandle) {
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.show();
+    }
+    let state = app.state::<Brain>();
+    let restore = state
+        .0
+        .lock()
+        .map(|mut g| std::mem::take(&mut g.panel_hidden_by_home))
+        .unwrap_or(false);
+    if restore {
+        if let Some(panel) = app.get_webview_window("panel") {
+            let _ = panel.show();
+        }
+    }
+}
+
+/// 关闭大窗 = 隐藏（不销毁，保状态）+ 还原小窗模式（互斥：宠物窗回来）。
+/// 大窗前端的 × 走本命令；OS 级关闭由全局 CloseRequested 拦截后走同一还原。
+#[tauri::command]
+fn close_home_window(app: AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("home") {
+        win.hide().map_err(|e| e.to_string())?;
+    }
+    restore_after_home(&app);
     Ok(())
 }
 
 /// 打开/聚焦面板窗：已存在则 show+focus（关闭只是隐藏，状态保留）；
 /// 首次用 builder 创建（无装饰+透明与主窗一致，不需 always_on_top），位置取屏幕中央偏右（避开宠物球常驻角）。
+/// 大窗模式下不弹浮窗：面板嵌入大窗主区渲染（panel 事件大窗同样收到）。
 /// 注：CloseRequested → hide 由全局 on_window_event 统一拦截（对所有窗生效，面板窗同享）。
 #[tauri::command]
 fn open_panel_window(app: AppHandle) -> Result<(), String> {
+    if let Some(home) = app.get_webview_window("home") {
+        if home.is_visible().unwrap_or(false) {
+            return Ok(());
+        }
+    }
     if let Some(win) = app.get_webview_window("panel") {
         win.show().map_err(|e| e.to_string())?;
         win.set_focus().map_err(|e| e.to_string())?;
@@ -881,6 +932,14 @@ pub fn run() {
     let shortcuts = tauri_plugin_global_shortcut::Builder::new()
         .with_handler(|app, _shortcut, event| {
             if event.state == ShortcutState::Pressed {
+                // 大窗开着：热键 = 收起大窗回小窗（互斥）；否则显隐宠物窗
+                if let Some(home) = app.get_webview_window("home") {
+                    if home.is_visible().unwrap_or(false) {
+                        let _ = home.hide();
+                        restore_after_home(app);
+                        return;
+                    }
+                }
                 if let Some(win) = app.get_webview_window("main") {
                     let _ = if win.is_visible().unwrap_or(false) {
                         win.hide()
@@ -895,6 +954,13 @@ pub fn run() {
     tauri::Builder::default()
         // 单实例：第二个实例拉起时聚焦既有窗口并退出（防多实例 → 多 brain → qdrant 锁互踩）
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // 大窗开着就聚焦大窗（互斥，别两边都亮）；否则亮宠物窗
+            if let Some(h) = app.get_webview_window("home") {
+                if h.is_visible().unwrap_or(false) {
+                    let _ = h.set_focus();
+                    return;
+                }
+            }
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.show().and_then(|_| w.set_focus());
             }
@@ -916,6 +982,10 @@ pub fn run() {
                 if window.label() == "panel" {
                     let _ = window.app_handle().emit("panel-closed", ());
                 }
+                if window.label() == "home" {
+                    // 大小窗互斥：大窗关了把小窗模式还原回来
+                    restore_after_home(window.app_handle());
+                }
             }
         })
         .setup(|app| {
@@ -932,7 +1002,7 @@ pub fn run() {
                 let _ = win.show();
             }
 
-            // 设置大窗（home）：随 setup 预创建但隐藏——首开快、状态保留；
+            // 大窗（home，完整 APP 主界面）：随 setup 预创建但隐藏——首开快、状态保留；
             // 关窗=隐藏由全局 CloseRequested 拦截。正常窗口：不置顶、不 skipTaskbar（Dock/⌘⇥ 可切换）。
             // 定位取主窗所在屏中央（面板窗同款算法）。
             let home = tauri::WebviewWindowBuilder::new(
@@ -940,14 +1010,15 @@ pub fn run() {
                 "home",
                 tauri::WebviewUrl::App("home.html".into()),
             )
-            .title("译宝设置")
+            .title("译宝")
             .transparent(true)
             .decorations(false)
             .resizable(true)
-            .inner_size(760.0, 560.0)
+            .inner_size(860.0, 600.0)
+            .min_inner_size(680.0, 480.0)
             .visible(false)
             .build()
-            .map_err(|e| format!("创建设置窗失败：{e}"))?;
+            .map_err(|e| format!("创建大窗失败：{e}"))?;
             if let Ok(Some(mon)) = home.current_monitor() {
                 let s = mon.scale_factor();
                 let mx = mon.position().x as f64 / s;
@@ -955,8 +1026,8 @@ pub fn run() {
                 let sw = mon.size().width as f64 / s;
                 let sh = mon.size().height as f64 / s;
                 let _ = home.set_position(tauri::LogicalPosition::new(
-                    mx + (sw - 760.0) / 2.0,
-                    my + (sh - 560.0) / 2.0,
+                    mx + (sw - 860.0) / 2.0,
+                    my + (sh - 600.0) / 2.0,
                 ));
             }
 
@@ -982,6 +1053,14 @@ pub fn run() {
                 .tooltip("译宝")
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => {
+                        // 亮宠物窗 = 回小窗模式：大窗若开着先收（互斥）
+                        if let Some(h) = app.get_webview_window("home") {
+                            if h.is_visible().unwrap_or(false) {
+                                let _ = h.hide();
+                                restore_after_home(app);
+                                return;
+                            }
+                        }
                         if let Some(w) = app.get_webview_window("main") {
                             let _ = w.show().and_then(|_| w.set_focus());
                         }
@@ -1083,7 +1162,8 @@ pub fn run() {
             restart_brain,
             clear_brain_data,
             open_data_dir,
-            open_home_window
+            open_home_window,
+            close_home_window
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
