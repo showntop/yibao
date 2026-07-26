@@ -23,7 +23,8 @@ from .plugindb import PluginDb
 from .skills import Skill, SkillContext, SkillRegistry
 
 # 合法 capability 集合（v2 §3.3）；host 不由加载器注入（invoker 执行时嫁接）
-CAPABILITIES = {"db", "memory", "http", "llm", "host", "reminders"}
+# process：声明本插件会 spawn 子进程（如调本机 CLI 智能体）；仅声明不注入，供审计/闸门识别
+CAPABILITIES = {"db", "memory", "http", "llm", "host", "reminders", "process"}
 # 声明式 tool 类型 → 所需 capability（加载期校验，manifest 未声明即加载失败）
 TOOL_TYPE_CAPABILITY = {"db": "db", "http": "http", "prompt": "llm"}
 
@@ -422,6 +423,7 @@ def load_plugins(
     emit_panel=None,
     host_available: bool = True,
     reminders=None,
+    emit_event=None,
 ) -> dict[str, str]:
     """扫描加载所有插件，返回 {插件标识: "ok" 或错误信息}（失败插件的标识为目录名）。"""
     results: dict[str, str] = {}
@@ -436,7 +438,7 @@ def load_plugins(
         try:
             pid = _load_one(child, registry, memory=memory, http=http, llm=llm,
                             emit_panel=emit_panel, host_available=host_available,
-                            reminders=reminders)
+                            reminders=reminders, emit_event=emit_event)
             results[pid] = "ok"
         except Exception as e:  # 失败隔离：坏插件不拖累其他插件/底座
             results[child.name] = f"{type(e).__name__}: {e}"
@@ -444,7 +446,7 @@ def load_plugins(
 
 
 def _load_one(child: Path, registry: SkillRegistry, *, memory, http, llm, emit_panel, host_available,
-              reminders=None) -> str:
+              reminders=None, emit_event=None) -> str:
     manifest = tomllib.loads((child / "manifest.toml").read_text(encoding="utf-8"))
     pid = manifest["id"]  # id 必填；min_engine_version 只解析暂不校验（阶段 0）
     if not _PLUGIN_ID.match(pid):
@@ -466,7 +468,8 @@ def _load_one(child: Path, registry: SkillRegistry, *, memory, http, llm, emit_p
         raise ValueError("声明了 [[table]] 但未声明 db capability")
 
     # 按 capabilities 构造 scoped ctx：未声明的能力对应属性保持 None
-    ctx = SkillContext(emit_panel=emit_panel)
+    # emit_event 与 capability 无关（后台线程主动播报的公共通道，如 agents 插件任务完成通知）
+    ctx = SkillContext(emit_panel=emit_panel, emit_event=emit_event)
     if "db" in caps:
         ctx.db = PluginDb(pid)
         ctx.db.apply_schema(tables)

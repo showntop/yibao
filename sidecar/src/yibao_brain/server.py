@@ -72,6 +72,7 @@ def build_loop(
     skills_factory=None,
     confirmer=None,
     history_file: str | None = None,
+    emit_event=None,
 ) -> AgentLoop:
     real_a11y = use_real and a11y_enabled() and sys.platform == "darwin"
     reg = skills_factory() if skills_factory else SkillRegistry()
@@ -115,7 +116,7 @@ def build_loop(
         from .reminders import ReminderStore, make_skills
 
         reminder_store = ReminderStore(os.path.join(os.path.dirname(db_path), "reminders.json"))
-        _load_plugins_safe(reg, memory, prov, host, reminders=reminder_store)
+        _load_plugins_safe(reg, memory, prov, host, reminders=reminder_store, emit_event=emit_event)
         # 路由式暴露（§12-2）：插件 tool 默认隐藏，use_plugin 按需展开；
         # active 集合与 AgentLoop 共享（技能执行即改，下一步 LLM 调用即见新工具）
         from .plugins import get_plugin_summaries
@@ -158,7 +159,7 @@ def build_loop(
     return agent
 
 
-def _load_plugins_safe(reg, memory, prov, host, reminders=None) -> None:
+def _load_plugins_safe(reg, memory, prov, host, reminders=None, emit_event=None) -> None:
     """加载 <repo>/plugins 下的插件（env YIBAO_PLUGINS_DIR 可覆盖）。
 
     只在 use_real 且无自定义 skills_factory 时调用（测试不碰真实文件系统）；
@@ -176,6 +177,7 @@ def _load_plugins_safe(reg, memory, prov, host, reminders=None) -> None:
             plugins_dir, reg,
             memory=memory, http=HttpClient(), llm=LlmChat(prov),
             host_available=host is not None, reminders=reminders,
+            emit_event=emit_event,
         )
         for pid, status in results.items():
             print(f"[yibao] 插件 {pid}: {status}", file=sys.stderr)
@@ -398,8 +400,14 @@ async def serve_async(
             if pending_confirm["future"] is fut:
                 pending_confirm["future"] = None
 
+    # 插件后台线程 → 壳的主动事件通道（如 agents 插件任务完成播报）：
+    # 与下面 memory 状态回调同一跨线程先例（call_soon_threadsafe + write_msg）。
+    # surface=None 表示不绑定特定窗口（壳侧按 pet 处理）；事件形如 {"kind": "reminder", …}。
     agent = build_loop(
-        read_msg, use_real, db_path, provider, skills_factory, confirmer=confirmer
+        read_msg, use_real, db_path, provider, skills_factory, confirmer=confirmer,
+        emit_event=lambda ev: ai_loop.call_soon_threadsafe(
+            write_msg, {"type": "event", "surface": None, "event": ev}
+        ),
     )
     # mem0 降级（如多实例争 qdrant 锁）→ 显式推到壳，别让「失忆」无声发生
     mem = getattr(agent, "memory", None)

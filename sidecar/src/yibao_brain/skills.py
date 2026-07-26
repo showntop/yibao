@@ -27,6 +27,9 @@ class SkillContext:
     llm: Any = None  # plugins.LlmChat
     db: PluginDb | None = None
     emit_panel: Callable[[dict], None] | None = None
+    # 插件后台线程发事件的通道（由底座注入；测试环境为 None 时插件应静默跳过）。
+    # 事件形如 {"kind": "reminder", "text": …}——前端已支持亮窗+气泡+TTS。
+    emit_event: Callable[[dict], None] | None = None
     reminders: Any = None  # reminders.ReminderStore（提醒管理插件与底座技能共享同一实例）
 
 

@@ -93,6 +93,48 @@ def data_dir(tmp_path, monkeypatch):
     return d
 
 
+# ---------- emit_event 注入（插件后台线程主动播报通道）----------
+
+
+def test_emit_event_injected_when_passed(data_dir, tmp_path):
+    """load_plugins 传了 emit_event：插件 ctx.emit_event 即该通道（线程安全由底座包装保证）。"""
+    _write_plugin(tmp_path, "notes", NOTES_MANIFEST)
+    reg = SkillRegistry()
+    sent: list[dict] = []
+
+    def emit(ev: dict) -> None:
+        sent.append(ev)
+
+    results = _load(tmp_path, reg, emit_event=emit)
+    assert results == {"notes": "ok"}
+    ctx = reg.get("notes.keep").plugin_ctx
+    assert ctx.emit_event is emit
+    ctx.emit_event({"kind": "reminder", "text": "任务完成"})
+    assert sent == [{"kind": "reminder", "text": "任务完成"}]
+
+
+def test_emit_event_defaults_to_none(data_dir, tmp_path):
+    """load_plugins 不传 emit_event（兼容老调用方）：ctx.emit_event is None，插件应静默跳过。"""
+    _write_plugin(tmp_path, "notes", NOTES_MANIFEST)
+    reg = SkillRegistry()
+    assert _load(tmp_path, reg) == {"notes": "ok"}
+    assert reg.get("notes.keep").plugin_ctx.emit_event is None
+
+
+def test_process_capability_accepted(data_dir, tmp_path):
+    """process 是合法 capability（声明本插件会 spawn 子进程）；未知 capability 仍加载失败。"""
+    _write_plugin(tmp_path, "notes", NOTES_MANIFEST.replace(
+        'capabilities = ["db"]', 'capabilities = ["db", "process"]'))
+    _write_plugin(tmp_path, "badcap", NOTES_MANIFEST.replace(
+        'id = "notes"', 'id = "badcap"').replace(
+        'capabilities = ["db"]', 'capabilities = ["db", "teleport"]'))
+    reg = SkillRegistry()
+    results = _load(tmp_path, reg)
+    assert results["notes"] == "ok"
+    assert reg.get("notes.keep").plugin_capabilities == frozenset({"db", "process"})
+    assert "teleport" in results["badcap"]  # 报错指明未知能力
+
+
 # ---------- 声明式 db tool 端到端 ----------
 
 
