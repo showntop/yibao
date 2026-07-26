@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "type": "list",
+  "bind": {"items": "$data.rows"},
+  "item": {
+    "title": "$item.agent · $item.status",
+    "subtitle": "$item.created_at|date · $item.prompt",
+    "actions": [
+      {"label": "详情", "method": "agents.task_status", "params": {"id": "$item.id"}},
+      {"label": "停止", "method": "agents.task_stop", "params": {"id": "$item.id"}}
+    ]
+  }
+}

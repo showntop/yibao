@@ -1,0 +1,43 @@
+# 智能体调度：把任务派给本机 CLI 智能体（Claude Code / Codex）后台执行，完成主动汇报。
+# dispatch_task（代码 tool，L3 走确认）spawn 子进程后立即返回；daemon 线程等进程结束，
+# 落库 + 经 ctx.emit_event 播报结果。任务列表/详情/停止走面板。
+id = "agents"
+name = "智能体调度"
+description = "把任务派给本机 CLI 智能体（Claude Code/Codex）后台执行，完成后译宝主动播报结果；适合耗时较长、上下文独立的干活任务（改代码/查资料/批量处理等）"
+capabilities = ["db", "process"]   # process：本插件会 spawn 子进程（CLI 智能体）
+
+[code]
+entry = "skills"
+
+[[table]]
+name = "tasks"
+columns = [
+  {name = "id", type = "text", pk = true},
+  {name = "agent", type = "text"},
+  {name = "prompt", type = "text"},
+  {name = "cwd", type = "text"},
+  {name = "status", type = "text", default = "running"},
+  {name = "exit_code", type = "integer", default = -1},
+  {name = "log_path", type = "text", default = ""},
+  {name = "created_at", type = "integer"},
+  {name = "finished_at", type = "integer", default = 0},
+]
+indexes = ["status", "created_at"]
+
+[[tool]]
+id = "task_list"
+type = "db"
+description = "列出派给智能体的任务（按时间倒序）"
+risk = "L0"
+panel = "agents:tasks"
+[tool.db]
+op = "query"
+table = "tasks"
+order = "created_at DESC"
+limit = 50
+
+[[panel]]
+type = "schema"
+name = "tasks"
+label = "任务列表"
+src = "panel/tasks.schema.json"

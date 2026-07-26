@@ -1,0 +1,16 @@
+# 面板可调方法白名单（v2 §7）：direct 直调过闸门不过 LLM
+[[method]]
+name = "task_list"
+handler = "agents.task_list"
+direct = true
+
+[[method]]
+name = "task_status"
+handler = "agents.task_status"
+direct = true
+
+[[method]]
+name = "task_stop"
+handler = "agents.task_stop"
+direct = true
+refresh = "agents.task_list"   # 停止后面板拿刷新后的任务列表，而非回执
