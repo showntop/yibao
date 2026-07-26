@@ -443,17 +443,22 @@ onUnmounted(() => {
       </div>
     </template>
 
-    <!-- 对话：header（头像+名称+状态+收起）/ (权限引导) / 气泡流 / 输入条 -->
+    <!-- 对话：header（头像+名称+状态+收起，一体化贴边）/ 内容区（权限引导/气泡流/输入条） -->
     <template v-else>
-      <header class="chat-header flip">
-        <Avatar :state="state" :size="44" @click="collapse" />
-        <div class="meta">
+      <header class="chat-header flip" data-tauri-drag-region>
+        <Avatar :state="state" :size="38" @click="collapse" />
+        <div class="meta" data-tauri-drag-region>
           <span class="name">译宝</span>
           <span class="status" :class="state"><i class="dot" />{{ statusText }}</span>
         </div>
-        <button class="collapse-btn" title="收起" @click="collapse">—</button>
+        <button class="collapse-btn" title="收起" @click="collapse">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+            <line x1="6" y1="12" x2="18" y2="12" />
+          </svg>
+        </button>
       </header>
 
+      <div class="chat-body">
       <SetupWizard v-if="setupNeeded" :model="setupCfg.model" :base-url="setupCfg.baseUrl" :voice="setupCfg.voice" @saved="onSetupSaved" />
 
       <template v-if="!setupNeeded">
@@ -475,6 +480,7 @@ onUnmounted(() => {
 
       <div v-else class="bubbles" ref="bubblesRef">
         <div v-if="!bubbles.length && !showTyping" class="empty-hint">
+          <Avatar :state="state" :size="56" />
           <p>叫我做什么都行～</p>
           <div class="chips">
             <button v-for="c in suggestions" :key="c" class="chip" @click="submit(c)">{{ c }}</button>
@@ -501,6 +507,7 @@ onUnmounted(() => {
         />
       </div>
       </template>
+      </div>
     </template>
   </div>
 </template>
@@ -517,16 +524,25 @@ onUnmounted(() => {
   color: var(--yb-text);
 }
 .shell.exp {
-  padding: var(--yb-space-3);
   display: flex;
   flex-direction: column;
-  gap: var(--yb-space-3);
-  background: var(--yb-shell-bg);
+  background:
+    linear-gradient(180deg, rgba(77, 144, 196, 0.09), rgba(77, 144, 196, 0) 128px),
+    var(--yb-shell-bg);
   -webkit-backdrop-filter: var(--yb-blur);
   backdrop-filter: var(--yb-blur);
   border: 1px solid var(--yb-glass-border);
   border-radius: var(--yb-radius-xl);
   box-shadow: var(--yb-shadow);
+}
+/* 内容区：header 贴边一体化，其余内容在这里呼吸 */
+.chat-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--yb-space-3);
+  padding: var(--yb-space-3);
 }
 /* 常态：团子锚到右沿（right:34）——窗口向左撑开时团子原地不动；132 窗内 ≡ 居中 */
 .pet-wrap {
@@ -561,45 +577,53 @@ onUnmounted(() => {
     transform: none;
   }
 }
+/* header：贴边一体化（非浮卡），浅天青底与对话区分开，底部一根 hairline */
 .chat-header {
+  position: relative; /* 收起钮绝对定位的锚 */
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: var(--yb-space-2) var(--yb-space-3);
-  background: var(--yb-surface-solid);
-  border: 1px solid var(--yb-surface-border);
-  border-radius: 14px;
-  box-shadow: var(--yb-shadow);
+  padding: 10px var(--yb-space-3) 9px;
+  background: linear-gradient(180deg, rgba(77, 144, 196, 0.14), rgba(77, 144, 196, 0.08));
+  border-bottom: 1px solid var(--yb-surface-border);
 }
-/* 锚点在右侧时（dir=ne/se）镜像头部，头像与收起锚点同侧 */
+/* 锚点在右侧时（dir=ne/se）镜像头部，团子+meta 成团靠右（row-reverse 默认即靠右） */
 .chat-header.flip {
   flex-direction: row-reverse;
 }
-.chat-header.flip .meta {
-  align-items: flex-end;
-}
+/* meta 不撑开：挨着团子站，名称与状态胶囊互相居中 */
 .meta {
-  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  line-height: 1.3;
+  align-items: center;
+  gap: 3px;
+  line-height: 1.2;
+  /* 拖动把手区（名称/状态文字上按住可拖窗） */
+  cursor: default;
+  user-select: none;
 }
 .name {
   font-size: var(--yb-fs-xl);
-  font-weight: 600;
+  font-weight: 650;
+  letter-spacing: 0.01em;
 }
+/* 状态 pill：软底小胶囊，比裸文字更有「状态感」 */
 .status {
-  font-size: var(--yb-fs-sm);
+  font-size: 11px;
   color: var(--yb-text-dim);
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  line-height: 1.5;
+  line-height: 1.4;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--yb-well);
 }
 /* 状态点：颜色跟团子状态色环同源 */
 .status .dot {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   flex-shrink: 0;
   border-radius: 50%;
   background: var(--dot, var(--yb-idle));
@@ -609,41 +633,55 @@ onUnmounted(() => {
 }
 .status.listen {
   --dot: var(--yb-listen);
+  background: var(--yb-danger-soft);
+  color: var(--yb-danger);
 }
-.status.think {
+.status.think,
+.status.work {
   --dot: var(--yb-think);
+  background: var(--yb-accent-soft);
+  color: var(--yb-accent-deep);
 }
 .status.work {
   --dot: var(--yb-work);
 }
 .status.say {
   --dot: var(--yb-say);
+  background: var(--yb-accent-soft);
+  color: var(--yb-accent-deep);
 }
 .status.success {
   --dot: var(--yb-state-success);
 }
 .status.error {
   --dot: var(--yb-state-error);
+  background: var(--yb-danger-soft);
+  color: var(--yb-danger);
 }
-.status.think,
-.status.work {
-  color: var(--yb-accent-deep);
-}
+/* 收起：幽灵圆钮 + minus（macOS 最小化语义），hover 才显底；绝对定位钉在 header 最左 */
 .collapse-btn {
-  width: 26px;
-  height: 26px;
-  flex-shrink: 0;
-  border: 1px solid var(--yb-surface-border);
-  border-radius: 10px;
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 50%;
   background: transparent;
   color: var(--yb-text-dim);
   cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
   transition: all 0.15s ease;
 }
+.collapse-btn svg {
+  width: 14px;
+  height: 14px;
+}
 .collapse-btn:hover {
-  background: var(--yb-surface-solid);
+  background: var(--yb-well);
+  color: var(--yb-text);
 }
 .bubbles {
   flex: 1;
@@ -651,8 +689,11 @@ onUnmounted(() => {
   flex-direction: column;
   gap: var(--yb-space-2);
   overflow-y: auto;
-  padding: 0 2px;
+  padding: 4px 2px 0;
   scrollbar-width: thin;
+  /* 顶部渐隐：滚出视口的消息柔和淡出，不被硬边「切断」 */
+  mask-image: linear-gradient(180deg, transparent, #000 14px);
+  -webkit-mask-image: linear-gradient(180deg, transparent, #000 14px);
 }
 .bubbles::-webkit-scrollbar {
   width: 6px;
@@ -661,16 +702,19 @@ onUnmounted(() => {
   background: var(--yb-surface-border);
   border-radius: 3px;
 }
-/* 空状态：气泡区占位引导 */
+/* 空状态：气泡区占位引导（小号团子 + 一句招呼 + 建议 chip） */
 .empty-hint {
   flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--yb-space-3);
+  gap: 10px;
   color: var(--yb-text-dim);
   font-size: 13px;
+}
+.empty-hint p {
+  margin: 0 0 2px;
 }
 .chips {
   display: flex;
@@ -734,7 +778,7 @@ onUnmounted(() => {
   border: 1px solid var(--yb-surface-border);
   border-radius: 14px;
   background: var(--yb-surface-solid);
-  box-shadow: var(--yb-shadow);
+  box-shadow: var(--yb-shadow-soft);
   cursor: pointer;
   font-family: inherit;
   text-align: left;

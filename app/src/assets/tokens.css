@@ -24,7 +24,7 @@
 :root {
   /* 表面 */
   --yb-bg: #eef2f7;
-  --yb-shell-bg: rgba(255, 255, 255, 0.86);
+  --yb-shell-bg: rgba(255, 255, 255, 0.94); /* 0.94：底下是白窗也不糊字（0.86 实测看不清） */
   --yb-glass-border: rgba(255, 255, 255, 0.7);
   --yb-blur: saturate(140%) blur(20px);
   --yb-shadow: 0 10px 32px rgba(40, 60, 90, 0.16);

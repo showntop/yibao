@@ -78,15 +78,15 @@ function onMain() {
   gap: var(--yb-space-2);
   align-items: center;
   padding: 6px 6px 6px var(--yb-space-3);
-  border-radius: 14px;
+  border-radius: 18px;
   background: var(--yb-surface-solid);
   border: 1px solid var(--yb-surface-border);
-  box-shadow: var(--yb-shadow);
+  box-shadow: var(--yb-shadow-soft);
   transition: all 0.15s ease;
 }
 .bar:focus-within {
   border-color: var(--yb-accent);
-  box-shadow: var(--yb-shadow), 0 0 0 3px var(--yb-accent-soft);
+  box-shadow: var(--yb-shadow-soft), 0 0 0 3px var(--yb-accent-soft);
 }
 input {
   flex: 1;
@@ -116,11 +116,11 @@ input::placeholder {
 }
 .mic {
   background: transparent;
-  border: 1px solid var(--yb-surface-border);
+  border: none;
   color: var(--yb-text-dim);
 }
 .mic:hover {
-  background: var(--yb-btn-neutral);
+  background: var(--yb-well);
   color: var(--yb-text);
 }
 /* 聆听中：红底 + 脉动光环 + 声波动画（明确的「正在听」状态） */

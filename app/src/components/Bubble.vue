@@ -31,7 +31,7 @@ const html = computed(() => (props.role === "ai" && !props.typing ? renderMarkdo
   border: 1px solid var(--yb-surface-border);
   color: var(--yb-text);
   align-self: flex-start;
-  box-shadow: var(--yb-shadow);
+  box-shadow: var(--yb-shadow-soft);
   /* 尾巴角：靠左下的角收窄，拟小尾巴 */
   border-radius: var(--yb-radius-md) var(--yb-radius-md) var(--yb-radius-md) 4px;
 }
@@ -39,7 +39,7 @@ const html = computed(() => (props.role === "ai" && !props.typing ? renderMarkdo
   background: linear-gradient(135deg, var(--yb-accent), var(--yb-accent-deep));
   color: #fff;
   align-self: flex-end;
-  box-shadow: var(--yb-shadow);
+  box-shadow: 0 2px 8px rgba(77, 144, 196, 0.3);
   /* 尾巴角：靠右下的角收窄 */
   border-radius: var(--yb-radius-md) var(--yb-radius-md) 4px var(--yb-radius-md);
 }
