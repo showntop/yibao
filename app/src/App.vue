@@ -58,7 +58,9 @@ function onSetupSaved() {
 // ---- 说话态气泡（B）：流式 chunk 拼到 bubbleText（天然打字机）；说话时窗口撑出，说完缩回 ----
 const bubbleOn = ref(false);
 const bubbleText = ref("");
+const bubbleBusy = ref(false); // 走马灯滚动中（自动收起暂停，滚完再收）
 let bubbleTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingBubbleClose = false; // 滚动中收到收起请求：挂起，等 settled
 
 /** 打开气泡（仅收起态）：撑宽窗口 + 置位。 */
 function openBubble() {
@@ -68,14 +70,33 @@ function openBubble() {
 /** 立刻收起气泡（清计时）。 */
 function closeBubbleNow() {
   if (bubbleTimer) { clearTimeout(bubbleTimer); bubbleTimer = null; }
+  pendingBubbleClose = false;
+  bubbleBusy.value = false;
   if (!bubbleOn.value) return;
   bubbleOn.value = false;
   bubbleText.value = "";
 }
-/** 延迟收起（读完再看一会儿）。 */
+/** 延迟收起（读完再看一会儿）；走马灯滚动中先挂起，滚完（settled）再留 1.6s 收尾。 */
 function scheduleBubbleClose(ms: number) {
   if (bubbleTimer) clearTimeout(bubbleTimer);
+  if (bubbleBusy.value) {
+    pendingBubbleClose = true;
+    return;
+  }
   bubbleTimer = setTimeout(() => { closeBubbleNow(); }, ms);
+}
+/** 走马灯起跑：滚完前别收（清掉已排的收起计时）。 */
+function onBubbleBusy() {
+  bubbleBusy.value = true;
+  if (bubbleTimer) { clearTimeout(bubbleTimer); bubbleTimer = null; }
+}
+/** 走马灯滚到底：若有挂起的收起请求，留 1.6s 读完尾巴再收。 */
+function onBubbleSettled() {
+  bubbleBusy.value = false;
+  if (pendingBubbleClose) {
+    pendingBubbleClose = false;
+    scheduleBubbleClose(1600);
+  }
 }
 let unlisten: (() => void) | null = null;
 let unlistenStatus: (() => void) | null = null;
@@ -118,9 +139,7 @@ watch(showTyping, () => scrollBubbles(true));
 
 async function expand() {
   // 固定窗口方案：不缩放。先收气泡（仅切内容），再切聊天视图
-  if (bubbleTimer) { clearTimeout(bubbleTimer); bubbleTimer = null; }
-  bubbleOn.value = false;
-  bubbleText.value = "";
+  closeBubbleNow();
   expanded.value = true;
 }
 async function collapse() {
@@ -446,7 +465,13 @@ onUnmounted(() => {
     <!-- 常态：宠物球 + 状态文字 -->
     <template v-if="!expanded">
       <div class="speech-slot" v-if="bubbleOn">
-        <SpeechBubble :text="bubbleText" :streaming="streamingIdx !== null" @expand="expand" />
+        <SpeechBubble
+          :text="bubbleText"
+          :streaming="streamingIdx !== null"
+          @expand="expand"
+          @busy="onBubbleBusy"
+          @settled="onBubbleSettled"
+        />
       </div>
       <div class="pet-wrap">
         <Avatar class="pet" :state="state" :size="88" @click="onPetClick" @longpress="onMic" />
@@ -572,12 +597,12 @@ onUnmounted(() => {
 .pet-wrap .pet {
   position: static;
 }
-/* 说话态气泡槽：团子左侧（窗口撑开后腾出的空间） */
+/* 说话态气泡槽：贴着团子左沿（右锚定，tail 指着团子），向左占满腾出的空间 */
 .speech-slot {
   position: absolute;
   left: 8px;
+  right: 116px;
   top: 14px;
-  width: 188px;
   z-index: 3;
 }
 /* 展开内容渐入：配合窗口补间，不突兀 */
