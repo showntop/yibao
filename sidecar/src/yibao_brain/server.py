@@ -21,7 +21,7 @@ from .ipc import Action, Event, RiskLevel
 from .llm import FakeProvider, GLMProvider, ToolCall
 from .loop import AgentLoop, _offload
 from .memory import FakeMemory, LazyMem0Memory
-from .plugins import get_api, panel_payload
+from .plugins import LlmChat, get_api, panel_payload
 from .safety import Decision, Gate, GatePolicy, RiskClassifier
 from .skills import EchoSkill, SkillRegistry
 from .skills_composite import register_composite_skills
@@ -124,6 +124,12 @@ def build_loop(
         active_plugins = set()
         reg.register(UsePluginSkill(reg, active_plugins, get_plugin_summaries()))
         for sk in make_skills(reminder_store):
+            reg.register(sk)
+        # gen 面板（LLM 生成 webview）：启动恢复已生成面板 + 注册 panel_gen/open/list/delete
+        from . import genpanel
+
+        genpanel.load_saved_panels()
+        for sk in genpanel.make_skills(LlmChat(prov)):
             reg.register(sk)
 
     def default_confirmer(action) -> bool:

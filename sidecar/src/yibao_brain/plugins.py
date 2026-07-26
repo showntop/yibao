@@ -296,6 +296,19 @@ def get_panel_title(ref: str) -> str:
     return _PANEL_TITLES.get(ref, ref)
 
 
+def register_panel(pid: str, name: str, title: str, html: str) -> None:
+    """运行时注册 webview 面板（gen 面板等动态面板用）：ref = 「pid:name」，同名覆盖。"""
+    ref = f"{pid}:{name}"
+    _PANELS[ref] = {"type": "webview", "html": html}
+    _PANEL_TITLES[ref] = title
+
+
+def unregister_panel(ref: str) -> None:
+    """摘掉动态注册的面板；ref 不存在时静默跳过。"""
+    _PANELS.pop(ref, None)
+    _PANEL_TITLES.pop(ref, None)
+
+
 def panel_payload(result) -> dict | None:
     """result.panel 非空时构造 panel 事件 payload（loop 与 panel_action 共用）。
 
