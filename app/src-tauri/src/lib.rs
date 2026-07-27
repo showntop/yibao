@@ -310,8 +310,6 @@ fn ensure_runtime(app: &AppHandle) -> Result<(), String> {
     copy_dir(&resource.join("sidecar"), &runtime)?;
     let mut cmd = std::process::Command::new(resource.join("bin").join("uv"));
     cmd.arg("sync")
-        .arg("--extra")
-        .arg("memory")
         .arg("--project")
         .arg(&runtime)
         .env("PYTHONUNBUFFERED", "1");

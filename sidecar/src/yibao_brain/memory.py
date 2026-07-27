@@ -26,6 +26,17 @@ class Memory(ABC):
     def recall(self, query: str, user_id: str) -> list[str]: ...
 
 
+def _humanize_err(err: Exception | None) -> str:
+    """mem0 初始化失败的原文 → 给用户看的人话（第三方报错原文太技术且常误导）。"""
+    s = str(err or "未知错误")
+    if "already accessed by another instance" in s:
+        return "记忆库被另一个译宝实例占用"
+    if "Missing credentials" in s or "OPENAI_API_KEY" in s:
+        # mem0 的 openai provider 在 key 为空时抛的原生文案（实际复用主 LLM 配置）
+        return "未配置模型 key（请到设置页完成模型配置）"
+    return s
+
+
 class FakeMemory(Memory):
     """简单子串匹配；按 user_id 隔离。"""
 
@@ -42,12 +53,12 @@ class FakeMemory(Memory):
 
 
 class Mem0Memory(Memory):
-    """mem0 封装：DeepSeek(LLM 抽取) + 本地 fastembed/ONNX(embedder) + 本地 qdrant(vector)。
+    """mem0 封装：主 LLM 复用(事实抽取) + 本地 fastembed/ONNX(embedder) + 本地 qdrant(vector)。
 
     LLM 复用主 provider 配置（llm_api_key/model/base_url）；embedder/vector 本地，免外部服务。
     embedder 从 sentence-transformers/torch 换成 fastembed（同模型 ONNX 量化版）——打包瘦身，
     注意与旧 torch 实现的向量数值有微差，切换时旧 mem0_store 需重建（2026-07-22）。
-    mem0 未装（optional）或初始化失败时，由调用方 try/except 降级为 FakeMemory。
+    初始化失败时由调用方 try/except 降级为 FakeMemory。
     """
 
     def __init__(self) -> None:
@@ -58,6 +69,10 @@ class Mem0Memory(Memory):
             mem0_embedder_dim, mem0_embedder_model, mem0_vector_path,
         )
 
+        if not llm_api_key():
+            # key 缺失时 mem0 的 openai provider 抛原生「Missing credentials …OPENAI_API_KEY」，
+            # 文案误导（实际复用的是主 LLM 配置）——拦在前面给人话
+            raise RuntimeError("未配置模型 key（请到设置页完成模型配置）")
         cfg = {
             "vector_store": {
                 "provider": "qdrant",
@@ -78,6 +93,9 @@ class Mem0Memory(Memory):
                 "provider": "fastembed",
                 "config": {"model": mem0_embedder_model()},
             },
+            # 事实抽取默认英文偏好（中文输入被翻成英文事实，bge-zh 跨语言召回打折）：
+            # 指令级定制，事实保留用户原话语言
+            "custom_instructions": "提取的事实一律用用户原话的语言记录（中文输入记中文），保留专有名词原文。",
         }
         self._m = _Mem0.from_config(cfg)
 
@@ -99,16 +117,16 @@ class Mem0Memory(Memory):
 
 
 class LazyMem0Memory(Memory):
-    """mem0 后台懒加载：构造秒回（不 import torch/mem0），真实实例在后台线程初始化。
+    """mem0 后台懒加载：构造秒回（不 import mem0/onnx），真实实例在后台线程初始化。
 
     就绪前 recall 返回空、add 进缓冲（上限 buffer_max 条）；就绪后回放缓冲并直通真实实例；
     初始化失败会按 init_attempts 次重试（间隔 init_delay_s 秒）——旧大脑刚被回收、
     qdrant 锁尚未释放是常态竞态，重试覆盖它；最终失败才永久降级为空记忆（不阻断回路）。
-    解决 torch/sentence-transformers 冷加载把 sidecar 启动拖慢的问题（大脑先上线，记忆随后接入）。
+    解决 mem0/onnxruntime 冷加载把 sidecar 启动拖慢的问题（大脑先上线，记忆随后接入）。
     """
 
     def __init__(self, factory=None, buffer_max: int = 50,
-                 init_attempts: int = 3, init_delay_s: float = 2.0) -> None:
+                 init_attempts: int = 5, init_delay_s: float = 3.0) -> None:
         self._factory = factory or Mem0Memory
         self._buf_max = buffer_max
         self._attempts = max(1, init_attempts)
@@ -156,7 +174,7 @@ class LazyMem0Memory(Memory):
             print(f"[yibao] mem0 后台初始化失败，记忆降级为空：{err}", file=sys.stderr)
             with self._lock:
                 self._failed = True
-                self._fail_msg = f"长期记忆不可用（{err}），本次运行将记不住事"
+                self._fail_msg = f"长期记忆不可用（{_humanize_err(err)}），本次运行将记不住事"
                 cb = self._on_status
                 self._buf.clear()
             if cb is not None:

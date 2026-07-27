@@ -23,16 +23,15 @@ dependencies = [
     "numpy>=1.26",
     "edge-tts>=7.2",
     "miniaudio>=1.59",
+    # 长期记忆（核心功能，2026-07-27 从 optional 挪默认：dev/CI 漏装 extras 导致
+    # 「FastEmbed is not installed」失忆；向量模型走 fastembed/ONNX 而非 sentence-transformers，
+    # 同模型 bge-small-zh-v1.5 但不拖 PyTorch（~500MB）——打包体积砍半，2026-07-22 定）
+    "mem0ai>=0.1.20",
+    "fastembed>=0.4.0",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
-memory = [
-    "mem0ai>=0.1.20",
-    # 向量模型走 fastembed（ONNX Runtime）：与 sentence-transformers 同模型 bge-small-zh-v1.5，
-    # 但不拖 PyTorch（~500MB）——打包体积砍半的瘦身刀（2026-07-22 定）
-    "fastembed>=0.4.0",
-]
 
 [project.scripts]
 yibao-brain = "yibao_brain.cli:main"

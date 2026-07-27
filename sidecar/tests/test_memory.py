@@ -13,6 +13,7 @@ def test_mem0_recall_uses_filters_for_isolation(monkeypatch):
     # mem0 2.x：search 用 filters={"user_id":...}，不支持 top-level user_id（回归防护）
     import mem0
 
+    monkeypatch.setenv("YIBAO_LLM_API_KEY", "dummy")  # key 前置检查（不真发请求）
     seen = {}
 
     class _FakeMem0:
@@ -23,7 +24,10 @@ def test_mem0_recall_uses_filters_for_isolation(monkeypatch):
             seen["search_filters"] = filters
             return [{"memory": "命中"}]
 
-    monkeypatch.setattr(mem0.Memory, "from_config", lambda cfg: _FakeMem0())
+    def _from_config(cfg):
+        return _FakeMem0()
+
+    monkeypatch.setattr(mem0.Memory, "from_config", _from_config)
 
     from yibao_brain.memory import Mem0Memory
 
@@ -34,9 +38,53 @@ def test_mem0_recall_uses_filters_for_isolation(monkeypatch):
     assert seen["search_filters"] == {"user_id": "u1"}  # 关键：filters 而非 top-level user_id
 
 
+def test_mem0_config_wiring(monkeypatch):
+    # from_config 收到的配置：llm 复用主 provider + fastembed 本地 + 中文事实抽取指令
+    import mem0
+
+    monkeypatch.setenv("YIBAO_LLM_API_KEY", "dummy")
+    monkeypatch.setenv("YIBAO_MEM0_VECTOR_PATH", "/tmp/yibao-test-cfg-store")
+    seen = {}
+
+    class _FakeMem0:
+        pass
+
+    def _from_config(cfg):
+        seen["cfg"] = cfg
+        return _FakeMem0()
+
+    monkeypatch.setattr(mem0.Memory, "from_config", _from_config)
+
+    from yibao_brain.memory import Mem0Memory
+
+    Mem0Memory()
+    cfg = seen["cfg"]
+    assert cfg["llm"]["provider"] == "openai"
+    assert cfg["llm"]["config"]["api_key"] == "dummy"  # 复用主 LLM key，不是 OPENAI_API_KEY
+    assert cfg["embedder"]["provider"] == "fastembed"
+    assert cfg["vector_store"]["config"]["path"] == "/tmp/yibao-test-cfg-store"
+    assert "中文" in cfg["custom_instructions"]  # 事实保留用户原话语言
+
+
+def test_mem0_missing_key_raises_human_error(monkeypatch):
+    # key 缺失：拦在 mem0 原生「Missing credentials…OPENAI_API_KEY」前，给人话
+    monkeypatch.delenv("YIBAO_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("YIBAO_GLM_API_KEY", raising=False)
+
+    from yibao_brain.memory import Mem0Memory
+
+    try:
+        Mem0Memory()
+        raise AssertionError("应抛错")
+    except RuntimeError as e:
+        assert "未配置模型 key" in str(e) and "OPENAI_API_KEY" not in str(e)
+
+
 def test_mem0_recall_tolerates_search_error(monkeypatch):
     # search 抛异常时优雅返回空，不阻断回路
     import mem0
+
+    monkeypatch.setenv("YIBAO_LLM_API_KEY", "dummy")
 
     class _BoomMem0:
         def add(self, messages, user_id=None, **kw):
@@ -51,6 +99,16 @@ def test_mem0_recall_tolerates_search_error(monkeypatch):
 
     m = Mem0Memory()
     assert m.recall("q", user_id="u1") == []
+
+
+def test_humanize_err():
+    from yibao_brain.memory import _humanize_err
+
+    assert "另一个译宝实例" in _humanize_err(RuntimeError(
+        "Storage folder /x is already accessed by another instance of Qdrant client."))
+    assert "未配置模型 key" in _humanize_err(RuntimeError(
+        "Missing credentials. Please set the OPENAI_API_KEY environment variable."))
+    assert _humanize_err(RuntimeError("别的错")) == "别的错"  # 未识别原文透传
 
 
 # ---------- LazyMem0Memory：后台懒加载 ----------

@@ -3,8 +3,7 @@
 ## 安装
 ```bash
 cd sidecar
-uv sync --extra dev            # 开发（含 pytest）
-uv sync --extra memory         # 可选：启用 mem0 真实记忆（较重）
+uv sync --extra dev            # 开发（含 pytest；mem0/fastembed 已在默认依赖，记忆开箱即用）
 ```
 
 ## 测试
