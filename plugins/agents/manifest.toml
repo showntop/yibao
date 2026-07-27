@@ -3,7 +3,7 @@
 # 落库 + 经 ctx.emit_event 播报结果。任务列表/详情/停止走面板。
 id = "agents"
 name = "智能体调度"
-description = "把任务派给本机 CLI 智能体（Claude Code/Codex）后台执行，完成后译宝主动播报结果；适合耗时较长、上下文独立的干活任务（改代码/查资料/批量处理等）"
+description = "干活任务中心，两条通道：①步骤明确的一次性任务（统计/转换/整理/小计算/生成文件）→ code_exec 沙箱脚本，秒级免费；②需要自主多轮决策的开放任务（修 bug/写功能/重构/代码库调研）→ dispatch_task 派给 Claude Code/Codex，分钟级烧额度。完成都主动播报"
 capabilities = ["db", "process"]   # process：本插件会 spawn 子进程（CLI 智能体）
 
 [code]
