@@ -22,7 +22,7 @@ from .ipc import Action, Event, RiskLevel
 from .llm import FakeProvider, GLMProvider, ToolCall
 from .loop import AgentLoop, _offload
 from .memory import FakeMemory, LazyMem0Memory
-from .plugins import LlmChat, get_api, panel_payload
+from .plugins import LlmChat, get_api, get_widgets, panel_payload
 from .safety import Decision, Gate, GatePolicy, RiskClassifier
 from .skills import EchoSkill, SkillRegistry
 from .skills_composite import register_composite_skills
@@ -459,6 +459,28 @@ async def serve_async(
                 pass
         stats["done_24h"] = feed.count_since("task", time.time() - 86400)
         return stats
+
+    async def _collect_widgets() -> list[dict]:
+        """主屏 widget 取数（OS 感 §4.2）：每个 widget 调其声明的 L0 method，
+        返回 panel_payload 形状（+open 点击跳转方法）。单个失败/被拒只跳过，不拖垮其他。"""
+        out = []
+        for ref, decl in get_widgets().items():
+            try:
+                action = agent.invoker.propose(ToolCall(id=f"w_{ref}", skill_id=decl["method"], params={}))
+                if agent.invoker.decide(action) != Decision.AUTO:  # 理论上是 L0 恒 AUTO；防御
+                    continue
+                result = await _offload(agent.invoker.execute, action, {})
+                if not result.success:
+                    print(f"[yibao] widget {ref} 取数失败（已跳过）：{result.error}", file=sys.stderr)
+                    continue
+                result.panel = ref
+                payload = panel_payload(result)
+                if payload is not None:
+                    payload["open"] = decl.get("open")
+                    out.append(payload)
+            except Exception as e:
+                print(f"[yibao] widget {ref} 取数异常（已跳过）：{e}", file=sys.stderr)
+        return out
     # mem0 降级（如多实例争 qdrant 锁）→ 显式推到壳，别让「失忆」无声发生
     mem = getattr(agent, "memory", None)
     if hasattr(mem, "set_status_callback"):
@@ -810,6 +832,9 @@ async def serve_async(
             except (TypeError, ValueError):
                 limit = 60
             write_msg({"type": "feed", "items": feed.recent(limit=limit), "stats": _feed_stats()})
+        elif rtype == "widgets":
+            # 主屏查询：插件 widget 卡片逐个取数（panel_payload 形状 + open 跳转方法）
+            write_msg({"type": "widgets", "widgets": await _collect_widgets()})
         elif rtype == "check_permissions":
             write_msg({"type": "permissions", "permissions": _permissions_status()})
         elif rtype == "prompt_permission":

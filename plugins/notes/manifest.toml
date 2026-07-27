@@ -61,3 +61,12 @@ type = "schema"
 name = "list"
 label = "闪念列表"
 src = "panel/list.schema.json"
+
+# 主屏 widget（OS 感 §4.2）：最近闪念一瞥卡；method 供数据（L0），open 点击跳全面板
+[[panel]]
+type = "widget"
+name = "widget"
+label = "最近闪念"
+src = "panel/widget.schema.json"
+method = "list"
+open = "list"

@@ -14,3 +14,12 @@ type = "schema"
 name = "main"
 label = "提醒"
 src = "panel/list.schema.json"
+
+# 主屏 widget（OS 感 §4.2）：待办提醒一瞥卡；method 供数据（L0），open 点击跳提醒面板
+[[panel]]
+type = "widget"
+name = "widget"
+label = "待办提醒"
+src = "panel/widget.schema.json"
+method = "list"
+open = "list"

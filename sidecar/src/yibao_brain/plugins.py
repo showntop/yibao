@@ -311,6 +311,16 @@ def unregister_panel(ref: str) -> None:
     _PANEL_TITLES.pop(ref, None)
 
 
+# ---------- 主屏 widget 注册表（OS 感 §4.2：schema 协议加 widget 类型，复用面板机制） ----------
+
+_WIDGETS: dict[str, dict] = {}
+
+
+def get_widgets() -> dict[str, dict]:
+    """已加载主屏 widget：ref → {method, open, title}（主屏查询时逐个调 method 取数）。"""
+    return {ref: dict(decl) for ref, decl in _WIDGETS.items()}
+
+
 def panel_payload(result) -> dict | None:
     """result.panel 非空时构造 panel 事件 payload（loop 与 panel_action 共用）。
 
@@ -326,22 +336,42 @@ def panel_payload(result) -> dict | None:
     return {"panel": result.panel, "title": title, "schema": panel, "data": result.data}
 
 
-def _load_panels(child: Path, pid: str, manifest: dict) -> None:
-    """解析 manifest [[panel]]：schema 读 JSON、webview 读 HTML 文本存注册表；未知类型记错误跳过。
-    显示名 = 插件 name · 面板 label（label 缺省用面板 name）。"""
+def _load_panels(child: Path, pid: str, manifest: dict, registry: SkillRegistry) -> None:
+    """解析 manifest [[panel]]：schema/widget 读 JSON、webview 读 HTML 文本存注册表；未知类型记错误跳过。
+    显示名 = 插件 name · 面板 label（label 缺省用面板 name）。
+    widget（OS 感 §4.2 主屏一瞥卡）：须带 method（本插件 L0 只读 tool 供数据，须已注册）；
+    可选 open（主屏点击跳转的 api.toml 方法，缺省则卡片不可点击）。校验失败整个 widget 跳过。"""
     for p in manifest.get("panel") or []:
         name = p.get("name") or "main"
         ref = f"{pid}:{name}"
         ptype = p.get("type", "schema")
-        if ptype not in ("schema", "webview"):
+        if ptype not in ("schema", "webview", "widget"):
             print(f"[yibao] 插件 {pid} panel {ref} 类型 {ptype!r} 暂不支持（已跳过）", file=sys.stderr)
             continue
         _PANEL_TITLES[ref] = f"{manifest.get('name') or pid} · {p.get('label') or name}"
         try:
             text = (child / p["src"]).read_text(encoding="utf-8")
-            _PANELS[ref] = {"type": "webview", "html": text} if ptype == "webview" else json.loads(text)
+            parsed = {"type": "webview", "html": text} if ptype == "webview" else json.loads(text)
         except Exception as e:
             print(f"[yibao] 插件 {pid} panel {ref} 读取失败（已跳过）：{e}", file=sys.stderr)
+            continue
+        if ptype == "widget":
+            try:
+                method = str(p["method"])  # 缺 method → KeyError → 跳过
+                full = method if method.startswith(f"{pid}.") else f"{pid}.{method}"
+                sk = registry.get(full)  # 未注册 → KeyError → 跳过
+                if sk.default_risk != RiskLevel.L0_READONLY:
+                    raise ValueError(f"widget method 必须是 L0 只读 tool（{full} 为 {sk.default_risk.name}）")
+                open_method = None
+                if p.get("open") is not None:
+                    o = str(p["open"])
+                    open_method = o if o.startswith(f"{pid}.") else f"{pid}.{o}"
+            except (KeyError, ValueError) as e:
+                _PANEL_TITLES.pop(ref, None)
+                print(f"[yibao] 插件 {pid} widget {ref} 无效（已跳过）：{e}", file=sys.stderr)
+                continue
+            _WIDGETS[ref] = {"method": full, "open": open_method, "title": _PANEL_TITLES[ref]}
+        _PANELS[ref] = parsed
 
 
 # ---------- api.toml：面板可调方法白名单（⑦py） ----------
@@ -504,7 +534,7 @@ def _load_one(child: Path, registry: SkillRegistry, *, memory, http, llm, emit_p
     for skill in skills:
         if skill.refresh is not None and skill.refresh not in registered_ids:
             raise ValueError(f"refresh 指向未注册的 tool：{skill.refresh!r}")
-    _load_panels(child, pid, manifest)
+    _load_panels(child, pid, manifest, registry)
     api_file = child / "api.toml"  # 面板可调方法白名单（可选）
     if api_file.is_file():
         _load_api(pid, api_file, registry)

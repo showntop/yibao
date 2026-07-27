@@ -43,3 +43,12 @@ type = "schema"
 name = "tasks"
 label = "任务列表"
 src = "panel/tasks.schema.json"
+
+# 主屏 widget（OS 感 §4.2）：任务动态一瞥卡；method 供数据（L0），open 点击跳任务列表
+[[panel]]
+type = "widget"
+name = "widget"
+label = "任务动态"
+src = "panel/widget.schema.json"
+method = "task_list"
+open = "task_list"

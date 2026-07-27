@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "type": "list",
+  "bind": {"items": "$data.rows"},
+  "item": {
+    "title": "$item.prompt",
+    "subtitle": "$item.agent · $item.status"
+  }
+}
