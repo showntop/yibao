@@ -94,7 +94,9 @@ def _wait(proc, task_id: str, label: str, prompt: str, log_path: str, timeout_s:
             text = f"❌ {label}失败（退出码 {exit_code}）：{head}\n{summary}"
         emit = getattr(ctx, "emit_event", None)
         if emit is not None:  # 测试环境未注入时静默跳过
-            emit({"kind": "reminder", "text": text})
+            # task meta：主屏 Feed 点击可带上下文追问（server 落 Feed 时取走）
+            emit({"kind": "reminder", "text": text,
+                  "task": {"id": task_id, "status": status, "label": label, "prompt": prompt[:120]}})
     except Exception as e:  # 兜底：等待线程的任何意外都不许炸出来
         print(f"[agents] 任务 {task_id} 等待线程异常：{type(e).__name__}: {e}", file=sys.stderr)
     finally:
@@ -114,9 +116,10 @@ def _reap_detached(pid: int, task_id: str, label: str, prompt: str, log_path: st
         # 用户已主动停止（task_stop 先落 stopped）：保留 stopped，不翻成 done
         prev = ctx.db.query("tasks", where={"id": task_id})
         stopped = bool(prev and prev[0]["status"] == "stopped")
+        status = "stopped" if stopped else "done"
         try:
             ctx.db.update("tasks", task_id, {
-                "status": "stopped" if stopped else "done", "finished_at": int(time.time()),
+                "status": status, "finished_at": int(time.time()),
             })
         except Exception as e:
             print(f"[agents] 任务 {task_id} 对账落库失败：{e}", file=sys.stderr)
@@ -133,6 +136,7 @@ def _reap_detached(pid: int, task_id: str, label: str, prompt: str, log_path: st
             text = f"✅ {label}完成：{head}\n{summary}"
         emit = getattr(ctx, "emit_event", None)
         if emit is not None:  # 测试环境未注入时静默跳过
-            emit({"kind": "reminder", "text": text})
+            emit({"kind": "reminder", "text": text,
+                  "task": {"id": task_id, "status": status, "label": label, "prompt": prompt[:120]}})
     except Exception as e:  # 兜底：对账线程的任何意外都不许炸出来
         print(f"[agents] 任务 {task_id} 对账线程异常：{type(e).__name__}: {e}", file=sys.stderr)

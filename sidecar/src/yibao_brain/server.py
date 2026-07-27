@@ -1,7 +1,7 @@
 """stdio 行分隔 JSON 服务：把 AgentLoop 接到桌面壳（Phase B 的 Tauri 侧）。
 
-协议（脑→壳）：hello（启动握手，含权限状态）、pong、permissions、event、run_done。
-协议（壳→脑）：run、confirm、voice_start、interrupt、ping、check_permissions、prompt_permission、panel_context。
+协议（脑→壳）：hello（启动握手，含权限状态）、pong、permissions、event、run_done、feed（主屏动态+统计）。
+协议（壳→脑）：run、confirm、voice_start、interrupt、ping、check_permissions、prompt_permission、panel_context、feed。
 """
 from __future__ import annotations
 
@@ -15,7 +15,8 @@ from collections.abc import Callable
 
 from . import permissions
 from .audit import AuditLog
-from .config import a11y_enabled, computer_use_enabled, history_path, llm_api_key, screenshot_dir, stt_model_dir, tts_voice, vad_max_seconds, vad_min_silence, vad_model_path, voice_enabled
+from .config import a11y_enabled, computer_use_enabled, history_path, llm_api_key, plugin_data_dir, screenshot_dir, stt_model_dir, tts_voice, vad_max_seconds, vad_min_silence, vad_model_path, voice_enabled
+from .feed import FeedStore
 from .history import ConversationHistory
 from .ipc import Action, Event, RiskLevel
 from .llm import FakeProvider, GLMProvider, ToolCall
@@ -413,17 +414,51 @@ async def serve_async(
             if pending_confirm["future"] is fut:
                 pending_confirm["future"] = None
 
+    # 主屏 Feed 存储（OS 感 §4.2）：任务播报/提醒触发在此落库，主屏查询时一次拿回。
+    # 与审计库同目录；FeedStore 写失败只 print，不拖垮主链路。
+    feed = FeedStore(os.path.join(os.path.dirname(db_path), "feed.db"))
+
+    def _on_plugin_event(ev: dict) -> None:
+        """插件主动事件：先落 Feed 再转发壳（surface=None 壳侧按 pet 处理）。"""
+        try:
+            task_meta = ev.get("task") if isinstance(ev, dict) else None
+            feed.add("task" if task_meta else "event", str(ev.get("text", "")), task_meta or {})
+        except Exception:
+            pass
+        write_msg({"type": "event", "surface": None, "event": ev})
+
     # 插件后台线程 → 壳的主动事件通道（如 agents 插件任务完成播报）：
     # 与下面 memory 状态回调同一跨线程先例（call_soon_threadsafe + write_msg）。
-    # surface=None 表示不绑定特定窗口（壳侧按 pet 处理）；事件形如 {"kind": "reminder", …}。
     agent = build_loop(
         read_msg, use_real, db_path, provider, skills_factory, confirmer=confirmer,
-        emit_event=lambda ev: ai_loop.call_soon_threadsafe(
-            write_msg, {"type": "event", "surface": None, "event": ev}
-        ),
+        emit_event=lambda ev: ai_loop.call_soon_threadsafe(_on_plugin_event, ev),
     )
     # 免确认集合接到闸门：命中后 decide 直接 AUTO（连 confirmation_needed 都不发）
     agent.invoker.gate.session_allowed = remembered_confirm
+
+    def _feed_stats() -> dict:
+        """主屏问候统计：待办提醒 / 进行中任务 / 近 24h 完成任务。各自容错，缺啥补 0。"""
+        stats = {"pending_reminders": 0, "running_tasks": 0, "done_24h": 0}
+        rstore = getattr(agent, "reminder_store", None)
+        if rstore is not None:
+            try:
+                stats["pending_reminders"] = len(rstore.list_pending())
+            except Exception:
+                pass
+        adb_file = os.path.join(plugin_data_dir("agents"), "data.db")
+        if os.path.exists(adb_file):  # 只在已存在时读，别为统计凭空建库
+            try:
+                from .plugindb import PluginDb
+
+                adb = PluginDb("agents")
+                try:
+                    stats["running_tasks"] = len(adb.query("tasks", where={"status": "running"}))
+                finally:
+                    adb.close()
+            except Exception:
+                pass
+        stats["done_24h"] = feed.count_since("task", time.time() - 86400)
+        return stats
     # mem0 降级（如多实例争 qdrant 锁）→ 显式推到壳，别让「失忆」无声发生
     mem = getattr(agent, "memory", None)
     if hasattr(mem, "set_status_callback"):
@@ -450,6 +485,7 @@ async def serve_async(
             for r in due:
                 text = str(r.get("text", ""))
                 print(f"[yibao] 提醒触发 id={r.get('id')}：{text[:30]!r}", file=sys.stderr)
+                feed.add("reminder", text, {"rid": r.get("id")})  # 主屏动态
                 write_msg({"type": "event", "surface": "pet",
                            "event": {"kind": "reminder", "text": text}})
                 if agent.history:  # 落历史：用户回「知道了」时大脑有上下文
@@ -767,6 +803,13 @@ async def serve_async(
             else:
                 # confirmer 还没注册（消息先于 run 任务到达）→ 缓存，由 confirmer 兑现
                 pending_confirm["early"] = answer
+        elif rtype == "feed":
+            # 主屏查询：动态列表（倒序）+ 问候统计
+            try:
+                limit = int(msg.get("limit") or 60)
+            except (TypeError, ValueError):
+                limit = 60
+            write_msg({"type": "feed", "items": feed.recent(limit=limit), "stats": _feed_stats()})
         elif rtype == "check_permissions":
             write_msg({"type": "permissions", "permissions": _permissions_status()})
         elif rtype == "prompt_permission":
