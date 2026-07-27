@@ -25,6 +25,8 @@ export interface BrainAction {
   description?: string;
   params?: Record<string, unknown>;
   risk?: number;
+  /** 过程展示短标签（sidecar 从技能 label 填，回退 skill_id） */
+  label?: string;
 }
 
 export interface BrainResult {

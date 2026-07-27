@@ -16,6 +16,7 @@ KINDS = ("challenge", "prd")
 
 class DocSave(Skill):
     id = "forge.doc_save"
+    label = "保存文档"
     description = (
         "把写好的挑战文档或 PRD 落盘并记到需求行上（kind=challenge 时需求状态顺带变为「挑战中」）。"
         "挑战追问收敛后、PRD 撰写完成后调用。"

@@ -25,9 +25,12 @@ import {
   type BrainStatusMsg,
 } from "../lib/brain";
 import { SUGGESTIONS } from "../lib/suggestions";
+import { procLabel, procSkip, procResultSuffix, procDetail } from "../lib/proc";
 
 type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
-type BubbleMsg = { role: "user" | "ai" | "sys"; text: string; panelLink?: boolean };
+// proc：过程展示（工具调用行，可点开展开参数/结果）；panelLink：「⇢ 协作」关联气泡
+type ProcInfo = { label: string; action?: BrainEvent["action"]; result?: BrainEvent["result"]; done: boolean; expanded: boolean };
+type BubbleMsg = { role: "user" | "ai" | "sys"; text: string; panelLink?: boolean; proc?: ProcInfo };
 
 // state：同步给父级侧边栏团子；openPanel：关联气泡点击 → 父级切插件页；reminder：父级切回本页
 const emit = defineEmits<{ state: [AvatarState]; openPanel: []; reminder: [] }>();
@@ -39,6 +42,8 @@ const pending = ref<{ id: string; skill: string; desc: string } | null>(null);
 const brainDown = ref(false); // 大脑掉线/重启中（守护在恢复）
 const panelOpen = ref(false); // 面板协作会话进行中（关联气泡只插一次）
 const perms = ref<BrainPermissions | null>(null); // macOS 权限状态（null=未收到）
+// 过程展示：action.id → 过程行下标，结果回来原地更新 ✅/❌
+const procIdx = new Map<string, number>();
 
 // ---- 首启设置向导（缺 LLM key 时 Rust 发 setup-config-needed，大脑未启动；逻辑同源宠物窗）----
 const setupNeeded = ref(false);
@@ -99,6 +104,15 @@ function onEvent(e: BrainEvent) {
   switch (e.kind) {
     case "action_proposed":
       state.value = "work";
+      // 过程行：🔧 技能短标签（use_plugin 跳过——成功有 notice，不重复）
+      if (e.action?.id && !procSkip(e.action)) {
+        procIdx.set(e.action.id, bubbles.value.length);
+        bubbles.value.push({
+          role: "sys",
+          text: "",
+          proc: { label: procLabel(e.action), action: e.action, done: false, expanded: false },
+        });
+      }
       break;
     case "confirmation_needed":
       state.value = "idle";
@@ -108,11 +122,22 @@ function onEvent(e: BrainEvent) {
         desc: e.action?.description ?? "",
       };
       break;
-    case "action_result":
+    case "action_result": {
       // 确认可能在别处作答，结果回来即收尾（成功短闪 400ms）
       pending.value = null;
       flashValence("success");
+      // 过程行收尾：✅/❌ + 结果存好（点「详情」展开看参数/输出）
+      const idx = e.action?.id !== undefined ? procIdx.get(e.action.id) : undefined;
+      if (idx !== undefined) {
+        const p = bubbles.value[idx].proc;
+        if (p) {
+          p.done = true;
+          p.result = e.result;
+        }
+        procIdx.delete(e.action!.id!);
+      }
       break;
+    }
     case "final_reply_chunk":
       // 流式增量：拼到当前 streaming bubble（首片时新建）
       if (streamingIdx.value === null) {
@@ -188,6 +213,17 @@ function onEvent(e: BrainEvent) {
       break;
     }
   }
+}
+
+// ---- 过程展示辅助（模板用）----
+function procOk(p: ProcInfo): boolean {
+  return p.result?.success !== false;
+}
+function procErrSuffix(p: ProcInfo): string {
+  return procResultSuffix(p.result);
+}
+function procText(p: ProcInfo): string {
+  return procDetail(p.action, p.result);
 }
 
 function onStatus(m: BrainStatusMsg) {
@@ -318,6 +354,18 @@ onUnmounted(() => {
         <button v-if="b.panelLink" class="assoc" @click="emit('openPanel')">
           {{ b.text }}<span class="assoc-arrow">前往 ›</span>
         </button>
+        <!-- 过程行：🔧/✅/❌ 工具调用，点「详情」展开参数与结果 -->
+        <div v-else-if="b.proc" class="proc">
+          <button
+            class="proc-line"
+            :class="{ fail: b.proc.done && !procOk(b.proc) }"
+            @click="b.proc && (b.proc.expanded = !b.proc.expanded)"
+          >
+            {{ b.proc.done ? (procOk(b.proc) ? "✅" : "❌") : "🔧" }} {{ b.proc.label }}{{ b.proc.done ? procErrSuffix(b.proc) : "" }}
+            <span class="proc-toggle">{{ b.proc.expanded ? "收起" : "详情" }}</span>
+          </button>
+          <pre v-if="b.proc.expanded" class="proc-detail">{{ procText(b.proc) }}</pre>
+        </div>
         <Bubble v-else :role="b.role" :text="b.text" :streaming="i === streamingIdx" />
       </template>
       <Bubble v-if="showTyping" role="ai" text="" typing />
@@ -447,6 +495,51 @@ onUnmounted(() => {
   color: var(--yb-accent-deep);
   font-size: 12px;
   white-space: nowrap;
+}
+/* 过程展示：工具调用行（居中淡色小字，同 sys 调性）+ 可展开详情 */
+.proc {
+  align-self: center;
+  max-width: 92%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  animation: pop 0.15s ease;
+}
+.proc-line {
+  background: transparent;
+  border: none;
+  color: var(--yb-text-dim);
+  font-size: 11.5px;
+  line-height: 1.6;
+  cursor: pointer;
+  padding: 0 var(--yb-space-3);
+}
+.proc-line:hover {
+  color: var(--yb-text);
+}
+.proc-line.fail {
+  color: var(--yb-danger);
+}
+.proc-toggle {
+  opacity: 0.55;
+  margin-left: 4px;
+  font-size: 11px;
+}
+.proc-detail {
+  margin: 4px 0 0;
+  padding: 8px 10px;
+  background: var(--yb-code-bg);
+  border-radius: var(--yb-radius-sm);
+  font-family: var(--yb-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--yb-text-dim);
+  max-width: 100%;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  text-align: left;
 }
 @keyframes pop {
   from { opacity: 0; transform: scale(0.97); }

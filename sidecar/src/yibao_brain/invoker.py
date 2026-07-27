@@ -39,6 +39,7 @@ class ToolInvoker:
             skill_id=tc.skill_id,
             params=tc.params,
             description=skill.description,
+            label=skill.label or tc.skill_id,
             risk=self.classifier.classify(
                 Action(skill_id=tc.skill_id, params=tc.params), skill
             ),

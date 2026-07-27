@@ -43,6 +43,9 @@ class Skill(ABC):
     # 声明式 refresh：执行成功后跟一次本插件只读 tool，面板拿刷新数据而非操作回执
     # （写操作 data 是回执 {"id":…} 不适合喂面板；None = 不刷新，面板直接用 result.data）
     refresh: str | None = None
+    # 过程展示短标签（如「运行沙箱脚本」）：action_proposed 事件带给前端气泡行；
+    # 空则 invoker 回退用 skill id。description 是长路由文案，不能当标题用
+    label = ""
 
     @abstractmethod
     def run(self, params: dict, ctx: SkillContext) -> ActionResult: ...
@@ -58,6 +61,7 @@ class Skill(ABC):
 
 class EchoSkill(Skill):
     id = "echo"
+    label = "回声测试"
     description = "原样回显一段文本（占位技能，用于验证回路）。"
 
     def run(self, params: dict, ctx: SkillContext) -> ActionResult:
@@ -72,6 +76,7 @@ class UsePluginSkill(Skill):
     """
 
     id = "use_plugin"
+    label = "展开插件"
     default_risk = RiskLevel.L0_READONLY
 
     def __init__(self, registry: "SkillRegistry", active: set, summaries: dict) -> None:

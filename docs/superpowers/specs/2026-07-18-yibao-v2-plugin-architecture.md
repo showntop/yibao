@@ -198,11 +198,19 @@ name = "sync_done"
 ### 实装记录（code-exec，2026-07-26）
 
 - **④档落地形态**：agents 插件内 `code_exec` 技能（L3 走确认），LLM 生成脚本（python/node）经 macOS Seatbelt（`sandbox-exec -f policy.sb`）真沙箱执行；任务并入 agents 任务体系（tasks 表加 `kind` 列：`agent`/`script`，additive 迁移自动补列；task_status/task_stop/任务面板对两种任务通用），完成播报复用同一套 `_wait`（抽到 `skills/_common.py`，摘要抽成 callable；沙箱脚本摘要=log 尾部 500 字）。
+- **同步短窗口（2026-07-27 修）**：spawn 后同步等 25s——窗口内完成的短任务把输出直接作为工具结果返回（LLM 当轮给用户答案，落库 done、不播报）；窗口装不下的长任务才转 daemon `_wait` 后台播报；超时预算 ≤ 窗口时窗口耗尽即同步杀掉。`_PROCS` 登记在 wait 之前，同步窗口内 task_stop 照样能停。修法前一律「立即返回+播报」，LLM 想马上答只能反复 task_status 轮询，8 步耗尽报「达到最大步数仍未完成」。
 - **沙箱边界**：读全放 + 写限根（cwd + 任务目录 + /tmp，全部 realpath 规范化后拼进 profile；/tmp 与 /private/tmp 双写）+ 默认断网。**macOS 15.6 实测坑**：deny-default + process-exec 组合下 file-read 若加 subpath 过滤，dyld 在沙箱内加载被拒直接 SIGABRT——所以 file-read 必须全放，不能加过滤器。读全盘不构成泄露通道：无网络 + 写受限（读到的数据写不出限定目录）+ L3 审批向用户展示完整代码。
 - **.git 写保护**：每个写根追加一条 `(deny file-write* (subpath "<根>/.git"))`，脚本改不动仓库历史。
 - **可审计**：脚本本体、policy.sb（即实际执行的沙箱规则）、output.log 全部落盘在任务目录（插件数据目录 `sandbox/<task_id>/`）。
 - **网络**：v1 仅开关（`network=true` → profile 末尾追加 `(allow network-outbound)`，审批文案展示），域名白名单后续再议。
 - 解释器：python 优先 `/usr/bin/python3`（系统 3.9.6，沙箱兼容实测 ok）再 PATH；node 走 PATH；缺哪个报错哪个。非 macOS 无 sandbox-exec → 报「当前环境不支持沙箱执行」。
+
+### 实装记录（过程展示，2026-07-27）
+
+- **技能短标签 `label`**：Skill 基类加 `label = ""` 类属性（中文短名如「运行沙箱脚本」），所有底座/插件技能已填；声明式 tool 从 manifest `[[tool]] label` 读（可选）。`Action.label` 由 invoker.propose 填（回退 skill_id），随 `action_proposed`/`action_result` 事件到前端。description 是长路由文案，不能当标题用。
+- **过程气泡行**：工具调用在对话流留痕——`action_proposed` 插一行淡色小字「🔧 标签」（sys/hint 同款调性），`action_result` 原地更新 ✅/❌（失败带 error 摘要，60 字截断）。四个对话场景同款逻辑：宠物窗（App.vue，sys 气泡）、大窗对话页（HomeChat.vue，可点「详情」展开参数 pretty JSON + 结果，各截 800 字）、面板浮窗（PanelApp.vue）与大窗插件页（HomePlugins.vue）（t-row.proc 时间线行）。共享小工具 `app/src/lib/proc.ts`。
+- **规则**：`use_plugin` 不插行（成功有 notice 轻提示，重复；失败由 LLM 下一句转告）；`action_result` 无匹配过程行（面板直调只发 result 不发 proposed）不补行，失败仍走原 errorText 细条。思考过程不另做：模型调工具前的文本本就流式进气泡。
+- 顺带修：PanelApp.vue 重复 `case "action_result"`（JS switch 首个匹配生效，后一个死代码——「看 PRD」类直调失败无反馈的根因），已合并。
 
 ## 9. 数据存储
 

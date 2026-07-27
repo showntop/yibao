@@ -65,6 +65,7 @@ def _summarize(llm: Any, text: str) -> dict:
 
 class MatSave(Skill):
     id = "zimeiti.mat_save"
+    label = "存素材"
     description = (
         "存一条写作素材：传 url 抓网页正文，或传 text 直接存（灵感/摘抄/数据）。"
         "自动起标题、写摘要、打标签后进素材库（mat_list 可见）。用户发来链接说「存一下/收藏」就用它。"

@@ -148,6 +148,7 @@ def _parse_at(raw: str) -> float | None:
 
 class ReminderSetSkill(Skill):
     id = "reminder_set"
+    label = "设提醒"
     description = (
         "设置定时提醒：到点后译宝会主动找用户说话（气泡 + 语音）。"
         "用户说「X 分钟/小时后提醒我…」「明天 X 点叫我…」「每天/每周 X 点提醒我…」时用。"
@@ -218,6 +219,7 @@ class ReminderSetSkill(Skill):
 
 class ReminderListSkill(Skill):
     id = "reminder_list"
+    label = "查提醒"
     description = "列出还没触发的提醒（用户问「我有什么提醒/闹钟」时用）。"
     default_risk = RiskLevel.L0_READONLY
 
@@ -243,6 +245,7 @@ class ReminderListSkill(Skill):
 
 class ReminderCancelSkill(Skill):
     id = "reminder_cancel"
+    label = "取消提醒"
     description = "取消一个待触发的提醒（先 reminder_list 拿 id；用户说「取消那个提醒」时用）。"
     default_risk = RiskLevel.L1_LOW
 

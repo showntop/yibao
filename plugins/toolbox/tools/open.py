@@ -11,6 +11,7 @@ _TOOLS = ("json", "diff")
 
 class OpenToolboxSkill(Skill):
     id = "toolbox.open"
+    label = "打开工具箱"
     description = "打开工具箱面板（JSON 格式化 / 文本对比 等常用小工具）。"
     default_risk = RiskLevel.L0_READONLY
 

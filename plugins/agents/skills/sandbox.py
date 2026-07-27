@@ -87,6 +87,7 @@ def _find_interpreter(lang: str) -> str | None:
 
 class CodeExecSkill(Skill):
     id = "agents.code_exec"
+    label = "运行沙箱脚本"
     description = (
         "你（译宝）自己编写一段 python/node 脚本，并在 macOS 沙箱（Seatbelt）里运行它："
         "默认断网、只能写工作目录（沙箱强制，.git 写保护）。"

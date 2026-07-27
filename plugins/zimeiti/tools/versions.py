@@ -9,6 +9,7 @@ from yibao_brain.skills import Skill
 
 class VersionsSkill(Skill):
     id = "zimeiti.versions"
+    label = "查看版本"
     description = "列出选题的版本历史（版本号/备注/时间，新到旧；不含正文）。"
     default_risk = RiskLevel.L0_READONLY
 

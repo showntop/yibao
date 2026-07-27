@@ -27,6 +27,7 @@ _PLATFORM_URLS = (
 
 class PublishSkill(Skill):
     id = "zimeiti.publish"
+    label = "发布内容"
     description = (
         "发布选题的最新稿：标题+正文复制到剪贴板（用户去平台后台粘贴即可），选题标为「已发布」"
         "并记发布时间；open_platform=true 时顺手打开平台后台。没有稿件时报错引导先写稿。"

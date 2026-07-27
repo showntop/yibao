@@ -14,6 +14,7 @@ from yibao_brain.skills import Skill
 
 class ArticleSave(Skill):
     id = "zimeiti.article_save"
+    label = "保存稿件"
     description = (
         "把写好的稿件落盘为选题的下一个版本（v1/v2/…），选题状态顺带从「候选」变为「写作中」。"
         "初稿完成或改稿完成后调用；note 记一句本版改了什么。"

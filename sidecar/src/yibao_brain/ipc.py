@@ -22,6 +22,7 @@ class Action(BaseModel):
     params: dict = Field(default_factory=dict)
     description: str = ""
     risk: RiskLevel = RiskLevel.L1_LOW
+    label: str = ""  # 过程展示短标签（invoker 从 skill.label 填，回退 skill_id）
 
 
 class ActionResult(BaseModel):

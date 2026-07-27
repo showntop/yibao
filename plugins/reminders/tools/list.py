@@ -23,6 +23,7 @@ def _fmt_when(ts: float, rrule) -> str:
 
 class RemindersListSkill(Skill):
     id = "reminders.list"
+    label = "查看提醒"
     description = "列出待触发提醒并打开提醒面板（面板管理用）。"
     default_risk = RiskLevel.L0_READONLY
 

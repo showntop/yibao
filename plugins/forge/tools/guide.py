@@ -13,6 +13,7 @@ GUIDES = ("triage", "challenge", "scan", "prd")
 
 class Guide(Skill):
     id = "forge.guide"
+    label = "查看挑战指南"
     description = (
         "加载需求打磨方法论全文：triage=快筛框架 / challenge=挑战方法论 / scan=竞品扫描 / prd=PRD 模板。"
         "做快筛、挑战、竞品扫描、写 PRD 之前先调它拿到对应方法论。"

@@ -27,6 +27,7 @@ def _run_argv(argv: list[str], timeout: int = 10) -> subprocess.CompletedProcess
 
 class FindFileSkill(Skill):
     id = "find_file"
+    label = "找文件"
     description = "在本机全盘搜索文件（Spotlight），按文件名或内容关键词匹配，返回最相关的前 10 个路径。配合 open_path 打开结果。"
     default_risk = RiskLevel.L0_READONLY
 
@@ -55,6 +56,7 @@ class FindFileSkill(Skill):
 
 class WebSearchSkill(Skill):
     id = "web_search"
+    label = "联网搜索"
     description = "用系统默认浏览器打开搜索引擎查询关键词（结果页交给人看，或再用 read_tree/screenshot 读取内容）。"
     default_risk = RiskLevel.L1_LOW
 
@@ -88,6 +90,7 @@ class WebSearchSkill(Skill):
 
 class OpenPathSkill(Skill):
     id = "open_path"
+    label = "打开文件"
     description = "用默认应用打开一个本地文件/目录；reveal=true 时改为在 Finder 中定位显示该文件。"
     default_risk = RiskLevel.L1_LOW
 
@@ -124,6 +127,7 @@ class OpenPathSkill(Skill):
 
 class WriteNoteSkill(Skill):
     id = "write_note"
+    label = "记笔记"
     description = "打开文本编辑应用（默认 TextEdit）并写入一段文字（新建草稿，不落盘）。适合起草、记录、写文案。"
     default_risk = RiskLevel.L2_MEDIUM
 

@@ -13,6 +13,7 @@ _MAX_LINES = 5000
 
 class TextDiffSkill(Skill):
     id = "toolbox.text_diff"
+    label = "文本对比"
     description = (
         "对比两段文本的差异（逐行 diff）。用户说「对比 / diff / 看看改了什么」时调用；"
         "返回增删统计与逐行差异并打开工具箱面板展示。"

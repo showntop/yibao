@@ -13,6 +13,7 @@ VERDICTS = ("已立项", "已搁置", "已否决")
 
 class Verdict(Skill):
     id = "forge.verdict"
+    label = "评审打分"
     description = "用户对需求做出最终裁决（立项/搁置/否决）时调用；裁决理由会写入长期记忆影响以后快筛"
     default_risk = RiskLevel.L2_MEDIUM
 

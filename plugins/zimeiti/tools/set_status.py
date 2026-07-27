@@ -16,6 +16,7 @@ _STATUSES = ("候选", "写作中", "待发布", "已发布")
 
 class SetStatusSkill(Skill):
     id = "zimeiti.set_status"
+    label = "更新选题状态"
     description = "流转选题状态（静默版：不发面板事件，编辑器内调用用）。"
     default_risk = RiskLevel.L1_LOW
 

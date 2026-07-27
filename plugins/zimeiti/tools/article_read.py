@@ -10,6 +10,7 @@ from yibao_brain.skills import Skill
 
 class ArticleRead(Skill):
     id = "zimeiti.article_read"
+    label = "读稿件"
     description = "读选题的稿件正文：默认读最新版；version 指定读历史版。改稿前必读当前稿"
     default_risk = RiskLevel.L0_READONLY
 

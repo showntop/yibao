@@ -28,6 +28,20 @@ def test_propose_builds_action_with_classified_risk(tmp_path):
     assert isinstance(action, Action)
     assert action.skill_id == "echo"
     assert action.risk in (RiskLevel.L0_READONLY, RiskLevel.L1_LOW)
+    assert action.label == "回声测试"  # 技能声明了 label 则透传（过程展示用）
+
+
+def test_propose_label_falls_back_to_skill_id(tmp_path):
+    class _NoLabel(Skill):
+        id = "nolabel"
+        description = "没声明 label 的技能"
+
+        def run(self, params, ctx):
+            return ActionResult(success=True)
+
+    inv = make_invoker(tmp_path, [_NoLabel()])
+    action = inv.propose(ToolCall(id="t1", skill_id="nolabel", params={}))
+    assert action.label == "nolabel"  # 回退 skill_id，前端一定有得显示
 
 
 def test_execute_success_and_audit(tmp_path):

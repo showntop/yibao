@@ -9,6 +9,7 @@ from yibao_brain.skills import Skill
 
 class RemindersCancelSkill(Skill):
     id = "reminders.cancel"
+    label = "取消提醒"
     description = "取消一个待触发提醒（面板管理用）。"
     default_risk = RiskLevel.L1_LOW
 

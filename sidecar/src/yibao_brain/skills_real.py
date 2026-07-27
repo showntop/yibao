@@ -17,6 +17,7 @@ def _no_host() -> ActionResult:
 
 class ScreenshotSkill(Skill):
     id = "screenshot"
+    label = "截屏看屏幕"
     description = "截取当前主屏幕，保存为图片并返回路径。"
     default_risk = RiskLevel.L0_READONLY
 
@@ -36,6 +37,7 @@ class ScreenshotSkill(Skill):
 
 class ReadTreeSkill(Skill):
     id = "read_tree"
+    label = "读取界面结构"
     description = "读取前台应用的辅助功能(A11y)控件树（标题/角色/位置），了解屏幕上有哪些可交互控件。"
     default_risk = RiskLevel.L0_READONLY
 
@@ -62,6 +64,7 @@ class ReadTreeSkill(Skill):
 
 class OpenAppSkill(Skill):
     id = "open_app"
+    label = "打开应用"
     description = "按名字打开一个应用，如 Calculator / Safari / TextEdit。"
     default_risk = RiskLevel.L1_LOW
 
@@ -90,6 +93,7 @@ class OpenAppSkill(Skill):
 
 class ClickControlSkill(Skill):
     id = "click_control"
+    label = "点击控件"
     description = "点击一个控件：优先按 role/title 查找并触发其动作（确定性），找不到或不支持则回退屏幕坐标 (x,y) 点击。"
     default_risk = RiskLevel.L1_LOW
 
@@ -130,6 +134,7 @@ class ClickControlSkill(Skill):
 
 class TypeTextSkill(Skill):
     id = "type_text"
+    label = "输入文字"
     description = "向当前聚焦的文本控件输入文字（支持中文）。"
     default_risk = RiskLevel.L1_LOW
 
@@ -158,6 +163,7 @@ class ComputerUseSkill(Skill):
     """视觉兜底：截图 → GLM-4.6V → 动作 → 注入，覆盖 a11y 力不能及的 UI。"""
 
     id = "computer_use"
+    label = "操作电脑"
     description = (
         "computer-use 视觉兜底：当 read_tree/click_control 因控件无 title 或 UI 自绘而失效时，"
         "用视觉模型看截图识别目标并点击/输入。慢、可能不准、高风险。"

@@ -15,6 +15,7 @@ _MAX_TEXT = 20000  # 面板渲染上限，截断防卡
 
 class DocRead(Skill):
     id = "forge.doc_read"
+    label = "读文档"
     description = (
         "在面板里打开一条需求的挑战文档或 PRD 全文（kind=challenge/prd/proto）。"
         "用户说「看看挑战记录/PRD/文档」时调用。"

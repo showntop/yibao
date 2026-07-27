@@ -13,6 +13,7 @@ GUIDES = ("write",)
 
 class Guide(Skill):
     id = "zimeiti.guide"
+    label = "自媒体指南"
     description = (
         "加载写作方法论全文：write=成文框架（结构/钩子/节奏）。"
         "为选题写初稿或改稿之前先调它拿到方法论。"

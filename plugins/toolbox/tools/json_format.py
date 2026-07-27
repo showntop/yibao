@@ -49,6 +49,7 @@ def _unescape(text: str) -> str:
 
 class JsonFormatSkill(Skill):
     id = "toolbox.json_format"
+    label = "JSON 格式化"
     description = (
         "格式化、压缩或转义/去转义 JSON 文本。用户贴出 JSON 说「格式化 / 美化 / 压缩 / "
         "去除转义 / 添加转义」时调用；返回结果并打开工具箱面板展示。"

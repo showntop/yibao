@@ -129,6 +129,7 @@ class DeclarativeTool(Skill):
         tid = spec["id"]
         self.id = tid if tid.startswith(f"{plugin_id}.") else f"{plugin_id}.{tid}"
         self.description = spec.get("description", "")
+        self.label = str(spec.get("label", ""))  # manifest 可选短标签（过程展示用）
         risk = str(spec.get("risk", "L1")).upper()
         if risk not in _RISK:
             raise ValueError(f"tool {self.id!r} 非法 risk：{risk!r}（L0~L4）")

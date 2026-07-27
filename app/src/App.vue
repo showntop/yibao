@@ -28,6 +28,7 @@ import {
 } from "./lib/brain";
 import { resetWindowSize, openPanel, setInteractiveFull, setBubbleOn } from "./lib/window";
 import { SUGGESTIONS } from "./lib/suggestions";
+import { procLabel, procSkip, procResultSuffix } from "./lib/proc";
 
 type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
 type BubbleMsg = { role: "user" | "ai" | "sys"; text: string };
@@ -40,6 +41,8 @@ const brainDown = ref(false); // 大脑掉线/重启中（守护在恢复）
 const perms = ref<BrainPermissions | null>(null); // macOS 权限状态（null=未收到）
 const expanded = ref(false);
 const panelOpen = ref(false); // 面板协作会话进行中（关联气泡只插一次，panel 刷新不重复插）
+// 过程展示：action.id → 过程行（sys 淡色小字）在 bubbles 里的下标，结果回来原地更新 ✅/❌
+const procIdx = new Map<string, number>();
 
 // ---- 首启设置向导（缺 LLM key 时 Rust 发 setup-config-needed，大脑未启动）----
 const setupNeeded = ref(false);
@@ -212,6 +215,11 @@ function onEvent(e: BrainEvent) {
   switch (e.kind) {
     case "action_proposed":
       state.value = "work";
+      // 过程行：🔧 技能短标签（use_plugin 跳过——成功有 notice，不重复）
+      if (e.action?.id && !procSkip(e.action)) {
+        procIdx.set(e.action.id, bubbles.value.length);
+        bubbles.value.push({ role: "sys", text: "🔧 " + procLabel(e.action) });
+      }
       break;
     case "confirmation_needed":
       state.value = "idle";
@@ -222,11 +230,19 @@ function onEvent(e: BrainEvent) {
       };
       if (!expanded.value) void expand(); // 高风险确认必须可见
       break;
-    case "action_result":
+    case "action_result": {
       // 双窗口：确认可能在面板窗作答，结果回来即收尾（成功短闪 400ms，spec 选项 ①）
       pending.value = null;
       flashValence("success");
+      // 过程行收尾：✅/❌（失败带 error 摘要）；无匹配行（面板直调等）不动
+      const idx = e.action?.id !== undefined ? procIdx.get(e.action.id) : undefined;
+      if (idx !== undefined) {
+        const ok = e.result?.success !== false;
+        bubbles.value[idx].text = (ok ? "✅ " : "❌ ") + procLabel(e.action) + procResultSuffix(e.result);
+        procIdx.delete(e.action!.id!);
+      }
       break;
+    }
     case "final_reply_chunk": {
       // 流式增量：拼到当前 streaming bubble（首片时新建）
       if (streamingIdx.value === null) {

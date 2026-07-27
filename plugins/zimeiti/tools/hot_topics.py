@@ -103,6 +103,7 @@ _PLATFORMS: dict[str, tuple[str, str, Callable[[dict, int], list[dict]]]] = {
 
 class HotTopicsSkill(Skill):
     id = "zimeiti.hot_topics"
+    label = "查热点选题"
     description = (
         "拉取多平台热榜（知乎/头条/百度），返回结构化热点（标题/热度/链接，热点雷达面板展示）。"
         "用户说「看看最近热点」「有什么热点可写」「找选题灵感」时用它；挑中后用 zimeiti.add 转成选题"

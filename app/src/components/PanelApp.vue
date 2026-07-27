@@ -21,6 +21,7 @@ import {
   type BrainEvent,
   type PanelFocus,
 } from "../lib/brain";
+import { procLabel, procSkip, procResultSuffix } from "../lib/proc";
 
 // 当前面板：kind="panel" 事件整体替换刷新（webview 非空 → webview 面板，否则 schema 面板）
 const current = ref<{
@@ -45,8 +46,11 @@ const chipText = computed(() => {
   return t ? `在看：${t}` : "";
 });
 // ---- 对话浮层（工作台条上方）：输入/回复都留痕成时间线；一轮结束几秒后自动收起，角标可重开 ----
-type ThreadMsg = { role: "user" | "ai" | "hint"; text: string };
+// proc = 过程展示行（工具调用 🔧→✅/❌，样式同 hint 淡色小字）
+type ThreadMsg = { role: "user" | "ai" | "hint" | "proc"; text: string };
 const msgs = ref<ThreadMsg[]>([]);
+// 过程展示：action.id → 过程行下标，结果回来原地更新
+const procIdx = new Map<string, number>();
 const streamingIdx = ref<number | null>(null); // 正在接收 chunk 的 ai 气泡下标
 const layerVisible = ref(false);
 const listeningHint = ref(false); // 聆听占位行（识别完替换为用户气泡）
@@ -129,10 +133,27 @@ function onEvent(e: BrainEvent) {
       break;
     case "action_proposed":
       state.value = "work";
+      // 过程行：🔧 技能短标签（use_plugin 跳过——成功有 notice，不重复）
+      if (e.action?.id && !procSkip(e.action)) {
+        procIdx.set(e.action.id, msgs.value.length);
+        msgs.value.push({ role: "proc", text: "🔧 " + procLabel(e.action) });
+        scrollSoon();
+      }
       break;
-    case "action_result":
+    case "action_result": {
       pending.value = null; // 确认流结束（批准路径：执行结果回来了）
+      const idx = e.action?.id !== undefined ? procIdx.get(e.action.id) : undefined;
+      if (idx !== undefined) {
+        // 过程行收尾：✅/❌（失败带 error 摘要）
+        const ok = e.result?.success !== false;
+        msgs.value[idx].text = (ok ? "✅ " : "❌ ") + procLabel(e.action) + procResultSuffix(e.result);
+        procIdx.delete(e.action!.id!);
+      } else if (e.result && !e.result.success) {
+        // 直调失败（如「看 PRD」但还没生成）：结果不是 error 事件，得亮出来，否则点了没反应
+        errorText.value = e.result.error || "操作失败";
+      }
       break;
+    }
     case "final_reply_chunk":
       // 流式增量：拼到当前 streaming 气泡（首片时新建）
       if (streamingIdx.value === null) {
@@ -199,13 +220,6 @@ function onEvent(e: BrainEvent) {
       pending.value = null; // 确认流结束（拒绝路径）或执行失败
       errorText.value = e.text ?? "出错了";
       state.value = "idle";
-      break;
-    case "action_result":
-      // 直调失败（如「看 PRD」但还没生成）：结果不是 error 事件，得在这儿亮出来，否则点了没反应
-      pending.value = null;
-      if (e.result && !e.result.success) {
-        errorText.value = e.result.error || "操作失败";
-      }
       break;
   }
 }
@@ -567,6 +581,14 @@ onUnmounted(() => {
   align-self: center;
   color: var(--yb-text-dim);
   font-size: var(--yb-fs-sm);
+}
+/* 过程行：同 hint 淡色小字调性（🔧→✅/❌） */
+.t-row.proc {
+  align-self: center;
+  color: var(--yb-text-dim);
+  font-size: var(--yb-fs-sm);
+  padding-top: 0;
+  padding-bottom: 0;
 }
 .thread-open {
   width: 28px;

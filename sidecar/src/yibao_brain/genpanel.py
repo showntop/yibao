@@ -175,6 +175,7 @@ def make_skills(llm) -> list[Skill]:
 
 class PanelGenSkill(Skill):
     id = "panel_gen"
+    label = "生成面板"
     description = (
         "生成并打开一个 webview 面板：用 purpose 描述要什么样的界面，LLM 现场生成"
         "（HTML 全内联、无网络）。用户说「做一个/生成一个 XX 面板/看板/小工具」时用；"
@@ -245,6 +246,7 @@ class PanelGenSkill(Skill):
 
 class PanelOpenSkill(Skill):
     id = "panel_open"
+    label = "打开面板"
     description = "重新打开一个之前生成过的面板（不知道有哪些时先 panel_list）。"
     default_risk = RiskLevel.L0_READONLY
 
@@ -281,6 +283,7 @@ class PanelOpenSkill(Skill):
 
 class PanelListSkill(Skill):
     id = "panel_list"
+    label = "列出面板"
     description = "列出生成过的所有面板（name/title/用途/创建时间）。"
     default_risk = RiskLevel.L0_READONLY
 
@@ -303,6 +306,7 @@ class PanelListSkill(Skill):
 
 class PanelDeleteSkill(Skill):
     id = "panel_delete"
+    label = "删除面板"
     description = "删除一个生成过的面板（先 panel_list 拿 name；用户说「删掉那个面板」时用）。"
     default_risk = RiskLevel.L2_MEDIUM
 

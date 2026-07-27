@@ -109,6 +109,7 @@ def _unwrap(text: str) -> str:
 
 class AiEditSkill(Skill):
     id = "zimeiti.ai_edit"
+    label = "AI 改稿"
     description = (
         "编辑器 AI 协作：选段改写/扩写/缩写/自定义指令，全文润色/起标题/平台风格改写，"
         "返回替换文本或候选标题（不落盘）。"

@@ -8,6 +8,7 @@ from yibao_brain.skills import Skill
 
 class VerdictForm(Skill):
     id = "forge.verdict_form"
+    label = "评审表单"
     description = "打开某条需求的裁决表单（面板交互）：返回需求 id/title，表单提交走 forge.verdict"
     default_risk = RiskLevel.L0_READONLY
 

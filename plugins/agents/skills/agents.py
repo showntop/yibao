@@ -115,6 +115,7 @@ def _wait(proc, task_id: str, agent: str, prompt: str, log_path: str, timeout_s:
 
 class DispatchTaskSkill(Skill):
     id = "agents.dispatch_task"
+    label = "派任务给智能体"
     description = (
         "把任务派给本机 CLI 智能体（Claude Code/Codex）后台执行：立即返回不等结果，"
         "完成后译宝主动播报。【仅用于】需要智能体自主多轮决策的开放任务——"
@@ -207,6 +208,7 @@ class DispatchTaskSkill(Skill):
 
 class TaskStatusSkill(Skill):
     id = "agents.task_status"
+    label = "查任务状态"
     description = "查看一个智能体任务的状态与日志尾部"
     default_risk = RiskLevel.L0_READONLY
 
@@ -244,6 +246,7 @@ class TaskStatusSkill(Skill):
 
 class TaskStopSkill(Skill):
     id = "agents.task_stop"
+    label = "停止任务"
     description = "停止一个还在运行的智能体任务（终止其子进程）"
     default_risk = RiskLevel.L2_MEDIUM
 
