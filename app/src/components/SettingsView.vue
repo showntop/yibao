@@ -15,8 +15,13 @@ import {
   promptPermission,
   onBrainStatus,
   onBrainPermissions,
+  getMemListOnce,
+  memDelete,
+  getSettingsOnce,
+  setSettings,
   type BrainPermissions,
   type ClearKind,
+  type MemItem,
 } from "../lib/brain";
 // ---- 模型 / 语音（写 .env，重启大脑生效）----
 const key = ref(""); // 留空 = 不改动已有 key
@@ -113,6 +118,49 @@ async function doClear(kind: ClearKind) {
   }
 }
 
+// ---- 自主权（数据目录 settings.json，即时生效免重启）----
+const proactiveVoice = ref(true);
+const autonErr = ref("");
+
+async function toggleProactiveVoice() {
+  autonErr.value = "";
+  const next = !proactiveVoice.value;
+  proactiveVoice.value = next; // 乐观更新，失败回滚
+  const r = await setSettings({ proactive_voice: next });
+  if (r === null) {
+    proactiveVoice.value = !next;
+    autonErr.value = "设置未生效（大脑不在线？）";
+  }
+}
+
+// ---- 记忆管理（「它记得我什么」必须可见、可删）----
+const memItems = ref<MemItem[]>([]);
+const memReady = ref(true);
+const memFailed = ref(false);
+const memLoaded = ref(false);
+const memConfirming = ref<string | null>(null);
+const memDeleting = ref<string | null>(null);
+const memErr = ref("");
+
+async function loadMem() {
+  memErr.value = "";
+  const r = await getMemListOnce();
+  memItems.value = r.items;
+  memReady.value = r.ready;
+  memFailed.value = r.failed;
+  memLoaded.value = true;
+}
+
+async function doMemDelete(id: string) {
+  memConfirming.value = null;
+  memDeleting.value = id;
+  memErr.value = "";
+  const r = await memDelete(id);
+  memDeleting.value = null;
+  if (r.ok) memItems.value = memItems.value.filter((m) => m.id !== id);
+  else memErr.value = r.error || "删除失败";
+}
+
 // ---- 关于 ----
 const version = ref("…");
 
@@ -139,6 +187,10 @@ onMounted(async () => {
   try {
     version.value = await getVersion();
   } catch { /* 保留占位 */ }
+  void loadMem(); // 记忆管理列表（异步，不阻塞设置页首屏）
+  void getSettingsOnce().then((s) => { // 自主权旋钮当前值（大脑不在线则保持默认）
+    if (s && typeof s.proactive_voice === "boolean") proactiveVoice.value = s.proactive_voice;
+  });
   // 保存触发的重启：大脑上线事件收尾行内提示（掉线过程 UI 复用对话页既有事件）
   unlistenStatus = await onBrainStatus((m) => {
     if (m.status === "up" && saveMsg.value === "已保存，正在重启大脑…") {
@@ -212,6 +264,16 @@ onUnmounted(() => {
         </div>
       </section>
 
+      <!-- 自主权（settings.json，即时生效免重启） -->
+      <section class="s-group">
+        <div class="s-group-title">自主权</div>
+        <div class="s-row">
+          <span class="s-row-label">主动开口播报<span class="s-row-why">提醒触发时开口说话；关闭则只亮窗/气泡</span></span>
+          <button class="switch" :class="{ on: proactiveVoice }" title="主动开口播报" @click="toggleProactiveVoice"><i /></button>
+        </div>
+        <div v-if="autonErr" class="s-msg err">⚠️ {{ autonErr }}</div>
+      </section>
+
       <!-- 权限 -->
       <section class="s-group">
         <div class="s-group-title">权限</div>
@@ -235,6 +297,32 @@ onUnmounted(() => {
           <span class="s-row-why">{{ perms ? "授权后点重新检测；屏幕录制需重启译宝生效" : "大脑连接后自动检测" }}</span>
           <button class="s-mini" @click="recheck">重新检测</button>
         </div>
+      </section>
+
+      <!-- 记忆管理（「它记得我什么」：按命名空间列出，可单条删除；彻底清空走下方数据区） -->
+      <section class="s-group">
+        <div class="s-group-title">记忆管理<template v-if="memLoaded && memItems.length"> · {{ memItems.length }}</template></div>
+        <div v-if="memFailed" class="s-note">长期记忆不可用（本次运行记不住事）——检查模型配置或重启译宝。</div>
+        <div v-else-if="!memReady" class="s-note">
+          记忆接入中… <button class="s-mini" @click="loadMem">刷新</button>
+        </div>
+        <template v-else>
+          <div v-if="memLoaded && !memItems.length" class="s-note">还没有记住什么——跟译宝聊聊你的偏好和习惯。</div>
+          <div v-for="m in memItems" :key="m.id" class="m-row">
+            <span class="m-ns">{{ m.label }}</span>
+            <span class="m-text">{{ m.text }}</span>
+            <span class="s-row-btns">
+              <template v-if="memConfirming === m.id">
+                <button class="s-mini danger" :disabled="memDeleting === m.id" @click="doMemDelete(m.id)">
+                  {{ memDeleting === m.id ? "删除中…" : "确认" }}
+                </button>
+                <button class="s-mini" :disabled="memDeleting === m.id" @click="memConfirming = null">取消</button>
+              </template>
+              <button v-else class="s-mini" @click="memConfirming = m.id">删除</button>
+            </span>
+          </div>
+        </template>
+        <div v-if="memErr" class="s-msg err">⚠️ {{ memErr }}</div>
       </section>
 
       <!-- 数据 -->
@@ -408,6 +496,35 @@ select:focus {
   font-size: var(--yb-fs-sm);
   color: var(--yb-text-dim);
   line-height: 1.4;
+}
+/* 记忆行：命名空间徽章 + 文本（两行截断）+ 删除 */
+.m-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--yb-space-2);
+  padding: 6px 0;
+  border-top: 1px solid var(--yb-surface-border);
+}
+.m-ns {
+  flex-shrink: 0;
+  padding: 1px 8px;
+  border-radius: var(--yb-radius-lg);
+  background: var(--yb-accent-soft);
+  color: var(--yb-accent-deep);
+  font-size: var(--yb-fs-sm);
+  line-height: 1.6;
+}
+.m-text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--yb-fs-md);
+  color: var(--yb-text);
+  line-height: 1.5;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 /* 权限状态点：绿=已授权 红=缺 灰=未检测到 */
 .perm-dot {

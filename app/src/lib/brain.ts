@@ -364,3 +364,99 @@ void listen<BrainStatusMsg>("brain-status", (ev) => {
     _pcEmit();
   }
 });
+
+// ---- 记忆管理（OS 感 §4.4：「它记得我什么」必须可见、可删）----
+
+export interface MemItem {
+  id: string;
+  text: string;
+  ns: string;    // 命名空间（"" = 底座译宝）
+  label: string; // 显示名（译宝 / 插件名）
+}
+
+export interface MemListResponse {
+  items: MemItem[];
+  ready: boolean;  // 记忆后端就绪（false = 懒加载中/已降级）
+  failed: boolean; // 降级（本次运行记不住事）
+}
+
+const EMPTY_MEM: MemListResponse = { items: [], ready: true, failed: false };
+
+/** 一次性取记忆列表：发查询等 brain-mem-list；大脑不在线/超时返回空。 */
+export async function getMemListOnce(timeoutMs = 4000): Promise<MemListResponse> {
+  const resp = new Promise<MemListResponse>((resolve) => {
+    void once<MemListResponse>("brain-mem-list", (ev) => resolve(ev.payload));
+  });
+  const timeout = new Promise<MemListResponse>((resolve) =>
+    setTimeout(() => resolve(EMPTY_MEM), timeoutMs),
+  );
+  try {
+    await invoke("get_mem_list");
+  } catch { /* 大脑不在线：走超时兜底 */ }
+  return Promise.race([resp, timeout]);
+}
+
+export interface MemDeleted {
+  id: string;
+  ok: boolean;
+  error?: string;
+}
+
+/** 删除一条记忆，等该 id 的 brain-mem-deleted 回执；超时按失败处理。 */
+export async function memDelete(id: string, timeoutMs = 5000): Promise<MemDeleted> {
+  const holder: { un: (() => void) | null } = { un: null }; // 对象持有：绕过 TS 对闭包赋值的窄化
+  const resp = new Promise<MemDeleted>((resolve) => {
+    void listen<MemDeleted>("brain-mem-deleted", (ev) => {
+      if (ev.payload.id === id) resolve(ev.payload);
+    }).then((u) => (holder.un = u));
+  });
+  const timeout = new Promise<MemDeleted>((resolve) =>
+    setTimeout(() => resolve({ id, ok: false, error: "删除超时（大脑不在线？）" }), timeoutMs),
+  );
+  try {
+    await invoke("mem_delete", { id });
+  } catch (e) {
+    holder.un?.();
+    return { id, ok: false, error: String(e) };
+  }
+  const r = await Promise.race([resp, timeout]);
+  holder.un?.();
+  return r;
+}
+
+// ---- 用户设置（自主权旋钮等；数据目录 settings.json，即时生效免重启）----
+
+export interface SettingsValues {
+  proactive_voice: boolean; // 主动开口：提醒触发时语音播报
+  [k: string]: unknown;
+}
+
+/** 一次性取设置：发查询等 brain-settings；超时返回 null（调用方用默认）。 */
+export async function getSettingsOnce(timeoutMs = 3000): Promise<SettingsValues | null> {
+  const resp = new Promise<{ values: SettingsValues }>((resolve) => {
+    void once<{ values: SettingsValues }>("brain-settings", (ev) => resolve(ev.payload));
+  });
+  const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs));
+  try {
+    await invoke("get_settings");
+  } catch {
+    return null;
+  }
+  const r = await Promise.race([resp, timeout]);
+  return r ? r.values : null;
+}
+
+/** 写设置（已知键才生效），等 brain-settings 回执；超时/null 按未生效处理。 */
+export async function setSettings(values: Partial<SettingsValues>, timeoutMs = 3000): Promise<SettingsValues | null> {
+  const resp = new Promise<{ values: SettingsValues }>((resolve) => {
+    void once<{ values: SettingsValues }>("brain-settings", (ev) => resolve(ev.payload));
+  });
+  const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs));
+  try {
+    await invoke("set_settings", { values });
+  } catch {
+    return null;
+  }
+  const r = await Promise.race([resp, timeout]);
+  return r ? r.values : null;
+}

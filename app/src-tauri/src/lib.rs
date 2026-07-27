@@ -453,6 +453,16 @@ fn spawn_bridge(app: AppHandle, mut rx: tauri::async_runtime::Receiver<CommandEv
                             Some("widgets") => {
                                 let _ = app.emit("brain-widgets", v);
                             }
+                            // 记忆管理/设置响应：整体转发（前端 once 竞速取用）
+                            Some("mem_list") => {
+                                let _ = app.emit("brain-mem-list", v);
+                            }
+                            Some("mem_deleted") => {
+                                let _ = app.emit("brain-mem-deleted", v);
+                            }
+                            Some("settings") => {
+                                let _ = app.emit("brain-settings", v);
+                            }
                             _ => {}
                         },
                         Err(_) => eprintln!("[brain] 非 JSON：{line}"),
@@ -706,6 +716,30 @@ fn get_feed(state: tauri::State<Brain>, limit: Option<u32>) -> Result<(), String
 #[tauri::command]
 fn get_widgets(state: tauri::State<Brain>) -> Result<(), String> {
     write_to_brain(&state, serde_json::json!({ "id": 0, "type": "widgets" }))
+}
+
+/// 记忆管理：列出全部记忆（回 {"type":"mem_list"} 经 brain-mem-list 广播）。
+#[tauri::command]
+fn get_mem_list(state: tauri::State<Brain>) -> Result<(), String> {
+    write_to_brain(&state, serde_json::json!({ "id": 0, "type": "mem_list" }))
+}
+
+/// 记忆管理：按 id 删除一条（回 {"type":"mem_deleted"} 经 brain-mem-deleted 广播）。
+#[tauri::command]
+fn mem_delete(state: tauri::State<Brain>, id: String) -> Result<(), String> {
+    write_to_brain(&state, serde_json::json!({ "id": 0, "type": "mem_delete", "mem_id": id }))
+}
+
+/// 用户设置查询（回 {"type":"settings"} 经 brain-settings 广播）。
+#[tauri::command]
+fn get_settings(state: tauri::State<Brain>) -> Result<(), String> {
+    write_to_brain(&state, serde_json::json!({ "id": 0, "type": "settings_get" }))
+}
+
+/// 用户设置写入（仅已知键生效；回 {"type":"settings"} 经 brain-settings 广播）。
+#[tauri::command]
+fn set_settings(state: tauri::State<Brain>, values: serde_json::Value) -> Result<(), String> {
+    write_to_brain(&state, serde_json::json!({ "id": 0, "type": "settings_set", "values": values }))
 }
 
 /// 面板动作（v2 §7）：壳不懂 panel 语义，透传 api.toml 白名单方法给大脑裁决。
@@ -1195,6 +1229,10 @@ pub fn run() {
             list_plugins,
             get_feed,
             get_widgets,
+            get_mem_list,
+            mem_delete,
+            get_settings,
+            set_settings,
             open_panel_window,
             close_panel_window,
             get_current_panel,

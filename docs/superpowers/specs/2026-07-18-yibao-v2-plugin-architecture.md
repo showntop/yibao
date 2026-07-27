@@ -244,6 +244,14 @@ name = "sync_done"
 - **任务面板三区化**：agents `tasks.schema.json` 从 list 改 board——列 = 进行中(running)/已完成(done)/失败(failed)/已中断(interrupted)，`bind.column = "$item.status"`；卡片动作保持 详情/停止。复用既有 board 渲染，sidecar/工具零改动。
 - 无 sidecar 改动故无新 Python 测试；前端 npm run build + cargo check 通过。
 
+### 实装记录（设置增强，2026-07-27）
+
+- **依据**：OS 感 §4.4——「我管得住它」是用户敢让 agent 常驻的前提；补两件：记忆管理（可见可删）+ 自主权旋钮。
+- **记忆管理**：Memory 接口加 `list_all(user_id)`/`delete_by_id(id)`（ABC 默认空/抛，Fake/Mem0/LazyMem0 各自实装；Lazy 未就绪 list 空、delete 抛「尚未就绪」）。plugins 加载期登记 `_PLUGIN_MEM_NS`（memory capability → ns+显示名）。协议：`mem_list` → 底座「译宝」(uid=agent.user_id) + 各插件空间（`<ns>:<uid>`）分组列出 `{id,text,ns,label}` + ready/failed 状态；`mem_delete`（**记忆 id 走 `mem_id` 键**——信封 id 被请求序号占用）→ `mem_deleted {id, ok, error?}`。设置页「记忆管理」组：ns 徽章 + 两行截断 + 行内二次确认删除；未就绪给「接入中…刷新」、降级给人话提示。
+- **自主权旋钮**：新增数据目录 `settings.json`（config.load_settings/save_settings——已知键合并默认、原子替换写盘、坏文件回默认），与 .env 分工：**运行期可调**（即时生效免重启）vs 部署配置（重启生效）。协议 `settings_get`/`settings_set` → `settings {values}`。首个键 `proactive_voice`（主动开口：提醒触发语音播报的闸门，关=只亮窗不出声），设置页「自主权」组开关（乐观更新失败回滚）。
+- Rust 转发 `brain-mem-list`/`brain-mem-deleted`/`brain-settings` + 四个命令；brain.ts `getMemListOnce`/`memDelete`（listen 过滤 id，超时兜底）/`getSettingsOnce`/`setSettings`。
+- 测试 `test_mem_settings.py` 7 个（空列表/分组/删除往返/坏 id/默认值/持久化+未知键拦截/坏文件回默认）；全量 481 passed。
+
 ## 9. 数据存储
 
 | 类型 | 存储 | 规则 |
