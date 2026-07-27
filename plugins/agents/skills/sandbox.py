@@ -1,8 +1,10 @@
 """agents.code_exec：LLM 生成脚本在 macOS Seatbelt 沙箱里执行（读全放 / 写限根 / 默认断网）。
 
 流程：校验 → 脚本 + policy.sb 落盘（可审计）→ sandbox-exec spawn → 登记 tasks 表
-（kind="script"）立即返回；daemon 线程收尾复用 _common._wait（与 dispatch_task 同一套：
-落库 + emit_event 播报），task_stop 经共享 _PROCS 自然可停。
+（kind="script"）→ 同步等一个短窗口（_SYNC_WAIT_SEC）：窗口内完成就把输出直接作为
+工具结果返回（LLM 当轮给用户答案，不播报）；窗口装不下（长任务）才转 daemon 线程
+_common._wait 后台收尾（与 dispatch_task 同一套：落库 + emit_event 播报）。
+task_stop 经共享 _PROCS 两种路径都能停。
 
 macOS 15.6 实测坑：deny-default + process-exec 组合下 file-read 若加 subpath 过滤，
 dyld 在沙箱内加载被拒直接 SIGABRT——所以 file-read 必须全放，不能加过滤器。
@@ -43,6 +45,9 @@ _PROCS = _common._PROCS
 _LANGS = {"python": "script.py", "node": "script.js"}
 _TIMEOUT_DEFAULT = 120
 _TIMEOUT_MAX = 600
+_SYNC_WAIT_SEC = 25  # 同步等待窗口：短任务当轮出答案，不让 LLM 轮询 task_status 烧步数
+_SYNC_LOG_READ = 64 * 1024  # 同步路径读 log 的上限
+_SYNC_OUTPUT_TAIL = 6000  # 喂给 LLM 的输出尾部上限
 
 
 def _build_profile(write_roots: list[str], allow_network: bool) -> str:
@@ -84,7 +89,9 @@ class CodeExecSkill(Skill):
     id = "agents.code_exec"
     description = (
         "你（译宝）自己编写一段 python/node 脚本，并在 macOS 沙箱（Seatbelt）里运行它："
-        "默认断网、只能写工作目录（沙箱强制，.git 写保护），立即返回不等结果，跑完主动播报输出。"
+        "默认断网、只能写工作目录（沙箱强制，.git 写保护）。"
+        f"{_SYNC_WAIT_SEC}s 内跑完的任务输出直接作为工具结果返回给你，当轮给用户答案；"
+        "更长的任务转后台，跑完主动播报。"
         "用户说「写个脚本做 X / 用脚本统计 X / 帮我处理这批文件」就是在叫你走我——"
         "步骤明确的本地加工一律你自己写脚本走我，不要派 agents.dispatch_task"
         "（那是给需要自主多轮决策的开放任务用的，又慢又烧额度）。"
@@ -168,22 +175,69 @@ class CodeExecSkill(Skill):
             log_file.close()
             return ActionResult(success=False, error=f"启动沙箱失败：{e}")
         log_file.close()  # 子进程已继承写 fd，父进程这份关掉
-        _PROCS[task_id] = proc
+        _PROCS[task_id] = proc  # 先登记再等：同步窗口内 task_stop 也能停
         ctx.db.insert("tasks", {
             "id": task_id, "kind": "script", "agent": lang, "prompt": code[:200], "cwd": cwd_real,
             "status": "running", "exit_code": -1, "log_path": log_path,
             "created_at": int(time.time()), "finished_at": 0,
         })
-        threading.Thread(
-            target=_common._wait,
-            args=(proc, task_id, "沙箱脚本", code, log_path, timeout_sec, ctx),
-            daemon=True,
-        ).start()
-        return ActionResult(success=True, data={
-            "task_id": task_id,
-            "human": f"已在沙箱中运行（{lang}，{'允许联网' if network else '断网'}），"
-                     f"任务 {task_id}，完成后我会主动汇报",
-        })
+
+        wait_window = min(_SYNC_WAIT_SEC, timeout_sec)
+        timed_out = False
+        try:
+            proc.wait(timeout=wait_window)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+
+        if timed_out and timeout_sec > wait_window:
+            # 长任务：转后台 daemon 收尾（落库 + 播报），立即返回
+            threading.Thread(
+                target=_common._wait,
+                args=(proc, task_id, "沙箱脚本", code, log_path, timeout_sec - wait_window, ctx),
+                daemon=True,
+            ).start()
+            return ActionResult(success=True, data={
+                "task_id": task_id,
+                "human": f"已在沙箱中运行（{lang}，{'允许联网' if network else '断网'}），"
+                         f"任务 {task_id}，完成后我会主动汇报",
+            })
+
+        # 同步收尾：窗口内完成 / 超时预算耗尽（自己杀）/ 被 task_stop 停掉
+        if timed_out:
+            proc.kill()
+            proc.wait()  # 等 kill 生效（收尸防僵尸）
+        exit_code = proc.returncode if proc.returncode is not None else -1
+        prev = ctx.db.query("tasks", where={"id": task_id})
+        stopped = bool(prev and prev[0]["status"] == "stopped")
+        if timed_out:
+            status = "failed"
+        elif stopped:
+            status = "stopped"
+        else:
+            status = "done" if exit_code == 0 else "failed"
+        try:
+            ctx.db.update("tasks", task_id, {
+                "status": status, "exit_code": exit_code, "finished_at": int(time.time()),
+            })
+        except Exception as e:
+            print(f"[agents] 任务 {task_id} 落库失败：{e}", file=sys.stderr)
+        _PROCS.pop(task_id, None)
+        output = _common._tail_text(log_path, _SYNC_LOG_READ)[-_SYNC_OUTPUT_TAIL:].strip()
+        if timed_out:
+            return ActionResult(success=False,
+                                error=f"沙箱脚本超时被终止（{timeout_sec}s，任务 {task_id}）。"
+                                      f"输出尾部：\n{output or '(无输出)'}")
+        if stopped:
+            return ActionResult(success=False, error=f"沙箱脚本已被用户停止（任务 {task_id}）")
+        if status == "done":
+            return ActionResult(success=True, data={
+                "task_id": task_id,
+                "human": f"✅ 沙箱脚本完成（任务 {task_id}）",
+                "output": output or "(无输出)",
+            })
+        return ActionResult(success=False,
+                            error=f"沙箱脚本失败（退出码 {exit_code}，任务 {task_id}）。"
+                                  f"输出尾部：\n{output or '(无输出)'}")
 
 
 def make_tools(ctx: Any) -> list[Skill]:

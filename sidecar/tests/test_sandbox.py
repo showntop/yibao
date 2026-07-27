@@ -1,8 +1,9 @@
-"""agents.code_exec 沙箱技能测试：profile 生成 / 参数校验 / fake Popen 全链 / task_stop / 真沙箱冒烟。
+"""agents.code_exec 沙箱技能测试：profile 生成 / 参数校验 / 同步窗口 / fake Popen 全链 / task_stop / 真沙箱冒烟。
 
 照 test_agents_plugin.py 范式：加载真实 plugins/agents/（数据目录重定向到 tmp），
 subprocess.Popen 换 fake 时 daemon 线程的落库与 emit_event 播报走真实路径；
-冒烟用例（有 sandbox-exec 才跑）走真 Seatbelt 沙箱。
+同步窗口（_SYNC_WAIT_SEC）可经模块 globals patch：异步路径用例 patch 成 0 保持秒回；
+冒烟用例（有 sandbox-exec 才跑）走真 Seatbelt 沙箱（短脚本走同步路径直接出结果）。
 """
 import os
 import shutil
@@ -114,12 +115,16 @@ class _FakeProc:
 
 
 class _PopenFactory:
-    """fake Popen：记录 argv/cwd，往 log 文件写 log_text，返回可控假进程。"""
+    """fake Popen：记录 argv/cwd，往 log 文件写 log_text，返回可控假进程。
+
+    auto_finish 非 None 时 spawn 出来的进程立即以该码完成（同步窗口路径用）。
+    """
 
     def __init__(self):
         self.calls: list[dict] = []
         self.procs: list[_FakeProc] = []
         self.log_text = "hello result"
+        self.auto_finish: int | None = None
 
     def __call__(self, argv, cwd=None, stdout=None, stderr=None, text=None):
         self.calls.append({"argv": argv, "cwd": cwd})
@@ -128,6 +133,8 @@ class _PopenFactory:
             stdout.flush()
         proc = _FakeProc()
         self.procs.append(proc)
+        if self.auto_finish is not None:
+            proc.finish(self.auto_finish)
         return proc
 
 
@@ -145,6 +152,13 @@ def fake_interp(monkeypatch, env):
     """解释器路径换 fake（/usr/bin/python3 是否真实存在不影响断言）。"""
     reg, _, _ = env
     monkeypatch.setitem(_mod_globals(reg), "_find_interpreter", lambda lang: f"/fake/bin/{lang}")
+    return env
+
+
+@pytest.fixture
+def no_sync_window(monkeypatch, env):
+    """同步等待窗口 patch 成 0：run() 秒回，用例专注 daemon 收尾路径（不然每个要等 25s）。"""
+    monkeypatch.setitem(_mod_globals(env[0]), "_SYNC_WAIT_SEC", 0)
     return env
 
 
@@ -216,7 +230,7 @@ def test_rejects_missing_interpreter(env, monkeypatch, tmp_path):
 # ---------- fake Popen 全链 ----------
 
 
-def test_code_exec_full_chain(fake_interp, fake_popen, tmp_path):
+def test_code_exec_full_chain(fake_interp, no_sync_window, fake_popen, tmp_path):
     reg, _, events = fake_interp
     code = "print('沙箱你好')\n" + "# padding 注释\n" * 40  # >200 字，验证 prompt 截断
     ctx = reg.get("agents.code_exec").plugin_ctx
@@ -258,7 +272,7 @@ def test_code_exec_full_chain(fake_interp, fake_popen, tmp_path):
     assert "✅ 沙箱脚本完成" in ev["text"] and "hello result" in ev["text"]
 
 
-def test_code_exec_failure_reports(fake_interp, fake_popen, tmp_path):
+def test_code_exec_failure_reports(fake_interp, no_sync_window, fake_popen, tmp_path):
     reg, _, events = fake_interp
     ctx = reg.get("agents.code_exec").plugin_ctx
     r = _run(reg, "agents.code_exec", {"lang": "python", "code": "boom", "cwd": str(tmp_path)})
@@ -270,10 +284,91 @@ def test_code_exec_failure_reports(fake_interp, fake_popen, tmp_path):
     assert "❌ 沙箱脚本失败（退出码 3）" in events[0]["text"]
 
 
-# ---------- task_stop 对 script 任务生效 ----------
+# ---------- 同步窗口：短任务当轮出答案 ----------
 
 
-def test_task_stop_script_task(fake_interp, fake_popen, tmp_path):
+def test_code_exec_sync_fast_answer(fake_interp, fake_popen, tmp_path):
+    """窗口内完成 → 输出直接进 ActionResult.data，不落库 running、不发播报。"""
+    reg, _, events = fake_interp
+    fake_popen.auto_finish = 0
+    ctx = reg.get("agents.code_exec").plugin_ctx
+    r = _run(reg, "agents.code_exec",
+             {"lang": "python", "code": "print('hi')", "cwd": str(tmp_path), "timeout_sec": 60})
+    assert r.success
+    task_id = r.data["task_id"]
+    assert "hello result" in r.data["output"]  # log 内容直接喂给 LLM
+    assert f"✅ 沙箱脚本完成（任务 {task_id}）" in r.data["human"]
+    row = ctx.db.query("tasks", where={"id": task_id})[0]
+    assert row["status"] == "done" and row["exit_code"] == 0 and row["finished_at"] > 0
+    assert events == []  # 同步路径不播报
+    assert task_id not in _mod_globals(reg)["_PROCS"]
+
+
+def test_code_exec_sync_failure_returns_output(fake_interp, fake_popen, tmp_path):
+    """窗口内失败 → error 带退出码与输出尾部（LLM 当轮能看到报错并修脚本重试）。"""
+    reg, _, events = fake_interp
+    fake_popen.auto_finish = 3
+    fake_popen.log_text = "Traceback: boom"
+    r = _run(reg, "agents.code_exec", {"lang": "python", "code": "boom", "cwd": str(tmp_path)})
+    assert not r.success
+    assert "退出码 3" in r.error and "Traceback: boom" in r.error
+    assert events == []
+
+
+def test_code_exec_sync_failure_db_row(fake_interp, fake_popen, tmp_path):
+    reg, _, _ = fake_interp
+    fake_popen.auto_finish = 3
+    ctx = reg.get("agents.code_exec").plugin_ctx
+    r = _run(reg, "agents.code_exec", {"lang": "python", "code": "boom", "cwd": str(tmp_path)})
+    assert not r.success
+    # error 文本里带任务 id；从库里反查唯一行验证落库 failed
+    rows = ctx.db.query("tasks", where={"kind": "script"})
+    assert len(rows) == 1 and rows[0]["status"] == "failed" and rows[0]["exit_code"] == 3
+
+
+def test_code_exec_sync_timeout_kills(fake_interp, fake_popen, tmp_path, monkeypatch):
+    """超时预算 ≤ 同步窗口：窗口耗尽即同步杀掉，不转后台（timeout_sec=1 < 窗口 1.2s）。"""
+    reg, _, events = fake_interp
+    monkeypatch.setitem(_mod_globals(reg), "_SYNC_WAIT_SEC", 1.2)
+    ctx = reg.get("agents.code_exec").plugin_ctx
+    r = _run(reg, "agents.code_exec",
+             {"lang": "python", "code": "import time; time.sleep(99)", "cwd": str(tmp_path),
+              "timeout_sec": 1})
+    assert not r.success and "超时被终止" in r.error
+    assert fake_popen.procs[0].killed
+    row = ctx.db.query("tasks", where={"kind": "script"})[0]
+    assert row["status"] == "failed"
+    assert events == []
+
+
+def test_task_stop_during_sync_window(fake_interp, fake_popen, tmp_path, monkeypatch):
+    """同步等待期间 task_stop 也能停（_PROCS 登记在 wait 之前）。"""
+    reg, _, _ = fake_interp
+    monkeypatch.setitem(_mod_globals(reg), "_SYNC_WAIT_SEC", 5)
+    ctx = reg.get("agents.code_exec").plugin_ctx
+    holder: dict = {}
+
+    def _call():
+        holder["r"] = _run(reg, "agents.code_exec",
+                           {"lang": "python", "code": "import time; time.sleep(99)",
+                            "cwd": str(tmp_path), "timeout_sec": 60})
+
+    th = threading.Thread(target=_call)
+    th.start()
+    assert _wait_for(lambda: len(ctx.db.query("tasks", where={"kind": "script"})) == 1)
+    task_id = ctx.db.query("tasks", where={"kind": "script"})[0]["id"]
+    s = _run(reg, "agents.task_stop", {"id": task_id})
+    assert s.success
+    th.join(timeout=5)
+    r = holder["r"]
+    assert not r.success and "已被用户停止" in r.error
+    row = ctx.db.query("tasks", where={"id": task_id})[0]
+    assert row["status"] == "stopped"
+    assert task_id not in _mod_globals(reg)["_PROCS"]
+
+
+
+def test_task_stop_script_task(fake_interp, no_sync_window, fake_popen, tmp_path):
     reg, _, _ = fake_interp
     ctx = reg.get("agents.code_exec").plugin_ctx
     r = _run(reg, "agents.code_exec", {"lang": "python", "code": "import time; time.sleep(99)",
@@ -302,20 +397,17 @@ def test_real_sandbox_hello_and_write_cwd(env, tmp_path):
     r = _run(reg, "agents.code_exec",
              {"lang": "python", "code": code, "cwd": str(tmp_path), "timeout_sec": 60})
     assert r.success, r.error
-    task_id = r.data["task_id"]
-    row = _wait_row(ctx.db, task_id, "done", timeout=15)
-    assert row is not None and row["status"] == "done" and row["exit_code"] == 0, (
-        Path(row["log_path"]).read_text(encoding="utf-8") if row else "无任务行")
-    log = Path(row["log_path"]).read_text(encoding="utf-8")
-    assert "hello sandbox" in log
+    # 短脚本在同步窗口内完成：输出直接进 data，库落 done，无播报
+    assert "hello sandbox" in r.data["output"]
+    row = ctx.db.query("tasks", where={"id": r.data["task_id"]})[0]
+    assert row["status"] == "done" and row["exit_code"] == 0
     assert (tmp_path / "out.txt").read_text(encoding="utf-8") == "written-in-cwd"  # 写 cwd 放行
-    assert _wait_for(lambda: any("✅ 沙箱脚本完成" in e["text"] for e in events), timeout=5)
+    assert events == []
 
 
 @pytest.mark.skipif(not _has_sandbox, reason="需要 macOS sandbox-exec")
 def test_real_sandbox_blocks_home_write(env, tmp_path):
     reg, _, _ = env
-    ctx = reg.get("agents.code_exec").plugin_ctx
     evil = os.path.expanduser("~/yibao_sbx_evil.txt")
     if os.path.exists(evil):
         os.remove(evil)
@@ -330,12 +422,9 @@ def test_real_sandbox_blocks_home_write(env, tmp_path):
     try:
         r = _run(reg, "agents.code_exec",
                  {"lang": "python", "code": code, "cwd": str(tmp_path), "timeout_sec": 60})
-        assert r.success, r.error
-        row = _wait_row(ctx.db, r.data["task_id"], "done", timeout=15)
-        assert row is not None and row["status"] == "done"  # 脚本自己 catch 了异常 → exit 0
-        log = Path(row["log_path"]).read_text(encoding="utf-8")
-        assert "WROTE-EVIL" not in log
-        assert "PermissionError" in log or "Operation not permitted" in log
+        assert r.success, r.error  # 脚本自己 catch 了异常 → exit 0，同步窗口内完成
+        assert "WROTE-EVIL" not in r.data["output"]
+        assert "PermissionError" in r.data["output"] or "Operation not permitted" in r.data["output"]
         assert not os.path.exists(evil)
     finally:
         if os.path.exists(evil):
