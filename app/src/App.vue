@@ -263,15 +263,16 @@ const ctxPreview = computed(() => {
   return t.length > 42 ? t.slice(0, 42) + "…" : t;
 });
 
-async function onPetInvoke() {
-  // 反射键第二段：已展开 = 收回隐藏（_toggle_）；未展开 = 展开 + 输入就绪
-  if (expanded.value) {
-    await getCurrentWindow().hide();
-    return;
-  }
-  await expand();
+async function onPetShow() {
+  // Rust 侧已按 可见性×展开态 决策（显隐不经过前端）：pet-show 只需确保展开 + 输入就绪
+  if (!expanded.value) await expand();
   void nextTick(() => inputBarRef.value?.focus());
 }
+
+// 展开态同步给 Rust（全局热键在 Rust 侧决定 显示/展开/隐藏 的依据）
+watch(expanded, (v) => {
+  void invoke("set_pet_expanded", { expanded: v }).catch(() => {});
+});
 
 async function onPetInvokeSelection(text: string | null) {
   await expand();
@@ -554,8 +555,8 @@ onMounted(async () => {
     bubbles.value.push({ role: "ai", text: "⚠️ " + e.payload });
   });
   unlistenSetupCfg = await listen<string>("setup-config-needed", () => void onSetupNeeded());
-  // 全局唤起：⌘⇧Y 反射键（展开⇄隐藏）/ ⌘⇧U 划词唤起（展开 + 上下文 chip）
-  unlistenInvoke = await listen("pet-invoke", () => void onPetInvoke());
+  // 全局唤起：⌘⇧Y 反射键（pet-show 确保展开）/ ⌘⇧U 划词唤起（展开 + 上下文 chip）
+  unlistenInvoke = await listen("pet-show", () => void onPetShow());
   unlistenInvokeSel = await listen<{ text: string | null }>("pet-invoke-selection", (e) =>
     void onPetInvokeSelection(e.payload.text),
   );

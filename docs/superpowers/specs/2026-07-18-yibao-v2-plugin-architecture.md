@@ -263,11 +263,11 @@ name = "sync_done"
 ### 实装记录（全局唤起，2026-07-27）
 
 - **依据**：OS 感 §5 第 5 项——一个反射键 + 划词上下文唤起；OS 感套餐至此齐（主屏/收件箱/设置/环境态/唤起）。
-- **⌘⇧Y 反射键**（原显隐开关升级为唤起即输入）：大窗开着=收大窗（不变）；宠物窗 隐藏→显示+聚焦 / 收起→展开+输入聚焦 / 展开→隐藏。展开态只有前端知道：Rust 统一发 `pet-invoke` 事件，前端判 expanded 决定 展开+聚焦 还是 `hide()`。InputBar 新增 `defineExpose({ focus })`。
-- **⌘⇧U 划词唤起**：Rust 线程内抓前台选中文字——暂存剪贴板（pbpaste）→ osascript 模拟 ⌘C → 180ms 后读回 → 还原剪贴板；剪贴板未变 = 无选中/权限缺，退化为普通唤起。**已知限制**：pbpaste/pbcopy 只保真文本，剪贴板里富格式被覆盖时还原不回原类型（NSPasteboard 类型级备份留待需要时）。抓耗时 ~200ms 挪线程，不卡热键线程。
+- **⌘⇧Y 反射键**（原显隐开关升级为唤起即输入）：大窗开着=收大窗（不变）；宠物窗 隐藏→显示+聚焦 / 收起→展开+输入聚焦 / 展开→隐藏。**显隐全在 Rust 侧**：前端 `watch(expanded)` 经 `set_pet_expanded` 命令同步展开态（`PetExpanded(AtomicBool)` 托管状态），热键处理器按 可见性×展开态 直接 show/hide，前端只收 `pet-show` 事件做「确保展开 + InputBar `defineExpose({ focus })` 聚焦」。（教训：JS 侧 `hide()` 在此窗不生效、且 `emit_to` 不是本项目前端收事件的通路——全部事件走广播 `emit`。）
+- **⌘⇧U 划词唤起**：Rust 线程内抓前台选中文字——暂存剪贴板（pbpaste）→ **等物理修饰键松开**（`CGEventSourceFlagsState` FFI 轮询 ⇧/⌘ 清零，最多 2s；否则合成 ⌘C 与按住中的 ⇧ 合并成 ⇧⌘C，在备忘录里就是打开调色板）→ **CGEvent 直发 ⌘C**（`post_cmd_c`，与应用本体同一辅助功能信任域；osascript/System Events 路线 responsible process 归属成疑，静默不投递）→ 300ms 后读回 → 还原剪贴板；剪贴板未变 = 无选中/权限缺，退化为普通唤起。**已知限制**：pbpaste/pbcopy 只保真文本，剪贴板里富格式被覆盖时还原不回原类型（NSPasteboard 类型级备份留待需要时）。
 - **上下文呈现**：前端 `pet-invoke-selection` → 展开 + 输入条上方 chip（📄 + 42 字预览 + × 可去）+ 输入聚焦；发送时组合自包含消息 `用户在前台应用选中了一段文字：「…」+ 用户的指示：…`（截 4000 字），气泡只显示用户打的字 + sys 知情行「📄 已附带选中文字 N 字」——与 Feed 点击追问同哲学：大脑看不到前端上下文，必须拼好。
 - **截图唤起未做**：sidecar 有 GLM-4.6V 视觉（仅 computer-use grounding 用），图片进主对话链路（消息格式/历史/成本门）是独立迭代。
-- cargo check + npm run build 通过；热键与抓取路径需真机验证。
+- cargo check + npm run build 通过；热键三连与划词抓取真机验证通过。
 
 ## 9. 数据存储
 

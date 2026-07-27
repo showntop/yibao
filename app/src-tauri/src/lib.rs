@@ -943,9 +943,18 @@ fn report_panel_context(state: tauri::State<Brain>, focus: Value) -> Result<(), 
     )
 }
 
-/// 重新检测 macOS 权限（辅助功能/屏幕录制），结果经 brain-permissions 事件回前端。
+/// 宠物窗展开态（前端同步）：全局热键据此在 Rust 侧决定 显示/展开/隐藏，显隐不经过前端。
+struct PetExpanded(std::sync::atomic::AtomicBool);
+
 #[tauri::command]
-fn check_permissions(state: tauri::State<Brain>) -> Result<(), String> {
+fn set_pet_expanded(state: tauri::State<PetExpanded>, expanded: bool) {
+    state
+        .0
+        .store(expanded, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// 重新检测 macOS 权限（辅助功能/屏幕录制），结果经 brain-permissions 事件回前端。
+#[tauri::command]fn check_permissions(state: tauri::State<Brain>) -> Result<(), String> {
     write_to_brain(&state, serde_json::json!({ "id": 0, "type": "check_permissions" }))
 }
 
@@ -1027,15 +1036,52 @@ fn pb_copy(text: &str) {
     }
 }
 
-/** 读前台应用选中文字：暂存剪贴板 → 模拟 ⌘C → 读回 → 还原。
+// 读当前物理修饰键状态（CGEventSourceFlagsState 未被 core-graphics crate 包装，直接 FFI）
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGEventSourceFlagsState(state_id: i32) -> u64;
+}
+
+/** 等用户松开热键的修饰键（⇧/⌘）：合成 ⌘C 会被系统与物理按住中的 ⇧ 合并成 ⇧⌘C
+ * （调色板就是这么被打开的）。最多等 2s，超时照发（退化为旧行为）。 */
+fn wait_modifiers_released() {
+    const COMBINED_SESSION_STATE: i32 = 1;
+    const SHIFT_OR_CMD: u64 = 0x2_0000 | 0x10_0000; // kCGEventFlagMaskShift | kCGEventFlagMaskCommand
+    for _ in 0..50 {
+        let flags = unsafe { CGEventSourceFlagsState(COMBINED_SESSION_STATE) };
+        if flags & SHIFT_OR_CMD == 0 {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(40));
+    }
+}
+
+/** 直接经 CGEvent 发 ⌘C（kVK_ANSI_C=8）：与应用本体同一个辅助功能信任域（pyautogui 能注入靠的就是它），
+ *  不绕 System Events/osascript（responsible process 归属成疑时静默不投递）。 */
+fn post_cmd_c() -> Result<(), String> {
+    use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation};
+    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+    let src = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
+        .map_err(|_| "创建 CGEventSource 失败".to_string())?;
+    let down = CGEvent::new_keyboard_event(src.clone(), 8, true).map_err(|_| "创建 keydown 失败")?;
+    down.set_flags(CGEventFlags::CGEventFlagCommand);
+    let up = CGEvent::new_keyboard_event(src, 8, false).map_err(|_| "创建 keyup 失败")?;
+    up.set_flags(CGEventFlags::CGEventFlagCommand);
+    down.post(CGEventTapLocation::HID);
+    up.post(CGEventTapLocation::HID);
+    Ok(())
+}
+
+/** 读前台应用选中文字：暂存剪贴板 → 等物理修饰键松开 → 模拟 ⌘C → 读回 → 还原。
  *  已知限制：pbpaste/pbcopy 只保真文本——剪贴板里是图片等富格式且被覆盖时还原不回原类型。
  *  无选中（剪贴板未变）或权限缺失（⌘C 静默失败）→ None，调用方退化为普通唤起。 */
 fn grab_selected_text() -> Option<String> {
     let old = pb_paste();
-    let _ = std::process::Command::new("osascript")
-        .args(["-e", r#"tell application "System Events" to keystroke "c" using command down"#])
-        .output();
-    std::thread::sleep(std::time::Duration::from_millis(180));
+    wait_modifiers_released();
+    if post_cmd_c().is_err() {
+        return None;
+    }
+    std::thread::sleep(std::time::Duration::from_millis(300));
     let new = pb_paste();
     if new == old {
         return None; // 剪贴板没变 = 没有选中（或前台不可拷贝）
@@ -1054,7 +1100,7 @@ pub fn run() {
             if event.state != ShortcutState::Pressed {
                 return;
             }
-            // 划词唤起：抓选中文字（osascript+剪贴板接力 ~200ms，挪线程别卡热键线程）→ 展开带上下文
+            // 划词唤起：抓选中文字（剪贴板接力 + CGEvent ⌘C，挪线程别卡热键线程）→ 展开带上下文
             if shortcut == &tauri_plugin_global_shortcut::Shortcut::new(
                 Some(tauri_plugin_global_shortcut::Modifiers::SUPER | tauri_plugin_global_shortcut::Modifiers::SHIFT),
                 tauri_plugin_global_shortcut::Code::KeyU,
@@ -1065,11 +1111,11 @@ pub fn run() {
                     if let Some(win) = handle.get_webview_window("main") {
                         let _ = win.show().and_then(|_| win.set_focus());
                     }
-                    let _ = handle.emit_to("main", "pet-invoke-selection", serde_json::json!({ "text": text }));
+                    let _ = handle.emit("pet-invoke-selection", serde_json::json!({ "text": text }));
                 });
                 return;
             }
-            // 反射键：大窗开着 = 收起大窗回小窗（互斥）；否则唤起/收起宠物窗
+            // 反射键：大窗开着 = 收起大窗回小窗（互斥）；否则按 可见性×展开态 决策（显隐全在 Rust 侧）
             if let Some(home) = app.get_webview_window("home") {
                 if home.is_visible().unwrap_or(false) {
                     let _ = home.hide();
@@ -1078,11 +1124,22 @@ pub fn run() {
                 }
             }
             if let Some(win) = app.get_webview_window("main") {
-                if !win.is_visible().unwrap_or(false) {
+                let vis = win.is_visible().unwrap_or(false);
+                let expanded = app
+                    .state::<PetExpanded>()
+                    .0
+                    .load(std::sync::atomic::Ordering::Relaxed);
+                if !vis {
+                    // 隐藏 → 唤起：显示并聚焦；pet-show 让前端确保展开 + 输入聚焦
                     let _ = win.show().and_then(|_| win.set_focus());
+                    let _ = app.emit("pet-show", ());
+                } else if !expanded {
+                    // 收起球 → 展开就绪
+                    let _ = app.emit("pet-show", ());
+                } else {
+                    // 展开中 → 收回隐藏（第二段）
+                    let _ = win.hide();
                 }
-                // 展开态只有前端知道：统一发 pet-invoke，由前端决定 展开+聚焦 还是 隐藏
-                let _ = app.emit_to("main", "pet-invoke", ());
             }
         })
         .build();
@@ -1110,6 +1167,7 @@ pub fn run() {
             None::<Vec<&str>>,
         ))
         .manage(Brain(Mutex::new(BrainState::new())))
+        .manage(PetExpanded(std::sync::atomic::AtomicBool::new(false)))
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 // 桌宠常驻：关窗只隐藏，真正退出走托盘菜单
@@ -1311,7 +1369,8 @@ pub fn run() {
             clear_brain_data,
             open_data_dir,
             open_home_window,
-            close_home_window
+            close_home_window,
+            set_pet_expanded
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
