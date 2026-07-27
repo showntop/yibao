@@ -258,3 +258,43 @@ export async function getFeedOnce(limit = 60, timeoutMs = 3000): Promise<FeedRes
   } catch { /* 大脑不在线：走超时兜底 */ }
   return Promise.race([resp, timeout]);
 }
+
+// ---- 主屏 widget（OS 感 §4.2：插件一瞥卡，schema 协议的 widget 类型）----
+
+export interface WidgetPayload {
+  panel: string;        // ref（pid:name）
+  title: string;        // 插件名 · 卡片名
+  schema: unknown;      // schema 面板 JSON（SchemaPanel 直接渲染）
+  data: unknown;        // method 取回的数据
+  open?: string | null; // 点击跳转的 api.toml 方法（null = 不可点击）
+}
+
+export interface WidgetsResponse {
+  widgets: WidgetPayload[];
+}
+
+const EMPTY_WIDGETS: WidgetsResponse = { widgets: [] };
+
+/** 订阅主屏 widget 响应（get_widgets 查询的回包，经 Rust 转发）。 */
+export function onWidgets(cb: (r: WidgetsResponse) => void): Promise<UnlistenFn> {
+  return listen<WidgetsResponse>("brain-widgets", (ev) => cb(ev.payload));
+}
+
+/** 查询主屏 widget（响应经 brain-widgets 事件回来）。 */
+export function fetchWidgets(): Promise<void> {
+  return invoke("get_widgets");
+}
+
+/** 一次性取 widget：发查询并等下一条 brain-widgets；大脑不在线/超时返回空（主屏不显示卡片区）。 */
+export async function getWidgetsOnce(timeoutMs = 3000): Promise<WidgetsResponse> {
+  const resp = new Promise<WidgetsResponse>((resolve) => {
+    void once<WidgetsResponse>("brain-widgets", (ev) => resolve(ev.payload));
+  });
+  const timeout = new Promise<WidgetsResponse>((resolve) =>
+    setTimeout(() => resolve(EMPTY_WIDGETS), timeoutMs),
+  );
+  try {
+    await fetchWidgets();
+  } catch { /* 大脑不在线：走超时兜底 */ }
+  return Promise.race([resp, timeout]);
+}

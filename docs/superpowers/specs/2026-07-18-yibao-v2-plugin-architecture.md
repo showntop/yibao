@@ -228,6 +228,14 @@ name = "sync_done"
 - **大窗四页化**：Home.vue 加「主屏」默认落地页（NAV 第一位），四页仍 v-show 常驻挂载。新组件 `HomeFeed.vue`：问候条（时段问候 + 日期 + stats chips，全 0 时「今天安安静静」）；动态区（kind 图标 + 两行截断 + 相对时间）；常用 Dock（`list_plugins` → 首字圆图标，点击 `panelAction("<pid>.list")` 开面板，HomePlugins 事件监听自动接管切页）；底部常驻 InputBar（submit 走 `runInput(text,"pet")` 并切对话页）。
 - **Feed 点击追问**：动态点击生成**自包含**草稿（`关于任务「label」：`——大脑看不到 Feed 内容，上下文必须前端拼好）→ Home.vue `onFeedChat` 先清空再 nextTick 设回 `chatDraft`（同一条重复点击也触发 watch）→ HomeChat 透传 → InputBar 新 `draft` prop watch 填入并聚焦。
 
+### 实装记录（主屏 widget，2026-07-27）
+
+- **协议**：manifest `[[panel]] type = "widget"`——schema 协议加 widget 类型，复用面板机制不另起框架（schema 进 `_PANELS`/`panel_payload` 走 schema 分支）。两个新字段：`method`（必填，本插件 **L0 只读** tool 供数据，加载期 `registry.get` 校验存在性 + `default_risk`，不合格整个 widget 跳过）；`open`（可选，主屏点击跳转的 api.toml 方法，缺省卡片不可点击）。注册表 `_WIDGETS: ref → {method, open, title}`。
+- **查询**：`{"type":"widgets"}` → serve_async `_collect_widgets` 逐个 propose/decide（非 AUTO 防御跳过）/execute（`_offload` 挪线程池），`result.panel` 覆盖为 widget ref 后 `panel_payload` 组装 + `open` 键；单个失败只 print 跳过，响应照常。Rust 转发 `brain-widgets` + `get_widgets` 命令；前端 `getWidgetsOnce`（once 与 3s 超时竞速，同 feed 模式）。
+- **渲染**：HomeFeed 卡片区（问候条与动态之间）——卡片 = 标题头（有 open 则可点，`panelAction(open)` 开全面板由插件页接管）+ 固定 148px `SchemaPanel`（展示型：widget schema 不声明 item actions，交互去全面板做，避免刷新 panel 事件把用户拽离主屏）。提醒/播报事件防抖同时刷新 feed + widgets。
+- **首批实例**：notes「最近闪念」（method=list）、agents「任务动态」（method=task_list）、reminders「待办提醒」（method=list）——全部复用既有 L0 查询 tool，未新增 tool。
+- 测试 `test_widgets.py` 10 个：加载校验 7（缺 method/未注册/非 L0/坏 schema 均跳过且不留面板残骸）+ serve_async 集成 3（正常 payload 形状、失败跳过、空注册表）。
+
 ## 9. 数据存储
 
 | 类型 | 存储 | 规则 |

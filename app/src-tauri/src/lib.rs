@@ -449,6 +449,10 @@ fn spawn_bridge(app: AppHandle, mut rx: tauri::async_runtime::Receiver<CommandEv
                             Some("feed") => {
                                 let _ = app.emit("brain-feed", v);
                             }
+                            // 主屏 widget 响应（插件一瞥卡列表）：整体转发
+                            Some("widgets") => {
+                                let _ = app.emit("brain-widgets", v);
+                            }
                             _ => {}
                         },
                         Err(_) => eprintln!("[brain] 非 JSON：{line}"),
@@ -696,6 +700,12 @@ fn get_feed(state: tauri::State<Brain>, limit: Option<u32>) -> Result<(), String
         &state,
         serde_json::json!({ "id": 0, "type": "feed", "limit": limit.unwrap_or(60) }),
     )
+}
+
+/// 主屏 widget 查询：大脑回 {"type":"widgets","widgets":…}，经 brain-widgets 事件广播。
+#[tauri::command]
+fn get_widgets(state: tauri::State<Brain>) -> Result<(), String> {
+    write_to_brain(&state, serde_json::json!({ "id": 0, "type": "widgets" }))
 }
 
 /// 面板动作（v2 §7）：壳不懂 panel 语义，透传 api.toml 白名单方法给大脑裁决。
@@ -1184,6 +1194,7 @@ pub fn run() {
             panel_action,
             list_plugins,
             get_feed,
+            get_widgets,
             open_panel_window,
             close_panel_window,
             get_current_panel,

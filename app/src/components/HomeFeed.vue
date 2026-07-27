@@ -5,15 +5,20 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import InputBar from "./InputBar.vue";
+import SchemaPanel from "./SchemaPanel.vue";
 import {
   getFeedOnce,
   fetchFeed,
   onFeed,
+  getWidgetsOnce,
+  fetchWidgets,
+  onWidgets,
   onBrainEvent,
   panelAction,
   runInput,
   type FeedItem,
   type FeedStats,
+  type WidgetPayload,
 } from "../lib/brain";
 
 // chat：提交/点动态 → 切对话页；draft 非空时带给对话页预填
@@ -57,6 +62,26 @@ async function reload() {
   items.value = r.items;
   stats.value = r.stats;
   loaded.value = true;
+}
+
+// ---- 主屏 widget：插件一瞥卡（schema 协议的 widget 类型，展示型；交互去全面板） ----
+const widgets = ref<WidgetPayload[]>([]);
+
+async function reloadWidgets() {
+  const r = await getWidgetsOnce();
+  widgets.value = r.widgets;
+}
+
+/** 点 widget 标题 → 调声明的 open 方法开全面板（panel 事件回来，插件页自动接管切页）。 */
+function openWidget(w: WidgetPayload) {
+  if (!w.open) return;
+  const pid = w.panel.split(":")[0];
+  void panelAction(w.open, {}, undefined, `panel:${pid}`).catch(() => {});
+}
+
+/** widget 数据兜底：取数异常时给 {}（SchemaPanel 要求 Record）。 */
+function widgetData(w: WidgetPayload): Record<string, unknown> {
+  return (w.data && typeof w.data === "object" ? w.data : {}) as Record<string, unknown>;
 }
 
 /** 相对时间：刚刚 / N 分钟前 / N 小时前 / 昨天 / M月D日 */
@@ -115,26 +140,34 @@ function submit(text: string) {
   emit("chat");
 }
 
-// ---- 订阅：新动态（任务播报/提醒触发）实时刷新 Feed ----
+// ---- 订阅：新动态（任务播报/提醒触发）实时刷新 Feed 与 widget ----
 let unFeed: (() => void) | null = null;
+let unWidgets: (() => void) | null = null;
 let unEvent: (() => void) | null = null;
 let refetchTimer: ReturnType<typeof setTimeout> | null = null;
 
 onMounted(async () => {
-  await reload();
+  await Promise.all([reload(), reloadWidgets()]);
   void loadPlugins();
   unFeed = await onFeed((r) => {
     items.value = r.items;
     stats.value = r.stats;
   });
+  unWidgets = await onWidgets((r) => {
+    widgets.value = r.widgets;
+  });
   unEvent = await onBrainEvent((e) => {
     if (e.kind !== "reminder") return;
     if (refetchTimer !== null) clearTimeout(refetchTimer);
-    refetchTimer = setTimeout(() => void fetchFeed().catch(() => {}), 800);
+    refetchTimer = setTimeout(() => {
+      void fetchFeed().catch(() => {});
+      void fetchWidgets().catch(() => {});
+    }, 800);
   });
 });
 onUnmounted(() => {
   unFeed?.();
+  unWidgets?.();
   unEvent?.();
   if (refetchTimer !== null) clearTimeout(refetchTimer);
 });
@@ -155,6 +188,21 @@ onUnmounted(() => {
     </header>
 
     <div class="scroll">
+      <!-- widget 卡片区：插件供的一瞥卡（待办提醒/任务动态/最近闪念），点标题进全面板 -->
+      <section v-if="widgets.length" class="sec sec-widgets">
+        <div class="w-row">
+          <div v-for="w in widgets" :key="w.panel" class="w-card">
+            <button class="w-head" :class="{ link: !!w.open }" @click="openWidget(w)">
+              <span class="w-title">{{ w.title }}</span>
+              <span v-if="w.open" class="w-go">›</span>
+            </button>
+            <div class="w-body">
+              <SchemaPanel :panel="w.panel" :schema="(w.schema as Record<string, any>)" :data="widgetData(w)" />
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- Feed 动态：它在后台干的事，按时间倒序 -->
       <section class="sec">
         <div class="sec-title">动态</div>
@@ -248,6 +296,60 @@ onUnmounted(() => {
 }
 .sec {
   margin-top: var(--yb-space-3);
+}
+.sec-widgets {
+  margin-top: var(--yb-space-2);
+}
+/* widget 卡片区：横排自适应卡片，固定高度一瞥（内部滚动；交互去全面板） */
+.w-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--yb-space-3);
+  padding: 0 var(--yb-space-2);
+}
+.w-card {
+  flex: 1 1 230px;
+  min-width: 210px;
+  max-width: 380px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--yb-surface-border);
+  border-radius: 14px;
+  background: var(--yb-surface-solid);
+  box-shadow: var(--yb-shadow-soft);
+  overflow: hidden;
+}
+.w-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--yb-space-2) var(--yb-space-3);
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+}
+.w-head.link {
+  cursor: pointer;
+}
+.w-head.link:hover .w-title,
+.w-head.link:hover .w-go {
+  color: var(--yb-accent-deep);
+}
+.w-title {
+  font-size: var(--yb-fs-sm);
+  font-weight: 600;
+  color: var(--yb-text-dim);
+  letter-spacing: 0.04em;
+}
+.w-go {
+  color: var(--yb-text-dim);
+  font-size: 14px;
+}
+.w-body {
+  height: 148px;
+  padding: 0 var(--yb-space-2) var(--yb-space-2);
+  min-height: 0;
 }
 .sec-title {
   padding: 0 var(--yb-space-2) var(--yb-space-2);
