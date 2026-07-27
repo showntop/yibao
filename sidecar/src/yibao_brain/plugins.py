@@ -288,6 +288,14 @@ def get_plugin_summaries() -> dict[str, dict]:
     return {pid: dict(info) for pid, info in _PLUGIN_INFO.items()}
 
 
+_PLUGIN_MEM_NS: dict[str, str] = {}
+
+
+def get_mem_namespaces() -> dict[str, str]:
+    """声明了 memory capability 的插件：namespace → 插件显示名（记忆管理页按空间分组列出）。"""
+    return dict(_PLUGIN_MEM_NS)
+
+
 def get_panel(ref: str) -> dict | None:
     """按「plugin_id:name」查面板。schema 面板为 JSON dict；webview 面板为 {"type": "webview", "html": …}。"""
     return _PANELS.get(ref)
@@ -505,7 +513,9 @@ def _load_one(child: Path, registry: SkillRegistry, *, memory, http, llm, emit_p
         ctx.db = PluginDb(pid)
         ctx.db.apply_schema(tables)
     if "memory" in caps:
-        ctx.memory = ScopedMemory(memory, manifest.get("mem_namespace") or pid)
+        ns = manifest.get("mem_namespace") or pid
+        ctx.memory = ScopedMemory(memory, ns)
+        _PLUGIN_MEM_NS[ns] = manifest.get("name") or pid  # 记忆管理页按空间列出用
     if "http" in caps:
         ctx.http = http
     if "llm" in caps:

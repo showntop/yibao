@@ -15,14 +15,14 @@ from collections.abc import Callable
 
 from . import permissions
 from .audit import AuditLog
-from .config import a11y_enabled, computer_use_enabled, history_path, llm_api_key, plugin_data_dir, screenshot_dir, stt_model_dir, tts_voice, vad_max_seconds, vad_min_silence, vad_model_path, voice_enabled
+from .config import a11y_enabled, computer_use_enabled, history_path, llm_api_key, load_settings, plugin_data_dir, save_settings, screenshot_dir, stt_model_dir, tts_voice, vad_max_seconds, vad_min_silence, vad_model_path, voice_enabled
 from .feed import FeedStore
 from .history import ConversationHistory
 from .ipc import Action, Event, RiskLevel
 from .llm import FakeProvider, GLMProvider, ToolCall
 from .loop import AgentLoop, _offload
 from .memory import FakeMemory, LazyMem0Memory
-from .plugins import LlmChat, get_api, get_widgets, panel_payload
+from .plugins import LlmChat, get_api, get_mem_namespaces, get_widgets, panel_payload
 from .safety import Decision, Gate, GatePolicy, RiskClassifier
 from .skills import EchoSkill, SkillRegistry
 from .skills_composite import register_composite_skills
@@ -481,6 +481,24 @@ async def serve_async(
             except Exception as e:
                 print(f"[yibao] widget {ref} 取数异常（已跳过）：{e}", file=sys.stderr)
         return out
+
+    # 用户设置（自主权旋钮等，数据目录 settings.json）：运行期可调，settings_set 即时生效免重启
+    settings = load_settings()
+
+    async def _mem_list() -> list[dict]:
+        """记忆管理页数据（OS 感 §4.4）：底座（译宝）+ 各插件命名空间分组列出。单空间失败不拖垮整体。"""
+        groups = [("译宝", "", agent.user_id)]
+        groups.extend((label, ns, f"{ns}:{agent.user_id}") for ns, label in get_mem_namespaces().items())
+        out = []
+        for label, ns, uid in groups:
+            try:
+                rows = await _offload(agent.memory.list_all, uid)
+            except Exception as e:
+                print(f"[yibao] 记忆列出失败（{label}，已跳过）：{e}", file=sys.stderr)
+                continue
+            for r in rows:
+                out.append({"id": r["id"], "text": r["text"], "ns": ns, "label": label})
+        return out
     # mem0 降级（如多实例争 qdrant 锁）→ 显式推到壳，别让「失忆」无声发生
     mem = getattr(agent, "memory", None)
     if hasattr(mem, "set_status_callback"):
@@ -516,9 +534,9 @@ async def serve_async(
                                        [{"role": "assistant", "content": f"⏰ 到点提醒：{text}"}])
                     except Exception:
                         pass
-                # 有任务在跑就只在气泡里提醒，不打断在播的语音
+                # 有任务在跑就只在气泡里提醒，不打断在播的语音；「主动开口」关掉时只亮窗不出声
                 task = run_state["task"]
-                if voice is not None and (task is None or task.done()):
+                if voice is not None and settings.get("proactive_voice", True) and (task is None or task.done()):
                     async def _once(t=text):
                         yield f"提醒：{t}"
                     try:
@@ -835,6 +853,29 @@ async def serve_async(
         elif rtype == "widgets":
             # 主屏查询：插件 widget 卡片逐个取数（panel_payload 形状 + open 跳转方法）
             write_msg({"type": "widgets", "widgets": await _collect_widgets()})
+        elif rtype == "mem_list":
+            # 记忆管理页：全命名空间分组列出 + 记忆后端状态（未就绪/降级时前端给提示）
+            mem = agent.memory
+            write_msg({"type": "mem_list", "items": await _mem_list(),
+                       "ready": bool(getattr(mem, "ready", True)), "failed": bool(getattr(mem, "failed", False))})
+        elif rtype == "mem_delete":
+            mid = str(msg.get("mem_id") or "")  # 信封 id 字段被请求序号占用，记忆 id 走 mem_id
+            try:
+                await _offload(agent.memory.delete_by_id, mid)
+                write_msg({"type": "mem_deleted", "id": mid, "ok": True})
+            except Exception as e:
+                write_msg({"type": "mem_deleted", "id": mid, "ok": False, "error": str(e)})
+        elif rtype == "settings_get":
+            write_msg({"type": "settings", "values": dict(settings)})
+        elif rtype == "settings_set":
+            vals = msg.get("values")
+            if isinstance(vals, dict):
+                try:
+                    save_settings(vals)  # 只落已知键；写盘成功后重读合并
+                    settings.update(load_settings())
+                except Exception as e:
+                    print(f"[yibao] 设置保存失败：{e}", file=sys.stderr)
+            write_msg({"type": "settings", "values": dict(settings)})
         elif rtype == "check_permissions":
             write_msg({"type": "permissions", "permissions": _permissions_status()})
         elif rtype == "prompt_permission":

@@ -25,6 +25,14 @@ class Memory(ABC):
     @abstractmethod
     def recall(self, query: str, user_id: str) -> list[str]: ...
 
+    def list_all(self, user_id: str) -> list[dict]:
+        """记忆管理（OS 感 §4.4）：列出该命名空间全部记忆 [{"id","text"}]。默认空（不支持后端的退化）。"""
+        return []
+
+    def delete_by_id(self, memory_id: str) -> None:
+        """按 id 删一条；未就绪/不支持时实现方应抛异常（调用方转人话）。"""
+        raise RuntimeError("当前记忆后端不支持删除")
+
 
 def _humanize_err(err: Exception | None) -> str:
     """mem0 初始化失败的原文 → 给用户看的人话（第三方报错原文太技术且常误导）。"""
@@ -50,6 +58,17 @@ class FakeMemory(Memory):
         items = self._by_user.get(user_id, [])
         q = query.lower()
         return [it for it in items if q and (q in it.lower() or it.lower() in q)]
+
+    def list_all(self, user_id: str) -> list[dict]:
+        # 合成稳定 id（user_id:下标），测试可断言删除效果
+        return [{"id": f"{user_id}:{i}", "text": t} for i, t in enumerate(self._by_user.get(user_id, []))]
+
+    def delete_by_id(self, memory_id: str) -> None:
+        uid, _, idx = memory_id.rpartition(":")
+        items = self._by_user.get(uid)
+        if items is None or not idx.isdigit() or int(idx) >= len(items):
+            raise RuntimeError(f"记忆不存在：{memory_id}")
+        del items[int(idx)]
 
 
 class Mem0Memory(Memory):
@@ -114,6 +133,21 @@ class Mem0Memory(Memory):
             if mem:
                 out.append(mem)
         return out
+
+    def list_all(self, user_id: str) -> list[dict]:
+        try:
+            res = self._m.get_all(user_id=user_id)
+        except Exception:
+            return []
+        items = res if isinstance(res, list) else (res.get("results", []) if isinstance(res, dict) else [])
+        out = []
+        for it in items:
+            if isinstance(it, dict) and it.get("memory"):
+                out.append({"id": str(it.get("id") or ""), "text": str(it["memory"])})
+        return out
+
+    def delete_by_id(self, memory_id: str) -> None:
+        self._m.delete(memory_id=memory_id)
 
 
 class LazyMem0Memory(Memory):
@@ -205,3 +239,17 @@ class LazyMem0Memory(Memory):
         if real is None:
             return []
         return real.recall(query, user_id)
+
+    def list_all(self, user_id: str) -> list[dict]:
+        with self._lock:
+            real = self._real
+        if real is None:
+            return []  # 未就绪/已降级：管理页显示空 + 状态提示（ready/failed 由 server 带出）
+        return real.list_all(user_id)
+
+    def delete_by_id(self, memory_id: str) -> None:
+        with self._lock:
+            real = self._real
+        if real is None:
+            raise RuntimeError("长期记忆尚未就绪，请稍后再试")
+        real.delete_by_id(memory_id)

@@ -1,6 +1,7 @@
 """配置：从环境变量读取，带默认值。"""
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -161,3 +162,43 @@ def mem0_vector_path() -> str:
 def history_path() -> str:
     """短期会话历史 JSON 落盘路径（大脑重启后恢复最近几轮对话）。"""
     return os.environ.get("YIBAO_HISTORY_PATH", os.path.join(data_dir(), "history.json"))
+
+
+# ---------- 用户设置（数据目录 settings.json：自主权旋钮等运行期可调项，区别于 .env 的部署配置） ----------
+
+_SETTINGS_DEFAULTS: dict = {
+    "proactive_voice": True,  # 主动开口：提醒触发时语音播报（关 = 只亮窗/气泡，不出声）
+}
+
+
+def settings_path() -> str:
+    return os.path.join(data_dir(), "settings.json")
+
+
+def load_settings() -> dict:
+    """读设置并与默认值合并（新键后续加入时旧文件自动补默认）；文件坏/不存在 → 全默认。"""
+    try:
+        with open(settings_path(), encoding="utf-8") as f:
+            raw = json.load(f)
+        if not isinstance(raw, dict):
+            raise ValueError("settings.json 不是对象")
+    except Exception:
+        raw = {}
+    out = dict(_SETTINGS_DEFAULTS)
+    for k in out:
+        if k in raw:
+            out[k] = raw[k]
+    return out
+
+
+def save_settings(values: dict) -> None:
+    """只落已知键（防前端乱写键名）；目录不存在先建。"""
+    os.makedirs(os.path.dirname(settings_path()), exist_ok=True)
+    cur = load_settings()
+    for k in cur:
+        if k in values:
+            cur[k] = values[k]
+    tmp = settings_path() + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(cur, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, settings_path())  # 原子替换，别写半个文件
