@@ -45,8 +45,13 @@ class RiskClassifier:
 class Gate:
     def __init__(self, policy: GatePolicy):
         self.policy = policy
+        # 会话内免确认集合：用户勾选「本会话不再询问」并批准后由确认链路写入；
+        # 只活在内存（重启即失效）。命中即 AUTO，连 confirmation_needed 事件都不发。
+        self.session_allowed: set[str] = set()
 
     def decide(self, action: Action) -> Decision:
+        if action.skill_id in self.session_allowed:
+            return Decision.AUTO
         r = action.risk
         if r <= self.policy.auto_below_or_equal:
             return Decision.AUTO

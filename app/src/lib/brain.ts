@@ -72,9 +72,10 @@ export function runInput(text: string, surface?: string): Promise<void> {
   return invoke("run_input", { text, surface: surface ?? _surface });
 }
 
-/** 回复高风险确认（Rust 命令参数 confirmation_id 在 JS 侧为 camelCase）。 */
-export function sendConfirm(confirmationId: string, approved: boolean): Promise<void> {
-  return invoke("confirm", { confirmationId, approved });
+/** 回复高风险确认（Rust 命令参数 confirmation_id 在 JS 侧为 camelCase）。
+ *  remember=true：本会话不再询问这个技能（大脑侧会话级记忆，重启失效）。 */
+export function sendConfirm(confirmationId: string, approved: boolean, remember = false): Promise<void> {
+  return invoke("confirm", { confirmationId, approved, remember });
 }
 
 /** 触发语音输入：sidecar 录音→STT→run→TTS 播报（Plan 4a 最小语音）。

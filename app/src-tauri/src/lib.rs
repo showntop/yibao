@@ -678,10 +678,10 @@ fn run_input(state: tauri::State<Brain>, text: String, surface: Option<String>) 
 }
 
 #[tauri::command]
-fn confirm(state: tauri::State<Brain>, confirmation_id: String, approved: bool) -> Result<(), String> {
+fn confirm(state: tauri::State<Brain>, confirmation_id: String, approved: bool, remember: Option<bool>) -> Result<(), String> {
     write_to_brain(
         &state,
-        serde_json::json!({ "id": 0, "type": "confirm", "confirmation_id": confirmation_id, "approved": approved }),
+        serde_json::json!({ "id": 0, "type": "confirm", "confirmation_id": confirmation_id, "approved": approved, "remember": remember.unwrap_or(false) }),
     )
 }
 

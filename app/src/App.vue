@@ -388,13 +388,13 @@ async function submit(text: string) {
   }
 }
 
-async function decide(approved: boolean) {
+async function decide(approved: boolean, remember = false) {
   if (!pending.value) return;
   const { id } = pending.value;
   pending.value = null;
   state.value = "think";
   try {
-    await sendConfirm(id, approved);
+    await sendConfirm(id, approved, remember);
   } catch (err) {
     bubbles.value.push({ role: "ai", text: "⚠️ 确认失败：" + String(err) });
   }
@@ -573,7 +573,7 @@ onUnmounted(() => {
           v-else
           :skill="pending.skill"
           :desc="pending.desc"
-          @approve="() => decide(true)"
+          @approve="(remember) => decide(true, remember)"
           @deny="() => decide(false)"
         />
       </div>

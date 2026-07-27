@@ -368,11 +368,22 @@ async def serve_async(
     # 并发的 L0 只读面板调用（不占槽位）：跟踪起来，stdin 关闭时一起收尾
     readonly_tasks: set[asyncio.Task] = set()
 
+    # 会话内记住的「免确认」技能集合：用户勾选「本会话不再询问」并批准后记入；
+    # 只活在内存，大脑重启即失效（C-4：会话级，不落盘）。
+    remembered_confirm: set[str] = set()
+
     async def confirmer(action) -> bool:
+        skill_id = getattr(action, "skill_id", "?")
+        if skill_id in remembered_confirm:
+            print(f"[yibao] 会话内已免确认：{skill_id}", file=sys.stderr)
+            return True
+        remember = False
         # 早到的 confirm 直接兑现
         if pending_confirm["early"] is not None:
-            approved = pending_confirm["early"]
+            approved, remember = pending_confirm["early"]
             pending_confirm["early"] = None
+            if approved and remember:
+                remembered_confirm.add(skill_id)
             return bool(approved)
         # 单槽 future：收到任意 confirm 消息即兑现（v1 run 串行，确认也串行）
         fut = ai_loop.create_future()
@@ -381,7 +392,6 @@ async def serve_async(
         # 派发循环卡死、ping 不应答、看门狗误杀（2026-07-19 复现确认）
         cancel = run_state["cancel"]
         cancel_wait = ai_loop.create_task(cancel.wait()) if cancel is not None else None
-        skill_id = getattr(action, "skill_id", "?")
         print(f"[yibao] 等待用户确认：{skill_id}", file=sys.stderr)
         try:
             waiters: set = {fut}
@@ -389,9 +399,12 @@ async def serve_async(
                 waiters.add(cancel_wait)
             done, _ = await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
             if fut in done:
-                approved = bool(fut.result())
+                approved, remember = fut.result()
+                if approved and remember:
+                    remembered_confirm.add(skill_id)
+                    print(f"[yibao] 本会话不再询问：{skill_id}", file=sys.stderr)
                 print(f"[yibao] 确认结果：{'允许' if approved else '拒绝'}（{skill_id}）", file=sys.stderr)
-                return approved
+                return bool(approved)
             print(f"[yibao] 确认被抢占取消：{skill_id}", file=sys.stderr)
             return False
         finally:
@@ -409,6 +422,8 @@ async def serve_async(
             write_msg, {"type": "event", "surface": None, "event": ev}
         ),
     )
+    # 免确认集合接到闸门：命中后 decide 直接 AUTO（连 confirmation_needed 都不发）
+    agent.invoker.gate.session_allowed = remembered_confirm
     # mem0 降级（如多实例争 qdrant 锁）→ 显式推到壳，别让「失忆」无声发生
     mem = getattr(agent, "memory", None)
     if hasattr(mem, "set_status_callback"):
@@ -745,12 +760,13 @@ async def serve_async(
             # 壳上面板焦点变化：存下来，下次 run 注入 LLM 上下文
             _FOCUS["value"] = msg.get("focus")
         elif rtype == "confirm":
+            answer = (bool(msg.get("approved", False)), bool(msg.get("remember", False)))
             fut = pending_confirm["future"]
             if fut is not None and not fut.done():
-                fut.set_result(bool(msg.get("approved", False)))
+                fut.set_result(answer)
             else:
                 # confirmer 还没注册（消息先于 run 任务到达）→ 缓存，由 confirmer 兑现
-                pending_confirm["early"] = bool(msg.get("approved", False))
+                pending_confirm["early"] = answer
         elif rtype == "check_permissions":
             write_msg({"type": "permissions", "permissions": _permissions_status()})
         elif rtype == "prompt_permission":

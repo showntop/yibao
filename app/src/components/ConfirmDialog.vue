@@ -1,15 +1,22 @@
 <script setup lang="ts">
+import { ref } from "vue";
+
 defineProps<{ skill: string; desc: string }>();
-const emit = defineEmits<{ (e: "approve"): void; (e: "deny"): void }>();
+const emit = defineEmits<{ (e: "approve", remember: boolean): void; (e: "deny"): void }>();
+const remember = ref(false);
 </script>
 
 <template>
   <div class="dlg">
     <div class="title"><span class="icon">⚠️</span> 确认执行高风险操作</div>
     <p><span class="skill">{{ skill }}</span>{{ desc ? " · " + desc : "" }}</p>
+    <label class="remember">
+      <input type="checkbox" v-model="remember" />
+      本会话不再询问这个操作
+    </label>
     <div class="btns">
       <button class="deny" @click="emit('deny')">拒绝</button>
-      <button class="ok" @click="emit('approve')">允许执行</button>
+      <button class="ok" @click="emit('approve', remember)">允许执行</button>
     </div>
   </div>
 </template>
@@ -41,6 +48,20 @@ p {
 }
 .skill {
   font-weight: 600;
+}
+.remember {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 var(--yb-space-3);
+  font-size: var(--yb-fs-md);
+  color: var(--yb-text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+.remember input {
+  accent-color: var(--yb-accent);
+  margin: 0;
 }
 .btns {
   display: flex;

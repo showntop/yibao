@@ -295,6 +295,69 @@ def test_serve_async_confirm_roundtrip(tmp_path):
     )
 
 
+def test_serve_async_confirm_remember_skips_future_prompts(tmp_path):
+    """勾选「本会话不再询问」并批准：同技能后续调用免确认直接执行（会话级，不落盘）。"""
+    from yibao_brain.skills import Skill
+    from yibao_brain.ipc import ActionResult, RiskLevel
+
+    class DangerSkill(Skill):
+        id = "danger"; description = "危险占位"; default_risk = RiskLevel.L3_HIGH
+        def run(self, params, ctx): return ActionResult(success=True, data={"did": True})
+
+    class _SeqProvider:
+        """按 astream 调用序弹出响应（两轮 run 各两步：tool_call → 收尾文本）。"""
+
+        def __init__(self, responses):
+            self._responses = list(responses)
+            self._n = 0
+
+        async def astream(self, messages, tools=None):
+            i = min(self._n, len(self._responses) - 1)
+            self._n += 1
+            async for d in self._responses[i].astream(messages, tools):
+                yield d
+
+    provider = _SeqProvider([
+        FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="danger", params={})]),
+        FakeProvider(text="第一次完成"),
+        FakeProvider(tool_calls=[ToolCall(id="t2", skill_id="danger", params={})]),
+        FakeProvider(text="第二次完成"),
+    ])
+    # run(3) 必须等 run(1) 执行完再投——瞬时连投会被同 surface 抢占（rid=1 直接 interrupted）
+    import time as _time
+    inbox = iter([
+        {"id": 1, "type": "run", "text": "做危险的事"},
+        {"id": 2, "type": "confirm", "confirmation_id": "x", "approved": True, "remember": True},
+        "wait",
+        {"id": 3, "type": "run", "text": "再做一次危险的事"},
+    ])
+
+    def reader():
+        msg = next(inbox, None)
+        if msg == "wait":
+            _time.sleep(0.5)
+            return next(inbox, None)
+        return msg
+    out = []
+    _run_async(
+        serve_async(
+            reader,
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=provider,
+            skills_factory=lambda: _registry_with(DangerSkill()),
+        )
+    )
+    confirms = [m for m in out
+                if m["type"] == "event" and m["event"].get("kind") == "confirmation_needed"]
+    assert len(confirms) == 1  # 只有第一次弹了确认
+    oks = [m for m in out
+           if m["type"] == "event" and m["event"].get("kind") == "action_result"
+           and m["event"]["result"].get("success")]
+    assert len(oks) == 2  # 两次都执行成功（第二次免确认）
+
+
 # ---------- 协议扩展：hello / ping / permissions ----------
 
 
