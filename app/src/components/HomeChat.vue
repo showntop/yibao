@@ -34,6 +34,8 @@ type BubbleMsg = { role: "user" | "ai" | "sys"; text: string; panelLink?: boolea
 
 // state：同步给父级侧边栏团子；openPanel：关联气泡点击 → 父级切插件页；reminder：父级切回本页
 const emit = defineEmits<{ state: [AvatarState]; openPanel: []; reminder: [] }>();
+// draft：主屏 Feed 点击带过来的自包含草稿，直接转给 InputBar（它自己 watch 填入+聚焦）
+defineProps<{ draft?: string }>();
 
 const state = ref<AvatarState>("idle");
 const bubbles = ref<BubbleMsg[]>([]);
@@ -372,7 +374,7 @@ onUnmounted(() => {
     </div>
 
     <div class="input-slot">
-      <InputBar v-if="!pending" :busy="busy" :listening="state === 'listen'" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
+      <InputBar v-if="!pending" :busy="busy" :listening="state === 'listen'" :draft="draft" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
       <ConfirmDialog
         v-else
         :skill="pending.skill"

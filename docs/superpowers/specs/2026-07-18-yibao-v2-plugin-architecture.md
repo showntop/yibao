@@ -219,6 +219,15 @@ name = "sync_done"
 - **precheck 路由纠偏（C-3）**：`Skill.precheck(params) -> str|None`——返回人话原因则拦截（不执行、不弹审批），loop 两条路径在 propose 后 decide 前插入，原因作为 tool 结果回喂让模型换工具重试。比 LLM 自觉读 description 可靠，比风险审批轻。首个用户：dispatch_task 拦「短描述+一次性任务关键词」（统计/转换/整理/计算/格式化/生成文件）指路 code_exec。
 - **会话内免确认（C-4）**：确认弹窗加「本会话不再询问这个操作」勾选，批准后同技能本会话免确认：confirm 消息带 `remember` → sidecar 记入会话级集合 → `Gate.session_allowed` 命中即 AUTO（连 confirmation_needed 事件都不发）。只活内存重启失效；拒绝不记忆（防自动拒绝陷阱）。
 
+### 实装记录（主屏，2026-07-27）
+
+- **依据**：`docs/research/2026-07-27-os-feel-design.md` §4.2——大窗落地页从对话页改为「主屏」（问候 + 动态 + 常用），本轮只做主屏页与四页导航；Widget schema 协议、收件箱化、设置增强后置。
+- **Feed 存储**：`sidecar/src/yibao_brain/feed.py` FeedStore——append-only SQLite（数据目录 `feed.db`，与审计库同目录），kind ∈ task/reminder/event，meta JSON；**写失败只 print 不抛**（Feed 是增强面，不许拖垮主链路）。
+- **记录点**：插件主动事件 `_on_plugin_event` 先落 Feed 再转发壳（ev 带 `task` 键则 kind=task——agents `_wait`/`_reap_detached` 播报已带 `{id,status,label,prompt 截120}` meta）；提醒触发在 `_reminder_loop` 落 reminder。
+- **查询协议**：`{"type":"feed","limit":60}` → `{"type":"feed","items":倒序,"stats":{pending_reminders,running_tasks,done_24h}}`；stats 各自容错缺啥补 0，running_tasks 只在 agents `data.db` 已存在时读（不为统计凭空建库）。Rust reader 转发 `brain-feed` 事件 + `get_feed` 命令；前端 `brain.ts getFeedOnce`（once 与 3s 超时竞速，失败兜底空 Feed）。
+- **大窗四页化**：Home.vue 加「主屏」默认落地页（NAV 第一位），四页仍 v-show 常驻挂载。新组件 `HomeFeed.vue`：问候条（时段问候 + 日期 + stats chips，全 0 时「今天安安静静」）；动态区（kind 图标 + 两行截断 + 相对时间）；常用 Dock（`list_plugins` → 首字圆图标，点击 `panelAction("<pid>.list")` 开面板，HomePlugins 事件监听自动接管切页）；底部常驻 InputBar（submit 走 `runInput(text,"pet")` 并切对话页）。
+- **Feed 点击追问**：动态点击生成**自包含**草稿（`关于任务「label」：`——大脑看不到 Feed 内容，上下文必须前端拼好）→ Home.vue `onFeedChat` 先清空再 nextTick 设回 `chatDraft`（同一条重复点击也触发 watch）→ HomeChat 透传 → InputBar 新 `draft` prop watch 填入并聚焦。
+
 ## 9. 数据存储
 
 | 类型 | 存储 | 规则 |

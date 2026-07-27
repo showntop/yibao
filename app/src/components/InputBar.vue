@@ -1,11 +1,23 @@
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref, computed, watch } from "vue";
 
 // busy = 生成/播报中（可打断）；listening = 录音中（麦克风切声波态，点击=取消录音）
-const props = defineProps<{ busy?: boolean; listening?: boolean }>();
+// draft = 外部预填草稿（主屏 Feed 点击带上下文来）；变化即填入并聚焦
+const props = defineProps<{ busy?: boolean; listening?: boolean; draft?: string }>();
 const emit = defineEmits<{ (e: "submit", text: string): void; (e: "mic"): void; (e: "interrupt"): void }>();
 const text = ref("");
+const inputRef = ref<HTMLInputElement | null>(null);
 const canSend = computed(() => text.value.trim().length > 0);
+
+watch(
+  () => props.draft,
+  (v) => {
+    if (v) {
+      text.value = v;
+      inputRef.value?.focus();
+    }
+  },
+);
 
 function send() {
   const t = text.value.trim();
@@ -32,7 +44,7 @@ function onMain() {
 
 <template>
   <form class="bar" @submit.prevent="send">
-    <input v-model="text" placeholder="对译宝说点什么…" />
+    <input ref="inputRef" v-model="text" placeholder="对译宝说点什么…" />
     <button
       type="button"
       class="mic"

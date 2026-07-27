@@ -445,6 +445,10 @@ fn spawn_bridge(app: AppHandle, mut rx: tauri::async_runtime::Receiver<CommandEv
                                     let _ = app.emit("brain-permissions", perms.clone());
                                 }
                             }
+                            // 主屏 Feed 响应（动态列表 + 问候统计）：整体转发，前端一次性取用
+                            Some("feed") => {
+                                let _ = app.emit("brain-feed", v);
+                            }
                             _ => {}
                         },
                         Err(_) => eprintln!("[brain] 非 JSON：{line}"),
@@ -682,6 +686,15 @@ fn confirm(state: tauri::State<Brain>, confirmation_id: String, approved: bool, 
     write_to_brain(
         &state,
         serde_json::json!({ "id": 0, "type": "confirm", "confirmation_id": confirmation_id, "approved": approved, "remember": remember.unwrap_or(false) }),
+    )
+}
+
+/// 主屏 Feed 查询：大脑回 {"type":"feed","items":…,"stats":…}，经 brain-feed 事件广播。
+#[tauri::command]
+fn get_feed(state: tauri::State<Brain>, limit: Option<u32>) -> Result<(), String> {
+    write_to_brain(
+        &state,
+        serde_json::json!({ "id": 0, "type": "feed", "limit": limit.unwrap_or(60) }),
     )
 }
 
@@ -1170,6 +1183,7 @@ pub fn run() {
             confirm,
             panel_action,
             list_plugins,
+            get_feed,
             open_panel_window,
             close_panel_window,
             get_current_panel,

@@ -1,26 +1,42 @@
 <script setup lang="ts">
-// 大窗根组件（完整 APP 主界面）：左侧边栏（团子 + 对话/插件/设置导航 + 收起）+ 主区三页。
-// 三页常驻挂载（v-show 切显隐）：事件订阅不断、气泡/面板状态切页不丢。
+// 大窗根组件（完整 APP 主界面）：左侧边栏（团子 + 主屏/对话/插件/设置导航 + 收起）+ 主区四页。
+// 四页常驻挂载（v-show 切显隐）：事件订阅不断、气泡/面板状态切页不丢。
+// 主屏是默认落地页（OS 感 §4.2：解锁第一眼 = 问候 + 动态 + 常用）。
 // 与小窗互斥由 Rust 管（open/close_home_window），本组件 × 走 close_home_window。
-import { computed, ref } from "vue";
+import { computed, nextTick, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import Avatar from "./components/Avatar.vue";
+import HomeFeed from "./components/HomeFeed.vue";
 import HomeChat from "./components/HomeChat.vue";
 import HomePlugins from "./components/HomePlugins.vue";
 import SettingsView from "./components/SettingsView.vue";
 
-type Tab = "chat" | "plugins" | "settings";
+type Tab = "home" | "chat" | "plugins" | "settings";
 type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
 
-const tab = ref<Tab>("chat");
-// 两页各自的会话状态：侧边栏团子跟随「当前页」的状态（设置页沿用对话页）
+const tab = ref<Tab>("home");
+// 两页各自的会话状态：侧边栏团子跟随「当前页」的状态（主屏/设置沿用对话页）
 const chatState = ref<AvatarState>("idle");
 const panelState = ref<AvatarState>("idle");
 const railState = computed<AvatarState>(() =>
   tab.value === "plugins" ? panelState.value : chatState.value,
 );
+// 主屏 → 对话页的草稿传递（Feed 点击带上下文追问）
+const chatDraft = ref("");
+
+function onFeedChat(draft?: string) {
+  tab.value = "chat";
+  if (!draft) {
+    chatDraft.value = "";
+    return;
+  }
+  // 同一条动态重复点击也要重新填入：先清空、下一拍再设回，强制触发 InputBar 的 watch
+  chatDraft.value = "";
+  void nextTick(() => (chatDraft.value = draft));
+}
 
 const NAV: { id: Tab; label: string }[] = [
+  { id: "home", label: "主屏" },
   { id: "chat", label: "对话" },
   { id: "plugins", label: "插件" },
   { id: "settings", label: "设置" },
@@ -48,8 +64,14 @@ function close() {
           :class="{ on: tab === n.id }"
           @click="tab = n.id"
         >
+          <!-- 主屏 -->
+          <svg v-if="n.id === 'home'" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+            <polyline points="9 22 9 12 15 12 15 22" />
+          </svg>
           <!-- 对话 -->
-          <svg v-if="n.id === 'chat'" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          <svg v-else-if="n.id === 'chat'" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
           </svg>
@@ -79,10 +101,12 @@ function close() {
       </div>
     </aside>
 
-    <!-- 主区：三页常驻挂载，切页只切显隐。
-         reminder / 新面板打开 → 自动切到对应页（提醒要看见；新面板 ≈ 小窗模式浮窗弹出） -->
+    <!-- 主区：四页常驻挂载，切页只切显隐。
+         reminder / 新面板打开 → 自动切到对应页（提醒要看见；新面板 ≈ 小窗模式浮窗弹出）；
+         主屏提交/点动态 → 切对话页（draft 非空时预填输入框） -->
     <main class="main">
-      <HomeChat v-show="tab === 'chat'" @state="chatState = $event" @open-panel="tab = 'plugins'" @reminder="tab = 'chat'" />
+      <HomeFeed v-show="tab === 'home'" @chat="onFeedChat" />
+      <HomeChat v-show="tab === 'chat'" :draft="chatDraft" @state="chatState = $event" @open-panel="tab = 'plugins'" @reminder="tab = 'chat'" />
       <HomePlugins v-show="tab === 'plugins'" @state="panelState = $event" @panel="tab = 'plugins'" />
       <SettingsView v-show="tab === 'settings'" />
     </main>

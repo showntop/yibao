@@ -1,6 +1,6 @@
 // 封装与大脑 sidecar 的通信（经 Tauri Rust 桥）。
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { listen, once, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type BrainEventKind =
   | "thought"
@@ -207,4 +207,54 @@ export function openDataDir(): Promise<void> {
 /** 打开/聚焦设置大窗（home；宠物窗 header「扩充」钮与托盘「设置…」共用）。 */
 export function openHomeWindow(): Promise<void> {
   return invoke("open_home_window");
+}
+
+// ---- 主屏 Feed（OS 感 §4.2：「它在我不看的时候干了什么」）----
+
+export interface FeedItem {
+  id: number;
+  ts: number;
+  kind: "task" | "reminder" | "event";
+  text: string;
+  meta?: Record<string, unknown>;
+}
+
+export interface FeedStats {
+  pending_reminders: number;
+  running_tasks: number;
+  done_24h: number;
+}
+
+export interface FeedResponse {
+  items: FeedItem[];
+  stats: FeedStats;
+}
+
+const EMPTY_FEED: FeedResponse = {
+  items: [],
+  stats: { pending_reminders: 0, running_tasks: 0, done_24h: 0 },
+};
+
+/** 订阅主屏 Feed 响应（get_feed 查询的回包，经 Rust 转发）。 */
+export function onFeed(cb: (r: FeedResponse) => void): Promise<UnlistenFn> {
+  return listen<FeedResponse>("brain-feed", (ev) => cb(ev.payload));
+}
+
+/** 查询主屏 Feed（响应经 brain-feed 事件回来）。 */
+export function fetchFeed(limit = 60): Promise<void> {
+  return invoke("get_feed", { limit });
+}
+
+/** 一次性取 Feed：发查询并等下一条 brain-feed；大脑不在线/超时返回空（主屏照常渲染空态）。 */
+export async function getFeedOnce(limit = 60, timeoutMs = 3000): Promise<FeedResponse> {
+  const resp = new Promise<FeedResponse>((resolve) => {
+    void once<FeedResponse>("brain-feed", (ev) => resolve(ev.payload));
+  });
+  const timeout = new Promise<FeedResponse>((resolve) =>
+    setTimeout(() => resolve(EMPTY_FEED), timeoutMs),
+  );
+  try {
+    await fetchFeed(limit);
+  } catch { /* 大脑不在线：走超时兜底 */ }
+  return Promise.race([resp, timeout]);
 }
