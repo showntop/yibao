@@ -129,6 +129,8 @@ let unlistenPanelClosed: (() => void) | null = null;
 let unlistenSetup: (() => void) | null = null;
 let unlistenSetupErr: (() => void) | null = null;
 let unlistenSetupCfg: (() => void) | null = null;
+let unlistenInvoke: (() => void) | null = null;
+let unlistenInvokeSel: (() => void) | null = null;
 
 const statusText = computed(
   () => ({
@@ -251,6 +253,32 @@ async function launchPlugin(p: PluginInfo) {
 /** header「扩充」钮 → 打开大窗（完整 APP 主界面，与小窗互斥，宠物窗保持纯粹）。 */
 function openHome() {
   void openHomeWindow().catch(() => {});
+}
+
+// ---- 全局唤起（⌘⇧Y 反射键 / ⌘⇧U 划词唤起，Rust 抓完选中文字发事件）----
+const inputBarRef = ref<{ focus: () => void } | null>(null);
+const selectionCtx = ref<string | null>(null); // 划词上下文（chip 展示，发送时拼进给大脑的消息）
+const ctxPreview = computed(() => {
+  const t = (selectionCtx.value ?? "").replace(/\s+/g, " ").trim();
+  return t.length > 42 ? t.slice(0, 42) + "…" : t;
+});
+
+async function onPetInvoke() {
+  // 反射键第二段：已展开 = 收回隐藏（_toggle_）；未展开 = 展开 + 输入就绪
+  if (expanded.value) {
+    await getCurrentWindow().hide();
+    return;
+  }
+  await expand();
+  void nextTick(() => inputBarRef.value?.focus());
+}
+
+async function onPetInvokeSelection(text: string | null) {
+  await expand();
+  const t = text?.trim();
+  // 上下文截断 4000 字：够一整页文档，又不至于一条消息烧穿上下文
+  if (t) selectionCtx.value = t.length > 4000 ? t.slice(0, 4000) : t;
+  void nextTick(() => inputBarRef.value?.focus());
 }
 
 function onEvent(e: BrainEvent) {
@@ -433,8 +461,15 @@ function onPerms(p: BrainPermissions) {
 async function submit(text: string) {
   bubbles.value.push({ role: "user", text });
   state.value = "think";
+  // 划词上下文：气泡只显示用户打的字，给大脑的消息自包含拼好（大脑看不到前台选中）
+  let msg = text;
+  if (selectionCtx.value) {
+    msg = `用户在前台应用选中了一段文字：\n「${selectionCtx.value}」\n\n用户的指示：${text}`;
+    bubbles.value.push({ role: "sys", text: `📄 已附带选中文字 ${selectionCtx.value.length} 字` });
+    selectionCtx.value = null;
+  }
   try {
-    await runInput(text);
+    await runInput(msg);
   } catch (err) {
     bubbles.value.push({ role: "ai", text: "⚠️ 发送失败：" + String(err) });
     state.value = "idle";
@@ -519,6 +554,11 @@ onMounted(async () => {
     bubbles.value.push({ role: "ai", text: "⚠️ " + e.payload });
   });
   unlistenSetupCfg = await listen<string>("setup-config-needed", () => void onSetupNeeded());
+  // 全局唤起：⌘⇧Y 反射键（展开⇄隐藏）/ ⌘⇧U 划词唤起（展开 + 上下文 chip）
+  unlistenInvoke = await listen("pet-invoke", () => void onPetInvoke());
+  unlistenInvokeSel = await listen<{ text: string | null }>("pet-invoke-selection", (e) =>
+    void onPetInvokeSelection(e.payload.text),
+  );
   // 主动拉一次配置：首启引导若秒过（venv/模型已在），setup-config-needed 可能先于挂载发出而丢——靠拉取兜底
   try {
     const cfg = await invoke<{ has_key: boolean }>("get_setup_config");
@@ -534,6 +574,8 @@ onUnmounted(() => {
   unlistenSetup?.();
   unlistenSetupErr?.();
   unlistenSetupCfg?.();
+  unlistenInvoke?.();
+  unlistenInvokeSel?.();
   window.removeEventListener("keydown", onKeydown);
   if (clickTimer !== null) clearTimeout(clickTimer);
   if (bubbleTimer !== null) clearTimeout(bubbleTimer);
@@ -622,7 +664,13 @@ onUnmounted(() => {
       </div>
 
       <div v-if="view === 'chat'" class="input-slot">
-        <InputBar v-if="!pending" :busy="busy" :listening="state === 'listen'" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
+        <!-- 划词上下文 chip：⌘⇧U 抓到选中文字后等待指示，可 × 掉；发送后自消 -->
+        <div v-if="selectionCtx" class="ctx-chip">
+          <span class="ctx-ic">📄</span>
+          <span class="ctx-text" :title="selectionCtx">{{ ctxPreview }}</span>
+          <button class="ctx-x" title="去掉上下文" @click="selectionCtx = null">×</button>
+        </div>
+        <InputBar v-if="!pending" ref="inputBarRef" :busy="busy" :listening="state === 'listen'" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
         <ConfirmDialog
           v-else
           :skill="pending.skill"
@@ -697,6 +745,16 @@ onUnmounted(() => {
 .shell.exp .bubbles,
 .shell.exp .input-slot {
   animation: fade-in 0.22s var(--yb-ease) 0.06s both;
+}
+/* 输入区：chip（划词上下文）贴左坐在输入条上方 */
+.input-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ctx-chip {
+  align-self: flex-start;
+  max-width: 100%;
 }
 @keyframes fade-in {
   from {
@@ -883,6 +941,47 @@ onUnmounted(() => {
   background: var(--yb-accent-soft);
   border-color: var(--yb-accent);
   color: var(--yb-accent-deep);
+}
+/* 划词上下文 chip：淡 accent 底胶囊，贴在输入条上方 */
+.ctx-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: var(--yb-accent-soft);
+  border: 1px solid rgba(77, 144, 196, 0.25);
+  color: var(--yb-accent-deep);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.ctx-ic {
+  flex-shrink: 0;
+  font-size: 12px;
+}
+.ctx-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ctx-x {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--yb-accent-deep);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+.ctx-x:hover {
+  background: rgba(77, 144, 196, 0.18);
 }
 /* ---- 插件启动器 ---- */
 .pl-head {

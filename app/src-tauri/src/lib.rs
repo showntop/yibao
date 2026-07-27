@@ -1006,26 +1006,83 @@ fn spawn_click_through(handle: tauri::AppHandle) {
     });
 }
 
+// ---- 全局唤起（OS 感 §5：一个反射键 + 划词上下文唤起）----
+// ⌘⇧Y 反射键：大窗开着=收大窗；否则宠物窗 隐藏→唤起 / 收起→展开就绪 / 展开→隐藏（展开态由前端判，Rust 只发事件）。
+// ⌘⇧U 划词唤起：抓前台应用选中文字（剪贴板接力，用后还原）→ 宠物窗展开 + 上下文 chip。
+fn pb_paste() -> Option<String> {
+    let out = std::process::Command::new("pbpaste").output().ok()?;
+    String::from_utf8(out.stdout).ok()
+}
+
+fn pb_copy(text: &str) {
+    use std::io::Write;
+    if let Ok(mut child) = std::process::Command::new("pbcopy")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+    {
+        if let Some(mut s) = child.stdin.take() {
+            let _ = s.write_all(text.as_bytes());
+        }
+        let _ = child.wait();
+    }
+}
+
+/** 读前台应用选中文字：暂存剪贴板 → 模拟 ⌘C → 读回 → 还原。
+ *  已知限制：pbpaste/pbcopy 只保真文本——剪贴板里是图片等富格式且被覆盖时还原不回原类型。
+ *  无选中（剪贴板未变）或权限缺失（⌘C 静默失败）→ None，调用方退化为普通唤起。 */
+fn grab_selected_text() -> Option<String> {
+    let old = pb_paste();
+    let _ = std::process::Command::new("osascript")
+        .args(["-e", r#"tell application "System Events" to keystroke "c" using command down"#])
+        .output();
+    std::thread::sleep(std::time::Duration::from_millis(180));
+    let new = pb_paste();
+    if new == old {
+        return None; // 剪贴板没变 = 没有选中（或前台不可拷贝）
+    }
+    match &old {
+        Some(o) => pb_copy(o),
+        None => pb_copy(""),
+    }
+    new.filter(|t| !t.trim().is_empty())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let shortcuts = tauri_plugin_global_shortcut::Builder::new()
-        .with_handler(|app, _shortcut, event| {
-            if event.state == ShortcutState::Pressed {
-                // 大窗开着：热键 = 收起大窗回小窗（互斥）；否则显隐宠物窗
-                if let Some(home) = app.get_webview_window("home") {
-                    if home.is_visible().unwrap_or(false) {
-                        let _ = home.hide();
-                        restore_after_home(app);
-                        return;
+        .with_handler(|app, shortcut, event| {
+            if event.state != ShortcutState::Pressed {
+                return;
+            }
+            // 划词唤起：抓选中文字（osascript+剪贴板接力 ~200ms，挪线程别卡热键线程）→ 展开带上下文
+            if shortcut == &tauri_plugin_global_shortcut::Shortcut::new(
+                Some(tauri_plugin_global_shortcut::Modifiers::SUPER | tauri_plugin_global_shortcut::Modifiers::SHIFT),
+                tauri_plugin_global_shortcut::Code::KeyU,
+            ) {
+                let handle = app.clone();
+                std::thread::spawn(move || {
+                    let text = grab_selected_text();
+                    if let Some(win) = handle.get_webview_window("main") {
+                        let _ = win.show().and_then(|_| win.set_focus());
                     }
+                    let _ = handle.emit_to("main", "pet-invoke-selection", serde_json::json!({ "text": text }));
+                });
+                return;
+            }
+            // 反射键：大窗开着 = 收起大窗回小窗（互斥）；否则唤起/收起宠物窗
+            if let Some(home) = app.get_webview_window("home") {
+                if home.is_visible().unwrap_or(false) {
+                    let _ = home.hide();
+                    restore_after_home(app);
+                    return;
                 }
-                if let Some(win) = app.get_webview_window("main") {
-                    let _ = if win.is_visible().unwrap_or(false) {
-                        win.hide()
-                    } else {
-                        win.show().and_then(|_| win.set_focus())
-                    };
+            }
+            if let Some(win) = app.get_webview_window("main") {
+                if !win.is_visible().unwrap_or(false) {
+                    let _ = win.show().and_then(|_| win.set_focus());
                 }
+                // 展开态只有前端知道：统一发 pet-invoke，由前端决定 展开+聚焦 还是 隐藏
+                let _ = app.emit_to("main", "pet-invoke", ());
             }
         })
         .build();
@@ -1110,10 +1167,15 @@ pub fn run() {
                 ));
             }
 
-            // 注册全局热键：Super+Shift+Y 显隐主窗（macOS 上 Super=Cmd）
+            // 注册全局热键：⌘⇧Y 反射键（唤起/收起）；⌘⇧U 划词唤起（带选中文字上下文）
             #[cfg(desktop)]
-            if let Err(e) = app.global_shortcut().register("Super+Shift+Y") {
-                eprintln!("[yibao] 注册热键失败：{e}");
+            {
+                if let Err(e) = app.global_shortcut().register("Super+Shift+Y") {
+                    eprintln!("[yibao] 注册热键失败：{e}");
+                }
+                if let Err(e) = app.global_shortcut().register("Super+Shift+U") {
+                    eprintln!("[yibao] 注册热键失败：{e}");
+                }
             }
 
             // 系统托盘：关窗隐藏后靠它重新显示/退出。左键点图标切换显隐，右键菜单。

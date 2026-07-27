@@ -40,6 +40,9 @@ function onMain() {
   if (stopping.value) emit("interrupt");
   else send();
 }
+
+// 全局唤起等外部焦点请求（反射键唤起后输入就绪）
+defineExpose({ focus: () => inputRef.value?.focus() });
 </script>
 
 <template>
