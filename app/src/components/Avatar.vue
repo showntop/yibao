@@ -3,11 +3,12 @@ import { ref, watch, onUnmounted } from "vue";
 import { startDrag } from "../lib/window";
 
 // 译宝 · 天青鹅蛋角色：立体光影 + 小手 + 天线（兼状态灯）。
-// 七态：idle/listen/think/work/say + 短暂 valence（success/error）。
+// 七态：idle/listen/think/work/say + 短暂 valence（success/error）；
+// 环境态：notify（有事找你：招手+「!」徽标）/ drowsy（发呆：垂眼+Zz）。
 // size：常态球 64 / 聊天头部 44。保留 click/longpress/drag 手势状态机。
 const props = withDefaults(
   defineProps<{
-    state: "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
+    state: "idle" | "listen" | "think" | "work" | "say" | "success" | "error" | "notify" | "drowsy";
     size?: number;
   }>(),
   { size: 64 },
@@ -144,9 +145,11 @@ onUnmounted(() => { if (blinkTimer) clearTimeout(blinkTimer); });
         </g>
         <!-- 左侧边缘反光 -->
         <path d="M40 32 C37.6 47 37.8 73 44 94" fill="none" stroke="#ffffff" stroke-opacity="0.9" stroke-width="2.2" filter="url(#yb-b1)" />
-        <!-- 小手 -->
-        <ellipse cx="33" cy="64" rx="7.5" ry="11.5" fill="url(#yb-body)" transform="rotate(-14 33 64)" />
-        <ellipse cx="34" cy="60" rx="3" ry="5" fill="#ffffff" opacity="0.5" transform="rotate(-14 34 60)" />
+        <!-- 小手（左手包组：notify 态的招手动画挂点） -->
+        <g class="hand-l">
+          <ellipse cx="33" cy="64" rx="7.5" ry="11.5" fill="url(#yb-body)" transform="rotate(-14 33 64)" />
+          <ellipse cx="34" cy="60" rx="3" ry="5" fill="#ffffff" opacity="0.5" transform="rotate(-14 34 60)" />
+        </g>
         <ellipse cx="87" cy="64" rx="7.5" ry="11.5" fill="url(#yb-body)" transform="rotate(14 87 64)" />
         <ellipse cx="88" cy="60" rx="3" ry="5" fill="var(--yb-body-core-shadow)" opacity="0.32" transform="rotate(14 88 60)" />
         <!-- 领巾（天青） -->
@@ -211,6 +214,24 @@ onUnmounted(() => { if (blinkTimer) clearTimeout(blinkTimer); });
           <path d="M65 60.5 Q69 57.5 73 60.5" fill="none" :stroke="INK" stroke-width="2.4" stroke-linecap="round" />
           <path d="M52 67 Q60 75 68 67" fill="none" :stroke="INK" stroke-width="2.6" stroke-linecap="round" />
         </g>
+        <!-- notify（有事找你：期待脸——睁大眼+眉毛上扬+笑开一点） -->
+        <g v-else-if="state === 'notify'">
+          <path d="M45 53 l6.4 -2.6" fill="none" :stroke="INK" stroke-width="1.8" stroke-linecap="round" />
+          <path d="M75 53 l-6.4 -2.6" fill="none" :stroke="INK" stroke-width="1.8" stroke-linecap="round" />
+          <ellipse cx="51" cy="60" rx="3.4" ry="4.9" :fill="INK" />
+          <ellipse cx="69" cy="60" rx="3.4" ry="4.9" :fill="INK" />
+          <circle cx="52.3" cy="58.2" r="1.1" fill="#fff" />
+          <circle cx="70.3" cy="58.2" r="1.1" fill="#fff" />
+          <path d="M54.5 68.5 Q60 73.5 65.5 68.5" fill="none" :stroke="INK" stroke-width="2.4" stroke-linecap="round" />
+        </g>
+        <!-- drowsy（发呆：眼皮半垂——眼压扁+眼睑线，嘴放松） -->
+        <g v-else-if="state === 'drowsy'">
+          <path d="M47.2 57.6 Q51 55.8 54.8 57.6" fill="none" :stroke="INK" stroke-width="1.6" stroke-linecap="round" />
+          <path d="M65.2 57.6 Q69 55.8 72.8 57.6" fill="none" :stroke="INK" stroke-width="1.6" stroke-linecap="round" />
+          <ellipse cx="51" cy="61" rx="3.2" ry="2.1" :fill="INK" />
+          <ellipse cx="69" cy="61" rx="3.2" ry="2.1" :fill="INK" />
+          <path d="M56.5 69.5 Q60 71 63.5 69.5" fill="none" :stroke="INK" stroke-width="2.2" stroke-linecap="round" />
+        </g>
         <!-- error -->
         <g v-else>
           <path d="M47 61.5 Q51 64 55 61.5" fill="none" :stroke="INK" stroke-width="2.4" stroke-linecap="round" />
@@ -240,6 +261,19 @@ onUnmounted(() => { if (blinkTimer) clearTimeout(blinkTimer); });
       <path v-if="state === 'success'" class="spark" d="M86 26 l1.6 4.4 l4.4 1.6 l-4.4 1.6 l-1.6 4.4 l-1.6 -4.4 l-4.4 -1.6 l4.4 -1.6 Z" fill="#f2a03c" />
       <!-- error 汗滴 -->
       <path v-if="state === 'error'" d="M80 34 q2.6 3.4 0 5 q-2.6 -1.6 0 -5" fill="#6a9cc4" />
+
+      <!-- notify「!」徽标：右上角小圆，入场 pop 一次 -->
+      <g v-if="state === 'notify'" class="attn-badge">
+        <circle cx="92" cy="24" r="8.5" fill="var(--dot)" />
+        <circle cx="92" cy="24" r="8.5" fill="none" stroke="#ffffff" stroke-opacity="0.7" stroke-width="1.2" />
+        <path d="M92 19.5 v5.6" stroke="#fff" stroke-width="2.4" stroke-linecap="round" />
+        <circle cx="92" cy="28.4" r="1.4" fill="#fff" />
+      </g>
+      <!-- drowsy 飘 Zz -->
+      <g v-if="state === 'drowsy'" class="zzz">
+        <text x="82" y="40">z</text>
+        <text x="89" y="32">z</text>
+      </g>
 
       <!-- 声波弧（listen 左 / say 右） -->
       <g v-if="state === 'listen'" class="waves">
@@ -283,6 +317,8 @@ onUnmounted(() => { if (blinkTimer) clearTimeout(blinkTimer); });
 .av.say { --dot: var(--yb-state-say); }
 .av.success { --dot: var(--yb-state-success); }
 .av.error { --dot: var(--yb-state-error); }
+.av.notify { --dot: var(--yb-state-notify); }
+.av.drowsy { --dot: var(--yb-state-idle); }
 
 /* ---- 动画基础 ---- */
 .body-grp {
@@ -308,6 +344,9 @@ onUnmounted(() => { if (blinkTimer) clearTimeout(blinkTimer); });
 }
 
 /* 按住反馈：整体微放大，提示继续按住 = 语音 */
+.av:hover .yb {
+  transform: translateY(-3px);
+}
 .av.holding .yb {
   transform: scale(1.06);
   transition: transform 0.45s ease;
@@ -334,6 +373,42 @@ onUnmounted(() => { if (blinkTimer) clearTimeout(blinkTimer); });
 .av.say .dot-grp { animation: glow 1s infinite alternate ease-in-out; }
 .av.success .spark { animation: pop 1.2s ease-out infinite; }
 .av.error .dot-grp { animation: shake 0.5s infinite ease-in-out; }
+
+/* notify：灯快脉冲 + 左手招手 + 徽标入场 pop 一次 */
+.av.notify .dot-grp { animation: pulse 1s infinite ease-in-out; }
+.hand-l { transform-box: fill-box; transform-origin: 85% 90%; }
+.av.notify .hand-l { animation: wave 1s infinite ease-in-out; }
+.attn-badge {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: badge-in 0.35s var(--yb-ease) both;
+}
+
+/* drowsy：全体减速——呼吸/光晕/灯都拉长，Zz 循环飘出 */
+.av.drowsy .body-grp { animation-duration: 6.5s; }
+.av.drowsy .aura { animation-duration: 9s; }
+.av.drowsy .dot-grp { animation: dim 6s infinite ease-in-out; }
+.zzz text {
+  font: 700 9px var(--yb-font);
+  fill: var(--yb-body-stem);
+  opacity: 0;
+}
+.av.drowsy .zzz text { animation: zfloat 3.2s infinite ease-in-out; }
+.av.drowsy .zzz text:nth-child(2) { animation-delay: 1.6s; font-size: 6.5px; }
+
+@keyframes wave {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(-18deg); }
+}
+@keyframes badge-in {
+  from { transform: scale(0); }
+  to { transform: scale(1); }
+}
+@keyframes zfloat {
+  0% { opacity: 0; transform: translate(0, 4px); }
+  30% { opacity: 0.9; }
+  100% { opacity: 0; transform: translate(6px, -10px); }
+}
 
 /* listen / say 声波渐次闪烁 */
 .av.listen .wave,
@@ -372,6 +447,6 @@ onUnmounted(() => { if (blinkTimer) clearTimeout(blinkTimer); });
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .body-grp, .dot-grp, .ring, .spark, .wave { animation: none !important; }
+  .body-grp, .dot-grp, .ring, .spark, .wave, .hand-l, .attn-badge, .zzz text { animation: none !important; }
 }
 </style>

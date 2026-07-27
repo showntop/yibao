@@ -30,10 +30,20 @@ import { resetWindowSize, openPanel, setInteractiveFull, setBubbleOn } from "./l
 import { SUGGESTIONS } from "./lib/suggestions";
 import { procLabel, procSkip, procResultSuffix } from "./lib/proc";
 
-type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
+type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error" | "notify" | "drowsy";
 type BubbleMsg = { role: "user" | "ai" | "sys"; text: string };
 
 const state = ref<AvatarState>("idle");
+// 环境态原料：attentionNeeded=有事找你（提醒/收起时的播报，展开即消）；drowsy=发呆（连续纯待命超时）
+const attentionNeeded = ref(false);
+const drowsy = ref(false);
+/** 展示态：运行态优先；idle 时按 有事 > 发呆 > 普通 推导（发呆只在收起态露脸） */
+const petState = computed<AvatarState>(() => {
+  if (state.value !== "idle") return state.value;
+  if (attentionNeeded.value) return "notify";
+  if (!expanded.value && drowsy.value) return "drowsy";
+  return "idle";
+});
 const bubbles = ref<BubbleMsg[]>([]);
 const streamingIdx = ref<number | null>(null); // 正在接收 chunk 的 bubble 下标
 const pending = ref<{ id: string; skill: string; desc: string } | null>(null);
@@ -63,6 +73,7 @@ function onSetupSaved() {
 const bubbleOn = ref(false);
 const bubbleText = ref("");
 const bubbleBusy = ref(false); // 走马灯滚动中（自动收起暂停，滚完再收）
+const bubbleSticky = ref(false); // 常驻气泡（有事找你）：不自动收起，点团子展开才走
 let bubbleTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingBubbleClose = false; // 滚动中收到收起请求：挂起，等 settled
 
@@ -71,17 +82,26 @@ function openBubble() {
   if (expanded.value || bubbleOn.value) return;
   bubbleOn.value = true;
 }
+/** 常驻轻提示气泡（reminder 等「有事找你」）：文本一步到位，不排任何自动收起。 */
+function openBubbleSticky(text: string) {
+  if (expanded.value) return;
+  bubbleSticky.value = true;
+  bubbleOn.value = true;
+  bubbleText.value = text;
+}
 /** 立刻收起气泡（清计时）。 */
 function closeBubbleNow() {
   if (bubbleTimer) { clearTimeout(bubbleTimer); bubbleTimer = null; }
   pendingBubbleClose = false;
   bubbleBusy.value = false;
+  bubbleSticky.value = false;
   if (!bubbleOn.value) return;
   bubbleOn.value = false;
   bubbleText.value = "";
 }
-/** 延迟收起（读完再看一会儿）；走马灯滚动中先挂起，滚完（settled）再留 1.6s 收尾。 */
+/** 延迟收起（读完再看一会儿）；常驻气泡不收；走马灯滚动中先挂起，滚完（settled）再留 1.6s 收尾。 */
 function scheduleBubbleClose(ms: number) {
+  if (bubbleSticky.value) return;
   if (bubbleTimer) clearTimeout(bubbleTimer);
   if (bubbleBusy.value) {
     pendingBubbleClose = true;
@@ -113,8 +133,8 @@ let unlistenSetupCfg: (() => void) | null = null;
 const statusText = computed(
   () => ({
     idle: "待命中", listen: "聆听中", think: "思考中…", work: "操作中…", say: "说话中…",
-    success: "完成", error: "出错了",
-  }[state.value]),
+    success: "完成", error: "出错了", notify: "有事找你", drowsy: "发呆中",
+  }[petState.value]),
 );
 // success/error 是短暂 valence（不可打断），不算 busy
 const busy = computed(() =>
@@ -144,10 +164,34 @@ watch(showTyping, () => scrollBubbles(true));
 async function expand() {
   // 固定窗口方案：不缩放。先收气泡（仅切内容），再切聊天视图
   closeBubbleNow();
+  attentionNeeded.value = false; // 用户来看了 = 事已知，notify 态消
   expanded.value = true;
 }
 async function collapse() {
   expanded.value = false;
+}
+
+// ---- 发呆（drowsy）：连续 5 分钟纯待命则入睡相；任何运行态变化/碰团子即醒并重计时 ----
+let drowsyTimer: ReturnType<typeof setTimeout> | null = null;
+function armDrowsy() {
+  if (drowsyTimer) clearTimeout(drowsyTimer);
+  drowsyTimer = setTimeout(() => { drowsy.value = true; }, 5 * 60_000);
+}
+watch(
+  state,
+  (s) => {
+    if (s === "idle") armDrowsy();
+    else {
+      if (drowsyTimer) { clearTimeout(drowsyTimer); drowsyTimer = null; }
+      drowsy.value = false;
+    }
+  },
+  { immediate: true },
+);
+function onPetHover() {
+  if (state.value !== "idle") return;
+  drowsy.value = false;
+  armDrowsy();
 }
 
 // ---- 插件启动器（双击团子）----
@@ -251,8 +295,9 @@ function onEvent(e: BrainEvent) {
       } else {
         bubbles.value[streamingIdx.value].text += e.text ?? "";
       }
-      // 收起态：撑出气泡，镜像流式文本（打字机效果）
+      // 收起态：撑出气泡，镜像流式文本（打字机效果）；新回复接管气泡，常驻提示让位
       if (!expanded.value) {
+        bubbleSticky.value = false;
         openBubble();
         bubbleText.value = bubbles.value[streamingIdx.value].text;
       }
@@ -270,6 +315,7 @@ function onEvent(e: BrainEvent) {
       if (state.value !== "say") state.value = "idle";
       // 收起态：兜底显示完整文本；若无语音（非 say），读完即收
       if (!expanded.value) {
+        bubbleSticky.value = false;
         openBubble();
         bubbleText.value = full;
         if (state.value !== "say") scheduleBubbleClose(2200);
@@ -291,12 +337,16 @@ function onEvent(e: BrainEvent) {
       if (bubbleOn.value && !expanded.value) scheduleBubbleClose(1600); // 说完，留 1.6s 读完再收
       break;
     case "notice":
-      // 轻提示（插件展开等，§12-2 要知情）：居中淡色小字，不弹窗不打断
+      // 轻提示（插件展开等，§12-2 要知情）：居中淡色小字，不弹窗不打断；
+      // 收起态看不到气泡流 → 标「有事找你」，点团子即见
       bubbles.value.push({ role: "sys", text: e.text ?? "" });
+      if (!expanded.value) attentionNeeded.value = true;
       break;
     case "reminder": {
-      // 主动提醒：宠物可能收起/隐藏 → 亮窗 + 展开，确保被看见（不抢焦点）
-      bubbles.value.push({ role: "ai", text: "⏰ " + (e.text ?? "到点了") });
+      // 主动提醒：轻提示而非弹窗——亮窗（若隐藏）+ notify 态 + 常驻气泡，等用户点团子来看；
+      // 确认闸门（confirmation_needed）不在此列，仍是强制展开
+      const text = "⏰ " + (e.text ?? "到点了");
+      bubbles.value.push({ role: "ai", text });
       void (async () => {
         try {
           // 大小窗互斥：大窗开着时提醒由大窗呈现，别把宠物窗再弹出来
@@ -304,7 +354,10 @@ function onEvent(e: BrainEvent) {
           if (home && (await home.isVisible())) return;
           const win = getCurrentWindow();
           if (!(await win.isVisible())) await win.show();
-          if (!expanded.value) await expand();
+          if (!expanded.value) {
+            attentionNeeded.value = true;
+            openBubbleSticky(text);
+          }
         } catch { /* 亮窗失败也至少留了气泡 */ }
       })();
       break;
@@ -485,6 +538,7 @@ onUnmounted(() => {
   if (clickTimer !== null) clearTimeout(clickTimer);
   if (bubbleTimer !== null) clearTimeout(bubbleTimer);
   if (valenceTimer !== null) clearTimeout(valenceTimer);
+  if (drowsyTimer !== null) clearTimeout(drowsyTimer);
 });
 </script>
 
@@ -501,18 +555,18 @@ onUnmounted(() => {
           @settled="onBubbleSettled"
         />
       </div>
-      <div class="pet-wrap">
-        <Avatar class="pet" :state="state" :size="88" @click="onPetClick" @longpress="onMicContinuous" />
+      <div class="pet-wrap" @pointerenter="onPetHover">
+        <Avatar class="pet" :state="petState" :size="88" @click="onPetClick" @longpress="onMicContinuous" />
       </div>
     </template>
 
     <!-- 对话：header（头像+名称+状态+收起，一体化贴边）/ 内容区（权限引导/气泡流/输入条） -->
     <template v-else>
       <header class="chat-header flip" data-tauri-drag-region>
-        <Avatar :state="state" :size="38" @click="collapse" />
+        <Avatar :state="petState" :size="38" @click="collapse" />
         <div class="meta" data-tauri-drag-region>
           <span class="name">译宝</span>
-          <span class="status" :class="state"><i class="dot" />{{ statusText }}</span>
+          <span class="status" :class="petState"><i class="dot" />{{ statusText }}</span>
         </div>
         <button class="collapse-btn" title="收起" @click="collapse">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
@@ -551,7 +605,7 @@ onUnmounted(() => {
 
       <div v-else class="bubbles" ref="bubblesRef">
         <div v-if="!bubbles.length && !showTyping" class="empty-hint">
-          <Avatar :state="state" :size="56" />
+          <Avatar :state="petState" :size="56" />
           <p>叫我做什么都行～</p>
           <div class="chips">
             <button v-for="c in suggestions" :key="c" class="chip" @click="submit(c)">{{ c }}</button>
@@ -734,6 +788,14 @@ onUnmounted(() => {
   --dot: var(--yb-state-error);
   background: var(--yb-danger-soft);
   color: var(--yb-danger);
+}
+.status.notify {
+  --dot: var(--yb-state-notify);
+  background: rgba(238, 95, 143, 0.12);
+  color: #d13d72;
+}
+.status.drowsy {
+  --dot: var(--yb-state-idle);
 }
 /* 收起：幽灵圆钮 + minus（macOS 最小化语义），hover 才显底；绝对定位钉在 header 最左 */
 .collapse-btn {

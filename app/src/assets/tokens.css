@@ -52,7 +52,7 @@
   --yb-body-blush: #ffb89a;
   --yb-body-stem: #6a7c92;
 
-  /* 天线状态灯（七态） */
+  /* 天线状态灯（七态 + 环境态 notify） */
   --yb-state-idle: #aab8c8;
   --yb-state-listen: #2fb0b5;
   --yb-state-think: #8e7cf0;
@@ -60,6 +60,7 @@
   --yb-state-say: #58b368;
   --yb-state-success: #3e8e5a;
   --yb-state-error: #e5484d;
+  --yb-state-notify: #ee5f8f;
 
   /* 圆角梯度 */
   --yb-radius-sm: 10px;

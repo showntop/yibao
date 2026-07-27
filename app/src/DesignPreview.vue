@@ -5,7 +5,7 @@ import Bubble from "./components/Bubble.vue";
 import InputBar from "./components/InputBar.vue";
 import SchemaPanel from "./components/SchemaPanel.vue";
 
-const states = ["idle", "listen", "think", "work", "say", "success", "error"] as const;
+const states = ["idle", "listen", "think", "work", "say", "success", "error", "notify", "drowsy"] as const;
 const stateLabel: Record<string, string> = {
   idle: "待机",
   listen: "聆听",
@@ -14,6 +14,8 @@ const stateLabel: Record<string, string> = {
   say: "说话",
   success: "成功",
   error: "出错",
+  notify: "有事找你",
+  drowsy: "发呆",
 };
 
 const chat: Array<{ role: "user" | "ai"; text: string }> = [
@@ -65,7 +67,7 @@ const boardData = {
     <h1 class="page-title">译宝 UI 预览 · 天青</h1>
 
     <section class="block">
-      <h2>团子 · 七状态</h2>
+      <h2>团子 · 状态</h2>
       <div class="avatar-row">
         <div v-for="s in states" :key="s" class="avatar-cell">
           <Avatar :state="s" :size="88" />

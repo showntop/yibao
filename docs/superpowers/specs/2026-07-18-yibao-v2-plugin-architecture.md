@@ -252,6 +252,14 @@ name = "sync_done"
 - Rust 转发 `brain-mem-list`/`brain-mem-deleted`/`brain-settings` + 四个命令；brain.ts `getMemListOnce`/`memDelete`（listen 过滤 id，超时兜底）/`getSettingsOnce`/`setSettings`。
 - 测试 `test_mem_settings.py` 7 个（空列表/分组/删除往返/坏 id/默认值/持久化+未知键拦截/坏文件回默认）；全量 481 passed。
 
+### 实装记录（桌宠环境态，2026-07-27）
+
+- **依据**：OS 感 §4.1——桌宠 = Home 键 + 状态灯；缺口在「运行态以下」的环境语义：有事找你、发呆。纯前端实装（宠物壳），sidecar 零改动。
+- **Avatar 加两态**（`Avatar.vue`）：`notify`（期待脸：睁大眼+眉毛上扬+笑开一点，左手招手动画，天线灯玫红脉冲 `#ee5f8f`，右上「!」徽标入场 pop 一次）；`drowsy`（发呆：眼压扁+眼睑线，呼吸/光晕/灯全部减速，Zz 循环飘出）。tokens.css 加 `--yb-state-notify`。悬停团子轻微上浮（生命感）。DesignPreview 九态齐走查。
+- **状态推导**（`App.vue`）：`petState = computed`——运行态优先；idle 时 `attentionNeeded` → notify，收起态 + 发呆超时 → drowsy。`attentionNeeded` 置位：reminder 事件、收起态收到 notice（任务播报等）；展开即清（用户来看了 = 事已知）。`drowsy`：watch state 进 idle 起 5 分钟计时（immediate 兜挂载态），任何非 idle / 悬停团子重置。
+- **reminder 轻提示化**（反模式「弹窗轰炸」在小窗侧的收口）：不再强制展开整个对话窗——窗口隐藏则照常亮窗，然后 notify 态 + **常驻说话气泡**（sticky：不排任何自动收起，语音播报流程在 sticky 时同样不排收起；新回复流接管气泡时 sticky 让位），点团子展开才收。高风险确认闸门（confirmation_needed）保持强制展开，不在轻量化范围。
+- 无 sidecar 改动故无新 Python 测试；npm run build（vue-tsc + vite）通过。
+
 ## 9. 数据存储
 
 | 类型 | 存储 | 规则 |
