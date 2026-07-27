@@ -4,7 +4,9 @@
 （可控完成的假进程），daemon 线程的落库与 emit_event 播报走真实路径。
 """
 import json
+import os
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -88,6 +90,8 @@ def _wait_for(cond, timeout=2.0):
 class _FakeProc:
     """可控完成的假 Popen：finish(code) 前 wait 一直阻塞；terminate/kill 记录调用并结束。"""
 
+    pid = 12345  # 假 pid：落库断言用（对账路径别拿它探活）
+
     def __init__(self):
         self.returncode = None
         self.terminated = False
@@ -121,8 +125,8 @@ class _PopenFactory:
         self.procs: list[_FakeProc] = []
         self.log_text = "hello result"
 
-    def __call__(self, argv, cwd=None, stdout=None, stderr=None, text=None):
-        self.calls.append({"argv": argv, "cwd": cwd})
+    def __call__(self, argv, cwd=None, stdin=None, stdout=None, stderr=None, text=None):
+        self.calls.append({"argv": argv, "cwd": cwd, "stdin": stdin})
         if stdout is not None:
             stdout.write(self.log_text)
             stdout.flush()
@@ -173,13 +177,43 @@ def test_api_whitelist_and_panel_schema(env):
 # ---------- 适配表（argv 构造 + 摘要解析）----------
 
 
-def test_adapters_argv(env):
+def test_build_argv_claude_seatbelt(env, tmp_path):
+    """claude 套 Seatbelt：sandbox-exec -f policy + 免权限参数；policy 落盘可审计。"""
     reg, _, _ = env
     g = _mod_globals(reg)
-    assert g["_AGENTS"]["claude"]["argv"]("/fake/bin/claude", "干活") == [
-        "/fake/bin/claude", "-p", "干活", "--output-format", "json"]
-    assert g["_AGENTS"]["codex"]["argv"]("/fake/bin/codex", "干活") == [
-        "/fake/bin/codex", "exec", "干活", "--json"]
+    logs = str(tmp_path / "logs")
+    os.makedirs(logs)
+    argv, err = g["_build_argv"]("claude", "/fake/bin/claude", "干活",
+                                 str(tmp_path), logs, "t123")
+    assert err is None
+    policy_path = os.path.join(logs, "t123.sb")
+    assert argv == ["/usr/sbin/sandbox-exec", "-f", policy_path, "/fake/bin/claude",
+                    "-p", "干活", "--dangerously-skip-permissions", "--output-format", "json"] \
+        or argv[0].endswith("sandbox-exec")  # which 路径随环境，关键看结构
+    assert argv[2] == policy_path and argv[3] == "/fake/bin/claude"
+    policy = Path(policy_path).read_text(encoding="utf-8")
+    assert "(deny default)" in policy and "(allow network-outbound)" in policy  # claude 要调 API
+    assert os.path.realpath(str(tmp_path)) in policy  # 写根含 cwd
+    assert argv[argv.index("--dangerously-skip-permissions")]
+
+
+def test_build_argv_claude_needs_macos(env, monkeypatch, tmp_path):
+    """没有 sandbox-exec（非 macOS）→ 人话报错，不放行裸跑。"""
+    reg, _, _ = env
+    g = _mod_globals(reg)
+    monkeypatch.setattr(shutil, "which", lambda b: None if b == "sandbox-exec" else f"/fake/bin/{b}")
+    argv, err = g["_build_argv"]("claude", "/fake/bin/claude", "干活", str(tmp_path), str(tmp_path), "t1")
+    assert argv is None and "沙箱" in err
+
+
+def test_build_argv_codex_builtin_sandbox(env, tmp_path):
+    """codex 用内建 workspace-write 沙箱，无需外套 Seatbelt。"""
+    reg, _, _ = env
+    g = _mod_globals(reg)
+    argv, err = g["_build_argv"]("codex", "/fake/bin/codex", "干活", str(tmp_path), str(tmp_path), "t1")
+    assert err is None
+    assert argv == ["/fake/bin/codex", "exec", "--sandbox", "workspace-write",
+                    "--skip-git-repo-check", "干活", "--json"]
 
 
 def test_adapter_summaries(env):
@@ -217,15 +251,21 @@ def test_dispatch_full_chain(env, fake_popen, tmp_path):
     assert r.success
     task_id = r.data["task_id"]
     assert "已派给 claude" in r.data["human"] and task_id in r.data["human"]
-    # argv / cwd / 日志落插件数据目录
+    # argv / cwd / 日志落插件数据目录；claude 走 Seatbelt（policy 落盘可审计）
     call = fake_popen.calls[0]
-    assert call["argv"] == ["/fake/bin/claude", "-p", "整理 README", "--output-format", "json"]
-    assert call["cwd"] == str(tmp_path)
+    argv = call["argv"]
+    assert argv[0].endswith("sandbox-exec") and argv[1] == "-f"
+    assert argv[3:] == ["/fake/bin/claude", "-p", "整理 README",
+                        "--dangerously-skip-permissions", "--output-format", "json"]
+    assert Path(argv[2]).is_file(), "policy.sb 未落盘"
+    assert call["cwd"] == os.path.realpath(str(tmp_path))
+    assert call["stdin"] is subprocess.DEVNULL  # claude/codex 都会读 stdin，必须关掉
     row = ctx.db.query("tasks", where={"id": task_id})[0]
     log_path = Path(row["log_path"])
     assert log_path.is_file() and log_path.parent.name == "logs" and "agents" in str(log_path)
-    # dispatch 立即返回：进程未结束时库里是 running 行
+    # dispatch 立即返回：进程未结束时库里是 running 行（pid 落库供重启后对账）
     assert row["status"] == "running" and row["exit_code"] == -1 and row["created_at"] > 0
+    assert row["pid"] == 12345
     assert task_id in _mod_globals(reg)["_PROCS"]
     # 进程完成 → daemon 线程落库 done + emit_event 播报（摘要走 claude result 解析）
     fake_popen.procs[0].finish(0)
@@ -242,7 +282,9 @@ def test_dispatch_codex_argv(env, fake_popen, tmp_path):
     reg, _, _ = env
     r = _run(reg, "agents.dispatch_task", {"agent": "codex", "prompt": "查日志", "cwd": str(tmp_path)})
     assert r.success
-    assert fake_popen.calls[0]["argv"] == ["/fake/bin/codex", "exec", "查日志", "--json"]
+    assert fake_popen.calls[0]["argv"] == [
+        "/fake/bin/codex", "exec", "--sandbox", "workspace-write",
+        "--skip-git-repo-check", "查日志", "--json"]
     fake_popen.procs[0].finish(0)  # 收尾，别留挂着 daemon 线程的假进程
 
 
@@ -270,8 +312,22 @@ def test_dispatch_rejects_unknown_agent(env, tmp_path):
 def test_dispatch_rejects_missing_binary(env, monkeypatch, tmp_path):
     monkeypatch.setattr(shutil, "which", lambda b: None)
     reg, _, _ = env
+    monkeypatch.setitem(_mod_globals(reg), "_CLI_FALLBACK_DIRS", ())  # 隔离真机上的 CLI 安装
     r = _run(reg, "agents.dispatch_task", {"agent": "claude", "prompt": "P", "cwd": str(tmp_path)})
     assert not r.success and "未安装或未登录" in r.error
+
+
+def test_find_cli_fallback_dirs(env, monkeypatch, tmp_path):
+    """PATH 找不到时补查 fallback 目录（GUI spawn 的大脑 PATH 很薄）。"""
+    reg, _, _ = env
+    g = _mod_globals(reg)
+    monkeypatch.setattr(shutil, "which", lambda b: None)
+    fake_bin = tmp_path / "claude"
+    fake_bin.write_text("#!/bin/sh\n", encoding="utf-8")
+    fake_bin.chmod(0o755)
+    monkeypatch.setitem(g, "_CLI_FALLBACK_DIRS", (str(tmp_path),))
+    assert g["_find_cli"]("claude") == str(fake_bin)
+    assert g["_find_cli"]("nope") is None  # fallback 里也没有 → None
 
 
 def test_dispatch_rejects_bad_cwd(env, monkeypatch):
@@ -346,10 +402,119 @@ def test_task_stop_lost_handle(env, fake_popen, tmp_path):
     g = _mod_globals(reg)
     r = _run(reg, "agents.dispatch_task", {"agent": "claude", "prompt": "P", "cwd": str(tmp_path)})
     task_id = r.data["task_id"]
-    g["_PROCS"].pop(task_id)  # 模拟底座重启后句柄丢失
+    g["_PROCS"].pop(task_id)  # 模拟底座重启后句柄丢失（pid 12345 也不可能活着）
     s = _run(reg, "agents.task_stop", {"id": task_id})
     assert not s.success and "进程句柄已丢失" in s.error
     fake_popen.procs[0].finish(0)  # 收尾
+
+
+def test_task_stop_pid_fallback(env, tmp_path):
+    """句柄丢失但 pid 还活着（重启后）：先落 stopped，再按 pid SIGTERM 兜底。"""
+    reg, _, _ = env
+    ctx = reg.get("agents.dispatch_task").plugin_ctx
+    proc = subprocess.Popen(["sleep", "30"], stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        ctx.db.insert("tasks", {"id": "tstop", "agent": "claude", "prompt": "P", "cwd": "/tmp",
+                                "status": "running", "pid": proc.pid,
+                                "created_at": int(time.time())})
+        s = _run(reg, "agents.task_stop", {"id": "tstop"})
+        assert s.success, s.error
+        assert proc.wait(timeout=5) == -signal.SIGTERM
+        assert ctx.db.query("tasks", where={"id": "tstop"})[0]["status"] == "stopped"
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
+# ---------- 重启后对账（_reconcile_orphans / _reap_detached）----------
+
+
+def test_pid_alive_basics(env):
+    reg, _, _ = env
+    g = _mod_globals(reg)
+    alive = g["_common"]._pid_alive
+    assert alive(os.getpid())
+    assert not alive(999999)  # 超过 macOS pid 上限，必不存在
+    assert not alive(0) and not alive(-1)
+
+
+def test_reconcile_dead_pid_marks_interrupted(env):
+    """running 行 pid 已死（重启带走了 _wait 线程）→ 落 interrupted。"""
+    reg, _, _ = env
+    g = _mod_globals(reg)
+    ctx = reg.get("agents.dispatch_task").plugin_ctx
+    ctx.db.insert("tasks", {"id": "zombie", "agent": "claude", "prompt": "P", "cwd": "/tmp",
+                            "status": "running", "pid": 999999,
+                            "created_at": int(time.time())})
+    g["_reconcile_orphans"](ctx)
+    row = ctx.db.query("tasks", where={"id": "zombie"})[0]
+    assert row["status"] == "interrupted" and row["finished_at"] > 0
+
+
+def test_reconcile_alive_pid_reaps_and_broadcasts(env):
+    """running 行 pid 还活着 → 挂探活线程，进程死后落 done + 播报（exit_code 保持 -1 未知）。"""
+    reg, _, events = env
+    g = _mod_globals(reg)
+    ctx = reg.get("agents.dispatch_task").plugin_ctx
+    proc = subprocess.Popen(["sleep", "0.2"], stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # 测试里父进程（pytest）还活着，得有人 wait 收尸——否则僵尸会骗过 kill(0) 探活。
+    # 生产上孤儿被 launchd 收尸，无此问题。
+    threading.Thread(target=proc.wait, daemon=True).start()
+    try:
+        ctx.db.insert("tasks", {"id": "orphan", "agent": "claude", "prompt": "遗留任务", "cwd": "/tmp",
+                                "status": "running", "pid": proc.pid,
+                                "created_at": int(time.time())})
+        g["_reconcile_orphans"](ctx)
+        row = _wait_row(ctx.db, "orphan", "done", timeout=8.0)  # 探活间隔 2s，留足余量
+        assert row["status"] == "done" and row["exit_code"] == -1 and row["finished_at"] > 0
+        assert _wait_for(lambda: any("遗留任务" in e.get("text", "") for e in events), timeout=8.0)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
+def test_reap_detached_preserves_stopped(env):
+    """对账任务被 task_stop 按 pid 停掉：探活线程保留 stopped，不翻成 done。"""
+    reg, _, events = env
+    g = _mod_globals(reg)
+    ctx = reg.get("agents.dispatch_task").plugin_ctx
+    proc = subprocess.Popen(["sleep", "30"], stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    threading.Thread(target=proc.wait, daemon=True).start()  # 收尸防僵尸（同上）
+    try:
+        ctx.db.insert("tasks", {"id": "reap_stop", "agent": "claude", "prompt": "P", "cwd": "/tmp",
+                                "status": "running", "pid": proc.pid,
+                                "created_at": int(time.time())})
+        g["_reconcile_orphans"](ctx)  # 挂探活线程
+        s = _run(reg, "agents.task_stop", {"id": "reap_stop"})
+        assert s.success, s.error
+        row = _wait_row(ctx.db, "reap_stop", "stopped", timeout=8.0)  # 探活线程醒来后仍 stopped
+        assert row["status"] == "stopped"
+        assert _wait_for(lambda: any("⏹" in e.get("text", "") for e in events), timeout=8.0)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
+# ---------- precheck 启发式拦截 ----------
+
+
+def test_dispatch_precheck_blocks_one_shot(env):
+    """短描述 + 一次性任务关键词 → 拦截并指路 code_exec；开放任务/长描述放行。"""
+    reg, _, _ = env
+    t = reg.get("agents.dispatch_task")
+    reason = t.precheck({"agent": "claude", "prompt": "统计一下这个目录有多少行代码", "cwd": "/tmp"})
+    assert reason and "code_exec" in reason
+    assert t.precheck({"agent": "claude", "prompt": "格式化这些 JSON 文件", "cwd": "/tmp"}) is not None
+    open_task = "调查并修复这个仓库偶发的测试失败：需要先读代码定位，再改，再跑测试迭代验证"
+    assert t.precheck({"agent": "claude", "prompt": open_task, "cwd": "/tmp"}) is None
+    long_prompt = "统计" + "背景说明" * 60  # 长描述即使含关键词也放行（越详细越像真开放任务）
+    assert t.precheck({"agent": "claude", "prompt": long_prompt, "cwd": "/tmp"}) is None
 
 
 # ---------- _wait 单元路径（超时 / emit_event 为 None）----------

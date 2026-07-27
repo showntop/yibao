@@ -18,6 +18,17 @@ _SUMMARY_TAIL = 500  # 无解析器时的摘要：log 尾部 500 字
 _PROCS: dict[str, "subprocess.Popen"] = {}
 
 
+def _pid_alive(pid: int) -> bool:
+    """pid 是否存活（用于大脑重启后对账在跑任务；kill 0 不发信号只探活）。"""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
 def _tail_text(path: str, max_bytes: int) -> str:
     """读 log（≤max_bytes 全读，超出只读尾部）。文件不存在/读失败返回空串。"""
     try:
@@ -88,3 +99,40 @@ def _wait(proc, task_id: str, label: str, prompt: str, log_path: str, timeout_s:
         print(f"[agents] 任务 {task_id} 等待线程异常：{type(e).__name__}: {e}", file=sys.stderr)
     finally:
         _PROCS.pop(task_id, None)
+
+
+_REAP_INTERVAL_S = 2.0
+
+
+def _reap_detached(pid: int, task_id: str, label: str, prompt: str, log_path: str, ctx, summarize=None) -> None:
+    """daemon 线程：对账用——大脑重启后没有 Popen 句柄，改为每 2s kill(pid,0) 探活；
+    pid 死后读 log 收尾落库（status=done，exit_code 保持 -1 未知）并播报。任何异常只 print。
+    """
+    try:
+        while _pid_alive(pid):
+            time.sleep(_REAP_INTERVAL_S)
+        # 用户已主动停止（task_stop 先落 stopped）：保留 stopped，不翻成 done
+        prev = ctx.db.query("tasks", where={"id": task_id})
+        stopped = bool(prev and prev[0]["status"] == "stopped")
+        try:
+            ctx.db.update("tasks", task_id, {
+                "status": "stopped" if stopped else "done", "finished_at": int(time.time()),
+            })
+        except Exception as e:
+            print(f"[agents] 任务 {task_id} 对账落库失败：{e}", file=sys.stderr)
+        log = _tail_text(log_path, _LOG_MAX_BYTES)
+        try:
+            summary = (summarize or _tail_summary)(log)
+        except Exception:
+            summary = ""
+        summary = summary or _tail_summary(log)
+        head = prompt[:50] + ("…" if len(prompt) > 50 else "")
+        if stopped:
+            text = f"⏹ {label}已停止：{head}"
+        else:
+            text = f"✅ {label}完成：{head}\n{summary}"
+        emit = getattr(ctx, "emit_event", None)
+        if emit is not None:  # 测试环境未注入时静默跳过
+            emit({"kind": "reminder", "text": text})
+    except Exception as e:  # 兜底：对账线程的任何意外都不许炸出来
+        print(f"[agents] 任务 {task_id} 对账线程异常：{type(e).__name__}: {e}", file=sys.stderr)

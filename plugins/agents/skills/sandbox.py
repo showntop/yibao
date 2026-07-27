@@ -170,7 +170,8 @@ class CodeExecSkill(Skill):
         try:
             proc = subprocess.Popen(
                 [sandbox_exec, "-f", policy_path, interp, script_path],
-                cwd=cwd_real, stdout=log_file, stderr=subprocess.STDOUT, text=True,
+                cwd=cwd_real, stdin=subprocess.DEVNULL,
+                stdout=log_file, stderr=subprocess.STDOUT, text=True,
             )
         except OSError as e:
             log_file.close()
@@ -179,7 +180,7 @@ class CodeExecSkill(Skill):
         _PROCS[task_id] = proc  # 先登记再等：同步窗口内 task_stop 也能停
         ctx.db.insert("tasks", {
             "id": task_id, "kind": "script", "agent": lang, "prompt": code[:200], "cwd": cwd_real,
-            "status": "running", "exit_code": -1, "log_path": log_path,
+            "status": "running", "exit_code": -1, "pid": proc.pid, "log_path": log_path,
             "created_at": int(time.time()), "finished_at": 0,
         })
 

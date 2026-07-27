@@ -89,6 +89,8 @@ def _wait_for(cond, timeout=2.0):
 class _FakeProc:
     """可控完成的假 Popen：finish(code) 前 wait 一直阻塞；terminate/kill 记录调用并结束。"""
 
+    pid = 12345  # 假 pid：落库断言用
+
     def __init__(self):
         self.returncode = None
         self.terminated = False
@@ -126,8 +128,8 @@ class _PopenFactory:
         self.log_text = "hello result"
         self.auto_finish: int | None = None
 
-    def __call__(self, argv, cwd=None, stdout=None, stderr=None, text=None):
-        self.calls.append({"argv": argv, "cwd": cwd})
+    def __call__(self, argv, cwd=None, stdin=None, stdout=None, stderr=None, text=None):
+        self.calls.append({"argv": argv, "cwd": cwd, "stdin": stdin})
         if stdout is not None:
             stdout.write(self.log_text)
             stdout.flush()
@@ -258,6 +260,7 @@ def test_code_exec_full_chain(fake_interp, no_sync_window, fake_popen, tmp_path)
     # 立即返回：进程未结束时库里是 running 行，kind="script"
     row = ctx.db.query("tasks", where={"id": task_id})[0]
     assert row["kind"] == "script" and row["agent"] == "python" and row["status"] == "running"
+    assert row["pid"] == 12345  # pid 落库：底座重启后对账用
     assert row["prompt"] == code[:200] and row["cwd"] == cwd_real
     assert row["log_path"] == str(task_dir / "output.log")
     assert task_id in _mod_globals(reg)["_PROCS"]

@@ -2,9 +2,14 @@
 
 dispatch_task（L3，走用户确认）：Popen spawn 子进程后登记 db 立即返回；
 daemon 线程 _wait 等进程结束 → 落库 → 经 ctx.emit_event 播报（前端亮窗+气泡+TTS）。
-task_status（L0）查行 + log 尾部；task_stop（L2）terminate 在跑进程。
-新智能体接入：_AGENTS 加一项（bin + argv 构造 + 结果摘要解析）即可。
+task_status（L0）查行 + log 尾部；task_stop（L2）terminate 在跑进程（句柄丢失时按 pid 兜底）。
+新智能体接入：_AGENTS 加一项（bin + 结果摘要解析）+ _build_argv 加分支即可。
 进程登记/等待收尾与 sandbox.py（code_exec 沙箱脚本）共用，见 _common.py。
+
+写权限（C-1 教训：无沙箱时 claude 全程 permission_denials 空跑烧钱）：
+- claude 套 macOS Seatbelt（sandbox-exec）：写限 cwd/logs/~/.claude，放开网络，policy 落盘可审计；
+- codex 用内建 --sandbox workspace-write（macOS Seatbelt / Linux Landlock）。
+底座重启后对账（make_tools 时）：running 行 pid 活着 → _reap_detached 探活收尾；已死 → interrupted。
 """
 from __future__ import annotations
 
@@ -12,6 +17,7 @@ import importlib.util
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -45,13 +51,50 @@ _common = _sibling("_common")
 _SUMMARY_TAIL = _common._SUMMARY_TAIL  # 摘要解析失败/为空时退化为 log 尾部 500 字
 _STATUS_TAIL = 2000  # task_status 返回的 log 尾部长度
 
-# task_id → 在跑进程句柄（task_stop 用；底座重启后丢失，stop 会优雅报错）
+# task_id → 在跑进程句柄（task_stop 用；底座重启后丢失，stop 按 pid 兜底）
 _PROCS = _common._PROCS
 _tail_text = _common._tail_text
 
+# PATH 找不到 CLI 时的补查目录（GUI spawn 的大脑 PATH 很薄，fnm/本地安装的 CLI 常在以下位置）
+_CLI_FALLBACK_DIRS = ("~/.local/bin", "/opt/homebrew/bin", "/usr/local/bin")
 
-def _claude_argv(bin_path: str, prompt: str) -> list[str]:
-    return [bin_path, "-p", prompt, "--output-format", "json"]
+
+def _find_cli(bin_name: str) -> str | None:
+    """PATH 里找 CLI，失败再补查常见安装目录；找到返回完整路径，否则 None。"""
+    path = shutil.which(bin_name)
+    if path:
+        return path
+    for d in _CLI_FALLBACK_DIRS:
+        candidate = os.path.join(os.path.expanduser(d), bin_name)
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def _build_argv(agent_name: str, bin_path: str, prompt: str, cwd_real: str,
+                logs_dir: str, task_id: str) -> tuple[list[str] | None, str | None]:
+    """构造命令行（成功返回 argv, None；失败返回 None, 人话原因）。
+
+    claude 必须套 Seatbelt 沙箱（无沙箱时 permission_denials 空跑烧钱，C-1 根因）：
+    写限 cwd/logs/~/.claude、放开网络（要调 API）、--dangerously-skip-permissions 免交互授权；
+    policy 落盘 logs/<task_id>.sb 可审计。codex 用内建 sandbox 无需外套。
+    """
+    if agent_name == "claude":
+        sandbox_exec = shutil.which("sandbox-exec")
+        if sandbox_exec is None:
+            return None, "当前环境不支持派任务给 claude（需要 macOS 沙箱，找不到 sandbox-exec）"
+        policy_path = os.path.join(logs_dir, f"{task_id}.sb")
+        roots = [cwd_real, logs_dir, os.path.expanduser("~/.claude")]
+        try:
+            with open(policy_path, "w", encoding="utf-8") as f:
+                f.write(_sibling("sandbox")._build_profile(roots, allow_network=True))
+        except OSError as e:
+            return None, f"写沙箱策略文件失败：{e}"
+        return [sandbox_exec, "-f", policy_path, bin_path, "-p", prompt,
+                "--dangerously-skip-permissions", "--output-format", "json"], None
+    # codex：内建沙箱（macOS Seatbelt / Linux Landlock），写限工作区；--json 输出 JSONL 事件流
+    return [bin_path, "exec", "--sandbox", "workspace-write", "--skip-git-repo-check",
+            prompt, "--json"], None
 
 
 def _claude_summary(log: str) -> str:
@@ -61,10 +104,6 @@ def _claude_summary(log: str) -> str:
         if isinstance(ev, dict) and ev.get("type") == "result":
             return str(ev.get("result") or "").strip()
     return ""
-
-
-def _codex_argv(bin_path: str, prompt: str) -> list[str]:
-    return [bin_path, "exec", prompt, "--json"]
 
 
 def _codex_summary(log: str) -> str:
@@ -91,10 +130,10 @@ def _codex_summary(log: str) -> str:
     return ""
 
 
-# 适配表：bin（PATH 里找）、argv（构造命令行）、summarize（从 log 解析结果摘要，异常由调用方退化）
+# 适配表：bin（PATH + 补查目录里找）、summarize（从 log 解析结果摘要，异常由调用方退化）
 _AGENTS = {
-    "claude": {"bin": "claude", "argv": _claude_argv, "summarize": _claude_summary},
-    "codex": {"bin": "codex", "argv": _codex_argv, "summarize": _codex_summary},
+    "claude": {"bin": "claude", "summarize": _claude_summary},
+    "codex": {"bin": "codex", "summarize": _codex_summary},
 }
 
 
@@ -113,6 +152,10 @@ def _wait(proc, task_id: str, agent: str, prompt: str, log_path: str, timeout_s:
                   summarize=lambda log: _summarize(agent, log))
 
 
+# precheck 启发式：短描述 + 命中这些关键词 → 像步骤明确的一次性任务，应走 code_exec
+_ONE_SHOT_KEYWORDS = ("统计", "转换", "整理", "计算", "格式化", "生成文件")
+
+
 class DispatchTaskSkill(Skill):
     id = "agents.dispatch_task"
     label = "派任务给智能体"
@@ -124,6 +167,14 @@ class DispatchTaskSkill(Skill):
         "那些用 agents.code_exec 自己写脚本沙箱跑，秒级且免费。"
     )
     default_risk = RiskLevel.L3_HIGH
+
+    def precheck(self, params: dict) -> str | None:
+        """启发式拦截：短描述 + 一次性任务关键词 → 建议改走 code_exec（秒级免费）。"""
+        prompt = str(params.get("prompt") or "")
+        if len(prompt) < 120 and any(k in prompt for k in _ONE_SHOT_KEYWORDS):
+            return ("此任务像步骤明确的一次性任务，应使用 agents.code_exec"
+                    "（自己写脚本沙箱执行，秒级免费）；确需自主多轮决策请在描述中说明探索/迭代原因")
+        return None
 
     def openai_schema(self) -> dict:
         return {
@@ -156,14 +207,15 @@ class DispatchTaskSkill(Skill):
         prompt = str(params.get("prompt") or "").strip()
         if not prompt:
             return ActionResult(success=False, error="任务描述（prompt）不能为空")
-        bin_path = shutil.which(spec["bin"])
+        bin_path = _find_cli(spec["bin"])
         if bin_path is None:
             return ActionResult(
                 success=False,
-                error=f"{spec['bin']} 未安装或未登录（PATH 里找不到 {spec['bin']}）",
+                error=f"{spec['bin']} 未安装或未登录（PATH 和常见安装目录里都找不到 {spec['bin']}）",
             )
         cwd = str(params.get("cwd") or "").strip()
-        if not cwd or not os.path.isdir(cwd):
+        cwd_real = os.path.realpath(cwd) if cwd else ""
+        if not cwd_real or not os.path.isdir(cwd_real):
             return ActionResult(success=False, error=f"工作目录不存在：{cwd or '(空)'}")
         try:
             timeout_min = int(params.get("timeout_min") or 30)
@@ -176,14 +228,18 @@ class DispatchTaskSkill(Skill):
         logs_dir = os.path.join(config.plugin_data_dir("agents"), "logs")
         os.makedirs(logs_dir, exist_ok=True)
         log_path = os.path.join(logs_dir, f"{task_id}.log")
+        argv, err = _build_argv(agent_name, bin_path, prompt, cwd_real, logs_dir, task_id)
+        if argv is None:
+            return ActionResult(success=False, error=err)
         try:
             log_file = open(log_path, "w", encoding="utf-8")
         except OSError as e:
             return ActionResult(success=False, error=f"创建日志文件失败：{e}")
         try:
             proc = subprocess.Popen(
-                spec["argv"](bin_path, prompt),
-                cwd=cwd, stdout=log_file, stderr=subprocess.STDOUT, text=True,
+                argv,
+                cwd=cwd_real, stdin=subprocess.DEVNULL,
+                stdout=log_file, stderr=subprocess.STDOUT, text=True,
             )
         except OSError as e:
             log_file.close()
@@ -191,8 +247,8 @@ class DispatchTaskSkill(Skill):
         log_file.close()  # 子进程已继承写 fd，父进程这份关掉
         _PROCS[task_id] = proc
         ctx.db.insert("tasks", {
-            "id": task_id, "agent": agent_name, "prompt": prompt, "cwd": cwd,
-            "status": "running", "exit_code": -1, "log_path": log_path,
+            "id": task_id, "agent": agent_name, "prompt": prompt, "cwd": cwd_real,
+            "status": "running", "exit_code": -1, "pid": proc.pid, "log_path": log_path,
             "created_at": int(time.time()), "finished_at": 0,
         })
         threading.Thread(
@@ -276,17 +332,63 @@ class TaskStopSkill(Skill):
         if rows[0]["status"] != "running":
             return ActionResult(success=False, error=f"任务已结束（{rows[0]['status']}），无需停止")
         proc = _PROCS.get(task_id)
-        if proc is None:
-            return ActionResult(success=False, error="进程句柄已丢失（可能重启过），无法停止")
-        # 先落 stopped 再 terminate：_wait 被 terminate 唤醒后读到 stopped 会保留它；
-        # 反过来先 terminate，_wait 可能在本 update 之前把状态翻成 failed（竞态）
+        try:
+            pid = int(rows[0].get("pid") or 0)
+        except (TypeError, ValueError):
+            pid = 0
+        if proc is None and not _common._pid_alive(pid):
+            return ActionResult(success=False, error="进程句柄已丢失（可能重启过）且进程已不在，无法停止")
+        # 先落 stopped 再杀：收尾线程（_wait / _reap_detached）被唤醒后读到 stopped 会保留它；
+        # 反过来先杀，收尾线程可能在本 update 之前把状态翻成 failed/done（竞态）
         ctx.db.update("tasks", task_id, {"status": "stopped", "finished_at": int(time.time())})
-        proc.terminate()
+        if proc is not None:
+            proc.terminate()
+        else:
+            os.kill(pid, signal.SIGTERM)  # 句柄丢失（重启过）但 pid 还活着：按 pid 兜底
         return ActionResult(success=True, data={
             "id": task_id,
             "human": f"已停止任务 {task_id}",
         })
 
 
+def _reconcile_orphans(ctx: Any) -> None:
+    """底座重启后对账（make_tools 时跑）：running 行 pid 还活着 → 挂 _reap_detached 探活收尾；
+    已死 → 落 interrupted（重启把 _wait 线程带走了，没人替它收尾）。
+    """
+    try:
+        rows = ctx.db.query("tasks", where={"status": "running"})
+    except Exception as e:
+        print(f"[agents] 任务对账查询失败：{e}", file=sys.stderr)
+        return
+    for row in rows:
+        task_id = str(row.get("id") or "")
+        if not task_id:
+            continue
+        try:
+            pid = int(row.get("pid") or 0)
+        except (TypeError, ValueError):
+            pid = 0
+        if _common._pid_alive(pid):
+            kind = str(row.get("kind") or "agent")
+            agent = str(row.get("agent") or "")
+            label = "沙箱脚本" if kind == "script" else f"{agent} 任务"
+            summarize = None if kind == "script" else (lambda log, a=agent: _summarize(a, log))
+            threading.Thread(
+                target=_common._reap_detached,
+                args=(pid, task_id, label, str(row.get("prompt") or ""),
+                      str(row.get("log_path") or ""), ctx),
+                kwargs={"summarize": summarize},
+                daemon=True,
+            ).start()
+            print(f"[agents] 对账：任务 {task_id}（pid {pid}）仍在运行，挂探活收尾线程", file=sys.stderr)
+            continue
+        try:
+            ctx.db.update("tasks", task_id, {"status": "interrupted", "finished_at": int(time.time())})
+        except Exception as e:
+            print(f"[agents] 任务 {task_id} 对账落库失败：{e}", file=sys.stderr)
+        print(f"[agents] 对账：任务 {task_id} 进程已不在，落 interrupted", file=sys.stderr)
+
+
 def make_tools(ctx: Any) -> list[Skill]:
+    _reconcile_orphans(ctx)
     return [DispatchTaskSkill(), TaskStatusSkill(), TaskStopSkill()]

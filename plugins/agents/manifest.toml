@@ -19,6 +19,7 @@ columns = [
   {name = "cwd", type = "text"},
   {name = "status", type = "text", default = "running"},
   {name = "exit_code", type = "integer", default = -1},
+  {name = "pid", type = "integer", default = 0},   # 子进程 pid：底座重启后对账在跑任务用
   {name = "log_path", type = "text", default = ""},
   {name = "created_at", type = "integer"},
   {name = "finished_at", type = "integer", default = 0},
