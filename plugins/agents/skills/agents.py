@@ -117,8 +117,10 @@ class DispatchTaskSkill(Skill):
     id = "agents.dispatch_task"
     description = (
         "把任务派给本机 CLI 智能体（Claude Code/Codex）后台执行：立即返回不等结果，"
-        "完成后译宝主动播报。适合耗时较长、上下文独立的干活任务"
-        "（改代码/跑脚本/批量处理文件等）。"
+        "完成后译宝主动播报。【仅用于】需要智能体自主多轮决策的开放任务——"
+        "修 bug（要读代码、改、跑测试迭代）、写功能、重构、代码库调研。"
+        "【不要用于】步骤明确的一次性任务（统计/转换/整理/小计算/生成文件）——"
+        "那些用 agents.code_exec 自己写脚本沙箱跑，秒级且免费。"
     )
     default_risk = RiskLevel.L3_HIGH
 

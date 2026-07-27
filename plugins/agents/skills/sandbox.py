@@ -85,7 +85,9 @@ class CodeExecSkill(Skill):
     description = (
         "在 macOS 沙箱（Seatbelt）里运行一段自包含脚本（python/node）：默认断网、"
         "只能写工作目录（沙箱强制，.git 写保护），立即返回不等结果，跑完主动播报输出。"
-        "适合一次性的数据处理/文件整理/小计算。"
+        "【优先通道】步骤明确的本地加工（数据统计/文件整理/格式转换/小计算/生成文件）"
+        "一律走我——不要为此类任务调 agents.dispatch_task"
+        "（那是给需要自主多轮决策的开放任务用的，又慢又烧额度）。"
     )
     default_risk = RiskLevel.L3_HIGH
 
