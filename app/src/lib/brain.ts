@@ -75,6 +75,7 @@ export function runInput(text: string, surface?: string): Promise<void> {
 /** 回复高风险确认（Rust 命令参数 confirmation_id 在 JS 侧为 camelCase）。
  *  remember=true：本会话不再询问这个技能（大脑侧会话级记忆，重启失效）。 */
 export function sendConfirm(confirmationId: string, approved: boolean, remember = false): Promise<void> {
+  _pcRemove(confirmationId); // 待批准队列出队（本窗口作答；其他窗口靠 action_result/error 事件出队）
   return invoke("confirm", { confirmationId, approved, remember });
 }
 
@@ -298,3 +299,68 @@ export async function getWidgetsOnce(timeoutMs = 3000): Promise<WidgetsResponse>
   } catch { /* 大脑不在线：走超时兜底 */ }
   return Promise.race([resp, timeout]);
 }
+
+// ---- 待批准队列（OS 感 §4.5 收件箱 Question 面：连环弹窗的替代）----
+// confirmation_needed 进队；任一窗口 sendConfirm（见上）/ action_result / error 出队；
+// 大脑掉线清空（未答确认随进程死）。HomeChat 的 ConfirmDialog 本来就靠事件自清，两边天然一致。
+
+export interface PendingConfirm {
+  id: string; // confirmation_id（= action.id）
+  skill: string;
+  label: string; // 技能短标签（回退 skill_id）
+  desc: string;
+  risk?: number;
+}
+
+let _pc: PendingConfirm[] = [];
+const _pcSubs = new Set<(l: PendingConfirm[]) => void>();
+
+function _pcEmit(): void {
+  const l = [..._pc];
+  _pcSubs.forEach((cb) => cb(l));
+}
+
+function _pcRemove(id: string): void {
+  const n = _pc.filter((p) => p.id !== id);
+  if (n.length !== _pc.length) {
+    _pc = n;
+    _pcEmit();
+  }
+}
+
+/** 订阅待批准队列（立即回当前值；返回取消订阅函数）。 */
+export function onPendingConfirms(cb: (l: PendingConfirm[]) => void): () => void {
+  _pcSubs.add(cb);
+  cb([..._pc]);
+  return () => {
+    _pcSubs.delete(cb);
+  };
+}
+
+void listen<BrainEvent>("brain-event", (ev) => {
+  const e = ev.payload;
+  if (e.kind === "confirmation_needed" && e.confirmation_id) {
+    if (_pc.some((p) => p.id === e.confirmation_id)) return;
+    _pc = [
+      ..._pc,
+      {
+        id: e.confirmation_id,
+        skill: e.action?.skill_id ?? "",
+        label: e.action?.label ?? e.action?.skill_id ?? "",
+        desc: e.action?.description ?? "",
+        risk: e.action?.risk,
+      },
+    ];
+    _pcEmit();
+  } else if ((e.kind === "action_result" || e.kind === "error") && e.action?.id) {
+    _pcRemove(e.action.id);
+  }
+});
+
+void listen<BrainStatusMsg>("brain-status", (ev) => {
+  if (ev.payload.status === "up") return;
+  if (_pc.length) {
+    _pc = [];
+    _pcEmit();
+  }
+});

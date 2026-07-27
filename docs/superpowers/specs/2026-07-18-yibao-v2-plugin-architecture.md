@@ -236,6 +236,14 @@ name = "sync_done"
 - **首批实例**：notes「最近闪念」（method=list）、agents「任务动态」（method=task_list）、reminders「待办提醒」（method=list）——全部复用既有 L0 查询 tool，未新增 tool。
 - 测试 `test_widgets.py` 10 个：加载校验 7（缺 method/未注册/非 L0/坏 schema 均跳过且不留面板残骸）+ serve_async 集成 3（正常 payload 形状、失败跳过、空注册表）。
 
+### 实装记录（任务收件箱，2026-07-27）
+
+- **依据**：OS 感 §4.5——收件箱是有状态控制面（待办、可批、可追溯），不是通知流；Notify=Feed（已有）、Question=待批队列（本轮）、Review=Feed 点击追问（已有）。三分级齐了。
+- **待批准队列（前端 store，brain.ts）**：`confirmation_needed` 进队（去重按 confirmation_id=action.id）；出队三通道——任一窗口 `sendConfirm`（wrapper 内先出队）、`action_result`/`error` 事件带同 action.id（别窗作答/被拒收尾）、大脑 down/restarting（未答确认随进程死，清空）。订阅 `onPendingConfirms(cb)` 立即回当前值。**sidecar 零改动**：确认流仍是单槽 future；队列只解决「展示与一键批/拒」，多窗一致性本来就靠事件流（HomeChat 的 ConfirmDialog 在 action_result/error 时自清，与队列天然不打架）。已知限制（存量）：两个并发 L2 直调都进确认时第二个 future 覆盖第一个——本轮不碰，先记在这里。
+- **主屏「等你处理」区**：HomeFeed 顶部（widget 之上）警示色卡片——技能 label + description + 批准/拒绝按钮（拒绝不记忆，与 ConfirmDialog 同语义）；Home.vue 侧边栏「主屏」nav 加红色计数徽标（`onPendingConfirms` 订阅）。连环弹窗在**大窗**有了排队出口；小窗 modal 保持（小窗即上下文）。
+- **任务面板三区化**：agents `tasks.schema.json` 从 list 改 board——列 = 进行中(running)/已完成(done)/失败(failed)/已中断(interrupted)，`bind.column = "$item.status"`；卡片动作保持 详情/停止。复用既有 board 渲染，sidecar/工具零改动。
+- 无 sidecar 改动故无新 Python 测试；前端 npm run build + cargo check 通过。
+
 ## 9. 数据存储
 
 | 类型 | 存储 | 规则 |

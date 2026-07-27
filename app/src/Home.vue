@@ -3,13 +3,14 @@
 // 四页常驻挂载（v-show 切显隐）：事件订阅不断、气泡/面板状态切页不丢。
 // 主屏是默认落地页（OS 感 §4.2：解锁第一眼 = 问候 + 动态 + 常用）。
 // 与小窗互斥由 Rust 管（open/close_home_window），本组件 × 走 close_home_window。
-import { computed, nextTick, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import Avatar from "./components/Avatar.vue";
 import HomeFeed from "./components/HomeFeed.vue";
 import HomeChat from "./components/HomeChat.vue";
 import HomePlugins from "./components/HomePlugins.vue";
 import SettingsView from "./components/SettingsView.vue";
+import { onPendingConfirms } from "./lib/brain";
 
 type Tab = "home" | "chat" | "plugins" | "settings";
 type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
@@ -23,6 +24,13 @@ const railState = computed<AvatarState>(() =>
 );
 // 主屏 → 对话页的草稿传递（Feed 点击带上下文追问）
 const chatDraft = ref("");
+// 待批准数：主屏 nav 徽标（收件箱有待处理的事，一眼可见）
+const approvalCount = ref(0);
+let unApprovals: (() => void) | null = null;
+onMounted(() => {
+  unApprovals = onPendingConfirms((l) => (approvalCount.value = l.length));
+});
+onUnmounted(() => unApprovals?.());
 
 function onFeedChat(draft?: string) {
   tab.value = "chat";
@@ -90,6 +98,7 @@ function close() {
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
           </svg>
           {{ n.label }}
+          <span v-if="n.id === 'home' && approvalCount" class="nav-badge">{{ approvalCount }}</span>
         </button>
       </nav>
       <div class="rail-foot">
@@ -189,6 +198,21 @@ function close() {
   color: var(--yb-accent-deep);
   font-weight: 600;
   box-shadow: var(--yb-shadow-soft);
+}
+/* 待批徽标：主屏 nav 上的小红点计数（收件箱有等你处理的事） */
+.nav-badge {
+  margin-left: auto;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  background: var(--yb-danger);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
 }
 .rail-foot {
   margin-top: auto;

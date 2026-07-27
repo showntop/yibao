@@ -167,9 +167,11 @@ def test_api_whitelist_and_panel_schema(env):
         assert api is not None and api.direct, name
     assert get_api("agents.task_stop").refresh == "agents.task_list"
     schema = json.loads((AGENTS_DIR / "panel/tasks.schema.json").read_text(encoding="utf-8"))
-    assert schema["type"] == "list" and schema["bind"]["items"] == "$data.rows"
-    assert schema["item"]["actions"], "面板没有条目 action"
-    for a in schema["item"]["actions"]:  # 面板引用的 method 必须都在白名单（防手滑）
+    assert schema["type"] == "board" and schema["bind"]["items"] == "$data.rows"
+    assert schema["bind"]["column"] == "$item.status"  # 收件箱三区：按状态分列
+    assert {c["key"] for c in schema["columns"]} >= {"running", "done", "failed", "interrupted"}
+    assert schema["card"]["actions"], "面板没有卡片 action"
+    for a in schema["card"]["actions"]:  # 面板引用的 method 必须都在白名单（防手滑）
         assert get_api(a["method"]) is not None, a["method"]
     assert get_panel("agents:tasks") == schema
 

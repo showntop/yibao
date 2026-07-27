@@ -14,10 +14,13 @@ import {
   fetchWidgets,
   onWidgets,
   onBrainEvent,
+  onPendingConfirms,
   panelAction,
   runInput,
+  sendConfirm,
   type FeedItem,
   type FeedStats,
+  type PendingConfirm,
   type WidgetPayload,
 } from "../lib/brain";
 
@@ -62,6 +65,13 @@ async function reload() {
   items.value = r.items;
   stats.value = r.stats;
   loaded.value = true;
+}
+
+// ---- 待批准队列（OS 感 §4.5 收件箱 Question 面：高风险操作排队一键批/拒） ----
+const approvals = ref<PendingConfirm[]>([]);
+
+function decideApproval(p: PendingConfirm, approved: boolean) {
+  void sendConfirm(p.id, approved).catch(() => {});
 }
 
 // ---- 主屏 widget：插件一瞥卡（schema 协议的 widget 类型，展示型；交互去全面板） ----
@@ -140,15 +150,17 @@ function submit(text: string) {
   emit("chat");
 }
 
-// ---- 订阅：新动态（任务播报/提醒触发）实时刷新 Feed 与 widget ----
+// ---- 订阅：新动态（任务播报/提醒触发）实时刷新 Feed 与 widget；待批队列订阅 ----
 let unFeed: (() => void) | null = null;
 let unWidgets: (() => void) | null = null;
 let unEvent: (() => void) | null = null;
+let unApprovals: (() => void) | null = null;
 let refetchTimer: ReturnType<typeof setTimeout> | null = null;
 
 onMounted(async () => {
   await Promise.all([reload(), reloadWidgets()]);
   void loadPlugins();
+  unApprovals = onPendingConfirms((l) => (approvals.value = l));
   unFeed = await onFeed((r) => {
     items.value = r.items;
     stats.value = r.stats;
@@ -169,6 +181,7 @@ onUnmounted(() => {
   unFeed?.();
   unWidgets?.();
   unEvent?.();
+  unApprovals?.();
   if (refetchTimer !== null) clearTimeout(refetchTimer);
 });
 </script>
@@ -188,6 +201,21 @@ onUnmounted(() => {
     </header>
 
     <div class="scroll">
+      <!-- 待批准：它要做的高风险操作排队等你一键批/拒（收件箱 Question 面，替代连环弹窗） -->
+      <section v-if="approvals.length" class="sec sec-approvals">
+        <div class="sec-title">等你处理 · {{ approvals.length }}</div>
+        <div v-for="p in approvals" :key="p.id" class="a-card">
+          <div class="a-info">
+            <span class="a-label">🔐 {{ p.label || p.skill }}</span>
+            <span class="a-desc">{{ p.desc || p.skill }}</span>
+          </div>
+          <div class="a-btns">
+            <button class="a-no" @click="decideApproval(p, false)">拒绝</button>
+            <button class="a-yes" @click="decideApproval(p, true)">批准</button>
+          </div>
+        </div>
+      </section>
+
       <!-- widget 卡片区：插件供的一瞥卡（待办提醒/任务动态/最近闪念），点标题进全面板 -->
       <section v-if="widgets.length" class="sec sec-widgets">
         <div class="w-row">
@@ -296,6 +324,70 @@ onUnmounted(() => {
 }
 .sec {
   margin-top: var(--yb-space-3);
+}
+/* 待批准卡片：警示淡黄底（与对话/动态区分开），右侧批/拒按钮 */
+.sec-approvals .sec-title {
+  color: #b7791f;
+}
+.a-card {
+  display: flex;
+  align-items: center;
+  gap: var(--yb-space-3);
+  padding: var(--yb-space-2) var(--yb-space-3);
+  margin-bottom: var(--yb-space-2);
+  border: 1px solid rgba(183, 121, 31, 0.35);
+  border-radius: 14px;
+  background: rgba(255, 193, 99, 0.14);
+}
+.a-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.a-label {
+  font-size: var(--yb-fs-md);
+  font-weight: 600;
+  color: var(--yb-text);
+}
+.a-desc {
+  font-size: var(--yb-fs-sm);
+  color: var(--yb-text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.a-btns {
+  flex-shrink: 0;
+  display: flex;
+  gap: var(--yb-space-2);
+}
+.a-yes,
+.a-no {
+  padding: 4px var(--yb-space-3);
+  border-radius: var(--yb-radius-lg);
+  font-size: var(--yb-fs-md);
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.a-yes {
+  border: none;
+  background: var(--yb-accent);
+  color: #fff;
+}
+.a-yes:hover {
+  background: var(--yb-accent-deep);
+}
+.a-no {
+  border: 1px solid var(--yb-surface-border);
+  background: transparent;
+  color: var(--yb-text-dim);
+}
+.a-no:hover {
+  color: var(--yb-danger);
+  border-color: var(--yb-danger);
 }
 .sec-widgets {
   margin-top: var(--yb-space-2);

@@ -1,10 +1,16 @@
 {
   "version": 1,
-  "type": "list",
-  "bind": {"items": "$data.rows"},
-  "item": {
-    "title": "$item.agent · $item.status",
-    "subtitle": "$item.created_at|date · $item.prompt",
+  "type": "board",
+  "bind": {"items": "$data.rows", "column": "$item.status"},
+  "columns": [
+    {"key": "running", "label": "进行中", "color": "#4d90c4"},
+    {"key": "done", "label": "已完成", "color": "#58b368"},
+    {"key": "failed", "label": "失败", "color": "#e5484d"},
+    {"key": "interrupted", "label": "已中断", "color": "#9c8b7a"}
+  ],
+  "card": {
+    "title": "$item.prompt",
+    "subtitle": "$item.agent · $item.created_at|date",
     "actions": [
       {"label": "详情", "method": "agents.task_status", "params": {"id": "$item.id"}},
       {"label": "停止", "method": "agents.task_stop", "params": {"id": "$item.id"}}
