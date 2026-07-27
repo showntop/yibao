@@ -10,7 +10,7 @@ from .audit import AuditLog
 from .history import ConversationHistory
 from .host import Host
 from .invoker import ToolInvoker
-from .ipc import Action, Event
+from .ipc import Action, ActionResult, Event
 from .llm import LLMProvider, LLMResponse, ToolCall, merge_tool_call_deltas
 from .memory import Memory
 from .plugins import get_panel, get_panel_title, panel_payload
@@ -224,6 +224,14 @@ class AgentLoop:
                 tc.skill_id = self.skills.resolve_llm_name(tc.skill_id)  # 安全名 → 真实 id
                 action = self.invoker.propose(tc)
                 yield Event(kind="action_proposed", action=action)
+                reason = self.invoker.precheck(action)  # 本地启发式拦截（不执行、不弹审批）
+                if reason:
+                    yield Event(kind="action_result", action=action,
+                                result=ActionResult(success=False, error=reason))
+                    messages.append({"role": "tool", "tool_call_id": tc.id,
+                                     "content": f"{reason}（未执行，请改用更合适的工具重试）"})
+                    proceeded = True
+                    continue
                 decision = self.invoker.decide(action)
                 if decision == Decision.CONFIRM:
                     yield Event(kind="confirmation_needed", action=action, confirmation_id=action.id)
@@ -311,6 +319,14 @@ class AgentLoop:
                 tc.skill_id = self.skills.resolve_llm_name(tc.skill_id)  # 安全名 → 真实 id
                 action = self.invoker.propose(tc)
                 yield Event(kind="action_proposed", action=action)
+                reason = self.invoker.precheck(action)  # 本地启发式拦截（不执行、不弹审批）
+                if reason:
+                    yield Event(kind="action_result", action=action,
+                                result=ActionResult(success=False, error=reason))
+                    messages.append({"role": "tool", "tool_call_id": tc.id,
+                                     "content": f"{reason}（未执行，请改用更合适的工具重试）"})
+                    proceeded = True
+                    continue
                 decision = self.invoker.decide(action)
                 if decision == Decision.CONFIRM:
                     yield Event(kind="confirmation_needed", action=action, confirmation_id=action.id)

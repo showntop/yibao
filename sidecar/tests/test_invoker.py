@@ -103,3 +103,36 @@ def test_confirm_async_confirmer(tmp_path):
     action = inv.propose(ToolCall(id="t1", skill_id="danger", params={}))
     assert inv.decide(action) == Decision.CONFIRM
     assert asyncio.run(inv.confirm(action)) is False
+
+
+def test_precheck_blocks_and_passes(tmp_path):
+    """precheck 返回人话原因 = 拦截；None = 放行；技能没覆盖 / 检查本身炸了都放行。"""
+    class PickySkill(Skill):
+        id = "picky"
+        description = "挑剔"
+
+        def run(self, params, ctx):
+            return ActionResult(success=True)
+
+        def precheck(self, params):
+            return "该走别的工具" if params.get("bad") else None
+
+    class BoomCheckSkill(Skill):
+        id = "boomcheck"
+        description = "检查会炸"
+
+        def run(self, params, ctx):
+            return ActionResult(success=True)
+
+        def precheck(self, params):
+            raise RuntimeError("检查炸了")
+
+    inv = make_invoker(tmp_path, [PickySkill(), BoomCheckSkill(), EchoSkill()])
+    blocked = inv.propose(ToolCall(id="t1", skill_id="picky", params={"bad": 1}))
+    assert inv.precheck(blocked) == "该走别的工具"
+    ok = inv.propose(ToolCall(id="t2", skill_id="picky", params={}))
+    assert inv.precheck(ok) is None
+    boom = inv.propose(ToolCall(id="t3", skill_id="boomcheck", params={}))
+    assert inv.precheck(boom) is None  # 检查本身出问题不挡路
+    echo = inv.propose(ToolCall(id="t4", skill_id="echo", params={}))
+    assert inv.precheck(echo) is None  # 基类默认放行

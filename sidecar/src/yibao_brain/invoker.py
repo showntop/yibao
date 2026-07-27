@@ -48,6 +48,14 @@ class ToolInvoker:
     def decide(self, action: Action) -> Decision:
         return self.gate.decide(action)
 
+    def precheck(self, action: Action) -> str | None:
+        """技能的本地启发式拦截：返回人话原因 = 不执行（loop 拿去让 LLM 换工具重试）。"""
+        skill = self.skills.get(action.skill_id)
+        try:
+            return skill.precheck(action.params)
+        except Exception:  # 检查本身出问题不挡路
+            return None
+
     def confirm_sync(self, action: Action) -> bool:
         res = self.confirmer(action)
         if inspect.isawaitable(res):

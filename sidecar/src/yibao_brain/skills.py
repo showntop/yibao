@@ -50,6 +50,14 @@ class Skill(ABC):
     @abstractmethod
     def run(self, params: dict, ctx: SkillContext) -> ActionResult: ...
 
+    def precheck(self, params: dict) -> str | None:
+        """执行前的本地启发式检查：返回人话原因则拦截（不执行、不弹审批），None 放行。
+
+        用途：路由纠偏（如 dispatch_task 拦截一次性任务指路 code_exec）——比 LLM 自觉
+        读 description 可靠，又比风险审批轻（不打断用户）。子类按需覆盖。
+        """
+        return None
+
     def openai_schema(self) -> dict:
         """OpenAI function-calling 工具描述（子类按需覆盖 params 描述）。"""
         return {
