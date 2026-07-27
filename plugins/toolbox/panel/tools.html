@@ -159,6 +159,8 @@
   <div class="toolbar">
     <button class="act" id="json-pretty">格式化</button>
     <button class="act ghost" id="json-minify">压缩</button>
+    <button class="act ghost" id="json-unescape">去除转义</button>
+    <button class="act ghost" id="json-escape">添加转义</button>
     <label class="opt">缩进
       <select id="json-indent"><option>2</option><option>4</option></select>
     </label>
@@ -264,7 +266,8 @@
     }).then(function (r) {
       var out = (r && r.output) || "";
       if (out && out !== $("json-in").value) replaceText($("json-in"), out);
-      toast(mode === "minify" ? "已压缩" : "已格式化");
+      toast({pretty: "已格式化", minify: "已压缩",
+             escape: "已添加转义", unescape: "已去除转义"}[mode] || "完成");
     }).catch(function (e) {
       $("json-err").textContent = e && e.message ? e.message : String(e || "失败");
       show($("json-err"));
@@ -272,6 +275,8 @@
   }
   $("json-pretty").addEventListener("click", function () { runJson("pretty"); });
   $("json-minify").addEventListener("click", function () { runJson("minify"); });
+  $("json-unescape").addEventListener("click", function () { runJson("unescape"); });
+  $("json-escape").addEventListener("click", function () { runJson("escape"); });
   $("json-clear").addEventListener("click", function () {
     $("json-in").value = ""; updJsonIn(); hide($("json-err"));
   });
