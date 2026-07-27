@@ -212,6 +212,13 @@ name = "sync_done"
 - **规则**：`use_plugin` 不插行（成功有 notice 轻提示，重复；失败由 LLM 下一句转告）；`action_result` 无匹配过程行（面板直调只发 result 不发 proposed）不补行，失败仍走原 errorText 细条。思考过程不另做：模型调工具前的文本本就流式进气泡。
 - 顺带修：PanelApp.vue 重复 `case "action_result"`（JS switch 首个匹配生效，后一个死代码——「看 PRD」类直调失败无反馈的根因），已合并。
 
+### 实装记录（记忆稳定 + 调度可靠性，2026-07-27）
+
+- **记忆稳定**：mem0ai+fastembed 挪默认依赖（bootstrap 不再 `--extra memory`，防漏装失忆）；Mem0Memory key 前置人话检查 + `custom_instructions` 保中文事实原文进出；LazyMem0 重试 3×2s→5×3s + 报错人话化（qdrant 锁→「记忆库被另一个译宝实例占用」）。
+- **委派可靠性（C-1/C-2）**：根因——claude 无沙箱时 `permission_denials` 空跑烧钱；大脑重启后 running 任务成僵尸（`_wait` 线程死、无人落库）。修法：dispatch_task 的 claude 套 Seatbelt（写限 cwd/logs/`~/.claude`、放开网络、`--dangerously-skip-permissions`，policy 落盘 logs/ 可审计；无 sandbox-exec 直接人话拒绝），codex 用内建 `--sandbox workspace-write`；两者 `stdin=DEVNULL`（claude/codex 都读 stdin）；`_find_cli` 在 PATH 找不到时补查 `~/.local/bin` 等（GUI spawn 的 brain PATH 很薄）。tasks 表加 `pid` 列：重启后 `make_tools` 对账——pid 活着挂 `_reap_detached` 探活线程收尾（done + 播报，exit_code 保持 -1 未知），已死落 `interrupted`；task_stop 句柄丢失时按 pid SIGTERM 兜底。坑：测试里僵尸子进程会骗过 `kill(pid,0)` 探活（生产上孤儿被 launchd 收尸无此问题）。
+- **precheck 路由纠偏（C-3）**：`Skill.precheck(params) -> str|None`——返回人话原因则拦截（不执行、不弹审批），loop 两条路径在 propose 后 decide 前插入，原因作为 tool 结果回喂让模型换工具重试。比 LLM 自觉读 description 可靠，比风险审批轻。首个用户：dispatch_task 拦「短描述+一次性任务关键词」（统计/转换/整理/计算/格式化/生成文件）指路 code_exec。
+- **会话内免确认（C-4）**：确认弹窗加「本会话不再询问这个操作」勾选，批准后同技能本会话免确认：confirm 消息带 `remember` → sidecar 记入会话级集合 → `Gate.session_allowed` 命中即 AUTO（连 confirmation_needed 事件都不发）。只活内存重启失效；拒绝不记忆（防自动拒绝陷阱）。
+
 ## 9. 数据存储
 
 | 类型 | 存储 | 规则 |
