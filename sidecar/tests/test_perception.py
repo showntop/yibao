@@ -108,6 +108,16 @@ def test_store_query_window_keeps_corrupt_rows_for_skip_count(tmp_path):
     assert rows[1]["payload"] == {}
 
 
+def test_store_query_window_limit_keeps_newest_rows_in_chronological_order(tmp_path):
+    store = _store(tmp_path)
+    for ts in range(1, 6):
+        store.append("app", "frontmost", {"app": f"App {ts}"}, "S1", ts=ts)
+
+    rows = store.query_window(0, 10, limit=3)
+
+    assert [row["ts"] for row in rows] == [3.0, 4.0, 5.0]
+
+
 def test_store_delete_and_clear_return_real_counts(tmp_path):
     store = _store(tmp_path)
     first = store.append("app", "frontmost", {"app": "A"}, "S1", ts=1)
@@ -355,6 +365,57 @@ def test_load_user_activity_empty_or_corrupt_window_has_no_notice(tmp_path):
     assert result.data["observation_count"] == 0
     assert result.data["skipped_count"] == 1
     assert skill.post_reply_notice(result) is None
+
+
+def test_load_user_activity_dense_window_keeps_recent_context_and_marks_truncated():
+    tz = timezone.utc
+    start = datetime(2026, 7, 28, 10, 0, tzinfo=tz)
+    end = start + timedelta(hours=1)
+
+    class DenseStore:
+        def __init__(self):
+            self.seed_ts = None
+
+        def query_window(self, start_ts, end_ts, limit=2000):
+            assert limit == 2001
+            return [
+                {
+                    "id": i + 1,
+                    "ts": start.timestamp() + i,
+                    "source": "app",
+                    "kind": "frontmost",
+                    "payload": {"app": f"App {i}", "title": f"Window {i}"},
+                    "sensitivity": "S1",
+                }
+                for i in range(2001)
+            ]
+
+        def latest_before(self, source, ts):
+            self.seed_ts = ts
+            if source != "app":
+                return None
+            return {
+                "source": "app",
+                "kind": "frontmost",
+                "payload": {"app": "App 0", "title": "Window 0"},
+            }
+
+    store = DenseStore()
+    skill = LoadUserActivitySkill(
+        store,
+        {"perception.model_access": True},
+        now_provider=lambda: end,
+    )
+
+    result = skill.run(
+        {"start_at": start.isoformat(), "end_at": end.isoformat()}, SkillContext()
+    )
+
+    assert result.success is True
+    assert result.data["truncated"] is True
+    assert result.data["observation_count"] == 2000
+    assert result.data["segments"][-1]["app"] == "App 2000"
+    assert store.seed_ts == start.timestamp() + 1
 
 
 def test_keychain_timeout_fails_closed(monkeypatch):

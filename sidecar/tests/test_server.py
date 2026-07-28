@@ -618,6 +618,7 @@ def _tool_names(call):
 def test_serve_async_registers_activity_tool_only_when_store_exists(tmp_path, monkeypatch):
     monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path))
     with_store = FakeProvider(chunks=["ok"])
+    store = _ActivityPerceptionStore()
     _run_async(
         serve_async(
             make_reader([{"id": 1, "type": "run", "text": "你好"}]),
@@ -625,7 +626,7 @@ def test_serve_async_registers_activity_tool_only_when_store_exists(tmp_path, mo
             use_real=False,
             db_path=str(tmp_path / "with.db"),
             provider=with_store,
-            perception_store=_ActivityPerceptionStore(),
+            perception_store=store,
         )
     )
     without_store = FakeProvider(chunks=["ok"])
@@ -641,6 +642,7 @@ def test_serve_async_registers_activity_tool_only_when_store_exists(tmp_path, mo
 
     assert "load_user_activity" in _tool_names(with_store.astream_calls[0])
     assert "load_user_activity" not in _tool_names(without_store.astream_calls[0])
+    assert store.queries == 0  # 工具可见不等于自动读取；模型没调用时保持零访问
 
 
 def test_serve_async_activity_tool_observes_live_model_access_setting(tmp_path, monkeypatch):

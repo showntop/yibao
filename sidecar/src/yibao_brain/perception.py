@@ -189,9 +189,11 @@ class PerceptionStore:
         bounded_limit = max(1, min(int(limit), 2001))
         with self._lock:
             rows = self._conn.execute(
+                "SELECT id, ts, source, kind, payload, sensitivity FROM ("
                 "SELECT id, ts, source, kind, payload, sensitivity FROM observations "
                 "WHERE ts >= ? AND ts <= ? AND source IN ('app', 'activity') "
-                "ORDER BY ts ASC, id ASC LIMIT ?",
+                "ORDER BY ts DESC, id DESC LIMIT ?"
+                ") ORDER BY ts ASC, id ASC",
                 (float(start_ts), float(end_ts), bounded_limit),
             ).fetchall()
         return [self._decode_row(row) for row in rows]
@@ -416,12 +418,16 @@ class LoadUserActivitySkill(Skill):
             return ActionResult(success=False, error=str(exc))
 
         try:
-            rows = self.store.query_window(start.timestamp(), end.timestamp())
+            rows = self.store.query_window(start.timestamp(), end.timestamp(), limit=2001)
+            input_truncated = len(rows) > 2000
+            if input_truncated:
+                rows = rows[-2000:]
+            timeline_start = float(rows[0]["ts"]) if input_truncated else start.timestamp()
             seeds = [
                 item
                 for item in (
-                    self.store.latest_before("app", start.timestamp()),
-                    self.store.latest_before("activity", start.timestamp()),
+                    self.store.latest_before("app", timeline_start),
+                    self.store.latest_before("activity", timeline_start),
                 )
                 if item is not None
             ]
@@ -430,12 +436,13 @@ class LoadUserActivitySkill(Skill):
 
         valid_rows = [row for row in rows if row.get("payload")]
         skipped_count = len(rows) - len(valid_rows)
-        segments, truncated = build_activity_segments(
+        segments, segment_truncated = build_activity_segments(
             valid_rows,
             seeds,
-            start.timestamp(),
+            timeline_start,
             end.timestamp(),
         )
+        truncated = input_truncated or segment_truncated
         tz = start.tzinfo
         formatted = [
             {
