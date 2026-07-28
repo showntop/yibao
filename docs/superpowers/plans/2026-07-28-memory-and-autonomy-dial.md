@@ -1,6 +1,6 @@
 # 译宝 设置补两件：记忆管理增强 + 自主权旋钮 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 补齐 OS 感套餐第 ③ 项——记忆管理「可见、可改、可删」三件套中的「可改」，加命名空间筛选与全文展开；新增「自主权旋钮」三档（安静/气泡/完整）控制主动触达强度。
 
@@ -39,28 +39,28 @@
 - Test: `sidecar/tests/test_memory.py`
 - Test: `sidecar/tests/test_server.py`
 
-- [ ] **Step 1: 写 update 的失败测试**
+- [x] **Step 1: 写 update 的失败测试**
 
 `test_memory.py` 中对 `FakeMemory`：add 一条后 `update(mem_id, "改后")`，断言 `list_all` 中文本已替换、id 不变、不存在旧文本；更新不存在的 id 返回 False。对 `Mem0Memory`：用 monkeypatch 的假 mem0 client 断言调用了底层 update 且签名按 `memory_id` + 新文本（实装时先核对已装 mem0 版本的 `update` 精确签名，以其为准）。
 
-- [ ] **Step 2: 确认 RED**
+- [x] **Step 2: 确认 RED**
 
 Run: `cd sidecar && uv run --extra dev pytest tests/test_memory.py -q`
 Expected: FAIL with `AttributeError: update`。
 
-- [ ] **Step 3: 实现 update**
+- [x] **Step 3: 实现 update**
 
 `Memory` 抽象加 `update(self, memory_id: str, text: str) -> bool`；`FakeMemory` 原地替换；`Mem0Memory` 委托 mem0 client（异常回 False 不抛）；`LazyMem0Memory` 就绪前返回 False 或委托转发（与 `delete_by_id` 同款策略）。
 
-- [ ] **Step 4: 写 mem_edit IPC 的失败测试**
+- [x] **Step 4: 写 mem_edit IPC 的失败测试**
 
 经 fake `serve` harness 发送 `{"type": "mem_edit", "mem_id": 7, "text": "改后"}`，断言回包 `mem_edited {id, ok}`；空文本/缺 id 回 `ok=False` 与明确 error，异常不炸主循环。
 
-- [ ] **Step 5: 确认 RED**
+- [x] **Step 5: 确认 RED**
 
 Run: `cd sidecar && uv run --extra dev pytest tests/test_server.py -k mem_edit -q`
 
-- [ ] **Step 6: 实现 mem_edit 并全绿**
+- [x] **Step 6: 实现 mem_edit 并全绿**
 
 `server.py` 在 `mem_delete` 旁加 `mem_edit` 分支（复用底座 `memory` 实例，与删除同路径）。
 
@@ -80,15 +80,15 @@ git commit -m "feat(memory): 支持编辑单条长期记忆"
 - Modify: `app/src-tauri/src/lib.rs`
 - Modify: `app/src/lib/brain.ts`
 
-- [ ] **Step 1: Rust command 与转发**
+- [x] **Step 1: Rust command 与转发**
 
 sidecar reader 将 `mem_edited` emit 为 `brain-mem-edited`；新增 `mem_edit(id, text)` command 注册进 `invoke_handler`（与 `mem_delete` 同模式，`lib.rs:731-741` 参照）。
 
-- [ ] **Step 2: TypeScript 一次性接口**
+- [x] **Step 2: TypeScript 一次性接口**
 
 `editMem(id, text)`：`invoke("mem_edit")` + 监听匹配 id 的 `brain-mem-edited` 回包，5s 超时，完成或超时释放 listener（与 `deleteMem` 同款）。
 
-- [ ] **Step 3: 类型与编译验证**
+- [x] **Step 3: 类型与编译验证**
 
 Run: `cd app && npx vue-tsc --noEmit && cargo check --manifest-path src-tauri/Cargo.toml`
 Expected: exit 0。
@@ -105,19 +105,19 @@ git commit -m "feat(shell): 记忆编辑 IPC 桥"
 **Files:**
 - Modify: `app/src/components/SettingsView.vue`
 
-- [ ] **Step 1: 行内编辑**
+- [x] **Step 1: 行内编辑**
 
 记忆行尾加「编辑」mini 按钮 → 文本切换为 textarea（带原始值）+ 保存/取消；保存中禁用，成功原地更新该行，失败提示并还原。复用现有 `confirming`/行内按钮样式（`SettingsView.vue:503-510` 参照）。
 
-- [ ] **Step 2: 命名空间筛选 chips**
+- [x] **Step 2: 命名空间筛选 chips**
 
 列表上方 chips 行：「全部 · N」+ 各命名空间「label · n」（按 `memItems` 的 `ns` 分组计数，纯前端 computed）；选中态过滤列表。只有「译宝」一个命名空间时不显示 chips 行。
 
-- [ ] **Step 3: 全文展开**
+- [x] **Step 3: 全文展开**
 
 点击记忆文本在两行截断与全文间切换（CSS class 切换 `line-clamp`），长文本行尾给「展开/收起」提示。
 
-- [ ] **Step 4: 前端验证**
+- [x] **Step 4: 前端验证**
 
 Run: `cd app && npx vue-tsc --noEmit && npm run build`
 Expected: exit 0。
@@ -138,27 +138,27 @@ git commit -m "feat(settings): 记忆可编辑、按命名空间筛选、展开�
 - Test: `sidecar/tests/test_reminders.py`
 - Test: `sidecar/tests/test_server.py`
 
-- [ ] **Step 1: 写 settings 失败测试**
+- [x] **Step 1: 写 settings 失败测试**
 
 默认值断言加 `"proactive.level": "full"`；`settings_set` 设为 `quiet` 后 get 生效；非法值（如 `"loud"`）被拒绝或回退默认，未知键仍忽略。
 
-- [ ] **Step 2: 确认 RED**
+- [x] **Step 2: 确认 RED**
 
 Run: `cd sidecar && uv run --extra dev pytest tests/test_mem_settings.py -q`
 
-- [ ] **Step 3: 加默认键与校验**
+- [x] **Step 3: 加默认键与校验**
 
 `_SETTINGS_DEFAULTS` 加 `"proactive.level": "full"`；`settings_set` 对该键只接受 `{"quiet", "bubble", "full"}`。
 
-- [ ] **Step 4: 写旋钮行为失败测试**
+- [x] **Step 4: 写旋钮行为失败测试**
 
 提醒循环：level=quiet 时到期提醒**不广播** reminder 事件、不 TTS，但仍落历史与 Feed；level=bubble 时广播事件带 `level="bubble"` 且不 TTS；level=full 时带 `level="full"` 且 TTS 仍受 `proactive_voice` 控（现状）。插件事件：`_on_plugin_event` 对播报类事件做同款过滤/标注，Feed 照落。
 
-- [ ] **Step 5: 确认 RED**
+- [x] **Step 5: 确认 RED**
 
 Run: `cd sidecar && uv run --extra dev pytest tests/test_reminders.py tests/test_server.py -q`
 
-- [ ] **Step 6: 挂接两个推送点并全绿**
+- [x] **Step 6: 挂接两个推送点并全绿**
 
 `_reminder_loop`（`server.py:567-603`）与 `_on_plugin_event`（`server.py:425-437`）每轮实时读 `settings.get("proactive.level", "full")`：`quiet` 跳过广播与 TTS；其余档位在广播 payload 加 `level` 字段；TTS 条件收紧为 `level == "full" and proactive_voice`。`error`/`confirmation_needed` 事件路径不动。
 
@@ -179,19 +179,19 @@ git commit -m "feat(settings): 自主权三档旋钮挂接主动推送"
 - Modify: `app/src/components/SettingsView.vue`
 - Modify: `app/src/App.vue`
 
-- [ ] **Step 1: 类型与设置读写**
+- [x] **Step 1: 类型与设置读写**
 
 `SettingsValues` 加 `"proactive.level": "quiet" | "bubble" | "full"`；reminder 事件 DTO 加可选 `level`。
 
-- [ ] **Step 2: 设置页「主动行为」组**
+- [x] **Step 2: 设置页「主动行为」组**
 
 三档 segmented：安静（提醒与播报只记入动态，不打扰）/ 气泡（桌宠冒泡轻提示，不亮窗不出声）/ 完整（亮窗 + 气泡，语音播报由下方开关控制）。乐观更新 + 失败回滚（与感知开关同款）。`proactive_voice` 开关保留，非 `full` 档置灰并注明「仅完整档生效」。
 
-- [ ] **Step 3: App.vue 按 level 呈现**
+- [x] **Step 3: App.vue 按 level 呈现**
 
 reminder case（`App.vue:374-392`）：`e.level === "bubble"` 时只 push 气泡 + `attentionNeeded`，跳过亮窗分支；无 `level` 字段按 `full` 处理（兼容旧 sidecar）。`notice`/`error`/确认闸门不动。
 
-- [ ] **Step 4: 前端验证**
+- [x] **Step 4: 前端验证**
 
 Run: `cd app && npx vue-tsc --noEmit && npm run build`
 Expected: exit 0。
@@ -208,21 +208,21 @@ git commit -m "feat(settings): 主动行为三档旋钮与呈现分级"
 **Files:**
 - Modify: `docs/research/2026-07-27-os-feel-design.md`
 
-- [ ] **Step 1: sidecar 全量**
+- [x] **Step 1: sidecar 全量**
 
 Run: `cd sidecar && uv run --extra dev pytest -q`
 Expected: all tests pass，记录数量。
 
-- [ ] **Step 2: 前端与 Rust 全量**
+- [x] **Step 2: 前端与 Rust 全量**
 
 Run: `cd app && npx vue-tsc --noEmit && npm run build && cargo check --manifest-path src-tauri/Cargo.toml && cargo test --manifest-path src-tauri/Cargo.toml`
 Expected: exit 0。
 
-- [ ] **Step 3: 更新 os-feel-design §4.4 实装记录**
+- [x] **Step 3: 更新 os-feel-design §4.4 实装记录**
 
 追加日期行：记忆管理三件套齐（可见/可改/可删 + 命名空间筛选 + 展开）；自主权旋钮三档语义与管辖范围（只管触达强度，历史/Feed 照落，error/确认闸门不受管辖）；遗留真机验收项。
 
-- [ ] **Step 4: 文档提交**
+- [x] **Step 4: 文档提交**
 
 ```bash
 git add docs/research/2026-07-27-os-feel-design.md
