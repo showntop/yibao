@@ -203,7 +203,8 @@ ObsStore：append/查询倒序+分页/delete/clear/留存 purge（构造过期�
 - 已实现独立出站授权：`perception.model_access` 默认 false、设置页明确披露应用名/窗口标题/活动状态会发送给当前模型；不开启时在解密前拦截。采集暂停不影响读取尚未删除的历史。
 - 已实现敏感结果边界：当前模型轮次拿完整结构化活动；audit、`action_result`、panel 与 history 只拿安全摘要。敏感工具的摘要钩子异常时 fail closed 为 `redacted=true`；使用非空活动回答后发 notice「已参考最近活动」。
 - 自动验证：sidecar 全量 `512 passed`；`vue-tsc --noEmit`、Vite production build、`cargo check`、`cargo test` 全部 exit 0。
-- 待真机验收：除首次创建/重启读取 Keychain、AX 标题与 CGWindow 退化、设置页视觉与实际采样外，还需用真实模型验证工具选择、时间线顺序和 notice，并扫描用户真实数据目录的 audit/history 不含唯一测试窗口标题。自动测试未替代这些 macOS 与模型交互验证。
+- 真机验收（2026-07-28 核心通过）：真实模型加载成功（11 条观察、12 个时间段）；真实 `audit.db` 只含时间窗与计数、无活动详情；真实会话历史无应用名/窗口标题、最终回答已替换为敏感占位。
+- 待真机验收（剩余）：`perception.model_access` 关闭时的拦截与引导文案；notice「已参考最近活动」的实际出现；采集暂停后历史仍可查；首次创建/重启读取 Keychain、AX 标题与 CGWindow 退化、设置页视觉与实际采样。
 
 ## 11. 风险与反模式
 
