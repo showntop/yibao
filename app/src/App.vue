@@ -373,7 +373,8 @@ function onEvent(e: BrainEvent) {
       break;
     case "reminder": {
       // 主动提醒：轻提示而非弹窗——亮窗（若隐藏）+ notify 态 + 常驻气泡，等用户点团子来看；
-      // 确认闸门（confirmation_needed）不在此列，仍是强制展开
+      // 确认闸门（confirmation_needed）不在此列，仍是强制展开。
+      // 自主权「气泡」档（e.level）：不主动亮窗，只标「有事找你」；缺省 level 按完整档（兼容旧 sidecar）。
       const text = "⏰ " + (e.text ?? "到点了");
       bubbles.value.push({ role: "ai", text });
       void (async () => {
@@ -382,7 +383,12 @@ function onEvent(e: BrainEvent) {
           const home = await WebviewWindow.getByLabel("home");
           if (home && (await home.isVisible())) return;
           const win = getCurrentWindow();
-          if (!(await win.isVisible())) await win.show();
+          const visible = await win.isVisible();
+          if (!visible && e.level === "bubble") {
+            attentionNeeded.value = true; // 气泡档：窗藏着就不打扰，点团子即见
+            return;
+          }
+          if (!visible) await win.show();
           if (!expanded.value) {
             attentionNeeded.value = true;
             openBubbleSticky(text);

@@ -56,6 +56,8 @@ export interface BrainEvent {
   payload?: PanelPayload;
   /** 会话分流：本次 run 的发起场景（pet / panel:<plugin>）；空 = 全局事件（两窗都处理） */
   surface?: string;
+  /** 自主权档位（reminder 类主动事件；缺省按 full 处理，兼容旧 sidecar） */
+  level?: "quiet" | "bubble" | "full";
 }
 
 // ---- 会话分流（v2 §5）：run/语音/面板调用带 surface 标签，大脑透传回事件流与历史 ----
@@ -456,6 +458,7 @@ export async function memEdit(id: string, text: string, timeoutMs = 5000): Promi
 
 export interface SettingsValues {
   proactive_voice: boolean; // 主动开口：提醒触发时语音播报
+  "proactive.level": "quiet" | "bubble" | "full"; // 自主权旋钮：触达强度三档
   "perception.master": boolean;
   "perception.app": boolean;
   "perception.activity": boolean;

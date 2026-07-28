@@ -126,6 +126,7 @@ async function doClear(kind: ClearKind) {
 
 // ---- 自主权（数据目录 settings.json，即时生效免重启）----
 const proactiveVoice = ref(true);
+const proactiveLevel = ref<"quiet" | "bubble" | "full">("full");
 const autonErr = ref("");
 
 async function toggleProactiveVoice() {
@@ -135,6 +136,18 @@ async function toggleProactiveVoice() {
   const r = await setSettings({ proactive_voice: next });
   if (r === null) {
     proactiveVoice.value = !next;
+    autonErr.value = "设置未生效（大脑不在线？）";
+  }
+}
+
+async function setProactiveLevel(lv: "quiet" | "bubble" | "full") {
+  if (lv === proactiveLevel.value) return;
+  autonErr.value = "";
+  const prev = proactiveLevel.value;
+  proactiveLevel.value = lv; // 乐观更新，失败回滚
+  const r = await setSettings({ "proactive.level": lv });
+  if (r === null) {
+    proactiveLevel.value = prev;
     autonErr.value = "设置未生效（大脑不在线？）";
   }
 }
@@ -375,6 +388,8 @@ onMounted(async () => {
   void getSettingsOnce().then((s) => { // 自主权旋钮当前值（大脑不在线则保持默认）
     if (s) {
       if (typeof s.proactive_voice === "boolean") proactiveVoice.value = s.proactive_voice;
+      const lv = s["proactive.level"];
+      if (lv === "quiet" || lv === "bubble" || lv === "full") proactiveLevel.value = lv;
       syncPerceptionSettings(s);
     }
   });
@@ -456,8 +471,28 @@ onUnmounted(() => {
       <section class="s-group">
         <div class="s-group-title">自主权</div>
         <div class="s-row">
-          <span class="s-row-label">主动开口播报<span class="s-row-why">提醒触发时开口说话；关闭则只亮窗/气泡</span></span>
-          <button class="switch" :class="{ on: proactiveVoice }" title="主动开口播报" @click="toggleProactiveVoice"><i /></button>
+          <span class="s-row-label">
+            主动找我
+            <span class="s-row-why">安静：提醒与播报只记入动态，不打扰；气泡：桌宠冒泡，不亮窗不出声；完整：亮窗 + 气泡</span>
+          </span>
+          <span class="seg" role="group" aria-label="主动找我频率">
+            <button class="seg-btn" :class="{ on: proactiveLevel === 'quiet' }" @click="setProactiveLevel('quiet')">安静</button>
+            <button class="seg-btn" :class="{ on: proactiveLevel === 'bubble' }" @click="setProactiveLevel('bubble')">气泡</button>
+            <button class="seg-btn" :class="{ on: proactiveLevel === 'full' }" @click="setProactiveLevel('full')">完整</button>
+          </span>
+        </div>
+        <div class="s-row">
+          <span class="s-row-label">
+            主动开口播报
+            <span class="s-row-why">{{ proactiveLevel === "full" ? "提醒触发时开口说话；关闭则只亮窗/气泡" : "仅「完整」档生效" }}</span>
+          </span>
+          <button
+            class="switch"
+            :class="{ on: proactiveVoice }"
+            :disabled="proactiveLevel !== 'full'"
+            title="主动开口播报"
+            @click="toggleProactiveVoice"
+          ><i /></button>
         </div>
         <div v-if="autonErr" class="s-msg err">⚠️ {{ autonErr }}</div>
       </section>
@@ -887,6 +922,26 @@ select:focus {
 .switch:disabled {
   opacity: 0.45;
   cursor: default;
+}
+/* 三档 segmented（自主权旋钮） */
+.seg {
+  display: inline-flex;
+  flex-shrink: 0;
+  border: 1px solid var(--yb-surface-border);
+  border-radius: var(--yb-radius-lg);
+  overflow: hidden;
+}
+.seg-btn {
+  border: none;
+  background: transparent;
+  color: var(--yb-text-dim);
+  font-size: var(--yb-fs-sm);
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.seg-btn.on {
+  background: var(--yb-accent-soft);
+  color: var(--yb-accent-deep);
 }
 /* 感知日志：来源徽章 + 一行正文/元信息 + 原地删除。 */
 .p-row {
