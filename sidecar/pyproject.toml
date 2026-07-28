@@ -6,6 +6,8 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "pydantic>=2.7",
     "openai>=1.40",
+    # 感知原始内容字段加密；密钥由 macOS Keychain 托管，禁止明文降级。
+    "cryptography>=43.0",
     # Plan 3a 执行/感知基座（跨平台）
     "mss>=9.0",
     "pillow>=10.0",

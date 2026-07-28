@@ -511,6 +511,69 @@ def test_serve_async_prompt_permission(monkeypatch, tmp_path):
     assert any(m["type"] == "permissions" for m in out)
 
 
+def test_serve_async_perception_list_delete_and_clear(tmp_path):
+    class FakePerceptionStore:
+        def __init__(self):
+            self.deleted = []
+            self.cleared = False
+
+        def list(self, limit=60, before_id=None):
+            assert limit == 20
+            assert before_id == 9
+            return [
+                {
+                    "id": 8,
+                    "ts": 100.0,
+                    "source": "app",
+                    "kind": "frontmost",
+                    "payload": {"app": "Xcode", "title": "yibao"},
+                    "sensitivity": "S1",
+                }
+            ]
+
+        def delete(self, oid):
+            self.deleted.append(oid)
+            return oid == 8
+
+        def clear(self):
+            self.cleared = True
+            return 4
+
+        def purge(self):
+            return 0
+
+        def close(self):
+            pass
+
+    store = FakePerceptionStore()
+    out = []
+    _run_async(
+        serve_async(
+            make_reader(
+                [
+                    {"type": "perception_list", "limit": 20, "before_id": 9},
+                    {"type": "perception_delete", "id": 123, "per_id": 8},
+                    {"type": "perception_clear"},
+                ]
+            ),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+            perception_store=store,
+        )
+    )
+
+    perception = [m for m in out if m["type"] == "perception"]
+    assert perception == [
+        {"type": "perception", "items": store.list(20, 9), "sources": ["app"], "available": True}
+    ]
+    assert {"type": "perception_deleted", "id": 8, "ok": True} in out
+    assert {"type": "perception_cleared", "count": 4} in out
+    assert store.deleted == [8]
+    assert store.cleared is True
+
+
 def test_load_plugins_safe_wires_registry(tmp_path, monkeypatch, capsys):
     """build_loop 的插件接线：YIBAO_PLUGINS_DIR 指向 tmp，加载结果进 registry 并打印 stderr。"""
     from yibao_brain.memory import FakeMemory

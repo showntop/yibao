@@ -100,7 +100,12 @@ def test_settings_set_persists_and_ignores_unknown(tmp_path, monkeypatch):
     assert rs[1]["values"]["proactive_voice"] is False  # get 复读
     assert "hack" not in rs[0]["values"]                # 未知键不落
     disk = json.load(open(settings_path(), encoding="utf-8"))
-    assert disk == {"proactive_voice": False}
+    assert disk == {
+        "proactive_voice": False,
+        "perception.master": False,
+        "perception.app": False,
+        "perception.activity": False,
+    }
 
 
 def test_settings_bad_file_falls_back_to_defaults(tmp_path, monkeypatch):
@@ -108,4 +113,9 @@ def test_settings_bad_file_falls_back_to_defaults(tmp_path, monkeypatch):
     os.makedirs(tmp_path, exist_ok=True)
     with open(settings_path(), "w", encoding="utf-8") as f:
         f.write("{bad json")
-    assert load_settings() == {"proactive_voice": True}
+    assert load_settings() == {
+        "proactive_voice": True,
+        "perception.master": False,
+        "perception.app": False,
+        "perception.activity": False,
+    }

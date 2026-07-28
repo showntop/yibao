@@ -15,7 +15,7 @@ from collections.abc import Callable
 
 from . import permissions
 from .audit import AuditLog
-from .config import a11y_enabled, computer_use_enabled, history_path, llm_api_key, load_settings, plugin_data_dir, save_settings, screenshot_dir, stt_model_dir, tts_voice, vad_max_seconds, vad_min_silence, vad_model_path, voice_enabled
+from .config import a11y_enabled, computer_use_enabled, history_path, llm_api_key, load_settings, perception_db_path, plugin_data_dir, save_settings, screenshot_dir, stt_model_dir, tts_voice, vad_max_seconds, vad_min_silence, vad_model_path, voice_enabled
 from .feed import FeedStore
 from .history import ConversationHistory
 from .ipc import Action, Event, RiskLevel
@@ -339,6 +339,8 @@ async def serve_async(
     voice=None,
     provider=None,
     skills_factory=None,
+    perception_store=None,
+    perception_sensors=None,
 ) -> None:
     """异步控制平面：stdin 读线程 → asyncio.Queue → 分发；支持 interrupt 打断。
 
@@ -484,6 +486,52 @@ async def serve_async(
 
     # 用户设置（自主权旋钮等，数据目录 settings.json）：运行期可调，settings_set 即时生效免重启
     settings = load_settings()
+
+    # 感知是增强面：Keychain/SQLite 不可用时保持关闭，绝不降级明文或拖垮大脑。
+    pstore = perception_store
+    if pstore is None and use_real:
+        try:
+            from .perception import PerceptionStore
+
+            pstore = PerceptionStore(perception_db_path())
+        except Exception as e:
+            settings["perception.master"] = False
+            print(f"[yibao] 感知不可用（保持关闭）：{e}", file=sys.stderr)
+
+    perception_stop = threading.Event()
+    perception_thread = None
+    if pstore is not None:
+        try:
+            pstore.purge()
+        except Exception as e:
+            print(f"[yibao] 感知过期清理失败：{e}", file=sys.stderr)
+        if use_real or perception_sensors is not None:
+            try:
+                if perception_sensors is None:
+                    from .perception import PerceptionSensors
+
+                    perception_sensors = PerceptionSensors(pstore, settings)
+                perception_thread = threading.Thread(
+                    target=perception_sensors.run,
+                    args=(perception_stop,),
+                    daemon=True,
+                    name="yibao-perception",
+                )
+                perception_thread.start()
+            except Exception as e:
+                settings["perception.master"] = False
+                print(f"[yibao] 感知采样器启动失败（保持关闭）：{e}", file=sys.stderr)
+
+    async def _perception_cleanup_loop() -> None:
+        while True:
+            await asyncio.sleep(3600)
+            if pstore is not None:
+                try:
+                    await _offload(pstore.purge)
+                except Exception as e:
+                    print(f"[yibao] 感知过期清理失败：{e}", file=sys.stderr)
+
+    perception_cleanup_task = asyncio.ensure_future(_perception_cleanup_loop())
 
     async def _mem_list() -> list[dict]:
         """记忆管理页数据（OS 感 §4.4）：底座（译宝）+ 各插件命名空间分组列出。单空间失败不拖垮整体。"""
@@ -776,6 +824,15 @@ async def serve_async(
                     t.cancel()
             tick_task.cancel()
             reminder_task.cancel()
+            perception_cleanup_task.cancel()
+            perception_stop.set()
+            if perception_thread is not None:
+                perception_thread.join(timeout=1)
+            if pstore is not None:
+                try:
+                    pstore.close()
+                except Exception:
+                    pass
             return
         rtype = msg.get("type")
         if rtype in ("run", "voice_start"):
@@ -871,11 +928,45 @@ async def serve_async(
             vals = msg.get("values")
             if isinstance(vals, dict):
                 try:
-                    save_settings(vals)  # 只落已知键；写盘成功后重读合并
+                    accepted = dict(vals)
+                    if pstore is None and accepted.get("perception.master"):
+                        accepted["perception.master"] = False
+                    save_settings(accepted)  # 只落已知键；写盘成功后重读合并
                     settings.update(load_settings())
                 except Exception as e:
                     print(f"[yibao] 设置保存失败：{e}", file=sys.stderr)
             write_msg({"type": "settings", "values": dict(settings)})
+        elif rtype == "perception_list":
+            if pstore is None:
+                write_msg({"type": "perception", "items": [], "sources": [], "available": False})
+                continue
+            try:
+                limit = max(1, min(int(msg.get("limit") or 60), 200))
+                before_raw = msg.get("before_id")
+                before_id = int(before_raw) if before_raw is not None else None
+                items = pstore.list(limit=limit, before_id=before_id)
+                sources = sorted({str(item.get("source", "")) for item in items if item.get("source")})
+                write_msg({"type": "perception", "items": items, "sources": sources, "available": True})
+            except Exception as e:
+                write_msg({"type": "perception", "items": [], "sources": [], "available": True, "error": str(e)})
+        elif rtype == "perception_delete":
+            per_raw = msg.get("per_id")
+            if pstore is None or per_raw is None:
+                write_msg({"type": "perception_deleted", "id": per_raw, "ok": False, "error": "感知存储不可用"})
+                continue
+            try:
+                per_id = int(per_raw)
+                write_msg({"type": "perception_deleted", "id": per_id, "ok": bool(pstore.delete(per_id))})
+            except Exception as e:
+                write_msg({"type": "perception_deleted", "id": per_raw, "ok": False, "error": str(e)})
+        elif rtype == "perception_clear":
+            if pstore is None:
+                write_msg({"type": "perception_cleared", "count": 0, "error": "感知存储不可用"})
+                continue
+            try:
+                write_msg({"type": "perception_cleared", "count": int(pstore.clear())})
+            except Exception as e:
+                write_msg({"type": "perception_cleared", "count": 0, "error": str(e)})
         elif rtype == "check_permissions":
             write_msg({"type": "permissions", "permissions": _permissions_status()})
         elif rtype == "prompt_permission":

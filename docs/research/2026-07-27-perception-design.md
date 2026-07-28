@@ -70,11 +70,11 @@
 
 | 数据 | 产生 | 存储 | 过期 | 提炼去向 | 用户可删粒度 |
 |---|---|---|---|---|---|
-| a11y 树文本 | B 事件 | obs 表 | 7 天 | 模式记忆 | 单条/按 app/按时段/全部 |
+| a11y 树文本 | B 事件 | obs 表（payload 加密） | 7 天 | 模式记忆 | 单条/按 app/按时段/全部 |
 | 截图原图 | B 事件 | 文件系统 | 24 小时 | 概括后即删（只留概括文本 7 天） | 同上 |
-| app/窗口流 | A 变化 | obs 表 | 30 天 | 使用模式（时段×app） | 同上 |
-| 活跃/空闲 | C 切换 | obs 表 | 30 天 | 作息模式 | 同上 |
-| 剪贴板文本 | E 变化（开关） | obs 表 | 24 小时 | 不提炼进记忆 | 同上 |
+| app/窗口流 | A 变化 | obs 表（payload 加密） | 30 天 | 使用模式（时段×app） | 同上 |
+| 活跃/空闲 | C 切换 | obs 表（payload 加密） | 30 天 | 作息模式 | 同上 |
+| 剪贴板文本 | E 变化（开关） | obs 表（payload 加密） | 24 小时 | 不提炼进记忆 | 同上 |
 | 环境快照 | D 附带 | obs 表 | 7 天 | 不提炼 | 同上 |
 | 模式/结论 | Distiller | mem0 | 长期 | — | 记忆管理页（已有） |
 
@@ -104,8 +104,8 @@
 
 ### 6.4 安全（at-rest）
 
-- v1：文件权限 0600 + 数据目录权限 0700（基线）。
-- v2 加密：obs 库 SQLCipher 或字段级加密，密钥 Keychain 封装（类比 Recall 的 TPM 封装，macOS 无 VBS Enclave 可类比物，Keychain+生物识别是平台等价物）；查看感知日志可选要求 Touch ID。
+- v1：**字段级加密从第一版启用**。`payload` 使用 Fernet（AES-128-CBC + HMAC-SHA256）加密，密钥存 macOS Keychain；测试通过注入 key provider，不接触真实 Keychain。数据库文件权限 0600 + 数据目录权限 0700。时间、来源、类型、敏感度保留明文用于留存清理与分页，但窗口标题、应用名、空闲时长等实际内容不以明文落盘。
+- v2 加密增强：评估 SQLCipher 全库加密（隐藏时间/来源等元数据）与查看感知日志时可选 Touch ID；迁移必须原地重加密并保留可回滚备份。
 - 访问限流：感知日志/删除接口防暴力枚举（Recall anti-hammering 的对标）。
 
 ## 7. 消费场景（价值闭环）
@@ -157,10 +157,10 @@ CREATE INDEX idx_obs_ts ON observations(ts);
 CREATE INDEX idx_obs_source ON observations(source);
 ```
 
-- 库文件 `observations.db`（数据目录，与 feed.db 同目录）；写失败只 print 不抛（增强面纪律同 feed）。
+- 库文件 `observations.db`（数据目录，与 feed.db 同目录）；`payload` 入库前 Fernet 加密、读取时解密，密钥由 macOS Keychain service `com.yibao.perception` 提供；写失败只 print 不抛（增强面纪律同 feed）。无法取得密钥时感知保持关闭并向 stderr 明示，**禁止退化成明文**。
 - **v1 无 ObservationBus**：sensors 直写 `ObsStore.append`（量极小；Bus 背压抽象留给 B 源——别过早实现，但 `append` 即接口留好了）。
 - 留存：A/C 30 天；清理 = 启动时 + 每小时 purge（复用 `_reminder_loop` 后台线程模式）。
-- 文件权限：observations.db 0600（§6.4 v1 基线）。
+- 文件权限：observations.db 0600、数据目录 0700；密钥只进 Keychain，不写 settings/.env/数据库（§6.4 v1 基线）。
 
 ### 11.3 协议（server.py，feed/widgets 同款转发模式）
 

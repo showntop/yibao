@@ -164,10 +164,18 @@ def history_path() -> str:
     return os.environ.get("YIBAO_HISTORY_PATH", os.path.join(data_dir(), "history.json"))
 
 
+def perception_db_path() -> str:
+    """加密观察数据库；内容密钥不在此处配置，只能来自 macOS Keychain。"""
+    return os.environ.get("YIBAO_PERCEPTION_DB", os.path.join(data_dir(), "observations.db"))
+
+
 # ---------- 用户设置（数据目录 settings.json：自主权旋钮等运行期可调项，区别于 .env 的部署配置） ----------
 
 _SETTINGS_DEFAULTS: dict = {
     "proactive_voice": True,  # 主动开口：提醒触发时语音播报（关 = 只亮窗/气泡，不出声）
+    "perception.master": False,
+    "perception.app": False,
+    "perception.activity": False,
 }
 
 
