@@ -1,5 +1,6 @@
 import asyncio
 import json
+from datetime import datetime, timedelta
 from yibao_brain.server import serve, serve_async, build_loop
 from yibao_brain.llm import FakeProvider, ToolCall
 from yibao_brain.ipc import RiskLevel
@@ -575,6 +576,119 @@ def test_serve_async_perception_list_delete_and_clear(tmp_path):
     assert {"type": "perception_cleared", "count": 4} in out
     assert store.deleted == [8]
     assert store.cleared is True
+
+
+class _ActivityPerceptionStore:
+    def __init__(self, row_ts=None):
+        self.row_ts = row_ts
+        self.queries = 0
+
+    def purge(self):
+        return 0
+
+    def close(self):
+        pass
+
+    def query_window(self, start_ts, end_ts, limit=2000):
+        self.queries += 1
+        if self.row_ts is None:
+            return []
+        return [
+            {
+                "id": 1,
+                "ts": self.row_ts,
+                "source": "app",
+                "kind": "frontmost",
+                "payload": {"app": "Terminal", "title": "Window Secret"},
+                "sensitivity": "S1",
+            }
+        ]
+
+    def latest_before(self, source, ts):
+        return None
+
+
+def _tool_names(call):
+    return {
+        item.get("name") or item.get("function", {}).get("name")
+        for item in call["tools"]
+    }
+
+
+def test_serve_async_registers_activity_tool_only_when_store_exists(tmp_path, monkeypatch):
+    monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path))
+    with_store = FakeProvider(chunks=["ok"])
+    _run_async(
+        serve_async(
+            make_reader([{"id": 1, "type": "run", "text": "你好"}]),
+            lambda _m: None,
+            use_real=False,
+            db_path=str(tmp_path / "with.db"),
+            provider=with_store,
+            perception_store=_ActivityPerceptionStore(),
+        )
+    )
+    without_store = FakeProvider(chunks=["ok"])
+    _run_async(
+        serve_async(
+            make_reader([{"id": 2, "type": "run", "text": "你好"}]),
+            lambda _m: None,
+            use_real=False,
+            db_path=str(tmp_path / "without.db"),
+            provider=without_store,
+        )
+    )
+
+    assert "load_user_activity" in _tool_names(with_store.astream_calls[0])
+    assert "load_user_activity" not in _tool_names(without_store.astream_calls[0])
+
+
+def test_serve_async_activity_tool_observes_live_model_access_setting(tmp_path, monkeypatch):
+    monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path))
+    end = datetime.now().astimezone()
+    start = end - timedelta(minutes=10)
+    store = _ActivityPerceptionStore(row_ts=(start + timedelta(minutes=1)).timestamp())
+    provider = _TwoStepProvider(
+        first=FakeProvider(
+            tool_calls=[
+                ToolCall(
+                    id="t1",
+                    skill_id="load_user_activity",
+                    params={"start_at": start.isoformat(), "end_at": end.isoformat()},
+                )
+            ]
+        ),
+        second=FakeProvider(chunks=["你刚才在 Terminal"]),
+    )
+    out = []
+
+    _run_async(
+        serve_async(
+            make_reader(
+                [
+                    {"type": "settings_set", "values": {"perception.model_access": True}},
+                    {"id": 1, "type": "run", "text": "我刚才在干嘛"},
+                ]
+            ),
+            out.append,
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=provider,
+            perception_store=store,
+        )
+    )
+
+    settings = [item for item in out if item["type"] == "settings"][-1]
+    assert settings["values"]["perception.model_access"] is True
+    assert store.queries == 1
+    events = [item["event"] for item in out if item["type"] == "event"]
+    result = next(item["result"] for item in events if item["kind"] == "action_result")
+    assert result["data"]["segment_count"] == 1
+    assert "Window Secret" not in json.dumps(result, ensure_ascii=False)
+    assert [(item["kind"], item.get("text", "")) for item in events[-2:]] == [
+        ("final_reply", "你刚才在 Terminal"),
+        ("notice", "已参考最近活动"),
+    ]
 
 
 def test_load_plugins_safe_wires_registry(tmp_path, monkeypatch, capsys):

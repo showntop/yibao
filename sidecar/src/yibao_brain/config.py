@@ -176,6 +176,7 @@ _SETTINGS_DEFAULTS: dict = {
     "perception.master": False,
     "perception.app": False,
     "perception.activity": False,
+    "perception.model_access": False,
 }
 
 

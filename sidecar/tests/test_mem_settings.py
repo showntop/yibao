@@ -87,17 +87,24 @@ def test_settings_get_defaults(tmp_path, monkeypatch):
     r = [m for m in out if m["type"] == "settings"]
     assert len(r) == 1
     assert r[0]["values"]["proactive_voice"] is True
+    assert r[0]["values"]["perception.model_access"] is False
 
 
 def test_settings_set_persists_and_ignores_unknown(tmp_path, monkeypatch):
     out = _serve(
         tmp_path, monkeypatch,
-        [{"type": "settings_set", "values": {"proactive_voice": False, "hack": 1}},
+        [{"type": "settings_set", "values": {
+            "proactive_voice": False,
+            "perception.model_access": True,
+            "hack": 1,
+        }},
          {"type": "settings_get"}],
     )
     rs = [m for m in out if m["type"] == "settings"]
     assert rs[0]["values"]["proactive_voice"] is False  # set 的回执
     assert rs[1]["values"]["proactive_voice"] is False  # get 复读
+    assert rs[0]["values"]["perception.model_access"] is True
+    assert rs[1]["values"]["perception.model_access"] is True
     assert "hack" not in rs[0]["values"]                # 未知键不落
     disk = json.load(open(settings_path(), encoding="utf-8"))
     assert disk == {
@@ -105,6 +112,7 @@ def test_settings_set_persists_and_ignores_unknown(tmp_path, monkeypatch):
         "perception.master": False,
         "perception.app": False,
         "perception.activity": False,
+        "perception.model_access": True,
     }
 
 
@@ -118,4 +126,5 @@ def test_settings_bad_file_falls_back_to_defaults(tmp_path, monkeypatch):
         "perception.master": False,
         "perception.app": False,
         "perception.activity": False,
+        "perception.model_access": False,
     }
