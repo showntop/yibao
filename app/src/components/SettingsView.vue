@@ -142,6 +142,7 @@ async function toggleProactiveVoice() {
 const perceptionMaster = ref(false);
 const perceptionApp = ref(false);
 const perceptionActivity = ref(false);
+const perceptionModelAccess = ref(false);
 const perceptionItems = ref<PerceptionItem[]>([]);
 const perceptionAvailable = ref(true);
 const perceptionLoaded = ref(false);
@@ -155,10 +156,15 @@ function syncPerceptionSettings(s: SettingsValues) {
   perceptionMaster.value = s["perception.master"] === true;
   perceptionApp.value = s["perception.app"] === true;
   perceptionActivity.value = s["perception.activity"] === true;
+  perceptionModelAccess.value = s["perception.model_access"] === true;
 }
 
 async function setPerceptionSetting(
-  key: "perception.master" | "perception.app" | "perception.activity",
+  key:
+    | "perception.master"
+    | "perception.app"
+    | "perception.activity"
+    | "perception.model_access",
   next: boolean,
 ) {
   perceptionErr.value = "";
@@ -166,15 +172,18 @@ async function setPerceptionSetting(
     "perception.master": perceptionMaster.value,
     "perception.app": perceptionApp.value,
     "perception.activity": perceptionActivity.value,
+    "perception.model_access": perceptionModelAccess.value,
   };
   if (key === "perception.master") perceptionMaster.value = next;
   if (key === "perception.app") perceptionApp.value = next;
   if (key === "perception.activity") perceptionActivity.value = next;
+  if (key === "perception.model_access") perceptionModelAccess.value = next;
   const r = await setSettings({ [key]: next });
   if (r === null) {
     perceptionMaster.value = old["perception.master"];
     perceptionApp.value = old["perception.app"];
     perceptionActivity.value = old["perception.activity"];
+    perceptionModelAccess.value = old["perception.model_access"];
     perceptionErr.value = "设置未生效（大脑不在线？）";
     return;
   }
@@ -399,7 +408,7 @@ onUnmounted(() => {
       <!-- 感知：显式 opt-in；A/C 只收状态，不截屏、不读输入内容 -->
       <section class="s-group">
         <div class="s-group-title">感知</div>
-        <div class="s-note">全部默认关闭。观察内容加密存放在本机；当前版本不截屏、不读取按键内容。</div>
+        <div class="s-note">全部默认关闭。观察内容加密存放在本机；只有开启下方模型读取开关并询问最近活动时，所选时间段才会发送给当前模型服务。</div>
         <div class="s-row">
           <span class="s-row-label">启用感知<span class="s-row-why">总开关，关闭后立即停止采样</span></span>
           <button class="switch" :class="{ on: perceptionMaster }" title="启用感知" @click="setPerceptionSetting('perception.master', !perceptionMaster)"><i /></button>
@@ -411,6 +420,10 @@ onUnmounted(() => {
         <div class="s-row">
           <span class="s-row-label">活动与空闲<span class="s-row-why">只记录状态切换，不读取输入内容</span></span>
           <button class="switch" :class="{ on: perceptionActivity }" :disabled="!perceptionMaster" title="活动与空闲" @click="setPerceptionSetting('perception.activity', !perceptionActivity)"><i /></button>
+        </div>
+        <div class="s-row">
+          <span class="s-row-label">允许模型读取感知记录<span class="s-row-why">询问最近活动时，将所选时间段的应用名、窗口标题和活动状态发送给当前模型；不发送截图或按键内容</span></span>
+          <button class="switch" :class="{ on: perceptionModelAccess }" title="允许模型读取感知记录" @click="setPerceptionSetting('perception.model_access', !perceptionModelAccess)"><i /></button>
         </div>
         <div class="s-note">{{ perceptionMaster ? "运行中" : "已暂停" }} · {{ perceptionItems.length }} 条已加载观察</div>
         <div v-if="perceptionErr" class="s-msg err">⚠️ {{ perceptionErr }}</div>

@@ -431,6 +431,7 @@ export interface SettingsValues {
   "perception.master": boolean;
   "perception.app": boolean;
   "perception.activity": boolean;
+  "perception.model_access": boolean;
   [k: string]: unknown;
 }
 
