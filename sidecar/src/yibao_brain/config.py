@@ -173,10 +173,17 @@ def perception_db_path() -> str:
 
 _SETTINGS_DEFAULTS: dict = {
     "proactive_voice": True,  # 主动开口：提醒触发时语音播报（关 = 只亮窗/气泡，不出声）
+    # 自主权旋钮（OS 感 §4.4）：quiet 只落动态 / bubble 气泡轻提示 / full 亮窗+气泡（+语音）
+    "proactive.level": "full",
     "perception.master": False,
     "perception.app": False,
     "perception.activity": False,
     "perception.model_access": False,
+}
+
+# 枚举型设置的合法取值；非法值拒收保持原值（防前端/手滑写坏）
+_SETTINGS_ENUMS: dict[str, tuple] = {
+    "proactive.level": ("quiet", "bubble", "full"),
 }
 
 
@@ -201,11 +208,14 @@ def load_settings() -> dict:
 
 
 def save_settings(values: dict) -> None:
-    """只落已知键（防前端乱写键名）；目录不存在先建。"""
+    """只落已知键且枚举键校验取值（防前端乱写）；目录不存在先建。"""
     os.makedirs(os.path.dirname(settings_path()), exist_ok=True)
     cur = load_settings()
     for k in cur:
         if k in values:
+            allowed = _SETTINGS_ENUMS.get(k)
+            if allowed is not None and values[k] not in allowed:
+                continue  # 非法枚举值拒收，保持原值
             cur[k] = values[k]
     tmp = settings_path() + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:

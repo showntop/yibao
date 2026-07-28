@@ -330,6 +330,55 @@ def serve(loop: AgentLoop, read_msg: ReadMsg, write_msg: WriteMsg, voice=None) -
                 write_msg({"type": "run_done", "id": req.get("id")})
 
 
+# ---------- 自主权旋钮（OS 感 §4.4：主动触达三档；只管触达强度，Feed/历史照落）----------
+
+
+def _proactive_level(settings: dict) -> str:
+    """旋钮当前档位；缺省/非法值按 full（兼容旧行为）。"""
+    lv = settings.get("proactive.level", "full")
+    return lv if lv in ("quiet", "bubble", "full") else "full"
+
+
+def _gate_proactive_event(ev: dict, settings: dict) -> dict | None:
+    """插件主动事件过旋钮：播报类（kind=reminder）quiet 吞掉、其余档标注 level；
+    error 等信任信息不受管辖，原样放行。"""
+    if not isinstance(ev, dict) or ev.get("kind") != "reminder":
+        return ev
+    level = _proactive_level(settings)
+    if level == "quiet":
+        return None
+    return {**ev, "level": level}
+
+
+async def _dispatch_reminder(r: dict, *, settings: dict, feed, history, voice,
+                             run_state: dict, write_msg) -> None:
+    """到期提醒分发：Feed/历史照落（可追溯底线）；气泡广播与 TTS 受 proactive.level 管辖。"""
+    text = str(r.get("text", ""))
+    level = _proactive_level(settings)
+    feed.add("reminder", text, {"rid": r.get("id")})  # 主屏动态：quiet 档也照落
+    if level != "quiet":
+        write_msg({"type": "event", "surface": "pet",
+                   "event": {"kind": "reminder", "text": text, "level": level}})
+    if history is not None:  # 落历史：用户回「知道了」时大脑有上下文
+        try:
+            await _offload(history.record_messages,
+                           [{"role": "assistant", "content": f"⏰ 到点提醒：{text}"}])
+        except Exception:
+            pass
+    # TTS 只在完整档且「主动开口」开着；有任务在跑不打断在播的语音
+    task = run_state["task"]
+    if level == "full" and voice is not None and settings.get("proactive_voice", True) \
+            and (task is None or task.done()):
+        async def _once(t=text):
+            yield f"提醒：{t}"
+        try:
+            write_msg({"type": "event", "surface": "pet", "event": {"kind": "speaking"}})
+            await voice.speak_stream(_once(), asyncio.Event())
+        except Exception as e:
+            print(f"[yibao] 提醒播报失败：{e}", file=sys.stderr)
+        write_msg({"type": "event", "surface": "pet", "event": {"kind": "speaking_done"}})
+
+
 async def serve_async(
     read_msg: ReadMsg,
     write_msg: WriteMsg,
@@ -421,13 +470,15 @@ async def serve_async(
     feed = FeedStore(os.path.join(os.path.dirname(db_path), "feed.db"))
 
     def _on_plugin_event(ev: dict) -> None:
-        """插件主动事件：先落 Feed 再转发壳（surface=None 壳侧按 pet 处理）。"""
+        """插件主动事件：先落 Feed 再转发壳（surface=None 壳侧按 pet 处理）；播报类受旋钮管辖。"""
         try:
             task_meta = ev.get("task") if isinstance(ev, dict) else None
             feed.add("task" if task_meta else "event", str(ev.get("text", "")), task_meta or {})
         except Exception:
             pass
-        write_msg({"type": "event", "surface": None, "event": ev})
+        gated = _gate_proactive_event(ev, settings)
+        if gated is not None:
+            write_msg({"type": "event", "surface": None, "event": gated})
 
     # 插件后台线程 → 壳的主动事件通道（如 agents 插件任务完成播报）：
     # 与下面 memory 状态回调同一跨线程先例（call_soon_threadsafe + write_msg）。
@@ -565,7 +616,7 @@ async def serve_async(
     write_msg({"type": "hello", "version": 1, "permissions": _permissions_status()})
 
     async def _reminder_loop() -> None:
-        """主动能力：每 10s 扫到期提醒 → 推 reminder 事件到壳；空闲时顺手语音播报。"""
+        """主动能力：每 10s 扫到期提醒 → 按自主权档位分发（广播/气泡/语音）。"""
         store = getattr(agent, "reminder_store", None)
         if store is None:
             return
@@ -577,28 +628,9 @@ async def serve_async(
                 print(f"[yibao] 提醒扫描失败：{e}", file=sys.stderr)
                 continue
             for r in due:
-                text = str(r.get("text", ""))
-                print(f"[yibao] 提醒触发 id={r.get('id')}：{text[:30]!r}", file=sys.stderr)
-                feed.add("reminder", text, {"rid": r.get("id")})  # 主屏动态
-                write_msg({"type": "event", "surface": "pet",
-                           "event": {"kind": "reminder", "text": text}})
-                if agent.history:  # 落历史：用户回「知道了」时大脑有上下文
-                    try:
-                        await _offload(agent.history.record_messages,
-                                       [{"role": "assistant", "content": f"⏰ 到点提醒：{text}"}])
-                    except Exception:
-                        pass
-                # 有任务在跑就只在气泡里提醒，不打断在播的语音；「主动开口」关掉时只亮窗不出声
-                task = run_state["task"]
-                if voice is not None and settings.get("proactive_voice", True) and (task is None or task.done()):
-                    async def _once(t=text):
-                        yield f"提醒：{t}"
-                    try:
-                        write_msg({"type": "event", "surface": "pet", "event": {"kind": "speaking"}})
-                        await voice.speak_stream(_once(), asyncio.Event())
-                    except Exception as e:
-                        print(f"[yibao] 提醒播报失败：{e}", file=sys.stderr)
-                    write_msg({"type": "event", "surface": "pet", "event": {"kind": "speaking_done"}})
+                print(f"[yibao] 提醒触发 id={r.get('id')}：{str(r.get('text', ''))[:30]!r}", file=sys.stderr)
+                await _dispatch_reminder(r, settings=settings, feed=feed, history=agent.history,
+                                         voice=voice, run_state=run_state, write_msg=write_msg)
 
     reminder_task = asyncio.ensure_future(_reminder_loop())
 

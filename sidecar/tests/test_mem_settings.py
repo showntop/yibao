@@ -136,11 +136,31 @@ def test_settings_set_persists_and_ignores_unknown(tmp_path, monkeypatch):
     disk = json.load(open(settings_path(), encoding="utf-8"))
     assert disk == {
         "proactive_voice": False,
+        "proactive.level": "full",
         "perception.master": False,
         "perception.app": False,
         "perception.activity": False,
         "perception.model_access": True,
     }
+
+
+def test_settings_proactive_level_default_full(tmp_path, monkeypatch):
+    out = _serve(tmp_path, monkeypatch, [{"type": "settings_get"}])
+    r = [m for m in out if m["type"] == "settings"][0]
+    assert r["values"]["proactive.level"] == "full"
+
+
+def test_settings_proactive_level_validated(tmp_path, monkeypatch):
+    out = _serve(
+        tmp_path, monkeypatch,
+        [{"type": "settings_set", "values": {"proactive.level": "quiet"}},
+         {"type": "settings_set", "values": {"proactive.level": "loud"}},
+         {"type": "settings_get"}],
+    )
+    rs = [m for m in out if m["type"] == "settings"]
+    assert rs[0]["values"]["proactive.level"] == "quiet"  # 合法值生效
+    assert rs[1]["values"]["proactive.level"] == "quiet"  # 非法枚举值拒收，保持原值
+    assert rs[2]["values"]["proactive.level"] == "quiet"
 
 
 def test_settings_bad_file_falls_back_to_defaults(tmp_path, monkeypatch):
@@ -150,6 +170,7 @@ def test_settings_bad_file_falls_back_to_defaults(tmp_path, monkeypatch):
         f.write("{bad json")
     assert load_settings() == {
         "proactive_voice": True,
+        "proactive.level": "full",
         "perception.master": False,
         "perception.app": False,
         "perception.activity": False,

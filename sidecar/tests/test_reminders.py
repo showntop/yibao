@@ -278,3 +278,95 @@ def test_list_shows_repeat_marker(store):
     store.add("喝水", time.time() + 600, rrule="daily")
     r = _skill(store, "reminder_list").run({}, None)
     assert "每天" in r.data["items"][0]
+
+
+# ---------- 自主权旋钮：到期提醒分发与插件播报闸门（OS 感 §4.4）----------
+
+
+def _dispatch(level, *, voice=None, proactive_voice=True):
+    import asyncio
+
+    from yibao_brain.server import _dispatch_reminder
+
+    out: list[dict] = []
+    feed_rows: list[tuple] = []
+    hist_msgs: list[dict] = []
+
+    class _Feed:
+        def add(self, kind, text, meta):
+            feed_rows.append((kind, text))
+
+    class _Hist:
+        def record_messages(self, msgs):
+            hist_msgs.extend(msgs)
+
+    asyncio.run(
+        _dispatch_reminder(
+            {"id": "r1", "text": "关火"},
+            settings={"proactive.level": level, "proactive_voice": proactive_voice},
+            feed=_Feed(), history=_Hist(), voice=voice, run_state={"task": None},
+            write_msg=out.append,
+        )
+    )
+    return out, feed_rows, hist_msgs
+
+
+def test_dispatch_quiet_feeds_and_history_but_no_broadcast():
+    out, feed_rows, hist_msgs = _dispatch("quiet")
+    kinds = [m["event"]["kind"] for m in out]
+    assert "reminder" not in kinds  # 不打扰：不广播不亮窗
+    assert feed_rows == [("reminder", "关火")]  # Feed 照落（可追溯底线）
+    assert hist_msgs and "关火" in hist_msgs[0]["content"]  # 历史照落
+
+
+def test_dispatch_bubble_broadcasts_with_level_no_tts():
+    class _Voice:
+        async def speak_stream(self, *a):
+            raise AssertionError("bubble 档不该出声")
+
+    out, _, _ = _dispatch("bubble", voice=_Voice())
+    evs = [m["event"] for m in out]
+    assert evs == [{"kind": "reminder", "text": "关火", "level": "bubble"}]
+
+
+def test_dispatch_full_marks_level_and_tts_when_voice_on():
+    spoken: list[str] = []
+
+    class _Voice:
+        async def speak_stream(self, stream, _ev):
+            async for t in stream:
+                spoken.append(t)
+
+    out, _, _ = _dispatch("full", voice=_Voice())
+    evs = [m["event"] for m in out]
+    assert [e["kind"] for e in evs] == ["reminder", "speaking", "speaking_done"]
+    assert evs[0] == {"kind": "reminder", "text": "关火", "level": "full"}
+    assert spoken == ["提醒：关火"]
+
+
+def test_dispatch_full_respects_proactive_voice_off():
+    spoken: list[str] = []
+
+    class _Voice:
+        async def speak_stream(self, stream, _ev):
+            async for t in stream:
+                spoken.append(t)
+
+    out, _, _ = _dispatch("full", voice=_Voice(), proactive_voice=False)
+    assert spoken == []
+    assert [m["event"]["kind"] for m in out] == ["reminder"]
+
+
+def test_gate_proactive_event_levels():
+    from yibao_brain.server import _gate_proactive_event
+
+    # 播报类（kind=reminder）：quiet 吞掉，bubble/full 标注档位
+    assert _gate_proactive_event({"kind": "reminder", "text": "d"}, {"proactive.level": "quiet"}) is None
+    assert _gate_proactive_event({"kind": "reminder", "text": "d"}, {"proactive.level": "bubble"}) == {
+        "kind": "reminder", "text": "d", "level": "bubble"}
+    # 缺省/非法值按 full（现状行为）
+    assert _gate_proactive_event({"kind": "reminder", "text": "d"}, {})["level"] == "full"
+    assert _gate_proactive_event({"kind": "reminder", "text": "d"}, {"proactive.level": "x"})["level"] == "full"
+    # error 等信任信息不受旋钮管辖，原样放行
+    assert _gate_proactive_event({"kind": "error", "text": "e"}, {"proactive.level": "quiet"}) == {
+        "kind": "error", "text": "e"}
