@@ -220,55 +220,139 @@ class PerceptionStore:
             self._conn.close()
 
 
-def sample_frontmost() -> tuple[str, str] | None:
-    """取当前应用与窗口标题；AX 优先，CGWindow 免权限退化。"""
-    if sys.platform != "darwin":
-        return None
-    from AppKit import NSWorkspace
+def _window_snapshot() -> list[dict]:
+    """实时窗口层级快照；每次调用直读 WindowServer，不依赖 Cocoa 通知缓存。"""
+    from Quartz import (
+        CGWindowListCopyWindowInfo,
+        kCGNullWindowID,
+        kCGWindowListExcludeDesktopElements,
+        kCGWindowListOptionOnScreenOnly,
+    )
 
-    app = NSWorkspace.sharedWorkspace().frontmostApplication()
-    if app is None:
+    return list(
+        CGWindowListCopyWindowInfo(
+            kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+            kCGNullWindowID,
+        )
+        or []
+    )
+
+
+def _localized_app_name(pid: int, fallback: str) -> str:
+    """按 pid 补本地化应用名；失败时保留 WindowServer owner name。"""
+    try:
+        from AppKit import NSRunningApplication
+
+        app = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
+        if app is not None:
+            return str(app.localizedName() or app.bundleIdentifier() or fallback)
+    except Exception:
+        pass
+    return fallback or "未知应用"
+
+
+def _ax_frontmost() -> tuple[int, str] | None:
+    """从系统级 AX 焦点读取真实前台 pid/title；不依赖 NSWorkspace 通知缓存。"""
+    try:
+        from ApplicationServices import (
+            AXUIElementCopyAttributeValue,
+            AXUIElementCreateSystemWide,
+            AXUIElementGetPid,
+            AXUIElementSetMessagingTimeout,
+            kAXErrorSuccess,
+            kAXFocusedApplicationAttribute,
+            kAXFocusedWindowAttribute,
+            kAXTitleAttribute,
+        )
+
+        system = AXUIElementCreateSystemWide()
+        err, app = AXUIElementCopyAttributeValue(system, kAXFocusedApplicationAttribute, None)
+        if err != kAXErrorSuccess or app is None:
+            return None
+        err, pid = AXUIElementGetPid(app, None)
+        if err != kAXErrorSuccess or int(pid) <= 0:
+            return None
+        AXUIElementSetMessagingTimeout(app, 0.5)
+        title = ""
+        err, window = AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute, None)
+        if err == kAXErrorSuccess and window is not None:
+            err, value = AXUIElementCopyAttributeValue(window, kAXTitleAttribute, None)
+            if err == kAXErrorSuccess and value is not None:
+                title = str(value)
+        return int(pid), title
+    except Exception:
         return None
-    name = str(app.localizedName() or app.bundleIdentifier() or "未知应用")
-    pid = int(app.processIdentifier())
-    title = ""
+
+
+def _ax_title_for_pid(pid: int) -> str:
+    """读取该应用的聚焦窗口标题；AX 不可用/超时返回空。"""
     try:
         from ApplicationServices import (
             AXUIElementCopyAttributeValue,
             AXUIElementCreateApplication,
+            AXUIElementSetMessagingTimeout,
             kAXErrorSuccess,
             kAXFocusedWindowAttribute,
             kAXTitleAttribute,
         )
 
         element = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(element, 0.5)
         err, window = AXUIElementCopyAttributeValue(element, kAXFocusedWindowAttribute, None)
         if err == kAXErrorSuccess and window is not None:
             err, value = AXUIElementCopyAttributeValue(window, kAXTitleAttribute, None)
             if err == kAXErrorSuccess and value is not None:
-                title = str(value)
+                return str(value)
     except Exception:
         pass
-    if not title:
-        try:
-            from Quartz import (
-                CGWindowListCopyWindowInfo,
-                kCGNullWindowID,
-                kCGWindowListExcludeDesktopElements,
-                kCGWindowListOptionOnScreenOnly,
-            )
+    return ""
 
-            windows = CGWindowListCopyWindowInfo(
-                kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
-                kCGNullWindowID,
-            )
-            for window in windows or []:
-                if int(window.get("kCGWindowOwnerPID", -1)) == pid and int(window.get("kCGWindowLayer", 0)) == 0:
-                    title = str(window.get("kCGWindowName") or "")
-                    break
-        except Exception:
-            pass
-    return name, title
+
+def sample_frontmost() -> tuple[str, str] | None:
+    """取实时前台应用：系统级 AX 优先，WindowServer 与 NSWorkspace 依次退化。"""
+    if sys.platform != "darwin":
+        return None
+
+    # A 源本来就依赖辅助功能授权。系统级 focusedApplication 每次直读焦点，
+    # 不会像后台线程里的 NSWorkspace.frontmostApplication 一样停在启动快照。
+    focused = _ax_frontmost()
+    if focused is not None:
+        pid, title = focused
+        return _localized_app_name(pid, "未知应用"), title
+
+    # AX 未授权时，若用户已有屏幕录制权限，WindowServer 仍能给实时前后层级。
+    try:
+        windows = _window_snapshot()
+    except Exception:
+        windows = []
+    # CGWindowListCopyWindowInfo 已按前→后排序；首个 layer=0 窗口就是当前普通前台窗。
+    for window in windows:
+        try:
+            if int(window.get("kCGWindowLayer", -1)) != 0:
+                continue
+            pid = int(window.get("kCGWindowOwnerPID", -1))
+            owner = str(window.get("kCGWindowOwnerName") or "")
+            if pid <= 0 or not owner:
+                continue
+            name = _localized_app_name(pid, owner)
+            title = _ax_title_for_pid(pid) or str(window.get("kCGWindowName") or "")
+            return name, title
+        except (TypeError, ValueError):
+            continue
+
+    # 最后才用 NSWorkspace，保证缺 AX/录屏时至少有退化结果；此路径可能受后台
+    # Cocoa 通知缓存影响，所以不会再作为正常授权状态下的主路径。
+    try:
+        from AppKit import NSWorkspace
+
+        app = NSWorkspace.sharedWorkspace().frontmostApplication()
+        if app is not None:
+            pid = int(app.processIdentifier())
+            name = str(app.localizedName() or app.bundleIdentifier() or "未知应用")
+            return name, _ax_title_for_pid(pid)
+    except Exception:
+        pass
+    return None
 
 
 def sample_idle_seconds() -> float:

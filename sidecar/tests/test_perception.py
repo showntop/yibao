@@ -106,6 +106,44 @@ def test_keychain_timeout_fails_closed(monkeypatch):
         perception.key_from_macos_keychain()
 
 
+def test_frontmost_sampler_rechecks_systemwide_ax_each_call(monkeypatch):
+    focused = iter([(101, "one.py"), (202, "pytest")])
+    names = {101: "Xcode", 202: "Terminal"}
+    monkeypatch.setattr(perception.sys, "platform", "darwin")
+    monkeypatch.setattr(perception, "_ax_frontmost", lambda: next(focused), raising=False)
+    monkeypatch.setattr(perception, "_localized_app_name", lambda pid, fallback: names[pid])
+    monkeypatch.setattr(
+        perception,
+        "_window_snapshot",
+        lambda: pytest.fail("AX 可用时不应依赖屏幕录制权限"),
+    )
+
+    assert perception.sample_frontmost() == ("Xcode", "one.py")
+    assert perception.sample_frontmost() == ("Terminal", "pytest")
+
+
+def test_frontmost_sampler_falls_back_to_live_window_order_without_ax(monkeypatch):
+    monkeypatch.setattr(perception.sys, "platform", "darwin")
+    monkeypatch.setattr(perception, "_ax_frontmost", lambda: None)
+    monkeypatch.setattr(
+        perception,
+        "_window_snapshot",
+        lambda: [
+            {"kCGWindowLayer": 20, "kCGWindowOwnerPID": 1, "kCGWindowOwnerName": "Overlay"},
+            {
+                "kCGWindowLayer": 0,
+                "kCGWindowOwnerPID": 202,
+                "kCGWindowOwnerName": "Terminal",
+                "kCGWindowName": "pytest",
+            },
+        ],
+    )
+    monkeypatch.setattr(perception, "_localized_app_name", lambda pid, fallback: fallback)
+    monkeypatch.setattr(perception, "_ax_title_for_pid", lambda pid: "")
+
+    assert perception.sample_frontmost() == ("Terminal", "pytest")
+
+
 def test_sensors_do_nothing_while_master_is_off(tmp_path):
     store = _store(tmp_path)
     settings = {

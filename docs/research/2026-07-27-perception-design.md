@@ -197,7 +197,7 @@ ObsStore：append/查询倒序+分页/delete/clear/留存 purge（构造过期�
 - 已实现：`perception.py` 的 Fernet 字段加密 store、macOS Keychain 密钥、0600/0700 权限、分页/删除/清空/分源留存；Keychain 访问 5 秒超时并 fail closed，禁止明文降级。
 - 已实现：A 源前台应用/窗口（AX 优先、CGWindow 退化）与 C 源活跃/空闲（60 秒阈值、不装 event tap），5 秒轮询、只记变化、总开关/子开关每轮即时读取。
 - 已实现：sidecar 生命周期与每小时清理、三类 JSONL IPC、Rust/Tauri 透明转发、TypeScript 超时接口、设置页三开关与可见/可删/可清空日志。
-- 自动验证：sidecar 全量 `491 passed`；`vue-tsc --noEmit`、Vite production build、`cargo check`、`cargo test` 全部 exit 0。
+- 自动验证：sidecar 全量 `493 passed`；`vue-tsc --noEmit`、Vite production build、`cargo check`、`cargo test` 全部 exit 0。
 - 待真机验收：首次创建/重启读取 Keychain、AX 标题与 CGWindow 退化、设置页视觉与开关后 5 秒内实际采样。自动测试未替代这些 macOS 交互验证。
 
 ## 11. 风险与反模式
