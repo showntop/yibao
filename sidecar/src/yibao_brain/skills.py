@@ -46,6 +46,9 @@ class Skill(ABC):
     # 过程展示短标签（如「运行沙箱脚本」）：action_proposed 事件带给前端气泡行；
     # 空则 invoker 回退用 skill id。description 是长路由文案，不能当标题用
     label = ""
+    # 敏感工具可以给当前模型完整结果，但审计、壳事件与会话历史只能使用 safe_result。
+    # 默认关闭，现有工具行为不变。
+    sensitive_output: bool = False
 
     @abstractmethod
     def run(self, params: dict, ctx: SkillContext) -> ActionResult: ...
@@ -56,6 +59,14 @@ class Skill(ABC):
         用途：路由纠偏（如 dispatch_task 拦截一次性任务指路 code_exec）——比 LLM 自觉
         读 description 可靠，又比风险审批轻（不打断用户）。子类按需覆盖。
         """
+        return None
+
+    def safe_result(self, result: ActionResult) -> ActionResult:
+        """返回可持久化、可暴露给壳侧的结果；普通工具默认原样返回。"""
+        return result
+
+    def post_reply_notice(self, result: ActionResult) -> str | None:
+        """工具成功影响最终回答时，可在最终回复后给用户一个轻提示。"""
         return None
 
     def openai_schema(self) -> dict:

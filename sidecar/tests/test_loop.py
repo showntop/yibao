@@ -1,12 +1,30 @@
 import asyncio
+import json
 
 from yibao_brain.loop import AgentLoop
 from yibao_brain.llm import FakeProvider, ToolCall, LLMDelta, ToolCallDelta
 from yibao_brain.skills import SkillRegistry, EchoSkill, Skill, SkillContext
 from yibao_brain.safety import RiskClassifier, Gate, GatePolicy
 from yibao_brain.audit import AuditLog
+from yibao_brain.history import ConversationHistory
 from yibao_brain.memory import FakeMemory
 from yibao_brain.ipc import ActionResult, RiskLevel
+
+
+class _SensitiveSkill(Skill):
+    id = "sensitive"
+    description = "返回敏感数据"
+    default_risk = RiskLevel.L0_READONLY
+    sensitive_output = True
+
+    def run(self, params, ctx):
+        return ActionResult(success=True, data={"secret": "Window Secret", "count": 1})
+
+    def safe_result(self, result):
+        return ActionResult(success=result.success, error=result.error, data={"count": 1})
+
+    def post_reply_notice(self, result):
+        return "已参考敏感上下文" if result.success else None
 
 
 def build_loop(tmp_path, provider, confirmer=lambda a: True):
@@ -23,6 +41,20 @@ def build_loop(tmp_path, provider, confirmer=lambda a: True):
     )
 
 
+def _build_sensitive_loop(tmp_path, provider):
+    reg = SkillRegistry()
+    reg.register(_SensitiveSkill())
+    return AgentLoop(
+        provider=provider,
+        skills=reg,
+        classifier=RiskClassifier(),
+        gate=Gate(GatePolicy()),
+        memory=FakeMemory(),
+        log=AuditLog(tmp_path / "a.db"),
+        history=ConversationHistory(tmp_path / "h.json"),
+    )
+
+
 def test_loop_executes_tool_then_replies(tmp_path):
     # 第一轮模型调用 echo，第二轮给出最终回复
     provider = _TwoStepProvider(
@@ -35,6 +67,27 @@ def test_loop_executes_tool_then_replies(tmp_path):
     assert "action_result" in kinds
     assert kinds[-1] == "final_reply"
     assert "echoed: hi" in events[-1].text
+
+
+def test_loop_sensitive_result_is_full_for_model_but_safe_for_shell_and_history(tmp_path):
+    first = FakeProvider(
+        tool_calls=[ToolCall(id="t1", skill_id="sensitive", params={})]
+    )
+    second = FakeProvider(text="你刚才在 Window Secret")
+    loop = _build_sensitive_loop(tmp_path, _TwoStepProvider(first, second))
+
+    events = list(loop.run("我刚才在干嘛"))
+
+    assert "Window Secret" in json.dumps(second.calls[0]["messages"], ensure_ascii=False)
+    action_result = next(e for e in events if e.kind == "action_result")
+    assert action_result.result.data == {"count": 1}
+    assert [(e.kind, e.text) for e in events[-2:]] == [
+        ("final_reply", "你刚才在 Window Secret"),
+        ("notice", "已参考敏感上下文"),
+    ]
+    disk = (tmp_path / "h.json").read_text(encoding="utf-8")
+    assert "Window Secret" not in disk
+    assert "本轮使用敏感工具回答，敏感内容未写入会话历史" in disk
 
 
 def test_loop_confirms_high_risk(tmp_path):
@@ -116,6 +169,29 @@ def test_loop_arun_executes_tool_then_streams_reply(tmp_path):
     assert "final_reply_chunk" in kinds
     assert kinds[-1] == "final_reply"
     assert events[-1].text == "echoed: hi"
+
+
+def test_loop_arun_sensitive_result_is_full_for_model_but_safe_for_shell_and_history(tmp_path):
+    first = FakeProvider(
+        tool_calls=[ToolCall(id="t1", skill_id="sensitive", params={})]
+    )
+    second = FakeProvider(chunks=["你刚才在 ", "Window Secret"])
+    loop = _build_sensitive_loop(tmp_path, _TwoStepProvider(first, second))
+
+    events = asyncio.run(_collect_events(loop.arun("我刚才在干嘛")))
+
+    assert "Window Secret" in json.dumps(
+        second.astream_calls[0]["messages"], ensure_ascii=False
+    )
+    action_result = next(e for e in events if e.kind == "action_result")
+    assert action_result.result.data == {"count": 1}
+    assert [(e.kind, e.text) for e in events[-2:]] == [
+        ("final_reply", "你刚才在 Window Secret"),
+        ("notice", "已参考敏感上下文"),
+    ]
+    disk = (tmp_path / "h.json").read_text(encoding="utf-8")
+    assert "Window Secret" not in disk
+    assert "本轮使用敏感工具回答，敏感内容未写入会话历史" in disk
 
 
 def test_loop_arun_interrupt_mid_stream(tmp_path):

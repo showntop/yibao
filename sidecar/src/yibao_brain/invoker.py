@@ -85,8 +85,22 @@ class ToolInvoker:
             result = skill.run(params, ctx)
         except Exception as e:
             result = ActionResult(success=False, error=f"技能执行异常：{e}")
-        self._safe_record(action, result)
+        self._safe_record(action, self.safe_result(action, result))
         return result
+
+    def safe_result(self, action: Action, result: ActionResult) -> ActionResult:
+        """把完整结果转换成壳侧/持久化安全副本；敏感工具转换失败时禁止回退原文。"""
+        skill = self.skills.get(action.skill_id)
+        try:
+            return skill.safe_result(result)
+        except Exception:
+            if skill.sensitive_output:
+                return ActionResult(
+                    success=result.success,
+                    error=result.error,
+                    data={"redacted": True},
+                )
+            return result
 
     def _safe_record(self, action: Action, result: ActionResult) -> None:
         """审计写库失败只记 stderr、不中断对话（丢一条日志好过整个 run 崩掉）。"""

@@ -207,6 +207,9 @@ class AgentLoop:
             messages.extend(self.history.messages())
         messages.append({"role": "user", "content": user_text})
         run_start = len(messages) - 1  # 本轮轨迹起点（user 消息），成功收尾时整轮入史（含工具调用）
+        safe_tool_content: dict[str, str] = {}
+        sensitive_turn = False
+        post_reply_notices: list[str] = []
 
         for _ in range(self.max_steps):
             resp: LLMResponse = self.provider.chat(messages, tools=self._visible_tools())
@@ -215,8 +218,12 @@ class AgentLoop:
                 if self.history:
                     span = messages[run_start:] + [{"role": "assistant", "content": resp.text}]
                     span[0] = _tag_surface(span[0], surface)
-                    self.history.record_messages(span)
+                    self.history.record_messages(
+                        _history_safe_span(span, safe_tool_content, sensitive_turn)
+                    )
                 yield Event(kind="final_reply", text=resp.text)
+                for notice in post_reply_notices:
+                    yield Event(kind="notice", text=notice)
                 return
             messages.append(_assistant_with_tools(resp.text, resp.tool_calls))
             proceeded = False
@@ -245,16 +252,27 @@ class AgentLoop:
                     continue
                 result = self.invoker.execute(action, tc.params)
                 self._auto_activate(action.skill_id)
-                yield Event(kind="action_result", action=action, result=result)
+                skill = self.skills.get(action.skill_id)
+                safe = self.invoker.safe_result(action, result)
+                yield Event(kind="action_result", action=action, result=safe)
                 if action.skill_id == "use_plugin" and result.success and not (result.data or {}).get("already"):
                     # 插件展开要知情（§12-2 已定）：轻提示，不弹窗不打断
                     yield Event(kind="notice", text=(result.data or {}).get("human", "插件已展开"))
-                payload = self._panel_with_refresh(action, result)  # 声明 refresh 则面板拿刷新数据
+                payload = self._panel_with_refresh(action, safe)  # 壳侧面板也只拿安全副本
                 if payload is not None:
                     yield Event(kind="panel", payload=payload)
                 messages.append(
                     {"role": "tool", "tool_call_id": tc.id, "content": _stringify_result(result)}
                 )
+                safe_tool_content[tc.id] = _stringify_result(safe)
+                if skill.sensitive_output and result.success:
+                    sensitive_turn = True
+                try:
+                    notice = skill.post_reply_notice(result)
+                except Exception:
+                    notice = None
+                if notice and notice not in post_reply_notices:
+                    post_reply_notices.append(notice)
                 proceeded = True
             if not proceeded:
                 # 所有工具调用都被拒/禁，给模型一次机会换策略
@@ -282,6 +300,9 @@ class AgentLoop:
             messages.extend(self.history.messages())
         messages.append({"role": "user", "content": user_text})
         run_start = len(messages) - 1  # 本轮轨迹起点（user 消息），成功收尾时整轮入史（含工具调用）
+        safe_tool_content: dict[str, str] = {}
+        sensitive_turn = False
+        post_reply_notices: list[str] = []
 
         def cancelled() -> bool:
             return bool(cancel and cancel.is_set())
@@ -307,8 +328,12 @@ class AgentLoop:
                 if self.history:
                     span = messages[run_start:] + [{"role": "assistant", "content": text_buf}]
                     span[0] = _tag_surface(span[0], surface)
-                    self.history.record_messages(span)
+                    self.history.record_messages(
+                        _history_safe_span(span, safe_tool_content, sensitive_turn)
+                    )
                 yield Event(kind="final_reply", text=text_buf)
+                for notice in post_reply_notices:
+                    yield Event(kind="notice", text=notice)
                 return
             messages.append(_assistant_with_tools(text_buf, tool_calls))
             proceeded = False
@@ -345,16 +370,27 @@ class AgentLoop:
                     continue
                 result = await _offload(self.invoker.execute, action, tc.params)
                 self._auto_activate(action.skill_id)
-                yield Event(kind="action_result", action=action, result=result)
+                skill = self.skills.get(action.skill_id)
+                safe = self.invoker.safe_result(action, result)
+                yield Event(kind="action_result", action=action, result=safe)
                 if action.skill_id == "use_plugin" and result.success and not (result.data or {}).get("already"):
                     # 插件展开要知情（§12-2 已定）：轻提示，不弹窗不打断
                     yield Event(kind="notice", text=(result.data or {}).get("human", "插件已展开"))
-                payload = await _offload(self._panel_with_refresh, action, result)  # 声明 refresh 则面板拿刷新数据
+                payload = await _offload(self._panel_with_refresh, action, safe)  # 壳侧面板也只拿安全副本
                 if payload is not None:
                     yield Event(kind="panel", payload=payload)
                 messages.append(
                     {"role": "tool", "tool_call_id": tc.id, "content": _stringify_result(result)}
                 )
+                safe_tool_content[tc.id] = _stringify_result(safe)
+                if skill.sensitive_output and result.success:
+                    sensitive_turn = True
+                try:
+                    notice = skill.post_reply_notice(result)
+                except Exception:
+                    notice = None
+                if notice and notice not in post_reply_notices:
+                    post_reply_notices.append(notice)
                 proceeded = True
             if not proceeded:
                 continue
@@ -409,3 +445,19 @@ def _assistant_with_tools(content: str, tool_calls) -> dict:
 def _stringify_result(result) -> str:
     payload = {"success": result.success, "data": result.data, "error": result.error}
     return json.dumps(payload, ensure_ascii=False)
+
+
+def _history_safe_span(
+    span: list[dict], safe_tool_content: dict[str, str], sensitive: bool
+) -> list[dict]:
+    """复制本轮轨迹并替换敏感工具结果；敏感回答仅保留不可逆占位说明。"""
+    out: list[dict] = []
+    for message in span:
+        item = dict(message)
+        tool_call_id = item.get("tool_call_id")
+        if item.get("role") == "tool" and tool_call_id in safe_tool_content:
+            item["content"] = safe_tool_content[tool_call_id]
+        out.append(item)
+    if sensitive and out and out[-1].get("role") == "assistant":
+        out[-1]["content"] = "【本轮使用敏感工具回答，敏感内容未写入会话历史】"
+    return out

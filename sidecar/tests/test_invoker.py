@@ -1,5 +1,6 @@
 """ToolInvoker：tool 唯一执行器（v2 方案 §4）。loop 的两条路径与面板直达都收编到它上面。"""
 import asyncio
+import json
 
 from yibao_brain.audit import AuditLog
 from yibao_brain.invoker import ToolInvoker
@@ -7,6 +8,26 @@ from yibao_brain.ipc import Action, ActionResult, RiskLevel
 from yibao_brain.llm import ToolCall
 from yibao_brain.safety import Decision, Gate, GatePolicy, RiskClassifier
 from yibao_brain.skills import EchoSkill, Skill, SkillRegistry
+
+
+class _SensitiveSkill(Skill):
+    id = "sensitive"
+    description = "返回敏感数据"
+    default_risk = RiskLevel.L0_READONLY
+    sensitive_output = True
+
+    def run(self, params, ctx):
+        return ActionResult(success=True, data={"secret": "Window Secret", "count": 1})
+
+    def safe_result(self, result):
+        return ActionResult(success=result.success, error=result.error, data={"count": 1})
+
+
+class _BrokenSafeResultSkill(_SensitiveSkill):
+    id = "broken_sensitive"
+
+    def safe_result(self, result):
+        raise RuntimeError("摘要失败")
 
 
 def make_invoker(tmp_path, skills, confirmer=lambda a: True, policy=None):
@@ -51,6 +72,30 @@ def test_execute_success_and_audit(tmp_path):
     assert result.success
     # 审计落库（不依赖 loop）
     assert len(inv.log.recent()) == 1
+
+
+def test_sensitive_skill_audits_only_safe_result(tmp_path):
+    inv = make_invoker(tmp_path, [_SensitiveSkill()])
+    action = inv.propose(ToolCall(id="t1", skill_id="sensitive", params={}))
+
+    result = inv.execute(action, {})
+
+    assert result.data["secret"] == "Window Secret"
+    audit_data = json.loads(inv.log.recent()[0]["data"])
+    assert audit_data == {"count": 1}
+    assert "Window Secret" not in json.dumps(audit_data, ensure_ascii=False)
+
+
+def test_sensitive_skill_safe_result_failure_redacts_audit(tmp_path):
+    inv = make_invoker(tmp_path, [_BrokenSafeResultSkill()])
+    action = inv.propose(ToolCall(id="t1", skill_id="broken_sensitive", params={}))
+
+    result = inv.execute(action, {})
+
+    assert result.data["secret"] == "Window Secret"
+    audit_data = json.loads(inv.log.recent()[0]["data"])
+    assert audit_data == {"redacted": True}
+    assert "Window Secret" not in json.dumps(audit_data, ensure_ascii=False)
 
 
 def test_execute_skill_exception_becomes_failure_result(tmp_path):
