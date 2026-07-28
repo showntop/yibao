@@ -945,7 +945,7 @@ async def serve_async(
                 before_raw = msg.get("before_id")
                 before_id = int(before_raw) if before_raw is not None else None
                 items = pstore.list(limit=limit, before_id=before_id)
-                sources = sorted({str(item.get("source", "")) for item in items if item.get("source")})
+                sources = pstore.sources()
                 write_msg({"type": "perception", "items": items, "sources": sources, "available": True})
             except Exception as e:
                 write_msg({"type": "perception", "items": [], "sources": [], "available": True, "error": str(e)})

@@ -428,6 +428,9 @@ export async function memDelete(id: string, timeoutMs = 5000): Promise<MemDelete
 
 export interface SettingsValues {
   proactive_voice: boolean; // 主动开口：提醒触发时语音播报
+  "perception.master": boolean;
+  "perception.app": boolean;
+  "perception.activity": boolean;
   [k: string]: unknown;
 }
 
@@ -459,4 +462,121 @@ export async function setSettings(values: Partial<SettingsValues>, timeoutMs = 3
   }
   const r = await Promise.race([resp, timeout]);
   return r ? r.values : null;
+}
+
+// ---- 感知（默认关闭、payload 加密落盘；这里只接收 sidecar 解密后的短暂 UI 数据）----
+
+export interface PerceptionItem {
+  id: number;
+  ts: number;
+  source: "app" | "activity" | "screen" | "clipboard" | "environment";
+  kind: string;
+  payload: Record<string, unknown>;
+  sensitivity: "S0" | "S1" | "S2" | "S3";
+}
+
+export interface PerceptionResponse {
+  items: PerceptionItem[];
+  sources: string[];
+  available: boolean;
+  error?: string;
+}
+
+const EMPTY_PERCEPTION: PerceptionResponse = { items: [], sources: [], available: false };
+
+/** 分页取感知日志；超时释放 listener 并返回不可用空态。 */
+export async function getPerceptionOnce(
+  limit = 60,
+  beforeId?: number,
+  timeoutMs = 3000,
+): Promise<PerceptionResponse> {
+  const holder: { un: (() => void) | null } = { un: null };
+  let settled = false;
+  const resp = new Promise<PerceptionResponse>((resolve) => {
+    void listen<PerceptionResponse>("brain-perception", (ev) => resolve(ev.payload))
+      .then((u) => {
+        holder.un = u;
+        if (settled) u();
+      });
+  });
+  const timeout = new Promise<PerceptionResponse>((resolve) =>
+    setTimeout(() => resolve(EMPTY_PERCEPTION), timeoutMs),
+  );
+  try {
+    await invoke("get_perception", { limit, beforeId });
+  } catch {
+    settled = true;
+    holder.un?.();
+    return EMPTY_PERCEPTION;
+  }
+  const result = await Promise.race([resp, timeout]);
+  settled = true;
+  holder.un?.();
+  return result;
+}
+
+export interface PerceptionDeleted {
+  id: number;
+  ok: boolean;
+  error?: string;
+}
+
+/** 删除单条观察；只接收匹配 id 的回执。 */
+export async function deletePerception(id: number, timeoutMs = 5000): Promise<PerceptionDeleted> {
+  const holder: { un: (() => void) | null } = { un: null };
+  let settled = false;
+  const resp = new Promise<PerceptionDeleted>((resolve) => {
+    void listen<PerceptionDeleted>("brain-perception-deleted", (ev) => {
+      if (ev.payload.id === id) resolve(ev.payload);
+    }).then((u) => {
+      holder.un = u;
+      if (settled) u();
+    });
+  });
+  const timeout = new Promise<PerceptionDeleted>((resolve) =>
+    setTimeout(() => resolve({ id, ok: false, error: "删除超时（大脑不在线？）" }), timeoutMs),
+  );
+  try {
+    await invoke("perception_delete", { id });
+  } catch (e) {
+    settled = true;
+    holder.un?.();
+    return { id, ok: false, error: String(e) };
+  }
+  const result = await Promise.race([resp, timeout]);
+  settled = true;
+  holder.un?.();
+  return result;
+}
+
+export interface PerceptionCleared {
+  count: number;
+  error?: string;
+}
+
+/** 清空观察日志并等待 sidecar 回执。 */
+export async function clearPerception(timeoutMs = 5000): Promise<PerceptionCleared> {
+  const holder: { un: (() => void) | null } = { un: null };
+  let settled = false;
+  const resp = new Promise<PerceptionCleared>((resolve) => {
+    void listen<PerceptionCleared>("brain-perception-cleared", (ev) => resolve(ev.payload))
+      .then((u) => {
+        holder.un = u;
+        if (settled) u();
+      });
+  });
+  const timeout = new Promise<PerceptionCleared>((resolve) =>
+    setTimeout(() => resolve({ count: 0, error: "清空超时（大脑不在线？）" }), timeoutMs),
+  );
+  try {
+    await invoke("perception_clear");
+  } catch (e) {
+    settled = true;
+    holder.un?.();
+    return { count: 0, error: String(e) };
+  }
+  const result = await Promise.race([resp, timeout]);
+  settled = true;
+  holder.un?.();
+  return result;
 }

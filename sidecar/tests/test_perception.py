@@ -3,10 +3,13 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import subprocess
 
+import pytest
 from cryptography.fernet import Fernet
 
-from yibao_brain.perception import PerceptionSensors, PerceptionStore
+from yibao_brain import perception
+from yibao_brain.perception import PerceptionKeyUnavailable, PerceptionSensors, PerceptionStore
 
 
 def _store(tmp_path):
@@ -52,6 +55,7 @@ def test_store_lists_newest_first_and_pages_before_id(tmp_path):
 
     assert [x["id"] for x in store.list(limit=2)] == [third, second]
     assert [x["id"] for x in store.list(limit=2, before_id=third)] == [second, first]
+    assert store.sources() == ["activity", "app"]
 
 
 def test_store_tolerates_corrupt_ciphertext(tmp_path):
@@ -87,6 +91,19 @@ def test_store_purge_uses_source_retention(tmp_path):
 
     assert store.purge(now=now) == 3
     assert [x["source"] for x in store.list()] == ["activity"]
+
+
+def test_keychain_timeout_fails_closed(monkeypatch):
+    monkeypatch.setattr(perception.sys, "platform", "darwin")
+    monkeypatch.setattr(perception.getpass, "getuser", lambda: "denny")
+
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(args[0], 5)
+
+    monkeypatch.setattr(perception.subprocess, "run", timeout)
+
+    with pytest.raises(PerceptionKeyUnavailable, match="超时"):
+        perception.key_from_macos_keychain()
 
 
 def test_sensors_do_nothing_while_master_is_off(tmp_path):

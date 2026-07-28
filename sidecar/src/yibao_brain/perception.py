@@ -38,12 +38,25 @@ class PerceptionKeyUnavailable(RuntimeError):
     """无法安全取得感知密钥；调用方必须保持感知关闭。"""
 
 
+def _run_security(args: list[str]) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise PerceptionKeyUnavailable("访问 macOS Keychain 超时") from exc
+
+
 def key_from_macos_keychain() -> bytes:
     """读取或创建登录 Keychain 中的 Fernet key。"""
     if sys.platform != "darwin":
         raise PerceptionKeyUnavailable("感知密钥仅支持 macOS Keychain")
     account = getpass.getuser()
-    find = subprocess.run(
+    find = _run_security(
         [
             "/usr/bin/security",
             "find-generic-password",
@@ -53,9 +66,6 @@ def key_from_macos_keychain() -> bytes:
             _KEYCHAIN_SERVICE,
             "-w",
         ],
-        capture_output=True,
-        text=True,
-        check=False,
     )
     if find.returncode == 0 and find.stdout.strip():
         key = find.stdout.strip().encode("ascii")
@@ -66,7 +76,7 @@ def key_from_macos_keychain() -> bytes:
         return key
 
     key = Fernet.generate_key()
-    add = subprocess.run(
+    add = _run_security(
         [
             "/usr/bin/security",
             "add-generic-password",
@@ -78,9 +88,6 @@ def key_from_macos_keychain() -> bytes:
             "-w",
             key.decode("ascii"),
         ],
-        capture_output=True,
-        text=True,
-        check=False,
     )
     if add.returncode != 0:
         detail = add.stderr.strip() or "unknown error"
@@ -176,6 +183,14 @@ class PerceptionStore:
             cur = self._conn.execute("DELETE FROM observations WHERE id = ?", (int(observation_id),))
             self._conn.commit()
             return cur.rowcount > 0
+
+    def sources(self) -> list[str]:
+        """返回整个日志中出现过的来源，不受当前分页范围影响。"""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT DISTINCT source FROM observations ORDER BY source"
+            ).fetchall()
+        return [str(row["source"]) for row in rows]
 
     def clear(self) -> int:
         with self._lock:

@@ -19,9 +19,14 @@ import {
   memDelete,
   getSettingsOnce,
   setSettings,
+  getPerceptionOnce,
+  deletePerception,
+  clearPerception,
   type BrainPermissions,
   type ClearKind,
   type MemItem,
+  type PerceptionItem,
+  type SettingsValues,
 } from "../lib/brain";
 // ---- 模型 / 语音（写 .env，重启大脑生效）----
 const key = ref(""); // 留空 = 不改动已有 key
@@ -133,6 +138,119 @@ async function toggleProactiveVoice() {
   }
 }
 
+// ---- 感知（默认关闭；settings 即时生效；日志内容由 sidecar 临时解密给 UI）----
+const perceptionMaster = ref(false);
+const perceptionApp = ref(false);
+const perceptionActivity = ref(false);
+const perceptionItems = ref<PerceptionItem[]>([]);
+const perceptionAvailable = ref(true);
+const perceptionLoaded = ref(false);
+const perceptionLoading = ref(false);
+const perceptionHasMore = ref(false);
+const perceptionErr = ref("");
+const perceptionConfirming = ref<number | "all" | null>(null);
+const perceptionDeleting = ref<number | "all" | null>(null);
+
+function syncPerceptionSettings(s: SettingsValues) {
+  perceptionMaster.value = s["perception.master"] === true;
+  perceptionApp.value = s["perception.app"] === true;
+  perceptionActivity.value = s["perception.activity"] === true;
+}
+
+async function setPerceptionSetting(
+  key: "perception.master" | "perception.app" | "perception.activity",
+  next: boolean,
+) {
+  perceptionErr.value = "";
+  const old = {
+    "perception.master": perceptionMaster.value,
+    "perception.app": perceptionApp.value,
+    "perception.activity": perceptionActivity.value,
+  };
+  if (key === "perception.master") perceptionMaster.value = next;
+  if (key === "perception.app") perceptionApp.value = next;
+  if (key === "perception.activity") perceptionActivity.value = next;
+  const r = await setSettings({ [key]: next });
+  if (r === null) {
+    perceptionMaster.value = old["perception.master"];
+    perceptionApp.value = old["perception.app"];
+    perceptionActivity.value = old["perception.activity"];
+    perceptionErr.value = "设置未生效（大脑不在线？）";
+    return;
+  }
+  syncPerceptionSettings(r);
+  if (key === "perception.master" && next && !perceptionMaster.value) {
+    perceptionErr.value = "感知存储不可用，已保持关闭";
+  }
+}
+
+async function loadPerception(more = false) {
+  perceptionLoading.value = true;
+  perceptionErr.value = "";
+  const beforeId = more && perceptionItems.value.length
+    ? perceptionItems.value[perceptionItems.value.length - 1].id
+    : undefined;
+  const r = await getPerceptionOnce(50, beforeId);
+  perceptionAvailable.value = r.available;
+  if (r.error) perceptionErr.value = r.error;
+  if (more) {
+    const known = new Set(perceptionItems.value.map((x) => x.id));
+    perceptionItems.value.push(...r.items.filter((x) => !known.has(x.id)));
+  } else {
+    perceptionItems.value = r.items;
+  }
+  perceptionHasMore.value = r.items.length === 50;
+  perceptionLoaded.value = true;
+  perceptionLoading.value = false;
+}
+
+function perceptionText(item: PerceptionItem): string {
+  if (item.source === "app") {
+    const app = String(item.payload.app || "未知应用");
+    const title = String(item.payload.title || "");
+    return title ? `${app} — ${title}` : app;
+  }
+  if (item.source === "activity") {
+    const seconds = Number(item.payload.idle_seconds || 0);
+    return item.kind === "idle" ? `进入空闲 · ${Math.max(1, Math.round(seconds / 60))} 分钟` : "恢复活跃";
+  }
+  return String(item.payload.text || item.kind);
+}
+
+function perceptionSource(item: PerceptionItem): string {
+  return item.source === "app" ? "应用" : item.source === "activity" ? "活动" : item.source;
+}
+
+function relativeTime(ts: number): string {
+  const seconds = Math.max(0, Math.round(Date.now() / 1000 - ts));
+  if (seconds < 60) return "刚刚";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} 小时前`;
+  return `${Math.floor(seconds / 86400)} 天前`;
+}
+
+async function doPerceptionDelete(id: number) {
+  perceptionConfirming.value = null;
+  perceptionDeleting.value = id;
+  const r = await deletePerception(id);
+  perceptionDeleting.value = null;
+  if (r.ok) perceptionItems.value = perceptionItems.value.filter((x) => x.id !== id);
+  else perceptionErr.value = r.error || "删除失败";
+}
+
+async function doPerceptionClear() {
+  perceptionConfirming.value = null;
+  perceptionDeleting.value = "all";
+  const r = await clearPerception();
+  perceptionDeleting.value = null;
+  if (!r.error) {
+    perceptionItems.value = [];
+    perceptionHasMore.value = false;
+  } else {
+    perceptionErr.value = r.error;
+  }
+}
+
 // ---- 记忆管理（「它记得我什么」必须可见、可删）----
 const memItems = ref<MemItem[]>([]);
 const memReady = ref(true);
@@ -189,8 +307,12 @@ onMounted(async () => {
   } catch { /* 保留占位 */ }
   void loadMem(); // 记忆管理列表（异步，不阻塞设置页首屏）
   void getSettingsOnce().then((s) => { // 自主权旋钮当前值（大脑不在线则保持默认）
-    if (s && typeof s.proactive_voice === "boolean") proactiveVoice.value = s.proactive_voice;
+    if (s) {
+      if (typeof s.proactive_voice === "boolean") proactiveVoice.value = s.proactive_voice;
+      syncPerceptionSettings(s);
+    }
   });
+  void loadPerception();
   // 保存触发的重启：大脑上线事件收尾行内提示（掉线过程 UI 复用对话页既有事件）
   unlistenStatus = await onBrainStatus((m) => {
     if (m.status === "up" && saveMsg.value === "已保存，正在重启大脑…") {
@@ -272,6 +394,59 @@ onUnmounted(() => {
           <button class="switch" :class="{ on: proactiveVoice }" title="主动开口播报" @click="toggleProactiveVoice"><i /></button>
         </div>
         <div v-if="autonErr" class="s-msg err">⚠️ {{ autonErr }}</div>
+      </section>
+
+      <!-- 感知：显式 opt-in；A/C 只收状态，不截屏、不读输入内容 -->
+      <section class="s-group">
+        <div class="s-group-title">感知</div>
+        <div class="s-note">全部默认关闭。观察内容加密存放在本机；当前版本不截屏、不读取按键内容。</div>
+        <div class="s-row">
+          <span class="s-row-label">启用感知<span class="s-row-why">总开关，关闭后立即停止采样</span></span>
+          <button class="switch" :class="{ on: perceptionMaster }" title="启用感知" @click="setPerceptionSetting('perception.master', !perceptionMaster)"><i /></button>
+        </div>
+        <div class="s-row">
+          <span class="s-row-label">应用与窗口<span class="s-row-why">只在切换时记录应用名和窗口标题</span></span>
+          <button class="switch" :class="{ on: perceptionApp }" :disabled="!perceptionMaster" title="应用与窗口" @click="setPerceptionSetting('perception.app', !perceptionApp)"><i /></button>
+        </div>
+        <div class="s-row">
+          <span class="s-row-label">活动与空闲<span class="s-row-why">只记录状态切换，不读取输入内容</span></span>
+          <button class="switch" :class="{ on: perceptionActivity }" :disabled="!perceptionMaster" title="活动与空闲" @click="setPerceptionSetting('perception.activity', !perceptionActivity)"><i /></button>
+        </div>
+        <div class="s-note">{{ perceptionMaster ? "运行中" : "已暂停" }} · {{ perceptionItems.length }} 条已加载观察</div>
+        <div v-if="perceptionErr" class="s-msg err">⚠️ {{ perceptionErr }}</div>
+      </section>
+
+      <!-- 感知日志：让用户看到、逐条删、全部清空 -->
+      <section class="s-group">
+        <div class="s-group-title">感知日志<template v-if="perceptionItems.length"> · {{ perceptionItems.length }}</template></div>
+        <div v-if="perceptionLoaded && !perceptionAvailable" class="s-note">感知存储不可用；总开关会保持关闭。</div>
+        <div v-else-if="perceptionLoaded && !perceptionItems.length" class="s-note">
+          {{ perceptionMaster ? "还没有观察——切换一次应用或等待进入空闲。" : "感知未开启；已有记录仍可在开启前审阅和删除。" }}
+        </div>
+        <div v-for="item in perceptionItems" :key="item.id" class="p-row">
+          <span class="m-ns">{{ perceptionSource(item) }}</span>
+          <span class="p-main">
+            <span class="p-text">{{ perceptionText(item) }}</span>
+            <span class="p-meta">{{ relativeTime(item.ts) }} · {{ item.sensitivity }}</span>
+          </span>
+          <span class="s-row-btns">
+            <template v-if="perceptionConfirming === item.id">
+              <button class="s-mini danger" :disabled="perceptionDeleting === item.id" @click="doPerceptionDelete(item.id)">确认</button>
+              <button class="s-mini" @click="perceptionConfirming = null">取消</button>
+            </template>
+            <button v-else class="s-mini" :disabled="perceptionDeleting === item.id" @click="perceptionConfirming = item.id">删除</button>
+          </span>
+        </div>
+        <div class="p-actions">
+          <button class="s-mini" :disabled="perceptionLoading" @click="loadPerception(false)">{{ perceptionLoading ? "读取中…" : "刷新" }}</button>
+          <button v-if="perceptionHasMore" class="s-mini" :disabled="perceptionLoading" @click="loadPerception(true)">加载更早</button>
+          <span class="p-spacer" />
+          <template v-if="perceptionConfirming === 'all'">
+            <button class="s-mini danger" :disabled="perceptionDeleting === 'all'" @click="doPerceptionClear">确认清空</button>
+            <button class="s-mini" @click="perceptionConfirming = null">取消</button>
+          </template>
+          <button v-else class="s-mini" :disabled="!perceptionItems.length || perceptionDeleting === 'all'" @click="perceptionConfirming = 'all'">清空…</button>
+        </div>
       </section>
 
       <!-- 权限 -->
@@ -569,6 +744,45 @@ select:focus {
 }
 .switch.on i {
   transform: translateX(14px);
+}
+.switch:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+/* 感知日志：来源徽章 + 一行正文/元信息 + 原地删除。 */
+.p-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--yb-space-2);
+  padding: 7px 0;
+  border-top: 1px solid var(--yb-surface-border);
+}
+.p-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.p-text {
+  overflow: hidden;
+  color: var(--yb-text);
+  font-size: var(--yb-fs-md);
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.p-meta {
+  color: var(--yb-text-dim);
+  font-size: var(--yb-fs-sm);
+}
+.p-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.p-spacer {
+  flex: 1;
 }
 /* 行内小按钮 */
 .s-mini {

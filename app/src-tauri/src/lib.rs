@@ -463,6 +463,16 @@ fn spawn_bridge(app: AppHandle, mut rx: tauri::async_runtime::Receiver<CommandEv
                             Some("settings") => {
                                 let _ = app.emit("brain-settings", v);
                             }
+                            // 感知日志与删除回执：sidecar 解密后整体转发，壳不持有密钥。
+                            Some("perception") => {
+                                let _ = app.emit("brain-perception", v);
+                            }
+                            Some("perception_deleted") => {
+                                let _ = app.emit("brain-perception-deleted", v);
+                            }
+                            Some("perception_cleared") => {
+                                let _ = app.emit("brain-perception-cleared", v);
+                            }
                             _ => {}
                         },
                         Err(_) => eprintln!("[brain] 非 JSON：{line}"),
@@ -740,6 +750,39 @@ fn get_settings(state: tauri::State<Brain>) -> Result<(), String> {
 #[tauri::command]
 fn set_settings(state: tauri::State<Brain>, values: serde_json::Value) -> Result<(), String> {
     write_to_brain(&state, serde_json::json!({ "id": 0, "type": "settings_set", "values": values }))
+}
+
+/// 感知日志：分页查询（回 perception，经 brain-perception 广播）。
+#[tauri::command]
+fn get_perception(
+    state: tauri::State<Brain>,
+    limit: Option<u32>,
+    before_id: Option<i64>,
+) -> Result<(), String> {
+    write_to_brain(
+        &state,
+        serde_json::json!({
+            "id": 0,
+            "type": "perception_list",
+            "limit": limit.unwrap_or(60),
+            "before_id": before_id,
+        }),
+    )
+}
+
+/// 感知日志：按观察 id 删除（信封 id 已占用，sidecar 字段必须是 per_id）。
+#[tauri::command]
+fn perception_delete(state: tauri::State<Brain>, id: i64) -> Result<(), String> {
+    write_to_brain(
+        &state,
+        serde_json::json!({ "id": 0, "type": "perception_delete", "per_id": id }),
+    )
+}
+
+/// 感知日志：清空全部观察。
+#[tauri::command]
+fn perception_clear(state: tauri::State<Brain>) -> Result<(), String> {
+    write_to_brain(&state, serde_json::json!({ "id": 0, "type": "perception_clear" }))
 }
 
 /// 面板动作（v2 §7）：壳不懂 panel 语义，透传 api.toml 白名单方法给大脑裁决。
@@ -1353,6 +1396,9 @@ pub fn run() {
             mem_delete,
             get_settings,
             set_settings,
+            get_perception,
+            perception_delete,
+            perception_clear,
             open_panel_window,
             close_panel_window,
             get_current_panel,

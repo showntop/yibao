@@ -535,6 +535,9 @@ def test_serve_async_perception_list_delete_and_clear(tmp_path):
             self.deleted.append(oid)
             return oid == 8
 
+        def sources(self):
+            return ["activity", "app"]
+
         def clear(self):
             self.cleared = True
             return 4
@@ -566,7 +569,7 @@ def test_serve_async_perception_list_delete_and_clear(tmp_path):
 
     perception = [m for m in out if m["type"] == "perception"]
     assert perception == [
-        {"type": "perception", "items": store.list(20, 9), "sources": ["app"], "available": True}
+        {"type": "perception", "items": store.list(20, 9), "sources": ["activity", "app"], "available": True}
     ]
     assert {"type": "perception_deleted", "id": 8, "ok": True} in out
     assert {"type": "perception_cleared", "count": 4} in out
