@@ -129,12 +129,70 @@
 
 ## 9. 路线图
 
-- **v1 骨架**：ObsStore + A（应用窗口）+ C（活动）+ 设置「感知」组（开关默认关）+ 感知日志页 + 过期清理。无 LLM 成本，零出站点。
-- **v2 眼睛**：B 源（事件驱动 a11y 树优先 + 截图概括）+ 三层过滤 + 出站点闸门 + 黑名单。
+- **v1 骨架**：ObsStore + A（应用窗口）+ C（活动）+ 设置「感知」组（开关默认关）+ 感知日志页 + 过期清理。无 LLM 成本，零出站点。实施细化见 §10。
+- **v2 眼睛**：B 源（事件驱动 a11y 树优先 + 截图概括）+ 三层过滤 + 出站点闸门 + 黑名单 + 团子「观察中」状态灯。
 - **v3 反刍**：对话上下文注入 + 晨间问候接入 + 主屏时间线 + Distiller 模式提炼进 mem0。
 - **v4 伙伴**：主动建议（旋钮闸门）+ 使用统计 + 加密增强（Keychain/Touch ID）。
 
-## 10. 风险与反模式
+## 10. v1 实施细化（技术方案已核实依赖）
+
+### 11.1 采集技术选型（sidecar 依赖已含 pyobjc Quartz/Cocoa/ApplicationServices）
+
+- **A 源（应用与窗口）**：`NSWorkspace.sharedWorkspace().frontmostApplication()` 取前台 app；窗口标题优先 AX（`AXUIElementCopyAttributeValue` 前台窗口 title，复用既有辅助功能权限），取不到退化 `CGWindowListCopyWindowInfo`（免权限，z-order 第一窗）。**5s 轮询，(app,title) 变化才写**——每秒产物是零，纯文本行。
+- **C 源（活动强度）**：`CGEventSourceSecondsSinceLastEventType(kCGEventSourceStateCombinedSessionState, kCGAnyInputEventType)` 轮询空闲秒数；≥60s 判空闲、<60s 判活跃，**只记状态切换**。**明确不用 CGEventTap**——event tap 是键盘记录器的相邻物（要单独权限、伦理越界），空闲轮询拿到同样的 活跃/空闲 结论且零风险。
+- **D 源**：v1 不做（观察事件自带时间戳，环境上下文够 v3 用）。
+
+### 11.2 存储（ObsStore，`perception.py`，feed.py 同款模式）
+
+```sql
+CREATE TABLE observations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts REAL NOT NULL,
+  source TEXT NOT NULL,      -- 'app' | 'activity'（v2: 'screen' | 'clipboard'）
+  kind TEXT NOT NULL,        -- app: 'frontmost'；activity: 'active' | 'idle'
+  payload TEXT NOT NULL DEFAULT '{}',  -- JSON：{app, title} / {idle_seconds}
+  sensitivity TEXT NOT NULL  -- 'S0'..'S3'
+);
+CREATE INDEX idx_obs_ts ON observations(ts);
+CREATE INDEX idx_obs_source ON observations(source);
+```
+
+- 库文件 `observations.db`（数据目录，与 feed.db 同目录）；写失败只 print 不抛（增强面纪律同 feed）。
+- **v1 无 ObservationBus**：sensors 直写 `ObsStore.append`（量极小；Bus 背压抽象留给 B 源——别过早实现，但 `append` 即接口留好了）。
+- 留存：A/C 30 天；清理 = 启动时 + 每小时 purge（复用 `_reminder_loop` 后台线程模式）。
+- 文件权限：observations.db 0600（§6.4 v1 基线）。
+
+### 11.3 协议（server.py，feed/widgets 同款转发模式）
+
+- `perception_list {limit?, before_id?}` → `{items: 倒序, sources: 出现过的源清单}`；分页用 before_id（id < before_id）。
+- `perception_delete {per_id}` → `perception_deleted {id, ok, error?}`——**观察 id 走 `per_id` 键**（信封 id 被请求序号占用，mem_delete 同款坑）。
+- `perception_clear {}` → `perception_cleared {count}`。
+- Rust：转发 `brain-perception`/`brain-perception-deleted`/`brain-perception-cleared` + 三命令；前端 `getPerceptionOnce`（once+3s 竞速，feed 同款）。
+
+### 11.4 settings 键（并入 settings.json 已知键，即时生效）
+
+`perception.master`（总开关）/ `perception.app` / `perception.activity`——**全部默认 false**；sensors 每轮循环读 settings，settings_set 即时生效免重启。B/E 键预留（v2 才进 UI 与默认表）。
+
+### 11.5 前端（SettingsView 两组，记忆管理同款样式）
+
+- 「感知」组：总开关 + 应用窗口/活动强度两个子开关 + 状态行（运行中·N 条观察 / 已暂停）；总开关关 = 子开关置灰。
+- 「感知日志」组：来源徽章（应用/活动）+ 内容一行（「Xcode — yibao — App.vue」「活跃 → 空闲 12 分钟」）+ 相对时间 + 单条删除 + 底部「清空感知记录」；空态给「感知未开启」或「还没有观察」人话。
+- 团子「观察中」状态灯：v1 不做——A/C 源不「看内容」，指示灯的必要性随 v2（B 源截图）一起来；v1 的透明由日志页 + 状态行承担。
+
+### 11.6 测试清单（test_perception.py）
+
+ObsStore：append/查询倒序+分页/delete/clear/留存 purge（构造过期行）/坏 JSON payload 容忍；协议：三方法往返 + 默认关时 sensors 不写（mock 轮询源）+ 变化才写（同 app 连续轮询只写一条）+ settings 拨开后即时开始写。
+
+### 11.7 任务分解（照单执行顺序）
+
+1. `perception.py`：ObsStore + purge
+2. sensors：A 轮询（NSWorkspace+AX/CGWindowList）+ C 空闲轮询，settings 闸门
+3. server.py：启动清理线程 + 三协议方法 + sensors 挂载
+4. config.py：三个 settings 键
+5. Rust 转发 + 前端 brain.ts + SettingsView 两组
+6. 测试 + spec 实装记录
+
+## 11. 风险与反模式
 
 - ❌ 默认开启（Recall 2024-05 死因：opt-out 变 opt-in 才活下来）
 - ❌ 明文存储原始观察（Beaumont/TotalRecall：「两行代码偷走一切」）
