@@ -56,7 +56,7 @@ class _SensitiveSkill(Skill):
         return "已参考敏感上下文" if result.success else None
 ```
 
-Then assert `inv.execute(...)` returns the full sentinel while `inv.log.recent()[0]["data"]` does not contain it.
+Then assert `inv.execute(...)` returns the full sentinel while `inv.log.recent()[0]["data"]` does not contain it. Add a second sensitive skill whose `safe_result` raises and assert its audit row contains only `{"redacted": true}` rather than the sentinel.
 
 - [ ] **Step 2: Run the invoker test and verify RED**
 
@@ -78,10 +78,23 @@ def post_reply_notice(self, result: ActionResult) -> str | None:
     return None
 ```
 
-In `ToolInvoker.execute`, keep returning the full result but pass a safe copy to `_safe_record`:
+Add one fail-closed conversion point to `ToolInvoker`:
 
 ```python
-safe = skill.safe_result(result)
+def safe_result(self, action: Action, result: ActionResult) -> ActionResult:
+    skill = self.skills.get(action.skill_id)
+    try:
+        return skill.safe_result(result)
+    except Exception:
+        if skill.sensitive_output:
+            return ActionResult(success=result.success, error=result.error, data={"redacted": True})
+        return result
+```
+
+In `execute`, keep returning the full result but pass the fail-closed safe copy to `_safe_record`:
+
+```python
+safe = self.safe_result(action, result)
 self._safe_record(action, safe)
 return result
 ```
@@ -131,7 +144,7 @@ After tool execution:
 
 ```python
 skill = self.skills.get(action.skill_id)
-safe = skill.safe_result(result)
+safe = self.invoker.safe_result(action, result)
 yield Event(kind="action_result", action=action, result=safe)
 messages.append({"role": "tool", "tool_call_id": tc.id, "content": _stringify_result(result)})
 safe_tool_content[tc.id] = _stringify_result(safe)
