@@ -460,6 +460,9 @@ fn spawn_bridge(app: AppHandle, mut rx: tauri::async_runtime::Receiver<CommandEv
                             Some("mem_deleted") => {
                                 let _ = app.emit("brain-mem-deleted", v);
                             }
+                            Some("mem_edited") => {
+                                let _ = app.emit("brain-mem-edited", v);
+                            }
                             Some("settings") => {
                                 let _ = app.emit("brain-settings", v);
                             }
@@ -738,6 +741,12 @@ fn get_mem_list(state: tauri::State<Brain>) -> Result<(), String> {
 #[tauri::command]
 fn mem_delete(state: tauri::State<Brain>, id: String) -> Result<(), String> {
     write_to_brain(&state, serde_json::json!({ "id": 0, "type": "mem_delete", "mem_id": id }))
+}
+
+/// 记忆管理：按 id 编辑文本（回 {"type":"mem_edited"} 经 brain-mem-edited 广播）。
+#[tauri::command]
+fn mem_edit(state: tauri::State<Brain>, id: String, text: String) -> Result<(), String> {
+    write_to_brain(&state, serde_json::json!({ "id": 0, "type": "mem_edit", "mem_id": id, "text": text }))
 }
 
 /// 用户设置查询（回 {"type":"settings"} 经 brain-settings 广播）。
@@ -1394,6 +1403,7 @@ pub fn run() {
             get_widgets,
             get_mem_list,
             mem_delete,
+            mem_edit,
             get_settings,
             set_settings,
             get_perception,

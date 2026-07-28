@@ -424,6 +424,34 @@ export async function memDelete(id: string, timeoutMs = 5000): Promise<MemDelete
   return r;
 }
 
+export interface MemEdited {
+  id: string;
+  ok: boolean;
+  error?: string;
+}
+
+/** 编辑一条记忆的文本，等该 id 的 brain-mem-edited 回执；超时按失败处理。 */
+export async function memEdit(id: string, text: string, timeoutMs = 5000): Promise<MemEdited> {
+  const holder: { un: (() => void) | null } = { un: null };
+  const resp = new Promise<MemEdited>((resolve) => {
+    void listen<MemEdited>("brain-mem-edited", (ev) => {
+      if (ev.payload.id === id) resolve(ev.payload);
+    }).then((u) => (holder.un = u));
+  });
+  const timeout = new Promise<MemEdited>((resolve) =>
+    setTimeout(() => resolve({ id, ok: false, error: "保存超时（大脑不在线？）" }), timeoutMs),
+  );
+  try {
+    await invoke("mem_edit", { id, text });
+  } catch (e) {
+    holder.un?.();
+    return { id, ok: false, error: String(e) };
+  }
+  const r = await Promise.race([resp, timeout]);
+  holder.un?.();
+  return r;
+}
+
 // ---- 用户设置（自主权旋钮等；数据目录 settings.json，即时生效免重启）----
 
 export interface SettingsValues {
