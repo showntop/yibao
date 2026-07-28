@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 设置页（home 大窗唯一内容）：模型/语音（保存后重启大脑生效）+ 通用/权限/数据（即时生效）。
 // 大脑只在启动时读 .env，所以模型/语音保存链路 = save_setup_config → restart_brain。
-import { onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { getVersion } from "@tauri-apps/api/app";
 import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -17,6 +17,7 @@ import {
   onBrainPermissions,
   getMemListOnce,
   memDelete,
+  memEdit,
   getSettingsOnce,
   setSettings,
   getPerceptionOnce,
@@ -260,7 +261,7 @@ async function doPerceptionClear() {
   }
 }
 
-// ---- 记忆管理（「它记得我什么」必须可见、可删）----
+// ---- 记忆管理（「它记得我什么」必须可见、可改、可删）----
 const memItems = ref<MemItem[]>([]);
 const memReady = ref(true);
 const memFailed = ref(false);
@@ -268,6 +269,27 @@ const memLoaded = ref(false);
 const memConfirming = ref<string | null>(null);
 const memDeleting = ref<string | null>(null);
 const memErr = ref("");
+// 行内编辑
+const memEditing = ref<string | null>(null);
+const memDraft = ref("");
+const memSaving = ref<string | null>(null);
+// 命名空间筛选（null = 全部）与全文展开
+const memFilter = ref<string | null>(null);
+const memExpanded = ref(new Set<string>());
+
+const memNamespaces = computed(() => {
+  const map = new Map<string, { ns: string; label: string; count: number }>();
+  for (const m of memItems.value) {
+    const cur = map.get(m.ns);
+    if (cur) cur.count += 1;
+    else map.set(m.ns, { ns: m.ns, label: m.label, count: 1 });
+  }
+  return [...map.values()];
+});
+
+const memFiltered = computed(() =>
+  memFilter.value === null ? memItems.value : memItems.value.filter((m) => m.ns === memFilter.value),
+);
 
 async function loadMem() {
   memErr.value = "";
@@ -286,6 +308,41 @@ async function doMemDelete(id: string) {
   memDeleting.value = null;
   if (r.ok) memItems.value = memItems.value.filter((m) => m.id !== id);
   else memErr.value = r.error || "删除失败";
+}
+
+function startMemEdit(m: MemItem) {
+  memConfirming.value = null;
+  memEditing.value = m.id;
+  memDraft.value = m.text;
+  memErr.value = "";
+}
+
+function cancelMemEdit() {
+  memEditing.value = null;
+  memDraft.value = "";
+}
+
+async function doMemEdit(id: string) {
+  const text = memDraft.value.trim();
+  if (!text) return;
+  memSaving.value = id;
+  memErr.value = "";
+  const r = await memEdit(id, text);
+  memSaving.value = null;
+  if (r.ok) {
+    const it = memItems.value.find((m) => m.id === id);
+    if (it) it.text = text;
+    cancelMemEdit();
+  } else {
+    memErr.value = r.error || "保存失败";
+  }
+}
+
+function toggleMemExpand(id: string) {
+  const s = new Set(memExpanded.value);
+  if (s.has(id)) s.delete(id);
+  else s.add(id);
+  memExpanded.value = s;
 }
 
 // ---- 关于 ----
@@ -496,18 +553,47 @@ onUnmounted(() => {
         </div>
         <template v-else>
           <div v-if="memLoaded && !memItems.length" class="s-note">还没有记住什么——跟译宝聊聊你的偏好和习惯。</div>
-          <div v-for="m in memItems" :key="m.id" class="m-row">
+          <div v-if="memNamespaces.length > 1" class="m-chips">
+            <button class="m-chip" :class="{ on: memFilter === null }" @click="memFilter = null">
+              全部 · {{ memItems.length }}
+            </button>
+            <button
+              v-for="n in memNamespaces"
+              :key="n.ns"
+              class="m-chip"
+              :class="{ on: memFilter === n.ns }"
+              @click="memFilter = n.ns"
+            >{{ n.label }} · {{ n.count }}</button>
+          </div>
+          <div v-for="m in memFiltered" :key="m.id" class="m-row">
             <span class="m-ns">{{ m.label }}</span>
-            <span class="m-text">{{ m.text }}</span>
-            <span class="s-row-btns">
-              <template v-if="memConfirming === m.id">
-                <button class="s-mini danger" :disabled="memDeleting === m.id" @click="doMemDelete(m.id)">
-                  {{ memDeleting === m.id ? "删除中…" : "确认" }}
+            <template v-if="memEditing === m.id">
+              <textarea v-model="memDraft" class="m-edit" rows="2" :disabled="memSaving === m.id" />
+              <span class="s-row-btns">
+                <button class="s-mini" :disabled="memSaving === m.id || !memDraft.trim()" @click="doMemEdit(m.id)">
+                  {{ memSaving === m.id ? "保存中…" : "保存" }}
                 </button>
-                <button class="s-mini" :disabled="memDeleting === m.id" @click="memConfirming = null">取消</button>
-              </template>
-              <button v-else class="s-mini" @click="memConfirming = m.id">删除</button>
-            </span>
+                <button class="s-mini" :disabled="memSaving === m.id" @click="cancelMemEdit">取消</button>
+              </span>
+            </template>
+            <template v-else>
+              <span
+                class="m-text"
+                :class="{ open: memExpanded.has(m.id) }"
+                :title="memExpanded.has(m.id) ? '点击收起' : '点击展开全文'"
+                @click="toggleMemExpand(m.id)"
+              >{{ m.text }}</span>
+              <span class="s-row-btns">
+                <button class="s-mini" @click="startMemEdit(m)">编辑</button>
+                <template v-if="memConfirming === m.id">
+                  <button class="s-mini danger" :disabled="memDeleting === m.id" @click="doMemDelete(m.id)">
+                    {{ memDeleting === m.id ? "删除中…" : "确认" }}
+                  </button>
+                  <button class="s-mini" :disabled="memDeleting === m.id" @click="memConfirming = null">取消</button>
+                </template>
+                <button v-else class="s-mini" @click="memConfirming = m.id">删除</button>
+              </span>
+            </template>
           </div>
         </template>
         <div v-if="memErr" class="s-msg err">⚠️ {{ memErr }}</div>
@@ -713,6 +799,46 @@ select:focus {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  cursor: pointer;
+}
+.m-text.open {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+}
+/* 记忆筛选 chips + 行内编辑框 */
+.m-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 0 8px;
+}
+.m-chip {
+  border: 1px solid var(--yb-surface-border);
+  background: transparent;
+  color: var(--yb-text-dim);
+  border-radius: var(--yb-radius-lg);
+  padding: 2px 10px;
+  font-size: var(--yb-fs-sm);
+  cursor: pointer;
+}
+.m-chip.on {
+  background: var(--yb-accent-soft);
+  border-color: var(--yb-accent);
+  color: var(--yb-accent-deep);
+}
+.m-edit {
+  flex: 1;
+  min-width: 0;
+  resize: vertical;
+  font-family: inherit;
+  font-size: var(--yb-fs-md);
+  line-height: 1.5;
+  padding: 6px 8px;
+  border: 1px solid var(--yb-accent);
+  border-radius: var(--yb-radius-md);
+  background: var(--yb-surface);
+  color: var(--yb-text);
 }
 /* 权限状态点：绿=已授权 红=缺 灰=未检测到 */
 .perm-dot {
