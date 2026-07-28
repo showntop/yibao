@@ -4,12 +4,21 @@ from __future__ import annotations
 import os
 import sqlite3
 import subprocess
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from cryptography.fernet import Fernet
 
 from yibao_brain import perception
-from yibao_brain.perception import PerceptionKeyUnavailable, PerceptionSensors, PerceptionStore
+from yibao_brain.perception import (
+    LoadUserActivitySkill,
+    PerceptionKeyUnavailable,
+    PerceptionSensors,
+    PerceptionStore,
+    build_activity_segments,
+)
+from yibao_brain.ipc import RiskLevel
+from yibao_brain.skills import SkillContext
 
 
 def _store(tmp_path):
@@ -69,6 +78,36 @@ def test_store_tolerates_corrupt_ciphertext(tmp_path):
     assert store.list()[0]["payload"] == {}
 
 
+def test_store_query_window_is_inclusive_ordered_and_uses_latest_seed(tmp_path):
+    store = _store(tmp_path)
+    store.append("app", "frontmost", {"app": "Seed App", "title": "Before"}, "S1", ts=90)
+    store.append("app", "frontmost", {"app": "Chrome", "title": "Docs"}, "S1", ts=100)
+    store.append("activity", "active", {"idle_seconds": 0}, "S1", ts=150)
+    store.append("app", "frontmost", {"app": "Terminal", "title": "yibao"}, "S1", ts=200)
+    store.append("app", "frontmost", {"app": "After", "title": "Outside"}, "S1", ts=201)
+
+    rows = store.query_window(100, 200)
+
+    assert [row["ts"] for row in rows] == [100.0, 150.0, 200.0]
+    assert store.latest_before("app", 100)["payload"]["app"] == "Seed App"
+    assert store.latest_before("activity", 100) is None
+
+
+def test_store_query_window_keeps_corrupt_rows_for_skip_count(tmp_path):
+    store = _store(tmp_path)
+    store.append("app", "frontmost", {"app": "Chrome", "title": "Docs"}, "S1", ts=100)
+    with sqlite3.connect(store.db_path) as conn:
+        conn.execute(
+            "INSERT INTO observations (ts, source, kind, payload, sensitivity) VALUES (?, ?, ?, ?, ?)",
+            (150.0, "activity", "idle", "not-a-fernet-token", "S1"),
+        )
+
+    rows = store.query_window(100, 200)
+
+    assert len(rows) == 2
+    assert rows[1]["payload"] == {}
+
+
 def test_store_delete_and_clear_return_real_counts(tmp_path):
     store = _store(tmp_path)
     first = store.append("app", "frontmost", {"app": "A"}, "S1", ts=1)
@@ -91,6 +130,231 @@ def test_store_purge_uses_source_retention(tmp_path):
 
     assert store.purge(now=now) == 3
     assert [x["source"] for x in store.list()] == ["activity"]
+
+
+def test_build_activity_segments_uses_seeds_and_splits_on_each_state_change():
+    segments, truncated = build_activity_segments(
+        rows=[
+            {
+                "ts": 120.0,
+                "source": "app",
+                "kind": "frontmost",
+                "payload": {"app": "Terminal", "title": "yibao"},
+            },
+            {
+                "ts": 150.0,
+                "source": "activity",
+                "kind": "idle",
+                "payload": {"idle_seconds": 60},
+            },
+        ],
+        seeds=[
+            {
+                "source": "app",
+                "kind": "frontmost",
+                "payload": {"app": "Chrome", "title": "Docs"},
+            },
+            {
+                "source": "activity",
+                "kind": "active",
+                "payload": {"idle_seconds": 0},
+            },
+        ],
+        start_ts=100.0,
+        end_ts=200.0,
+    )
+
+    assert segments == [
+        {
+            "start_ts": 100.0,
+            "end_ts": 120.0,
+            "app": "Chrome",
+            "title": "Docs",
+            "activity": "active",
+        },
+        {
+            "start_ts": 120.0,
+            "end_ts": 150.0,
+            "app": "Terminal",
+            "title": "yibao",
+            "activity": "active",
+        },
+        {
+            "start_ts": 150.0,
+            "end_ts": 200.0,
+            "app": "Terminal",
+            "title": "yibao",
+            "activity": "idle",
+        },
+    ]
+    assert truncated is False
+
+
+def test_build_activity_segments_merges_duplicates_and_omits_unknown_app():
+    segments, truncated = build_activity_segments(
+        rows=[
+            {"ts": 110.0, "source": "activity", "kind": "active", "payload": {"idle_seconds": 2}},
+            {"ts": 150.0, "source": "activity", "kind": "idle", "payload": {"idle_seconds": 60}},
+        ],
+        seeds=[
+            {"source": "activity", "kind": "active", "payload": {"idle_seconds": 0}},
+        ],
+        start_ts=100.0,
+        end_ts=200.0,
+    )
+
+    assert segments == [
+        {"start_ts": 100.0, "end_ts": 150.0, "activity": "active"},
+        {"start_ts": 150.0, "end_ts": 200.0, "activity": "idle"},
+    ]
+    assert truncated is False
+    assert all("app" not in item and "title" not in item for item in segments)
+
+
+def test_build_activity_segments_keeps_newest_120_segments():
+    rows = [
+        {
+            "ts": float(i + 1),
+            "source": "app",
+            "kind": "frontmost",
+            "payload": {"app": f"App {i}", "title": f"Window {i}"},
+        }
+        for i in range(130)
+    ]
+
+    segments, truncated = build_activity_segments(
+        rows=rows,
+        seeds=[],
+        start_ts=0.0,
+        end_ts=131.0,
+    )
+
+    assert len(segments) == 120
+    assert segments[0]["app"] == "App 10"
+    assert segments[-1] == {
+        "start_ts": 130.0,
+        "end_ts": 131.0,
+        "app": "App 129",
+        "title": "Window 129",
+    }
+    assert truncated is True
+
+
+def test_load_user_activity_contract_authorization_and_structured_result(tmp_path):
+    tz = timezone(timedelta(hours=8))
+    now = datetime(2026, 7, 28, 14, 0, tzinfo=tz)
+    start = now - timedelta(hours=1)
+    store = _store(tmp_path)
+    store.append(
+        "app", "frontmost", {"app": "Chrome", "title": "Docs"}, "S1", ts=start.timestamp() - 60
+    )
+    store.append(
+        "activity", "active", {"idle_seconds": 0}, "S1", ts=start.timestamp() - 30
+    )
+    store.append(
+        "app", "frontmost", {"app": "Terminal", "title": "yibao"}, "S1", ts=start.timestamp() + 1800
+    )
+    store.append(
+        "activity", "idle", {"idle_seconds": 60}, "S1", ts=start.timestamp() + 2700
+    )
+    settings = {"perception.model_access": False}
+    skill = LoadUserActivitySkill(store, settings, now_provider=lambda: now)
+    params = {"start_at": start.isoformat(), "end_at": now.isoformat()}
+
+    schema = skill.openai_schema()
+    assert skill.id == "load_user_activity"
+    assert skill.default_risk == RiskLevel.L0_READONLY
+    assert schema["parameters"]["required"] == ["start_at", "end_at"]
+    assert skill.precheck(params) == "模型读取感知记录未开启，请先在设置的感知区域开启"
+    assert skill.run(params, SkillContext()).success is False
+
+    settings["perception.model_access"] = True
+    assert skill.precheck(params) is None
+    result = skill.run(params, SkillContext())
+
+    assert result.success is True
+    assert result.data["observation_count"] == 2
+    assert result.data["skipped_count"] == 0
+    assert result.data["segments"] == [
+        {
+            "start_at": "2026-07-28T13:00:00+08:00",
+            "end_at": "2026-07-28T13:30:00+08:00",
+            "app": "Chrome",
+            "title": "Docs",
+            "activity": "active",
+        },
+        {
+            "start_at": "2026-07-28T13:30:00+08:00",
+            "end_at": "2026-07-28T13:45:00+08:00",
+            "app": "Terminal",
+            "title": "yibao",
+            "activity": "active",
+        },
+        {
+            "start_at": "2026-07-28T13:45:00+08:00",
+            "end_at": "2026-07-28T14:00:00+08:00",
+            "app": "Terminal",
+            "title": "yibao",
+            "activity": "idle",
+        },
+    ]
+    assert skill.safe_result(result).data == {
+        "window": result.data["window"],
+        "observation_count": 2,
+        "segment_count": 3,
+        "truncated": False,
+    }
+    assert skill.post_reply_notice(result) == "已参考最近活动"
+
+
+@pytest.mark.parametrize(
+    ("start_at", "end_at", "error"),
+    [
+        ("2026-07-28T13:00:00", "2026-07-28T14:00:00+08:00", "时区"),
+        ("2026-07-28T14:00:00+08:00", "2026-07-28T13:00:00+08:00", "早于"),
+        ("2026-07-27T12:59:59+08:00", "2026-07-28T14:00:00+08:00", "24 小时"),
+        ("2026-07-28T14:00:00+08:00", "2026-07-28T14:06:00+08:00", "未来"),
+    ],
+)
+def test_load_user_activity_rejects_invalid_windows(tmp_path, start_at, end_at, error):
+    now = datetime(2026, 7, 28, 14, 0, tzinfo=timezone(timedelta(hours=8)))
+    skill = LoadUserActivitySkill(
+        _store(tmp_path),
+        {"perception.model_access": True},
+        now_provider=lambda: now,
+    )
+
+    result = skill.run({"start_at": start_at, "end_at": end_at}, SkillContext())
+
+    assert result.success is False
+    assert error in result.error
+
+
+def test_load_user_activity_empty_or_corrupt_window_has_no_notice(tmp_path):
+    tz = timezone(timedelta(hours=8))
+    now = datetime(2026, 7, 28, 14, 0, tzinfo=tz)
+    start = now - timedelta(hours=1)
+    store = _store(tmp_path)
+    with sqlite3.connect(store.db_path) as conn:
+        conn.execute(
+            "INSERT INTO observations (ts, source, kind, payload, sensitivity) VALUES (?, ?, ?, ?, ?)",
+            (start.timestamp() + 60, "app", "frontmost", "broken", "S1"),
+        )
+    skill = LoadUserActivitySkill(
+        store,
+        {"perception.model_access": True},
+        now_provider=lambda: now,
+    )
+
+    result = skill.run(
+        {"start_at": start.isoformat(), "end_at": now.isoformat()}, SkillContext()
+    )
+
+    assert result.success is True
+    assert result.data["segments"] == []
+    assert result.data["observation_count"] == 0
+    assert result.data["skipped_count"] == 1
+    assert skill.post_reply_notice(result) is None
 
 
 def test_keychain_timeout_fails_closed(monkeypatch):

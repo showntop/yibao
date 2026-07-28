@@ -14,8 +14,12 @@ import sys
 import threading
 import time
 from collections.abc import Callable
+from datetime import datetime, timedelta
 
 from cryptography.fernet import Fernet, InvalidToken
+
+from .ipc import ActionResult, RiskLevel
+from .skills import Skill, SkillContext
 
 _KEYCHAIN_SERVICE = "com.yibao.perception"
 _DAY = 86400
@@ -132,6 +136,16 @@ class PerceptionStore:
         except (InvalidToken, UnicodeError, json.JSONDecodeError, ValueError):
             return {}
 
+    def _decode_row(self, row: sqlite3.Row) -> dict:
+        return {
+            "id": int(row["id"]),
+            "ts": float(row["ts"]),
+            "source": row["source"],
+            "kind": row["kind"],
+            "payload": self._decrypt(row["payload"]),
+            "sensitivity": row["sensitivity"],
+        }
+
     def append(
         self,
         source: str,
@@ -166,17 +180,34 @@ class PerceptionStore:
         args.append(limit)
         with self._lock:
             rows = self._conn.execute(sql, args).fetchall()
-        return [
-            {
-                "id": int(row["id"]),
-                "ts": float(row["ts"]),
-                "source": row["source"],
-                "kind": row["kind"],
-                "payload": self._decrypt(row["payload"]),
-                "sensitivity": row["sensitivity"],
-            }
-            for row in rows
-        ]
+        return [self._decode_row(row) for row in rows]
+
+    def query_window(
+        self, start_ts: float, end_ts: float, limit: int = 2000
+    ) -> list[dict]:
+        """按时间正序读取 A/C 观察；损坏行保留为空 payload，交给上层计数跳过。"""
+        bounded_limit = max(1, min(int(limit), 2001))
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, ts, source, kind, payload, sensitivity FROM observations "
+                "WHERE ts >= ? AND ts <= ? AND source IN ('app', 'activity') "
+                "ORDER BY ts ASC, id ASC LIMIT ?",
+                (float(start_ts), float(end_ts), bounded_limit),
+            ).fetchall()
+        return [self._decode_row(row) for row in rows]
+
+    def latest_before(self, source: str, ts: float) -> dict | None:
+        """读取指定来源在窗口起点前最后一个可解密状态。"""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id, ts, source, kind, payload, sensitivity FROM observations "
+                "WHERE source = ? AND ts < ? ORDER BY ts DESC, id DESC LIMIT 1",
+                (source, float(ts)),
+            ).fetchone()
+        if row is None:
+            return None
+        item = self._decode_row(row)
+        return item if item["payload"] else None
 
     def delete(self, observation_id: int) -> bool:
         with self._lock:
@@ -218,6 +249,235 @@ class PerceptionStore:
     def close(self) -> None:
         with self._lock:
             self._conn.close()
+
+
+def _observation_state(item: dict) -> dict:
+    """把单条 A/C 观察规范化为时间线状态增量；坏数据不产生状态。"""
+    payload = item.get("payload")
+    if not isinstance(payload, dict) or not payload:
+        return {}
+    if item.get("source") == "app" and payload.get("app"):
+        return {
+            "app": str(payload["app"]),
+            "title": str(payload.get("title") or ""),
+        }
+    if item.get("source") == "activity" and item.get("kind") in ("active", "idle"):
+        return {"activity": item["kind"]}
+    return {}
+
+
+def build_activity_segments(
+    rows: list[dict],
+    seeds: list[dict],
+    start_ts: float,
+    end_ts: float,
+    *,
+    max_segments: int = 120,
+) -> tuple[list[dict], bool]:
+    """把 app/title 与 active/idle 状态变化合并成有界的正序时间线。"""
+    state: dict = {}
+    for seed in seeds:
+        state.update(_observation_state(seed))
+
+    segments: list[dict] = []
+    cursor = float(start_ts)
+    end = float(end_ts)
+
+    def append_segment(segment_end: float) -> None:
+        nonlocal cursor
+        if not state or segment_end <= cursor:
+            return
+        segment = {"start_ts": cursor, "end_ts": segment_end, **state}
+        if (
+            segments
+            and segments[-1]["end_ts"] == segment["start_ts"]
+            and {k: v for k, v in segments[-1].items() if k not in ("start_ts", "end_ts")}
+            == {k: v for k, v in segment.items() if k not in ("start_ts", "end_ts")}
+        ):
+            segments[-1]["end_ts"] = segment_end
+        else:
+            segments.append(segment)
+
+    for item in sorted(rows, key=lambda row: (float(row.get("ts", 0)), int(row.get("id", 0)))):
+        event_ts = float(item.get("ts", start_ts))
+        if event_ts < start_ts or event_ts > end_ts:
+            continue
+        delta = _observation_state(item)
+        if not delta:
+            continue
+        changed = any(state.get(key) != value for key, value in delta.items())
+        if not changed:
+            continue
+        if state:
+            append_segment(event_ts)
+        else:
+            # 窗口内首次得知状态，不能把它倒推到窗口起点。
+            cursor = event_ts
+        state.update(delta)
+        cursor = event_ts
+
+    append_segment(end)
+    max_segments = max(1, int(max_segments))
+    truncated = len(segments) > max_segments
+    if truncated:
+        segments = segments[-max_segments:]
+    return segments, truncated
+
+
+class LoadUserActivitySkill(Skill):
+    """按模型选择的时间窗口加载本机 A/C 感知记录。"""
+
+    id = "load_user_activity"
+    label = "加载活动记录"
+    default_risk = RiskLevel.L0_READONLY
+    sensitive_output = True
+    description = (
+        "仅在用户询问过去活动、应用/窗口切换或刚才的工作上下文时，加载本机感知记录；"
+        "不得为无关的个性化回答调用。参数必须是带时区的 ISO 8601 本地时间。"
+        "用户说“刚才”通常查询最近 30 分钟，“最近”通常查询最近 60 分钟，"
+        "“今天”查询本地当天 00:00 到当前时间；单次最多 24 小时。"
+    )
+
+    def __init__(
+        self,
+        store: PerceptionStore,
+        settings: dict,
+        *,
+        now_provider: Callable[[], datetime] | None = None,
+    ):
+        self.store = store
+        self.settings = settings
+        self.now_provider = now_provider or (lambda: datetime.now().astimezone())
+
+    def openai_schema(self) -> dict:
+        return {
+            "name": self.id,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "start_at": {
+                        "type": "string",
+                        "description": (
+                            "查询起点，带时区的本地时间 ISO 8601，"
+                            "例如 2026-07-28T13:00:00+08:00"
+                        ),
+                    },
+                    "end_at": {
+                        "type": "string",
+                        "description": (
+                            "查询终点，带时区的本地时间 ISO 8601，"
+                            "例如 2026-07-28T14:00:00+08:00"
+                        ),
+                    },
+                },
+                "required": ["start_at", "end_at"],
+            },
+        }
+
+    def precheck(self, params: dict) -> str | None:
+        if not self.settings.get("perception.model_access", False):
+            return "模型读取感知记录未开启，请先在设置的感知区域开启"
+        return None
+
+    @staticmethod
+    def _parse_datetime(value: object, label: str) -> datetime:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{label} 必须是带时区的 ISO 8601 时间")
+        try:
+            parsed = datetime.fromisoformat(value.strip())
+        except ValueError as exc:
+            raise ValueError(f"{label} 不是有效的 ISO 8601 时间") from exc
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError(f"{label} 必须包含时区")
+        return parsed
+
+    def _window(self, params: dict) -> tuple[datetime, datetime]:
+        start = self._parse_datetime(params.get("start_at"), "start_at")
+        end = self._parse_datetime(params.get("end_at"), "end_at")
+        if start >= end:
+            raise ValueError("start_at 必须早于 end_at")
+        if end - start > timedelta(hours=24):
+            raise ValueError("单次查询不能超过 24 小时，请缩小时间窗口")
+        now = self.now_provider()
+        if now.tzinfo is None or now.utcoffset() is None:
+            now = now.astimezone()
+        if end > now + timedelta(minutes=5):
+            raise ValueError("end_at 不能位于未来 5 分钟以后")
+        return start, end
+
+    def run(self, params: dict, ctx: SkillContext) -> ActionResult:
+        blocked = self.precheck(params)
+        if blocked:
+            return ActionResult(success=False, error=blocked)
+        try:
+            start, end = self._window(params)
+        except (TypeError, ValueError) as exc:
+            return ActionResult(success=False, error=str(exc))
+
+        try:
+            rows = self.store.query_window(start.timestamp(), end.timestamp())
+            seeds = [
+                item
+                for item in (
+                    self.store.latest_before("app", start.timestamp()),
+                    self.store.latest_before("activity", start.timestamp()),
+                )
+                if item is not None
+            ]
+        except Exception as exc:
+            return ActionResult(success=False, error=f"无法读取感知记录：{exc}")
+
+        valid_rows = [row for row in rows if row.get("payload")]
+        skipped_count = len(rows) - len(valid_rows)
+        segments, truncated = build_activity_segments(
+            valid_rows,
+            seeds,
+            start.timestamp(),
+            end.timestamp(),
+        )
+        tz = start.tzinfo
+        formatted = [
+            {
+                "start_at": datetime.fromtimestamp(item["start_ts"], tz=tz).isoformat(),
+                "end_at": datetime.fromtimestamp(item["end_ts"], tz=tz).isoformat(),
+                **{
+                    key: value
+                    for key, value in item.items()
+                    if key not in ("start_ts", "end_ts")
+                },
+            }
+            for item in segments
+        ]
+        return ActionResult(
+            success=True,
+            data={
+                "window": {"start_at": start.isoformat(), "end_at": end.isoformat()},
+                "segments": formatted,
+                "observation_count": len(valid_rows),
+                "skipped_count": skipped_count,
+                "truncated": truncated,
+            },
+        )
+
+    def safe_result(self, result: ActionResult) -> ActionResult:
+        if not result.success:
+            return ActionResult(success=False, error=result.error)
+        data = result.data or {}
+        return ActionResult(
+            success=True,
+            data={
+                "window": data.get("window", {}),
+                "observation_count": int(data.get("observation_count", 0)),
+                "segment_count": len(data.get("segments") or []),
+                "truncated": bool(data.get("truncated", False)),
+            },
+        )
+
+    def post_reply_notice(self, result: ActionResult) -> str | None:
+        if result.success and (result.data or {}).get("segments"):
+            return "已参考最近活动"
+        return None
 
 
 def _window_snapshot() -> list[dict]:
