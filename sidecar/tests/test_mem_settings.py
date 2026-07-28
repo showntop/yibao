@@ -79,6 +79,33 @@ def test_mem_delete_bad_id_reports_not_ok(tmp_path, monkeypatch):
     assert d["ok"] is False and d["error"]
 
 
+def test_mem_edit_roundtrip(tmp_path, monkeypatch):
+    mem = FakeMemory()
+    mem.add("喜欢美式", "default")
+    out = _serve(
+        tmp_path, monkeypatch,
+        [{"type": "mem_edit", "mem_id": "default:0", "text": "喜欢拿铁"}, {"type": "mem_list"}],
+        mem=mem,
+    )
+    e = [m for m in out if m["type"] == "mem_edited"]
+    assert len(e) == 1 and e[0] == {"type": "mem_edited", "id": "default:0", "ok": True}
+    lst = [m for m in out if m["type"] == "mem_list"][0]
+    assert [i["text"] for i in lst["items"]] == ["喜欢拿铁"]
+
+
+def test_mem_edit_bad_id_or_empty_text_reports_not_ok(tmp_path, monkeypatch):
+    out = _serve(
+        tmp_path, monkeypatch,
+        [{"type": "mem_edit", "mem_id": "ghost:9", "text": "x"},
+         {"type": "mem_edit", "mem_id": "default:0", "text": "   "},
+         {"type": "mem_edit", "text": "x"}],
+        mem=FakeMemory(),
+    )
+    es = [m for m in out if m["type"] == "mem_edited"]
+    assert len(es) == 3
+    assert all(e["ok"] is False and e["error"] for e in es)
+
+
 # ---------- 自主权旋钮（settings.json）----------
 
 

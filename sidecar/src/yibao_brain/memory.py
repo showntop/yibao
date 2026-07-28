@@ -33,6 +33,10 @@ class Memory(ABC):
         """按 id 删一条；未就绪/不支持时实现方应抛异常（调用方转人话）。"""
         raise RuntimeError("当前记忆后端不支持删除")
 
+    def update(self, memory_id: str, text: str) -> bool:
+        """按 id 编辑一条的文本：成功 True，不存在/后端失败 False；未就绪/不支持时实现方可抛异常。"""
+        raise RuntimeError("当前记忆后端不支持编辑")
+
 
 def _humanize_err(err: Exception | None) -> str:
     """mem0 初始化失败的原文 → 给用户看的人话（第三方报错原文太技术且常误导）。"""
@@ -69,6 +73,14 @@ class FakeMemory(Memory):
         if items is None or not idx.isdigit() or int(idx) >= len(items):
             raise RuntimeError(f"记忆不存在：{memory_id}")
         del items[int(idx)]
+
+    def update(self, memory_id: str, text: str) -> bool:
+        uid, _, idx = memory_id.rpartition(":")
+        items = self._by_user.get(uid)
+        if items is None or not idx.isdigit() or int(idx) >= len(items):
+            return False
+        items[int(idx)] = text
+        return True
 
 
 class Mem0Memory(Memory):
@@ -148,6 +160,13 @@ class Mem0Memory(Memory):
 
     def delete_by_id(self, memory_id: str) -> None:
         self._m.delete(memory_id=memory_id)
+
+    def update(self, memory_id: str, text: str) -> bool:
+        try:
+            self._m.update(memory_id=memory_id, text=text)
+        except Exception:
+            return False
+        return True
 
 
 class LazyMem0Memory(Memory):
@@ -253,3 +272,10 @@ class LazyMem0Memory(Memory):
         if real is None:
             raise RuntimeError("长期记忆尚未就绪，请稍后再试")
         real.delete_by_id(memory_id)
+
+    def update(self, memory_id: str, text: str) -> bool:
+        with self._lock:
+            real = self._real
+        if real is None:
+            raise RuntimeError("长期记忆尚未就绪，请稍后再试")
+        return real.update(memory_id, text)

@@ -101,6 +101,60 @@ def test_mem0_recall_tolerates_search_error(monkeypatch):
     assert m.recall("q", user_id="u1") == []
 
 
+# ---------- update：编辑单条记忆（OS 感 §4.4 可改）----------
+
+
+def test_fake_update_replaces_text_keeps_id():
+    m = FakeMemory()
+    m.add("用户喜欢美式咖啡", user_id="u1")
+    mid = m.list_all("u1")[0]["id"]
+    assert m.update(mid, "用户喜欢拿铁") is True
+    items = m.list_all("u1")
+    assert [it["text"] for it in items] == ["用户喜欢拿铁"]
+    assert items[0]["id"] == mid  # id 不变
+
+
+def test_fake_update_missing_id_returns_false():
+    m = FakeMemory()
+    assert m.update("u1:9", "x") is False
+
+
+def test_mem0_update_delegates_by_memory_id(monkeypatch):
+    import mem0
+
+    monkeypatch.setenv("YIBAO_LLM_API_KEY", "dummy")
+    seen = {}
+
+    class _FakeMem0:
+        def update(self, memory_id, text=None, **kw):
+            seen["memory_id"] = memory_id
+            seen["text"] = text
+
+    monkeypatch.setattr(mem0.Memory, "from_config", lambda cfg: _FakeMem0())
+
+    from yibao_brain.memory import Mem0Memory
+
+    m = Mem0Memory()
+    assert m.update("abc-123", "改后文本") is True
+    assert seen == {"memory_id": "abc-123", "text": "改后文本"}
+
+
+def test_mem0_update_error_returns_false(monkeypatch):
+    import mem0
+
+    monkeypatch.setenv("YIBAO_LLM_API_KEY", "dummy")
+
+    class _BoomMem0:
+        def update(self, memory_id, text=None, **kw):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(mem0.Memory, "from_config", lambda cfg: _BoomMem0())
+
+    from yibao_brain.memory import Mem0Memory
+
+    assert Mem0Memory().update("x", "y") is False
+
+
 def test_humanize_err():
     from yibao_brain.memory import _humanize_err
 
@@ -224,6 +278,32 @@ def test_lazy_memory_callback_set_after_failure_fires_immediately():
     seen: list[str] = []
     m.set_status_callback(seen.append)  # 失败后才注入：立即补发，不错过
     assert seen and "no torch" in seen[0]
+
+
+def test_lazy_update_not_ready_raises_human_error():
+    import threading
+
+    from yibao_brain.memory import LazyMem0Memory
+
+    gate = threading.Event()
+    m = LazyMem0Memory(factory=lambda: gate.wait(5) or FakeMemory())
+    try:
+        m.update("u:0", "x")
+        raise AssertionError("应抛错")
+    except RuntimeError as e:
+        assert "尚未就绪" in str(e)
+
+
+def test_lazy_update_delegates_when_ready():
+    from yibao_brain.memory import LazyMem0Memory
+
+    real = FakeMemory()
+    real.add("旧文本", "u")
+    m = LazyMem0Memory(factory=lambda: real)
+    assert _wait(lambda: m.ready)
+    mid = real.list_all("u")[0]["id"]
+    assert m.update(mid, "新文本") is True
+    assert real.list_all("u")[0]["text"] == "新文本"
 
 
 def test_lazy_memory_buffer_cap():

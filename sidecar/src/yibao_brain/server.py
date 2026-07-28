@@ -928,6 +928,23 @@ async def serve_async(
                 write_msg({"type": "mem_deleted", "id": mid, "ok": True})
             except Exception as e:
                 write_msg({"type": "mem_deleted", "id": mid, "ok": False, "error": str(e)})
+        elif rtype == "mem_edit":
+            # 记忆管理「可改」：按 mem_id 替换文本；空文本/坏 id 明确报错，不静默
+            mid = str(msg.get("mem_id") or "")
+            text = str(msg.get("text") or "").strip()
+            if not mid or not text:
+                write_msg({"type": "mem_edited", "id": mid, "ok": False,
+                           "error": "记忆 id 与新文本都不能为空"})
+                continue
+            try:
+                ok = await _offload(agent.memory.update, mid, text)
+                if ok:
+                    write_msg({"type": "mem_edited", "id": mid, "ok": True})
+                else:
+                    write_msg({"type": "mem_edited", "id": mid, "ok": False,
+                               "error": "记忆不存在或后端更新失败"})
+            except Exception as e:
+                write_msg({"type": "mem_edited", "id": mid, "ok": False, "error": str(e)})
         elif rtype == "settings_get":
             write_msg({"type": "settings", "values": dict(settings)})
         elif rtype == "settings_set":
