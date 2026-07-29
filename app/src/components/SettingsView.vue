@@ -304,6 +304,14 @@ const memFiltered = computed(() =>
   memFilter.value === null ? memItems.value : memItems.value.filter((m) => m.ns === memFilter.value),
 );
 
+function fmtMemTime(iso?: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getMonth() + 1}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 async function loadMem() {
   memErr.value = "";
   const r = await getMemListOnce();
@@ -618,6 +626,7 @@ onUnmounted(() => {
                 :title="memExpanded.has(m.id) ? '点击收起' : '点击展开全文'"
                 @click="toggleMemExpand(m.id)"
               >{{ m.text }}</span>
+              <span v-if="m.created_at" class="m-time">{{ fmtMemTime(m.created_at) }}</span>
               <span class="s-row-btns">
                 <button class="s-mini" @click="startMemEdit(m)">编辑</button>
                 <template v-if="memConfirming === m.id">
@@ -840,6 +849,12 @@ select:focus {
   display: block;
   -webkit-line-clamp: unset;
   overflow: visible;
+}
+.m-time {
+  flex-shrink: 0;
+  font-size: var(--yb-fs-sm);
+  opacity: 0.55;
+  white-space: nowrap;
 }
 /* 记忆筛选 chips + 行内编辑框 */
 .m-chips {

@@ -18,13 +18,13 @@ indexes = ["created_at"]
 [[tool]]
 id = "keep"
 type = "db"
-description = "记一条闪念"
+description = "记录用户明确要求保存的想法/灵感/备忘（一句话）。仅当用户主动要「记一下/记条闪念」时调用；用户随口说的偏好/习惯会自动进入长期记忆，不要用此工具记录偏好"
 risk = "L1"
 panel = "notes:list"
 refresh = "list"   # 写入后面板拿刷新列表，而非回执 {"id":…}
 required = ["text"]
 [tool.params]
-text = {type = "string", description = "内容"}
+text = {type = "string", description = "要记的想法/灵感/备忘（一句话）"}
 [tool.db]
 op = "insert"
 table = "notes"

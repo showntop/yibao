@@ -602,7 +602,8 @@ async def serve_async(
                 print(f"[yibao] 记忆列出失败（{label}，已跳过）：{e}", file=sys.stderr)
                 continue
             for r in rows:
-                out.append({"id": r["id"], "text": r["text"], "ns": ns, "label": label})
+                out.append({"id": r["id"], "text": r["text"], "ns": ns, "label": label,
+                            "created_at": r.get("created_at", "")})
         return out
     # mem0 降级（如多实例争 qdrant 锁）→ 显式推到壳，别让「失忆」无声发生
     mem = getattr(agent, "memory", None)

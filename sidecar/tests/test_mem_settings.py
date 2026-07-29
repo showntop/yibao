@@ -106,6 +106,24 @@ def test_mem_edit_bad_id_or_empty_text_reports_not_ok(tmp_path, monkeypatch):
     assert all(e["ok"] is False and e["error"] for e in es)
 
 
+def test_mem_list_all_uses_filters_not_top_level_user_id():
+    """mem0 2.x get_all 不再接受 top-level user_id，必须走 filters（回归：记忆管理全空 bug）。
+    且按 created_at 倒序（最新在前）——mem0 get_all 不保证时间序，曾在列表中间看不到新增。"""
+    from unittest.mock import MagicMock
+    from yibao_brain.memory import Mem0Memory
+    m = Mem0Memory.__new__(Mem0Memory)  # 跳过 from_config，直接注入 mock
+    fake = MagicMock()
+    fake.get_all.return_value = {"results": [
+        {"id": "a", "memory": "旧偏好", "created_at": "2026-07-01T00:00:00+00:00"},
+        {"id": "b", "memory": "新偏好", "created_at": "2026-07-29T00:00:00+00:00"},
+    ]}
+    m._m = fake
+    out = m.list_all("default")
+    fake.get_all.assert_called_once_with(filters={"user_id": "default"})
+    assert [i["id"] for i in out] == ["b", "a"]  # 倒序：最新在前
+    assert out[0]["created_at"] == "2026-07-29T00:00:00+00:00"
+
+
 # ---------- 自主权旋钮（settings.json）----------
 
 

@@ -148,14 +148,19 @@ class Mem0Memory(Memory):
 
     def list_all(self, user_id: str) -> list[dict]:
         try:
-            res = self._m.get_all(user_id=user_id)
+            res = self._m.get_all(filters={"user_id": user_id})
         except Exception:
             return []
         items = res if isinstance(res, list) else (res.get("results", []) if isinstance(res, dict) else [])
         out = []
         for it in items:
             if isinstance(it, dict) and it.get("memory"):
-                out.append({"id": str(it.get("id") or ""), "text": str(it["memory"])})
+                out.append({
+                    "id": str(it.get("id") or ""),
+                    "text": str(it["memory"]),
+                    "created_at": str(it.get("created_at") or ""),
+                })
+        out.sort(key=lambda m: m["created_at"], reverse=True)  # 最新在前（mem0 get_all 不保证时间序）
         return out
 
     def delete_by_id(self, memory_id: str) -> None:

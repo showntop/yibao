@@ -374,6 +374,7 @@ export interface MemItem {
   text: string;
   ns: string;    // 命名空间（"" = 底座译宝）
   label: string; // 显示名（译宝 / 插件名）
+  created_at?: string; // ISO 时间；list_all 已按其倒序
 }
 
 export interface MemListResponse {
