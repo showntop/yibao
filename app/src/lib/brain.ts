@@ -234,6 +234,15 @@ export interface FeedItem {
   read: number; // 0=未读 1=已读（sidecar Task 1/6 落库 + Rust 透传）
 }
 
+export interface RunningTask {
+  id: string;
+  kind: "agent" | "script";
+  label: string;
+  prompt: string;
+  status: "running";
+  created_at: number;
+}
+
 export interface FeedStats {
   pending_reminders: number;
   running_tasks: number;
@@ -244,11 +253,13 @@ export interface FeedStats {
 export interface FeedResponse {
   items: FeedItem[];
   stats: FeedStats;
+  running_tasks: RunningTask[];
 }
 
 const EMPTY_FEED: FeedResponse = {
   items: [],
   stats: { pending_reminders: 0, running_tasks: 0, done_24h: 0, unread: 0 },
+  running_tasks: [],
 };
 
 /** 订阅主屏 Feed 响应（get_feed 查询的回包，经 Rust 转发）。 */
