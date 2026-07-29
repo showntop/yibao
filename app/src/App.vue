@@ -7,7 +7,6 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import Avatar from "./components/Avatar.vue";
 import SpeechBubble from "./components/SpeechBubble.vue";
 import InputBar from "./components/InputBar.vue";
-import ConfirmDialog from "./components/ConfirmDialog.vue";
 import Bubble from "./components/Bubble.vue";
 import PermissionsBanner from "./components/PermissionsBanner.vue";
 import SetupWizard from "./components/SetupWizard.vue";
@@ -16,15 +15,17 @@ import {
   onBrainStatus,
   onBrainPermissions,
   onPanelClosed,
+  onPendingConfirms,
   openHomeWindow,
   runInput,
-  sendConfirm,
+  sendConfirmBatch,
   voiceStart,
   interrupt,
   panelAction,
   type BrainEvent,
   type BrainStatusMsg,
   type BrainPermissions,
+  type PendingConfirm,
 } from "./lib/brain";
 import { resetWindowSize, openPanel, setInteractiveFull, setBubbleOn } from "./lib/window";
 import { SUGGESTIONS } from "./lib/suggestions";
@@ -46,7 +47,9 @@ const petState = computed<AvatarState>(() => {
 });
 const bubbles = ref<BubbleMsg[]>([]);
 const streamingIdx = ref<number | null>(null); // 正在接收 chunk 的 bubble 下标
-const pending = ref<{ id: string; skill: string; desc: string } | null>(null);
+const pendingConfirms = ref<PendingConfirm[]>([]);
+const pending = computed(() => pendingConfirms.value[0] ?? null);
+const rememberPending = ref(false);
 const brainDown = ref(false); // 大脑掉线/重启中（守护在恢复）
 const perms = ref<BrainPermissions | null>(null); // macOS 权限状态（null=未收到）
 const expanded = ref(false);
@@ -131,6 +134,7 @@ let unlistenSetupErr: (() => void) | null = null;
 let unlistenSetupCfg: (() => void) | null = null;
 let unlistenInvoke: (() => void) | null = null;
 let unlistenInvokeSel: (() => void) | null = null;
+let unlistenApprovals: (() => void) | null = null;
 
 const statusText = computed(
   () => ({
@@ -294,18 +298,8 @@ function onEvent(e: BrainEvent) {
         bubbles.value.push({ role: "sys", text: "🔧 " + procLabel(e.action) });
       }
       break;
-    case "confirmation_needed":
-      state.value = "idle";
-      pending.value = {
-        id: e.confirmation_id ?? "",
-        skill: e.action?.skill_id ?? "",
-        desc: e.action?.description ?? "",
-      };
-      if (!expanded.value) void expand(); // 高风险确认必须可见
-      break;
     case "action_result": {
       // 双窗口：确认可能在面板窗作答，结果回来即收尾（成功短闪 400ms，spec 选项 ①）
-      pending.value = null;
       flashValence("success");
       // 过程行收尾：✅/❌（失败带 error 摘要）；无匹配行（面板直调等）不动
       const idx = e.action?.id !== undefined ? procIdx.get(e.action.id) : undefined;
@@ -400,7 +394,6 @@ function onEvent(e: BrainEvent) {
     case "error":
       state.value = "idle";
       streamingIdx.value = null;
-      pending.value = null; // 确认被拒（任一窗口作答）或出错
       bubbles.value.push({ role: "ai", text: "⚠️ " + (e.text ?? "出错了") });
       flashValence("error");
       closeBubbleNow();
@@ -447,7 +440,6 @@ function onStatus(m: BrainStatusMsg) {
   // down / restarting：复位界面状态（进行中的 run/确认已随进程丢失）
   state.value = "idle";
   streamingIdx.value = null;
-  pending.value = null;
   if (!brainDown.value) {
     brainDown.value = true;
     const why = m.detail ? `（${m.detail}）` : "";
@@ -486,10 +478,10 @@ async function submit(text: string) {
 async function decide(approved: boolean, remember = false) {
   if (!pending.value) return;
   const { id } = pending.value;
-  pending.value = null;
   state.value = "think";
   try {
-    await sendConfirm(id, approved, remember);
+    await sendConfirmBatch([{ id, approved, remember }]);
+    rememberPending.value = false;
   } catch (err) {
     bubbles.value.push({ role: "ai", text: "⚠️ 确认失败：" + String(err) });
   }
@@ -551,6 +543,24 @@ onMounted(async () => {
     panelOpen.value = false;
     bubbles.value.push({ role: "ai", text: "⇠ 协作结束" });
   });
+  unlistenApprovals = onPendingConfirms((items) => {
+    const previousCount = pendingConfirms.value.length;
+    pendingConfirms.value = items.filter((item) => !item.surface || item.surface === "pet");
+    if (pendingConfirms.value.length === 0) {
+      rememberPending.value = false;
+      return;
+    }
+    state.value = "idle";
+    if (pendingConfirms.value.length > 1) {
+      attentionNeeded.value = true;
+      if (!expanded.value) {
+        openBubbleSticky(`${pendingConfirms.value.length} 项待批准，去大窗批量处理`);
+      }
+    } else if (previousCount === 0 && !expanded.value) {
+      // 单条仍允许在小窗直接快批；多条必须进大窗，避免只答第一条后整批悬挂。
+      void expand();
+    }
+  });
   // 首启引导（生产打包首跑：装 Python 环境/下模型，大脑还没起来，走 Tauri 事件直推）
   unlistenSetup = await listen<{ stage: string; detail: string }>("setup-progress", (e) => {
     if (e.payload.stage !== "done" && !expanded.value) void expand();
@@ -583,6 +593,7 @@ onUnmounted(() => {
   unlistenSetupCfg?.();
   unlistenInvoke?.();
   unlistenInvokeSel?.();
+  unlistenApprovals?.();
   window.removeEventListener("keydown", onKeydown);
   if (clickTimer !== null) clearTimeout(clickTimer);
   if (bubbleTimer !== null) clearTimeout(bubbleTimer);
@@ -678,13 +689,27 @@ onUnmounted(() => {
           <button class="ctx-x" title="去掉上下文" @click="selectionCtx = null">×</button>
         </div>
         <InputBar v-if="!pending" ref="inputBarRef" :busy="busy" :listening="state === 'listen'" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
-        <ConfirmDialog
-          v-else
-          :skill="pending.skill"
-          :desc="pending.desc"
-          @approve="(remember) => decide(true, remember)"
-          @deny="() => decide(false)"
-        />
+        <div v-else-if="pendingConfirms.length > 1" class="batch-confirm-notice">
+          <div>
+            <strong>{{ pendingConfirms.length }} 项待批准，去大窗批量处理</strong>
+            <span>可逐项核对，也可以一次批准或拒绝。</span>
+          </div>
+          <button class="confirm-open" @click="openHome">打开收件箱</button>
+        </div>
+        <div v-else class="quick-confirm">
+          <div class="quick-copy">
+            <strong>⚠️ {{ pending.label || pending.skill }}</strong>
+            <span v-if="pending.desc">{{ pending.desc }}</span>
+          </div>
+          <label class="quick-remember">
+            <input v-model="rememberPending" type="checkbox" />
+            本会话不再询问
+          </label>
+          <div class="quick-actions">
+            <button class="quick-deny" @click="decide(false)">拒绝</button>
+            <button class="quick-allow" @click="decide(true, rememberPending)">允许</button>
+          </div>
+        </div>
       </div>
       </template>
       </div>
@@ -758,6 +783,75 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+.quick-confirm,
+.batch-confirm-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--yb-space-2);
+  padding: 9px 10px;
+  border: 1px solid var(--yb-danger-soft);
+  border-radius: var(--yb-radius-md);
+  background: var(--yb-surface-solid);
+  box-shadow: var(--yb-shadow-sm);
+}
+.quick-copy,
+.batch-confirm-notice > div {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.35;
+}
+.quick-copy strong,
+.batch-confirm-notice strong {
+  overflow: hidden;
+  color: var(--yb-text);
+  font-size: var(--yb-fs-md);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.quick-copy span,
+.batch-confirm-notice span {
+  overflow: hidden;
+  color: var(--yb-text-dim);
+  font-size: var(--yb-fs-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.quick-remember {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--yb-text-dim);
+  font-size: var(--yb-fs-sm);
+  white-space: nowrap;
+}
+.quick-remember input {
+  margin: 0;
+  accent-color: var(--yb-accent);
+}
+.quick-actions {
+  display: flex;
+  gap: 5px;
+}
+.quick-actions button,
+.confirm-open {
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--yb-radius-sm);
+  cursor: pointer;
+  font: inherit;
+  white-space: nowrap;
+}
+.quick-deny {
+  color: var(--yb-text-dim);
+  background: var(--yb-btn-neutral);
+}
+.quick-allow,
+.confirm-open {
+  color: #fff;
+  background: var(--yb-accent);
 }
 .ctx-chip {
   align-self: flex-start;

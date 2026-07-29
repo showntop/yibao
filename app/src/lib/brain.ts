@@ -392,6 +392,8 @@ export interface PendingConfirm {
   label: string; // 技能短标签（回退 skill_id）
   desc: string;
   risk?: number;
+  /** 产生确认的会话面：小窗/面板只消费自己的确认，大窗收件箱展示全部。 */
+  surface?: string;
   /** 收件箱分层（C 子项目预留）：通知 / 问答 / 复核。本 task 不实装 tier 分流逻辑。 */
   tier?: "Notify" | "Question" | "Review";
 }
@@ -435,6 +437,7 @@ void listen<BrainEvent>("brain-event", (ev) => {
         label: a.label ?? a.skill_id ?? "",
         desc: a.description ?? "",
         risk: a.risk,
+        surface: e.surface,
       }));
     if (fresh.length) {
       _pc = [..._pc, ...fresh];
