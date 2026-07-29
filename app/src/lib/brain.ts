@@ -220,12 +220,14 @@ export interface FeedItem {
   kind: "task" | "reminder" | "event";
   text: string;
   meta?: Record<string, unknown>;
+  read: number; // 0=未读 1=已读（sidecar Task 1/6 落库 + Rust 透传）
 }
 
 export interface FeedStats {
   pending_reminders: number;
   running_tasks: number;
   done_24h: number;
+  unread: number; // 未读动态数（sidecar stats.unread，Rust 透传）
 }
 
 export interface FeedResponse {
@@ -235,7 +237,7 @@ export interface FeedResponse {
 
 const EMPTY_FEED: FeedResponse = {
   items: [],
-  stats: { pending_reminders: 0, running_tasks: 0, done_24h: 0 },
+  stats: { pending_reminders: 0, running_tasks: 0, done_24h: 0, unread: 0 },
 };
 
 /** 订阅主屏 Feed 响应（get_feed 查询的回包，经 Rust 转发）。 */
@@ -260,6 +262,16 @@ export async function getFeedOnce(limit = 60, timeoutMs = 3000): Promise<FeedRes
     await fetchFeed(limit);
   } catch { /* 大脑不在线：走超时兜底 */ }
   return Promise.race([resp, timeout]);
+}
+
+/** 点掉单条 Feed（sidecar 回执经 brain-feed-marked-read 事件来；UI 可乐观置 read=1）。 */
+export function markFeedRead(id: number): Promise<void> {
+  return invoke("feed_mark_read", { id });
+}
+
+/** 全部已读（sidecar 回执经 brain-feed-all-read 事件来，载荷含 n=归零条数）。 */
+export function markAllFeedRead(): Promise<void> {
+  return invoke("feed_mark_all_read");
 }
 
 // ---- 主屏 widget（OS 感 §4.2：插件一瞥卡，schema 协议的 widget 类型）----
@@ -298,6 +310,62 @@ export async function getWidgetsOnce(timeoutMs = 3000): Promise<WidgetsResponse>
   );
   try {
     await fetchWidgets();
+  } catch { /* 大脑不在线：走超时兜底 */ }
+  return Promise.race([resp, timeout]);
+}
+
+// ---- 主屏 Dock（OS 感 §4.3：常驻插件快捷条，pinned 优先 + 频率补齐）----
+
+export interface DockItem {
+  id: string; // 插件 pid
+  name: string; // 显示名
+  pinned: boolean;
+}
+
+/** brain-dock-list / brain-dock-pin-set 载荷里的 dock 数组包装（匹配 sidecar {dock:[...]}）。 */
+export interface DockListResponse {
+  dock: DockItem[];
+}
+
+/** brain-dock-pin-set 载荷：操作回执 + 最新 dock 数组（前端原子刷新）。 */
+export interface DockPinSet {
+  pid: string;
+  ok: boolean;
+  dock: DockItem[];
+}
+
+const EMPTY_DOCK: DockListResponse = { dock: [] };
+
+/** 订阅 Dock 列表响应（dock_list 查询的回包，经 Rust 转发）。 */
+export function onDockList(cb: (r: DockListResponse) => void): Promise<UnlistenFn> {
+  return listen<DockListResponse>("brain-dock-list", (ev) => cb(ev.payload));
+}
+
+/** 订阅 Dock 固定/取消回执（含最新 dock 数组，供主屏整体刷新）。 */
+export function onDockPinSet(cb: (p: DockPinSet) => void): Promise<UnlistenFn> {
+  return listen<DockPinSet>("brain-dock-pin-set", (ev) => cb(ev.payload));
+}
+
+/** 查询主屏 Dock（响应经 brain-dock-list 事件回来）。 */
+export function fetchDockList(): Promise<void> {
+  return invoke("dock_list");
+}
+
+/** 固定/取消固定一个插件（响应经 brain-dock-pin-set 事件来）。 */
+export function setDockPin(pid: string, on: boolean): Promise<void> {
+  return invoke("set_dock_pin", { pid, on });
+}
+
+/** 一次性取 Dock：发查询并等下一条 brain-dock-list；大脑不在线/超时返回空（主屏渲染空 Dock）。 */
+export async function getDockListOnce(timeoutMs = 3000): Promise<DockListResponse> {
+  const resp = new Promise<DockListResponse>((resolve) => {
+    void once<DockListResponse>("brain-dock-list", (ev) => resolve(ev.payload));
+  });
+  const timeout = new Promise<DockListResponse>((resolve) =>
+    setTimeout(() => resolve(EMPTY_DOCK), timeoutMs),
+  );
+  try {
+    await fetchDockList();
   } catch { /* 大脑不在线：走超时兜底 */ }
   return Promise.race([resp, timeout]);
 }

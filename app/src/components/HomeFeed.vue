@@ -28,7 +28,7 @@ import {
 const emit = defineEmits<{ chat: [draft?: string] }>();
 
 // ---- 问候条 ----
-const stats = ref<FeedStats>({ pending_reminders: 0, running_tasks: 0, done_24h: 0 });
+const stats = ref<FeedStats>({ pending_reminders: 0, running_tasks: 0, done_24h: 0, unread: 0 });
 
 const greeting = computed(() => {
   const h = new Date().getHours();
