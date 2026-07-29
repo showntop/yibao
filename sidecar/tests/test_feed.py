@@ -151,13 +151,14 @@ def test_serve_async_feed_query(tmp_path, monkeypatch):
     assert len(feeds) == 1
     assert [i["text"] for i in feeds[0]["items"]] == ["提醒触发", "任务完成"]
     stats = feeds[0]["stats"]
-    assert set(stats) == {"pending_reminders", "running_tasks", "done_24h"}
+    assert set(stats) == {"pending_reminders", "running_tasks", "done_24h", "unread"}
     assert stats["running_tasks"] == 0  # tmp 数据目录下无 agents 库
     assert stats["done_24h"] == 1  # 一条 task 动态落在 24h 内
+    assert stats["unread"] == 2  # 两条预置动态均未读
 
 
 def test_serve_async_feed_query_empty(tmp_path, monkeypatch):
-    """全新库：items 空、stats 三键齐全且全 0（主屏「今天安安静静」态）。"""
+    """全新库：items 空、stats 四键齐全且全 0（主屏「今天安安静静」态）。"""
     monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path))
     out = []
     _run_async(
@@ -172,4 +173,4 @@ def test_serve_async_feed_query_empty(tmp_path, monkeypatch):
     feeds = [m for m in out if m["type"] == "feed"]
     assert len(feeds) == 1
     assert feeds[0]["items"] == []
-    assert feeds[0]["stats"] == {"pending_reminders": 0, "running_tasks": 0, "done_24h": 0}
+    assert feeds[0]["stats"] == {"pending_reminders": 0, "running_tasks": 0, "done_24h": 0, "unread": 0}

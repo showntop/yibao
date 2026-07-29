@@ -514,6 +514,7 @@ async def serve_async(
             except Exception:
                 pass
         stats["done_24h"] = feed.count_since("task", time.time() - 86400)
+        stats["unread"] = feed.count_unread()
         return stats
 
     async def _collect_widgets() -> list[dict]:
@@ -949,6 +950,15 @@ async def serve_async(
             except (TypeError, ValueError):
                 limit = 60
             write_msg({"type": "feed", "items": feed.recent(limit=limit), "stats": _feed_stats()})
+        elif rtype == "feed_mark_read":
+            # 主屏点掉单条：feed.mark_read 容错（坏 id 返回 False，不抛）
+            fid = int(msg.get("id", 0))
+            ok = feed.mark_read(fid)
+            write_msg({"type": "feed_marked_read", "id": fid, "ok": ok})
+        elif rtype == "feed_mark_all_read":
+            # 主屏「全部已读」：返回受影响行数
+            n = feed.mark_all_read()
+            write_msg({"type": "feed_all_read", "n": n})
         elif rtype == "widgets":
             # 主屏查询：插件 widget 卡片逐个取数（panel_payload 形状 + open 跳转方法）
             write_msg({"type": "widgets", "widgets": await _collect_widgets()})

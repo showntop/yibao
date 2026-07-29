@@ -1244,3 +1244,88 @@ def test_serve_async_default_surface_is_pet(tmp_path):
     )
     events = [m for m in out if m["type"] == "event"]
     assert events and all(m.get("surface") == "pet" for m in events)
+
+
+# ---------- Feed 已读 IPC + stats.unread（Task 6）----------
+
+
+def _seed_feed(db_path, entries):
+    """serve_async 内部自建 FeedStore（按 db_path 同目录的 feed.db）。
+    测试用独立连接先写几条未读，serve_async 打开同一 SQLite 文件即可读到。"""
+    from yibao_brain.feed import FeedStore
+
+    feed = FeedStore(str(db_path.parent / "feed.db"))
+    try:
+        for kind, text, meta in entries:
+            feed.add(kind, text, meta)
+    finally:
+        feed.close()
+
+
+def test_serve_async_feed_mark_read_lowers_unread(tmp_path):
+    # 预先写两条未读 → 取一次 feed（stats.unread=2）→ 标 id=1 已读 → 再取 feed（unread=1）
+    _seed_feed(tmp_path / "a.db", [
+        ("task", "任务A完成", {"task": {"id": "a"}}),
+        ("event", "事件B", {}),
+    ])
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([
+                {"type": "feed"},
+                {"type": "feed_mark_read", "id": 1},
+                {"type": "feed"},
+            ]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+        )
+    )
+    feeds = [m for m in out if m["type"] == "feed"]
+    assert len(feeds) == 2
+    assert feeds[0]["stats"]["unread"] == 2
+    assert feeds[1]["stats"]["unread"] == 1
+    # 已读回执：id 回传、ok=True（id=1 命中预写行）
+    assert {"type": "feed_marked_read", "id": 1, "ok": True} in out
+
+
+def test_serve_async_feed_mark_read_unknown_id_returns_ok_false(tmp_path):
+    # 不存在的 id：ok=False，不抛
+    _seed_feed(tmp_path / "a.db", [("event", "仅一条", {})])
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([{"type": "feed_mark_read", "id": 999}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+        )
+    )
+    assert {"type": "feed_marked_read", "id": 999, "ok": False} in out
+
+
+def test_serve_async_feed_mark_all_read(tmp_path):
+    # 两条未读 → mark_all_read 回 n=2 → feed.stats.unread=0
+    _seed_feed(tmp_path / "a.db", [
+        ("task", "任务A完成", {}),
+        ("event", "事件B", {}),
+    ])
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([
+                {"type": "feed_mark_all_read"},
+                {"type": "feed"},
+            ]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+        )
+    )
+    assert {"type": "feed_all_read", "n": 2} in out
+    feeds = [m for m in out if m["type"] == "feed"]
+    assert len(feeds) == 1
+    assert feeds[0]["stats"]["unread"] == 0
