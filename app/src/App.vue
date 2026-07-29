@@ -487,6 +487,18 @@ async function decide(approved: boolean, remember = false) {
   }
 }
 
+async function decideAllPending(approved: boolean) {
+  if (pendingConfirms.value.length < 2) return;
+  const items = pendingConfirms.value.map(({ id }) => ({ id, approved, remember: false }));
+  state.value = "think";
+  try {
+    await sendConfirmBatch(items);
+  } catch (err) {
+    bubbles.value.push({ role: "ai", text: "⚠️ 批量确认失败：" + String(err) });
+    state.value = "idle";
+  }
+}
+
 function onMic() {
   // 不乐观置 listen：等大脑 listening 事件确认（语音栈不可用时大脑会回 error，别自欺卡死）
   void voiceStart().catch((err) => {
@@ -554,10 +566,10 @@ onMounted(async () => {
     if (pendingConfirms.value.length > 1) {
       attentionNeeded.value = true;
       if (!expanded.value) {
-        openBubbleSticky(`${pendingConfirms.value.length} 项待批准，去大窗批量处理`);
+        openBubbleSticky(`${pendingConfirms.value.length} 项待批准，可在小窗全部处理`);
       }
     } else if (previousCount === 0 && !expanded.value) {
-      // 单条仍允许在小窗直接快批；多条必须进大窗，避免只答第一条后整批悬挂。
+      // 单条直接展开快批；多条先以常驻气泡提醒，用户展开后可整批处理。
       void expand();
     }
   });
@@ -690,11 +702,15 @@ onUnmounted(() => {
         </div>
         <InputBar v-if="!pending" ref="inputBarRef" :busy="busy" :listening="state === 'listen'" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
         <div v-else-if="pendingConfirms.length > 1" class="batch-confirm-notice">
-          <div>
-            <strong>{{ pendingConfirms.length }} 项待批准，去大窗批量处理</strong>
-            <span>可逐项核对，也可以一次批准或拒绝。</span>
+          <div class="batch-copy">
+            <strong>{{ pendingConfirms.length }} 项待批准</strong>
+            <span>逐项核对或分别记住选择，请打开收件箱。</span>
           </div>
-          <button class="confirm-open" @click="openHome">打开收件箱</button>
+          <div class="batch-actions">
+            <button class="quick-deny" @click="decideAllPending(false)">全部拒绝</button>
+            <button class="quick-allow" @click="decideAllPending(true)">全部批准</button>
+            <button class="confirm-open" @click="openHome">打开收件箱</button>
+          </div>
         </div>
         <div v-else class="quick-confirm">
           <div class="quick-copy">
@@ -796,7 +812,7 @@ onUnmounted(() => {
   box-shadow: var(--yb-shadow-sm);
 }
 .quick-copy,
-.batch-confirm-notice > div {
+.batch-copy {
   min-width: 0;
   flex: 1;
   display: flex;
@@ -831,11 +847,13 @@ onUnmounted(() => {
   margin: 0;
   accent-color: var(--yb-accent);
 }
-.quick-actions {
+.quick-actions,
+.batch-actions {
   display: flex;
   gap: 5px;
 }
 .quick-actions button,
+.batch-actions button,
 .confirm-open {
   padding: 6px 10px;
   border: 0;

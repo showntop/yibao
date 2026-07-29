@@ -14,9 +14,16 @@ test("pet window consumes the full pending-confirm queue", () => {
   assert.match(appSource, /pendingConfirms\.length\s*>\s*1/);
 });
 
+test("pet window can approve or reject every pending confirmation at once", () => {
+  assert.match(appSource, /function decideAllPending/);
+  assert.match(appSource, />全部批准</);
+  assert.match(appSource, />全部拒绝</);
+  assert.match(appSource, /pendingConfirms\.value\.map/);
+});
+
 test("pet window retires the old full confirmation dialog", () => {
   assert.doesNotMatch(appSource, /ConfirmDialog/);
-  assert.match(appSource, /项待批准，去大窗批量处理/);
+  assert.match(appSource, /项待批准/);
 });
 
 test("large-window chat routes confirmations only to the home inbox", () => {
