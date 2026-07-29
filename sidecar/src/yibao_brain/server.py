@@ -257,11 +257,11 @@ async def handle_panel_action(msg: dict, agent: AgentLoop, write_msg: WriteMsg, 
             return
         if decision == Decision.CONFIRM:
             emit(Event(kind="confirmation_needed", action=action, confirmation_id=action.id))
-            # Task 1：批量 confirmer 接口，面板直达仍 batch size=1。等壳 confirm 消息（复用单槽确认流）。
+            # 面板直达走批量 confirmer（batch size=1）：等壳 confirm_batch 回执。
+            # remember 写入复用 invoker.apply_verdict（F4：消除 loop 之外的第 3 处重复）。
             verdicts = await agent.invoker.batch_confirm([action])
             approved, remember = verdicts.get(action.id, (False, False))
-            if approved and remember:
-                agent.invoker.gate.session_allowed.add(action.skill_id)
+            agent.invoker.apply_verdict(action, approved, remember)
             if not approved:
                 emit(Event(kind="error", text=f"用户拒绝执行 {api.handler}", action=action))
                 write_msg({"type": "run_done", "id": rid})
@@ -474,9 +474,12 @@ async def serve_async(
 
     tick_task = asyncio.ensure_future(_tick())
     queue: asyncio.Queue = asyncio.Queue()
-    # 确认单槽 + 早到缓存：confirm 可能先于 confirmer 注册 future 到达
-    # （读线程瞬时投递 run+confirm，主循环先处理 confirm），直接丢会死锁。
-    pending_confirm: dict = {"future": None, "early": None}
+    # 确认多槽（spec §3.2）：按 confirmation_id 索引的 future + 早到答案缓存。
+    # 早到：confirm_batch 可能先于 batch_confirmer 注册 future 到达（读线程瞬时投递
+    # run+confirm，主循环先处理 confirm），直接丢会死锁——存 early_answers 待取。
+    # 多槽不假设并发数：当前单 run 抢占（dict 通常 1 entry），未来多 run 并发这层不用改。
+    pending_confirms: dict[str, asyncio.Future] = {}
+    early_answers: dict[str, tuple[bool, bool]] = {}
     # preempt_gen：抢占代数。新请求到来即 +1；排队中的任务启动时发现自己落后 →
     # 一启动即置 cancel（快速跳过），保证「只有最新请求真正执行」。
     # surface：最近一次受理请求的窗口（pet=主窗 / 面板 id，dispatch 受理即写入）。
@@ -490,26 +493,29 @@ async def serve_async(
     # 只活在内存，大脑重启即失效（C-4：会话级，不落盘）。
     remembered_confirm: set[str] = set()
 
-    async def confirmer(actions) -> dict:
-        # 批量 confirmer（Task 1）：list[Action] -> {action.id: (approved, remember)}。
-        # 仍走单槽 pending_confirm（v1 run 串行，确认也串行）；多槽批量 resolve 是 Task 3。
-        # remember 的 session_allowed 写入由 loop 拿到 verdict 后统一处理（不在 confirmer 内做）。
+    async def batch_confirmer(actions) -> dict[str, tuple[bool, bool]]:
+        """批量确认（Task 3 多槽）：list[Action] -> {action.id: (approved, remember)}。
+
+        每个 confirmation_id 独立 future，互不阻挡；早到答案（confirm_batch 先于
+        batch_confirmer 注册 future 到达）存 early_answers，取时命中。等待期间响应
+        cancel（抢占/打断）：否则新请求 join 一个永不结束的确认 → 派发循环卡死、
+        ping 不应答、看门狗误杀（2026-07-19 复现确认）。
+
+        remember 的 session_allowed 写入由 loop / handle_panel_action 拿到 verdict 后
+        统一调 invoker.apply_verdict 处理（不在 confirmer 内做）。
+
+        注意：remembered_confirm 短路已移除——gate.session_allowed 命中后 decide() 直接
+        AUTO，根本进不到 CONFIRM；此处见到的 action 必然需要真确认。
+        """
         out: dict[str, tuple[bool, bool]] = {}
         for action in actions:
+            cid = action.id
             skill_id = getattr(action, "skill_id", "?")
-            if skill_id in remembered_confirm:
-                print(f"[yibao] 会话内已免确认：{skill_id}", file=sys.stderr)
-                out[action.id] = (True, False)
+            # 早到的 confirm_batch 直接兑现（future 还没建）
+            if cid in early_answers:
+                out[cid] = early_answers.pop(cid)
                 continue
-            # 早到的 confirm 直接兑现
-            if pending_confirm["early"] is not None:
-                approved, remember = pending_confirm["early"]
-                pending_confirm["early"] = None
-                out[action.id] = (bool(approved), bool(remember))
-                continue
-            # 单槽 future：收到任意 confirm 消息即兑现（v1 run 串行，确认也串行）
-            fut = ai_loop.create_future()
-            pending_confirm["future"] = fut
+            fut = pending_confirms.setdefault(cid, ai_loop.create_future())
             # 确认等待必须响应抢占/打断：否则新请求 join 一个永不结束的确认 →
             # 派发循环卡死、ping 不应答、看门狗误杀（2026-07-19 复现确认）
             cancel = run_state["cancel"]
@@ -523,15 +529,15 @@ async def serve_async(
                 if fut in done:
                     approved, remember = fut.result()
                     print(f"[yibao] 确认结果：{'允许' if approved else '拒绝'}（{skill_id}）", file=sys.stderr)
-                    out[action.id] = (bool(approved), bool(remember))
+                    out[cid] = (bool(approved), bool(remember))
                 else:
                     print(f"[yibao] 确认被抢占取消：{skill_id}", file=sys.stderr)
-                    out[action.id] = (False, False)
+                    out[cid] = (False, False)
             finally:
                 if cancel_wait is not None:
                     cancel_wait.cancel()
-                if pending_confirm["future"] is fut:
-                    pending_confirm["future"] = None
+                if pending_confirms.get(cid) is fut:
+                    del pending_confirms[cid]
         return out
 
     # 主屏 Feed 存储（OS 感 §4.2）：任务播报/提醒触发在此落库，主屏查询时一次拿回。
@@ -552,7 +558,7 @@ async def serve_async(
     # 插件后台线程 → 壳的主动事件通道（如 agents 插件任务完成播报）：
     # 与下面 memory 状态回调同一跨线程先例（call_soon_threadsafe + write_msg）。
     agent = build_loop(
-        read_msg, use_real, db_path, provider, skills_factory, confirmer=confirmer,
+        read_msg, use_real, db_path, provider, skills_factory, confirmer=batch_confirmer,
         emit_event=lambda ev: ai_loop.call_soon_threadsafe(_on_plugin_event, ev),
         feed=feed,
     )
@@ -1002,14 +1008,23 @@ async def serve_async(
         elif rtype == "panel_context":
             # 壳上面板焦点变化：存下来，下次 run 注入 LLM 上下文
             _FOCUS["value"] = msg.get("focus")
-        elif rtype == "confirm":
-            answer = (bool(msg.get("approved", False)), bool(msg.get("remember", False)))
-            fut = pending_confirm["future"]
-            if fut is not None and not fut.done():
-                fut.set_result(answer)
-            else:
-                # confirmer 还没注册（消息先于 run 任务到达）→ 缓存，由 confirmer 兑现
-                pending_confirm["early"] = answer
+        elif rtype == "confirm_batch":
+            # 批量确认回执（spec §3.2）：对每个 item 兑现 future 或存 early_answers
+            # （future 没建 = batch_confirmer 还没注册，confirm_batch 先到）。
+            # 单 confirm 走 size=1 的 items（旧 confirm IPC 已退役，统一 batch）。
+            for item in (msg.get("items") or []):
+                cid = str(item.get("id") or "")
+                if not cid:
+                    continue
+                approved = bool(item.get("approved", False))
+                remember = bool(item.get("remember", False))
+                fut = pending_confirms.get(cid)
+                if fut is not None and not fut.done():
+                    fut.set_result((approved, remember))
+                else:
+                    # confirmer 还没注册（消息先于 run 任务到达）→ 缓存，由 batch_confirmer 兑现
+                    early_answers[cid] = (approved, remember)
+            write_msg({"type": "confirm_batched", "ok": True})
         elif rtype == "feed":
             # 主屏查询：动态列表（倒序）+ 问候统计
             try:

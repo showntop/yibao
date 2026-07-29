@@ -261,7 +261,14 @@ def test_serve_async_provider_error_emits_error_and_run_done(tmp_path):
 
 
 def test_serve_async_confirm_roundtrip(tmp_path):
-    from yibao_brain.skills import Skill, SkillRegistry
+    """异步路径 confirm_batch 往返：confirmation_needed 携带 id → confirm_batch 回批 → 拒绝 → error。
+
+    loop 路径的 action.id 是随机生成的，客户端需从 confirmation_needed 事件取 id 再回批；
+    这里用 queue + 反应式 writer 模拟（writer 看到事件即把 confirm_batch 推回 reader 队列）。
+    """
+    import queue as _queue
+
+    from yibao_brain.skills import Skill
     from yibao_brain.ipc import ActionResult, RiskLevel
 
     class DangerSkill(Skill):
@@ -272,15 +279,28 @@ def test_serve_async_confirm_roundtrip(tmp_path):
         first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="danger", params={})]),
         second=FakeProvider(text="done"),
     )
-    inbox = [
-        {"id": 1, "type": "run", "text": "做危险的事"},
-        {"id": 2, "type": "confirm", "confirmation_id": "x", "approved": False},
-    ]
-    out = []
+    out: list = []
+    inbox_q: "_queue.Queue" = _queue.Queue()
+    inbox_q.put({"id": 1, "type": "run", "text": "做危险的事"})
+    reacted = [False]
+
+    def reader():
+        return inbox_q.get()  # 阻塞读；writer 会推 confirm_batch + None
+
+    def writer(m):
+        out.append(m)
+        if (not reacted[0] and m.get("type") == "event"
+                and m["event"].get("kind") == "confirmation_needed"):
+            reacted[0] = True
+            cid = m["event"]["confirmation_id"]
+            inbox_q.put({"type": "confirm_batch", "items": [
+                {"id": cid, "approved": False, "remember": False}
+            ]})
+            inbox_q.put(None)  # EOF
+
     _run_async(
         serve_async(
-            make_reader(inbox),
-            lambda m: out.append(m),
+            reader, writer,
             use_real=False,
             db_path=str(tmp_path / "a.db"),
             provider=provider,
@@ -298,6 +318,10 @@ def test_serve_async_confirm_roundtrip(tmp_path):
 
 def test_serve_async_confirm_remember_skips_future_prompts(tmp_path):
     """勾选「本会话不再询问」并批准：同技能后续调用免确认直接执行（会话级，不落盘）。"""
+    import queue as _queue
+    import threading as _th
+    import time as _time
+
     from yibao_brain.skills import Skill
     from yibao_brain.ipc import ActionResult, RiskLevel
 
@@ -324,26 +348,33 @@ def test_serve_async_confirm_remember_skips_future_prompts(tmp_path):
         FakeProvider(tool_calls=[ToolCall(id="t2", skill_id="danger", params={})]),
         FakeProvider(text="第二次完成"),
     ])
-    # run(3) 必须等 run(1) 执行完再投——瞬时连投会被同 surface 抢占（rid=1 直接 interrupted）
-    import time as _time
-    inbox = iter([
-        {"id": 1, "type": "run", "text": "做危险的事"},
-        {"id": 2, "type": "confirm", "confirmation_id": "x", "approved": True, "remember": True},
-        "wait",
-        {"id": 3, "type": "run", "text": "再做一次危险的事"},
-    ])
+    out: list = []
+    inbox_q: "_queue.Queue" = _queue.Queue()
+    inbox_q.put({"id": 1, "type": "run", "text": "做危险的事"})
+    first_confirmed = [False]
 
     def reader():
-        msg = next(inbox, None)
-        if msg == "wait":
-            _time.sleep(0.5)
-            return next(inbox, None)
-        return msg
-    out = []
+        return inbox_q.get()
+
+    def writer(m):
+        out.append(m)
+        if (not first_confirmed[0] and m.get("type") == "event"
+                and m["event"].get("kind") == "confirmation_needed"):
+            first_confirmed[0] = True
+            cid = m["event"]["confirmation_id"]
+            inbox_q.put({"type": "confirm_batch", "items": [
+                {"id": cid, "approved": True, "remember": True}
+            ]})
+            # run(3) 必须等 run(1) 执行完再投——瞬时连投会被同 surface 抢占（rid=1 直接 interrupted）
+            def _push_second():
+                _time.sleep(0.5)
+                inbox_q.put({"id": 3, "type": "run", "text": "再做一次危险的事"})
+                inbox_q.put(None)
+            _th.Thread(target=_push_second, daemon=True).start()
+
     _run_async(
         serve_async(
-            reader,
-            lambda m: out.append(m),
+            reader, writer,
             use_real=False,
             db_path=str(tmp_path / "a.db"),
             provider=provider,
@@ -357,6 +388,125 @@ def test_serve_async_confirm_remember_skips_future_prompts(tmp_path):
            if m["type"] == "event" and m["event"].get("kind") == "action_result"
            and m["event"]["result"].get("success")]
     assert len(oks) == 2  # 两次都执行成功（第二次免确认）
+
+
+# ---------- Task 3：多槽 pending_confirms + batch_confirmer + confirm_batch IPC ----------
+
+
+def test_confirm_batch_resolves_multiple_futures(tmp_path):
+    """多槽：两个 L3 tool 同轮 CONFIRM → 一次 confirmation_needed(actions=2) →
+    confirm_batch 两个 id → batch_confirmer 都 resolve → 都执行。
+
+    验证 spec §3.2：多槽 dict 互不阻挡；loop 攒批 + 一次推收件箱 + 批量批回的端到端链路。
+    """
+    import queue as _queue
+
+    from yibao_brain.skills import Skill
+    from yibao_brain.ipc import ActionResult, RiskLevel
+
+    class DangerSkill(Skill):
+        id = "danger"; description = "危险占位"; default_risk = RiskLevel.L3_HIGH
+        def run(self, params, ctx):
+            return ActionResult(success=True, data={"did": True, "n": params.get("n")})
+
+    provider = _TwoStepProvider(
+        first=FakeProvider(tool_calls=[
+            ToolCall(id="t1", skill_id="danger", params={"n": 1}),
+            ToolCall(id="t2", skill_id="danger", params={"n": 2}),
+        ]),
+        second=FakeProvider(text="done"),
+    )
+    out: list = []
+    inbox_q: "_queue.Queue" = _queue.Queue()
+    inbox_q.put({"id": 1, "type": "run", "text": "做两件危险事"})
+    reacted = [False]
+
+    def reader():
+        return inbox_q.get()
+
+    def writer(m):
+        out.append(m)
+        if (not reacted[0] and m.get("type") == "event"
+                and m["event"].get("kind") == "confirmation_needed"):
+            reacted[0] = True
+            ids = [a["id"] for a in m["event"]["actions"]]
+            assert len(ids) == 2  # 一次推两个 action（攒批载荷）
+            inbox_q.put({"type": "confirm_batch", "items": [
+                {"id": i, "approved": True, "remember": False} for i in ids
+            ]})
+            inbox_q.put(None)
+
+    _run_async(
+        serve_async(
+            reader, writer,
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=provider,
+            skills_factory=lambda: _registry_with(DangerSkill()),
+        )
+    )
+    evs = [m["event"] for m in out if m["type"] == "event"]
+    confirms = [e for e in evs if e.get("kind") == "confirmation_needed"]
+    assert len(confirms) == 1                  # 只一次 confirmation_needed（攒批）
+    assert len(confirms[0]["actions"]) == 2    # 多槽：两个 action 同事件
+    oks = [e for e in evs if e.get("kind") == "action_result" and e["result"].get("success")]
+    assert len(oks) == 2                        # 两个 id 都 resolve → 都执行
+
+
+def test_confirm_batch_early_answer(tmp_path, monkeypatch):
+    """早到答案：confirm_batch 在 batch_confirmer 注册 future 前到达 → 存 early_answers →
+    loop 取时命中（不走 future await 路径）。
+
+    用 panel_action 因其 action.id = pa_<rid> 可预知；把 confirm_batch 放在 panel_action
+    之前投递，强制走 early_answers 分支（future 还没建）。
+    """
+    executed = []
+    _patch_api(monkeypatch, risk="L2")  # 触发 CONFIRM
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([
+                # 先投 confirm_batch：pending_confirms 还没 pa_1 → 存 early_answers
+                {"type": "confirm_batch", "items": [
+                    {"id": "pa_1", "approved": True, "remember": False}
+                ]},
+                # 再投 panel_action：CONFIRM 时 batch_confirmer 从 early_answers 命中
+                {"id": 1, "type": "panel_action", "method": "tdel.delete", "params": {"id": "r1"}},
+            ]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+            skills_factory=_pa_factory(executed),
+        )
+    )
+    evs = [m["event"] for m in out if m["type"] == "event"]
+    assert "confirmation_needed" in [e["kind"] for e in evs]
+    assert executed == [{"id": "r1"}]                      # 早到答案批准 → 执行了
+    assert {"type": "confirm_batched", "ok": True} in out  # IPC 往返回执
+
+
+def test_confirm_batch_ipc_roundtrip(tmp_path):
+    """confirm_batch IPC 往返：发 items（无对应 future，存 early_answers）→ 回 confirm_batched ok。"""
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([
+                {"type": "confirm_batch", "items": [
+                    {"id": "x1", "approved": True, "remember": False},
+                    {"id": "x2", "approved": False, "remember": True},
+                    {"id": "x3", "approved": True, "remember": True},
+                ]},
+            ]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+        )
+    )
+    assert {"type": "confirm_batched", "ok": True} in out
+    # 多条目都应被吃下（不抛、不漏回执）
+    assert len([m for m in out if m["type"] == "confirm_batched"]) == 1
 
 
 # ---------- 协议扩展：hello / ping / permissions ----------
@@ -896,7 +1046,8 @@ def test_panel_action_not_in_whitelist_rejected(tmp_path):
 
 
 def test_panel_action_confirm_flow_rejected(tmp_path, monkeypatch):
-    # api.risk="L2" 收紧（tool 默认 L1）→ 触发确认流；壳拒绝 → error，不执行
+    # api.risk="L2" 收紧（tool 默认 L1）→ 触发确认流；壳 confirm_batch 拒绝 → error，不执行
+    # action.id = pa_<rid> 由 handle_panel_action 显式设置，客户端可预知
     executed = []
     _patch_api(monkeypatch, risk="L2")
     out = []
@@ -904,7 +1055,7 @@ def test_panel_action_confirm_flow_rejected(tmp_path, monkeypatch):
         serve_async(
             make_reader([
                 {"id": 1, "type": "panel_action", "method": "tdel.delete", "params": {"id": "r1"}},
-                {"type": "confirm", "approved": False},
+                {"type": "confirm_batch", "items": [{"id": "pa_1", "approved": False}]},
             ]),
             lambda m: out.append(m),
             use_real=False,
@@ -931,7 +1082,7 @@ def test_panel_action_confirm_flow_approved_executes(tmp_path, monkeypatch):
         serve_async(
             make_reader([
                 {"id": 1, "type": "panel_action", "method": "tdel.delete", "params": {"id": "r1"}},
-                {"type": "confirm", "approved": True},
+                {"type": "confirm_batch", "items": [{"id": "pa_1", "approved": True}]},
             ]),
             lambda m: out.append(m),
             use_real=False,
