@@ -724,11 +724,37 @@ fn run_input(state: tauri::State<Brain>, text: String, surface: Option<String>) 
     )
 }
 
+/// 批量确认条目（前端 Task 5 传 camelCase：{id, approved, remember}）。
+/// id = confirmation_needed 事件里 action.id（单条时等于 confirmation_id）。
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ConfirmItem {
+    id: String,
+    approved: bool,
+    #[serde(default)]
+    remember: bool,
+}
+
+/// 批量确认（Task 4 桥到 sidecar 新 IPC）：一次回 N 条 verdict。
+/// 写 {"type":"confirm_batch","items":[{"id":...,"approved":...,"remember":...}, ...]}，
+/// sidecar 回 confirm_batched ok（按 id 匹配 pending_confirms / early_answers）。
+/// confirmation_needed 转发：sidecar 已把 actions 放进 event 载荷，桥任务 Some("event") 分支
+/// 透传整个 v，前端读 actions 即可——本命令只管回批。
 #[tauri::command]
-fn confirm(state: tauri::State<Brain>, confirmation_id: String, approved: bool, remember: Option<bool>) -> Result<(), String> {
+fn confirm_batch(state: tauri::State<Brain>, items: Vec<ConfirmItem>) -> Result<(), String> {
+    let items_json: Vec<Value> = items
+        .iter()
+        .map(|it| {
+            serde_json::json!({
+                "id": it.id,
+                "approved": it.approved,
+                "remember": it.remember,
+            })
+        })
+        .collect();
     write_to_brain(
         &state,
-        serde_json::json!({ "id": 0, "type": "confirm", "confirmation_id": confirmation_id, "approved": approved, "remember": remember.unwrap_or(false) }),
+        serde_json::json!({ "id": 0, "type": "confirm_batch", "items": items_json }),
     )
 }
 
@@ -1446,7 +1472,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             run_input,
-            confirm,
+            confirm_batch,
             panel_action,
             list_plugins,
             get_feed,
