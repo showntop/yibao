@@ -146,11 +146,11 @@ def test_doc_save_rejects_bad_kind_and_missing_id(env):
     assert not _run(reg, "forge.doc_save", {"id": "missing", "kind": "prd", "content": "x"}).success
 
 
-# ---------- verdict（裁决档案 + 记忆飞轮） ----------
+# ---------- verdict（裁决档案） ----------
 
 
-def test_verdict_updates_row_and_feeds_memory(env):
-    reg, mem, _ = env
+def test_verdict_updates_row(env):
+    reg, _mem, _ = env
     rid = _run(reg, "forge.add", {"title": "日程助手", "pain": "老忘事"}).data["id"]
     assert not _run(reg, "forge.verdict", {"id": rid, "verdict": "随便", "reason": "r"}).success
 
@@ -159,9 +159,6 @@ def test_verdict_updates_row_and_feeds_memory(env):
     row = _run(reg, "forge.get", {"id": rid}).data["rows"][0]
     assert row["status"] == "已否决" and row["verdict_reason"] == "巨头标配，没差异点"
     assert row["decided_at"] > 0
-    # 裁决理由进了 forge 命名空间的长期记忆（下次快筛召回比对）
-    hits = mem.recall("裁决", "forge:user")
-    assert any("日程助手" in h and "已否决" in h for h in hits)
 
 
 def test_verdict_form_returns_row(env):

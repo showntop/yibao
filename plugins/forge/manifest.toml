@@ -3,8 +3,7 @@
 id = "forge"
 name = "需求磨刀"
 description = "需求磨刀：产品需求录入、挑战分析、裁决、PRD 与原型"
-capabilities = ["db", "memory"]
-mem_namespace = "forge"
+capabilities = ["db"]
 
 [code]
 entry = "tools"

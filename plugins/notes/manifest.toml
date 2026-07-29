@@ -2,8 +2,7 @@
 id = "notes"
 name = "闪念盘"
 description = "闪念笔记：随手记一句话灵感/备忘（收藏链接、文章等写作素材请用 zimeiti 素材库，不要用本插件）"
-capabilities = ["db", "memory"]
-mem_namespace = "notes"
+capabilities = ["db"]
 
 [[table]]
 name = "notes"

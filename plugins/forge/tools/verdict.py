@@ -1,4 +1,4 @@
-"""forge.verdict：需求最终裁决——更新行状态，理由写长期记忆（飞轮：下次快筛召回比对历史裁决）。
+"""forge.verdict：需求最终裁决——更新行状态，理由落库该需求的 verdict_reason。
 
 文件自包含（加载器按文件独立 importlib 加载，禁止跨文件 import）。
 """
@@ -14,7 +14,7 @@ VERDICTS = ("已立项", "已搁置", "已否决")
 class Verdict(Skill):
     id = "forge.verdict"
     label = "评审打分"
-    description = "用户对需求做出最终裁决（立项/搁置/否决）时调用；裁决理由会写入长期记忆影响以后快筛"
+    description = "用户对需求做出最终裁决（立项/搁置/否决）时调用；裁决理由落库该需求的 verdict_reason"
     default_risk = RiskLevel.L2_MEDIUM
 
     def __init__(self):
@@ -29,7 +29,7 @@ class Verdict(Skill):
                 "properties": {
                     "id": {"type": "string", "description": "需求 id"},
                     "verdict": {"type": "string", "description": "裁决：已立项 / 已搁置 / 已否决"},
-                    "reason": {"type": "string", "description": "裁决理由（会记入长期记忆）"},
+                    "reason": {"type": "string", "description": "裁决理由（落库 verdict_reason）"},
                 },
                 "required": ["id", "verdict", "reason"],
             },
@@ -53,9 +53,6 @@ class Verdict(Skill):
             "decided_at": now,
             "updated_at": now,
         })
-        # 裁决理由进长期记忆：下次快筛新想法时召回比对，同类坑不踩第二次
-        title = rows[0].get("title", "")
-        ctx.memory.add(f"需求「{title}」裁决为{verdict}：{reason}", "user")
         result = ActionResult(success=True, data={"id": rid, "status": verdict})
         result.panel = "forge:board"
         return result
