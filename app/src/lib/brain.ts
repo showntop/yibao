@@ -51,6 +51,9 @@ export interface BrainEvent {
   kind: BrainEventKind;
   text?: string;
   action?: BrainAction;
+  /** Task 2 攒批载荷：confirmation_needed 一轮多 CONFIRM 的全部待批 action。
+   *  旧 sidecar 单条路径仍用 action；前端无 actions 时退化为 [action]。 */
+  actions?: BrainAction[];
   result?: BrainResult;
   confirmation_id?: string;
   payload?: PanelPayload;
@@ -74,11 +77,20 @@ export function runInput(text: string, surface?: string): Promise<void> {
   return invoke("run_input", { text, surface: surface ?? _surface });
 }
 
-/** 回复高风险确认（Rust 命令参数 confirmation_id 在 JS 侧为 camelCase）。
+/** 批量回复确认：一次回 N 条裁决（Task 4 Rust `confirm_batch` 命令）。
+ *  items 里 id = confirmation_needed 事件中每条 action.id（攒批场景）。
+ *  本窗口作答的卡本地立即出队；其他窗口靠 action_result / error / interrupted 事件出队。 */
+export function sendConfirmBatch(
+  items: { id: string; approved: boolean; remember?: boolean }[],
+): Promise<void> {
+  for (const it of items) _pcRemove(it.id);
+  return invoke("confirm_batch", { items });
+}
+
+/** 旧单条确认包装（过渡）：Task 6-9 调用方逐步切 batch；保留签名让现有调用方编译过。
  *  remember=true：本会话不再询问这个技能（大脑侧会话级记忆，重启失效）。 */
 export function sendConfirm(confirmationId: string, approved: boolean, remember = false): Promise<void> {
-  _pcRemove(confirmationId); // 待批准队列出队（本窗口作答；其他窗口靠 action_result/error 事件出队）
-  return invoke("confirm", { confirmationId, approved, remember });
+  return sendConfirmBatch([{ id: confirmationId, approved, remember }]);
 }
 
 /** 触发语音输入：sidecar 录音→STT→run→TTS 播报（Plan 4a 最小语音）。
@@ -380,6 +392,8 @@ export interface PendingConfirm {
   label: string; // 技能短标签（回退 skill_id）
   desc: string;
   risk?: number;
+  /** 收件箱分层（C 子项目预留）：通知 / 问答 / 复核。本 task 不实装 tier 分流逻辑。 */
+  tier?: "Notify" | "Question" | "Review";
 }
 
 let _pc: PendingConfirm[] = [];
@@ -409,21 +423,32 @@ export function onPendingConfirms(cb: (l: PendingConfirm[]) => void): () => void
 
 void listen<BrainEvent>("brain-event", (ev) => {
   const e = ev.payload;
-  if (e.kind === "confirmation_needed" && e.confirmation_id) {
-    if (_pc.some((p) => p.id === e.confirmation_id)) return;
-    _pc = [
-      ..._pc,
-      {
-        id: e.confirmation_id,
-        skill: e.action?.skill_id ?? "",
-        label: e.action?.label ?? e.action?.skill_id ?? "",
-        desc: e.action?.description ?? "",
-        risk: e.action?.risk,
-      },
-    ];
-    _pcEmit();
+  if (e.kind === "confirmation_needed") {
+    // Task 2 攒批：一轮可能多 CONFIRM，actions 带全部待批 action；
+    // 兼容旧单条载荷——无 actions 时退化为 [action]（旧 sidecar 里 confirmation_id = action.id）。
+    const actions = e.actions?.length ? e.actions : e.action ? [e.action] : [];
+    const fresh = actions
+      .filter((a) => a?.id && !_pc.some((p) => p.id === a.id))
+      .map((a) => ({
+        id: a.id as string,
+        skill: a.skill_id ?? "",
+        label: a.label ?? a.skill_id ?? "",
+        desc: a.description ?? "",
+        risk: a.risk,
+      }));
+    if (fresh.length) {
+      _pc = [..._pc, ...fresh];
+      _pcEmit();
+    }
   } else if ((e.kind === "action_result" || e.kind === "error") && e.action?.id) {
     _pcRemove(e.action.id);
+  } else if (e.kind === "interrupted") {
+    // F1（Task 2 review Important）：cancel-during-CONFIRM 从 error 改为 interrupted 后，
+    // 旧逻辑只认 action_result/error 出队 → 待批卡会滞留。打断即整批清空。
+    if (_pc.length) {
+      _pc = [];
+      _pcEmit();
+    }
   }
 });
 
