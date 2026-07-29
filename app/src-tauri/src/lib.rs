@@ -453,6 +453,22 @@ fn spawn_bridge(app: AppHandle, mut rx: tauri::async_runtime::Receiver<CommandEv
                             Some("widgets") => {
                                 let _ = app.emit("brain-widgets", v);
                             }
+                            // 主屏 Feed 已读回执：整体转发（前端按 id 局部更新 read）
+                            Some("feed_marked_read") => {
+                                let _ = app.emit("brain-feed-marked-read", v);
+                            }
+                            // 主屏 Feed 全部已读回执：整体转发（前端刷统计 + 列表 read）
+                            Some("feed_all_read") => {
+                                let _ = app.emit("brain-feed-all-read", v);
+                            }
+                            // 主屏 Dock 列表：整体转发
+                            Some("dock_list") => {
+                                let _ = app.emit("brain-dock-list", v);
+                            }
+                            // 主屏 Dock 固定/取消回执：整体转发（含最新 dock 数组）
+                            Some("dock_pin_set") => {
+                                let _ = app.emit("brain-dock-pin-set", v);
+                            }
                             // 记忆管理/设置响应：整体转发（前端 once 竞速取用）
                             Some("mem_list") => {
                                 let _ = app.emit("brain-mem-list", v);
@@ -729,6 +745,40 @@ fn get_feed(state: tauri::State<Brain>, limit: Option<u32>) -> Result<(), String
 #[tauri::command]
 fn get_widgets(state: tauri::State<Brain>) -> Result<(), String> {
     write_to_brain(&state, serde_json::json!({ "id": 0, "type": "widgets" }))
+}
+
+/// 主屏 Feed：点掉单条（大脑回 {"type":"feed_marked_read","id":N,"ok":bool}
+/// 经 brain-feed-marked-read 广播）。
+/// 注：sidecar 直接读 msg["id"] 作 feed 条目 id（非信封序号），故不写 "id":0 占位。
+#[tauri::command]
+fn feed_mark_read(state: tauri::State<Brain>, id: i64) -> Result<(), String> {
+    write_to_brain(&state, serde_json::json!({ "type": "feed_mark_read", "id": id }))
+}
+
+/// 主屏 Feed：全部已读（大脑回 {"type":"feed_all_read","n":N} 经 brain-feed-all-read 广播）。
+#[tauri::command]
+fn feed_mark_all_read(state: tauri::State<Brain>) -> Result<(), String> {
+    write_to_brain(
+        &state,
+        serde_json::json!({ "id": 0, "type": "feed_mark_all_read" }),
+    )
+}
+
+/// 主屏 Dock 查询：pinned 优先 + 频率补齐（回 {"type":"dock_list","dock":[...]}
+/// 经 brain-dock-list 广播）。
+#[tauri::command]
+fn dock_list(state: tauri::State<Brain>) -> Result<(), String> {
+    write_to_brain(&state, serde_json::json!({ "id": 0, "type": "dock_list" }))
+}
+
+/// 主屏 Dock：固定/取消固定（回 {"type":"dock_pin_set","pid":...,"ok":bool,"dock":[...]}
+/// 经 brain-dock-pin-set 广播）。
+#[tauri::command]
+fn set_dock_pin(state: tauri::State<Brain>, pid: String, on: bool) -> Result<(), String> {
+    write_to_brain(
+        &state,
+        serde_json::json!({ "id": 0, "type": "set_dock_pin", "pid": pid, "on": on }),
+    )
 }
 
 /// 记忆管理：列出全部记忆（回 {"type":"mem_list"} 经 brain-mem-list 广播）。
@@ -1401,6 +1451,10 @@ pub fn run() {
             list_plugins,
             get_feed,
             get_widgets,
+            feed_mark_read,
+            feed_mark_all_read,
+            dock_list,
+            set_dock_pin,
             get_mem_list,
             mem_delete,
             mem_edit,
