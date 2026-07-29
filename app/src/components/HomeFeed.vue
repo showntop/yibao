@@ -25,6 +25,7 @@ import {
   onDockPinSet,
   type FeedItem,
   type FeedStats,
+  type RunningTask,
   type PendingConfirm,
   type WidgetPayload,
   type DockItem,
@@ -64,12 +65,16 @@ watch(
 
 // ---- Feed 动态 ----
 const items = ref<FeedItem[]>([]);
+const runningTasks = ref<RunningTask[]>([]);
 const loaded = ref(false);
+const completedTasks = computed(() => items.value.filter((it) => it.kind === "task").slice(0, 5));
+const activityItems = computed(() => items.value.filter((it) => it.kind !== "task"));
 
 async function reload() {
   const r = await getFeedOnce();
   items.value = r.items;
   stats.value = r.stats;
+  runningTasks.value = r.running_tasks ?? [];
   loaded.value = true;
 }
 
@@ -100,6 +105,9 @@ const selectedApprovals = ref<Set<string>>(new Set());
 const rememberMap = ref<Record<string, boolean>>({});
 
 const selectedCount = computed(() => selectedApprovals.value.size);
+const hasInbox = computed(() =>
+  runningTasks.value.length > 0 || approvals.value.length > 0 || completedTasks.value.length > 0,
+);
 
 /** brain.ts sendConfirmBatch 内部乐观出队（_pcRemove → emit → approvals 替换）后校正默认选择：
  *  N>1 全选鼓励批量；N<=1 清空走单条快批。同时清理 rememberMap 陈旧项。 */
@@ -211,6 +219,27 @@ function kindIcon(it: FeedItem): string {
   return "💬";
 }
 
+function elapsedSince(ts: number): string {
+  const seconds = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+  if (seconds < 60) return "刚开始";
+  if (seconds < 3600) return `已运行 ${Math.floor(seconds / 60)} 分钟`;
+  return `已运行 ${Math.floor(seconds / 3600)} 小时`;
+}
+
+function taskStatusLabel(it: FeedItem): string {
+  const status = String(it.meta?.status ?? "done");
+  return ({ done: "完成", failed: "失败", stopped: "已停止", interrupted: "已中断" } as Record<string, string>)[status]
+    ?? "已结束";
+}
+
+function taskStatus(it: FeedItem): string {
+  return String(it.meta?.status ?? "done");
+}
+
+function openTasks() {
+  void panelAction("agents.task_list", {}, undefined, "panel:agents").catch(() => {});
+}
+
 /** 点动态 → 乐观置已读 + 带自包含上下文草稿切对话页（大脑看不到 Feed，上下文随草稿走）。
  *  it 来自 items 的 reactive proxy，直接改 it.read 即触发视图更新。 */
 async function openInChat(it: FeedItem) {
@@ -279,12 +308,21 @@ let unDock: (() => void) | null = null;
 let unDockPin: (() => void) | null = null;
 let refetchTimer: ReturnType<typeof setTimeout> | null = null;
 
+function scheduleFeedRefresh() {
+  if (refetchTimer !== null) clearTimeout(refetchTimer);
+  refetchTimer = setTimeout(() => {
+    void fetchFeed().catch(() => {});
+    void fetchWidgets().catch(() => {});
+  }, 800);
+}
+
 onMounted(async () => {
   await Promise.all([reload(), reloadWidgets(), loadDock()]);
   unApprovals = onPendingConfirms((l) => (approvals.value = l));
   unFeed = await onFeed((r) => {
     items.value = r.items;
     stats.value = r.stats;
+    runningTasks.value = r.running_tasks ?? [];
   });
   unWidgets = await onWidgets((r) => {
     widgets.value = r.widgets;
@@ -296,12 +334,9 @@ onMounted(async () => {
     dock.value = r.dock; // 后端权威数组覆盖（含图钉操作回执）
   });
   unEvent = await onBrainEvent((e) => {
-    if (e.kind !== "reminder") return;
-    if (refetchTimer !== null) clearTimeout(refetchTimer);
-    refetchTimer = setTimeout(() => {
-      void fetchFeed().catch(() => {});
-      void fetchWidgets().catch(() => {});
-    }, 800);
+    const agentChanged = e.kind === "action_result"
+      && !!e.action?.skill_id?.startsWith("agents.");
+    if (e.kind === "reminder" || agentChanged) scheduleFeedRefresh();
   });
 });
 onUnmounted(() => {
@@ -326,53 +361,77 @@ onUnmounted(() => {
     </header>
 
     <div class="scroll">
-      <!-- 待批准：它要做的高风险操作排队等你一键批/拒（收件箱 Question 面，替代连环弹窗）。
-           N>1：顶部一键全批/全拒 + 每条多选；N=1：直接单条快批。每条可勾 remember 会话内免询问。 -->
-      <section v-if="approvals.length" class="sec sec-approvals">
-        <div class="sec-title inbox-head">
-          <span>等你处理 · {{ approvals.length }}</span>
-          <div v-if="approvals.length > 1" class="batch-btns">
-            <button
-              class="batch-no"
-              :disabled="selectedCount === 0"
-              @click="batchDecide(false)"
-            >全部拒绝{{ selectedCount ? ` (${selectedCount})` : "" }}</button>
-            <button
-              class="batch-yes"
-              :disabled="selectedCount === 0"
-              @click="batchDecide(true)"
-            >全部批准{{ selectedCount ? ` (${selectedCount})` : "" }}</button>
+      <!-- 任务收件箱：同页纵向三区，空区折叠。 -->
+      <section v-if="hasInbox" class="sec sec-inbox">
+        <div class="sec-title inbox-title">任务收件箱</div>
+
+        <div v-if="runningTasks.length" class="inbox-zone zone-running">
+          <div class="zone-title">进行中 · {{ runningTasks.length }}</div>
+          <button
+            v-for="task in runningTasks"
+            :key="task.id"
+            class="task-row running-row"
+            @click="openTasks"
+          >
+            <span class="task-dot running"></span>
+            <span class="task-main">
+              <strong>{{ task.label }}</strong>
+              <span>{{ task.prompt }}</span>
+            </span>
+            <span class="task-time">{{ elapsedSince(task.created_at) }}</span>
+            <span class="task-go">查看 ›</span>
+          </button>
+        </div>
+
+        <div v-if="approvals.length" class="inbox-zone zone-approvals sec-approvals">
+          <div class="zone-title inbox-head">
+            <span>待批准 · {{ approvals.length }}</span>
+            <div v-if="approvals.length > 1" class="batch-btns">
+              <button class="batch-no" :disabled="selectedCount === 0" @click="batchDecide(false)">
+                全部拒绝{{ selectedCount ? ` (${selectedCount})` : "" }}
+              </button>
+              <button class="batch-yes" :disabled="selectedCount === 0" @click="batchDecide(true)">
+                全部批准{{ selectedCount ? ` (${selectedCount})` : "" }}
+              </button>
+            </div>
+          </div>
+          <div
+            v-for="p in approvals"
+            :key="p.id"
+            class="a-card"
+            :class="{ selected: approvals.length > 1 && isSelected(p.id) }"
+          >
+            <label v-if="approvals.length > 1" class="a-check" title="选中后可一键批量">
+              <input type="checkbox" :checked="isSelected(p.id)" @change="onToggleSelect(p.id, $event)" />
+            </label>
+            <div class="a-info">
+              <span class="a-label">🔐 {{ p.label || p.skill }}</span>
+              <span class="a-desc">{{ p.desc || p.skill }}</span>
+            </div>
+            <label class="a-remember" title="勾选后该技能在本会话内不再询问">
+              <input type="checkbox" :checked="rememberOf(p.id)" @change="onToggleRemember(p.id, $event)" />
+              <span>记住</span>
+            </label>
+            <div class="a-btns">
+              <button class="a-no" @click="decideApproval(p, false)">拒绝</button>
+              <button class="a-yes" @click="decideApproval(p, true)">批准</button>
+            </div>
           </div>
         </div>
-        <div
-          v-for="p in approvals"
-          :key="p.id"
-          class="a-card"
-          :class="{ selected: approvals.length > 1 && isSelected(p.id) }"
-        >
-          <label v-if="approvals.length > 1" class="a-check" title="选中后可一键批量">
-            <input
-              type="checkbox"
-              :checked="isSelected(p.id)"
-              @change="onToggleSelect(p.id, $event)"
-            />
-          </label>
-          <div class="a-info">
-            <span class="a-label">🔐 {{ p.label || p.skill }}</span>
-            <span class="a-desc">{{ p.desc || p.skill }}</span>
-          </div>
-          <label class="a-remember" title="勾选后该技能在本会话内不再询问">
-            <input
-              type="checkbox"
-              :checked="rememberOf(p.id)"
-              @change="onToggleRemember(p.id, $event)"
-            />
-            <span>记住</span>
-          </label>
-          <div class="a-btns">
-            <button class="a-no" @click="decideApproval(p, false)">拒绝</button>
-            <button class="a-yes" @click="decideApproval(p, true)">批准</button>
-          </div>
+
+        <div v-if="completedTasks.length" class="inbox-zone zone-completed">
+          <div class="zone-title">已完成 · 最近 {{ completedTasks.length }} 条</div>
+          <button
+            v-for="it in completedTasks"
+            :key="it.id"
+            class="task-row completed-row"
+            :class="{ unread: it.read === 0 }"
+            @click="openInChat(it)"
+          >
+            <span class="task-status" :class="`status-${taskStatus(it)}`">{{ taskStatusLabel(it) }}</span>
+            <span class="task-main"><span>{{ it.text }}</span></span>
+            <span class="task-time">{{ relTime(it.ts) }}</span>
+          </button>
         </div>
       </section>
 
@@ -397,11 +456,11 @@ onUnmounted(() => {
           <span>动态</span>
           <button v-if="stats.unread > 0" class="mark-all" @click="markAllRead">全部已读</button>
         </div>
-        <div v-if="loaded && !items.length" class="f-empty">
-          还没有动态——派个任务、设个提醒，干完活我会记在这里
+        <div v-if="loaded && !activityItems.length" class="f-empty">
+          还没有其他动态——提醒、记忆和主动消息会出现在这里
         </div>
         <button
-          v-for="it in items"
+          v-for="it in activityItems"
           :key="it.id"
           class="f-row"
           :class="{ unread: it.read === 0 }"
@@ -486,8 +545,103 @@ onUnmounted(() => {
 .sec {
   margin-top: var(--yb-space-3);
 }
+.sec-inbox {
+  padding: var(--yb-space-2);
+  border: 1px solid var(--yb-surface-border);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--yb-surface-solid) 88%, transparent);
+  box-shadow: var(--yb-shadow-soft);
+}
+.inbox-title {
+  color: var(--yb-text);
+  font-size: var(--yb-fs-md);
+}
+.inbox-zone + .inbox-zone {
+  margin-top: var(--yb-space-3);
+  padding-top: var(--yb-space-3);
+  border-top: 1px solid var(--yb-surface-border);
+}
+.zone-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--yb-space-2);
+  padding: 0 var(--yb-space-2) var(--yb-space-2);
+  color: var(--yb-text-dim);
+  font-size: var(--yb-fs-sm);
+  font-weight: 600;
+}
+.task-row {
+  display: flex;
+  align-items: center;
+  gap: var(--yb-space-2);
+  width: 100%;
+  padding: var(--yb-space-2) var(--yb-space-3);
+  margin-bottom: var(--yb-space-2);
+  border: 1px solid var(--yb-surface-border);
+  border-radius: 12px;
+  background: var(--yb-surface-solid);
+  color: var(--yb-text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.task-row:hover {
+  border-color: var(--yb-accent);
+}
+.task-row.unread {
+  border-color: var(--yb-accent);
+  background: var(--yb-accent-soft);
+}
+.task-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.task-main strong,
+.task-main span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-main span {
+  color: var(--yb-text-dim);
+  font-size: var(--yb-fs-sm);
+}
+.task-time,
+.task-go {
+  flex-shrink: 0;
+  color: var(--yb-text-dim);
+  font-size: var(--yb-fs-sm);
+}
+.task-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+}
+.task-dot.running {
+  background: var(--yb-accent);
+  box-shadow: 0 0 0 4px var(--yb-accent-soft);
+}
+.task-status {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  border-radius: var(--yb-radius-lg);
+  background: var(--yb-btn-neutral);
+  color: var(--yb-text-dim);
+  font-size: var(--yb-fs-sm);
+}
+.status-done {
+  color: var(--yb-state-success);
+}
+.status-failed {
+  color: var(--yb-danger);
+}
 /* 待批准卡片：警示淡黄底（与对话/动态区分开），右侧批/拒按钮 */
-.sec-approvals .sec-title {
+.sec-approvals .zone-title {
   color: #b7791f;
 }
 /* 收件箱头：标题 + 顶部一键全批/全拒（仅 N>1 出现） */
