@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS feed (
   ts REAL NOT NULL,
   kind TEXT NOT NULL,
   text TEXT NOT NULL,
-  meta TEXT NOT NULL DEFAULT '{}'
+  meta TEXT NOT NULL DEFAULT '{}',
+  read INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_feed_ts ON feed(ts);
 """
@@ -34,6 +35,13 @@ class FeedStore:
         self._lock = threading.Lock()
         with self._lock:
             self._conn.executescript(_SCHEMA)
+            # 幂等迁移：老库没有 read 列 → 补上（存量行天然 read=0）
+            try:
+                self._conn.execute("ALTER TABLE feed ADD COLUMN read INTEGER NOT NULL DEFAULT 0")
+                self._conn.commit()
+            except sqlite3.OperationalError as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
 
     def add(self, kind: str, text: str, meta: dict | None = None) -> None:
         """追加一条动态；任何失败只 print 不抛（见模块 docstring）。"""
@@ -51,7 +59,7 @@ class FeedStore:
 
     def recent(self, limit: int = 60, since: float | None = None) -> list[dict]:
         """按时间倒序取动态。meta JSON 解析失败退化为 {}。"""
-        sql = "SELECT id, ts, kind, text, meta FROM feed"
+        sql = "SELECT id, ts, kind, text, meta, read FROM feed"
         args: list = []
         if since is not None:
             sql += " WHERE ts >= ?"
@@ -66,7 +74,14 @@ class FeedStore:
                 meta = json.loads(r["meta"] or "{}")
             except json.JSONDecodeError:
                 meta = {}
-            out.append({"id": r["id"], "ts": r["ts"], "kind": r["kind"], "text": r["text"], "meta": meta})
+            out.append({
+                "id": r["id"],
+                "ts": r["ts"],
+                "kind": r["kind"],
+                "text": r["text"],
+                "meta": meta,
+                "read": int(r["read"] or 0),
+            })
         return out
 
     def count_since(self, kind: str, ts: float) -> int:
@@ -75,6 +90,38 @@ class FeedStore:
                 "SELECT COUNT(*) AS n FROM feed WHERE kind = ? AND ts >= ?", (kind, ts)
             ).fetchone()
         return int(row["n"]) if row else 0
+
+    def count_unread(self) -> int:
+        """未读条数。读失败只 print 不抛（Feed 是增强面）。"""
+        try:
+            with self._lock:
+                row = self._conn.execute("SELECT COUNT(*) FROM feed WHERE read = 0").fetchone()
+            return int(row[0]) if row else 0
+        except Exception as e:
+            print(f"[yibao] feed 计数失败（已降级为 0）：{e}", file=sys.stderr)
+            return 0
+
+    def mark_read(self, feed_id: int) -> bool:
+        """标记单条已读。写失败只 print 不抛，返回 False。"""
+        try:
+            with self._lock:
+                cur = self._conn.execute("UPDATE feed SET read = 1 WHERE id = ?", (feed_id,))
+                self._conn.commit()
+            return cur.rowcount > 0
+        except Exception as e:
+            print(f"[yibao] feed 标记已读失败（已跳过）：{e}", file=sys.stderr)
+            return False
+
+    def mark_all_read(self) -> int:
+        """全部标记已读，返回受影响行数。写失败只 print 不抛，返回 0。"""
+        try:
+            with self._lock:
+                cur = self._conn.execute("UPDATE feed SET read = 1 WHERE read = 0")
+                self._conn.commit()
+            return cur.rowcount
+        except Exception as e:
+            print(f"[yibao] feed 全部标记已读失败（已跳过）：{e}", file=sys.stderr)
+            return 0
 
     def close(self) -> None:
         with self._lock:

@@ -84,6 +84,27 @@ def test_add_failure_never_raises(tmp_path):
     s.add("task", "再试")  # 连续失败也不抛
 
 
+def test_recent_includes_read_flag_and_mark_read(tmp_path):
+    from yibao_brain.feed import FeedStore
+    f = FeedStore(str(tmp_path / "f.db"))
+    f.add("reminder", "提醒A", {"rid": "1"})
+    rows = f.recent()
+    assert rows[0]["read"] == 0
+    assert f.count_unread() == 1
+    assert f.mark_read(rows[0]["id"]) is True
+    assert f.count_unread() == 0
+    assert f.recent()[0]["read"] == 1
+
+
+def test_mark_all_read(tmp_path):
+    from yibao_brain.feed import FeedStore
+    f = FeedStore(str(tmp_path / "f.db"))
+    f.add("task", "t1", {}); f.add("task", "t2", {})
+    assert f.count_unread() == 2
+    n = f.mark_all_read()
+    assert n == 2 and f.count_unread() == 0
+
+
 # ---------- serve_async 集成：{"type":"feed"} → items + stats ----------
 
 
