@@ -26,6 +26,8 @@ const railState = computed<AvatarState>(() =>
 const chatDraft = ref("");
 // 待批准数：主屏 nav 徽标（收件箱有待处理的事，一眼可见）
 const approvalCount = ref(0);
+// 未读动态数：主屏 nav 徽标（HomeFeed 经 emit 同步，stats.unread）
+const feedUnread = ref(0);
 let unApprovals: (() => void) | null = null;
 onMounted(() => {
   unApprovals = onPendingConfirms((l) => (approvalCount.value = l.length));
@@ -98,7 +100,7 @@ function close() {
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
           </svg>
           {{ n.label }}
-          <span v-if="n.id === 'home' && approvalCount" class="nav-badge">{{ approvalCount }}</span>
+          <span v-if="n.id === 'home' && (feedUnread > 0 || approvalCount > 0)" class="nav-badge">{{ feedUnread > 0 ? feedUnread : approvalCount }}</span>
         </button>
       </nav>
       <div class="rail-foot">
@@ -114,7 +116,7 @@ function close() {
          reminder / 新面板打开 → 自动切到对应页（提醒要看见；新面板 ≈ 小窗模式浮窗弹出）；
          主屏提交/点动态 → 切对话页（draft 非空时预填输入框） -->
     <main class="main">
-      <HomeFeed v-show="tab === 'home'" @chat="onFeedChat" />
+      <HomeFeed v-show="tab === 'home'" @chat="onFeedChat" @unread="feedUnread = $event" />
       <HomeChat v-show="tab === 'chat'" :draft="chatDraft" @state="chatState = $event" @open-panel="tab = 'plugins'" @reminder="tab = 'chat'" />
       <HomePlugins v-show="tab === 'plugins'" @state="panelState = $event" @panel="tab = 'plugins'" />
       <SettingsView v-show="tab === 'settings'" />

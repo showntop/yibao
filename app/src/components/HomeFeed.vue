@@ -2,8 +2,7 @@
 // 大窗「主屏」页（OS 感 §4.2）：问候条 + Feed 动态 + 插件 Dock + 常驻输入条。
 // 定位：回答「它为我做了什么 / 有什么等我处理」；发起对话由底部输入条完成（提交后切对话页）。
 // Feed 点击 → 带上下文草稿切对话页（草稿自包含：大脑看不到 Feed，上下文随草稿走）。
-import { computed, onMounted, onUnmounted, ref } from "vue";
-import { invoke } from "@tauri-apps/api/core";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import InputBar from "./InputBar.vue";
 import SchemaPanel from "./SchemaPanel.vue";
 import {
@@ -18,25 +17,37 @@ import {
   panelAction,
   runInput,
   sendConfirm,
+  markFeedRead,
+  markAllFeedRead,
+  setDockPin,
+  getDockListOnce,
+  onDockList,
+  onDockPinSet,
   type FeedItem,
   type FeedStats,
   type PendingConfirm,
   type WidgetPayload,
+  type DockItem,
 } from "../lib/brain";
 
 // chat：提交/点动态 → 切对话页；draft 非空时带给对话页预填
-const emit = defineEmits<{ chat: [draft?: string] }>();
+// unread：未读动态数同步给父（Home.vue nav 红点用）
+const emit = defineEmits<{ chat: [draft?: string]; unread: [n: number] }>();
 
 // ---- 问候条 ----
 const stats = ref<FeedStats>({ pending_reminders: 0, running_tasks: 0, done_24h: 0, unread: 0 });
 
+// 动态问候：时段 + 基于 stats 拼 1-2 句叙事；全 0 退化「暂时清净，随时叫我」。
+// 每次 onFeed 刷新 stats 即重算（=每次回主屏刷新）。
 const greeting = computed(() => {
   const h = new Date().getHours();
-  if (h < 6) return "夜深了";
-  if (h < 12) return "早上好";
-  if (h < 14) return "中午好";
-  if (h < 18) return "下午好";
-  return "晚上好";
+  const slot = h < 11 ? "早上好" : h < 18 ? "下午好" : "晚上好";
+  const bits: string[] = [];
+  if (stats.value.done_24h > 0) bits.push(`过去一天跑完了 ${stats.value.done_24h} 个任务`);
+  if (stats.value.pending_reminders > 0) bits.push(`今天有 ${stats.value.pending_reminders} 个提醒`);
+  if (stats.value.running_tasks > 0) bits.push(`${stats.value.running_tasks} 个任务正在跑`);
+  const tail = bits.length ? bits.slice(0, 2).join("、") : "暂时清净，随时叫我";
+  return `${slot}，${tail}`;
 });
 
 const dateLine = computed(() => {
@@ -45,16 +56,11 @@ const dateLine = computed(() => {
   return `${d.getMonth() + 1}月${d.getDate()}日 星期${week}`;
 });
 
-const statChips = computed(() => {
-  const chips: { icon: string; text: string }[] = [];
-  if (stats.value.pending_reminders > 0)
-    chips.push({ icon: "⏰", text: `待办提醒 ${stats.value.pending_reminders}` });
-  if (stats.value.running_tasks > 0)
-    chips.push({ icon: "🏃", text: `进行中任务 ${stats.value.running_tasks}` });
-  if (stats.value.done_24h > 0)
-    chips.push({ icon: "✅", text: `近 24h 完成 ${stats.value.done_24h}` });
-  return chips;
-});
+// 未读数同步给父组件（Home.vue nav 红点）：stats 每次刷新（含乐观更新）即重发。
+watch(
+  () => stats.value.unread,
+  (n) => emit("unread", n),
+);
 
 // ---- Feed 动态 ----
 const items = ref<FeedItem[]>([]);
@@ -65,6 +71,24 @@ async function reload() {
   items.value = r.items;
   stats.value = r.stats;
   loaded.value = true;
+}
+
+/** 全部已读：乐观置 items read=1 + stats.unread=0，后端确认后重拉对齐。 */
+async function markAllRead() {
+  const prevReads = items.value.map((it) => it.read);
+  const prevUnread = stats.value.unread;
+  items.value.forEach((it) => (it.read = 1));
+  stats.value = { ...stats.value, unread: 0 };
+  try {
+    await markAllFeedRead();
+  } catch {
+    // 失败回滚乐观态
+    items.value.forEach((it, i) => (it.read = prevReads[i]));
+    stats.value = { ...stats.value, unread: prevUnread };
+    return;
+  }
+  // 重拉对齐（markAll 成功后的权威状态）
+  void fetchFeed().catch(() => {});
 }
 
 // ---- 待批准队列（OS 感 §4.5 收件箱 Question 面：高风险操作排队一键批/拒） ----
@@ -112,8 +136,21 @@ function kindIcon(it: FeedItem): string {
   return "💬";
 }
 
-/** 点动态 → 带自包含上下文草稿切对话页（大脑看不到 Feed，上下文随草稿走）。 */
-function openInChat(it: FeedItem) {
+/** 点动态 → 乐观置已读 + 带自包含上下文草稿切对话页（大脑看不到 Feed，上下文随草稿走）。
+ *  it 来自 items 的 reactive proxy，直接改 it.read 即触发视图更新。 */
+async function openInChat(it: FeedItem) {
+  if (it.read === 0) {
+    const prevUnread = stats.value.unread;
+    it.read = 1; // 乐观置已读
+    if (stats.value.unread > 0) stats.value = { ...stats.value, unread: stats.value.unread - 1 };
+    try {
+      await markFeedRead(it.id);
+    } catch {
+      // 失败回滚
+      it.read = 0;
+      stats.value = { ...stats.value, unread: prevUnread };
+    }
+  }
   const oneLine = it.text.replace(/\s+/g, " ").trim();
   const truncated = oneLine.length > 60 ? oneLine.slice(0, 60) + "…" : oneLine;
   const prompt = typeof it.meta?.prompt === "string" && it.meta.prompt ? it.meta.prompt : "";
@@ -123,21 +160,29 @@ function openInChat(it: FeedItem) {
   emit("chat", draft);
 }
 
-// ---- 插件 Dock ----
-interface PluginInfo { id: string; name: string }
-const plugins = ref<PluginInfo[]>([]);
+// ---- 插件 Dock（后端 dock_list：pinned 优先 + 频率补齐；图钉可固定/取消）----
+const dock = ref<DockItem[]>([]);
 
-async function loadPlugins() {
-  try {
-    plugins.value = await invoke<PluginInfo[]>("list_plugins");
-  } catch {
-    plugins.value = [];
-  }
+async function loadDock() {
+  const r = await getDockListOnce();
+  dock.value = r.dock;
 }
 
 /** 点插件 → 调它的 list 直调开主面板（panel 事件回来，插件页自动接管切页）。 */
-function launchPlugin(p: PluginInfo) {
+function launchPlugin(p: DockItem) {
   void panelAction(`${p.id}.list`, {}, undefined, `panel:${p.id}`).catch(() => {});
+}
+
+/** 图钉：乐观翻转 pinned，后端确认后 onDockPinSet 回执整体覆盖对齐。 */
+async function togglePin(p: DockItem) {
+  const prev = p.pinned;
+  p.pinned = !p.pinned;
+  try {
+    await setDockPin(p.id, p.pinned);
+  } catch {
+    p.pinned = prev; // 失败回滚
+  }
+  // onDockPinSet 订阅会用后端权威 dock 数组覆盖（成功/失败都对齐）
 }
 
 function pluginIcon(name: string): string {
@@ -150,16 +195,17 @@ function submit(text: string) {
   emit("chat");
 }
 
-// ---- 订阅：新动态（任务播报/提醒触发）实时刷新 Feed 与 widget；待批队列订阅 ----
+// ---- 订阅：新动态（任务播报/提醒触发）实时刷新 Feed 与 widget；待批队列 + Dock 订阅 ----
 let unFeed: (() => void) | null = null;
 let unWidgets: (() => void) | null = null;
 let unEvent: (() => void) | null = null;
 let unApprovals: (() => void) | null = null;
+let unDock: (() => void) | null = null;
+let unDockPin: (() => void) | null = null;
 let refetchTimer: ReturnType<typeof setTimeout> | null = null;
 
 onMounted(async () => {
-  await Promise.all([reload(), reloadWidgets()]);
-  void loadPlugins();
+  await Promise.all([reload(), reloadWidgets(), loadDock()]);
   unApprovals = onPendingConfirms((l) => (approvals.value = l));
   unFeed = await onFeed((r) => {
     items.value = r.items;
@@ -167,6 +213,12 @@ onMounted(async () => {
   });
   unWidgets = await onWidgets((r) => {
     widgets.value = r.widgets;
+  });
+  unDock = await onDockList((r) => {
+    dock.value = r.dock;
+  });
+  unDockPin = await onDockPinSet((r) => {
+    dock.value = r.dock; // 后端权威数组覆盖（含图钉操作回执）
   });
   unEvent = await onBrainEvent((e) => {
     if (e.kind !== "reminder") return;
@@ -182,21 +234,19 @@ onUnmounted(() => {
   unWidgets?.();
   unEvent?.();
   unApprovals?.();
+  unDock?.();
+  unDockPin?.();
   if (refetchTimer !== null) clearTimeout(refetchTimer);
 });
 </script>
 
 <template>
   <div class="feed-page">
-    <!-- 问候条：时段问候 + 日期 + 统计 chips（它为你盯着的事） -->
+    <!-- 问候条：时段 + 叙事（它为你盯着的事）+ 日期 -->
     <header class="hero" data-tauri-drag-region>
       <div class="hero-top" data-tauri-drag-region>
         <span class="hero-hi" data-tauri-drag-region>{{ greeting }}</span>
         <span class="hero-date" data-tauri-drag-region>{{ dateLine }}</span>
-      </div>
-      <div class="hero-chips">
-        <span v-for="c in statChips" :key="c.text" class="h-chip">{{ c.icon }} {{ c.text }}</span>
-        <span v-if="!statChips.length" class="h-chip dim">今天安安静静，叫我做点什么吧</span>
       </div>
     </header>
 
@@ -231,28 +281,45 @@ onUnmounted(() => {
         </div>
       </section>
 
-      <!-- Feed 动态：它在后台干的事，按时间倒序 -->
+      <!-- Feed 动态：它在后台干的事，按时间倒序；未读项高亮，点击即已读 -->
       <section class="sec">
-        <div class="sec-title">动态</div>
+        <div class="sec-title feed-head">
+          <span>动态</span>
+          <button v-if="stats.unread > 0" class="mark-all" @click="markAllRead">全部已读</button>
+        </div>
         <div v-if="loaded && !items.length" class="f-empty">
           还没有动态——派个任务、设个提醒，干完活我会记在这里
         </div>
-        <button v-for="it in items" :key="it.id" class="f-row" @click="openInChat(it)">
+        <button
+          v-for="it in items"
+          :key="it.id"
+          class="f-row"
+          :class="{ unread: it.read === 0 }"
+          @click="openInChat(it)"
+        >
           <span class="f-icon">{{ kindIcon(it) }}</span>
           <span class="f-text">{{ it.text }}</span>
           <span class="f-time">{{ relTime(it.ts) }}</span>
         </button>
       </section>
 
-      <!-- 插件 Dock：常用能力直达（主屏的「应用」） -->
+      <!-- 插件 Dock：常用能力直达（主屏的「应用」）；图钉可固定/取消 -->
       <section class="sec">
         <div class="sec-title">常用</div>
         <div class="dock">
-          <button v-for="p in plugins" :key="p.id" class="dock-item" @click="launchPlugin(p)">
-            <span class="dock-icon">{{ pluginIcon(p.name) }}</span>
-            <span class="dock-name">{{ p.name }}</span>
-          </button>
-          <div v-if="!plugins.length" class="f-empty">没有发现插件</div>
+          <div v-for="p in dock" :key="p.id" class="dock-cell">
+            <button class="dock-item" @click="launchPlugin(p)">
+              <span class="dock-icon">{{ pluginIcon(p.name) }}</span>
+              <span class="dock-name">{{ p.name }}</span>
+            </button>
+            <button
+              class="dock-pin"
+              :class="{ on: p.pinned }"
+              :title="p.pinned ? '取消固定' : '固定到常用'"
+              @click="togglePin(p)"
+            >📌</button>
+          </div>
+          <div v-if="!dock.length" class="f-empty">没有发现插件</div>
         </div>
       </section>
     </div>
@@ -280,6 +347,7 @@ onUnmounted(() => {
   display: flex;
   align-items: baseline;
   gap: var(--yb-space-3);
+  flex-wrap: wrap;
 }
 .hero-hi {
   font-size: 22px;
@@ -289,23 +357,6 @@ onUnmounted(() => {
 }
 .hero-date {
   font-size: var(--yb-fs-md);
-  color: var(--yb-text-dim);
-}
-.hero-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--yb-space-2);
-  margin-top: var(--yb-space-2);
-}
-.h-chip {
-  padding: 3px var(--yb-space-3);
-  border-radius: var(--yb-radius-lg);
-  background: var(--yb-accent-soft);
-  color: var(--yb-accent-deep);
-  font-size: var(--yb-fs-md);
-}
-.h-chip.dim {
-  background: transparent;
   color: var(--yb-text-dim);
 }
 
@@ -450,8 +501,28 @@ onUnmounted(() => {
   color: var(--yb-text-dim);
   letter-spacing: 0.04em;
 }
+/* Feed 头：标题 + 全部已读按钮（仅未读>0 时出现） */
+.feed-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.mark-all {
+  border: none;
+  background: transparent;
+  color: var(--yb-accent-deep);
+  font-size: var(--yb-fs-sm);
+  font-family: inherit;
+  padding: 2px var(--yb-space-2);
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+.mark-all:hover {
+  opacity: 0.7;
+  text-decoration: underline;
+}
 
-/* Feed 行：图标 + 文本（两行截断）+ 相对时间；点击带上下文进对话 */
+/* Feed 行：图标 + 文本（两行截断）+ 相对时间；未读项 accent 高亮，点击带上下文进对话 */
 .f-row {
   display: flex;
   align-items: flex-start;
@@ -471,6 +542,14 @@ onUnmounted(() => {
 .f-row:hover {
   border-color: var(--yb-accent);
   transform: translateY(-1px);
+}
+/* 未读高亮：accent 边框 + 柔和高亮底（一眼可见待处理） */
+.f-row.unread {
+  border-color: var(--yb-accent);
+  background: var(--yb-accent-soft);
+}
+.f-row.unread .f-text {
+  font-weight: 600;
 }
 .f-icon {
   flex-shrink: 0;
@@ -503,19 +582,23 @@ onUnmounted(() => {
   text-align: center;
 }
 
-/* Dock：首字圆形图标 + 名称，与 iOS Dock 同语义 */
+/* Dock：首字圆形图标 + 名称 + 角落图钉按钮，与 iOS Dock 同语义 */
 .dock {
   display: flex;
   flex-wrap: wrap;
   gap: var(--yb-space-3);
   padding: var(--yb-space-2);
 }
+.dock-cell {
+  position: relative;
+  width: 64px;
+}
 .dock-item {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  width: 64px;
+  width: 100%;
   border: none;
   background: transparent;
   cursor: pointer;
@@ -546,6 +629,38 @@ onUnmounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 图钉：默认隐藏，hover 显半透、已固定常驻；点即固定/取消 */
+.dock-pin {
+  position: absolute;
+  top: -4px;
+  right: 6px;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--yb-surface-border);
+  border-radius: 50%;
+  background: var(--yb-surface-solid);
+  box-shadow: var(--yb-shadow-soft);
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  opacity: 0;
+  transition: opacity 0.15s ease, transform 0.15s ease, background 0.15s ease;
+}
+.dock-cell:hover .dock-pin {
+  opacity: 0.65;
+}
+.dock-pin:hover {
+  opacity: 1;
+  transform: scale(1.15);
+}
+.dock-pin.on {
+  opacity: 1;
+  background: var(--yb-accent);
+  border-color: var(--yb-accent);
 }
 
 .bar {
