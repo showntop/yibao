@@ -75,6 +75,19 @@ class ToolInvoker:
             res = await res
         return res
 
+    def apply_verdict(self, action: Action, approved: bool, remember: bool) -> None:
+        """应用批量确认裁决：approved + remember 时把 skill 写进 gate.session_allowed，
+        后续同技能直接 AUTO（连 confirmation_needed 都不发）。会话级，不落盘。
+
+        loop（run/arun）拿到 batch_confirm 的 verdict 后统一调用，消除三处重复写入，
+        并补回「本会话不再询问」stderr 日志（原逐个分支里漏打）。
+        """
+        if approved and remember:
+            self.gate.session_allowed.add(action.skill_id)
+            import sys
+
+            print(f"[yibao] 本会话不再询问：{action.skill_id}", file=sys.stderr)
+
     def execute(self, action: Action, params: dict) -> ActionResult:
         """执行 + 审计。技能异常转为失败结果，不抛出（不杀 run）。"""
         skill = self.skills.get(action.skill_id)

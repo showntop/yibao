@@ -242,6 +242,9 @@ class AgentLoop:
                 return
             messages.append(_assistant_with_tools(resp.text, resp.tool_calls))
             proceeded = False
+            # Task 2 攒批：先按 LLM 顺序收集决策（不立即执行——AUTO 不抢在 CONFIRM 前，
+            # 依赖链 a→b 的 a 仍在 b 前），再一轮批量确认，最后按序执行。spec §3.1。
+            plan: list[tuple[ToolCall, Action, Decision]] = []
             for tc in resp.tool_calls:
                 tc.skill_id = self.skills.resolve_llm_name(tc.skill_id)  # 安全名 → 真实 id
                 action = self.invoker.propose(tc)
@@ -254,17 +257,22 @@ class AgentLoop:
                                      "content": f"{reason}（未执行，请改用更合适的工具重试）"})
                     proceeded = True
                     continue
-                decision = self.invoker.decide(action)
+                plan.append((tc, action, self.invoker.decide(action)))
+            confirm_actions = [a for _tc, a, d in plan if d == Decision.CONFIRM]
+            verdicts: dict[str, tuple[bool, bool]] = {}
+            if confirm_actions:
+                # 一次推收件箱（旧前端读 action=actions[0]，Task 4/5 切 actions）
+                yield Event(kind="confirmation_needed", actions=confirm_actions,
+                            action=confirm_actions[0], confirmation_id=confirm_actions[0].id)
+                verdicts = self.invoker.batch_confirm_sync(confirm_actions)
+            for tc, action, decision in plan:
                 if decision == Decision.CONFIRM:
-                    yield Event(kind="confirmation_needed", action=action, confirmation_id=action.id)
-                    # Task 1：接口已批量化，loop 仍逐个 CONFIRM（batch size=1）。攒批逻辑是 Task 2。
-                    verdicts = self.invoker.batch_confirm_sync([action])
                     approved, remember = verdicts.get(action.id, (False, False))
-                    if approved and remember:
-                        self.invoker.gate.session_allowed.add(action.skill_id)
+                    self.invoker.apply_verdict(action, approved, remember)
                     if not approved:
                         yield Event(kind="error", text=f"用户拒绝执行 {tc.skill_id}")
-                        messages.append({"role": "tool", "tool_call_id": tc.id, "content": "用户拒绝执行该操作"})
+                        messages.append({"role": "tool", "tool_call_id": tc.id,
+                                         "content": "用户拒绝执行该操作"})
                         continue
                 elif decision == Decision.DENY:
                     yield Event(kind="error", text=f"策略禁止执行 {tc.skill_id}（风险过高）")
@@ -363,6 +371,9 @@ class AgentLoop:
                 return
             messages.append(_assistant_with_tools(text_buf, tool_calls))
             proceeded = False
+            # Task 2 攒批：先按 LLM 顺序收集决策（不立即执行——AUTO 不抢在 CONFIRM 前，
+            # 依赖链 a→b 的 a 仍在 b 前），再一轮批量确认，最后按序执行。spec §3.1。
+            plan: list[tuple[ToolCall, Action, Decision]] = []
             for tc in tool_calls:
                 if cancelled():
                     yield Event(kind="interrupted")
@@ -378,15 +389,22 @@ class AgentLoop:
                                      "content": f"{reason}（未执行，请改用更合适的工具重试）"})
                     proceeded = True
                     continue
-                decision = self.invoker.decide(action)
+                plan.append((tc, action, self.invoker.decide(action)))
+            confirm_actions = [a for _tc, a, d in plan if d == Decision.CONFIRM]
+            verdicts: dict[str, tuple[bool, bool]] = {}
+            if confirm_actions:
+                # 一次推收件箱（旧前端读 action=actions[0]，Task 4/5 切 actions）
+                yield Event(kind="confirmation_needed", actions=confirm_actions,
+                            action=confirm_actions[0], confirmation_id=confirm_actions[0].id)
+                verdicts = await self.invoker.batch_confirm(confirm_actions)
+            for tc, action, decision in plan:
+                if cancelled():
+                    yield Event(kind="interrupted")
+                    return
                 if decision == Decision.CONFIRM:
-                    yield Event(kind="confirmation_needed", action=action, confirmation_id=action.id)
-                    # Task 1：接口已批量化，loop 仍逐个 CONFIRM（batch size=1）。攒批逻辑是 Task 2。
-                    verdicts = await self.invoker.batch_confirm([action])
                     approved, remember = verdicts.get(action.id, (False, False))
-                    if approved and remember:
-                        self.invoker.gate.session_allowed.add(action.skill_id)
-                    if cancelled() or not approved:
+                    self.invoker.apply_verdict(action, approved, remember)
+                    if not approved:
                         yield Event(kind="error", text=f"用户拒绝执行 {tc.skill_id}")
                         messages.append(
                             {"role": "tool", "tool_call_id": tc.id, "content": "用户拒绝执行该操作"}

@@ -56,6 +56,9 @@ class Event(BaseModel):
     kind: EventKind
     text: str = ""
     action: Action | None = None
+    # Task 2：confirmation_needed 攒批载荷——一轮多 CONFIRM 的全部 action。
+    # 旧前端仍读 action（= actions[0]）；Task 4/5 切 actions 后保留 action 作过渡兼容。
+    actions: list[Action] | None = None
     result: ActionResult | None = None
     confirmation_id: str | None = None
     payload: dict = Field(default_factory=dict)  # kind="panel" 时放 {panel, schema, data}

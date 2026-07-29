@@ -828,3 +828,247 @@ def test_loop_skips_feed_when_memory_noop(tmp_path):
     )
     list(loop.run("嗨", surface="pet"))
     assert feed.calls == []
+
+
+# ---------- Task 2：一轮多 CONFIRM 攒批 + 按 LLM 顺序执行 ----------
+
+
+class _HighSkill(Skill):
+    """L3 高危技能，默认走 CONFIRM；run 记录调用顺序到共享 list。"""
+
+    id = "h"
+    description = "高危占位"
+    default_risk = RiskLevel.L3_HIGH
+
+    def __init__(self, log: list[str] | None = None, key: str = "h"):
+        self._log = log
+        self._key = key
+
+    def run(self, params, ctx):
+        if self._log is not None:
+            self._log.append(self._key)
+        return ActionResult(success=True, data={"did": params.get("x")})
+
+
+def _build_batch_loop(tmp_path, provider, confirmer, reg=None):
+    if reg is None:
+        reg = SkillRegistry()
+        reg.register(_HighSkill())
+    return AgentLoop(
+        provider=provider,
+        skills=reg,
+        classifier=RiskClassifier(),
+        gate=Gate(GatePolicy()),
+        memory=FakeMemory(),
+        log=AuditLog(tmp_path / "a.db"),
+        confirmer=confirmer,
+    )
+
+
+def test_run_batches_multiple_confirms_one_event(tmp_path):
+    """一轮两个 CONFIRM tool_call → 一次 confirmation_needed（actions 长 2，旧 action=actions[0]）。"""
+    provider = _TwoStepProvider(
+        first=FakeProvider(tool_calls=[
+            ToolCall(id="a", skill_id="h", params={"x": "A"}),
+            ToolCall(id="b", skill_id="h", params={"x": "B"}),
+        ]),
+        second=FakeProvider(text="done"),
+    )
+    loop = _build_batch_loop(
+        tmp_path, provider, confirmer=lambda actions: {a.id: (True, False) for a in actions}
+    )
+    events = list(loop.run("做两件事"))
+    cns = [e for e in events if e.kind == "confirmation_needed"]
+    assert len(cns) == 1                       # 只推一次收件箱
+    assert [a.params["x"] for a in cns[0].actions] == ["A", "B"]
+    assert cns[0].action is cns[0].actions[0]  # 旧前端兼容
+    assert cns[0].confirmation_id == cns[0].actions[0].id
+
+
+def test_arun_batches_multiple_confirms_executes_in_llm_order(tmp_path):
+    """批量批准后按 LLM 顺序执行（A 在 B 前）。"""
+    order: list[str] = []
+    provider = _TwoStepProvider(
+        first=FakeProvider(tool_calls=[
+            ToolCall(id="a", skill_id="h", params={"x": "A"}),
+            ToolCall(id="b", skill_id="h", params={"x": "B"}),
+        ]),
+        second=FakeProvider(text="done"),
+    )
+    reg = SkillRegistry()
+    reg.register(_HighSkill(log=order))
+    loop = _build_batch_loop(
+        tmp_path, provider, confirmer=lambda actions: {a.id: (True, False) for a in actions}, reg=reg
+    )
+    events = asyncio.run(_collect_events(loop.arun("做两件事")))
+    cns = [e for e in events if e.kind == "confirmation_needed"]
+    assert len(cns) == 1 and len(cns[0].actions) == 2
+    results = [e for e in events if e.kind == "action_result"]
+    assert len(results) == 2
+    assert [r.result.data["did"] for r in results] == ["A", "B"]  # LLM 顺序
+    assert order == ["h", "h"]
+
+
+def test_arun_batch_confirm_rejected_skips_and_records_message(tmp_path):
+    """批量批里拒了 a、批了 b → a 不执行、messages 记拒绝；b 照常执行。"""
+    second = FakeProvider(text="done")
+    provider = _TwoStepProvider(
+        first=FakeProvider(tool_calls=[
+            ToolCall(id="a", skill_id="h", params={"x": "A"}),
+            ToolCall(id="b", skill_id="h", params={"x": "B"}),
+        ]),
+        second=second,
+    )
+
+    def confirmer(actions):
+        # a 拒、b 批
+        return {actions[0].id: (False, False), actions[1].id: (True, False)}
+
+    loop = _build_batch_loop(tmp_path, provider, confirmer=confirmer)
+    events = asyncio.run(_collect_events(loop.arun("做两件事")))
+    results = [e for e in events if e.kind == "action_result"]
+    assert len(results) == 1                       # 只 b 执行
+    assert results[0].result.data == {"did": "B"}
+    # 第二轮请求的消息里包含 a 的拒绝回执
+    msgs = second.astream_calls[0]["messages"]
+    assert any(m.get("role") == "tool" and m.get("tool_call_id") == "a" and "拒绝" in m["content"]
+               for m in msgs)
+
+
+def test_arun_batch_confirm_preserves_llm_order_with_dependency(tmp_path):
+    """依赖链 a→b：a CONFIRM(L3)、b AUTO(L0) 用 a 的结果。
+    攒批后 a 先执行出结果、b 再用——AUTO 不抢在 CONFIRM 前重排（破坏依赖）。spec §3.1。"""
+    shared: dict[str, str] = {}
+
+    class Store(Skill):
+        id = "store"
+        description = "写入共享态（高危）"
+        default_risk = RiskLevel.L3_HIGH
+
+        def run(self, params, ctx):
+            shared["v"] = "from_a"
+            return ActionResult(success=True, data={"v": "from_a"})
+
+    class Read(Skill):
+        id = "read"
+        description = "读共享态（只读）"
+        default_risk = RiskLevel.L0_READONLY
+
+        def run(self, params, ctx):
+            return ActionResult(success=True, data={"got": shared.get("v", "EMPTY")})
+
+    reg = SkillRegistry()
+    reg.register(Store())
+    reg.register(Read())
+    provider = _TwoStepProvider(
+        first=FakeProvider(tool_calls=[
+            ToolCall(id="a", skill_id="store", params={}),
+            ToolCall(id="b", skill_id="read", params={}),
+        ]),
+        second=FakeProvider(text="done"),
+    )
+    loop = _build_batch_loop(
+        tmp_path, provider, confirmer=lambda actions: {a.id: (True, False) for a in actions}, reg=reg
+    )
+    events = asyncio.run(_collect_events(loop.arun("先存后读")))
+    results = [e for e in events if e.kind == "action_result"]
+    assert [r.action.skill_id for r in results] == ["store", "read"]  # LLM 顺序不乱
+    assert results[1].result.data == {"got": "from_a"}                # b 拿到 a 的结果
+
+
+def test_arun_batch_confirm_remember_adds_all_to_session_allowed(tmp_path):
+    """批量勾「本会话不再询问」→ 多个 skill 都进 session_allowed（remember 批量生效）。"""
+    class HSkill(Skill):
+        id = "h"
+        description = "高危"
+        default_risk = RiskLevel.L3_HIGH
+
+        def run(self, params, ctx):
+            return ActionResult(success=True, data={"did": True})
+
+    reg = SkillRegistry()
+    reg.register(HSkill())
+    provider = _TwoStepProvider(
+        first=FakeProvider(tool_calls=[ToolCall(id="a", skill_id="h", params={"x": "A"})]),
+        second=FakeProvider(text="done"),
+    )
+    # 批量 confirmer：批准 + remember
+    calls: list[int] = []
+
+    async def confirmer(actions):
+        calls.append(len(actions))
+        return {a.id: (True, True) for a in actions}
+
+    loop = _build_batch_loop(tmp_path, provider, confirmer=confirmer, reg=reg)
+    asyncio.run(_collect_events(loop.arun("做危险的事")))
+    assert "h" in loop.invoker.gate.session_allowed
+    assert calls == [1]  # 攒批后一次批量调用
+
+
+def test_arun_batch_confirm_two_skills_remember(tmp_path):
+    """两个不同高危 skill 同轮 CONFIRM、全批+remember → 两个 skill 都进 session_allowed。"""
+    class H1(Skill):
+        id = "h1"
+        description = "高危1"
+        default_risk = RiskLevel.L3_HIGH
+
+        def run(self, params, ctx):
+            return ActionResult(success=True, data={})
+
+    class H2(Skill):
+        id = "h2"
+        description = "高危2"
+        default_risk = RiskLevel.L3_HIGH
+
+        def run(self, params, ctx):
+            return ActionResult(success=True, data={})
+
+    reg = SkillRegistry()
+    reg.register(H1())
+    reg.register(H2())
+    provider = _TwoStepProvider(
+        first=FakeProvider(tool_calls=[
+            ToolCall(id="a", skill_id="h1", params={}),
+            ToolCall(id="b", skill_id="h2", params={}),
+        ]),
+        second=FakeProvider(text="done"),
+    )
+    loop = _build_batch_loop(
+        tmp_path, provider, confirmer=lambda actions: {a.id: (True, True) for a in actions}, reg=reg
+    )
+    asyncio.run(_collect_events(loop.arun("做两件危险事")))
+    assert {"h1", "h2"}.issubset(loop.invoker.gate.session_allowed)
+
+
+def test_single_confirm_size_one_unchanged(tmp_path):
+    """单 CONFIRM（batch size=1）行为不变：confirmation_needed 带单个 action、actions 长 1。"""
+    provider = _TwoStepProvider(
+        first=FakeProvider(tool_calls=[ToolCall(id="a", skill_id="h", params={"x": "A"})]),
+        second=FakeProvider(text="done"),
+    )
+    loop = _build_batch_loop(
+        tmp_path, provider, confirmer=lambda actions: {a.id: (True, False) for a in actions}
+    )
+    events = list(loop.run("做一件事"))
+    cns = [e for e in events if e.kind == "confirmation_needed"]
+    assert len(cns) == 1
+    assert cns[0].actions is not None and len(cns[0].actions) == 1
+    assert cns[0].action is cns[0].actions[0]  # 旧字段兼容
+    ar = next(e for e in events if e.kind == "action_result")
+    assert ar.result.data == {"did": "A"}
+
+
+def test_arun_single_confirm_rejected_still_emits_error(tmp_path):
+    """单 CONFIRM 被拒（batch size=1）仍发 error、不执行——回归 test_loop_arun_async_confirmer_rejected 同语义。"""
+    provider = _TwoStepProvider(
+        first=FakeProvider(tool_calls=[ToolCall(id="a", skill_id="h", params={"x": "A"})]),
+        second=FakeProvider(text="done"),
+    )
+    loop = _build_batch_loop(
+        tmp_path, provider, confirmer=lambda actions: {a.id: (False, False) for a in actions}
+    )
+    events = asyncio.run(_collect_events(loop.arun("做一件事")))
+    kinds = [e.kind for e in events]
+    assert "confirmation_needed" in kinds
+    assert "error" in kinds
+    assert not any(e.kind == "action_result" and e.result and e.result.data.get("did") for e in events)
