@@ -1,5 +1,6 @@
 """FeedStore 单测 + serve_async 的 feed 查询集成（OS 感 §4.2：主屏动态/问候统计）。"""
 import asyncio
+import sqlite3
 import time
 
 from yibao_brain.feed import FeedStore
@@ -14,6 +15,24 @@ def make_reader(msgs):
 
 def _run_async(coro):
     return asyncio.run(coro)
+
+
+def _seed_agent_tasks(root, rows):
+    path = root / "plugins" / "agents" / "data.db"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE tasks ("
+        "id TEXT PRIMARY KEY, kind TEXT, agent TEXT, prompt TEXT, "
+        "status TEXT, created_at INTEGER)"
+    )
+    conn.executemany(
+        "INSERT INTO tasks (id, kind, agent, prompt, status, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        rows,
+    )
+    conn.commit()
+    conn.close()
 
 
 # ---------- FeedStore 单测 ----------
@@ -129,6 +148,56 @@ def test_append_hourly_new_when_hour_differs(tmp_path):
 # ---------- serve_async 集成：{"type":"feed"} → items + stats ----------
 
 
+def test_serve_async_feed_includes_only_running_tasks_in_desc_order(tmp_path, monkeypatch):
+    monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path))
+    _seed_agent_tasks(tmp_path, [
+        ("old", "agent", "claude", "旧任务", "running", 10),
+        ("done", "agent", "codex", "已完成", "done", 20),
+        ("new", "script", "python", "新脚本", "running", 30),
+    ])
+    out = []
+    _run_async(serve_async(
+        make_reader([{"type": "feed"}]),
+        out.append,
+        use_real=False,
+        db_path=str(tmp_path / "a.db"),
+        provider=FakeProvider(),
+    ))
+    feed_msg = next(m for m in out if m["type"] == "feed")
+    assert feed_msg["running_tasks"] == [
+        {
+            "id": "new", "kind": "script", "label": "沙箱脚本",
+            "prompt": "新脚本", "status": "running", "created_at": 30,
+        },
+        {
+            "id": "old", "kind": "agent", "label": "claude 任务",
+            "prompt": "旧任务", "status": "running", "created_at": 10,
+        },
+    ]
+    assert feed_msg["stats"]["running_tasks"] == 2
+
+
+def test_serve_async_feed_running_task_query_failure_degrades_to_empty(tmp_path, monkeypatch):
+    monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path))
+    _seed_agent_tasks(tmp_path, [])
+
+    def fail_query(*_args, **_kwargs):
+        raise sqlite3.OperationalError("broken tasks")
+
+    monkeypatch.setattr("yibao_brain.plugindb.PluginDb.query", fail_query)
+    out = []
+    _run_async(serve_async(
+        make_reader([{"type": "feed"}]),
+        out.append,
+        use_real=False,
+        db_path=str(tmp_path / "a.db"),
+        provider=FakeProvider(),
+    ))
+    feed_msg = next(m for m in out if m["type"] == "feed")
+    assert feed_msg["running_tasks"] == []
+    assert feed_msg["stats"]["running_tasks"] == 0
+
+
 def test_serve_async_feed_query(tmp_path, monkeypatch):
     monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path))  # stats 不碰真实数据目录
     # 预置动态（serve_async 的 feed 库落在 dirname(db_path)/feed.db）
@@ -174,3 +243,4 @@ def test_serve_async_feed_query_empty(tmp_path, monkeypatch):
     assert len(feeds) == 1
     assert feeds[0]["items"] == []
     assert feeds[0]["stats"] == {"pending_reminders": 0, "running_tasks": 0, "done_24h": 0, "unread": 0}
+    assert feeds[0]["running_tasks"] == []

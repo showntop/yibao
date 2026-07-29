@@ -565,8 +565,45 @@ async def serve_async(
     # 免确认集合接到闸门：命中后 decide 直接 AUTO（连 confirmation_needed 都不发）
     agent.invoker.gate.session_allowed = remembered_confirm
 
-    def _feed_stats() -> dict:
-        """主屏问候统计：待办提醒 / 进行中任务 / 近 24h 完成任务。各自容错，缺啥补 0。"""
+    def _running_tasks(limit: int = 20) -> list[dict]:
+        """读取 agents 权威任务表，只返回 Home 需要的 running 摘要。"""
+        adb_file = os.path.join(plugin_data_dir("agents"), "data.db")
+        if not os.path.exists(adb_file):
+            return []
+        try:
+            from .plugindb import PluginDb
+
+            adb = PluginDb("agents")
+            try:
+                rows = adb.query(
+                    "tasks", where={"status": "running"},
+                    order="created_at DESC", limit=limit,
+                )
+            finally:
+                adb.close()
+        except Exception as e:
+            print(f"[yibao] 进行中任务查询失败（已降级为空）：{e}", file=sys.stderr)
+            return []
+
+        out = []
+        for row in rows:
+            task_id = str(row.get("id") or "")
+            if not task_id:
+                continue
+            kind = "script" if row.get("kind") == "script" else "agent"
+            agent_name = str(row.get("agent") or "智能体")
+            out.append({
+                "id": task_id,
+                "kind": kind,
+                "label": "沙箱脚本" if kind == "script" else f"{agent_name} 任务",
+                "prompt": str(row.get("prompt") or ""),
+                "status": "running",
+                "created_at": int(row.get("created_at") or 0),
+            })
+        return out
+
+    def _feed_stats(running_tasks: list[dict] | None = None) -> dict:
+        """主屏问候统计：待办提醒 / 进行中任务 / 近 24h 完成任务。"""
         stats = {"pending_reminders": 0, "running_tasks": 0, "done_24h": 0}
         rstore = getattr(agent, "reminder_store", None)
         if rstore is not None:
@@ -574,18 +611,7 @@ async def serve_async(
                 stats["pending_reminders"] = len(rstore.list_pending())
             except Exception:
                 pass
-        adb_file = os.path.join(plugin_data_dir("agents"), "data.db")
-        if os.path.exists(adb_file):  # 只在已存在时读，别为统计凭空建库
-            try:
-                from .plugindb import PluginDb
-
-                adb = PluginDb("agents")
-                try:
-                    stats["running_tasks"] = len(adb.query("tasks", where={"status": "running"}))
-                finally:
-                    adb.close()
-            except Exception:
-                pass
+        stats["running_tasks"] = len(running_tasks or [])
         stats["done_24h"] = feed.count_since("task", time.time() - 86400)
         stats["unread"] = feed.count_unread()
         return stats
@@ -1031,7 +1057,13 @@ async def serve_async(
                 limit = int(msg.get("limit") or 60)
             except (TypeError, ValueError):
                 limit = 60
-            write_msg({"type": "feed", "items": feed.recent(limit=limit), "stats": _feed_stats()})
+            running_tasks = _running_tasks()
+            write_msg({
+                "type": "feed",
+                "items": feed.recent(limit=limit),
+                "stats": _feed_stats(running_tasks),
+                "running_tasks": running_tasks,
+            })
         elif rtype == "feed_mark_read":
             # 主屏点掉单条：feed.mark_read 容错（坏 id 返回 False，不抛）
             fid = int(msg.get("id", 0))
