@@ -291,7 +291,7 @@ def test_code_exec_failure_reports(fake_interp, no_sync_window, fake_popen, tmp_
 
 
 def test_code_exec_sync_fast_answer(fake_interp, fake_popen, tmp_path):
-    """窗口内完成 → 输出直接进 ActionResult.data，不落库 running、不发播报。"""
+    """窗口内完成 → 输出直接进 ActionResult.data，不落库 running；同步路径也 emit 一次写 Feed。"""
     reg, _, events = fake_interp
     fake_popen.auto_finish = 0
     ctx = reg.get("agents.code_exec").plugin_ctx
@@ -303,19 +303,94 @@ def test_code_exec_sync_fast_answer(fake_interp, fake_popen, tmp_path):
     assert f"✅ 沙箱脚本完成（任务 {task_id}）" in r.data["human"]
     row = ctx.db.query("tasks", where={"id": task_id})[0]
     assert row["status"] == "done" and row["exit_code"] == 0 and row["finished_at"] > 0
-    assert events == []  # 同步路径不播报
+    # 同步路径也经 emit_event 写 Feed（kind=reminder + task meta，字段对齐 _common._wait）
+    assert len(events) == 1 and events[0]["kind"] == "reminder"
+    assert events[0]["task"] == {"id": task_id, "status": "done",
+                                 "label": "沙箱脚本", "prompt": "print('hi')"}
     assert task_id not in _mod_globals(reg)["_PROCS"]
 
 
+def test_code_exec_sync_emits_feed_event(fake_interp, fake_popen, tmp_path):
+    """同步完成也经 emit_event 写 Feed：字段对齐 _common._wait（kind=reminder + task meta），
+    底座 _on_plugin_event 凭 task meta 走 feed.add("task", ...)。done/failed/timeout/stopped 均发。"""
+    reg, _, events = fake_interp
+    fake_popen.auto_finish = 0
+    ctx = reg.get("agents.code_exec").plugin_ctx
+    code = "print('hi')"
+    r = _run(reg, "agents.code_exec",
+             {"lang": "python", "code": code, "cwd": str(tmp_path), "timeout_sec": 60})
+    assert r.success
+    task_id = r.data["task_id"]
+    # 同步路径完成即 emit 一次（不再为空）
+    assert len(events) == 1
+    ev = events[0]
+    # 字段对齐 _common._wait：kind=reminder（_on_plugin_event / _gate_proactive_event 按此分类）
+    assert ev["kind"] == "reminder"
+    assert "✅ 沙箱脚本完成" in ev["text"]
+    # task meta：id 与落库行一致、status=done、label/prompt 给 Feed 点击追问用
+    task_meta = ev["task"]
+    assert task_meta["id"] == task_id
+    assert task_meta["status"] == "done"
+    assert task_meta["label"] == "沙箱脚本"
+    assert task_meta["prompt"] == code[:120]
+    # 落库行与 emit 的 status 一致（同步路径底座不再二次落库，Feed 只拿 emit 的 meta）
+    row = ctx.db.query("tasks", where={"id": task_id})[0]
+    assert row["status"] == task_meta["status"]
+
+
+def test_code_exec_sync_emits_on_failure_timeout_stopped(fake_interp, fake_popen, tmp_path, monkeypatch):
+    """同步路径三种非成功收尾也 emit：failed（非 0 退出）/ timeout（同步杀）/ stopped（task_stop）。"""
+    reg, _, events = fake_interp
+    monkeypatch.setitem(_mod_globals(reg), "_SYNC_WAIT_SEC", 1.2)
+    ctx = reg.get("agents.code_exec").plugin_ctx
+
+    # failed：非 0 退出
+    fake_popen.auto_finish = 3
+    fake_popen.log_text = "Traceback: boom"
+    _run(reg, "agents.code_exec", {"lang": "python", "code": "boom", "cwd": str(tmp_path)})
+    assert len(events) == 1 and events[0]["task"]["status"] == "failed"
+    assert "❌ 沙箱脚本失败（退出码 3）" in events[0]["text"]
+    assert "Traceback: boom" in events[0]["text"]
+
+    # timeout：超时预算 ≤ 同步窗口 → 同步 kill
+    fake_popen.auto_finish = None
+    fake_popen.log_text = ""
+    _run(reg, "agents.code_exec",
+         {"lang": "python", "code": "import time; time.sleep(99)",
+          "cwd": str(tmp_path), "timeout_sec": 1})
+    assert len(events) == 2 and events[1]["task"]["status"] == "failed"
+    assert "⏰ 沙箱脚本超时已终止" in events[1]["text"]
+
+    # stopped：同步等待期间 task_stop
+    fake_popen.auto_finish = None
+    holder: dict = {}
+
+    def _call():
+        holder["r"] = _run(reg, "agents.code_exec",
+                           {"lang": "python", "code": "import time; time.sleep(99)",
+                            "cwd": str(tmp_path), "timeout_sec": 60})
+
+    th = threading.Thread(target=_call)
+    th.start()
+    # 等 running 行出现（前两个子用例的 done/failed 行也在同库里，按状态过滤取 running 那行）
+    assert _wait_for(lambda: any(r["status"] == "running"
+                                 for r in ctx.db.query("tasks", where={"kind": "script"})))
+    running = [r for r in ctx.db.query("tasks", where={"kind": "script"}) if r["status"] == "running"][0]
+    _run(reg, "agents.task_stop", {"id": running["id"]})
+    th.join(timeout=5)
+    assert len(events) == 3 and events[2]["task"]["status"] == "stopped"
+    assert "⏹ 沙箱脚本已停止" in events[2]["text"]
+
+
 def test_code_exec_sync_failure_returns_output(fake_interp, fake_popen, tmp_path):
-    """窗口内失败 → error 带退出码与输出尾部（LLM 当轮能看到报错并修脚本重试）。"""
+    """窗口内失败 → error 带退出码与输出尾部（LLM 当轮能看到报错并修脚本重试）；同步路径也 emit。"""
     reg, _, events = fake_interp
     fake_popen.auto_finish = 3
     fake_popen.log_text = "Traceback: boom"
     r = _run(reg, "agents.code_exec", {"lang": "python", "code": "boom", "cwd": str(tmp_path)})
     assert not r.success
     assert "退出码 3" in r.error and "Traceback: boom" in r.error
-    assert events == []
+    assert len(events) == 1 and events[0]["task"]["status"] == "failed"
 
 
 def test_code_exec_sync_failure_db_row(fake_interp, fake_popen, tmp_path):
@@ -341,7 +416,10 @@ def test_code_exec_sync_timeout_kills(fake_interp, fake_popen, tmp_path, monkeyp
     assert fake_popen.procs[0].killed
     row = ctx.db.query("tasks", where={"kind": "script"})[0]
     assert row["status"] == "failed"
-    assert events == []
+    # 同步路径超时也 emit（kind=reminder + task.status=failed，与 _common._wait 一致）
+    assert len(events) == 1 and events[0]["kind"] == "reminder"
+    assert events[0]["task"]["status"] == "failed"
+    assert "⏰ 沙箱脚本超时已终止" in events[0]["text"]
 
 
 def test_task_stop_during_sync_window(fake_interp, fake_popen, tmp_path, monkeypatch):
@@ -400,12 +478,13 @@ def test_real_sandbox_hello_and_write_cwd(env, tmp_path):
     r = _run(reg, "agents.code_exec",
              {"lang": "python", "code": code, "cwd": str(tmp_path), "timeout_sec": 60})
     assert r.success, r.error
-    # 短脚本在同步窗口内完成：输出直接进 data，库落 done，无播报
+    # 短脚本在同步窗口内完成：输出直接进 data，库落 done；同步路径也 emit 写 Feed
     assert "hello sandbox" in r.data["output"]
     row = ctx.db.query("tasks", where={"id": r.data["task_id"]})[0]
     assert row["status"] == "done" and row["exit_code"] == 0
     assert (tmp_path / "out.txt").read_text(encoding="utf-8") == "written-in-cwd"  # 写 cwd 放行
-    assert events == []
+    assert len(events) == 1 and events[0]["kind"] == "reminder"
+    assert events[0]["task"]["status"] == "done" and events[0]["task"]["label"] == "沙箱脚本"
 
 
 @pytest.mark.skipif(not _has_sandbox, reason="需要 macOS sandbox-exec")

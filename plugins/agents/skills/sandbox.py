@@ -225,6 +225,23 @@ class CodeExecSkill(Skill):
             print(f"[agents] 任务 {task_id} 落库失败：{e}", file=sys.stderr)
         _PROCS.pop(task_id, None)
         output = _common._tail_text(log_path, _SYNC_LOG_READ)[-_SYNC_OUTPUT_TAIL:].strip()
+        # 同步收尾也经 emit_event 写 Feed：字段对齐 _common._wait（kind=reminder + task meta），
+        # 底座 _on_plugin_event 凭 task 字段走 feed.add("task", meta)；短脚本与长任务走同一条
+        # 播报路径，用户主屏看到的"任务"卡片来源一致（不在插件里直接调 feed）。
+        label = "沙箱脚本"
+        head = code[:50] + ("…" if len(code) > 50 else "")
+        if timed_out:
+            ev_text = f"⏰ {label}超时已终止：{head}\n{output or '(无输出)'}"
+        elif stopped:
+            ev_text = f"⏹ {label}已停止：{head}"
+        elif status == "done":
+            ev_text = f"✅ {label}完成：{head}\n{output or '(无输出)'}"
+        else:
+            ev_text = f"❌ {label}失败（退出码 {exit_code}）：{head}\n{output or '(无输出)'}"
+        emit = getattr(ctx, "emit_event", None)
+        if emit is not None:  # 测试环境未注入时静默跳过
+            emit({"kind": "reminder", "text": ev_text,
+                  "task": {"id": task_id, "status": status, "label": label, "prompt": code[:120]}})
         if timed_out:
             return ActionResult(success=False,
                                 error=f"沙箱脚本超时被终止（{timeout_sec}s，任务 {task_id}）。"
