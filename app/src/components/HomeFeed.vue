@@ -139,7 +139,7 @@ function onToggleRemember(id: string, e: Event) {
 }
 
 /** 单条快批/拒：调 sendConfirmBatch 单条（remember 按本条勾选）。
- *  乐观出队由 brain.ts 处理；失败回滚把 p 加回 approvals.value（brain.ts 不会再 emit 它）。 */
+ *  乐观出队与失败回滚由 brain.ts 的共享队列统一处理；这里保留局部兜底。 */
 async function decideApproval(p: PendingConfirm, approved: boolean) {
   const remember = rememberOf(p.id);
   try {
@@ -152,7 +152,7 @@ async function decideApproval(p: PendingConfirm, approved: boolean) {
 }
 
 /** 全部批准/拒绝：对选中的项调 sendConfirmBatch（按各条 remember 勾选）。
- *  乐观出队由 brain.ts 处理；失败回滚把被移除的项加回 approvals.value。空选时调用方禁用。 */
+ *  乐观出队与失败回滚由共享队列处理；空选时调用方禁用。 */
 async function batchDecide(approved: boolean) {
   const targets = approvals.value.filter((p) => selectedApprovals.value.has(p.id));
   if (!targets.length) return;
@@ -161,7 +161,7 @@ async function batchDecide(approved: boolean) {
     approved,
     remember: rememberOf(p.id),
   }));
-  // 快照：invoke 失败时把这些项加回 approvals.value（brain.ts _pcRemove 已先于 await 执行）
+  // 局部快照：共享队列会回滚；此处兜底避免订阅链异常时卡片消失。
   const snapshot = targets.slice();
   try {
     await sendConfirmBatch(items);

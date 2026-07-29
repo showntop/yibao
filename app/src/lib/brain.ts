@@ -79,18 +79,17 @@ export function runInput(text: string, surface?: string): Promise<void> {
 
 /** 批量回复确认：一次回 N 条裁决（Task 4 Rust `confirm_batch` 命令）。
  *  items 里 id = confirmation_needed 事件中每条 action.id（攒批场景）。
- *  本窗口作答的卡本地立即出队；其他窗口靠 action_result / error / interrupted 事件出队。 */
+ *  本窗口作答的卡立即从共享队列乐观出队；IPC 失败时恢复，允许用户重试。 */
 export function sendConfirmBatch(
   items: { id: string; approved: boolean; remember?: boolean }[],
 ): Promise<void> {
+  const ids = new Set(items.map((item) => item.id));
+  const removed = _pc.filter((item) => ids.has(item.id));
   for (const it of items) _pcRemove(it.id);
-  return invoke("confirm_batch", { items });
-}
-
-/** 旧单条确认包装（过渡）：Task 6-9 调用方逐步切 batch；保留签名让现有调用方编译过。
- *  remember=true：本会话不再询问这个技能（大脑侧会话级记忆，重启失效）。 */
-export function sendConfirm(confirmationId: string, approved: boolean, remember = false): Promise<void> {
-  return sendConfirmBatch([{ id: confirmationId, approved, remember }]);
+  return invoke<void>("confirm_batch", { items }).catch((error) => {
+    _pcRestore(removed);
+    throw error;
+  });
 }
 
 /** 触发语音输入：sidecar 录音→STT→run→TTS 播报（Plan 4a 最小语音）。
@@ -383,8 +382,8 @@ export async function getDockListOnce(timeoutMs = 3000): Promise<DockListRespons
 }
 
 // ---- 待批准队列（OS 感 §4.5 收件箱 Question 面：连环弹窗的替代）----
-// confirmation_needed 进队；任一窗口 sendConfirm（见上）/ action_result / error 出队；
-// 大脑掉线清空（未答确认随进程死）。HomeChat 的 ConfirmDialog 本来就靠事件自清，两边天然一致。
+// confirmation_needed 进队；任一窗口 sendConfirmBatch / action_result / error 出队；
+// 大脑掉线清空（未答确认随进程死）。大窗只在 HomeFeed 呈现，小窗/面板按 surface 快批。
 
 export interface PendingConfirm {
   id: string; // confirmation_id（= action.id）
@@ -410,6 +409,16 @@ function _pcRemove(id: string): void {
   const n = _pc.filter((p) => p.id !== id);
   if (n.length !== _pc.length) {
     _pc = n;
+    _pcEmit();
+  }
+}
+
+/** IPC 失败时恢复刚才乐观移除的卡；去重避免另一窗口的队列更新造成重复。 */
+function _pcRestore(items: PendingConfirm[]): void {
+  const existing = new Set(_pc.map((item) => item.id));
+  const restore = items.filter((item) => !existing.has(item.id));
+  if (restore.length) {
+    _pc = [...restore, ..._pc];
     _pcEmit();
   }
 }
