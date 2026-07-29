@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 面板窗根组件：标题栏（可拖动 + 面板名 + 关闭）/ 内嵌确认条 / 错误细条 / SchemaPanel 撑满。
+// 面板窗根组件：标题栏（可拖动 + 面板名 + 关闭）/ 单条快批 / 错误细条 / SchemaPanel 撑满。
 // 工作台条（v2 §5）：面板是手、译宝是脑——条上有团子（状态同步）+ 上下文 chip + 输入条，
 // 对话走同一大脑；面板内容作为 focus 上报，注入 LLM 上下文（「这个/它」有解）。
 import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
@@ -11,14 +11,17 @@ import Avatar from "./Avatar.vue";
 import InputBar from "./InputBar.vue";
 import {
   onBrainEvent,
+  onPendingConfirms,
+  openHomeWindow,
   panelAction,
-  sendConfirm,
+  sendConfirmBatch,
   runInput,
   voiceStart,
   interrupt,
   reportPanelContext,
   setSurface,
   type BrainEvent,
+  type PendingConfirm,
   type PanelFocus,
 } from "../lib/brain";
 import { procLabel, procSkip, procResultSuffix } from "../lib/proc";
@@ -32,9 +35,12 @@ const current = ref<{
   data: Record<string, unknown>;
 } | null>(null);
 const errorText = ref(""); // 面板内顶部错误细条（不进对话气泡）
-const pending = ref<{ id: string; skill: string; desc: string } | null>(null); // 内嵌确认条
+const pendingConfirms = ref<PendingConfirm[]>([]);
+const pending = computed(() => pendingConfirms.value[0] ?? null);
+const rememberPending = ref(false);
 let unlisten: (() => void) | null = null;
 let unlistenFocus: (() => void) | null = null;
+let unlistenApprovals: (() => void) | null = null;
 
 // ---- 工作台条状态 ----
 type AvatarState = "idle" | "listen" | "think" | "work" | "say";
@@ -122,15 +128,6 @@ function onEvent(e: BrainEvent) {
         data: e.payload?.data ?? {},
       });
       break;
-    case "confirmation_needed":
-      // 面板 action 触发的 L2+ 确认在面板内解决，不跳宠物窗
-      pending.value = {
-        id: e.confirmation_id ?? "",
-        skill: e.action?.skill_id ?? "",
-        desc: e.action?.description ?? "",
-      };
-      state.value = "idle";
-      break;
     case "action_proposed":
       state.value = "work";
       // 过程行：🔧 技能短标签（use_plugin 跳过——成功有 notice，不重复）
@@ -141,7 +138,6 @@ function onEvent(e: BrainEvent) {
       }
       break;
     case "action_result": {
-      pending.value = null; // 确认流结束（批准路径：执行结果回来了）
       const idx = e.action?.id !== undefined ? procIdx.get(e.action.id) : undefined;
       if (idx !== undefined) {
         // 过程行收尾：✅/❌（失败带 error 摘要）
@@ -217,22 +213,27 @@ function onEvent(e: BrainEvent) {
       scheduleCollapse(4000);
       break;
     case "error":
-      pending.value = null; // 确认流结束（拒绝路径）或执行失败
       errorText.value = e.text ?? "出错了";
       state.value = "idle";
       break;
   }
 }
 
-async function decide(approved: boolean) {
+async function decide(approved: boolean, remember = false) {
   if (!pending.value) return;
   const { id } = pending.value;
-  pending.value = null;
   try {
-    await sendConfirm(id, approved);
+    await sendConfirmBatch([{ id, approved, remember }]);
+    rememberPending.value = false;
   } catch (err) {
     errorText.value = "确认失败：" + String(err);
   }
+}
+
+function openInbox() {
+  void openHomeWindow().catch((err) => {
+    errorText.value = "打开收件箱失败：" + String(err);
+  });
 }
 
 async function onAction(a: { method: string; params: Record<string, unknown> }) {
@@ -304,6 +305,14 @@ const webviewHtml = computed(() => current.value?.webview?.html ?? "");
 
 onMounted(async () => {
   unlisten = await onBrainEvent(onEvent);
+  unlistenApprovals = onPendingConfirms((items) => {
+    pendingConfirms.value = items.filter((item) => item.surface?.startsWith("panel"));
+    if (pendingConfirms.value.length === 0) {
+      rememberPending.value = false;
+    } else {
+      state.value = "idle";
+    }
+  });
   // 首开竞态：panel 事件先于本窗口订阅发出，从 Rust 缓存补拉最近一次面板
   await pullCache();
   // 兜底：窗口再聚焦时若仍是占位页，重拉一次（覆盖旧壳残留窗口等边角）
@@ -314,6 +323,7 @@ onMounted(async () => {
 onUnmounted(() => {
   unlisten?.();
   unlistenFocus?.();
+  unlistenApprovals?.();
   if (collapseTimer !== null) clearTimeout(collapseTimer);
   // 窗口销毁（重载等）也清焦点，避免大脑留着旧上下文
   void reportPanelContext(null).catch(() => {});
@@ -327,11 +337,21 @@ onUnmounted(() => {
       <button class="x" title="关闭" @click="close">×</button>
     </div>
 
-    <div v-if="pending" class="confirm-bar">
-      <span class="c-text">⚠️ {{ pending.skill }}{{ pending.desc ? " · " + pending.desc : "" }}</span>
+    <div v-if="pendingConfirms.length > 1" class="confirm-bar batch-confirm">
+      <span class="c-text"><strong>{{ pendingConfirms.length }} 项待批准，去大窗批量处理</strong></span>
+      <span class="c-btns">
+        <button class="ok" @click="openInbox">打开收件箱</button>
+      </span>
+    </div>
+    <div v-else-if="pending" class="confirm-bar">
+      <span class="c-text">⚠️ {{ pending.label || pending.skill }}{{ pending.desc ? " · " + pending.desc : "" }}</span>
+      <label class="c-remember">
+        <input v-model="rememberPending" type="checkbox" />
+        本会话不再询问
+      </label>
       <span class="c-btns">
         <button class="deny" @click="decide(false)">拒绝</button>
-        <button class="ok" @click="decide(true)">允许</button>
+        <button class="ok" @click="decide(true, rememberPending)">允许</button>
       </span>
     </div>
 
@@ -444,7 +464,24 @@ onUnmounted(() => {
   font-size: var(--yb-fs-md);
 }
 .c-text {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
   line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.c-remember {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--yb-text-dim);
+  font-size: var(--yb-fs-sm);
+  white-space: nowrap;
+}
+.c-remember input {
+  margin: 0;
+  accent-color: var(--yb-accent);
 }
 .c-btns {
   display: flex;
