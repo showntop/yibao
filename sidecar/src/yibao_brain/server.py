@@ -74,6 +74,7 @@ def build_loop(
     confirmer=None,
     history_file: str | None = None,
     emit_event=None,
+    feed=None,
 ) -> AgentLoop:
     real_a11y = use_real and a11y_enabled() and sys.platform == "darwin"
     reg = skills_factory() if skills_factory else SkillRegistry()
@@ -154,6 +155,7 @@ def build_loop(
         history=ConversationHistory(hist) if hist else None,
         focus_provider=lambda: _FOCUS["value"],
         active_plugins=active_plugins,
+        feed=feed,
     )
     if use_real and not skills_factory:
         agent.reminder_store = reminder_store  # serve 的调度循环经它触发提醒
@@ -485,6 +487,7 @@ async def serve_async(
     agent = build_loop(
         read_msg, use_real, db_path, provider, skills_factory, confirmer=confirmer,
         emit_event=lambda ev: ai_loop.call_soon_threadsafe(_on_plugin_event, ev),
+        feed=feed,
     )
     # 免确认集合接到闸门：命中后 decide 直接 AUTO（连 confirmation_needed 都不发）
     agent.invoker.gate.session_allowed = remembered_confirm

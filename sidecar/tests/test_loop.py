@@ -713,3 +713,60 @@ def test_focus_other_item_does_not_redirect(tmp_path, monkeypatch):
     events = list(loop.run("改一下"))
     pe = next(e for e in events if e.kind == "panel")
     assert pe.payload["panel"] == "w:detail"
+
+
+# ---------- Task 4：新记忆按小时合并写 Feed ----------
+
+
+class _FakeFeed:
+    """记录 append_hourly 调用（不落库）；用于断言 loop 在新记忆时是否写 Feed。"""
+
+    def __init__(self):
+        self.calls: list[str] = []
+
+    def append_hourly(self, kind, text, meta, hour_key):
+        self.calls.append("append_hourly")
+
+
+class _NoopMem(FakeMemory):
+    """记忆 add 永远返回 False（去重/降级场景）——不应触发 Feed 写入。"""
+
+    def add(self, text, user_id):
+        return False
+
+
+def _empty_reg() -> SkillRegistry:
+    """空技能注册表：无工具调用场景下给 AgentLoop 占位。"""
+    return SkillRegistry()
+
+
+def test_loop_writes_feed_when_memory_added(tmp_path):
+    """memory.add 返回 True（新增事实）→ 按当前小时写一条「记住了：…」Feed。"""
+    feed = _FakeFeed()
+    loop = AgentLoop(
+        provider=FakeProvider(text="好的"),
+        skills=_empty_reg(),
+        classifier=RiskClassifier(),
+        gate=Gate(GatePolicy(auto_below_or_equal=RiskLevel.L1_LOW)),
+        memory=FakeMemory(),
+        log=AuditLog(tmp_path / "a.db"),
+        feed=feed,
+    )
+    list(loop.run("我喜欢美式", surface="pet"))
+    assert feed.calls == ["append_hourly"]
+
+
+def test_loop_skips_feed_when_memory_noop(tmp_path):
+    """memory.add 返回 False（去重/降级）→ 不写 Feed，避免污染主屏。"""
+    feed = _FakeFeed()
+    loop = AgentLoop(
+        provider=FakeProvider(text="嗯嗯"),
+        skills=_empty_reg(),
+        classifier=RiskClassifier(),
+        gate=Gate(GatePolicy(auto_below_or_equal=RiskLevel.L1_LOW)),
+        memory=_NoopMem(),
+        log=AuditLog(tmp_path / "a.db"),
+        feed=feed,
+    )
+    list(loop.run("嗨", surface="pet"))
+    assert feed.calls == []

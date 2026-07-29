@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import AsyncIterator, Callable, Iterator
 from datetime import datetime
 
@@ -62,6 +63,7 @@ class AgentLoop:
         history: ConversationHistory | None = None,
         focus_provider=None,
         active_plugins: set | None = None,
+        feed=None,
     ):
         self.provider = provider
         self.host = host
@@ -71,6 +73,9 @@ class AgentLoop:
         self.user_id = user_id
         self.max_steps = max_steps
         self.history = history
+        # 主屏 Feed 存储（Task 4）：新记忆成立时按小时合并写一条「记住了：…」；
+        # None=测试/未接入，旧路径（不写 Feed）保持不变。
+        self.feed = feed
         # 面板焦点（v2 §5 focus）：() -> {"plugin","panel","item"} | None，由壳侧 panel_context 维护
         self.focus_provider = focus_provider
         # 路由式暴露（§12-2）：None=全量暴露（测试/兼容）；集合=仅暴露已激活插件（use_plugin 激活）
@@ -217,7 +222,12 @@ class AgentLoop:
         for _ in range(self.max_steps):
             resp: LLMResponse = self.provider.chat(messages, tools=self._visible_tools())
             if not resp.tool_calls:
-                self.memory.add(user_text, self.user_id)
+                if self.memory.add(user_text, self.user_id) and self.feed is not None:
+                    h = int(time.time()) // 3600 * 3600
+                    self.feed.append_hourly(
+                        "event", f"记住了：{user_text[:40]}",
+                        {"type": "memory", "hour": h}, h,
+                    )
                 if self.history:
                     span = messages[run_start:] + [{"role": "assistant", "content": resp.text}]
                     span[0] = _tag_surface(span[0], surface)
@@ -327,7 +337,13 @@ class AgentLoop:
                     delta_acc.extend(delta.tool_call_deltas)
             tool_calls = merge_tool_call_deltas(delta_acc)
             if not tool_calls:
-                await _offload(self.memory.add, user_text, self.user_id)
+                added = await _offload(self.memory.add, user_text, self.user_id)
+                if added and self.feed is not None:
+                    h = int(time.time()) // 3600 * 3600
+                    self.feed.append_hourly(
+                        "event", f"记住了：{user_text[:40]}",
+                        {"type": "memory", "hour": h}, h,
+                    )
                 if self.history:
                     span = messages[run_start:] + [{"role": "assistant", "content": text_buf}]
                     span[0] = _tag_surface(span[0], surface)
