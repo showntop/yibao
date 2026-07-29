@@ -324,3 +324,81 @@ def test_lazy_memory_buffer_cap():
     gate.set()
     assert _wait(lambda: m.ready)
     assert real.recall("m", "u") == ["m0", "m1"]  # 只回放前 buffer_max 条
+
+
+# ---------- add 返回是否新增事实（Task 3：Feed 主屏化铺路）----------
+
+
+def test_fake_memory_add_returns_true(tmp_path):
+    from yibao_brain.memory import FakeMemory
+    m = FakeMemory()
+    assert m.add("x", "u") is True
+
+
+def test_mem0_add_returns_whether_added(monkeypatch):
+    from yibao_brain.memory import Mem0Memory
+    m = Mem0Memory.__new__(Mem0Memory)
+    class _FakeM:
+        def add(self, messages, user_id): return {"results": [{"event": "ADD"}]}
+    m._m = _FakeM()
+    assert m.add("x", "u") is True
+    class _FakeM2:
+        def add(self, messages, user_id): return {"results": []}
+    m._m = _FakeM2()
+    assert m.add("x", "u") is False
+
+
+def test_mem0_add_noop_event_returns_false(monkeypatch):
+    # NOOP/UPDATE（去重/更新）不算新增事实
+    from yibao_brain.memory import Mem0Memory
+    m = Mem0Memory.__new__(Mem0Memory)
+    class _FakeM:
+        def add(self, messages, user_id): return {"results": [{"event": "NOOP"}]}
+    m._m = _FakeM()
+    assert m.add("x", "u") is False
+
+
+def test_mem0_add_malformed_result_returns_false(monkeypatch):
+    # 返回结构异常/抛异常时安全降级为 False，不阻断回路
+    from yibao_brain.memory import Mem0Memory
+    m = Mem0Memory.__new__(Mem0Memory)
+    class _BoomM:
+        def add(self, messages, user_id): raise RuntimeError("boom")
+    m._m = _BoomM()
+    assert m.add("x", "u") is False
+
+
+def test_lazy_add_returns_false_when_buffered():
+    # 未就绪进缓冲：返回 False（非新增）
+    import threading
+    from yibao_brain.memory import LazyMem0Memory
+
+    gate = threading.Event()
+    m = LazyMem0Memory(factory=lambda: gate.wait(5) or FakeMemory())
+    try:
+        assert m.add("x", "u") is False
+        assert not m.ready
+    finally:
+        gate.set()
+
+
+def test_lazy_add_returns_false_when_degraded():
+    from yibao_brain.memory import LazyMem0Memory
+
+    def factory():
+        raise RuntimeError("no torch")
+
+    m = LazyMem0Memory(factory=factory, init_attempts=1)
+    assert _wait(lambda: m.failed)
+    assert m.add("y", "u") is False
+
+
+def test_lazy_add_propagates_bool_when_ready():
+    # 就绪后透传 real.add 的 bool（True）
+    from yibao_brain.memory import LazyMem0Memory
+
+    real = FakeMemory()
+    m = LazyMem0Memory(factory=lambda: real)
+    assert _wait(lambda: m.ready)
+    assert m.add("新事实", "u") is True
+    assert "新事实" in real.recall("新", "u")

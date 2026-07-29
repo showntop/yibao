@@ -20,7 +20,12 @@ logging.getLogger("mem0").setLevel(logging.ERROR)
 
 class Memory(ABC):
     @abstractmethod
-    def add(self, text: str, user_id: str) -> None: ...
+    def add(self, text: str, user_id: str) -> bool:
+        """记录一条事实：True=新增事实，False=无新增/去重/降级。
+
+        Task 3：让调用方（loop）能按「是否真的新增了记忆」决定要不要写 Feed，
+        而不是每次 add 后都写一条（去重/降级场景会污染 Feed）。
+        """
 
     @abstractmethod
     def recall(self, query: str, user_id: str) -> list[str]: ...
@@ -55,8 +60,9 @@ class FakeMemory(Memory):
     def __init__(self) -> None:
         self._by_user: dict[str, list[str]] = {}
 
-    def add(self, text: str, user_id: str) -> None:
+    def add(self, text: str, user_id: str) -> bool:
         self._by_user.setdefault(user_id, []).append(text)
+        return True
 
     def recall(self, query: str, user_id: str) -> list[str]:
         items = self._by_user.get(user_id, [])
@@ -130,8 +136,16 @@ class Mem0Memory(Memory):
         }
         self._m = _Mem0.from_config(cfg)
 
-    def add(self, text: str, user_id: str) -> None:
-        self._m.add(messages=[{"role": "user", "content": text}], user_id=user_id)
+    def add(self, text: str, user_id: str) -> bool:
+        # mem0 返回 {"results":[{"event":"ADD"/"NOOP"/"UPDATE"}, ...]}：
+        # 仅当含 ADD 事件才算新增事实（NOOP=去重、UPDATE=改写都不算），Feed 才值得写。
+        # self._m.add 抛异常或返回结构异常时降级为 False，不阻断回路（与 recall 一致）。
+        try:
+            res = self._m.add(messages=[{"role": "user", "content": text}], user_id=user_id)
+            results = (res or {}).get("results", []) if isinstance(res, dict) else []
+            return any(isinstance(it, dict) and it.get("event") == "ADD" for it in results)
+        except Exception:
+            return False
 
     def recall(self, query: str, user_id: str) -> list[str]:
         try:
@@ -248,14 +262,16 @@ class LazyMem0Memory(Memory):
                 pass
         print("[yibao] mem0 后台就绪", file=sys.stderr)
 
-    def add(self, text: str, user_id: str) -> None:
+    def add(self, text: str, user_id: str) -> bool:
         with self._lock:
             real = self._real
             if real is None:
+                # 未就绪：进缓冲（待后台回放）或已降级（永久丢弃）都不算新增事实，
+                # 调用方据此跳过 Feed 写入，避免缓冲被回放成旧事实时重复/错时推送。
                 if not self._failed and len(self._buf) < self._buf_max:
                     self._buf.append((text, user_id))
-                return
-        real.add(text, user_id)
+                return False
+        return real.add(text, user_id)
 
     def recall(self, query: str, user_id: str) -> list[str]:
         with self._lock:
