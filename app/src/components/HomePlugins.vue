@@ -13,7 +13,6 @@ import InputBar from "./InputBar.vue";
 import {
   onBrainEvent,
   panelAction,
-  sendConfirm,
   runInput,
   voiceStart,
   interrupt,
@@ -63,7 +62,6 @@ const current = ref<{
   data: Record<string, unknown>;
 } | null>(null);
 const errorText = ref(""); // 面板内顶部错误细条（不进对话气泡）
-const pending = ref<{ id: string; skill: string; desc: string } | null>(null); // 内嵌确认条
 let unlisten: (() => void) | null = null;
 
 // ---- 工作台条状态 ----
@@ -165,15 +163,6 @@ function onEvent(e: BrainEvent) {
         data: e.payload?.data ?? {},
       });
       break;
-    case "confirmation_needed":
-      // 面板 action 触发的 L2+ 确认在面板内解决，不跳对话页
-      pending.value = {
-        id: e.confirmation_id ?? "",
-        skill: e.action?.skill_id ?? "",
-        desc: e.action?.description ?? "",
-      };
-      state.value = "idle";
-      break;
     case "action_proposed":
       state.value = "work";
       // 过程行：🔧 技能短标签（use_plugin 跳过——成功有 notice，不重复）
@@ -184,8 +173,7 @@ function onEvent(e: BrainEvent) {
       }
       break;
     case "action_result": {
-      // 确认流结束（批准路径：执行结果回来了）；直调失败在此亮出（不是 error 事件，否则点了没反应）
-      pending.value = null;
+      // 直调失败在此亮出（不是 error 事件，否则点了没反应）
       const idx = e.action?.id !== undefined ? procIdx.get(e.action.id) : undefined;
       if (idx !== undefined) {
         // 过程行收尾：✅/❌（失败带 error 摘要）
@@ -260,21 +248,9 @@ function onEvent(e: BrainEvent) {
       scheduleCollapse(4000);
       break;
     case "error":
-      pending.value = null; // 确认流结束（拒绝路径）或执行失败
       errorText.value = e.text ?? "出错了";
       state.value = "idle";
       break;
-  }
-}
-
-async function decide(approved: boolean) {
-  if (!pending.value) return;
-  const { id } = pending.value;
-  pending.value = null;
-  try {
-    await sendConfirm(id, approved);
-  } catch (err) {
-    errorText.value = "确认失败：" + String(err);
   }
 }
 
@@ -374,16 +350,8 @@ onUnmounted(() => {
       <div v-if="!plugins.length && !pluginErr" class="pl-empty">没有发现插件</div>
     </div>
 
-    <!-- 面板视图：确认条 / 错误细条 / 面板内容 / 工作台条（与浮窗同款） -->
+    <!-- 面板视图：确认统一进主屏收件箱；这里只保留错误细条 / 面板内容 / 工作台条 -->
     <template v-else>
-      <div v-if="pending" class="confirm-bar">
-        <span class="c-text">⚠️ {{ pending.skill }}{{ pending.desc ? " · " + pending.desc : "" }}</span>
-        <span class="c-btns">
-          <button class="deny" @click="decide(false)">拒绝</button>
-          <button class="ok" @click="decide(true)">允许</button>
-        </span>
-      </div>
-
       <div v-if="errorText" class="error-bar">⚠️ {{ errorText }}</div>
 
       <div class="content">
@@ -533,42 +501,6 @@ onUnmounted(() => {
 }
 
 /* ---- 面板视图（与浮窗同款） ---- */
-.confirm-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--yb-space-2);
-  margin: 0 var(--yb-space-2) var(--yb-space-2);
-  padding: var(--yb-space-2) var(--yb-space-3);
-  border-radius: var(--yb-radius-md);
-  background: var(--yb-surface-solid);
-  border: 1px solid var(--yb-danger-soft);
-  font-size: var(--yb-fs-md);
-}
-.c-text {
-  line-height: 1.4;
-}
-.c-btns {
-  display: flex;
-  gap: var(--yb-space-2);
-  flex-shrink: 0;
-}
-.c-btns button {
-  padding: 5px 14px;
-  border-radius: var(--yb-radius-sm);
-  border: none;
-  cursor: pointer;
-  font-size: var(--yb-fs-md);
-  font-weight: 500;
-}
-.ok {
-  background: var(--yb-accent);
-  color: #fff;
-}
-.deny {
-  background: var(--yb-btn-neutral);
-  color: var(--yb-text-dim);
-}
 .error-bar {
   margin: 0 var(--yb-space-2) var(--yb-space-2);
   padding: 6px var(--yb-space-3);

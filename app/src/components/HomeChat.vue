@@ -7,7 +7,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import Avatar from "./Avatar.vue";
 import InputBar from "./InputBar.vue";
-import ConfirmDialog from "./ConfirmDialog.vue";
 import Bubble from "./Bubble.vue";
 import PermissionsBanner from "./PermissionsBanner.vue";
 import SetupWizard from "./SetupWizard.vue";
@@ -17,7 +16,6 @@ import {
   onBrainPermissions,
   onPanelClosed,
   runInput,
-  sendConfirm,
   voiceStart,
   interrupt,
   type BrainEvent,
@@ -40,7 +38,6 @@ defineProps<{ draft?: string }>();
 const state = ref<AvatarState>("idle");
 const bubbles = ref<BubbleMsg[]>([]);
 const streamingIdx = ref<number | null>(null); // 正在接收 chunk 的 bubble 下标
-const pending = ref<{ id: string; skill: string; desc: string } | null>(null);
 const brainDown = ref(false); // 大脑掉线/重启中（守护在恢复）
 const panelOpen = ref(false); // 面板协作会话进行中（关联气泡只插一次）
 const perms = ref<BrainPermissions | null>(null); // macOS 权限状态（null=未收到）
@@ -116,17 +113,8 @@ function onEvent(e: BrainEvent) {
         });
       }
       break;
-    case "confirmation_needed":
-      state.value = "idle";
-      pending.value = {
-        id: e.confirmation_id ?? "",
-        skill: e.action?.skill_id ?? "",
-        desc: e.action?.description ?? "",
-      };
-      break;
     case "action_result": {
       // 确认可能在别处作答，结果回来即收尾（成功短闪 400ms）
-      pending.value = null;
       flashValence("success");
       // 过程行收尾：✅/❌ + 结果存好（点「详情」展开看参数/输出）
       const idx = e.action?.id !== undefined ? procIdx.get(e.action.id) : undefined;
@@ -185,7 +173,6 @@ function onEvent(e: BrainEvent) {
     case "error":
       state.value = "idle";
       streamingIdx.value = null;
-      pending.value = null; // 确认被拒（任一窗口作答）或出错
       bubbles.value.push({ role: "ai", text: "⚠️ " + (e.text ?? "出错了") });
       flashValence("error");
       break;
@@ -239,7 +226,6 @@ function onStatus(m: BrainStatusMsg) {
   // down / restarting：复位界面状态（进行中的 run/确认已随进程丢失）
   state.value = "idle";
   streamingIdx.value = null;
-  pending.value = null;
   if (!brainDown.value) {
     brainDown.value = true;
     const why = m.detail ? `（${m.detail}）` : "";
@@ -255,18 +241,6 @@ async function submit(text: string) {
   } catch (err) {
     bubbles.value.push({ role: "ai", text: "⚠️ 发送失败：" + String(err) });
     state.value = "idle";
-  }
-}
-
-async function decide(approved: boolean, remember = false) {
-  if (!pending.value) return;
-  const { id } = pending.value;
-  pending.value = null;
-  state.value = "think";
-  try {
-    await sendConfirm(id, approved, remember);
-  } catch (err) {
-    bubbles.value.push({ role: "ai", text: "⚠️ 确认失败：" + String(err) });
   }
 }
 
@@ -374,14 +348,7 @@ onUnmounted(() => {
     </div>
 
     <div class="input-slot">
-      <InputBar v-if="!pending" :busy="busy" :listening="state === 'listen'" :draft="draft" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
-      <ConfirmDialog
-        v-else
-        :skill="pending.skill"
-        :desc="pending.desc"
-        @approve="(remember) => decide(true, remember)"
-        @deny="() => decide(false)"
-      />
+      <InputBar :busy="busy" :listening="state === 'listen'" :draft="draft" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
     </div>
     </template>
   </div>
