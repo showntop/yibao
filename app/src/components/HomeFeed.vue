@@ -16,7 +16,7 @@ import {
   onPendingConfirms,
   panelAction,
   runInput,
-  sendConfirm,
+  sendConfirmBatch,
   markFeedRead,
   markAllFeedRead,
   setDockPin,
@@ -92,10 +92,85 @@ async function markAllRead() {
 }
 
 // ---- 待批准队列（OS 感 §4.5 收件箱 Question 面：高风险操作排队一键批/拒） ----
+// 收件箱：多选 + 顶部一键批/拒 + 每条独立 remember。批量为主，单条快批为辅。
 const approvals = ref<PendingConfirm[]>([]);
+// 多选集合：N>1 时默认全选（鼓励批量）；N<=1 留空走单条快批按钮。
+const selectedApprovals = ref<Set<string>>(new Set());
+// 每条独立 remember（默认 false；勾选后该技能会话内不再询问——大脑侧会话级记忆）
+const rememberMap = ref<Record<string, boolean>>({});
 
-function decideApproval(p: PendingConfirm, approved: boolean) {
-  void sendConfirm(p.id, approved).catch(() => {});
+const selectedCount = computed(() => selectedApprovals.value.size);
+
+/** brain.ts sendConfirmBatch 内部乐观出队（_pcRemove → emit → approvals 替换）后校正默认选择：
+ *  N>1 全选鼓励批量；N<=1 清空走单条快批。同时清理 rememberMap 陈旧项。 */
+watch(
+  () => approvals.value,
+  (l) => {
+    if (l.length > 1) {
+      selectedApprovals.value = new Set(l.map((p) => p.id));
+    } else {
+      selectedApprovals.value = new Set();
+    }
+    const live = new Set(l.map((p) => p.id));
+    for (const k of Object.keys(rememberMap.value)) {
+      if (!live.has(k)) delete rememberMap.value[k];
+    }
+  },
+);
+
+function isSelected(id: string): boolean {
+  return selectedApprovals.value.has(id);
+}
+
+function onToggleSelect(id: string, e: Event) {
+  const checked = (e.target as HTMLInputElement).checked;
+  const next = new Set(selectedApprovals.value);
+  if (checked) next.add(id);
+  else next.delete(id);
+  selectedApprovals.value = next;
+}
+
+function rememberOf(id: string): boolean {
+  return rememberMap.value[id] ?? false;
+}
+
+function onToggleRemember(id: string, e: Event) {
+  rememberMap.value = { ...rememberMap.value, [id]: (e.target as HTMLInputElement).checked };
+}
+
+/** 单条快批/拒：调 sendConfirmBatch 单条（remember 按本条勾选）。
+ *  乐观出队由 brain.ts 处理；失败回滚把 p 加回 approvals.value（brain.ts 不会再 emit 它）。 */
+async function decideApproval(p: PendingConfirm, approved: boolean) {
+  const remember = rememberOf(p.id);
+  try {
+    await sendConfirmBatch([{ id: p.id, approved, remember }]);
+  } catch {
+    if (!approvals.value.some((x) => x.id === p.id)) {
+      approvals.value = [...approvals.value, p];
+    }
+  }
+}
+
+/** 全部批准/拒绝：对选中的项调 sendConfirmBatch（按各条 remember 勾选）。
+ *  乐观出队由 brain.ts 处理；失败回滚把被移除的项加回 approvals.value。空选时调用方禁用。 */
+async function batchDecide(approved: boolean) {
+  const targets = approvals.value.filter((p) => selectedApprovals.value.has(p.id));
+  if (!targets.length) return;
+  const items = targets.map((p) => ({
+    id: p.id,
+    approved,
+    remember: rememberOf(p.id),
+  }));
+  // 快照：invoke 失败时把这些项加回 approvals.value（brain.ts _pcRemove 已先于 await 执行）
+  const snapshot = targets.slice();
+  try {
+    await sendConfirmBatch(items);
+    targets.forEach((p) => delete rememberMap.value[p.id]);
+  } catch {
+    const existing = new Set(approvals.value.map((p) => p.id));
+    const restore = snapshot.filter((p) => !existing.has(p.id));
+    if (restore.length) approvals.value = [...approvals.value, ...restore];
+  }
 }
 
 // ---- 主屏 widget：插件一瞥卡（schema 协议的 widget 类型，展示型；交互去全面板） ----
@@ -251,14 +326,49 @@ onUnmounted(() => {
     </header>
 
     <div class="scroll">
-      <!-- 待批准：它要做的高风险操作排队等你一键批/拒（收件箱 Question 面，替代连环弹窗） -->
+      <!-- 待批准：它要做的高风险操作排队等你一键批/拒（收件箱 Question 面，替代连环弹窗）。
+           N>1：顶部一键全批/全拒 + 每条多选；N=1：直接单条快批。每条可勾 remember 会话内免询问。 -->
       <section v-if="approvals.length" class="sec sec-approvals">
-        <div class="sec-title">等你处理 · {{ approvals.length }}</div>
-        <div v-for="p in approvals" :key="p.id" class="a-card">
+        <div class="sec-title inbox-head">
+          <span>等你处理 · {{ approvals.length }}</span>
+          <div v-if="approvals.length > 1" class="batch-btns">
+            <button
+              class="batch-no"
+              :disabled="selectedCount === 0"
+              @click="batchDecide(false)"
+            >全部拒绝{{ selectedCount ? ` (${selectedCount})` : "" }}</button>
+            <button
+              class="batch-yes"
+              :disabled="selectedCount === 0"
+              @click="batchDecide(true)"
+            >全部批准{{ selectedCount ? ` (${selectedCount})` : "" }}</button>
+          </div>
+        </div>
+        <div
+          v-for="p in approvals"
+          :key="p.id"
+          class="a-card"
+          :class="{ selected: approvals.length > 1 && isSelected(p.id) }"
+        >
+          <label v-if="approvals.length > 1" class="a-check" title="选中后可一键批量">
+            <input
+              type="checkbox"
+              :checked="isSelected(p.id)"
+              @change="onToggleSelect(p.id, $event)"
+            />
+          </label>
           <div class="a-info">
             <span class="a-label">🔐 {{ p.label || p.skill }}</span>
             <span class="a-desc">{{ p.desc || p.skill }}</span>
           </div>
+          <label class="a-remember" title="勾选后该技能在本会话内不再询问">
+            <input
+              type="checkbox"
+              :checked="rememberOf(p.id)"
+              @change="onToggleRemember(p.id, $event)"
+            />
+            <span>记住</span>
+          </label>
           <div class="a-btns">
             <button class="a-no" @click="decideApproval(p, false)">拒绝</button>
             <button class="a-yes" @click="decideApproval(p, true)">批准</button>
@@ -380,6 +490,48 @@ onUnmounted(() => {
 .sec-approvals .sec-title {
   color: #b7791f;
 }
+/* 收件箱头：标题 + 顶部一键全批/全拒（仅 N>1 出现） */
+.inbox-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--yb-space-2);
+}
+.batch-btns {
+  display: flex;
+  gap: var(--yb-space-2);
+}
+.batch-yes,
+.batch-no {
+  padding: 3px var(--yb-space-2);
+  border-radius: var(--yb-radius-lg);
+  font-size: var(--yb-fs-sm);
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.batch-yes {
+  border: none;
+  background: var(--yb-accent);
+  color: #fff;
+}
+.batch-yes:hover:not(:disabled) {
+  background: var(--yb-accent-deep);
+}
+.batch-no {
+  border: 1px solid var(--yb-surface-border);
+  background: transparent;
+  color: var(--yb-text-dim);
+}
+.batch-no:hover:not(:disabled) {
+  color: var(--yb-danger);
+  border-color: var(--yb-danger);
+}
+.batch-yes:disabled,
+.batch-no:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 .a-card {
   display: flex;
   align-items: center;
@@ -389,6 +541,24 @@ onUnmounted(() => {
   border: 1px solid rgba(183, 121, 31, 0.35);
   border-radius: 14px;
   background: rgba(255, 193, 99, 0.14);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+/* 选中态：accent 描边强调 */
+.a-card.selected {
+  border-color: var(--yb-accent);
+  background: rgba(255, 193, 99, 0.22);
+}
+/* 多选 checkbox（仅 N>1 出现） */
+.a-check {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+.a-check input {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
 }
 .a-info {
   flex: 1;
@@ -413,6 +583,25 @@ onUnmounted(() => {
   flex-shrink: 0;
   display: flex;
   gap: var(--yb-space-2);
+}
+/* remember 勾选框：会话内免询问，每条独立 */
+.a-remember {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--yb-fs-sm);
+  color: var(--yb-text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+.a-remember input {
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+.a-remember:hover {
+  color: var(--yb-text);
 }
 .a-yes,
 .a-no {
