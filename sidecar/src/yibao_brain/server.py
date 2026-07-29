@@ -22,7 +22,7 @@ from .ipc import Action, Event, RiskLevel
 from .llm import FakeProvider, GLMProvider, ToolCall
 from .loop import AgentLoop, _offload
 from .memory import FakeMemory, LazyMem0Memory
-from .plugins import LlmChat, get_api, get_mem_namespaces, get_widgets, panel_payload
+from .plugins import LlmChat, get_api, get_mem_namespaces, get_plugin_summaries, get_widgets, panel_payload
 from .safety import Decision, Gate, GatePolicy, RiskClassifier
 from .skills import EchoSkill, SkillRegistry
 from .skills_composite import register_composite_skills
@@ -379,6 +379,61 @@ async def _dispatch_reminder(r: dict, *, settings: dict, feed, history, voice,
         except Exception as e:
             print(f"[yibao] 提醒播报失败：{e}", file=sys.stderr)
         write_msg({"type": "event", "surface": "pet", "event": {"kind": "speaking_done"}})
+
+
+# ---------- 主屏 Dock 组装（OS 感 §5：固定优先 + 频率补齐，上限 5） ----------
+
+# Dock 最大条目数：pinned + 频率补齐合计上限。写入侧（set_dock_pin）也以此 enforce，
+# 避免配置层（config.save_settings）散落校验。
+_DOCK_MAX = 5
+
+
+def _dock_list(log, plugins: list[dict]) -> list[dict]:
+    """主屏 Dock 列表：pinned 优先（保序、上限 _DOCK_MAX）+ 未固定按调用频次降序补齐；
+    全空（无 pinned 且无任何频次）退化为字母序前 _DOCK_MAX。每项带 pinned 标记。
+
+    log: AuditLog 实例（取 plugin_call_counts；None 时按零频次处理）。
+    plugins: 已加载插件摘要 [{id, name}, ...]（serve_async 内来自 get_plugin_summaries）。
+    已固定但插件已卸载的 id 仍保留（name 退化为 id），让用户能看到并主动取消固定。
+    """
+    pinned_raw = list(load_settings().get("dock_pinned") or [])
+    # enforce 上限（脏数据/旧上限放宽的兜底）：写入侧已拦，这里再防一道展示溢出
+    pinned: list[str] = []
+    for pid in pinned_raw:
+        pid = str(pid).strip()
+        if pid and pid not in pinned:  # 去空、去重
+            pinned.append(pid)
+    pinned = pinned[:_DOCK_MAX]
+
+    try:
+        counts = log.plugin_call_counts() if log is not None else {}
+    except Exception:
+        counts = {}  # audit 读失败不拖垮 dock 组装
+
+    by_id = {p["id"]: p.get("name", p["id"]) for p in plugins}
+    dock = [{"id": pid, "name": by_id.get(pid, pid), "pinned": True} for pid in pinned]
+    pinned_set = {pid for pid in pinned}
+
+    unpinned = [p for p in plugins if p["id"] not in pinned_set]
+    # 频次降序；同频次按 name 升序保稳定（避免依赖 dict 迭代序）
+    unpinned.sort(key=lambda p: (-counts.get(p["id"], 0), p.get("name", p["id"])))
+    for p in unpinned:
+        if len(dock) >= _DOCK_MAX:
+            break
+        dock.append({"id": p["id"], "name": p.get("name", p["id"]), "pinned": False})
+
+    if not dock and plugins:
+        # 全空退化：无固定、无任何频次数据 → 字母序前 _DOCK_MAX（稳定默认展示）
+        alpha = sorted(plugins, key=lambda p: p.get("name", p["id"]))[:_DOCK_MAX]
+        dock = [{"id": p["id"], "name": p.get("name", p["id"]), "pinned": False}
+                for p in alpha]
+    return dock
+
+
+def _plugin_summaries_list() -> list[dict]:
+    """get_plugin_summaries → [{id, name}, ...]（_dock_list 与 IPC 共用）。"""
+    return [{"id": pid, "name": info.get("name") or pid}
+            for pid, info in get_plugin_summaries().items()]
 
 
 async def serve_async(
@@ -1005,6 +1060,41 @@ async def serve_async(
                 except Exception as e:
                     print(f"[yibao] 设置保存失败：{e}", file=sys.stderr)
             write_msg({"type": "settings", "values": dict(settings)})
+        elif rtype == "dock_list":
+            # 主屏 Dock 查询：pinned 优先 + 频率补齐（详见 _dock_list）
+            write_msg({"type": "dock_list", "dock": _dock_list(agent.log, _plugin_summaries_list())})
+        elif rtype == "set_dock_pin":
+            # 主屏 Dock 固定/取消固定：改 settings.dock_pinned，写入侧 enforce 上限 _DOCK_MAX
+            pid = str(msg.get("pid") or "").strip()
+            on = bool(msg.get("on"))
+            cur_list = list(load_settings().get("dock_pinned") or [])
+            # 去重去空（脏数据兜底）
+            seen: set[str] = set()
+            cleaned = []
+            for x in cur_list:
+                xs = str(x).strip()
+                if xs and xs not in seen:
+                    seen.add(xs)
+                    cleaned.append(xs)
+            cur_list = cleaned
+            ok = True
+            if on:
+                if pid and pid not in seen:
+                    if len(cur_list) >= _DOCK_MAX:
+                        ok = False  # 超上限拒绝（config 层不校验长度，这里拦）
+                    else:
+                        cur_list.append(pid)
+            else:
+                cur_list = [x for x in cur_list if x != pid]
+            if ok and pid:
+                try:
+                    save_settings({"dock_pinned": cur_list})
+                    settings["dock_pinned"] = list(cur_list)
+                except Exception as e:
+                    print(f"[yibao] dock_pinned 写入失败：{e}", file=sys.stderr)
+                    ok = False
+            write_msg({"type": "dock_pin_set", "pid": pid, "ok": ok,
+                       "dock": _dock_list(agent.log, _plugin_summaries_list())})
         elif rtype == "perception_list":
             if pstore is None:
                 write_msg({"type": "perception", "items": [], "sources": [], "available": False})

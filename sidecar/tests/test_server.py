@@ -1329,3 +1329,245 @@ def test_serve_async_feed_mark_all_read(tmp_path):
     feeds = [m for m in out if m["type"] == "feed"]
     assert len(feeds) == 1
     assert feeds[0]["stats"]["unread"] == 0
+
+
+# ---------- Dock 组装（固定 + 频率，Task 8）----------
+
+
+def _seed_audit_calls(db_path, counts: dict[str, int]) -> None:
+    """直接往 audit.db 的 actions 表插若干行（按 plugin id 指定次数）。
+    skill_id 用 `<plugin>.x` 形式以匹配 plugin_call_counts 的前缀解析。
+    先经 AuditLog 建表（避免 raw sqlite 撞「no such table」）。"""
+    from yibao_brain.audit import AuditLog
+
+    log = AuditLog(str(db_path))
+    try:
+        for pid, n in counts.items():
+            for _ in range(n):
+                log.conn.execute(
+                    "INSERT INTO actions (skill_id, success) VALUES (?, 1)",
+                    (f"{pid}.x",),
+                )
+        log.conn.commit()
+    finally:
+        log.close()
+
+
+def test_dock_list_pinned_first_then_frequency(tmp_path, monkeypatch):
+    """pinned 在前（保序），未固定按调用频次降序补齐；零频次的排最后。"""
+    from yibao_brain.audit import AuditLog
+    from yibao_brain.server import _dock_list
+
+    log = AuditLog(str(tmp_path / "a.db"))
+    _seed_audit_calls(tmp_path / "a.db", {"notes": 5, "zimeiti": 3, "forge": 1})
+    monkeypatch.setattr("yibao_brain.server.load_settings",
+                        lambda: {"dock_pinned": ["forge"]})
+
+    plugins = [
+        {"id": "agents", "name": "Agents"},
+        {"id": "forge", "name": "Forge"},
+        {"id": "notes", "name": "Notes"},
+        {"id": "zimeiti", "name": "Zimeiti"},
+    ]
+    dock = _dock_list(log, plugins)
+    assert [(d["id"], d["pinned"]) for d in dock] == [
+        ("forge", True),    # pinned 优先
+        ("notes", False),   # 5 次
+        ("zimeiti", False), # 3 次
+        ("agents", False),  # 0 次（不在 audit 表）
+    ]
+
+
+def test_dock_list_caps_at_five(tmp_path, monkeypatch):
+    """合计上限 5：pinned 满了不再塞频率补齐；pinned 不足时频率补到 5 截止。"""
+    from yibao_brain.audit import AuditLog
+    from yibao_brain.server import _dock_list
+
+    log = AuditLog(str(tmp_path / "a.db"))
+    _seed_audit_calls(tmp_path / "a.db", {f"p{i}": 10 - i for i in range(8)})
+    monkeypatch.setattr("yibao_brain.server.load_settings",
+                        lambda: {"dock_pinned": ["p0", "p1", "p2"]})
+    plugins = [{"id": f"p{i}", "name": f"P{i}"} for i in range(8)]
+    dock = _dock_list(log, plugins)
+    assert len(dock) == 5
+    # 前 3 是 pinned（保序），后 2 是按频次降序的前两个未固定（p3=7, p4=6）
+    assert [d["id"] for d in dock] == ["p0", "p1", "p2", "p3", "p4"]
+    assert all(d["pinned"] for d in dock[:3])
+    assert all(not d["pinned"] for d in dock[3:])
+
+
+def test_dock_list_pinned_overflow_truncated_to_five(tmp_path, monkeypatch):
+    """dock_pinned 配置超 5（脏数据/旧上限放宽）：只取前 5，enforce 上限。"""
+    from yibao_brain.audit import AuditLog
+    from yibao_brain.server import _dock_list
+
+    log = AuditLog(str(tmp_path / "a.db"))
+    monkeypatch.setattr("yibao_brain.server.load_settings",
+                        lambda: {"dock_pinned": ["a", "b", "c", "d", "e", "f", "g"]})
+    plugins = [{"id": x, "name": x.upper()} for x in "abcdefg"]
+    dock = _dock_list(log, plugins)
+    assert len(dock) == 5
+    assert [d["id"] for d in dock] == ["a", "b", "c", "d", "e"]
+    assert all(d["pinned"] for d in dock)
+
+
+def test_dock_list_no_pinned_no_counts_falls_back_to_alpha(tmp_path, monkeypatch):
+    """无固定、无频次数据：字母序前 5（稳定默认，避免按加载随机序展示）。"""
+    from yibao_brain.audit import AuditLog
+    from yibao_brain.server import _dock_list
+
+    log = AuditLog(str(tmp_path / "a.db"))  # 空 audit → counts={}
+    monkeypatch.setattr("yibao_brain.server.load_settings", lambda: {"dock_pinned": []})
+    plugins = [
+        {"id": "zimeiti", "name": "自媒体"},
+        {"id": "agents", "name": "Agents"},
+        {"id": "forge", "name": "Forge"},
+        {"id": "notes", "name": "Notes"},
+    ]
+    dock = _dock_list(log, plugins)
+    # 全部零频次 → 退化字母序（按 name）
+    assert [d["id"] for d in dock] == ["agents", "forge", "notes", "zimeiti"]
+    assert all(not d["pinned"] for d in dock)
+
+
+def test_dock_list_stale_pinned_id_keeps_entry_with_id_as_name(tmp_path, monkeypatch):
+    """已固定的插件被卸载：dock 仍保留其占位（id 即 name），用户能看到并主动取消固定。"""
+    from yibao_brain.audit import AuditLog
+    from yibao_brain.server import _dock_list
+
+    log = AuditLog(str(tmp_path / "a.db"))
+    monkeypatch.setattr("yibao_brain.server.load_settings",
+                        lambda: {"dock_pinned": ["ghost", "notes"]})
+    plugins = [{"id": "notes", "name": "Notes"}]  # ghost 已卸载
+    dock = _dock_list(log, plugins)
+    ids = {d["id"]: d for d in dock}
+    assert ids["ghost"]["name"] == "ghost"  # 退化为 id
+    assert ids["ghost"]["pinned"] is True
+    assert ids["notes"]["pinned"] is True
+
+
+def test_dock_list_ipc_returns_dock(tmp_path, monkeypatch):
+    """dock_list IPC：返回 {type:dock_list, dock:[...]}，每项带 pinned 标记。"""
+    monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path))
+    from yibao_brain import plugins
+
+    monkeypatch.setattr(plugins, "_PLUGIN_INFO", {
+        "notes": {"name": "Notes", "description": ""},
+        "forge": {"name": "Forge", "description": ""},
+    })
+    _seed_audit_calls(tmp_path / "a.db", {"notes": 3})
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([{"type": "dock_list"}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+        )
+    )
+    rs = [m for m in out if m["type"] == "dock_list"]
+    assert len(rs) == 1
+    dock = rs[0]["dock"]
+    assert [d["id"] for d in dock] == ["notes", "forge"]  # notes 有频次在前
+    assert dock[0]["pinned"] is False and dock[1]["pinned"] is False
+
+
+def test_set_dock_pin_add_and_remove_roundtrip(tmp_path, monkeypatch):
+    """set_dock_pin 加/移除往返：on=True 追加、on=False 移除；每次回新 dock。"""
+    monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path))
+    from yibao_brain import plugins
+    from yibao_brain.config import load_settings
+
+    monkeypatch.setattr(plugins, "_PLUGIN_INFO", {
+        "notes": {"name": "Notes", "description": ""},
+        "forge": {"name": "Forge", "description": ""},
+        "agents": {"name": "Agents", "description": ""},
+    })
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([
+                {"type": "set_dock_pin", "pid": "notes", "on": True},
+                {"type": "set_dock_pin", "pid": "forge", "on": True},
+                {"type": "set_dock_pin", "pid": "notes", "on": False},
+                {"type": "dock_list"},
+            ]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+        )
+    )
+    pins = [m for m in out if m["type"] == "dock_pin_set"]
+    assert len(pins) == 3
+    assert pins[0]["pid"] == "notes" and pins[0]["ok"] is True
+    assert pins[1]["pid"] == "forge" and pins[1]["ok"] is True
+    assert pins[2]["pid"] == "notes" and pins[2]["ok"] is True
+    # 持久化：disk 上只剩 forge
+    assert load_settings()["dock_pinned"] == ["forge"]
+    # 最后 dock_list：forge 是 pinned，notes 不是
+    last = [m for m in out if m["type"] == "dock_list"][0]
+    by_id = {d["id"]: d for d in last["dock"]}
+    assert by_id["forge"]["pinned"] is True
+    assert by_id["notes"]["pinned"] is False
+
+
+def test_set_dock_pin_rejects_above_five(tmp_path, monkeypatch):
+    """已固定 5 个时再加第 6 个：ok=False，dock 不变，磁盘不写。"""
+    monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path))
+    from yibao_brain import plugins
+    from yibao_brain.config import load_settings
+
+    monkeypatch.setattr(plugins, "_PLUGIN_INFO", {
+        f"p{i}": {"name": f"P{i}", "description": ""} for i in range(6)
+    })
+    # 预置 5 个 pinned
+    from yibao_brain.config import save_settings
+    save_settings({"dock_pinned": ["p0", "p1", "p2", "p3", "p4"]})
+
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([{"type": "set_dock_pin", "pid": "p5", "on": True}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+        )
+    )
+    pin = [m for m in out if m["type"] == "dock_pin_set"][0]
+    assert pin["pid"] == "p5" and pin["ok"] is False
+    # dock 仍是原 5 个（无 p5）
+    assert len(pin["dock"]) == 5
+    assert not any(d["id"] == "p5" for d in pin["dock"])
+    # 磁盘未写：仍 5 个
+    assert load_settings()["dock_pinned"] == ["p0", "p1", "p2", "p3", "p4"]
+
+
+def test_set_dock_pin_idempotent(tmp_path, monkeypatch):
+    """重复 pin 同一个：ok=True（幂等，不重复追加）；pin 不存在的再 unpin：ok=True（幂等）。"""
+    monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path))
+    from yibao_brain import plugins
+    from yibao_brain.config import load_settings
+
+    monkeypatch.setattr(plugins, "_PLUGIN_INFO", {
+        "notes": {"name": "Notes", "description": ""},
+    })
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([
+                {"type": "set_dock_pin", "pid": "notes", "on": True},
+                {"type": "set_dock_pin", "pid": "notes", "on": True},  # 幂等
+                {"type": "set_dock_pin", "pid": "ghost", "on": False},  # 未固定也卸
+            ]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+        )
+    )
+    pins = [m for m in out if m["type"] == "dock_pin_set"]
+    assert all(p["ok"] for p in pins)
+    assert load_settings()["dock_pinned"] == ["notes"]  # 没重复
