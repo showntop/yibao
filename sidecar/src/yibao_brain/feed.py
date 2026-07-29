@@ -57,6 +57,33 @@ class FeedStore:
         except Exception as e:
             print(f"[yibao] feed 写入失败（已跳过）：{e}", file=sys.stderr)
 
+    def append_hourly(self, kind: str, text: str, meta: dict, hour_key: int) -> None:
+        """按小时合并写：同 (kind, meta.type, hour_key) 的最近一条追加文本、更新 ts；
+        否则插入新行。合并时 read 重置为 0（有新内容视为未读）。
+        任何失败只 print 不抛（Feed 是增强面）。"""
+        mtype = (meta or {}).get("type", "")
+        meta_json = json.dumps(meta or {}, ensure_ascii=False)
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT id, text FROM feed WHERE kind=? AND json_extract(meta,'$.type')=? "
+                    "AND json_extract(meta,'$.hour')=? ORDER BY ts DESC LIMIT 1",
+                    (kind, mtype, hour_key),
+                ).fetchone()
+                if row:
+                    self._conn.execute(
+                        "UPDATE feed SET text=?, ts=?, read=0 WHERE id=?",
+                        (f"{row['text']}；{text}", hour_key, row["id"]),
+                    )
+                else:
+                    self._conn.execute(
+                        "INSERT INTO feed (ts, kind, text, meta, read) VALUES (?,?,?,?,0)",
+                        (hour_key, kind, text, meta_json),
+                    )
+                self._conn.commit()
+        except Exception as e:
+            print(f"[yibao] feed.append_hourly 失败（已忽略）：{e}", file=sys.stderr)
+
     def recent(self, limit: int = 60, since: float | None = None) -> list[dict]:
         """按时间倒序取动态。meta JSON 解析失败退化为 {}。"""
         sql = "SELECT id, ts, kind, text, meta, read FROM feed"

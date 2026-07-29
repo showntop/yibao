@@ -105,6 +105,27 @@ def test_mark_all_read(tmp_path):
     assert n == 2 and f.count_unread() == 0
 
 
+def test_append_hourly_merges_same_hour(tmp_path):
+    from yibao_brain.feed import FeedStore
+    f = FeedStore(str(tmp_path / "f.db"))
+    h = 1700000000 // 3600 * 3600
+    f.append_hourly("event", "记住了：喜欢美式", {"type": "memory", "hour": h}, h)
+    f.append_hourly("event", "记住了：住北京", {"type": "memory", "hour": h}, h)
+    rows = f.recent()
+    assert len(rows) == 1                       # 同小时合并
+    assert "美式" in rows[0]["text"] and "北京" in rows[0]["text"]
+
+
+def test_append_hourly_new_when_hour_differs(tmp_path):
+    from yibao_brain.feed import FeedStore
+    f = FeedStore(str(tmp_path / "f.db"))
+    h1 = 1700000000 // 3600 * 3600
+    h2 = h1 + 3600
+    f.append_hourly("event", "A", {"type": "memory", "hour": h1}, h1)
+    f.append_hourly("event", "B", {"type": "memory", "hour": h2}, h2)
+    assert len(f.recent()) == 2
+
+
 # ---------- serve_async 集成：{"type":"feed"} → items + stats ----------
 
 
