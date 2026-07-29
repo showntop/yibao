@@ -58,6 +58,24 @@ class AuditLog:
             cols = [d[0] for d in cur.description]
             return [dict(zip(cols, row)) for row in cur.fetchall()]
 
+    def plugin_call_counts(self) -> dict[str, int]:
+        """按 plugin id 聚合已执行 tool 次数（Dock 频率排序用）。
+
+        audit 表无独立 plugin 列，但 skill_id 恒为 `<plugin_id>.<tool>`（DeclarativeTool
+        强制前缀），取首个 `.` 前缀即 plugin id。NULL/空 skill_id 跳过；无记录返回 {}。
+        """
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT skill_id, COUNT(*) FROM actions GROUP BY skill_id"
+            ).fetchall()
+        counts: dict[str, int] = {}
+        for skill_id, n in rows:
+            if not skill_id:
+                continue
+            plugin = skill_id.split(".", 1)[0]
+            counts[plugin] = counts.get(plugin, 0) + n
+        return counts
+
     def close(self) -> None:
         with self._lock:
             self.conn.close()

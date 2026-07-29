@@ -179,6 +179,8 @@ _SETTINGS_DEFAULTS: dict = {
     "perception.app": False,
     "perception.activity": False,
     "perception.model_access": False,
+    # 用户手动固定到 Dock 的插件 id（上限 5，Task 8 Dock 排序用；空 = 不固定）
+    "dock_pinned": [],
 }
 
 # 枚举型设置的合法取值；非法值拒收保持原值（防前端/手滑写坏）

@@ -133,6 +133,7 @@ def test_settings_get_defaults(tmp_path, monkeypatch):
     assert len(r) == 1
     assert r[0]["values"]["proactive_voice"] is True
     assert r[0]["values"]["perception.model_access"] is False
+    assert r[0]["values"]["dock_pinned"] == []
 
 
 def test_settings_set_persists_and_ignores_unknown(tmp_path, monkeypatch):
@@ -159,6 +160,7 @@ def test_settings_set_persists_and_ignores_unknown(tmp_path, monkeypatch):
         "perception.app": False,
         "perception.activity": False,
         "perception.model_access": True,
+        "dock_pinned": [],
     }
 
 
@@ -193,4 +195,5 @@ def test_settings_bad_file_falls_back_to_defaults(tmp_path, monkeypatch):
         "perception.app": False,
         "perception.activity": False,
         "perception.model_access": False,
+        "dock_pinned": [],
     }
