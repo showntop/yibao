@@ -29,7 +29,9 @@ class ToolInvoker:
         self.classifier = classifier
         self.gate = gate
         self.log = log
-        self.confirmer = confirmer or (lambda _a: False)
+        # 批量 confirmer：list[Action] -> {action.id: (approved, remember)}。
+        # 默认空 dict（=全拒），调用方按 .get(id, (False, False)) 读取。
+        self.confirmer = confirmer or (lambda _actions: {})
         self.host = host
 
     def propose(self, tc: ToolCall) -> Action:
@@ -56,18 +58,22 @@ class ToolInvoker:
         except Exception:  # 检查本身出问题不挡路
             return None
 
-    def confirm_sync(self, action: Action) -> bool:
-        res = self.confirmer(action)
+    def batch_confirm_sync(self, actions: list[Action]) -> dict[str, tuple[bool, bool]]:
+        """同步批量确认：调 self._confirmer(actions) 返回 {action.id: (approved, remember)}。
+
+        异步 confirmer 在同步路径不可用（与单 action 时代一致，抛 RuntimeError）。
+        """
+        res = self.confirmer(actions)
         if inspect.isawaitable(res):
             raise RuntimeError("同步路径不支持异步 confirmer")
-        return bool(res)
+        return res
 
-    async def confirm(self, action: Action) -> bool:
-        """同步/异步 confirmer 兼容：返回协程则 await（与调用方同 loop）。"""
-        res = self.confirmer(action)
+    async def batch_confirm(self, actions: list[Action]) -> dict[str, tuple[bool, bool]]:
+        """异步批量确认：同步/异步 confirmer 兼容，返回协程则 await。"""
+        res = self.confirmer(actions)
         if inspect.isawaitable(res):
             res = await res
-        return bool(res)
+        return res
 
     def execute(self, action: Action, params: dict) -> ActionResult:
         """执行 + 审计。技能异常转为失败结果，不抛出（不杀 run）。"""

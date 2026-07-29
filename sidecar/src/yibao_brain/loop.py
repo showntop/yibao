@@ -18,7 +18,7 @@ from .plugins import get_panel, get_panel_title, panel_payload
 from .safety import Decision, Gate, RiskClassifier
 from .skills import SkillRegistry
 
-Confirmer = Callable[[Action], bool]
+Confirmer = Callable[[list[Action]], dict[str, tuple[bool, bool]]]
 
 SYSTEM_PROMPT = (
     "你是译宝，一个桌面 AI 助手。通过调用工具帮用户操作电脑。\n"
@@ -69,7 +69,9 @@ class AgentLoop:
         self.host = host
         self.memory = memory
         self.log = log
-        self.confirmer = confirmer or (lambda _a: False)
+        # 批量 confirmer：list[Action] -> {action.id: (approved, remember)}；
+        # 默认空 dict（=全拒），由 invoker.batch_confirm 透传，loop 用 .get(id, (False,False)) 读。
+        self.confirmer = confirmer or (lambda _actions: {})
         self.user_id = user_id
         self.max_steps = max_steps
         self.history = history
@@ -255,7 +257,12 @@ class AgentLoop:
                 decision = self.invoker.decide(action)
                 if decision == Decision.CONFIRM:
                     yield Event(kind="confirmation_needed", action=action, confirmation_id=action.id)
-                    if not self.invoker.confirm_sync(action):
+                    # Task 1：接口已批量化，loop 仍逐个 CONFIRM（batch size=1）。攒批逻辑是 Task 2。
+                    verdicts = self.invoker.batch_confirm_sync([action])
+                    approved, remember = verdicts.get(action.id, (False, False))
+                    if approved and remember:
+                        self.invoker.gate.session_allowed.add(action.skill_id)
+                    if not approved:
                         yield Event(kind="error", text=f"用户拒绝执行 {tc.skill_id}")
                         messages.append({"role": "tool", "tool_call_id": tc.id, "content": "用户拒绝执行该操作"})
                         continue
@@ -374,8 +381,12 @@ class AgentLoop:
                 decision = self.invoker.decide(action)
                 if decision == Decision.CONFIRM:
                     yield Event(kind="confirmation_needed", action=action, confirmation_id=action.id)
-                    ok = await self.invoker.confirm(action)
-                    if cancelled() or not ok:
+                    # Task 1：接口已批量化，loop 仍逐个 CONFIRM（batch size=1）。攒批逻辑是 Task 2。
+                    verdicts = await self.invoker.batch_confirm([action])
+                    approved, remember = verdicts.get(action.id, (False, False))
+                    if approved and remember:
+                        self.invoker.gate.session_allowed.add(action.skill_id)
+                    if cancelled() or not approved:
                         yield Event(kind="error", text=f"用户拒绝执行 {tc.skill_id}")
                         messages.append(
                             {"role": "tool", "tool_call_id": tc.id, "content": "用户拒绝执行该操作"}

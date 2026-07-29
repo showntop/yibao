@@ -2,6 +2,8 @@
 import asyncio
 import json
 
+import pytest
+
 from yibao_brain.audit import AuditLog
 from yibao_brain.invoker import ToolInvoker
 from yibao_brain.ipc import Action, ActionResult, RiskLevel
@@ -30,7 +32,12 @@ class _BrokenSafeResultSkill(_SensitiveSkill):
         raise RuntimeError("摘要失败")
 
 
-def make_invoker(tmp_path, skills, confirmer=lambda a: True, policy=None):
+def _batch_approve(actions):
+    """批量 confirmer 测试 helper：全批准、不 remember。"""
+    return {a.id: (True, False) for a in actions}
+
+
+def make_invoker(tmp_path, skills, confirmer=_batch_approve, policy=None):
     reg = SkillRegistry()
     for s in skills:
         reg.register(s)
@@ -141,13 +148,83 @@ def test_confirm_async_confirmer(tmp_path):
         def run(self, params, ctx):
             return ActionResult(success=True)
 
-    async def say_no(action):
-        return False
+    async def say_no(actions):
+        # 异步批量 confirmer：全拒绝
+        return {a.id: (False, False) for a in actions}
 
     inv = make_invoker(tmp_path, [DangerSkill()], confirmer=say_no)
     action = inv.propose(ToolCall(id="t1", skill_id="danger", params={}))
     assert inv.decide(action) == Decision.CONFIRM
-    assert asyncio.run(inv.confirm(action)) is False
+    verdicts = asyncio.run(inv.batch_confirm([action]))
+    assert verdicts[action.id] == (False, False)
+
+
+def test_batch_confirm_sync_returns_verdicts_per_id(tmp_path):
+    """批量 confirmer：invoker.batch_confirm_sync([a1,a2]) 调批量 confirmer，
+    返回 {id: (approved, remember)}，每条 action 各自的 verdict。"""
+    class DangerSkill(Skill):
+        id = "danger"
+        description = "危险"
+        default_risk = RiskLevel.L3_HIGH
+
+        def run(self, params, ctx):
+            return ActionResult(success=True)
+
+    def batch_confirmer(actions):
+        # 第一条批准+remember，第二条拒绝
+        out = {}
+        for i, a in enumerate(actions):
+            out[a.id] = (True, True) if i == 0 else (False, False)
+        return out
+
+    inv = make_invoker(tmp_path, [DangerSkill()], confirmer=batch_confirmer)
+    a1 = inv.propose(ToolCall(id="t1", skill_id="danger", params={}))
+    a2 = inv.propose(ToolCall(id="t2", skill_id="danger", params={}))
+    out = inv.batch_confirm_sync([a1, a2])
+    assert out == {a1.id: (True, True), a2.id: (False, False)}
+
+
+def test_batch_confirm_sync_rejects_when_confirmer_returns_empty(tmp_path):
+    """confirmer 返回空 dict（默认值）= 全拒；调用方按 .get(id, (False,False)) 读。"""
+    class DangerSkill(Skill):
+        id = "danger"
+        description = "危险"
+        default_risk = RiskLevel.L3_HIGH
+
+        def run(self, params, ctx):
+            return ActionResult(success=True)
+
+    inv = make_invoker(tmp_path, [DangerSkill()], confirmer=lambda _actions: {})
+    action = inv.propose(ToolCall(id="t1", skill_id="danger", params={}))
+    verdicts = inv.batch_confirm_sync([action])
+    assert verdicts.get(action.id, (False, False)) == (False, False)
+
+
+@pytest.mark.filterwarnings("ignore::RuntimeWarning")
+def test_batch_confirm_sync_raises_on_async_confirmer(tmp_path):
+    """同步路径调异步 confirmer 抛 RuntimeError（与旧单 action 行为一致）。
+
+    同步路径会调 confirmer 拿到协程后即抛错，协程未 await → RuntimeWarning，
+    属本测试预期副作用，静音之。
+    """
+    class DangerSkill(Skill):
+        id = "danger"
+        description = "危险"
+        default_risk = RiskLevel.L3_HIGH
+
+        def run(self, params, ctx):
+            return ActionResult(success=True)
+
+    async def async_confirmer(actions):
+        return {a.id: (True, False) for a in actions}
+
+    inv = make_invoker(tmp_path, [DangerSkill()], confirmer=async_confirmer)
+    action = inv.propose(ToolCall(id="t1", skill_id="danger", params={}))
+    try:
+        inv.batch_confirm_sync([action])
+        assert False, "应抛 RuntimeError"
+    except RuntimeError as e:
+        assert "同步路径不支持异步 confirmer" in str(e)
 
 
 def test_precheck_blocks_and_passes(tmp_path):

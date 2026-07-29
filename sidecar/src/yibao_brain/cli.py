@@ -43,9 +43,14 @@ def build_loop(use_real: bool, db_path: str = "audit.db"):
         except Exception as e:
             print(f"[yibao] MacHost 不可用，回退无基座：{e}", file=sys.stderr)
 
-    def confirmer(action) -> bool:
-        print(f"\n⚠️ 高风险操作待确认：[{action.skill_id}] {action.description} params={action.params}")
-        return input("允许执行？(y/N) ").strip().lower() == "y"
+    def confirmer(actions) -> dict:
+        # 批量 confirmer（Task 1）：逐个交互问，回 {id: (approved, remember)}。
+        out: dict[str, tuple[bool, bool]] = {}
+        for action in actions:
+            print(f"\n⚠️ 高风险操作待确认：[{action.skill_id}] {action.description} params={action.params}")
+            approved = input("允许执行？(y/N) ").strip().lower() == "y"
+            out[action.id] = (approved, False)
+        return out
 
     return AgentLoop(
         provider=provider,

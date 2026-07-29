@@ -135,10 +135,14 @@ def build_loop(
         for sk in genpanel.make_skills(LlmChat(prov)):
             reg.register(sk)
 
-    def default_confirmer(action) -> bool:
-        # 由 serve 在 confirmation_needed 事件之后触发；阻塞读壳的回答
-        ans = read_msg() or {}
-        return bool(ans.get("approved", False))
+    def default_confirmer(actions) -> dict:
+        # 由 serve 在 confirmation_needed 事件之后触发；阻塞读壳的回答。
+        # 批量接口（Task 1）：对每个 action 读一条 confirm 消息，回 {id: (approved, remember)}。
+        out: dict[str, tuple[bool, bool]] = {}
+        for action in actions:
+            ans = read_msg() or {}
+            out[action.id] = (bool(ans.get("approved", False)), bool(ans.get("remember", False)))
+        return out
 
     # 会话历史：仅真实模式默认落盘（fake/测试模式不污染本地文件）
     hist = history_file or (history_path() if use_real else None)
@@ -253,7 +257,12 @@ async def handle_panel_action(msg: dict, agent: AgentLoop, write_msg: WriteMsg, 
             return
         if decision == Decision.CONFIRM:
             emit(Event(kind="confirmation_needed", action=action, confirmation_id=action.id))
-            if not await agent.invoker.confirm(action):  # 等壳 confirm 消息（复用单槽确认流）
+            # Task 1：批量 confirmer 接口，面板直达仍 batch size=1。等壳 confirm 消息（复用单槽确认流）。
+            verdicts = await agent.invoker.batch_confirm([action])
+            approved, remember = verdicts.get(action.id, (False, False))
+            if approved and remember:
+                agent.invoker.gate.session_allowed.add(action.skill_id)
+            if not approved:
                 emit(Event(kind="error", text=f"用户拒绝执行 {api.handler}", action=action))
                 write_msg({"type": "run_done", "id": rid})
                 return
@@ -481,46 +490,49 @@ async def serve_async(
     # 只活在内存，大脑重启即失效（C-4：会话级，不落盘）。
     remembered_confirm: set[str] = set()
 
-    async def confirmer(action) -> bool:
-        skill_id = getattr(action, "skill_id", "?")
-        if skill_id in remembered_confirm:
-            print(f"[yibao] 会话内已免确认：{skill_id}", file=sys.stderr)
-            return True
-        remember = False
-        # 早到的 confirm 直接兑现
-        if pending_confirm["early"] is not None:
-            approved, remember = pending_confirm["early"]
-            pending_confirm["early"] = None
-            if approved and remember:
-                remembered_confirm.add(skill_id)
-            return bool(approved)
-        # 单槽 future：收到任意 confirm 消息即兑现（v1 run 串行，确认也串行）
-        fut = ai_loop.create_future()
-        pending_confirm["future"] = fut
-        # 确认等待必须响应抢占/打断：否则新请求 join 一个永不结束的确认 →
-        # 派发循环卡死、ping 不应答、看门狗误杀（2026-07-19 复现确认）
-        cancel = run_state["cancel"]
-        cancel_wait = ai_loop.create_task(cancel.wait()) if cancel is not None else None
-        print(f"[yibao] 等待用户确认：{skill_id}", file=sys.stderr)
-        try:
-            waiters: set = {fut}
-            if cancel_wait is not None:
-                waiters.add(cancel_wait)
-            done, _ = await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
-            if fut in done:
-                approved, remember = fut.result()
-                if approved and remember:
-                    remembered_confirm.add(skill_id)
-                    print(f"[yibao] 本会话不再询问：{skill_id}", file=sys.stderr)
-                print(f"[yibao] 确认结果：{'允许' if approved else '拒绝'}（{skill_id}）", file=sys.stderr)
-                return bool(approved)
-            print(f"[yibao] 确认被抢占取消：{skill_id}", file=sys.stderr)
-            return False
-        finally:
-            if cancel_wait is not None:
-                cancel_wait.cancel()
-            if pending_confirm["future"] is fut:
-                pending_confirm["future"] = None
+    async def confirmer(actions) -> dict:
+        # 批量 confirmer（Task 1）：list[Action] -> {action.id: (approved, remember)}。
+        # 仍走单槽 pending_confirm（v1 run 串行，确认也串行）；多槽批量 resolve 是 Task 3。
+        # remember 的 session_allowed 写入由 loop 拿到 verdict 后统一处理（不在 confirmer 内做）。
+        out: dict[str, tuple[bool, bool]] = {}
+        for action in actions:
+            skill_id = getattr(action, "skill_id", "?")
+            if skill_id in remembered_confirm:
+                print(f"[yibao] 会话内已免确认：{skill_id}", file=sys.stderr)
+                out[action.id] = (True, False)
+                continue
+            # 早到的 confirm 直接兑现
+            if pending_confirm["early"] is not None:
+                approved, remember = pending_confirm["early"]
+                pending_confirm["early"] = None
+                out[action.id] = (bool(approved), bool(remember))
+                continue
+            # 单槽 future：收到任意 confirm 消息即兑现（v1 run 串行，确认也串行）
+            fut = ai_loop.create_future()
+            pending_confirm["future"] = fut
+            # 确认等待必须响应抢占/打断：否则新请求 join 一个永不结束的确认 →
+            # 派发循环卡死、ping 不应答、看门狗误杀（2026-07-19 复现确认）
+            cancel = run_state["cancel"]
+            cancel_wait = ai_loop.create_task(cancel.wait()) if cancel is not None else None
+            print(f"[yibao] 等待用户确认：{skill_id}", file=sys.stderr)
+            try:
+                waiters: set = {fut}
+                if cancel_wait is not None:
+                    waiters.add(cancel_wait)
+                done, _ = await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+                if fut in done:
+                    approved, remember = fut.result()
+                    print(f"[yibao] 确认结果：{'允许' if approved else '拒绝'}（{skill_id}）", file=sys.stderr)
+                    out[action.id] = (bool(approved), bool(remember))
+                else:
+                    print(f"[yibao] 确认被抢占取消：{skill_id}", file=sys.stderr)
+                    out[action.id] = (False, False)
+            finally:
+                if cancel_wait is not None:
+                    cancel_wait.cancel()
+                if pending_confirm["future"] is fut:
+                    pending_confirm["future"] = None
+        return out
 
     # 主屏 Feed 存储（OS 感 §4.2）：任务播报/提醒触发在此落库，主屏查询时一次拿回。
     # 与审计库同目录；FeedStore 写失败只 print，不拖垮主链路。

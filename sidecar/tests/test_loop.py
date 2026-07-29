@@ -27,7 +27,7 @@ class _SensitiveSkill(Skill):
         return "已参考敏感上下文" if result.success else None
 
 
-def build_loop(tmp_path, provider, confirmer=lambda a: True):
+def build_loop(tmp_path, provider, confirmer=lambda actions: {a.id: (True, False) for a in actions}):
     reg = SkillRegistry()
     reg.register(EchoSkill())
     return AgentLoop(
@@ -111,7 +111,7 @@ def test_loop_confirms_high_risk(tmp_path):
         gate=Gate(GatePolicy()),
         memory=FakeMemory(),
         log=AuditLog(tmp_path / "a.db"),
-        confirmer=lambda a: False,  # 用户拒绝
+        confirmer=lambda actions: {a.id: (False, False) for a in actions},  # 用户拒绝（批量接口）
     )
     events = list(loop.run("做危险的事"))
     kinds = [e.kind for e in events]
@@ -225,8 +225,9 @@ def test_loop_arun_async_confirmer_rejected(tmp_path):
     reg = SkillRegistry()
     reg.register(DangerSkill())
 
-    async def confirmer(_action):
-        return False  # 异步 confirmer 返回协程
+    async def confirmer(actions):
+        # 异步批量 confirmer：全拒绝
+        return {a.id: (False, False) for a in actions}
 
     loop = AgentLoop(
         provider=_TwoStepProvider(
@@ -245,6 +246,63 @@ def test_loop_arun_async_confirmer_rejected(tmp_path):
     assert "confirmation_needed" in kinds
     assert "error" in kinds
     assert not any(e.kind == "action_result" and e.result and e.result.data.get("did") for e in events)
+
+
+def test_loop_arun_remember_verdict_adds_to_session_allowed(tmp_path):
+    """Task 1：verdict 含 remember=True 且 approved → loop 把 skill_id 写进 gate.session_allowed，
+    后续同 skill 即便风险高也走 AUTO（不弹 confirmation_needed）。"""
+    class DangerSkill(Skill):
+        id = "danger"
+        description = "危险占位"
+        default_risk = RiskLevel.L3_HIGH
+
+        def run(self, params, ctx):
+            return ActionResult(success=True, data={"did": True})
+
+    reg = SkillRegistry()
+    reg.register(DangerSkill())
+
+    # 一次批量 confirmer：对第一个 action 批准+remember，后续全 AUTO 不再调 confirmer
+    calls = []
+
+    async def confirmer(actions):
+        calls.append([a.id for a in actions])
+        return {a.id: (True, True) for a in actions}
+
+    class _SeqProvider:
+        def __init__(self, responses):
+            self._responses = list(responses)
+            self._n = 0
+
+        async def astream(self, messages, tools=None):
+            i = min(self._n, len(self._responses) - 1)
+            self._n += 1
+            async for d in self._responses[i].astream(messages, tools):
+                yield d
+
+    provider = _SeqProvider([
+        FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="danger", params={})]),
+        FakeProvider(text="第一次完成"),
+        FakeProvider(tool_calls=[ToolCall(id="t2", skill_id="danger", params={})]),
+        FakeProvider(text="第二次完成"),
+    ])
+    loop = AgentLoop(
+        provider=provider,
+        skills=reg,
+        classifier=RiskClassifier(),
+        gate=Gate(GatePolicy()),
+        memory=FakeMemory(),
+        log=AuditLog(tmp_path / "a.db"),
+        confirmer=confirmer,
+    )
+    events = asyncio.run(_collect_events(loop.arun("做危险的事")))
+
+    # 第一次确认后 session_allowed 写入 danger；第二次不再 confirmation_needed
+    confirms = [e for e in events if e.kind == "confirmation_needed"]
+    assert len(confirms) == 1
+    assert "danger" in loop.invoker.gate.session_allowed
+    # confirmer 只被调一次（第二次 AUTO，不进 CONFIRM 分支）
+    assert len(calls) == 1
 
 
 def test_loop_arun_assistant_msg_carries_tool_calls(tmp_path):
