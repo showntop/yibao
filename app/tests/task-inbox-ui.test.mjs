@@ -20,8 +20,10 @@ test("home inbox renders running pending and completed zones", () => {
 });
 
 test("completed tasks leave the generic activity stream", () => {
-  assert.match(homeSource, /completedTasks\s*=\s*computed[\s\S]*kind === "task"[\s\S]*slice\(0, 5\)/);
-  assert.match(homeSource, /activityItems\s*=\s*computed[\s\S]*kind !== "task"/);
+  assert.match(homeSource, /completedBase\s*=\s*computed[\s\S]*kind === "task"[\s\S]*slice\(0, 5\)/);
+  assert.match(homeSource, /completedTasks\s*=\s*computed[\s\S]*completedBase\.value/);
+  assert.match(homeSource, /activityBase\s*=\s*computed[\s\S]*kind !== "task"/);
+  assert.match(homeSource, /activityItems\s*=\s*computed[\s\S]*activityBase\.value/);
   assert.match(homeSource, /v-for="it in activityItems"/);
   assert.match(homeSource, /v-for="it in completedTasks"/);
 });
