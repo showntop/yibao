@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import inspect
+from dataclasses import replace
 
 from .audit import AuditLog
 from .host import Host
@@ -88,12 +89,14 @@ class ToolInvoker:
 
             print(f"[yibao] 本会话不再询问：{action.skill_id}", file=sys.stderr)
 
-    def execute(self, action: Action, params: dict) -> ActionResult:
+    def execute(self, action: Action, params: dict, meta: dict | None = None) -> ActionResult:
         """执行 + 审计。技能异常转为失败结果，不抛出（不杀 run）。"""
         skill = self.skills.get(action.skill_id)
         try:
             # 插件技能用加载器按 capability 注入好的 plugin_ctx；底座技能照旧给 host
             ctx = skill.plugin_ctx or SkillContext(host=self.host)
+            if meta:
+                ctx = replace(ctx, meta={**ctx.meta, **meta})
             # 插件声明了 host capability：加载器拿不到 host，在这里嫁接 invoker 的
             if (
                 skill.plugin_ctx is not None

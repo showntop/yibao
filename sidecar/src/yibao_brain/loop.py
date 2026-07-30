@@ -416,7 +416,9 @@ class AgentLoop:
                         {"role": "tool", "tool_call_id": tc.id, "content": "策略禁止该操作"}
                     )
                     continue
-                result = await _offload(self.invoker.execute, action, tc.params)
+                result = await _offload(
+                    self.invoker.execute, action, tc.params, {"cancel": cancel}
+                )
                 self._auto_activate(action.skill_id)
                 skill = self.skills.get(action.skill_id)
                 safe = self.invoker.safe_result(action, result)

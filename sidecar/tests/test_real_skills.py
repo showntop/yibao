@@ -197,7 +197,9 @@ def test_computer_use_som_click_type_finish(tmp_path, monkeypatch):
         {"action": "type", "text": "hi"},
         {"action": "finish"},
     ])
-    r = ComputerUseSkill(client, som=SoMGrounding()).run({"task": "t"}, SkillContext(host=host))
+    r = ComputerUseSkill(client, max_steps=3, som=SoMGrounding()).run(
+        {"task": "t"}, SkillContext(host=host)
+    )
     assert r.success and r.data["steps"] == 2
     assert host.a11y.press_calls and host.input.clicks == []  # mark1 走 AX
     assert host.input.types == ["hi"]
@@ -253,7 +255,14 @@ def test_computer_use_prefers_native_bbox_for_capable_model(tmp_path, monkeypatc
 
     monkeypatch.setattr(pyautogui, "size", lambda: _size_obj(100, 100))
     host = FakeHost()
-    host.screenshotter = FakeScreenshotter(paths=_make_shots(tmp_path, 2))
+    shot = _make_shot(tmp_path, physical_w=198, physical_h=350)
+
+    class WindowScreenshotter(FakeScreenshotter):
+        def capture_window(self, app):
+            self.calls.append(f"capture_window:{app}")
+            return shot, (72.0, 354.0), 1.0
+
+    host.screenshotter = WindowScreenshotter()
     som = SoMGrounding()
     monkeypatch.setattr(
         som,
@@ -261,16 +270,87 @@ def test_computer_use_prefers_native_bbox_for_capable_model(tmp_path, monkeypatc
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("不应构建 SoM")),
     )
     client = FakeComputerUseClient(
-        actions=[{"action": "click", "box": [10, 10, 30, 30]}, {"action": "finish"}],
+        actions=[{"action": "click", "box": [148, 301, 188, 341]}],
     )
     client.prefers_raw_bbox = True
 
-    result = ComputerUseSkill(client, som=som).run({"task": "t"}, SkillContext(host=host))
+    result = ComputerUseSkill(client, som=som).run(
+        {"task": "点击等号", "app": "计算器"}, SkillContext(host=host)
+    )
 
     assert result.success and result.data["steps"] == 1
-    assert host.input.clicks == [(20.0, 20.0)]
-    assert len(client.calls) == 2
+    assert host.input.clicks == [(240.0, 675.0)]
+    assert host.screenshotter.calls == ["capture_window:计算器"]
+    assert len(client.calls) == 1
     assert client.choose_calls == []
+
+
+def test_computer_use_native_bbox_requires_target_app():
+    from yibao_brain.skills_real import ComputerUseSkill
+    from fakes import FakeComputerUseClient
+
+    client = FakeComputerUseClient(actions=[{"action": "click", "box": [1, 2, 3, 4]}])
+    client.prefers_raw_bbox = True
+
+    result = ComputerUseSkill(client).run({"task": "点击等号"}, SkillContext(host=FakeHost()))
+
+    assert not result.success
+    assert "目标应用" in result.error
+    assert client.calls == []
+
+
+def test_computer_use_defaults_to_one_step(tmp_path, monkeypatch):
+    import pyautogui
+
+    from yibao_brain.grounding import SoMGrounding
+    from yibao_brain.skills_real import ComputerUseSkill
+    from fakes import FakeComputerUseClient, FakeScreenshotter
+
+    monkeypatch.setattr(pyautogui, "size", lambda: _size_obj(100, 100))
+    host = FakeHost()
+    host.screenshotter = FakeScreenshotter(paths=_make_shots(tmp_path, 3))
+    host.a11y.tree = {"role": "AXApp", "children": [
+        {"role": "AXButton", "bbox": [10, 10, 30, 30], "children": []}]}
+    client = FakeComputerUseClient(marked_actions=[{"action": "click", "mark": 1}] * 3)
+
+    result = ComputerUseSkill(client, som=SoMGrounding()).run(
+        {"task": "只点一次", "max_steps": 5}, SkillContext(host=host)
+    )
+
+    assert result.success and result.data["steps"] == 1
+    assert len(client.choose_calls) == 1
+
+
+def test_computer_use_cancel_after_model_response_prevents_click(tmp_path):
+    import threading
+
+    from yibao_brain.skills_real import ComputerUseSkill
+    from fakes import FakeComputerUseClient, FakeScreenshotter
+
+    shot = _make_shot(tmp_path, physical_w=198, physical_h=350)
+    cancel = threading.Event()
+
+    class WindowScreenshotter(FakeScreenshotter):
+        def capture_window(self, app):
+            return shot, (72.0, 354.0), 1.0
+
+    class CancelClient(FakeComputerUseClient):
+        prefers_raw_bbox = True
+
+        def next_action(self, screenshot_b64, task, history=None):
+            cancel.set()
+            return {"action": "click", "box": [148, 301, 188, 341]}
+
+    host = FakeHost()
+    host.screenshotter = WindowScreenshotter()
+
+    result = ComputerUseSkill(CancelClient()).run(
+        {"task": "点击等号", "app": "计算器"},
+        SkillContext(host=host, meta={"cancel": cancel}),
+    )
+
+    assert not result.success and "中断" in result.error
+    assert host.input.clicks == []
 
 
 def test_computer_use_empty_dict_action_not_counted_as_step(tmp_path, monkeypatch):

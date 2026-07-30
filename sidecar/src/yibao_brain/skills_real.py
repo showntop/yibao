@@ -170,7 +170,7 @@ class ComputerUseSkill(Skill):
     )
     default_risk = RiskLevel.L2_MEDIUM
 
-    def __init__(self, client, max_steps: int = 5, som: SoMGrounding | None = None):
+    def __init__(self, client, max_steps: int = 1, som: SoMGrounding | None = None):
         self._client = client
         self._default_max_steps = max_steps
         self._som = som or SoMGrounding()
@@ -183,9 +183,15 @@ class ComputerUseSkill(Skill):
                 "type": "object",
                 "properties": {
                     "task": {"type": "string", "description": "要完成的操作目标"},
-                    "max_steps": {"type": "integer", "default": 5, "description": "最多执行步数"},
+                    "app": {"type": "string", "description": "目标应用或窗口名称，如 计算器、Safari"},
+                    "max_steps": {
+                        "type": "integer",
+                        "default": 1,
+                        "maximum": self._default_max_steps,
+                        "description": "最多执行步数；单次批准最多执行 1 步",
+                    },
                 },
-                "required": ["task"],
+                "required": ["task", "app"],
             },
         }
 
@@ -197,19 +203,44 @@ class ComputerUseSkill(Skill):
             return ActionResult(success=False, error="缺少 task 参数")
         if self._client is None:
             return ActionResult(success=False, error="无 computer-use client")
-        max_steps = int(params.get("max_steps", self._default_max_steps))
+        prefers_raw_bbox = bool(getattr(self._client, "prefers_raw_bbox", False))
+        app = str(params.get("app", "")).strip()
+        if prefers_raw_bbox and not app:
+            return ActionResult(success=False, error="缺少目标应用名称，无法安全裁剪目标窗口")
+        requested_steps = max(1, int(params.get("max_steps", self._default_max_steps)))
+        max_steps = min(requested_steps, self._default_max_steps)
+        cancel = ctx.meta.get("cancel")
+
+        def cancelled() -> bool:
+            return bool(cancel is not None and cancel.is_set())
+
         history: list[dict] = []
         done: list[dict] = []
         prev_hash: str | None = None
         for _ in range(max_steps):
-            shot = ctx.host.screenshotter.capture()
+            if cancelled():
+                return ActionResult(success=False, error="操作已中断")
+            origin = (0.0, 0.0)
+            if prefers_raw_bbox:
+                capture_window = getattr(ctx.host.screenshotter, "capture_window", None)
+                captured = capture_window(app) if callable(capture_window) else None
+                if not captured:
+                    return ActionResult(
+                        success=False,
+                        error=f"找不到目标应用窗口：{app}；为避免误点，已停止操作",
+                    )
+                shot, origin, scale = captured
+            else:
+                shot = ctx.host.screenshotter.capture()
+                scale = _physical_scale(shot)
             shot_hash = self._md5(shot)
             if shot_hash is not None and shot_hash == prev_hash:
                 break  # 连续两帧无变化 → 停
             prev_hash = shot_hash
-            scale = _physical_scale(shot)
-            if getattr(self._client, "prefers_raw_bbox", False):
-                action = self._raw_bbox_step(shot, task, history, ctx.host, scale)  # 模型原生 grounding
+            if prefers_raw_bbox:
+                action = self._raw_bbox_step(
+                    shot, task, history, ctx.host, scale, origin, cancelled
+                )  # 模型原生 grounding
             else:
                 tree = ctx.host.a11y.frontmost_tree()
                 marked, marks = self._som.build_marks(shot, tree, scale)
@@ -217,11 +248,15 @@ class ComputerUseSkill(Skill):
                     action = self._raw_bbox_step(shot, task, history, ctx.host, scale)  # 回退
                 else:
                     action = self._client.choose_action(marked, task, len(marks), history)
+                    if cancelled():
+                        return ActionResult(success=False, error="操作已中断")
                     if action is None:
                         break  # 模型输出非法 → 停，防失控
                     if action.get("action") == "finish":
                         break
                     self._apply_marked(action, marks, ctx.host)
+            if action and action.get("action") == "interrupted":
+                return ActionResult(success=False, error="操作已中断")
             if action is not None and action.get("action") and action.get("action") != "finish":
                 done.append(action)
                 history.append({"role": "assistant", "content": json.dumps(action, ensure_ascii=False)})
@@ -234,15 +269,19 @@ class ComputerUseSkill(Skill):
         elif kind == "type":
             host.input.type_text(str(action.get("text", "")))
 
-    def _raw_bbox_step(self, shot, task, history, host, scale):
+    def _raw_bbox_step(
+        self, shot, task, history, host, scale, origin=(0.0, 0.0), should_cancel=None
+    ):
         """旧 raw-bbox 回退路径（build_marks 渲染失败时）。"""
         b64 = self._b64(shot)
         if b64 is None:
             return None
         action = self._client.next_action(b64, task, history)
+        if should_cancel is not None and should_cancel():
+            return {"action": "interrupted"}
         if not action or action.get("action") == "finish":
             return action
-        self._execute(action, host, scale)  # 既有 _execute：click box 中心 / type / scroll
+        self._execute(action, host, scale, origin)
         return action
 
     @staticmethod
@@ -266,12 +305,13 @@ class ComputerUseSkill(Skill):
             return None
 
     @staticmethod
-    def _execute(action: dict, host, scale: float) -> None:
+    def _execute(action: dict, host, scale: float, origin=(0.0, 0.0)) -> None:
         kind = action.get("action")
         box = action.get("box") or []
+        ox, oy = origin
         if kind == "click" and len(box) == 4:
             x1, y1, x2, y2 = (float(v) for v in box)
-            host.input.click((x1 + x2) / 2 / scale, (y1 + y2) / 2 / scale)
+            host.input.click(ox + (x1 + x2) / 2 / scale, oy + (y1 + y2) / 2 / scale)
         elif kind == "type":
             host.input.type_text(str(action.get("text", "")))
         elif kind == "scroll":
@@ -280,7 +320,11 @@ class ComputerUseSkill(Skill):
             delta = int(action.get("delta", -3))
             if len(box) == 4:
                 x1, y1, x2, y2 = (float(v) for v in box)
-                pyautogui.scroll(delta, (x1 + x2) / 2 / scale, (y1 + y2) / 2 / scale)
+                pyautogui.scroll(
+                    delta,
+                    ox + (x1 + x2) / 2 / scale,
+                    oy + (y1 + y2) / 2 / scale,
+                )
             else:
                 pyautogui.scroll(delta)
         # finish / 未知动作 → 不执行

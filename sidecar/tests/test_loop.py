@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 
 from yibao_brain.loop import AgentLoop
 from yibao_brain.llm import FakeProvider, ToolCall, LLMDelta, ToolCallDelta
@@ -211,6 +212,53 @@ def test_loop_arun_interrupt_mid_stream(tmp_path):
     kinds = [e.kind for e in events]
     assert "interrupted" in kinds
     assert "final_reply" not in kinds
+
+
+def test_loop_arun_passes_cancel_into_running_skill(tmp_path):
+    seen = {"cancel": False}
+
+    class WaitSkill(Skill):
+        id = "wait"
+        description = "等待中断"
+
+        def run(self, params, ctx):
+            cancel = ctx.meta.get("cancel")
+            deadline = time.monotonic() + 0.2
+            while time.monotonic() < deadline:
+                if cancel is not None and cancel.is_set():
+                    seen["cancel"] = True
+                    break
+                time.sleep(0.005)
+            return ActionResult(success=True)
+
+    async def _go():
+        reg = SkillRegistry()
+        reg.register(WaitSkill())
+        provider = _TwoStepProvider(
+            first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="wait", params={})]),
+            second=FakeProvider(text="done"),
+        )
+        loop = AgentLoop(
+            provider=provider,
+            skills=reg,
+            classifier=RiskClassifier(),
+            gate=Gate(GatePolicy()),
+            memory=FakeMemory(),
+            log=AuditLog(tmp_path / "a.db"),
+        )
+        cancel = asyncio.Event()
+
+        async def _trip():
+            await asyncio.sleep(0.02)
+            cancel.set()
+
+        asyncio.ensure_future(_trip())
+        return await _collect_events(loop.arun("等待", cancel))
+
+    events = asyncio.run(_go())
+
+    assert seen["cancel"] is True
+    assert any(e.kind == "interrupted" for e in events)
 
 
 def test_loop_arun_async_confirmer_rejected(tmp_path):
