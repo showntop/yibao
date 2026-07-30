@@ -64,25 +64,24 @@ def test_click_control_ax_press():
     assert host.input.clicks == []  # 没走坐标回退
 
 
-def test_click_control_coord_fallback():
+def test_click_control_no_blind_coord_and_hints_computer_use():
+    # 不再盲点坐标：给了 x/y 但 a11y 查不到 → 失败 + 提示 computer_use
+    r = ClickControlSkill().run({"x": 100, "y": 200}, _ctx(FakeHost()))
+    assert not r.success
+    assert "computer_use" in r.error
+
+
+def test_click_control_ax_fail_still_coordless():
     host = FakeHost()
-    r = ClickControlSkill().run({"x": 100, "y": 200}, _ctx(host))
-    assert r.success and r.data["method"] == "coord"
-    assert host.input.clicks == [(100.0, 200.0)]
+    r = ClickControlSkill().run({"role": "AXButton", "title": "不存在", "x": 5, "y": 6}, _ctx(host))
+    assert not r.success and "computer_use" in r.error
+    assert host.input.clicks == []  # 没走坐标点击
 
 
 def test_click_control_ax_fail_then_no_coord_returns_error():
     # 给了 role/title 但查不到、又没给坐标 → 失败
     r = ClickControlSkill().run({"role": "AXButton", "title": "不存在"}, _ctx(FakeHost()))
     assert not r.success
-
-
-def test_click_control_ax_fail_then_coord_fallback():
-    # 给了 role/title 查不到，但同时给了坐标 → 回退坐标
-    host = FakeHost()
-    r = ClickControlSkill().run({"role": "AXButton", "title": "不存在", "x": 5, "y": 6}, _ctx(host))
-    assert r.success and r.data["method"] == "coord"
-    assert host.input.clicks == [(5.0, 6.0)]
 
 
 def test_type_text_injects():

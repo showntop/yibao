@@ -95,7 +95,7 @@ class OpenAppSkill(Skill):
 class ClickControlSkill(Skill):
     id = "click_control"
     label = "点击控件"
-    description = "点击一个控件：优先按 role/title 查找并触发其动作（确定性），找不到或不支持则回退屏幕坐标 (x,y) 点击。"
+    description = "点击一个控件：按 role/title 查找并触发其动作（确定性）。找不到或不支持时返回失败，应改用 computer_use 视觉定位。"
     default_risk = RiskLevel.L1_LOW
 
     def openai_schema(self) -> dict:
@@ -107,8 +107,6 @@ class ClickControlSkill(Skill):
                 "properties": {
                     "role": {"type": "string", "description": "控件角色，如 AXButton"},
                     "title": {"type": "string", "description": "控件标题/文字，如 '等于' 或 'OK'"},
-                    "x": {"type": "number", "description": "回退用屏幕坐标 x"},
-                    "y": {"type": "number", "description": "回退用屏幕坐标 y"},
                 },
                 "required": [],
             },
@@ -120,17 +118,15 @@ class ClickControlSkill(Skill):
         a11y = ctx.host.a11y
         role = params.get("role")
         title = params.get("title")
-        # 1. role/title → 查控件 → AX 主动作（Press/Pick）
         if role or title:
             handle = a11y.find(role, title)
             if handle is not None and a11y.press(handle):
                 return ActionResult(success=True, data={"method": "ax", "target": title or role})
-        # 2. 回退坐标点击
-        x, y = params.get("x"), params.get("y")
-        if x is not None and y is not None:
-            ctx.host.input.click(float(x), float(y))
-            return ActionResult(success=True, data={"method": "coord", "x": float(x), "y": float(y)})
-        return ActionResult(success=False, error="无法定位控件（需提供 role/title 或 x/y）")
+        # 不再盲坐标回退：a11y 找不到 → 导向 computer_use 视觉定位
+        return ActionResult(
+            success=False,
+            error="无法用 a11y 定位该控件（自绘 UI 或无 title）。请改用 computer_use 视觉定位。",
+        )
 
 
 class TypeTextSkill(Skill):
