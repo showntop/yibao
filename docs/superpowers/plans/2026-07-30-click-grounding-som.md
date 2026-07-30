@@ -967,9 +967,11 @@ git add sidecar/scripts/eval_click.py sidecar/scripts/eval_scenarios/README.md
 git commit -m "feat(eval): Phase 0 点击精度评测 baseline vs SoM 脚手架"
 ```
 
-- [ ] **Step 5（手动，验收）：采集 ~12 真实场景并跑评测**
+- [x] **Step 5（手动，验收）：采集 ~12 真实场景并跑评测**
 
 按 README 采集约 12 个真实场景、手填 gt、`python scripts/eval_click.py --scenarios scripts/eval_scenarios`，对照 spec §8 成功标准（hit-rate ≥ baseline+20pt、标准控件区 ≥85%）。未达标 → 在本计划追加「本地 grounding 模型评估」任务。
+
+**2026-07-30 实测记录（`glm-4.1v-thinking-flashx`）**：12 个受控场景覆盖计算器密集按钮、原生窗口控件、网页链接/小目标、Canvas 与 Electron 风格 a11y 盲区。该模型输出的 bbox 使用 0–1000 归一化坐标；修正坐标协议后，raw-bbox baseline 为 12/12（100%，平均中心距离 7.7px），SoM 为 10/12（83%，平均中心距离 22.5px），标准控件子集为 8/9（89%）。SoM 未达到相对 baseline +20pt 的门槛，且原生 grounding 明显更优，因此本模型改走归一化 bbox 还原后的原生路径；其他视觉模型继续保留 SoM。当前样本是核心受控验收，不替代后续更大规模真机回归；只有原生路径在真机回归中退化时才启动本地 grounding 重模型评估。
 
 ---
 

@@ -213,6 +213,7 @@ def test_glm41v_thinking_normalized_box_is_converted_to_image_pixels(tmp_path):
         client_factory=FakeClient,
     )
 
+    assert client.prefers_raw_bbox is True
     action = client.next_action(image_b64, "点击帮助按钮")
 
     assert action == {

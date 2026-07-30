@@ -208,17 +208,20 @@ class ComputerUseSkill(Skill):
                 break  # 连续两帧无变化 → 停
             prev_hash = shot_hash
             scale = _physical_scale(shot)
-            tree = ctx.host.a11y.frontmost_tree()
-            marked, marks = self._som.build_marks(shot, tree, scale)
-            if marked is None:
-                action = self._raw_bbox_step(shot, task, history, ctx.host, scale)  # 回退
+            if getattr(self._client, "prefers_raw_bbox", False):
+                action = self._raw_bbox_step(shot, task, history, ctx.host, scale)  # 模型原生 grounding
             else:
-                action = self._client.choose_action(marked, task, len(marks), history)
-                if action is None:
-                    break  # 模型输出非法 → 停，防失控
-                if action.get("action") == "finish":
-                    break
-                self._apply_marked(action, marks, ctx.host)
+                tree = ctx.host.a11y.frontmost_tree()
+                marked, marks = self._som.build_marks(shot, tree, scale)
+                if marked is None:
+                    action = self._raw_bbox_step(shot, task, history, ctx.host, scale)  # 回退
+                else:
+                    action = self._client.choose_action(marked, task, len(marks), history)
+                    if action is None:
+                        break  # 模型输出非法 → 停，防失控
+                    if action.get("action") == "finish":
+                        break
+                    self._apply_marked(action, marks, ctx.host)
             if action is not None and action.get("action") and action.get("action") != "finish":
                 done.append(action)
                 history.append({"role": "assistant", "content": json.dumps(action, ensure_ascii=False)})

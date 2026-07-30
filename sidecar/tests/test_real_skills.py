@@ -243,6 +243,36 @@ def test_computer_use_raw_bbox_fallback_on_render_fail(tmp_path, monkeypatch):
     assert client.choose_calls == []  # 没走 SoM
 
 
+def test_computer_use_prefers_native_bbox_for_capable_model(tmp_path, monkeypatch):
+    """原生 grounding 更准的模型应直接走 bbox，不再叠 SoM。"""
+    import pyautogui
+
+    from yibao_brain.grounding import SoMGrounding
+    from yibao_brain.skills_real import ComputerUseSkill
+    from fakes import FakeComputerUseClient, FakeScreenshotter
+
+    monkeypatch.setattr(pyautogui, "size", lambda: _size_obj(100, 100))
+    host = FakeHost()
+    host.screenshotter = FakeScreenshotter(paths=_make_shots(tmp_path, 2))
+    som = SoMGrounding()
+    monkeypatch.setattr(
+        som,
+        "build_marks",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("不应构建 SoM")),
+    )
+    client = FakeComputerUseClient(
+        actions=[{"action": "click", "box": [10, 10, 30, 30]}, {"action": "finish"}],
+    )
+    client.prefers_raw_bbox = True
+
+    result = ComputerUseSkill(client, som=som).run({"task": "t"}, SkillContext(host=host))
+
+    assert result.success and result.data["steps"] == 1
+    assert host.input.clicks == [(20.0, 20.0)]
+    assert len(client.calls) == 2
+    assert client.choose_calls == []
+
+
 def test_computer_use_empty_dict_action_not_counted_as_step(tmp_path, monkeypatch):
     # raw-bbox 路径下，_parse_action 对 "{}" 模型输出返回 {} → 不应计为一步
     # （回归：旧守则 action.get("action") != "finish" 对 {} 为真 → 幻影 step）

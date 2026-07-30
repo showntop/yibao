@@ -253,6 +253,7 @@ class ComputerUseClient:
         from openai import OpenAI
 
         self.model = model or vision_model()
+        self.prefers_raw_bbox = self.model.startswith("glm-4.1v-thinking-")
         factory = client_factory or OpenAI
         self.client = factory(
             api_key=api_key or vision_api_key(),
