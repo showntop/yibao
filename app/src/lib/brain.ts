@@ -232,6 +232,7 @@ export interface FeedItem {
   text: string;
   meta?: Record<string, unknown>;
   read: number; // 0=未读 1=已读（sidecar Task 1/6 落库 + Rust 透传）
+  status: "none" | "follow" | "ignore"; // C 子项目：处置态（与 read 正交）
 }
 
 export interface RunningTask {
@@ -248,6 +249,7 @@ export interface FeedStats {
   running_tasks: number;
   done_24h: number;
   unread: number; // 未读动态数（sidecar stats.unread，Rust 透传）
+  ignored: number; // 已忽略数（C 子项目，折叠提示用）
 }
 
 export interface FeedResponse {
@@ -258,7 +260,7 @@ export interface FeedResponse {
 
 const EMPTY_FEED: FeedResponse = {
   items: [],
-  stats: { pending_reminders: 0, running_tasks: 0, done_24h: 0, unread: 0 },
+  stats: { pending_reminders: 0, running_tasks: 0, done_24h: 0, unread: 0, ignored: 0 },
   running_tasks: [],
 };
 
@@ -294,6 +296,17 @@ export function markFeedRead(id: number): Promise<void> {
 /** 全部已读（sidecar 回执经 brain-feed-all-read 事件来，载荷含 n=归零条数）。 */
 export function markAllFeedRead(): Promise<void> {
   return invoke("feed_mark_all_read");
+}
+
+/** 设置处置态：follow/ignore/none（C 子项目，与 read 正交）。前端走乐观更新。 */
+export function markFeedStatus(id: number, status: "none" | "follow" | "ignore"): Promise<void> {
+  return invoke("feed_mark_status", { id, status });
+}
+
+/** tier 三分级（按 kind 自动推导）：task→Review、reminder/event→Notify。 */
+export type FeedTier = "Notify" | "Review";
+export function feedTierOf(kind: FeedItem["kind"]): FeedTier {
+  return kind === "task" ? "Review" : "Notify";
 }
 
 // ---- 主屏 widget（OS 感 §4.2：插件一瞥卡，schema 协议的 widget 类型）----

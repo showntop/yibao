@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS feed (
   kind TEXT NOT NULL,
   text TEXT NOT NULL,
   meta TEXT NOT NULL DEFAULT '{}',
-  read INTEGER NOT NULL DEFAULT 0
+  read INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'none'
 );
 CREATE INDEX IF NOT EXISTS idx_feed_ts ON feed(ts);
 """
@@ -38,6 +39,13 @@ class FeedStore:
             # 幂等迁移：老库没有 read 列 → 补上（存量行天然 read=0）
             try:
                 self._conn.execute("ALTER TABLE feed ADD COLUMN read INTEGER NOT NULL DEFAULT 0")
+                self._conn.commit()
+            except sqlite3.OperationalError as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
+            # 幂等迁移：status 列（C 子项目：跟进/忽略处置态，与 read 正交）
+            try:
+                self._conn.execute("ALTER TABLE feed ADD COLUMN status TEXT NOT NULL DEFAULT 'none'")
                 self._conn.commit()
             except sqlite3.OperationalError as e:
                 if "duplicate column" not in str(e).lower():
@@ -86,7 +94,7 @@ class FeedStore:
 
     def recent(self, limit: int = 60, since: float | None = None) -> list[dict]:
         """按时间倒序取动态。meta JSON 解析失败退化为 {}。"""
-        sql = "SELECT id, ts, kind, text, meta, read FROM feed"
+        sql = "SELECT id, ts, kind, text, meta, read, status FROM feed"
         args: list = []
         if since is not None:
             sql += " WHERE ts >= ?"
@@ -108,6 +116,7 @@ class FeedStore:
                 "text": r["text"],
                 "meta": meta,
                 "read": int(r["read"] or 0),
+                "status": str(r["status"] or "none"),
             })
         return out
 
@@ -148,6 +157,29 @@ class FeedStore:
             return cur.rowcount
         except Exception as e:
             print(f"[yibao] feed 全部标记已读失败（已跳过）：{e}", file=sys.stderr)
+            return 0
+
+    def set_status(self, feed_id: int, status: str) -> bool:
+        """设置处置态：none/follow/ignore（与 read 正交）。写失败只 print 不抛，返回 False。"""
+        if status not in ("none", "follow", "ignore"):
+            return False
+        try:
+            with self._lock:
+                cur = self._conn.execute("UPDATE feed SET status = ? WHERE id = ?", (status, feed_id))
+                self._conn.commit()
+            return cur.rowcount > 0
+        except Exception as e:
+            print(f"[yibao] feed 设置处置态失败（已跳过）：{e}", file=sys.stderr)
+            return False
+
+    def count_ignored(self) -> int:
+        """已忽略条数（前端折叠提示用）。读失败降级 0。"""
+        try:
+            with self._lock:
+                row = self._conn.execute("SELECT COUNT(*) FROM feed WHERE status = 'ignore'").fetchone()
+            return int(row[0]) if row else 0
+        except Exception as e:
+            print(f"[yibao] feed 计数失败（已降级为 0）：{e}", file=sys.stderr)
             return 0
 
     def close(self) -> None:

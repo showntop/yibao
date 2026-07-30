@@ -220,7 +220,7 @@ def test_serve_async_feed_query(tmp_path, monkeypatch):
     assert len(feeds) == 1
     assert [i["text"] for i in feeds[0]["items"]] == ["提醒触发", "任务完成"]
     stats = feeds[0]["stats"]
-    assert set(stats) == {"pending_reminders", "running_tasks", "done_24h", "unread"}
+    assert set(stats) == {"pending_reminders", "running_tasks", "done_24h", "unread", "ignored"}
     assert stats["running_tasks"] == 0  # tmp 数据目录下无 agents 库
     assert stats["done_24h"] == 1  # 一条 task 动态落在 24h 内
     assert stats["unread"] == 2  # 两条预置动态均未读
@@ -242,5 +242,36 @@ def test_serve_async_feed_query_empty(tmp_path, monkeypatch):
     feeds = [m for m in out if m["type"] == "feed"]
     assert len(feeds) == 1
     assert feeds[0]["items"] == []
-    assert feeds[0]["stats"] == {"pending_reminders": 0, "running_tasks": 0, "done_24h": 0, "unread": 0}
+    assert feeds[0]["stats"] == {"pending_reminders": 0, "running_tasks": 0, "done_24h": 0, "unread": 0, "ignored": 0}
     assert feeds[0]["running_tasks"] == []
+
+
+def test_set_status_and_count_ignored(tmp_path):
+    """C 子项目：处置态（follow/ignore/none）与 read 正交。"""
+    from yibao_brain.feed import FeedStore
+    f = FeedStore(str(tmp_path / "f.db"))
+    f.add("task", "t1", {})
+    f.add("task", "t2", {})
+    rows = f.recent()
+    assert all(r["status"] == "none" for r in rows)
+    assert f.set_status(rows[0]["id"], "ignore") is True
+    assert f.set_status(rows[1]["id"], "follow") is True
+    assert f.count_ignored() == 1
+    by_id = {r["id"]: r for r in f.recent()}
+    assert by_id[rows[0]["id"]]["status"] == "ignore"
+    assert by_id[rows[1]["id"]]["status"] == "follow"
+    assert by_id[rows[0]["id"]]["read"] == 0            # ignore 与 read 正交
+    assert f.set_status(rows[0]["id"], "bogus") is False     # 非法 status 拒收
+    assert f.set_status(rows[0]["id"], "none") is True       # 取消标记
+    assert f.count_ignored() == 0
+
+
+def test_feed_status_migration_idempotent(tmp_path):
+    """status 列幂等迁移：重复打开不崩。"""
+    from yibao_brain.feed import FeedStore
+    db = str(tmp_path / "f.db")
+    FeedStore(db)
+    FeedStore(db)               # 再开：ALTER 触发 duplicate column，应被吞
+    f = FeedStore(db)
+    f.add("task", "x", {})
+    assert f.recent()[0]["status"] == "none"

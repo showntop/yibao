@@ -614,6 +614,7 @@ async def serve_async(
         stats["running_tasks"] = len(running_tasks or [])
         stats["done_24h"] = feed.count_since("task", time.time() - 86400)
         stats["unread"] = feed.count_unread()
+        stats["ignored"] = feed.count_ignored()
         return stats
 
     async def _collect_widgets() -> list[dict]:
@@ -1073,6 +1074,12 @@ async def serve_async(
             # 主屏「全部已读」：返回受影响行数
             n = feed.mark_all_read()
             write_msg({"type": "feed_all_read", "n": n})
+        elif rtype == "feed_mark_status":
+            # C 子项目：处置态（follow/ignore/none），与 read 正交
+            fid = int(msg.get("id", 0))
+            status = str(msg.get("status", "none"))
+            ok = feed.set_status(fid, status)
+            write_msg({"type": "feed_status_set", "id": fid, "status": status, "ok": ok})
         elif rtype == "widgets":
             # 主屏查询：插件 widget 卡片逐个取数（panel_payload 形状 + open 跳转方法）
             write_msg({"type": "widgets", "widgets": await _collect_widgets()})

@@ -1441,6 +1441,35 @@ def test_serve_async_feed_mark_read_lowers_unread(tmp_path):
     assert {"type": "feed_marked_read", "id": 1, "ok": True} in out
 
 
+def test_serve_async_feed_mark_status_roundtrip(tmp_path):
+    # C 子项目：feed_mark_status IPC 往返 + stats.ignored + recent status
+    _seed_feed(tmp_path / "a.db", [
+        ("task", "任务A", {}),
+        ("task", "任务B", {}),
+    ])
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([
+                {"type": "feed_mark_status", "id": 1, "status": "ignore"},
+                {"type": "feed_mark_status", "id": 2, "status": "follow"},
+                {"type": "feed"},
+            ]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+        )
+    )
+    assert {"type": "feed_status_set", "id": 1, "status": "ignore", "ok": True} in out
+    assert {"type": "feed_status_set", "id": 2, "status": "follow", "ok": True} in out
+    feed = [m for m in out if m["type"] == "feed"][0]
+    assert feed["stats"]["ignored"] == 1
+    by_id = {it["id"]: it for it in feed["items"]}
+    assert by_id[1]["status"] == "ignore"
+    assert by_id[2]["status"] == "follow"
+
+
 def test_serve_async_feed_mark_read_unknown_id_returns_ok_false(tmp_path):
     # 不存在的 id：ok=False，不抛
     _seed_feed(tmp_path / "a.db", [("event", "仅一条", {})])

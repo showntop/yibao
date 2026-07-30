@@ -790,6 +790,19 @@ fn feed_mark_all_read(state: tauri::State<Brain>) -> Result<(), String> {
     )
 }
 
+/// 主屏 Feed：处置态（follow/ignore/none，与 read 正交）。前端走乐观更新。
+#[tauri::command]
+fn feed_mark_status(
+    state: tauri::State<Brain>,
+    id: i64,
+    status: String,
+) -> Result<(), String> {
+    write_to_brain(
+        &state,
+        serde_json::json!({ "type": "feed_mark_status", "id": id, "status": status }),
+    )
+}
+
 /// 主屏 Dock 查询：pinned 优先 + 频率补齐（回 {"type":"dock_list","dock":[...]}
 /// 经 brain-dock-list 广播）。
 #[tauri::command]
@@ -1479,6 +1492,7 @@ pub fn run() {
             get_widgets,
             feed_mark_read,
             feed_mark_all_read,
+            feed_mark_status,
             dock_list,
             set_dock_pin,
             get_mem_list,
