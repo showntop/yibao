@@ -257,6 +257,11 @@ _SETTINGS_DEFAULTS: dict = {
     "dock_pinned": [],
     # TTS 引擎选择（UI 下拉；env YIBAO_TTS_PROVIDER 优先；切换下次启动生效）
     "tts.provider": "edge",
+    # watch mode（主动观察；slice1=健康节律+在场陪伴，默认关）
+    "watch.enabled": False,
+    "watch.cadence": 60,                  # watch 循环采样间隔（秒）
+    "watch.idle_warn_minutes": 45,        # 连续活跃多久提醒久坐
+    "watch.quiet_hours": "23:00-07:00",   # 静默时段（HH:MM-HH:MM，跨午夜；空串=关）
 }
 
 # 枚举型设置的合法取值；非法值拒收保持原值（防前端/手滑写坏）

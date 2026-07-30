@@ -27,6 +27,7 @@ from .safety import Decision, Gate, GatePolicy, RiskClassifier
 from .skills import EchoSkill, SkillRegistry
 from .skills_composite import register_composite_skills
 from .skills_real import ComputerUseSkill, register_real_skills
+from .watch import WatchCtx, build_behaviors, snapshot_from_perception
 
 ReadMsg = Callable[[], dict | None]
 WriteMsg = Callable[[dict], None]
@@ -449,6 +450,27 @@ def _plugin_summaries_list() -> list[dict]:
             for pid, info in get_plugin_summaries().items()]
 
 
+def _watch_tick(behaviors, snapshot, stgs) -> list:
+    """跑一轮 watch 行为；返回经 _gate_proactive_event 放行的事件列表。
+
+    单行为报错只记 stderr、跳过，不影响其它行为或整轮 watch。
+    """
+    ctx = WatchCtx(settings=stgs)
+    out: list[dict] = []
+    for b in behaviors:
+        try:
+            ev = b.tick(snapshot, ctx)
+        except Exception as e:
+            print(f"[yibao] watch 行为 {getattr(b, 'name', '?')} 报错（跳过）：{e}", file=sys.stderr)
+            continue
+        if not ev:
+            continue
+        gated = _gate_proactive_event(ev, stgs)
+        if gated is not None:
+            out.append(gated)
+    return out
+
+
 async def serve_async(
     read_msg: ReadMsg,
     write_msg: WriteMsg,
@@ -697,6 +719,31 @@ async def serve_async(
                     print(f"[yibao] 感知过期清理失败：{e}", file=sys.stderr)
 
     perception_cleanup_task = asyncio.ensure_future(_perception_cleanup_loop())
+
+    # watch mode（slice 1）：主动观察循环。总开关 watch.enabled 默认关；
+    # 每 cadence 秒取感知快照→跑行为→事件经 _gate_proactive_event（proactive.level）出口。
+    async def _watch_loop(store, stgs, vc, wm) -> None:
+        cadence = max(10.0, float(stgs.get("watch.cadence", 60) or 60))
+        behaviors = build_behaviors(stgs)
+        while True:
+            await asyncio.sleep(cadence)
+            try:
+                snap = snapshot_from_perception(store, time.time())
+                for ev in _watch_tick(behaviors, snap, stgs):
+                    wm({"type": "event", "surface": "pet", "event": ev})
+                    if vc is not None and _proactive_level(stgs) == "full" and ev.get("text"):
+                        try:
+                            await ai_loop.run_in_executor(None, vc.speak, ev["text"])
+                        except Exception as e:
+                            print(f"[yibao] watch 语音播报失败：{e}", file=sys.stderr)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                print(f"[yibao] watch tick 异常（继续）：{e}", file=sys.stderr)
+
+    watch_task = None
+    if settings.get("watch.enabled"):
+        watch_task = asyncio.ensure_future(_watch_loop(pstore, settings, voice, write_msg))
 
     async def _mem_list() -> list[dict]:
         """记忆管理页数据（OS 感 §4.4）：底座（译宝）+ 各插件命名空间分组列出。单空间失败不拖垮整体。"""
@@ -972,6 +1019,8 @@ async def serve_async(
             tick_task.cancel()
             reminder_task.cancel()
             perception_cleanup_task.cancel()
+            if watch_task is not None:
+                watch_task.cancel()
             perception_stop.set()
             if perception_thread is not None:
                 perception_thread.join(timeout=1)

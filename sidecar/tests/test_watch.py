@@ -128,3 +128,38 @@ def test_snapshot_no_data():
 def test_snapshot_no_store():
     snap = snapshot_from_perception(None, now=1000.0)
     assert snap.app is None and snap.activity is None and snap.now == 1000.0
+
+
+# ---------- _watch_tick：行为→gating→出口 ----------
+def test_watch_tick_emits_in_full_swallows_in_quiet():
+    """健康节律事件经 _gate_proactive_event：full 放行、quiet 吞掉。"""
+    from yibao_brain.server import _watch_tick
+
+    long_active = lambda seg: WatchSnapshot(  # noqa: E731
+        now=1000, activity={"state": "active", "seconds": 46 * 60, "segment_id": seg}
+    )
+    full = _watch_tick(
+        build_behaviors({"watch.idle_warn_minutes": 45, "watch.quiet_hours": ""}),
+        long_active(1), {"proactive.level": "full"},
+    )
+    assert full and full[0]["kind"] == "reminder"
+
+    quiet = _watch_tick(
+        build_behaviors({"watch.idle_warn_minutes": 45, "watch.quiet_hours": ""}),
+        long_active(2), {"proactive.level": "quiet"},
+    )
+    assert quiet == []
+
+
+def test_watch_tick_isolates_behavior_errors():
+    """一个行为报错不影响其它行为/整轮。"""
+    from yibao_brain.server import _watch_tick
+
+    class _Boom:
+        name = "boom"
+        def tick(self, snap, ctx):
+            raise RuntimeError("x")
+    ok = HealthNudge(idle_warn_minutes=45, quiet_hours="")
+    snap = WatchSnapshot(now=1000, activity={"state": "active", "seconds": 46 * 60, "segment_id": 1})
+    out = _watch_tick([_Boom(), ok], snap, {"proactive.level": "full"})
+    assert out and out[0]["kind"] == "reminder"  # _Boom 被跳过，ok 照常出

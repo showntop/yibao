@@ -162,6 +162,10 @@ def test_settings_set_persists_and_ignores_unknown(tmp_path, monkeypatch):
         "perception.model_access": True,
         "dock_pinned": [],
         "tts.provider": "edge",
+        "watch.enabled": False,
+        "watch.cadence": 60,
+        "watch.idle_warn_minutes": 45,
+        "watch.quiet_hours": "23:00-07:00",
     }
 
 
@@ -198,4 +202,8 @@ def test_settings_bad_file_falls_back_to_defaults(tmp_path, monkeypatch):
         "perception.model_access": False,
         "dock_pinned": [],
         "tts.provider": "edge",
+        "watch.enabled": False,
+        "watch.cadence": 60,
+        "watch.idle_warn_minutes": 45,
+        "watch.quiet_hours": "23:00-07:00",
     }
