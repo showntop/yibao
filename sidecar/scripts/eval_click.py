@@ -14,8 +14,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import os
-import re
 import sys
 from pathlib import Path
 
@@ -51,7 +49,6 @@ def center_distance(point, gt) -> float:
 
 
 def run_baseline(client, som, sc, scale):
-    from yibao_brain.grounding import _physical_scale  # noqa: F401
     action = client.next_action(_b64_png(sc["screenshot"]), sc["target"], [])
     if not action or action.get("action") != "click" or len(action.get("box") or []) != 4:
         return None
@@ -112,7 +109,9 @@ def _report(rows):
         print(f"{r['name']:<16}{_fmt(r['baseline']):<22}{_fmt(r['som']):<22}")
     print("-" * 60)
     print(f"hit-rate:  baseline {b_hit}/{n} = {b_hit/n:.0%}   SoM {s_hit}/{n} = {s_hit/n:.0%}")
-    print(f"平均距离:  baseline {sum(b_d)/len(b_d):.1f}px   SoM {sum(s_d)/len(s_d):.1f}px")
+    b_avg = sum(b_d) / len(b_d) if b_d else float("inf")
+    s_avg = sum(s_d) / len(s_d) if s_d else float("inf")
+    print(f"平均距离:  baseline {b_avg:.1f}px   SoM {s_avg:.1f}px  (仅成功预测)")
 
 
 def _fmt(p):

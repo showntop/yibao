@@ -243,6 +243,28 @@ def test_computer_use_raw_bbox_fallback_on_render_fail(tmp_path, monkeypatch):
     assert client.choose_calls == []  # 没走 SoM
 
 
+def test_computer_use_empty_dict_action_not_counted_as_step(tmp_path, monkeypatch):
+    # raw-bbox 路径下，_parse_action 对 "{}" 模型输出返回 {} → 不应计为一步
+    # （回归：旧守则 action.get("action") != "finish" 对 {} 为真 → 幻影 step）
+    import pyautogui
+    from yibao_brain.skills_real import ComputerUseSkill
+    from yibao_brain.grounding import SoMGrounding
+    from fakes import FakeComputerUseClient, FakeScreenshotter
+
+    monkeypatch.setattr(pyautogui, "size", lambda: _size_obj(100, 100))
+    host = FakeHost()
+    host.screenshotter = FakeScreenshotter(paths=_make_shots(tmp_path, 2))  # 真实可读图
+    host.a11y.tree = {"role": "AXApp", "children": []}
+    som = SoMGrounding()
+    monkeypatch.setattr(som, "_render", lambda *a, **k: None)  # 强制渲染失败 → raw-bbox
+    client = FakeComputerUseClient(actions=[{}, {"action": "finish"}])  # 空 dict 后 finish
+    r = ComputerUseSkill(client, som=som).run({"task": "t"}, SkillContext(host=host))
+    assert r.success and r.data["steps"] == 0
+    assert r.data["actions"] == []  # {} 未被记为步
+    assert host.input.clicks == []  # 也没误执行
+    assert client.choose_calls == []  # 没走 SoM
+
+
 def test_computer_use_som_max_steps_cap(tmp_path, monkeypatch):
     import pyautogui
     from yibao_brain.skills_real import ComputerUseSkill

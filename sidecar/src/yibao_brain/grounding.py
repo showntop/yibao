@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import base64
 import io
-import itertools
 
 INTERACTIVE_ROLES = frozenset({
     "AXButton", "AXLink", "AXTextField", "AXTextArea", "AXCheckBox",
@@ -24,7 +23,8 @@ def _physical_scale(shot_path: str) -> float:
     try:
         from PIL import Image
         import pyautogui
-        phys_w = Image.open(shot_path).width
+        with Image.open(shot_path) as _im:
+            phys_w = _im.width
         logical_w = pyautogui.size().width
         return phys_w / logical_w if logical_w else 1.0
     except Exception:
@@ -111,23 +111,24 @@ class SoMGrounding:
     def _render(self, shot_path: str, marks: list[dict], scale: float):
         try:
             from PIL import Image, ImageDraw, ImageFont
-            im = Image.open(shot_path).convert("RGB")
-            draw = ImageDraw.Draw(im)
-            try:
-                font = ImageFont.truetype(
-                    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-                    max(14, im.width // 40),
-                )
-            except Exception:
-                font = None
-            lw = max(2, im.width // 400)
-            for m in marks:
-                x1, y1, x2, y2 = (v * scale for v in m["rect"])  # 逻辑→物理
-                draw.rectangle([x1, y1, x2, y2], outline=(226, 32, 32), width=lw)
-                cx, cy = (v * scale for v in m["center"])
-                draw.text((cx + 2, cy + 2), str(m["id"]), fill=(226, 32, 32), font=font)
             buf = io.BytesIO()
-            im.save(buf, format="JPEG", quality=80)  # jpeg 省 token
+            with Image.open(shot_path) as _raw:
+                im = _raw.convert("RGB")
+                draw = ImageDraw.Draw(im)
+                try:
+                    font = ImageFont.truetype(
+                        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+                        max(14, im.width // 40),
+                    )
+                except Exception:
+                    font = None
+                lw = max(2, im.width // 400)
+                for m in marks:
+                    x1, y1, x2, y2 = (v * scale for v in m["rect"])  # 逻辑→物理
+                    draw.rectangle([x1, y1, x2, y2], outline=(226, 32, 32), width=lw)
+                    cx, cy = (v * scale for v in m["center"])
+                    draw.text((cx + 2, cy + 2), str(m["id"]), fill=(226, 32, 32), font=font)
+                im.save(buf, format="JPEG", quality=80)  # jpeg 省 token
             return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
         except Exception:
             return None

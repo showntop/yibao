@@ -1,7 +1,7 @@
 """Plan 3a 真实原子技能：经 SkillContext.host 调感知/执行基座操作 macOS。
 
 技能只做「编排」，原语（截图/查找/触发/点击/输入）由 host 提供。
-click_control 的三级回退（AX 动作 → 坐标）在这里体现。
+click_control 仅走 AX 动作；a11y 找不到/不支持时返回失败并指向 computer_use 视觉兜底（不再坐标回退）。
 """
 from __future__ import annotations
 
@@ -219,7 +219,7 @@ class ComputerUseSkill(Skill):
                 if action.get("action") == "finish":
                     break
                 self._apply_marked(action, marks, ctx.host)
-            if action is not None and action.get("action") != "finish":
+            if action is not None and action.get("action") and action.get("action") != "finish":
                 done.append(action)
                 history.append({"role": "assistant", "content": json.dumps(action, ensure_ascii=False)})
         return ActionResult(success=True, data={"steps": len(done), "actions": done})
