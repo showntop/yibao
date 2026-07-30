@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 
+from .grounding import SoMGrounding, _physical_scale
 from .ipc import ActionResult, RiskLevel
 from .skills import Skill, SkillContext, SkillRegistry
 
@@ -160,7 +161,10 @@ class TypeTextSkill(Skill):
 
 
 class ComputerUseSkill(Skill):
-    """视觉兜底：截图 → GLM-4.6V → 动作 → 注入，覆盖 a11y 力不能及的 UI。"""
+    """视觉兜底：截图 → SoM 叠编号 → GLM 选号/动作 → 解析执行，覆盖 a11y 力不能及的 UI。
+
+    build_marks 渲染失败时回退旧 raw-bbox（next_action）。
+    """
 
     id = "computer_use"
     label = "操作电脑"
@@ -170,9 +174,10 @@ class ComputerUseSkill(Skill):
     )
     default_risk = RiskLevel.L2_MEDIUM
 
-    def __init__(self, client, max_steps: int = 5):
+    def __init__(self, client, max_steps: int = 5, som: SoMGrounding | None = None):
         self._client = client
         self._default_max_steps = max_steps
+        self._som = som or SoMGrounding()
 
     def openai_schema(self) -> dict:
         return {
@@ -206,19 +211,40 @@ class ComputerUseSkill(Skill):
             if shot_hash is not None and shot_hash == prev_hash:
                 break  # 连续两帧无变化 → 停
             prev_hash = shot_hash
-            b64 = self._b64(shot)
-            if b64 is None:
-                break
-            action = self._client.next_action(b64, task, history)
-            if not action:
-                break  # 模型输出非法/空 → 停，防失控
-            if action.get("action") == "finish":
-                break
-            scale = self._scale(shot)
-            self._execute(action, ctx.host, scale)
-            done.append(action)
-            history.append({"role": "assistant", "content": json.dumps(action, ensure_ascii=False)})
+            scale = _physical_scale(shot)
+            tree = ctx.host.a11y.frontmost_tree()
+            marked, marks = self._som.build_marks(shot, tree, scale)
+            if marked is None:
+                action = self._raw_bbox_step(shot, task, history, ctx.host, scale)  # 回退
+            else:
+                action = self._client.choose_action(marked, task, len(marks), history)
+                if action is None:
+                    break  # 模型输出非法 → 停，防失控
+                if action.get("action") == "finish":
+                    break
+                self._apply_marked(action, marks, ctx.host)
+            if action is not None and action.get("action") != "finish":
+                done.append(action)
+                history.append({"role": "assistant", "content": json.dumps(action, ensure_ascii=False)})
         return ActionResult(success=True, data={"steps": len(done), "actions": done})
+
+    def _apply_marked(self, action: dict, marks: list[dict], host) -> None:
+        kind = action.get("action")
+        if kind == "click":
+            self._som.resolve(action.get("mark"), marks, host)
+        elif kind == "type":
+            host.input.type_text(str(action.get("text", "")))
+
+    def _raw_bbox_step(self, shot, task, history, host, scale):
+        """旧 raw-bbox 回退路径（build_marks 渲染失败时）。"""
+        b64 = self._b64(shot)
+        if b64 is None:
+            return None
+        action = self._client.next_action(b64, task, history)
+        if not action or action.get("action") == "finish":
+            return action
+        self._execute(action, host, scale)  # 既有 _execute：click box 中心 / type / scroll
+        return action
 
     @staticmethod
     def _md5(path: str) -> str | None:
@@ -239,19 +265,6 @@ class ComputerUseSkill(Skill):
                 return "data:image/png;base64," + base64.b64encode(f.read()).decode()
         except Exception:
             return None
-
-    @staticmethod
-    def _scale(shot_path: str) -> float:
-        """截图像素物理宽 / pyautogui 逻辑宽（Retina≈2）。失败退化 1.0。"""
-        try:
-            from PIL import Image
-            import pyautogui
-
-            phys_w = Image.open(shot_path).width
-            logical_w = pyautogui.size().width
-            return phys_w / logical_w if logical_w else 1.0
-        except Exception:
-            return 1.0
 
     @staticmethod
     def _execute(action: dict, host, scale: float) -> None:

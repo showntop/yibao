@@ -88,17 +88,30 @@ class FakeHost:
 
 
 class FakeComputerUseClient:
-    """按预设序列返回动作、记录调用；序列耗尽返回 finish。"""
+    """按预设序列返回动作、记录调用；序列耗尽返回 finish。
 
-    def __init__(self, actions: list | None = None, image_width: int = 1440):
+    支持两条路径：
+    - marked_actions + choose_action：SoM 选号流（主路径）；
+    - actions + next_action：raw-bbox 回退路径。
+    """
+
+    def __init__(self, actions=None, marked_actions=None, image_width=1440):
         self.actions = list(actions or [{"action": "finish"}])
-        self.calls: list[dict] = []
-        self.image_width = image_width  # 供技能算 HiDPI scale 用
+        self.marked_actions = list(marked_actions or [{"action": "finish"}])
+        self.calls = []
+        self.choose_calls = []
+        self.image_width = image_width
 
     def next_action(self, screenshot_b64: str, task: str, history: list | None = None):
         self.calls.append({"task": task, "history_len": len(history or [])})
         if self.actions:
             return self.actions.pop(0)
+        return {"action": "finish"}
+
+    def choose_action(self, marked_b64, task, n_marks, history=None):
+        self.choose_calls.append({"task": task, "n_marks": n_marks})
+        if self.marked_actions:
+            return self.marked_actions.pop(0)
         return {"action": "finish"}
 
 

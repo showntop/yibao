@@ -180,27 +180,84 @@ def test_choose_action_parse_marked():
     assert ComputerUseClient._parse_marked_action("乱码无数字", 5) is None
 
 
-def test_computer_use_loop_click_type_finish(tmp_path, monkeypatch):
+def test_computer_use_som_click_type_finish(tmp_path, monkeypatch):
     import pyautogui
-
     from yibao_brain.skills_real import ComputerUseSkill
+    from yibao_brain.grounding import SoMGrounding
+    from fakes import FakeComputerUseClient, FakeScreenshotter, FakeHost, _FakeHandle
+
+    monkeypatch.setattr(pyautogui, "size", lambda: _size_obj(100, 100))
+    host = FakeHost()
+    host.screenshotter = FakeScreenshotter(paths=_make_shots(tmp_path, 3))
+    host.a11y.element_at_result = _FakeHandle("AXButton", "ok")  # 命中 → AX-press
+    # tree 有一个 button 标记（mark 1）；网格补齐
+    host.a11y.tree = {"role": "AXApp", "children": [
+        {"role": "AXButton", "bbox": [10, 10, 30, 30], "children": []}]}
+    client = FakeComputerUseClient(marked_actions=[
+        {"action": "click", "mark": 1},
+        {"action": "type", "text": "hi"},
+        {"action": "finish"},
+    ])
+    r = ComputerUseSkill(client, som=SoMGrounding()).run({"task": "t"}, SkillContext(host=host))
+    assert r.success and r.data["steps"] == 2
+    assert host.a11y.press_calls and host.input.clicks == []  # mark1 走 AX
+    assert host.input.types == ["hi"]
+    assert len(client.choose_calls) == 3
+
+
+def test_computer_use_som_coord_fallback_when_no_element(tmp_path, monkeypatch):
+    import pyautogui
+    from yibao_brain.skills_real import ComputerUseSkill
+    from yibao_brain.grounding import SoMGrounding
     from fakes import FakeComputerUseClient, FakeScreenshotter
 
     monkeypatch.setattr(pyautogui, "size", lambda: _size_obj(100, 100))
     host = FakeHost()
-    host.screenshotter = FakeScreenshotter(paths=_make_shots(tmp_path, 3))  # 每步不同截图
+    host.screenshotter = FakeScreenshotter(paths=_make_shots(tmp_path, 2))
+    host.a11y.element_at_result = None  # 无 handle → 坐标回退
+    host.a11y.tree = {"role": "AXApp", "children": [
+        {"role": "AXButton", "bbox": [40, 40, 60, 60], "children": []}]}
+    client = FakeComputerUseClient(marked_actions=[{"action": "click", "mark": 1}, {"action": "finish"}])
+    ComputerUseSkill(client, som=SoMGrounding()).run({"task": "t"}, SkillContext(host=host))
+    assert host.input.clicks == [(50.0, 50.0)]  # bbox 中心，逻辑坐标
+
+
+def test_computer_use_raw_bbox_fallback_on_render_fail(tmp_path, monkeypatch):
+    # build_marks 渲染失败（_render 返 None）但图可读 → 回退 next_action raw-bbox
+    # 注意：不能用坏路径——_b64 也打不开图，next_action 永远不执行。故 monkeypatch _render。
+    import pyautogui
+    from yibao_brain.skills_real import ComputerUseSkill
+    from yibao_brain.grounding import SoMGrounding
+    from fakes import FakeComputerUseClient, FakeScreenshotter
+
+    monkeypatch.setattr(pyautogui, "size", lambda: _size_obj(100, 100))
+    host = FakeHost()
+    host.screenshotter = FakeScreenshotter(paths=_make_shots(tmp_path, 2))  # 真实可读图
+    host.a11y.tree = {"role": "AXApp", "children": []}
+    som = SoMGrounding()
+    monkeypatch.setattr(som, "_render", lambda *a, **k: None)  # 强制渲染失败
     client = FakeComputerUseClient(
-        [
-            {"action": "click", "box": [10, 10, 30, 30]},
-            {"action": "type", "text": "hi"},
-            {"action": "finish"},
-        ]
-    )
-    r = ComputerUseSkill(client).run({"task": "t"}, SkillContext(host=host))
-    assert r.success and r.data["steps"] == 2
-    assert host.input.clicks == [(20.0, 20.0)]  # box 中心，scale=1.0
-    assert host.input.types == ["hi"]
-    assert len(client.calls) == 3
+        actions=[{"action": "click", "box": [10, 10, 30, 30]}, {"action": "finish"}])  # 走 raw-bbox
+    r = ComputerUseSkill(client, som=som).run({"task": "t"}, SkillContext(host=host))
+    assert r.success and r.data["steps"] == 1
+    assert host.input.clicks == [(20.0, 20.0)]  # box 中心 / scale 1.0
+    assert client.choose_calls == []  # 没走 SoM
+
+
+def test_computer_use_som_max_steps_cap(tmp_path, monkeypatch):
+    import pyautogui
+    from yibao_brain.skills_real import ComputerUseSkill
+    from yibao_brain.grounding import SoMGrounding
+    from fakes import FakeComputerUseClient, FakeScreenshotter
+
+    monkeypatch.setattr(pyautogui, "size", lambda: _size_obj(100, 100))
+    host = FakeHost()
+    host.screenshotter = FakeScreenshotter(paths=_make_shots(tmp_path, 5))
+    host.a11y.tree = {"role": "AXApp", "children": [
+        {"role": "AXButton", "bbox": [0, 0, 2, 2], "children": []}]}
+    client = FakeComputerUseClient(marked_actions=[{"action": "click", "mark": 1}] * 5)
+    r = ComputerUseSkill(client, max_steps=3, som=SoMGrounding()).run({"task": "t"}, SkillContext(host=host))
+    assert r.success and r.data["steps"] == 3
 
 
 def test_computer_use_finish_stops_immediately(tmp_path, monkeypatch):
@@ -212,20 +269,20 @@ def test_computer_use_finish_stops_immediately(tmp_path, monkeypatch):
     monkeypatch.setattr(pyautogui, "size", lambda: _size_obj(100, 100))
     host = FakeHost()
     host.screenshotter.path = _make_shot(tmp_path)
-    r = ComputerUseSkill(FakeComputerUseClient([{"action": "finish"}])).run(
+    r = ComputerUseSkill(FakeComputerUseClient(marked_actions=[{"action": "finish"}])).run(
         {"task": "t"}, SkillContext(host=host)
     )
     assert r.success and r.data["steps"] == 0
 
 
 def test_computer_use_none_action_stops(tmp_path, monkeypatch):
-    # client 返 None（模型输出非法）→ 立即停，不失控
+    # choose_action 返 None（模型输出非法）→ 立即停，不失控
     import pyautogui
 
     from yibao_brain.skills_real import ComputerUseSkill
 
     class _NoneClient:
-        def next_action(self, b, t, history=None):
+        def choose_action(self, b, t, n, history=None):
             return None
 
     monkeypatch.setattr(pyautogui, "size", lambda: _size_obj(100, 100))
@@ -235,40 +292,8 @@ def test_computer_use_none_action_stops(tmp_path, monkeypatch):
     assert r.success and r.data["steps"] == 0
 
 
-def test_computer_use_hidpi_coordinate(tmp_path, monkeypatch):
-    # 物理 200px / 逻辑 100px → scale 2.0；box 中心 20 → click 10
-    import pyautogui
-
-    from yibao_brain.skills_real import ComputerUseSkill
-    from fakes import FakeComputerUseClient
-
-    monkeypatch.setattr(pyautogui, "size", lambda: _size_obj(100, 100))
-    host = FakeHost()
-    host.screenshotter.path = _make_shot(tmp_path, 200, 200)  # 物理宽 200
-    client = FakeComputerUseClient(
-        [{"action": "click", "box": [10, 10, 30, 30]}, {"action": "finish"}]
-    )
-    ComputerUseSkill(client).run({"task": "t"}, SkillContext(host=host))
-    assert host.input.clicks == [(10.0, 10.0)]  # 20 / scale(2.0)
-
-
 def test_computer_use_missing_task():
     from yibao_brain.skills_real import ComputerUseSkill
 
     r = ComputerUseSkill(client=None).run({}, SkillContext(host=FakeHost()))
     assert not r.success
-
-
-def test_computer_use_max_steps_cap(tmp_path, monkeypatch):
-    # 无 finish、每步不同截图 → 不触发无变化，靠 max_steps 截断
-    import pyautogui
-
-    from yibao_brain.skills_real import ComputerUseSkill
-    from fakes import FakeComputerUseClient, FakeScreenshotter
-
-    monkeypatch.setattr(pyautogui, "size", lambda: _size_obj(100, 100))
-    host = FakeHost()
-    host.screenshotter = FakeScreenshotter(paths=_make_shots(tmp_path, 5))
-    client = FakeComputerUseClient([{"action": "click", "box": [0, 0, 2, 2]}] * 5)
-    r = ComputerUseSkill(client, max_steps=3).run({"task": "t"}, SkillContext(host=host))
-    assert r.success and r.data["steps"] == 3
