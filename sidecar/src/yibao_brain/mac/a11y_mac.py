@@ -93,15 +93,44 @@ def _get_children(el):
     return list(v) if v else []
 
 
+def _json_safe(v, _depth: int = 0):
+    """把 AX 属性值收拢为 JSON 可序列化的原生类型。
+
+    pyobjc 会把 NSString/NSNumber/NSArray/NSDictionary 桥接成原生对象，但
+    AXUIElementRef / AXValueRef / NSURL 等保持为不透明对象。若直接塞进控件树，
+    event.model_dump(mode="json")（server.py）与 json.dumps 都会抛
+    "Unable to serialize unknown type"，整个对话回合崩掉。这里在源头收口，
+    让控件树只含可序列化值。
+    """
+    if v is None or isinstance(v, (bool, int, float, str)):
+        return v
+    if isinstance(v, bytes):
+        try:
+            return v.decode("utf-8")
+        except UnicodeDecodeError:
+            return f"<bytes len={len(v)}>"
+    if _depth >= 8:
+        return "<…>"
+    if isinstance(v, (list, tuple)):
+        return [_json_safe(x, _depth + 1) for x in list(v)[:200]]
+    if isinstance(v, dict):
+        return {str(k): _json_safe(x, _depth + 1) for k, x in list(v.items())[:200]}
+    # AXUIElementRef / AXValueRef / NSURL / NSDate 等不透明对象 → 类型标记字符串
+    try:
+        return f"<{type(v).__name__}>"
+    except Exception:
+        return "<object>"
+
+
 def _summarize(el) -> dict:
     pos = _ax_point(_get_attr(el, kAXPositionAttribute))
     size = _ax_size(_get_attr(el, kAXSizeAttribute))
     return {
-        "title": _get_attr(el, kAXTitleAttribute),
-        "role": _get_attr(el, kAXRoleAttribute),
-        "value": _get_attr(el, kAXValueAttribute),
-        "enabled": _get_attr(el, kAXEnabledAttribute),
-        "focused": _get_attr(el, kAXFocusedAttribute),
+        "title": _json_safe(_get_attr(el, kAXTitleAttribute)),
+        "role": _json_safe(_get_attr(el, kAXRoleAttribute)),
+        "value": _json_safe(_get_attr(el, kAXValueAttribute)),
+        "enabled": _json_safe(_get_attr(el, kAXEnabledAttribute)),
+        "focused": _json_safe(_get_attr(el, kAXFocusedAttribute)),
         "position": pos,
         "size": size,
         "bbox": (pos[0], pos[1], pos[0] + size[0], pos[1] + size[1]) if pos and size else None,
