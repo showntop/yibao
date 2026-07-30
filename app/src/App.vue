@@ -148,7 +148,7 @@ const busy = computed(() =>
   state.value === "work" || state.value === "say",
 );
 const suggestions = SUGGESTIONS;
-const missingPerms = computed(() => perms.value !== null && (!perms.value.ax || !perms.value.screen));
+const missingPerms = computed(() => perms.value !== null && (!perms.value.ax || !perms.value.screen || !perms.value.input));
 // 「正在输入」占位：run 受理（think）到首个 chunk 之间气泡流还是空的，用三点呼吸占位；
 // 复用 state/streamingIdx 判断——首 chunk 建起 streaming 气泡即让位，终态（idle/error）自动消失
 const showTyping = computed(() => state.value === "think" && streamingIdx.value === null);

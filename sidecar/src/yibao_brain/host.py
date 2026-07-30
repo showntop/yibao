@@ -50,6 +50,16 @@ class InputInjector(Protocol):
         """在屏幕坐标 (x,y) 左键点击。"""
         ...
 
+
+class UserInputGuard(Protocol):
+    def checkpoint(self) -> Any:
+        """记录当前最近一次用户输入，返回本次前台动作的租约。"""
+        ...
+
+    def permit(self, lease: Any) -> tuple[bool, str | None]:
+        """动作注入前复核；用户插手或权限缺失时拒绝。"""
+        ...
+
     def type_text(self, text: str) -> None:
         """输入文本：ASCII 走键入，含中文走剪贴板粘贴。"""
         ...
@@ -61,3 +71,4 @@ class Host(Protocol):
     screenshotter: Screenshotter
     a11y: A11yReader
     input: InputInjector
+    user_input: UserInputGuard

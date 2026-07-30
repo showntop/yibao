@@ -5,12 +5,13 @@ import { checkPermissions, promptPermission, type BrainPermissions } from "../li
 defineProps<{ perms: BrainPermissions }>();
 
 // macOS 系统设置对应面板的 URL scheme
-const SETTINGS_URLS: Record<"ax" | "screen", string> = {
+const SETTINGS_URLS: Record<"ax" | "screen" | "input", string> = {
   ax: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
   screen: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+  input: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",
 };
 
-function grant(which: "ax" | "screen") {
+function grant(which: "ax" | "screen" | "input") {
   // 双管齐下：系统授权弹窗（仅首次有效）+ 打开对应设置面板
   void promptPermission(which).catch(() => {});
   void openUrl(SETTINGS_URLS[which]).catch(() => {});
@@ -31,6 +32,10 @@ function recheck() {
     <div v-if="!perms.screen" class="row">
       <span class="label">屏幕录制<span class="why">（截图感知屏幕内容）</span></span>
       <button class="ok" @click="grant('screen')">去授权</button>
+    </div>
+    <div v-if="!perms.input" class="row">
+      <span class="label">输入监控<span class="why">（用户键鼠优先，AI 自动让出控制）</span></span>
+      <button class="ok" @click="grant('input')">去授权</button>
     </div>
     <div class="foot">
       <button class="dim" @click="recheck">重新检测</button>

@@ -1,6 +1,6 @@
-"""macOS 权限检查/引导：辅助功能（AX 读写 + 键鼠注入）、屏幕录制（截图）。
+"""macOS 权限检查/引导：辅助功能、屏幕录制、输入监控。
 
-两者都按「二进制」授权（TCC.db），换构建产物要重授。
+这些权限都按「二进制」授权（TCC.db），换构建产物要重授。
 AXIsProcessTrustedWithOptions 仅弹一次引导、不能强制授权；
 CGPreflightScreenCaptureAccess 需 Team ID 签名二进制才准，dev 期可能恒 false
 （用「抓图判黑」启发式兜底）。
@@ -49,6 +49,28 @@ def prompt_screen() -> bool:
         return False
 
 
+def check_input() -> bool:
+    if sys.platform != "darwin":
+        return True
+    try:
+        from Quartz import CGPreflightListenEventAccess
+
+        return bool(CGPreflightListenEventAccess())
+    except Exception:
+        return False
+
+
+def prompt_input() -> bool:
+    if sys.platform != "darwin":
+        return True
+    try:
+        from Quartz import CGRequestListenEventAccess
+
+        return bool(CGRequestListenEventAccess())
+    except Exception:
+        return False
+
+
 def ensure_permissions() -> dict:
     """启动时调用：返回各权限状态，未授权的弹一次引导。"""
     ax = check_ax()
@@ -57,4 +79,5 @@ def ensure_permissions() -> dict:
     screen = check_screen()
     if not screen:
         prompt_screen()
-    return {"ax": ax, "screen": screen}
+    input_ok = check_input()
+    return {"ax": ax, "screen": screen, "input": input_ok}

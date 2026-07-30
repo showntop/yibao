@@ -9,9 +9,46 @@ import pyautogui
 import pyperclip
 from PIL import Image
 
+from .. import permissions
+from ..interaction import UserInputLeaseGuard
 from .a11y_mac import MacA11yReader
 
 pyautogui.FAILSAFE = False  # agent 场景关掉角落熔断
+
+
+def _seconds_since_user_input() -> float:
+    """返回最近一次真实键鼠事件距今秒数；调用前由 TCC 输入监控权限兜底。"""
+    from Quartz import (
+        CGEventSourceSecondsSinceLastEventType,
+        kCGEventKeyDown,
+        kCGEventLeftMouseDragged,
+        kCGEventLeftMouseDown,
+        kCGEventMouseMoved,
+        kCGEventOtherMouseDragged,
+        kCGEventOtherMouseDown,
+        kCGEventRightMouseDragged,
+        kCGEventRightMouseDown,
+        kCGEventScrollWheel,
+        kCGEventSourceStateCombinedSessionState,
+    )
+
+    event_types = (
+        kCGEventMouseMoved,
+        kCGEventLeftMouseDragged,
+        kCGEventRightMouseDragged,
+        kCGEventOtherMouseDragged,
+        kCGEventLeftMouseDown,
+        kCGEventRightMouseDown,
+        kCGEventOtherMouseDown,
+        kCGEventScrollWheel,
+        kCGEventKeyDown,
+    )
+    return min(
+        float(CGEventSourceSecondsSinceLastEventType(
+            kCGEventSourceStateCombinedSessionState, event_type
+        ))
+        for event_type in event_types
+    )
 
 
 def _select_window(windows: list[dict], query: str) -> dict | None:
@@ -136,3 +173,8 @@ class MacHost:
         self.screenshotter = MacScreenshotter(screenshot_dir)
         self.a11y = MacA11yReader()
         self.input = MacInputInjector()
+        self.user_input = UserInputLeaseGuard(
+            _seconds_since_user_input,
+            idle_seconds=0.8,
+            available=permissions.check_input,
+        )

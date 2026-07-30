@@ -90,12 +90,13 @@ async function toggleAutostart() {
 // ---- 权限（复用引导横幅的检测/授权链路，视觉收敛为设置行）----
 // home 大窗独立挂载，收不到宠物窗的 perms prop：自行订阅 brain-permissions 广播 + 挂载时主动拉一次
 const perms = ref<BrainPermissions | null>(null);
-const SETTINGS_URLS: Record<"ax" | "screen", string> = {
+const SETTINGS_URLS: Record<"ax" | "screen" | "input", string> = {
   ax: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
   screen: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+  input: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",
 };
 
-function grant(which: "ax" | "screen") {
+function grant(which: "ax" | "screen" | "input") {
   // 双管齐下：系统授权弹窗（仅首次有效）+ 打开对应设置面板
   void promptPermission(which).catch(() => {});
   void openUrl(SETTINGS_URLS[which]).catch(() => {});
@@ -580,6 +581,14 @@ onUnmounted(() => {
             <span class="s-row-why">截图感知屏幕内容</span>
           </span>
           <button v-if="perms && !perms.screen" class="s-mini accent" @click="grant('screen')">去授权</button>
+        </div>
+        <div class="s-row">
+          <span class="s-row-label">
+            <i class="perm-dot" :class="perms ? (perms.input ? 'on' : 'off') : 'unknown'" />
+            输入监控
+            <span class="s-row-why">用户键鼠优先，AI 自动让出控制</span>
+          </span>
+          <button v-if="perms && !perms.input" class="s-mini accent" @click="grant('input')">去授权</button>
         </div>
         <div class="s-row">
           <span class="s-row-why">{{ perms ? "授权后点重新检测；屏幕录制需重启译宝生效" : "大脑连接后自动检测" }}</span>

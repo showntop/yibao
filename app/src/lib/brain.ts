@@ -147,6 +147,7 @@ export interface BrainStatusMsg {
 export interface BrainPermissions {
   ax: boolean;
   screen: boolean;
+  input: boolean;
 }
 
 /** 订阅大脑守护状态（up=在线 / down=掉线 / restarting=重启中）。 */
@@ -169,8 +170,8 @@ export function checkPermissions(): Promise<void> {
   return invoke("check_permissions");
 }
 
-/** 触发系统授权引导弹窗（which = "ax" | "screen"）。 */
-export function promptPermission(which: "ax" | "screen"): Promise<void> {
+/** 触发系统授权引导弹窗。 */
+export function promptPermission(which: "ax" | "screen" | "input"): Promise<void> {
   return invoke("prompt_permission", { which });
 }
 

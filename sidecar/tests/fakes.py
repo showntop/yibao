@@ -78,6 +78,23 @@ class FakeInputInjector:
         self.types.append(text)
 
 
+class FakeUserInputGuard:
+    def __init__(self) -> None:
+        self.allowed = True
+        self.reason = None
+        self.checkpoints: list[object] = []
+        self.permit_calls: list[object] = []
+
+    def checkpoint(self):
+        lease = object()
+        self.checkpoints.append(lease)
+        return lease
+
+    def permit(self, lease):
+        self.permit_calls.append(lease)
+        return self.allowed, self.reason
+
+
 class FakeHost:
     """聚合三个 fake 句柄，实现 Host Protocol。"""
 
@@ -85,6 +102,7 @@ class FakeHost:
         self.screenshotter = FakeScreenshotter()
         self.a11y = FakeA11yReader()
         self.input = FakeInputInjector()
+        self.user_input = FakeUserInputGuard()
 
 
 class FakeComputerUseClient:
