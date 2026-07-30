@@ -131,6 +131,11 @@ const proactiveLevel = ref<"quiet" | "bubble" | "full">("full");
 // TTS 引擎（settings.json；切换下次启动生效）
 const ttsProvider = ref<"edge" | "cosyvoice" | "cosyvoice_cloud">("edge");
 const ttsErr = ref("");
+// watch mode（settings.json；重启生效）
+const watchEnabled = ref(false);
+const watchIdleWarn = ref(45);
+const watchQuietHours = ref("23:00-07:00");
+const watchErr = ref("");
 const autonErr = ref("");
 
 async function toggleProactiveVoice() {
@@ -166,6 +171,31 @@ async function setTtsProvider(p: "edge" | "cosyvoice" | "cosyvoice_cloud") {
     ttsProvider.value = prev;
     ttsErr.value = "设置未生效（大脑不在线？）";
   }
+}
+
+async function _setWatch(patch: Record<string, unknown>, onFail: () => void) {
+  watchErr.value = "";
+  const r = await setSettings(patch);
+  if (r === null) {
+    onFail();
+    watchErr.value = "设置未生效（大脑不在线？）";
+  }
+}
+async function toggleWatch() {
+  const next = !watchEnabled.value;
+  watchEnabled.value = next;
+  await _setWatch({ "watch.enabled": next }, () => { watchEnabled.value = !next; });
+}
+async function setWatchIdleWarn(n: number) {
+  if (!Number.isFinite(n) || n < 5) return;
+  const prev = watchIdleWarn.value;
+  watchIdleWarn.value = n;
+  await _setWatch({ "watch.idle_warn_minutes": n }, () => { watchIdleWarn.value = prev; });
+}
+async function setWatchQuietHours(v: string) {
+  const prev = watchQuietHours.value;
+  watchQuietHours.value = v;
+  await _setWatch({ "watch.quiet_hours": v }, () => { watchQuietHours.value = prev; });
 }
 
 // ---- 感知（默认关闭；settings 即时生效；日志内容由 sidecar 临时解密给 UI）----
@@ -416,6 +446,9 @@ onMounted(async () => {
       if (lv === "quiet" || lv === "bubble" || lv === "full") proactiveLevel.value = lv;
       const tp = s["tts.provider"];
       if (tp === "edge" || tp === "cosyvoice" || tp === "cosyvoice_cloud") ttsProvider.value = tp;
+      if (typeof s["watch.enabled"] === "boolean") watchEnabled.value = s["watch.enabled"];
+      if (typeof s["watch.idle_warn_minutes"] === "number") watchIdleWarn.value = s["watch.idle_warn_minutes"];
+      if (typeof s["watch.quiet_hours"] === "string") watchQuietHours.value = s["watch.quiet_hours"];
       syncPerceptionSettings(s);
     }
   });
@@ -490,6 +523,29 @@ onUnmounted(() => {
         <span v-else-if="saveMsg" class="s-msg ok">{{ saveMsg }}</span>
         <button class="s-primary" :disabled="saving" @click="save">{{ saving ? "保存中…" : "保存并重启大脑" }}</button>
       </div>
+
+      <!-- watch mode（settings.json，重启生效） -->
+      <section class="s-group">
+        <div class="s-group-title">观察 / watch</div>
+        <div class="s-row">
+          <span class="s-row-label">
+            主动观察
+            <span class="s-row-why">开启后周期观察前台活动，久坐会提醒（重启大脑生效）</span>
+          </span>
+          <button class="switch" :class="{ on: watchEnabled }" title="主动观察总开关" @click="toggleWatch"><i /></button>
+        </div>
+        <div v-if="watchEnabled">
+          <label class="s-field">
+            <span class="s-label">久坐提醒（连续活跃分钟）</span>
+            <input type="number" min="5" step="5" :value="watchIdleWarn" @change="setWatchIdleWarn(+($event.target as HTMLInputElement).value)" />
+          </label>
+          <label class="s-field">
+            <span class="s-label">静默时段<span class="s-row-why">HH:MM-HH:MM，跨午夜；留空=关</span></span>
+            <input type="text" :value="watchQuietHours" placeholder="23:00-07:00" @change="setWatchQuietHours(($event.target as HTMLInputElement).value)" />
+          </label>
+        </div>
+        <div v-if="watchErr" class="s-msg err">⚠️ {{ watchErr }}</div>
+      </section>
 
       <!-- 通用 -->
       <section class="s-group">

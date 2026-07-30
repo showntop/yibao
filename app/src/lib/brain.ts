@@ -591,6 +591,10 @@ export interface SettingsValues {
   proactive_voice: boolean; // 主动开口：提醒触发时语音播报
   "proactive.level": "quiet" | "bubble" | "full"; // 自主权旋钮：触达强度三档
   "tts.provider": "edge" | "cosyvoice" | "cosyvoice_cloud"; // TTS 引擎（重启生效）
+  "watch.enabled": boolean; // watch mode 总开关（重启生效）
+  "watch.cadence": number;
+  "watch.idle_warn_minutes": number;
+  "watch.quiet_hours": string;
   "perception.master": boolean;
   "perception.app": boolean;
   "perception.activity": boolean;
