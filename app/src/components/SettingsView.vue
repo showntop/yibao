@@ -128,6 +128,9 @@ async function doClear(kind: ClearKind) {
 // ---- 自主权（数据目录 settings.json，即时生效免重启）----
 const proactiveVoice = ref(true);
 const proactiveLevel = ref<"quiet" | "bubble" | "full">("full");
+// TTS 引擎（settings.json；切换下次启动生效）
+const ttsProvider = ref<"edge" | "cosyvoice" | "cosyvoice_cloud">("edge");
+const ttsErr = ref("");
 const autonErr = ref("");
 
 async function toggleProactiveVoice() {
@@ -150,6 +153,18 @@ async function setProactiveLevel(lv: "quiet" | "bubble" | "full") {
   if (r === null) {
     proactiveLevel.value = prev;
     autonErr.value = "设置未生效（大脑不在线？）";
+  }
+}
+
+async function setTtsProvider(p: "edge" | "cosyvoice" | "cosyvoice_cloud") {
+  if (p === ttsProvider.value) return;
+  ttsErr.value = "";
+  const prev = ttsProvider.value;
+  ttsProvider.value = p; // 乐观更新，失败回滚
+  const r = await setSettings({ "tts.provider": p });
+  if (r === null) {
+    ttsProvider.value = prev;
+    ttsErr.value = "设置未生效（大脑不在线？）";
   }
 }
 
@@ -399,6 +414,8 @@ onMounted(async () => {
       if (typeof s.proactive_voice === "boolean") proactiveVoice.value = s.proactive_voice;
       const lv = s["proactive.level"];
       if (lv === "quiet" || lv === "bubble" || lv === "full") proactiveLevel.value = lv;
+      const tp = s["tts.provider"];
+      if (tp === "edge" || tp === "cosyvoice" || tp === "cosyvoice_cloud") ttsProvider.value = tp;
       syncPerceptionSettings(s);
     }
   });
@@ -449,6 +466,18 @@ onUnmounted(() => {
             <option v-for="[v, label] in VOICES" :key="v" :value="v">{{ label }}</option>
           </select>
         </label>
+        <label class="s-field">
+          <span class="s-label">合成引擎<span class="s-row-why">切换后重启大脑生效</span></span>
+          <select
+            :value="ttsProvider"
+            @change="setTtsProvider(($event.target as HTMLSelectElement).value as 'edge' | 'cosyvoice' | 'cosyvoice_cloud')"
+          >
+            <option value="edge">edge-tts（云端·快）</option>
+            <option value="cosyvoice_cloud">CosyVoice 云（阿里·高质量）</option>
+            <option value="cosyvoice">CosyVoice 本地（离线·可克隆）</option>
+          </select>
+        </label>
+        <div v-if="ttsErr" class="s-msg err">⚠️ {{ ttsErr }}</div>
         <div class="s-row">
           <span class="s-row-label">语音播报与聆听</span>
           <button class="switch" :class="{ on: voiceEnabled }" title="语音总开关" @click="voiceEnabled = !voiceEnabled"><i /></button>

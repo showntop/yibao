@@ -725,7 +725,18 @@ class _FakeProvider(StreamingPcmSpeaker):
         return self._ok
 
 
-def test_build_speaker_picks_configured_when_available():
+def test_tts_provider_reads_settings_then_env(monkeypatch):
+    """env 优先于 settings.json；非法值回退 edge。"""
+    from yibao_brain import config
+
+    monkeypatch.delenv("YIBAO_TTS_PROVIDER", raising=False)
+    monkeypatch.setattr(config, "load_settings", lambda: {"tts.provider": "cosyvoice_cloud"})
+    assert config.tts_provider() == "cosyvoice_cloud"
+    monkeypatch.setenv("YIBAO_TTS_PROVIDER", "cosyvoice")  # env 优先
+    assert config.tts_provider() == "cosyvoice"
+    monkeypatch.delenv("YIBAO_TTS_PROVIDER", raising=False)
+    monkeypatch.setattr(config, "load_settings", lambda: {"tts.provider": "bogus"})  # 非法→edge
+    assert config.tts_provider() == "edge"
     from yibao_brain.voice import build_speaker
 
     s = build_speaker(provider="cosyvoice",

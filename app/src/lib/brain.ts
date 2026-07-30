@@ -590,6 +590,7 @@ export async function memEdit(id: string, text: string, timeoutMs = 5000): Promi
 export interface SettingsValues {
   proactive_voice: boolean; // 主动开口：提醒触发时语音播报
   "proactive.level": "quiet" | "bubble" | "full"; // 自主权旋钮：触达强度三档
+  "tts.provider": "edge" | "cosyvoice" | "cosyvoice_cloud"; // TTS 引擎（重启生效）
   "perception.master": boolean;
   "perception.app": boolean;
   "perception.activity": boolean;

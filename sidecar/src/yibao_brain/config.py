@@ -176,8 +176,12 @@ def tts_voice() -> str:
 
 
 def tts_provider() -> str:
-    """TTS 引擎选择：edge | cosyvoice | cosyvoice_cloud。默认 edge。"""
-    p = os.environ.get("YIBAO_TTS_PROVIDER", "edge").strip().lower()
+    """TTS 引擎：edge | cosyvoice | cosyvoice_cloud。env 优先 → settings.json → 默认 edge。
+
+    切换在下次大脑启动（build_speaker）时生效。
+    """
+    raw = os.environ.get("YIBAO_TTS_PROVIDER") or load_settings().get("tts.provider") or "edge"
+    p = str(raw).strip().lower()
     return p if p in ("edge", "cosyvoice", "cosyvoice_cloud") else "edge"
 
 
@@ -251,11 +255,14 @@ _SETTINGS_DEFAULTS: dict = {
     "perception.model_access": False,
     # 用户手动固定到 Dock 的插件 id（上限 5，Task 8 Dock 排序用；空 = 不固定）
     "dock_pinned": [],
+    # TTS 引擎选择（UI 下拉；env YIBAO_TTS_PROVIDER 优先；切换下次启动生效）
+    "tts.provider": "edge",
 }
 
 # 枚举型设置的合法取值；非法值拒收保持原值（防前端/手滑写坏）
 _SETTINGS_ENUMS: dict[str, tuple] = {
     "proactive.level": ("quiet", "bubble", "full"),
+    "tts.provider": ("edge", "cosyvoice", "cosyvoice_cloud"),
 }
 
 
