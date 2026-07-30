@@ -3,6 +3,7 @@ import asyncio
 
 from yibao_brain.llm import FakeProvider, ToolCall
 from yibao_brain.server import build_loop, serve, serve_async
+from yibao_brain.voice import StreamingPcmSpeaker
 from fakes import FakeVoice
 
 
@@ -712,3 +713,33 @@ def test_streaming_base_pipeline_uses_subclass_synth(monkeypatch):
     monkeypatch.setattr(s, "_play_pcm", fake_play)
     asyncio.run(s.speak_stream(_async_gen(["一句。", "两句。"]), _NoCancel()))
     assert played == ["<一句。>", "<两句。>"]
+
+
+# ---------- build_speaker 选择 + 兜底 ----------
+class _FakeProvider(StreamingPcmSpeaker):
+    def __init__(self, tag, ok):
+        self.name = tag
+        self._ok = ok
+
+    def available(self):
+        return self._ok
+
+
+def test_build_speaker_picks_configured_when_available():
+    from yibao_brain.voice import build_speaker
+
+    s = build_speaker(provider="cosyvoice",
+                      edge=lambda: _FakeProvider("edge", True),
+                      cosyvoice=lambda: _FakeProvider("cv", True),
+                      cosyvoice_cloud=lambda: _FakeProvider("cvc", True))
+    assert s.name == "cv"
+
+
+def test_build_speaker_falls_back_to_edge_when_unavailable():
+    from yibao_brain.voice import build_speaker
+
+    s = build_speaker(provider="cosyvoice",
+                      edge=lambda: _FakeProvider("edge", True),
+                      cosyvoice=lambda: _FakeProvider("cv", False),
+                      cosyvoice_cloud=lambda: _FakeProvider("cvc", True))
+    assert s.name == "edge"

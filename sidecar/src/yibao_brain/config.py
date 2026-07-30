@@ -175,6 +175,45 @@ def tts_voice() -> str:
     return os.environ.get("YIBAO_TTS_VOICE", "zh-CN-XiaoxiaoNeural")
 
 
+def tts_provider() -> str:
+    """TTS 引擎选择：edge | cosyvoice | cosyvoice_cloud。默认 edge。"""
+    p = os.environ.get("YIBAO_TTS_PROVIDER", "edge").strip().lower()
+    return p if p in ("edge", "cosyvoice", "cosyvoice_cloud") else "edge"
+
+
+def cosyvoice_model_path() -> str:
+    """本地 CosyVoice2 模型目录（FunAudioLLM/CosyVoice2-0.5B 解压路径）。"""
+    return os.environ.get("YIBAO_COSYVOICE_MODEL", "")
+
+
+def cosyvoice_voice() -> str:
+    """本地 CosyVoice2 预置音色（无克隆参考音频时用）。"""
+    return os.environ.get("YIBAO_COSYVOICE_VOICE", "中文女")
+
+
+def cosyvoice_prompt_audio() -> str:
+    """零样本克隆参考音频路径（留空=用预置音色）。"""
+    return os.environ.get("YIBAO_COSYVOICE_PROMPT_AUDIO", "")
+
+
+def cosyvoice_prompt_text() -> str:
+    """参考音频对应台词（克隆必需）。"""
+    return os.environ.get("YIBAO_COSYVOICE_PROMPT_TEXT", "")
+
+
+def cosyvoice_cloud_key() -> str:
+    """阿里云百炼 DashScope API key（云 CosyVoice）。"""
+    return os.environ.get("YIBAO_COSYVOICE_CLOUD_KEY", "")
+
+
+def cosyvoice_cloud_model() -> str:
+    return os.environ.get("YIBAO_COSYVOICE_CLOUD_MODEL", "cosyvoice-v1")
+
+
+def cosyvoice_cloud_voice() -> str:
+    return os.environ.get("YIBAO_COSYVOICE_CLOUD_VOICE", "")
+
+
 def mem0_embedder_model() -> str:
     """mem0 本地 embedding 模型（fastembed/ONNX 跑 BAAI/bge-small-zh-v1.5，中文 512 维，量化版 ~50MB）。"""
     return os.environ.get("YIBAO_MEM0_EMBEDDER", "BAAI/bge-small-zh-v1.5")

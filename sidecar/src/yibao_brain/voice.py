@@ -17,6 +17,8 @@ import warnings
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+from .config import tts_provider, tts_voice
+
 # sounddevice 在 NumPy 2.5+ 下每次播放刷 4 行 DeprecationWarning（库内旧用法，非我们能修），压住
 _SD_WARN_MSG = "Setting the shape on a NumPy array.*"
 warnings.filterwarnings("ignore", message=_SD_WARN_MSG, category=DeprecationWarning)
@@ -386,6 +388,25 @@ def _decode_mp3(mp3_bytes: bytes):
     return np.frombuffer(dec.samples, dtype=np.float32)
 
 
+def build_speaker(*, edge=None, cosyvoice=None, cosyvoice_cloud=None, provider=None):
+    """按 config（或注入 provider）选 TTS provider；不可用回退 edge。
+
+    注入的 *_factory 仅用于测试；默认按 tts_provider() 实例化真实 provider
+    （cosyvoice / cosyvoice_cloud 类见下方；lambda 延迟解析，定义顺序无关）。
+    """
+    provider = provider or tts_provider()
+    factories = {
+        "edge": edge or (lambda: EdgeTtsSpeaker(tts_voice())),
+        "cosyvoice": cosyvoice or (lambda: CosyVoiceSpeaker()),
+        "cosyvoice_cloud": cosyvoice_cloud or (lambda: CosyVoiceCloudSpeaker()),
+    }
+    chosen = factories.get(provider, factories["edge"])()
+    if chosen.available():
+        return chosen
+    print(f"[yibao] TTS provider {provider} 不可用，回退 edge", file=sys.stderr)
+    return factories["edge"]()
+
+
 def build_voice(
     model_dir: str,
     vad_model: str,
@@ -393,9 +414,9 @@ def build_voice(
     min_silence: float = 1.2,
     max_seconds: int = 30,
 ) -> VoiceCapability:
-    """生产装配：sherpa STT（懒加载）+ sounddevice 录 + edge-tts 播。"""
+    """生产装配：sherpa STT（懒加载）+ sounddevice 录 + 按 config 选 TTS provider 播。"""
     return VoiceCapability(
         LazySherpaRecognizer(model_dir),
         SounddeviceRecorder(vad_model=vad_model, max_seconds=max_seconds, min_silence=min_silence),
-        EdgeTtsSpeaker(voice_name),
+        build_speaker(),
     )
