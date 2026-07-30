@@ -8,7 +8,7 @@ from typing import Protocol
 
 from pydantic import BaseModel, Field
 
-from .config import llm_api_key, llm_base_url, llm_model, vision_model
+from .config import llm_api_key, llm_base_url, llm_model, vision_api_key, vision_base_url, vision_model
 
 # 流式响应空闲超时（秒）：建连或任意 chunk 超过该时长无数据即判定连接僵死，
 # 避免死连接永久挂住 agent 任务、进而触发看门狗误杀。
@@ -255,8 +255,8 @@ class ComputerUseClient:
         self.model = model or vision_model()
         factory = client_factory or OpenAI
         self.client = factory(
-            api_key=api_key or llm_api_key(),
-            base_url=base_url or llm_base_url(),
+            api_key=api_key or vision_api_key(),
+            base_url=base_url or vision_base_url(),
         )
 
     def next_action(self, screenshot_b64: str, task: str, history: list | None = None) -> dict | None:

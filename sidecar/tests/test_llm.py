@@ -175,11 +175,45 @@ def test_computer_use_thinking_via_extra_body():
     assert seen["extra_body"] == {"thinking": {"type": "enabled"}}
 
 
-def test_computer_use_enabled_only_for_glm(monkeypatch):
+def test_computer_use_uses_separate_glm_vision_provider(monkeypatch):
+    from yibao_brain import config
+    from yibao_brain.llm import ComputerUseClient
+
+    monkeypatch.setenv("YIBAO_LLM_API_KEY", "deepseek-key")
+    monkeypatch.setenv("YIBAO_LLM_BASE_URL", "https://api.deepseek.com")
+    monkeypatch.setenv("YIBAO_VISION_API_KEY", "vision-key")
+    monkeypatch.setenv("YIBAO_VISION_BASE_URL", "https://open.bigmodel.cn/api/paas/v4/")
+
+    seen = {}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            seen.update(kwargs)
+
+    ComputerUseClient(client_factory=FakeClient)
+
+    assert config.vision_api_key() == "vision-key"
+    assert config.vision_base_url() == "https://open.bigmodel.cn/api/paas/v4/"
+    assert config.computer_use_enabled() is True
+    assert seen == {
+        "api_key": "vision-key",
+        "base_url": "https://open.bigmodel.cn/api/paas/v4/",
+    }
+
+
+def test_computer_use_vision_provider_falls_back_to_main(monkeypatch):
     from yibao_brain import config
 
+    monkeypatch.setenv("YIBAO_LLM_API_KEY", "glm-key")
     monkeypatch.setenv("YIBAO_LLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4/")
+    monkeypatch.delenv("YIBAO_VISION_API_KEY", raising=False)
+    monkeypatch.delenv("YIBAO_VISION_BASE_URL", raising=False)
+    monkeypatch.delenv("YIBAO_GLM_API_KEY", raising=False)
     monkeypatch.delenv("YIBAO_GLM_BASE_URL", raising=False)
+
+    assert config.vision_api_key() == "glm-key"
+    assert config.vision_base_url() == "https://open.bigmodel.cn/api/paas/v4/"
     assert config.computer_use_enabled() is True
+
     monkeypatch.setenv("YIBAO_LLM_BASE_URL", "https://api.deepseek.com")
     assert config.computer_use_enabled() is False

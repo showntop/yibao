@@ -15,7 +15,7 @@ from collections.abc import Callable
 
 from . import permissions
 from .audit import AuditLog
-from .config import a11y_enabled, computer_use_enabled, history_path, llm_api_key, load_settings, perception_db_path, plugin_data_dir, save_settings, screenshot_dir, stt_model_dir, tts_voice, vad_max_seconds, vad_min_silence, vad_model_path, voice_enabled
+from .config import a11y_enabled, computer_use_enabled, history_path, llm_api_key, load_settings, perception_db_path, plugin_data_dir, save_settings, screenshot_dir, stt_model_dir, tts_voice, vad_max_seconds, vad_min_silence, vad_model_path, vision_api_key, voice_enabled
 from .feed import FeedStore
 from .history import ConversationHistory
 from .ipc import Action, Event, RiskLevel
@@ -83,7 +83,7 @@ def build_loop(
         if real_a11y:
             register_real_skills(reg)
             register_composite_skills(reg)
-            if llm_api_key() and computer_use_enabled():
+            if vision_api_key() and computer_use_enabled():
                 try:
                     from .llm import ComputerUseClient
 

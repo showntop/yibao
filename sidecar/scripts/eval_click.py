@@ -5,7 +5,7 @@
   python scripts/eval_click.py --capture --name calc_eq --target "等号按钮"   # 采集场景
 
 场景 JSON（scripts/eval_scenarios/<name>.json）：
-  {"screenshot":"<abs png path>", "tree":{...a11y frontmost_tree...},
+  {"screenshot":"<abs png path>", "tree":{...a11y frontmost_tree...}, "scale":1.0,
    "target":"目标描述", "gt":{"kind":"region","rect":[x1,y1,x2,y2]}  // 或 {"kind":"point","xy":[x,y]}
   }
 """
@@ -48,6 +48,19 @@ def center_distance(point, gt) -> float:
     return float("inf")
 
 
+def _scenario_scale(sc, screenshot_path: str) -> float:
+    """窗口裁剪场景可显式声明物理/逻辑 scale；全屏场景继续自动探测。"""
+    explicit = sc.get("scale")
+    if explicit is not None:
+        scale = float(explicit)
+        if scale <= 0:
+            raise ValueError("scenario scale must be > 0")
+        return scale
+    from yibao_brain.grounding import _physical_scale
+
+    return _physical_scale(screenshot_path)
+
+
 def run_baseline(client, som, sc, scale):
     action = client.next_action(_b64_png(sc["screenshot"]), sc["target"], [])
     if not action or action.get("action") != "click" or len(action.get("box") or []) != 4:
@@ -79,7 +92,7 @@ def main():
         return
 
     from yibao_brain.llm import ComputerUseClient
-    from yibao_brain.grounding import SoMGrounding, _physical_scale
+    from yibao_brain.grounding import SoMGrounding
 
     client = ComputerUseClient()
     som = SoMGrounding()
@@ -88,7 +101,7 @@ def main():
         print("无场景，先 --capture 采集。"); return
     rows = []
     for sc in scs:
-        scale = _physical_scale(sc["screenshot"])
+        scale = _scenario_scale(sc, sc["screenshot"])
         b = run_baseline(client, som, sc, scale)
         s = run_som(client, som, sc, scale)
         rows.append({

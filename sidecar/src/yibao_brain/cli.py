@@ -4,7 +4,7 @@ from __future__ import annotations
 import sys
 
 from .audit import AuditLog
-from .config import a11y_enabled, llm_api_key, screenshot_dir
+from .config import a11y_enabled, computer_use_enabled, llm_api_key, screenshot_dir, vision_api_key
 from .ipc import RiskLevel
 from .llm import FakeProvider, GLMProvider
 from .loop import AgentLoop
@@ -20,7 +20,7 @@ def build_loop(use_real: bool, db_path: str = "audit.db"):
     reg.register(EchoSkill())
     if real_a11y:
         register_real_skills(reg)
-        if llm_api_key():
+        if vision_api_key() and computer_use_enabled():
             try:
                 from .llm import ComputerUseClient
 

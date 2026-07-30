@@ -15,6 +15,8 @@ uv run pytest -q
 ```bash
 # 任意 OpenAI 兼容 provider（智谱 GLM / DeepSeek / OpenAI …），见 .env.example
 export YIBAO_LLM_API_KEY=... YIBAO_LLM_MODEL=deepseek-chat YIBAO_LLM_BASE_URL=https://api.deepseek.com
+# 主模型无视觉能力时，可另配智谱视觉端点启用 computer_use：
+# export YIBAO_VISION_API_KEY=... YIBAO_VISION_MODEL=glm-4.6v-flash YIBAO_VISION_BASE_URL=https://open.bigmodel.cn/api/paas/v4/
 uv run yibao-brain              # 真实 LLM（需 key）
 uv run yibao-brain --fake       # 假模型，无需 key/联网
 ```

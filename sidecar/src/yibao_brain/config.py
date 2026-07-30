@@ -104,9 +104,27 @@ def vision_model() -> str:
     return _env("YIBAO_VISION_MODEL", "YIBAO_GLM_VISION_MODEL", "glm-4.6v-flash")
 
 
+def vision_api_key() -> str:
+    """视觉 provider key：独立配置优先，兼容旧 GLM 配置，最后回退主 provider。"""
+    return (
+        os.environ.get("YIBAO_VISION_API_KEY")
+        or os.environ.get("YIBAO_GLM_API_KEY")
+        or llm_api_key()
+    )
+
+
+def vision_base_url() -> str:
+    """视觉 provider 端点：支持主 LLM=DeepSeek、视觉 LLM=GLM 的双 provider 组合。"""
+    return (
+        os.environ.get("YIBAO_VISION_BASE_URL")
+        or os.environ.get("YIBAO_GLM_BASE_URL")
+        or llm_base_url()
+    )
+
+
 def computer_use_enabled() -> bool:
     """computer-use 视觉兜底仅 GLM 端点可用（DeepSeek 等无视觉模型时自动禁用）。"""
-    return "bigmodel" in llm_base_url()
+    return "bigmodel" in vision_base_url()
 
 
 def voice_enabled() -> bool:
