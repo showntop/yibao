@@ -61,6 +61,17 @@ def _scenario_scale(sc, screenshot_path: str) -> float:
     return _physical_scale(screenshot_path)
 
 
+def _require_vision_provider() -> None:
+    """真评测只允许已配置的 GLM 视觉端点，避免把视觉模型名误发给主文本端点。"""
+    from yibao_brain.config import computer_use_enabled, vision_api_key
+
+    if not vision_api_key() or not computer_use_enabled():
+        raise SystemExit(
+            "视觉评测未启用：请配置 YIBAO_VISION_API_KEY 和 "
+            "YIBAO_VISION_BASE_URL=https://open.bigmodel.cn/api/paas/v4/"
+        )
+
+
 def run_baseline(client, som, sc, scale):
     action = client.next_action(_b64_png(sc["screenshot"]), sc["target"], [])
     if not action or action.get("action") != "click" or len(action.get("box") or []) != 4:
@@ -91,14 +102,16 @@ def main():
         _capture(args)
         return
 
+    scs = [json.loads(p.read_text()) for p in sorted(Path(args.scenarios).glob("*.json"))]
+    if not scs:
+        print("无场景，先 --capture 采集。"); return
+    _require_vision_provider()
+
     from yibao_brain.llm import ComputerUseClient
     from yibao_brain.grounding import SoMGrounding
 
     client = ComputerUseClient()
     som = SoMGrounding()
-    scs = [json.loads(p.read_text()) for p in sorted(Path(args.scenarios).glob("*.json"))]
-    if not scs:
-        print("无场景，先 --capture 采集。"); return
     rows = []
     for sc in scs:
         scale = _scenario_scale(sc, sc["screenshot"])
