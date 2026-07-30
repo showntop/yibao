@@ -461,6 +461,10 @@ fn spawn_bridge(app: AppHandle, mut rx: tauri::async_runtime::Receiver<CommandEv
                             Some("feed_all_read") => {
                                 let _ = app.emit("brain-feed-all-read", v);
                             }
+                            // Feed 处置态回执（C 子项目）：整体转发（前端按 id/status 局部对齐）
+                            Some("feed_status_set") => {
+                                let _ = app.emit("brain-feed-status-set", v);
+                            }
                             // 主屏 Dock 列表：整体转发
                             Some("dock_list") => {
                                 let _ = app.emit("brain-dock-list", v);
