@@ -2,6 +2,7 @@
 from PIL import Image
 
 from yibao_brain.grounding import SoMGrounding, MAX_MARKS
+from fakes import FakeHost, _FakeHandle
 
 
 def _shot(tmp_path, w=100, h=100):
@@ -63,3 +64,42 @@ def test_build_marks_render_failure_returns_none(tmp_path):
     # 截图路径不存在 → 渲染失败 → (None, [])
     b64, marks = SoMGrounding().build_marks("/nope/missing.png", {"role": "AXApp"}, scale=1.0)
     assert b64 is None and marks == []
+
+
+def test_resolve_ax_press_via_element_at():
+    host = FakeHost()
+    host.a11y.element_at_result = _FakeHandle("AXButton", "ok")  # 命中 handle
+    marks = [{"id": 1, "source": "a11y", "center": (50.0, 60.0), "rect": (40, 50, 60, 70)}]
+    res = SoMGrounding().resolve(1, marks, host)
+    assert res["method"] == "ax" and (res["x"], res["y"]) == (50.0, 60.0)
+    assert host.a11y.press_calls and host.input.clicks == []  # 走 AX，没坐标点击
+
+
+def test_resolve_falls_back_to_coord_when_no_element():
+    host = FakeHost()
+    host.a11y.element_at_result = None  # 该坐标无 handle
+    marks = [{"id": 1, "source": "grid", "center": (5.0, 6.0), "rect": (0, 0, 10, 12)}]
+    res = SoMGrounding().resolve(1, marks, host)
+    assert res["method"] == "coord" and host.input.clicks == [(5.0, 6.0)]
+
+
+def test_resolve_falls_back_when_press_fails():
+    host = FakeHost()
+    host.a11y.element_at_result = _FakeHandle("AXButton", "x")
+    host.a11y.press_ok = False  # 取到 handle 但 press 失败
+    marks = [{"id": 1, "source": "a11y", "center": (7.0, 8.0), "rect": (0, 0, 14, 16)}]
+    res = SoMGrounding().resolve(1, marks, host)
+    assert res["method"] == "coord" and host.input.clicks == [(7.0, 8.0)]
+
+
+def test_resolve_out_of_range_is_miss():
+    host = FakeHost()
+    marks = [{"id": 1, "source": "grid", "center": (1.0, 1.0), "rect": (0, 0, 2, 2)}]
+    res = SoMGrounding().resolve(99, marks, host)
+    assert res["method"] == "miss" and host.input.clicks == []
+
+
+def test_predict_returns_center_only():
+    marks = [{"id": 1, "source": "a11y", "center": (3.0, 4.0), "rect": (0, 0, 6, 8)}]
+    assert SoMGrounding().predict(1, marks) == (3.0, 4.0)
+    assert SoMGrounding().predict(5, marks) is None

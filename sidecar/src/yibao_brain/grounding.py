@@ -132,4 +132,26 @@ class SoMGrounding:
         except Exception:
             return None
 
-    # Task 2 在此追加 predict / resolve
+    def predict(self, mark_id, marks):
+        """返回 mark_id(1-based) 的逻辑中心；越界/非法 → None。不动作。"""
+        if not isinstance(mark_id, int) or mark_id < 1 or mark_id > len(marks):
+            return None
+        return marks[mark_id - 1]["center"]
+
+    def resolve(self, mark_id, marks, host) -> dict:
+        """mark_id → element_at 取 handle 做 AX-press（确定性），失败回退坐标点击。"""
+        center = self.predict(mark_id, marks)
+        if center is None:
+            return {"method": "miss"}
+        cx, cy = center
+        handle = None
+        element_at = getattr(host.a11y, "element_at", None)
+        if callable(element_at):
+            try:
+                handle = element_at(cx, cy)
+            except Exception:
+                handle = None
+        if handle is not None and host.a11y.press(handle):
+            return {"method": "ax", "x": cx, "y": cy}
+        host.input.click(cx, cy)
+        return {"method": "coord", "x": cx, "y": cy}
