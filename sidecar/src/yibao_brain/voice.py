@@ -9,6 +9,7 @@ cancel 命中即停（"三连取消"之一：停 TTS）。
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import sys
 import threading
@@ -17,7 +18,11 @@ import warnings
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from .config import tts_provider, tts_voice
+from .config import (
+    cosyvoice_cloud_key, cosyvoice_cloud_model, cosyvoice_cloud_voice,
+    cosyvoice_model_path, cosyvoice_prompt_audio, cosyvoice_prompt_text,
+    cosyvoice_voice, tts_provider, tts_voice,
+)
 
 # sounddevice 在 NumPy 2.5+ 下每次播放刷 4 行 DeprecationWarning（库内旧用法，非我们能修），压住
 _SD_WARN_MSG = "Setting the shape on a NumPy array.*"
@@ -386,6 +391,173 @@ def _decode_mp3(mp3_bytes: bytes):
         sample_rate=24000,
     )
     return np.frombuffer(dec.samples, dtype=np.float32)
+
+
+def _can_import(name: str) -> bool:
+    """能否 import 某模块（惰性依赖探测）。"""
+    try:
+        __import__(name)
+        return True
+    except Exception:
+        return False
+
+
+def _pcm_bytes_to_float32(pcm_bytes: bytes):
+    """云 provider 约定交 float32 little-endian PCM 字节 → numpy float32（24k mono）。"""
+    import numpy as np
+
+    if not pcm_bytes:
+        return np.zeros(0, dtype=np.float32)
+    return np.frombuffer(pcm_bytes, dtype=np.float32)
+
+
+class CosyVoiceCloudSpeaker(StreamingPcmSpeaker):
+    """阿里云百炼 CosyVoice 云 TTS（DashScope）。惰性 import dashscope。
+
+    client_factory 注入用于测试；默认 _DashScopeClient（真 dashscope，需 key，真机验收）。
+    client 协议：async synth(text, model, voice, key) -> float32 PCM 字节。
+    """
+    name = "cosyvoice_cloud"
+
+    def __init__(self, client_factory=None, *, key=None, model=None, voice=None):
+        self._client_factory = client_factory
+        self._key = key if key is not None else cosyvoice_cloud_key()
+        self._model = model or cosyvoice_cloud_model()
+        self._voice = voice or cosyvoice_cloud_voice()
+        self._client = None
+
+    def available(self) -> bool:
+        if self._client_factory is not None:
+            return True
+        return bool(self._key) and _can_import("dashscope")
+
+    def _get_client(self):
+        if self._client is None:
+            self._client = self._client_factory() if self._client_factory else _DashScopeClient(self._key)
+        return self._client
+
+    async def _synth_pcm(self, text: str):
+        text = _speech_text(text)
+        if not text or not re.search(r"\w", text):
+            return None
+        try:
+            pcm_bytes = await self._get_client().synth(text, self._model, self._voice, self._key)
+        except Exception as e:
+            print(f"[yibao] 云 TTS 合成失败（已跳过）：{text!r} {e}", file=sys.stderr)
+            return None
+        pcm = _pcm_bytes_to_float32(pcm_bytes)
+        return pcm if len(pcm) else None
+
+
+class _DashScopeRenderer:
+    """dashscope SpeechSynthesizer 回调实现：把 PCM chunk 推进队列（best-effort，真机验收调）。"""
+    def __init__(self, q):
+        self._q = q
+
+    def on_open(self): ...
+    def on_complete(self): self._q.put(None)
+    def on_error(self, message): self._q.put(None)
+    def on_close(self): self._q.put(None)
+    def on_event(self, message): ...
+    def on_data(self, data: bytes) -> bool:
+        self._q.put(data)
+        return True
+
+
+class _DashScopeClient:
+    """阿里云 dashscope CosyVoice 封装（真机验收用）。
+
+    synth 返回 float32 PCM 字节。按 dashscope.audio.tts_v2 文档 best-effort 实现，
+    回调/参数细节需配真 key 跑通后微调；失败抛异常由 _synth_pcm 捕获跳过。
+    """
+    def __init__(self, key: str):
+        self._key = key
+
+    async def synth(self, text: str, model: str, voice: str, key: str) -> bytes:
+        import asyncio
+        from queue import Queue
+
+        import numpy as np
+        import dashscope
+        from dashscope.audio.tts_v2 import AudioFormat, SpeechSynthesizer
+
+        dashscope.api_key = key or self._key
+        q: Queue = Queue()
+        ss = SpeechSynthesizer(model=model, voice=voice or None,
+                               format=AudioFormat.PCM_24000HZ_MONO, callback=_DashScopeRenderer(q))
+        ss.streaming_call(text)
+        ss.streaming_complete()
+        chunks: list[bytes] = []
+        while True:
+            chunk = await asyncio.to_thread(q.get, timeout=15)
+            if chunk is None:
+                break
+            chunks.append(chunk)
+        arr = np.frombuffer(b"".join(chunks), dtype=np.int16).astype(np.float32) / 32768.0
+        return arr.tobytes()
+
+
+class CosyVoiceSpeaker(StreamingPcmSpeaker):
+    """CosyVoice2 本地推理（PyTorch）。惰性 import cosyvoice。
+
+    有 prompt_audio → 零样本克隆（专属音色）；否则 inference_sft 预置音色。
+    client_factory 注入测试；默认 _CosyVoice2Client（真模型，需下载，真机验收）。
+    client 协议：inference_sft(text, voice, stream) / inference_zero_shot(text, prompt_text, prompt_audio, stream)
+    → 迭代 (sample_rate, int16 numpy)。
+    """
+    name = "cosyvoice"
+
+    def __init__(self, client_factory=None, *, model_path=None, voice=None,
+                 prompt_audio=None, prompt_text=None):
+        self._client_factory = client_factory
+        self._model_path = model_path if model_path is not None else cosyvoice_model_path()
+        self._voice = voice or cosyvoice_voice()
+        self._prompt_audio = prompt_audio if prompt_audio is not None else cosyvoice_prompt_audio()
+        self._prompt_text = prompt_text if prompt_text is not None else cosyvoice_prompt_text()
+        self._client = None
+
+    def available(self) -> bool:
+        if self._client_factory is not None:
+            return True
+        return bool(self._model_path) and os.path.isdir(self._model_path) and _can_import("cosyvoice")
+
+    def _get_client(self):
+        if self._client is None:
+            self._client = self._client_factory() if self._client_factory else _CosyVoice2Client(self._model_path)
+        return self._client
+
+    async def _synth_pcm(self, text: str):
+        text = _speech_text(text)
+        if not text or not re.search(r"\w", text):
+            return None
+        try:
+            import numpy as np
+
+            client = self._get_client()
+            if self._prompt_audio:
+                chunks = client.inference_zero_shot(text, self._prompt_text, self._prompt_audio, stream=True)
+            else:
+                chunks = client.inference_sft(text, self._voice, stream=True)
+            pcms = [np.asarray(a, dtype=np.float32) / 32768.0 for _sr, a in chunks]  # int16 → float32
+            pcm = np.concatenate(pcms) if pcms else np.zeros(0, dtype=np.float32)
+        except Exception as e:
+            print(f"[yibao] 本地 TTS 合成失败（已跳过）：{text!r} {e}", file=sys.stderr)
+            return None
+        return pcm if len(pcm) else None
+
+
+class _CosyVoice2Client:
+    """官方 CosyVoice2 薄封装（真机验收用）。流式吐 (sr, int16 numpy)，收集为 list。"""
+    def __init__(self, model_path: str):
+        from cosyvoice.cli.cosyvoice import CosyVoice2  # 惰性；未装由 available() 拦
+
+        self._model = CosyVoice2(model_path)
+
+    def inference_sft(self, text, voice, stream=True):
+        return list(self._model.inference_sft(text, voice, stream=stream))
+
+    def inference_zero_shot(self, text, prompt_text, prompt_audio, stream=True):
+        return list(self._model.inference_zero_shot(text, prompt_text, prompt_audio, stream=stream))
 
 
 def build_speaker(*, edge=None, cosyvoice=None, cosyvoice_cloud=None, provider=None):

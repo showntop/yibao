@@ -743,3 +743,97 @@ def test_build_speaker_falls_back_to_edge_when_unavailable():
                       cosyvoice=lambda: _FakeProvider("cv", False),
                       cosyvoice_cloud=lambda: _FakeProvider("cvc", True))
     assert s.name == "edge"
+
+
+# ---------- CosyVoice 云 provider（fake client）----------
+class _FakeCloudClient:
+    def __init__(self):
+        self.calls = []
+
+    async def synth(self, text, model, voice, key):
+        import numpy as np
+
+        self.calls.append(text)
+        return (np.ones(24000, dtype=np.float32) * 0.1).tobytes()
+
+
+def test_cosyvoice_cloud_synth_uses_client_and_returns_pcm(monkeypatch):
+    from yibao_brain.voice import CosyVoiceCloudSpeaker
+
+    fake = _FakeCloudClient()
+    spk = CosyVoiceCloudSpeaker(client_factory=lambda: fake, key="k")
+    assert spk.available() is True
+    played = []
+
+    async def fake_play(pcm, cancel):
+        played.append(pcm)
+
+    monkeypatch.setattr(spk, "_play_pcm", fake_play)
+    asyncio.run(spk.speak_stream(_async_gen(["你好。"]), _NoCancel()))
+    assert fake.calls == ["你好。"]
+    assert played and len(played[0]) > 0
+
+
+def test_cosyvoice_cloud_skip_when_synth_raises(monkeypatch):
+    from yibao_brain.voice import CosyVoiceCloudSpeaker
+
+    class _Boom:
+        async def synth(self, *a, **k):
+            raise RuntimeError("net down")
+
+    spk = CosyVoiceCloudSpeaker(client_factory=lambda: _Boom(), key="k")
+    played = []
+    monkeypatch.setattr(spk, "_play_pcm", lambda pcm, c: played.append(pcm))
+    asyncio.run(spk.speak_stream(_async_gen(["你好。"]), _NoCancel()))  # 合成抛错 → 跳过该句，不杀整段
+    assert played == []
+
+
+# ---------- CosyVoice 本地 provider（fake client）----------
+class _FakeLocalClient:
+    def __init__(self):
+        self.sft = []
+        self.clone = []
+
+    def inference_sft(self, text, voice, stream=True):
+        import numpy as np
+
+        self.sft.append((text, voice))
+        return [(24000, np.ones(2400, dtype=np.int16))]
+
+    def inference_zero_shot(self, text, prompt_text, prompt_audio, stream=True):
+        import numpy as np
+
+        self.clone.append((text, prompt_text, prompt_audio))
+        return [(24000, np.ones(2400, dtype=np.int16))]
+
+
+def test_cosyvoice_local_sft_when_no_prompt(monkeypatch):
+    from yibao_brain.voice import CosyVoiceSpeaker
+
+    fake = _FakeLocalClient()
+    spk = CosyVoiceSpeaker(client_factory=lambda: fake)
+    assert spk.available() is True
+    played = []
+
+    async def _play(pcm, c):
+        played.append(pcm)
+
+    monkeypatch.setattr(spk, "_play_pcm", _play)
+    asyncio.run(spk.speak_stream(_async_gen(["你好。"]), _NoCancel()))
+    assert fake.sft and not fake.clone
+    assert played
+
+
+def test_cosyvoice_local_clones_when_prompt_audio(monkeypatch):
+    from yibao_brain.voice import CosyVoiceSpeaker
+
+    fake = _FakeLocalClient()
+    spk = CosyVoiceSpeaker(client_factory=lambda: fake, prompt_audio="/x.wav", prompt_text="示例台词")
+
+    async def _play(pcm, c):
+        ...
+
+    monkeypatch.setattr(spk, "_play_pcm", _play)
+    asyncio.run(spk.speak_stream(_async_gen(["你好。"]), _NoCancel()))
+    assert fake.clone and not fake.sft
+    assert fake.clone[0][1] == "示例台词"
