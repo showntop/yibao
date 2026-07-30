@@ -685,3 +685,30 @@ def test_take_sentence_force_cut_unchanged():
     buf = "啊" * 90
     s, rest = _take_sentence(buf)
     assert s is not None and len(s) <= 90 and rest == buf[len(s):]
+
+
+# ---------- 可插拔 TTS provider：StreamingPcmSpeaker 基类 ----------
+class _NoCancel:
+    def is_set(self):
+        return False
+
+
+def test_streaming_base_pipeline_uses_subclass_synth(monkeypatch):
+    """基类 speak_stream 管道调用子类 _synth_pcm，逐句播放。"""
+    from yibao_brain.voice import StreamingPcmSpeaker
+
+    class _Fake(StreamingPcmSpeaker):
+        name = "fake"
+
+        async def _synth_pcm(self, text):
+            return f"<{text}>"
+
+    s = _Fake()
+    played = []
+
+    async def fake_play(pcm, cancel):
+        played.append(pcm)
+
+    monkeypatch.setattr(s, "_play_pcm", fake_play)
+    asyncio.run(s.speak_stream(_async_gen(["一句。", "两句。"]), _NoCancel()))
+    assert played == ["<一句。>", "<两句。>"]

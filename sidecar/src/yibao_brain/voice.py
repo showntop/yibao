@@ -185,24 +185,23 @@ class SounddeviceRecorder:
         return np.zeros(SR, dtype=np.float32)  # 超时/被打断：无语音
 
 
-class EdgeTtsSpeaker:
-    """edge-tts 合成（zh-CN-XiaoxiaoNeural）→ miniaudio 解码 → sounddevice 播放。
+class StreamingPcmSpeaker:
+    """TTS provider 基类：共享流式管道（按句切分→预取下一句→播放→cancel）。
 
+    子类实现 _synth_pcm(一句文本) -> float32 24k PCM | None。
     speak（同步，4a）：整段合成→阻塞播放。
-    speak_stream（5）：按句切分 → 合成/播放管道化（预取下一句），cancel 命中立即 stop。
+    speak_stream（4b）：边收文本增量边按句播报；cancel.is_set() 立即停（清队列 + stop 播放）。
+    生产者/消费者管道：合成下一句与播放当前句并行，句间不再有完整网络延迟。
     """
+    name = "base"
 
-    def __init__(self, voice: str = "zh-CN-XiaoxiaoNeural"):
-        self._voice = voice
+    def available(self) -> bool:
+        return True
 
     def speak(self, text: str) -> None:
         asyncio.run(self._speak_one(text, _NeverCancel()))
 
     async def speak_stream(self, text_iter: AsyncIterator[str], cancel) -> None:
-        """边收 LLM 文本增量边按句播报；cancel.is_set() 立即停（清队列 + stop 播放）。
-
-        生产者/消费者管道：合成下一句与播放当前句并行，句间不再有完整网络延迟。
-        """
         queue: asyncio.Queue = asyncio.Queue()  # 句子 PCM 队列；None=结束哨兵
         synth_error: list[BaseException] = []
 
@@ -253,23 +252,7 @@ class EdgeTtsSpeaker:
             raise synth_error[0]
 
     async def _synth_pcm(self, text: str):
-        """一句文本 → edge-tts 合成 mp3 → 解码 float32 PCM。
-
-        先清洗成可播文本（Markdown 标记/emoji 不念出来）。
-        返回 None 的两种情况（都跳过该句、不杀整段播报）：
-        - 无可播内容（空串 / 纯标点——edge-tts 对「？」这类会 NoAudioReceived）
-        - edge-tts 单句合成失败（NoAudioReceived 等），记 stderr 留痕
-        """
-        text = _speech_text(text)
-        if not text or not re.search(r"\w", text):
-            return None
-        try:
-            mp3 = await self._fetch_mp3(text)
-        except Exception as e:
-            print(f"[yibao] 句子合成失败（已跳过）：{text!r} {e}", file=sys.stderr)
-            return None
-        pcm = _decode_mp3(mp3)
-        return pcm if len(pcm) else None
+        raise NotImplementedError
 
     async def _play_pcm(self, pcm, cancel) -> None:
         """非阻塞播放一段 PCM + 30ms 轮询 cancel（命中即 stop）。"""
@@ -299,6 +282,33 @@ class EdgeTtsSpeaker:
         if pcm is None or cancel.is_set():
             return
         await self._play_pcm(pcm, cancel)
+
+
+class EdgeTtsSpeaker(StreamingPcmSpeaker):
+    """edge-tts 合成（zh-CN-XiaoxiaoNeural）→ miniaudio 解码 → sounddevice 播放。"""
+
+    name = "edge"
+
+    def __init__(self, voice: str = "zh-CN-XiaoxiaoNeural"):
+        self._voice = voice
+
+    async def _synth_pcm(self, text: str):
+        """一句文本 → edge-tts 合成 mp3 → 解码 float32 PCM。
+
+        返回 None 的两种情况（都跳过该句、不杀整段播报）：
+        - 无可播内容（空串 / 纯标点——edge-tts 对「？」这类会 NoAudioReceived）
+        - edge-tts 单句合成失败（NoAudioReceived 等），记 stderr 留痕
+        """
+        text = _speech_text(text)
+        if not text or not re.search(r"\w", text):
+            return None
+        try:
+            mp3 = await self._fetch_mp3(text)
+        except Exception as e:
+            print(f"[yibao] 句子合成失败（已跳过）：{text!r} {e}", file=sys.stderr)
+            return None
+        pcm = _decode_mp3(mp3)
+        return pcm if len(pcm) else None
 
     async def _fetch_mp3(self, text: str) -> bytes:
         import edge_tts
