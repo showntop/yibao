@@ -545,7 +545,8 @@ def test_computer_use_som_coord_fallback_when_no_element(tmp_path, monkeypatch):
 
 
 def test_computer_use_raw_bbox_fallback_on_render_fail(tmp_path, monkeypatch):
-    # build_marks 渲染失败（截图路径坏）→ 回退 next_action raw-bbox
+    # build_marks 渲染失败（_render 返 None）但图可读 → 回退 next_action raw-bbox
+    # 注意：不能用坏路径——_b64 也打不开图，next_action 永远不执行。故 monkeypatch _render。
     import pyautogui
     from yibao_brain.skills_real import ComputerUseSkill
     from yibao_brain.grounding import SoMGrounding
@@ -553,10 +554,13 @@ def test_computer_use_raw_bbox_fallback_on_render_fail(tmp_path, monkeypatch):
 
     monkeypatch.setattr(pyautogui, "size", lambda: _size_obj(100, 100))
     host = FakeHost()
-    host.screenshotter = FakeScreenshotter(paths=[str(tmp_path / "nope.png"), str(tmp_path / "nope2.png")])
+    host.screenshotter = FakeScreenshotter(paths=_make_shots(tmp_path, 2))  # 真实可读图
+    host.a11y.tree = {"role": "AXApp", "children": []}
+    som = SoMGrounding()
+    monkeypatch.setattr(som, "_render", lambda *a, **k: None)  # 强制渲染失败
     client = FakeComputerUseClient(
         actions=[{"action": "click", "box": [10, 10, 30, 30]}, {"action": "finish"}])  # 走 raw-bbox
-    r = ComputerUseSkill(client, som=SoMGrounding()).run({"task": "t"}, SkillContext(host=host))
+    r = ComputerUseSkill(client, som=som).run({"task": "t"}, SkillContext(host=host))
     assert r.success and r.data["steps"] == 1
     assert host.input.clicks == [(20.0, 20.0)]  # box 中心 / scale 1.0
     assert client.choose_calls == []  # 没走 SoM
@@ -663,7 +667,7 @@ class ComputerUseSkill(Skill):
         return action
 ```
 
-> `_md5`/`_b64`/`_scale`/`_execute` 四个 staticmethod 保持原样不动（回退路径用 `_execute` 与 `_b64`；`_scale` 若不再被 `run` 直接引用可留作回退内部用，不删，避免破坏既有契约）。
+> `_md5`/`_b64`/`_execute` 三个 staticmethod 保留供回退路径用（`_execute` 点 box 中心、`_b64` 编码）。**删除现已不再被引用的 `_scale` staticmethod**（已被 `grounding._physical_scale` 取代，留着会触发未使用告警）；`_execute(action, host, scale)` 的 scale 由 `_raw_bbox_step` 传入（=`_physical_scale(shot)`）。
 
 - [ ] **Step 5: 跑测试确认通过**
 
@@ -987,5 +991,5 @@ git commit -m "feat(eval): Phase 0 点击精度评测 baseline vs SoM 脚手架"
 
 **已知执行期注意**：
 - `llm.py` 顶部需有 `import json, re`（`_parse_action` 已用，大概率已导入；Task 3 Step 3 注明补导入）。
-- `ComputerUseSkill._scale` 保留（回退路径 `_execute` 仍可能用）；若 lint 报未使用，保留为有意兜底。
+- `ComputerUseSkill._scale` 删除（被 `grounding._physical_scale` 取代、不再引用）；`_md5`/`_b64`/`_execute` 保留供回退路径。
 - `server.py:90` 构造 `ComputerUseSkill(ComputerUseClient())` 无需改（`som` 默认）。
