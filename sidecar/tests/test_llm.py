@@ -175,6 +175,52 @@ def test_computer_use_thinking_via_extra_body():
     assert seen["extra_body"] == {"thinking": {"type": "enabled"}}
 
 
+def test_glm41v_thinking_normalized_box_is_converted_to_image_pixels(tmp_path):
+    """GLM-4.1V-Thinking 的 0..1000 grounding 坐标要还原成截图物理像素。"""
+    import base64
+
+    from PIL import Image
+
+    from yibao_brain.llm import ComputerUseClient
+
+    shot = tmp_path / "shot.png"
+    Image.new("RGB", (760, 520), "white").save(shot)
+    image_b64 = "data:image/png;base64," + base64.b64encode(shot.read_bytes()).decode()
+
+    class FakeMsg:
+        content = '{"action":"click","box":[883,30,936,93]}'
+
+    class FakeChoice:
+        message = FakeMsg()
+
+    class FakeResp:
+        choices = [FakeChoice()]
+
+    class FakeClient:
+        def __init__(self, **kw):
+            pass
+
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**kw):
+                    return FakeResp()
+
+    client = ComputerUseClient(
+        api_key="x",
+        model="glm-4.1v-thinking-flashx",
+        base_url="https://open.bigmodel.cn/api/paas/v4/",
+        client_factory=FakeClient,
+    )
+
+    action = client.next_action(image_b64, "点击帮助按钮")
+
+    assert action == {
+        "action": "click",
+        "box": [671.08, 15.6, 711.36, 48.36],
+    }
+
+
 def test_computer_use_uses_separate_glm_vision_provider(monkeypatch):
     from yibao_brain import config
     from yibao_brain.llm import ComputerUseClient

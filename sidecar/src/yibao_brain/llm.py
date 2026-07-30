@@ -276,7 +276,36 @@ class ComputerUseClient:
             extra_body={"thinking": {"type": "enabled"}},  # GLM 特有参数走 extra_body（openai SDK 不认顶层 kwargs）
         )
         content = (resp.choices[0].message.content or "") if resp.choices else ""
-        return self._parse_action(content)
+        action = self._parse_action(content)
+        return self._convert_model_box(action, screenshot_b64)
+
+    def _convert_model_box(self, action: dict | None, screenshot_b64: str) -> dict | None:
+        """把特定视觉模型的 grounding 坐标还原为截图物理像素。"""
+        if not action or not self.model.startswith("glm-4.1v-thinking-"):
+            return action
+        box = action.get("box") or []
+        if len(box) != 4:
+            return action
+        try:
+            import base64
+            import io
+
+            from PIL import Image
+
+            payload = screenshot_b64.split(",", 1)[1]
+            with Image.open(io.BytesIO(base64.b64decode(payload))) as image:
+                width, height = image.size
+            x1, y1, x2, y2 = (float(v) for v in box)
+        except (IndexError, TypeError, ValueError, OSError):
+            return None
+        converted = dict(action)
+        converted["box"] = [
+            x1 * width / 1000,
+            y1 * height / 1000,
+            x2 * width / 1000,
+            y2 * height / 1000,
+        ]
+        return converted
 
     @staticmethod
     def _parse_action(content: str) -> dict | None:
