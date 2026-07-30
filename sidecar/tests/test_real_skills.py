@@ -165,6 +165,21 @@ def test_computer_use_client_parse_action():
     assert ComputerUseClient._parse_action('{"action":broken') is None
 
 
+def test_choose_action_parse_marked():
+    from yibao_brain.llm import ComputerUseClient
+
+    # 纯数字 → click + mark
+    assert ComputerUseClient._parse_marked_action("第 3 号", 5) == {"action": "click", "mark": 3}
+    # JSON 动作
+    assert ComputerUseClient._parse_marked_action('{"action":"type","text":"hi"}', 5) == {"action": "type", "text": "hi"}
+    assert ComputerUseClient._parse_marked_action('{"action":"click","mark":2}', 5) == {"action": "click", "mark": 2}
+    # finish
+    assert ComputerUseClient._parse_marked_action("做完了 finish", 5) == {"action": "finish"}
+    # 越界 / 非法
+    assert ComputerUseClient._parse_marked_action("第 9 号", 5) is None
+    assert ComputerUseClient._parse_marked_action("乱码无数字", 5) is None
+
+
 def test_computer_use_loop_click_type_finish(tmp_path, monkeypatch):
     import pyautogui
 
