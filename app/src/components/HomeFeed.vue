@@ -19,6 +19,8 @@ import {
   sendConfirmBatch,
   markFeedRead,
   markAllFeedRead,
+  markFeedStatus,
+  feedTierOf,
   setDockPin,
   getDockListOnce,
   onDockList,
@@ -36,7 +38,7 @@ import {
 const emit = defineEmits<{ chat: [draft?: string]; unread: [n: number] }>();
 
 // ---- 问候条 ----
-const stats = ref<FeedStats>({ pending_reminders: 0, running_tasks: 0, done_24h: 0, unread: 0 });
+const stats = ref<FeedStats>({ pending_reminders: 0, running_tasks: 0, done_24h: 0, unread: 0, ignored: 0 });
 
 // 动态问候：时段 + 基于 stats 拼 1-2 句叙事；全 0 退化「暂时清净，随时叫我」。
 // 每次 onFeed 刷新 stats 即重算（=每次回主屏刷新）。
@@ -67,8 +69,49 @@ watch(
 const items = ref<FeedItem[]>([]);
 const runningTasks = ref<RunningTask[]>([]);
 const loaded = ref(false);
-const completedTasks = computed(() => items.value.filter((it) => it.kind === "task").slice(0, 5));
-const activityItems = computed(() => items.value.filter((it) => it.kind !== "task"));
+
+// ---- 处置态筛选 + 忽略折叠（C 子项目 §4.5）----
+// statusFilter：全部 / 跟进 / 忽略；跟进项单独看，忽略项默认折叠，筛"忽略"=展开忽略项。
+type StatusFilter = "all" | "follow" | "ignore";
+const statusFilter = ref<StatusFilter>("all");
+// all 视图下：忽略项是否展开（点 fold 切换；切别的筛选自动收回）
+const showIgnored = ref(false);
+
+// 完成任务基础列表（最近 5 条 task，保持原"已完成"区容量）
+const completedBase = computed(() => items.value.filter((it) => it.kind === "task").slice(0, 5));
+// 按处置态筛选后展示
+const completedTasks = computed(() => filterByStatus(completedBase.value));
+// all 视图下被折叠的忽略项
+const completedIgnored = computed(() => completedBase.value.filter((it) => it.status === "ignore"));
+
+// 动态基础列表（reminder + event，按时间倒序）
+const activityBase = computed(() => items.value.filter((it) => it.kind !== "task"));
+const activityItems = computed(() => filterByStatus(activityBase.value));
+const activityIgnored = computed(() => activityBase.value.filter((it) => it.status === "ignore"));
+
+/** 按 statusFilter 筛选：follow/ignore 单独看；all 排除忽略项（折叠展示）。 */
+function filterByStatus(list: FeedItem[]): FeedItem[] {
+  if (statusFilter.value === "follow") return list.filter((it) => it.status === "follow");
+  if (statusFilter.value === "ignore") return list.filter((it) => it.status === "ignore");
+  return list.filter((it) => it.status !== "ignore");
+}
+
+// 有任何 Feed 项时显示筛选 chips（完成 + 动态任一非空）
+const hasAnyFeedItem = computed(() => completedBase.value.length > 0 || activityBase.value.length > 0);
+
+// 完成区是否渲染：各筛选下按是否有匹配项判定（all 时 base 非空即渲染以容纳忽略折叠）
+const showCompletedZone = computed(() => {
+  if (statusFilter.value === "follow") return completedBase.value.some((it) => it.status === "follow");
+  if (statusFilter.value === "ignore") return completedIgnored.value.length > 0;
+  return completedBase.value.length > 0;
+});
+
+// 动态区空态文案：随筛选变化（跟进/忽略无项时给明确提示）
+const activityEmptyText = computed(() => {
+  if (statusFilter.value === "follow") return "没有跟进的动态";
+  if (statusFilter.value === "ignore") return "没有忽略的动态";
+  return "还没有其他动态——提醒、记忆和主动消息会出现在这里";
+});
 
 async function reload() {
   const r = await getFeedOnce();
@@ -106,7 +149,7 @@ const rememberMap = ref<Record<string, boolean>>({});
 
 const selectedCount = computed(() => selectedApprovals.value.size);
 const hasInbox = computed(() =>
-  runningTasks.value.length > 0 || approvals.value.length > 0 || completedTasks.value.length > 0,
+  runningTasks.value.length > 0 || approvals.value.length > 0 || showCompletedZone.value,
 );
 
 /** brain.ts sendConfirmBatch 内部乐观出队（_pcRemove → emit → approvals 替换）后校正默认选择：
@@ -264,6 +307,37 @@ async function openInChat(it: FeedItem) {
   emit("chat", draft);
 }
 
+// ---- 处置态（C 子项目 §4.5）：跟进/忽略，乐观改 it.status + 失败回滚 ----
+
+/** 设置处置态：乐观改 it.status + 失败回滚（参考 openInChat 的乐观模式）。
+ *  与 read 正交：跟进/忽略不改已读态，read 筛选/高亮不受影响。 */
+async function setStatus(it: FeedItem, status: "none" | "follow" | "ignore") {
+  const prev = it.status;
+  if (prev === status) return; // 幂等
+  it.status = status;
+  try {
+    await markFeedStatus(it.id, status);
+  } catch {
+    it.status = prev; // 失败回滚
+  }
+}
+
+/** 跟进/忽略按钮：点已在态则取消回 none（再点取消），否则切到该态。 */
+function toggleStatus(it: FeedItem, target: "follow" | "ignore") {
+  void setStatus(it, it.status === target ? "none" : target);
+}
+
+/** 切处置态筛选；回到 all 自动收起忽略折叠（保持默认折叠视图）。 */
+function setStatusFilter(f: StatusFilter) {
+  statusFilter.value = f;
+  if (f === "all") showIgnored.value = false;
+}
+
+/** tier 轻着色 class（Review 蓝 / Notify 灰，按 kind 推导；B 分区已隐含 tier，此处仅轻标识）。 */
+function tierClass(it: FeedItem): string {
+  return `tier-${feedTierOf(it.kind).toLowerCase()}`;
+}
+
 // ---- 插件 Dock（后端 dock_list：pinned 优先 + 频率补齐；图钉可固定/取消）----
 const dock = ref<DockItem[]>([]);
 
@@ -361,6 +435,25 @@ onUnmounted(() => {
     </header>
 
     <div class="scroll">
+      <!-- 处置态筛选 chips（C 子项目）：全部 / 跟进 / 忽略；同时筛完成区 + 动态区 -->
+      <div v-if="hasAnyFeedItem" class="filter-bar">
+        <button
+          class="chip"
+          :class="{ active: statusFilter === 'all' }"
+          @click="setStatusFilter('all')"
+        >全部</button>
+        <button
+          class="chip"
+          :class="{ active: statusFilter === 'follow' }"
+          @click="setStatusFilter('follow')"
+        >跟进</button>
+        <button
+          class="chip"
+          :class="{ active: statusFilter === 'ignore' }"
+          @click="setStatusFilter('ignore')"
+        >忽略</button>
+      </div>
+
       <!-- 任务收件箱：同页纵向三区，空区折叠。 -->
       <section v-if="hasInbox" class="sec sec-inbox">
         <div class="sec-title inbox-title">任务收件箱</div>
@@ -419,19 +512,78 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <div v-if="completedTasks.length" class="inbox-zone zone-completed">
-          <div class="zone-title">已完成 · 最近 {{ completedTasks.length }} 条</div>
-          <button
+        <div v-if="showCompletedZone" class="inbox-zone zone-completed">
+          <div class="zone-title">已完成 · 最近 {{ completedBase.length }} 条</div>
+          <div
             v-for="it in completedTasks"
             :key="it.id"
             class="task-row completed-row"
-            :class="{ unread: it.read === 0 }"
+            :class="[tierClass(it), { unread: it.read === 0, [`status-${it.status}`]: it.status !== 'none' }]"
+            role="button"
+            tabindex="0"
             @click="openInChat(it)"
+            @keydown.enter="openInChat(it)"
           >
+            <span class="tier-dot" aria-hidden="true"></span>
             <span class="task-status" :class="`status-${taskStatus(it)}`">{{ taskStatusLabel(it) }}</span>
             <span class="task-main"><span>{{ it.text }}</span></span>
             <span class="task-time">{{ relTime(it.ts) }}</span>
-          </button>
+            <div class="f-actions" @click.stop>
+              <button
+                class="f-act"
+                :class="{ on: it.status === 'follow' }"
+                title="跟进"
+                @click="toggleStatus(it, 'follow')"
+              >跟进</button>
+              <button
+                class="f-act act-ignore"
+                :class="{ on: it.status === 'ignore' }"
+                title="忽略"
+                @click="toggleStatus(it, 'ignore')"
+              >忽略</button>
+            </div>
+          </div>
+          <!-- 忽略折叠（仅 all 视图）：默认收起，展开后仍可取消忽略 -->
+          <div v-if="statusFilter === 'all' && completedIgnored.length" class="ignored-fold">
+            <button v-if="!showIgnored" class="fold-toggle" @click="showIgnored = true">
+              已忽略 {{ completedIgnored.length }} 条 ›
+            </button>
+            <template v-else>
+              <div class="fold-header">
+                <span>已忽略 {{ completedIgnored.length }} 条</span>
+                <button class="fold-collapse" @click="showIgnored = false">收起</button>
+              </div>
+              <div
+                v-for="it in completedIgnored"
+                :key="it.id"
+                class="task-row completed-row ignored-row"
+                :class="[tierClass(it)]"
+                role="button"
+                tabindex="0"
+                @click="openInChat(it)"
+                @keydown.enter="openInChat(it)"
+              >
+                <span class="tier-dot" aria-hidden="true"></span>
+                <span class="task-status" :class="`status-${taskStatus(it)}`">{{ taskStatusLabel(it) }}</span>
+                <span class="task-main"><span>{{ it.text }}</span></span>
+                <span class="task-time">{{ relTime(it.ts) }}</span>
+                <div class="f-actions" @click.stop>
+                  <button
+                    class="f-act"
+                    :class="{ on: it.status === 'follow' }"
+                    title="跟进"
+                    @click="toggleStatus(it, 'follow')"
+                  >跟进</button>
+                  <button
+                    class="f-act act-ignore"
+                    :class="{ on: it.status === 'ignore' }"
+                    title="取消忽略"
+                    @click="toggleStatus(it, 'ignore')"
+                  >忽略</button>
+                </div>
+              </div>
+            </template>
+          </div>
         </div>
       </section>
 
@@ -456,20 +608,82 @@ onUnmounted(() => {
           <span>动态</span>
           <button v-if="stats.unread > 0" class="mark-all" @click="markAllRead">全部已读</button>
         </div>
-        <div v-if="loaded && !activityItems.length" class="f-empty">
-          还没有其他动态——提醒、记忆和主动消息会出现在这里
+        <div
+          v-if="loaded && !activityItems.length && !(statusFilter === 'all' && activityIgnored.length)"
+          class="f-empty"
+        >
+          {{ activityEmptyText }}
         </div>
-        <button
+        <div
           v-for="it in activityItems"
           :key="it.id"
           class="f-row"
-          :class="{ unread: it.read === 0 }"
+          :class="[tierClass(it), { unread: it.read === 0, [`status-${it.status}`]: it.status !== 'none' }]"
+          role="button"
+          tabindex="0"
           @click="openInChat(it)"
+          @keydown.enter="openInChat(it)"
         >
+          <span class="tier-dot" aria-hidden="true"></span>
           <span class="f-icon">{{ kindIcon(it) }}</span>
           <span class="f-text">{{ it.text }}</span>
           <span class="f-time">{{ relTime(it.ts) }}</span>
-        </button>
+          <div class="f-actions" @click.stop>
+            <button
+              class="f-act"
+              :class="{ on: it.status === 'follow' }"
+              title="跟进"
+              @click="toggleStatus(it, 'follow')"
+            >跟进</button>
+            <button
+              class="f-act act-ignore"
+              :class="{ on: it.status === 'ignore' }"
+              title="忽略"
+              @click="toggleStatus(it, 'ignore')"
+            >忽略</button>
+          </div>
+        </div>
+        <!-- 忽略折叠（仅 all 视图）：与完成区同语义 -->
+        <div v-if="statusFilter === 'all' && activityIgnored.length" class="ignored-fold">
+          <button v-if="!showIgnored" class="fold-toggle" @click="showIgnored = true">
+            已忽略 {{ activityIgnored.length }} 条 ›
+          </button>
+          <template v-else>
+            <div class="fold-header">
+              <span>已忽略 {{ activityIgnored.length }} 条</span>
+              <button class="fold-collapse" @click="showIgnored = false">收起</button>
+            </div>
+            <div
+              v-for="it in activityIgnored"
+              :key="it.id"
+              class="f-row ignored-row"
+              :class="[tierClass(it)]"
+              role="button"
+              tabindex="0"
+              @click="openInChat(it)"
+              @keydown.enter="openInChat(it)"
+            >
+              <span class="tier-dot" aria-hidden="true"></span>
+              <span class="f-icon">{{ kindIcon(it) }}</span>
+              <span class="f-text">{{ it.text }}</span>
+              <span class="f-time">{{ relTime(it.ts) }}</span>
+              <div class="f-actions" @click.stop>
+                <button
+                  class="f-act"
+                  :class="{ on: it.status === 'follow' }"
+                  title="跟进"
+                  @click="toggleStatus(it, 'follow')"
+                >跟进</button>
+                <button
+                  class="f-act act-ignore"
+                  :class="{ on: it.status === 'ignore' }"
+                  title="取消忽略"
+                  @click="toggleStatus(it, 'ignore')"
+                >忽略</button>
+              </div>
+            </div>
+          </template>
+        </div>
       </section>
 
       <!-- 插件 Dock：常用能力直达（主屏的「应用」）；图钉可固定/取消 -->
@@ -923,6 +1137,140 @@ onUnmounted(() => {
   color: var(--yb-text-dim);
   font-size: var(--yb-fs-md);
   text-align: center;
+}
+
+/* 处置态筛选 chips（C 子项目）：药丸状，active 态 accent 实心 */
+.filter-bar {
+  display: flex;
+  gap: var(--yb-space-2);
+  padding: var(--yb-space-2);
+  margin-top: var(--yb-space-2);
+}
+.chip {
+  padding: 4px var(--yb-space-3);
+  border: 1px solid var(--yb-surface-border);
+  border-radius: 999px;
+  background: var(--yb-surface-solid);
+  color: var(--yb-text-dim);
+  font-size: var(--yb-fs-sm);
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.chip:hover {
+  color: var(--yb-text);
+  border-color: var(--yb-accent);
+}
+.chip.active {
+  background: var(--yb-accent);
+  border-color: var(--yb-accent);
+  color: #fff;
+}
+
+/* 行内跟进/忽略按钮（f-actions）：默认低调轮廓，on 态高亮 */
+.f-actions {
+  flex-shrink: 0;
+  display: flex;
+  gap: 4px;
+  margin-left: var(--yb-space-2);
+}
+.f-act {
+  padding: 3px var(--yb-space-2);
+  border: 1px solid var(--yb-surface-border);
+  border-radius: var(--yb-radius-sm);
+  background: transparent;
+  color: var(--yb-text-dim);
+  font-size: var(--yb-fs-sm);
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.f-act:hover {
+  color: var(--yb-text);
+  border-color: var(--yb-accent);
+}
+/* 跟进 on：accent 着色 */
+.f-act.on {
+  background: var(--yb-accent-soft);
+  border-color: var(--yb-accent);
+  color: var(--yb-accent-deep);
+}
+/* 忽略 on：中性灰（与跟进区分，弱化被忽略项） */
+.f-act.act-ignore.on {
+  background: var(--yb-btn-neutral);
+  border-color: var(--yb-text-dim);
+  color: var(--yb-text-dim);
+}
+
+/* 处置态行级轻标识：跟进描边、忽略半透 */
+.task-row.status-follow,
+.f-row.status-follow {
+  border-color: var(--yb-accent);
+}
+.task-row.status-ignore,
+.f-row.status-ignore {
+  opacity: 0.6;
+}
+
+/* tier 轻着色（§4.5 三分级）：小色点贴行首，Review 蓝 / Notify 灰 */
+.tier-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  align-self: center;
+}
+.tier-review .tier-dot {
+  background: var(--yb-accent);
+}
+.tier-notify .tier-dot {
+  background: var(--yb-text-dim);
+  opacity: 0.55;
+}
+
+/* 忽略折叠（C 子项目）：折叠条虚框低调，展开后与普通行同构但半透 */
+.ignored-fold {
+  margin-top: var(--yb-space-2);
+}
+.fold-toggle {
+  width: 100%;
+  padding: var(--yb-space-2) var(--yb-space-3);
+  border: 1px dashed var(--yb-surface-border);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--yb-text-dim);
+  font-size: var(--yb-fs-sm);
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.fold-toggle:hover {
+  color: var(--yb-text);
+  border-color: var(--yb-accent);
+}
+.fold-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--yb-space-2) var(--yb-space-3) var(--yb-space-1);
+  color: var(--yb-text-dim);
+  font-size: var(--yb-fs-sm);
+  font-weight: 600;
+}
+.fold-collapse {
+  border: none;
+  background: transparent;
+  color: var(--yb-accent-deep);
+  font-size: var(--yb-fs-sm);
+  font-family: inherit;
+  cursor: pointer;
+  padding: 2px var(--yb-space-2);
+}
+.fold-collapse:hover {
+  text-decoration: underline;
+}
+.ignored-row {
+  opacity: 0.65;
 }
 
 /* Dock：首字圆形图标 + 名称 + 角落图钉按钮，与 iOS Dock 同语义 */
