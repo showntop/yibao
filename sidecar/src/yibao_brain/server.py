@@ -15,7 +15,7 @@ from collections.abc import Callable
 
 from . import permissions
 from .audit import AuditLog
-from .config import a11y_enabled, computer_use_enabled, history_path, llm_api_key, load_settings, perception_db_path, plugin_data_dir, save_settings, screenshot_dir, stt_model_dir, tts_voice, vad_max_seconds, vad_min_silence, vad_model_path, vision_api_key, voice_enabled
+from .config import a11y_enabled, computer_use_enabled, computer_use_max_steps, history_path, llm_api_key, load_settings, perception_db_path, plugin_data_dir, save_settings, screenshot_dir, stt_model_dir, tts_voice, vad_max_seconds, vad_min_silence, vad_model_path, vision_api_key, voice_enabled
 from .feed import FeedStore
 from .history import ConversationHistory
 from .ipc import Action, Event, RiskLevel
@@ -60,9 +60,13 @@ _TICK_FRESH_S = 12.0
 def _permissions_status() -> dict:
     """检测辅助功能/屏幕录制权限；检测本身失败时乐观返回 True（不出误报 banner）。"""
     try:
-        return {"ax": permissions.check_ax(), "screen": permissions.check_screen()}
+        return {
+            "ax": permissions.check_ax(),
+            "screen": permissions.check_screen(),
+            "input": permissions.check_input(),
+        }
     except Exception:
-        return {"ax": True, "screen": True}
+        return {"ax": True, "screen": True, "input": False}
 
 
 def build_loop(
@@ -87,7 +91,7 @@ def build_loop(
                 try:
                     from .llm import ComputerUseClient
 
-                    reg.register(ComputerUseSkill(ComputerUseClient()))
+                    reg.register(ComputerUseSkill(ComputerUseClient(), max_steps=computer_use_max_steps()))
                 except Exception as e:
                     print(f"[yibao] computer-use 兜底未启用：{e}", file=sys.stderr)
 
@@ -1200,6 +1204,8 @@ async def serve_async(
                 permissions.prompt_ax()
             elif which == "screen":
                 permissions.prompt_screen()
+            elif which == "input":
+                permissions.prompt_input()
             write_msg({"type": "permissions", "permissions": _permissions_status()})
 
 

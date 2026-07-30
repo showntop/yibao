@@ -2,7 +2,7 @@ import asyncio
 import json
 import time
 
-from yibao_brain.loop import AgentLoop
+from yibao_brain.loop import AgentLoop, SYSTEM_PROMPT
 from yibao_brain.llm import FakeProvider, ToolCall, LLMDelta, ToolCallDelta
 from yibao_brain.skills import SkillRegistry, EchoSkill, Skill, SkillContext
 from yibao_brain.safety import RiskClassifier, Gate, GatePolicy
@@ -141,6 +141,23 @@ class _TwoStepProvider:
             yield d
 
 
+class _SequenceProvider:
+    def __init__(self, providers):
+        self.providers = list(providers)
+        self.chat_calls = []
+        self.astream_calls = []
+
+    def chat(self, messages, tools=None):
+        self.chat_calls.append({"messages": messages, "tools": tools})
+        return self.providers.pop(0).chat(messages, tools)
+
+    async def astream(self, messages, tools=None):
+        self.astream_calls.append({"messages": messages, "tools": tools})
+        provider = self.providers.pop(0)
+        async for delta in provider.astream(messages, tools):
+            yield delta
+
+
 async def _collect_events(agen):
     out = []
     async for e in agen:
@@ -158,6 +175,47 @@ def test_loop_arun_streams_chunks_then_final(tmp_path):
     assert events[-1].text == "你好，我是译宝"
 
 
+def test_system_prompt_avoids_redundant_screenshot_around_computer_use():
+    assert "computer_use 会自行截图" in SYSTEM_PROMPT
+    assert "不要在 computer_use 前后重复调用 screenshot" in SYSTEM_PROMPT
+
+
+def test_loop_sync_reserves_final_reply_after_tool_budget(tmp_path):
+    provider = _SequenceProvider([
+        FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="echo", params={"text": "1"})]),
+        FakeProvider(tool_calls=[ToolCall(id="t2", skill_id="echo", params={"text": "2"})]),
+        FakeProvider(text="已到安全上限，停止继续操作"),
+    ])
+    loop = build_loop(tmp_path, provider)
+    loop.max_steps = 2
+
+    events = list(loop.run("连续操作"))
+
+    assert events[-1].kind == "final_reply"
+    assert events[-1].text == "已到安全上限，停止继续操作"
+    assert not any(e.kind == "error" and "最大步数" in (e.text or "") for e in events)
+    assert len(provider.chat_calls) == 3
+    assert provider.chat_calls[-1]["tools"] == []
+
+
+def test_loop_arun_reserves_final_reply_after_tool_budget(tmp_path):
+    provider = _SequenceProvider([
+        FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="echo", params={"text": "1"})]),
+        FakeProvider(tool_calls=[ToolCall(id="t2", skill_id="echo", params={"text": "2"})]),
+        FakeProvider(text="已到安全上限，停止继续操作"),
+    ])
+    loop = build_loop(tmp_path, provider)
+    loop.max_steps = 2
+
+    events = asyncio.run(_collect_events(loop.arun("连续操作")))
+
+    assert events[-1].kind == "final_reply"
+    assert events[-1].text == "已到安全上限，停止继续操作"
+    assert not any(e.kind == "error" and "最大步数" in (e.text or "") for e in events)
+    assert len(provider.astream_calls) == 3
+    assert provider.astream_calls[-1]["tools"] == []
+
+
 def test_loop_arun_executes_tool_then_streams_reply(tmp_path):
     provider = _TwoStepProvider(
         first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="echo", params={"text": "hi"})]),
@@ -170,6 +228,40 @@ def test_loop_arun_executes_tool_then_streams_reply(tmp_path):
     assert "final_reply_chunk" in kinds
     assert kinds[-1] == "final_reply"
     assert events[-1].text == "echoed: hi"
+
+
+def test_loop_arun_exposes_threadsafe_cancel_to_interactive_skill(tmp_path):
+    from yibao_brain.ipc import ActionResult
+    from yibao_brain.skills import Skill, SkillRegistry
+
+    class UserPreemptSkill(Skill):
+        id = "user_preempt"
+
+        def run(self, params, ctx):
+            ctx.meta["request_cancel"]()
+            return ActionResult(success=False, error="检测到用户正在操作")
+
+    reg = SkillRegistry()
+    reg.register(UserPreemptSkill())
+    provider = _TwoStepProvider(
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="user_preempt", params={})]),
+        second=FakeProvider(text="不应继续生成"),
+    )
+    loop = AgentLoop(
+        provider=provider,
+        skills=reg,
+        classifier=RiskClassifier(),
+        gate=Gate(GatePolicy()),
+        memory=FakeMemory(),
+        log=AuditLog(tmp_path / "a.db"),
+    )
+    cancel = asyncio.Event()
+
+    events = asyncio.run(_collect_events(loop.arun("操作电脑", cancel)))
+
+    assert cancel.is_set()
+    assert any(e.kind == "interrupted" for e in events)
+    assert provider._n_stream == 1
 
 
 def test_loop_arun_sensitive_result_is_full_for_model_but_safe_for_shell_and_history(tmp_path):

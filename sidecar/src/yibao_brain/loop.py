@@ -32,11 +32,23 @@ SYSTEM_PROMPT = (
     "描述里带「会打开面板」的工具被调用后会在用户屏幕上弹出对应面板窗；"
     "用户说「打开/看看某看板、面板、详情」时调用对应工具即可，不要只在对话里列数据。\n"
     "只有纯闲聊/知识问答才直接用自然语言回复。\n"
+    "桌面 GUI 操作时：标准应用（计算器、访达、系统设置、备忘录、邮件等原生应用）的控件都有 AX 角色/标题，"
+    "必须先 read_tree 看结构，再用 click_control（按 role+title）或 type_text 操作——本地、瞬时、可靠。"
+    "只有 read_tree 明确找不到目标控件时才用 computer_use：它每步都要调一次视觉大模型，又慢又常因网络失败，是最后手段。"
+    "computer_use 会自行截图并只执行一个动作，不要在 computer_use 前后重复调用 screenshot；"
+    "执行到用户要求的最后一个控件后立即停止调用工具并回复结果。\n"
     "回复风格：聊天气泡很窄，回复要口语化、简短直接；不要用表格（改成每行一条「键：值」），"
     "不要用 # 标题，emoji 一条回复最多 2 个，列表不超过 5 条。\n"
     "很多能力按插件组织且默认隐藏；需要的能力不在工具列表里时，先调 use_plugin 展开对应插件"
     "（可用插件清单见该工具描述），再继续。"
 )
+
+_TOOL_BUDGET_FINAL_PROMPT = (
+    "本轮工具调用已达到安全上限。禁止继续调用任何工具。请根据已有工具结果简短说明："
+    "任务若已完成就报告结果；若未完成或无法确认，就明确说明已停止以及还差什么。"
+    "不得把未验证的状态说成已完成。"
+)
+_TOOL_BUDGET_FALLBACK = "已达到安全操作上限，我已停止继续操作；当前结果还需要你确认。"
 
 
 async def _offload(fn, *args):
@@ -58,7 +70,7 @@ class AgentLoop:
         log: AuditLog,
         confirmer: Confirmer | None = None,
         user_id: str = "default",
-        max_steps: int = 8,
+        max_steps: int = 50,
         host: Host | None = None,
         history: ConversationHistory | None = None,
         focus_provider=None,
@@ -305,7 +317,23 @@ class AgentLoop:
             if not proceeded:
                 # 所有工具调用都被拒/禁，给模型一次机会换策略
                 continue
-        yield Event(kind="error", text="达到最大步数仍未完成")
+        # 工具轮次用满后仍预留一次“只收口、不再动作”的模型调用。旧逻辑在第 8 次工具
+        # 成功后直接报错，导致任务明明可能完成却没有最终答复。
+        final_messages = messages + [{"role": "system", "content": _TOOL_BUDGET_FINAL_PROMPT}]
+        resp = self.provider.chat(final_messages, tools=[])
+        final_text = (resp.text or "").strip()
+        if resp.tool_calls or not final_text:
+            yield Event(kind="error", text=_TOOL_BUDGET_FALLBACK)
+            return
+        if self.history:
+            span = messages[run_start:] + [{"role": "assistant", "content": final_text}]
+            span[0] = _tag_surface(span[0], surface)
+            self.history.record_messages(
+                _history_safe_span(span, safe_tool_content, sensitive_turn)
+            )
+        yield Event(kind="final_reply", text=final_text)
+        for notice in post_reply_notices:
+            yield Event(kind="notice", text=notice)
 
     async def arun(
         self, user_text: str, cancel=None, surface: str | None = None
@@ -416,13 +444,25 @@ class AgentLoop:
                         {"role": "tool", "tool_call_id": tc.id, "content": "策略禁止该操作"}
                     )
                     continue
+                running_loop = asyncio.get_running_loop()
+
+                def request_cancel() -> None:
+                    if cancel is not None:
+                        running_loop.call_soon_threadsafe(cancel.set)
+
                 result = await _offload(
-                    self.invoker.execute, action, tc.params, {"cancel": cancel}
+                    self.invoker.execute,
+                    action,
+                    tc.params,
+                    {"cancel": cancel, "request_cancel": request_cancel},
                 )
                 self._auto_activate(action.skill_id)
                 skill = self.skills.get(action.skill_id)
                 safe = self.invoker.safe_result(action, result)
                 yield Event(kind="action_result", action=action, result=safe)
+                if cancelled():
+                    yield Event(kind="interrupted")
+                    return
                 if action.skill_id == "use_plugin" and result.success and not (result.data or {}).get("already"):
                     # 插件展开要知情（§12-2 已定）：轻提示，不弹窗不打断
                     yield Event(kind="notice", text=(result.data or {}).get("human", "插件已展开"))
@@ -444,7 +484,32 @@ class AgentLoop:
                 proceeded = True
             if not proceeded:
                 continue
-        yield Event(kind="error", text="达到最大步数仍未完成")
+        # 与同步路径一致：保留 max_steps 的动作硬上限，但额外给一次无工具收口。
+        final_messages = messages + [{"role": "system", "content": _TOOL_BUDGET_FINAL_PROMPT}]
+        final_text = ""
+        final_tool_deltas: list = []
+        async for delta in self.provider.astream(final_messages, tools=[]):
+            if cancelled():
+                yield Event(kind="interrupted")
+                return
+            if delta.text:
+                final_text += delta.text
+                yield Event(kind="final_reply_chunk", text=delta.text)
+            if delta.tool_call_deltas:
+                final_tool_deltas.extend(delta.tool_call_deltas)
+        final_text = final_text.strip()
+        if final_tool_deltas or not final_text:
+            yield Event(kind="error", text=_TOOL_BUDGET_FALLBACK)
+            return
+        if self.history:
+            span = messages[run_start:] + [{"role": "assistant", "content": final_text}]
+            span[0] = _tag_surface(span[0], surface)
+            self.history.record_messages(
+                _history_safe_span(span, safe_tool_content, sensitive_turn)
+            )
+        yield Event(kind="final_reply", text=final_text)
+        for notice in post_reply_notices:
+            yield Event(kind="notice", text=notice)
 
 
 _WEEKDAYS = "一二三四五六日"

@@ -4,7 +4,7 @@ from __future__ import annotations
 import sys
 
 from .audit import AuditLog
-from .config import a11y_enabled, computer_use_enabled, llm_api_key, screenshot_dir, vision_api_key
+from .config import a11y_enabled, computer_use_enabled, computer_use_max_steps, llm_api_key, screenshot_dir, vision_api_key
 from .ipc import RiskLevel
 from .llm import FakeProvider, GLMProvider
 from .loop import AgentLoop
@@ -24,7 +24,7 @@ def build_loop(use_real: bool, db_path: str = "audit.db"):
             try:
                 from .llm import ComputerUseClient
 
-                reg.register(ComputerUseSkill(ComputerUseClient()))
+                reg.register(ComputerUseSkill(ComputerUseClient(), max_steps=computer_use_max_steps()))
             except Exception as e:
                 print(f"[yibao] computer-use 兜底未启用：{e}", file=sys.stderr)
 

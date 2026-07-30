@@ -127,6 +127,19 @@ def computer_use_enabled() -> bool:
     return "bigmodel" in vision_base_url()
 
 
+def computer_use_max_steps() -> int:
+    """computer_use 单次调用最多连续执行步数。
+
+    默认 8：一次调用连续完成一个多步子任务（视觉模型输出 finish 即提前停），
+    避免每一步都触发一次主模型往返 + 重新截图/开应用——这是 computer_use 慢的主因。
+    环境可调（YIBAO_COMPUTER_USE_MAX_STEPS）便于测试时收紧。
+    """
+    try:
+        return max(1, int(os.environ.get("YIBAO_COMPUTER_USE_MAX_STEPS", "8")))
+    except ValueError:
+        return 8
+
+
 def voice_enabled() -> bool:
     return os.environ.get("YIBAO_VOICE", "1") != "0"
 

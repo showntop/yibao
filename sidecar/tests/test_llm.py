@@ -7,7 +7,55 @@ from yibao_brain.llm import (
     ToolCall,
     merge_tool_call_deltas,
     ToolCallDelta,
+    _vision_create_with_retry,
 )
+
+
+def test_vision_create_retries_on_timeout_then_succeeds():
+    calls = []
+
+    def fn():
+        calls.append(1)
+        if len(calls) < 3:
+            raise TimeoutError("transient")
+        return "ok"
+
+    out = _vision_create_with_retry(fn, retries=2, base_delay=0)  # base_delay=0 不真睡
+    assert out == "ok"
+    assert len(calls) == 3  # 初试 1 + 重试 2
+
+
+def test_vision_create_retries_exhausted_reraises():
+    calls = []
+
+    def fn():
+        calls.append(1)
+        raise TimeoutError("transient")
+
+    try:
+        _vision_create_with_retry(fn, retries=1, base_delay=0)
+        raise AssertionError("应抛出 TimeoutError")
+    except TimeoutError:
+        pass
+    assert len(calls) == 2  # 初试 + 1 次重试后放弃
+
+
+def test_vision_create_non_retryable_reraises_immediately():
+    calls = []
+
+    class Boom(Exception):
+        pass
+
+    def fn():
+        calls.append(1)
+        raise Boom("not a network error")
+
+    try:
+        _vision_create_with_retry(fn, retries=2, base_delay=0)
+        raise AssertionError("应抛出 Boom")
+    except Boom:
+        pass
+    assert len(calls) == 1  # 非网络类错误不重试，立即抛出
 
 
 def test_tool_call_fields():

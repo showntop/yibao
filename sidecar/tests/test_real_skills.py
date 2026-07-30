@@ -38,6 +38,19 @@ def test_open_app_returns_pid():
     r = OpenAppSkill().run({"app": "Calculator"}, _ctx(host))
     assert r.success
     assert r.data == {"app": "Calculator", "pid": 4321}
+
+
+def test_open_app_not_blocked_by_user_input_lease():
+    """open_app 只是启动/置前、不注入键鼠；即使用户正在操作也不该被租约拦死。"""
+    host = FakeHost()
+    host.a11y.launch_pid = 4321
+    host.user_input.allowed = False
+    host.user_input.reason = "检测到用户正在操作，AI 已让出控制"
+    r = OpenAppSkill().run({"app": "Calculator"}, _ctx(host))
+    assert r.success
+    assert r.data == {"app": "Calculator", "pid": 4321}
+    # 守卫压根没被调用——租约已不覆盖 open_app
+    assert host.user_input.permit_calls == []
     assert host.a11y.launch_calls == ["Calculator"]
 
 
@@ -62,6 +75,19 @@ def test_click_control_ax_press():
     assert r.success and r.data["method"] == "ax"
     assert host.a11y.press_calls == [h]
     assert host.input.clicks == []  # 没走坐标回退
+
+
+def test_click_control_yields_before_ax_press_when_user_is_active():
+    host = FakeHost()
+    h = _FakeHandle("AXButton", "等于")
+    host.a11y.handles[("AXButton", "等于")] = h
+    host.user_input.allowed = False
+    host.user_input.reason = "检测到用户正在操作，AI 已让出控制"
+
+    r = ClickControlSkill().run({"role": "AXButton", "title": "等于"}, _ctx(host))
+
+    assert not r.success and "用户正在操作" in r.error
+    assert host.a11y.press_calls == []
 
 
 def test_click_control_no_blind_coord_and_hints_computer_use():
@@ -95,6 +121,17 @@ def test_type_text_injects():
 def test_type_text_missing():
     r = TypeTextSkill().run({}, _ctx(FakeHost()))
     assert not r.success
+
+
+def test_type_text_yields_when_user_is_active():
+    host = FakeHost()
+    host.user_input.allowed = False
+    host.user_input.reason = "检测到用户正在操作，AI 已让出控制"
+
+    r = TypeTextSkill().run({"text": "hello"}, _ctx(host))
+
+    assert not r.success and "用户正在操作" in r.error
+    assert host.input.types == []
 
 
 def test_register_real_skills_order():
@@ -273,13 +310,15 @@ def test_computer_use_prefers_native_bbox_for_capable_model(tmp_path, monkeypatc
         actions=[{"action": "click", "box": [148, 301, 188, 341]}],
     )
     client.prefers_raw_bbox = True
+    host.a11y.element_at_result = _FakeHandle("AXButton", "等于")
 
     result = ComputerUseSkill(client, som=som).run(
         {"task": "点击等号", "app": "计算器"}, SkillContext(host=host)
     )
 
     assert result.success and result.data["steps"] == 1
-    assert host.input.clicks == [(240.0, 675.0)]
+    assert host.a11y.press_calls == [host.a11y.element_at_result]
+    assert host.input.clicks == []
     assert host.screenshotter.calls == ["capture_window:计算器"]
     assert len(client.calls) == 1
     assert client.choose_calls == []
@@ -353,6 +392,40 @@ def test_computer_use_cancel_after_model_response_prevents_click(tmp_path):
     assert host.input.clicks == []
 
 
+def test_computer_use_user_input_after_screenshot_preempts_click_and_run(tmp_path):
+    import threading
+
+    from yibao_brain.skills_real import ComputerUseSkill
+    from fakes import FakeComputerUseClient, FakeScreenshotter
+
+    shot = _make_shot(tmp_path, physical_w=198, physical_h=350)
+    preempted = threading.Event()
+
+    class WindowScreenshotter(FakeScreenshotter):
+        def capture_window(self, app):
+            return shot, (72.0, 354.0), 1.0
+
+    client = FakeComputerUseClient(
+        actions=[{"action": "click", "box": [148, 301, 188, 341]}]
+    )
+    client.prefers_raw_bbox = True
+    host = FakeHost()
+    host.screenshotter = WindowScreenshotter()
+    host.user_input.allowed = False
+    host.user_input.reason = "检测到用户正在操作，AI 已让出控制"
+
+    result = ComputerUseSkill(client).run(
+        {"task": "点击等号", "app": "计算器"},
+        SkillContext(host=host, meta={"request_cancel": preempted.set}),
+    )
+
+    assert not result.success and "用户正在操作" in result.error
+    assert preempted.is_set()
+    assert host.input.clicks == []
+    assert len(host.user_input.checkpoints) == 1
+    assert host.user_input.permit_calls == host.user_input.checkpoints
+
+
 def test_computer_use_empty_dict_action_not_counted_as_step(tmp_path, monkeypatch):
     # raw-bbox 路径下，_parse_action 对 "{}" 模型输出返回 {} → 不应计为一步
     # （回归：旧守则 action.get("action") != "finish" 对 {} 为真 → 幻影 step）
@@ -373,6 +446,17 @@ def test_computer_use_empty_dict_action_not_counted_as_step(tmp_path, monkeypatc
     assert r.data["actions"] == []  # {} 未被记为步
     assert host.input.clicks == []  # 也没误执行
     assert client.choose_calls == []  # 没走 SoM
+
+
+def test_computer_use_schema_default_tracks_step_cap():
+    """放开多步批处理：schema 默认步数 = 构造上限；模型不传 max_steps 即按上限连续执行。"""
+    from fakes import FakeComputerUseClient
+    from yibao_brain.skills_real import ComputerUseSkill
+
+    schema = ComputerUseSkill(FakeComputerUseClient(), max_steps=6).openai_schema()
+    ms = schema["parameters"]["properties"]["max_steps"]
+    assert ms["default"] == 6
+    assert ms["maximum"] == 6
 
 
 def test_computer_use_som_max_steps_cap(tmp_path, monkeypatch):

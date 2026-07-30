@@ -571,7 +571,7 @@ def test_serve_async_emits_hello_on_start(tmp_path):
     )
     assert out[0]["type"] == "hello"
     assert out[0]["version"] == 1
-    assert set(out[0]["permissions"]) >= {"ax", "screen"}
+    assert set(out[0]["permissions"]) >= {"ax", "screen", "input"}
 
 
 def test_serve_async_ping_pong(tmp_path):
@@ -640,7 +640,7 @@ def test_serve_async_check_permissions(tmp_path):
     )
     perms = [m for m in out if m["type"] == "permissions"]
     assert len(perms) == 1
-    assert set(perms[0]["permissions"]) >= {"ax", "screen"}
+    assert set(perms[0]["permissions"]) >= {"ax", "screen", "input"}
 
 
 def test_serve_async_prompt_permission(monkeypatch, tmp_path):
@@ -659,6 +659,25 @@ def test_serve_async_prompt_permission(monkeypatch, tmp_path):
         )
     )
     assert calls == ["ax"]
+    assert any(m["type"] == "permissions" for m in out)
+
+
+def test_serve_async_prompt_input_permission(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(
+        "yibao_brain.server.permissions.prompt_input", lambda: calls.append("input") or True
+    )
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([{"type": "prompt_permission", "which": "input"}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+        )
+    )
+    assert calls == ["input"]
     assert any(m["type"] == "permissions" for m in out)
 
 

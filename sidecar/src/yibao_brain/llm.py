@@ -227,6 +227,29 @@ class GLMProvider:
             yield LLMDelta(text=text, tool_call_deltas=tcd)
 
 
+def _vision_create_with_retry(create_fn, *, retries: int = 2, base_delay: float = 0.8):
+    """视觉模型远端调用：对连接/超时错误短退避重试。
+
+    GLM 视觉端点偶发 Connection error；若不重试，一次抖动就让整步 computer_use 报废、
+    模型只好从头再来（重新开应用+截图），放大延迟。仅对网络类错误重试，其余立即抛出。
+    """
+    import time
+
+    try:
+        from openai import APIConnectionError, APITimeoutError
+
+        retryable = (APIConnectionError, APITimeoutError, TimeoutError)
+    except Exception:
+        retryable = (TimeoutError,)
+    for attempt in range(retries + 1):
+        try:
+            return create_fn()
+        except retryable:
+            if attempt >= retries:
+                raise
+            time.sleep(base_delay * (attempt + 1))
+
+
 class ComputerUseClient:
     """GLM-4.6V 视觉 grounding 兜底：截图 + 任务 → 下一步动作 JSON。
 
@@ -271,11 +294,11 @@ class ComputerUseClient:
                 {"type": "text", "text": f"任务：{task}\n请给出下一步动作 JSON。"},
             ],
         })
-        resp = self.client.chat.completions.create(
+        resp = _vision_create_with_retry(lambda: self.client.chat.completions.create(
             model=self.model,
             messages=messages,
             extra_body={"thinking": {"type": "enabled"}},  # GLM 特有参数走 extra_body（openai SDK 不认顶层 kwargs）
-        )
+        ))
         content = (resp.choices[0].message.content or "") if resp.choices else ""
         action = self._parse_action(content)
         return self._convert_model_box(action, screenshot_b64)
@@ -329,7 +352,7 @@ class ComputerUseClient:
                 {"type": "text", "text": f"任务：{task}\n共有 {n_marks} 个编号标记(1-{n_marks})。给出下一个动作。"},
             ],
         })
-        resp = self.client.chat.completions.create(model=self.model, messages=messages)
+        resp = _vision_create_with_retry(lambda: self.client.chat.completions.create(model=self.model, messages=messages))
         content = (resp.choices[0].message.content or "") if resp.choices else ""
         return self._parse_marked_action(content, n_marks)
 

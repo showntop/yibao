@@ -16,6 +16,28 @@ def _no_host() -> ActionResult:
     return ActionResult(success=False, error="无执行基座 host（ctx.host 为空）")
 
 
+def _interaction_lease(ctx: SkillContext):
+    guard = getattr(ctx.host, "user_input", None) if ctx.host is not None else None
+    if guard is None:
+        return None
+    return guard, guard.checkpoint()
+
+
+def _permit_interaction(ctx: SkillContext, lease) -> tuple[bool, str | None]:
+    if lease is None:
+        return True, None
+    guard, token = lease
+    try:
+        allowed, reason = guard.permit(token)
+    except Exception:
+        allowed, reason = False, "无法确认用户输入状态，已停止 AI 前台操作"
+    if not allowed:
+        request_cancel = ctx.meta.get("request_cancel")
+        if callable(request_cancel):
+            request_cancel()
+    return allowed, reason
+
+
 class ScreenshotSkill(Skill):
     id = "screenshot"
     label = "截屏看屏幕"
@@ -86,6 +108,8 @@ class OpenAppSkill(Skill):
         app = str(params.get("app", "")).strip()
         if not app:
             return ActionResult(success=False, error="缺少 app 参数")
+        # open_app 只是启动/置前，不注入键鼠输入；不纳入「用户正在操作则让出」租约——
+        # 否则任务一慢、用户动一下鼠标，连恢复动作（置前）都会被一起拦死。
         pid = ctx.host.a11y.launch_app(app)
         if pid is None:
             return ActionResult(success=False, error=f"无法打开应用：{app}")
@@ -116,12 +140,17 @@ class ClickControlSkill(Skill):
         if ctx.host is None:
             return _no_host()
         a11y = ctx.host.a11y
+        lease = _interaction_lease(ctx)
         role = params.get("role")
         title = params.get("title")
         if role or title:
             handle = a11y.find(role, title)
-            if handle is not None and a11y.press(handle):
-                return ActionResult(success=True, data={"method": "ax", "target": title or role})
+            if handle is not None:
+                allowed, reason = _permit_interaction(ctx, lease)
+                if not allowed:
+                    return ActionResult(success=False, error=reason)
+                if a11y.press(handle):
+                    return ActionResult(success=True, data={"method": "ax", "target": title or role})
         # 不再盲坐标回退：a11y 找不到 → 导向 computer_use 视觉定位
         return ActionResult(
             success=False,
@@ -152,6 +181,9 @@ class TypeTextSkill(Skill):
         text = str(params.get("text", ""))
         if not text:
             return ActionResult(success=False, error="缺少 text 参数")
+        allowed, reason = _permit_interaction(ctx, _interaction_lease(ctx))
+        if not allowed:
+            return ActionResult(success=False, error=reason)
         ctx.host.input.type_text(text)
         return ActionResult(success=True, data={"chars": len(text)})
 
@@ -165,8 +197,9 @@ class ComputerUseSkill(Skill):
     id = "computer_use"
     label = "操作电脑"
     description = (
-        "computer-use 视觉兜底：当 read_tree/click_control 因控件无 title 或 UI 自绘而失效时，"
-        "用视觉模型看截图识别目标并点击/输入。慢、可能不准、高风险。"
+        "视觉操作：看截图用视觉模型识别目标并点击/输入，适合无 AX 的自绘 UI 或 read_tree 找不到的控件。"
+        "可一次连续完成多步（如一连串点击/输入），模型输出 finish 即停；每步调一次视觉大模型，"
+        "标准控件用 click_control/type_text 更快更稳。"
     )
     default_risk = RiskLevel.L2_MEDIUM
 
@@ -186,9 +219,9 @@ class ComputerUseSkill(Skill):
                     "app": {"type": "string", "description": "目标应用或窗口名称，如 计算器、Safari"},
                     "max_steps": {
                         "type": "integer",
-                        "default": 1,
+                        "default": self._default_max_steps,
                         "maximum": self._default_max_steps,
-                        "description": "最多执行步数；单次批准最多执行 1 步",
+                        "description": "一次调用最多连续执行步数；可一次完成多步，模型输出 finish 即停",
                     },
                 },
                 "required": ["task", "app"],
@@ -220,6 +253,7 @@ class ComputerUseSkill(Skill):
         for _ in range(max_steps):
             if cancelled():
                 return ActionResult(success=False, error="操作已中断")
+            interaction_lease = _interaction_lease(ctx)
             origin = (0.0, 0.0)
             if prefers_raw_bbox:
                 capture_window = getattr(ctx.host.screenshotter, "capture_window", None)
@@ -239,7 +273,8 @@ class ComputerUseSkill(Skill):
             prev_hash = shot_hash
             if prefers_raw_bbox:
                 action = self._raw_bbox_step(
-                    shot, task, history, ctx.host, scale, origin, cancelled
+                    shot, task, history, ctx.host, scale, origin, cancelled,
+                    lambda: _permit_interaction(ctx, interaction_lease),
                 )  # 模型原生 grounding
             else:
                 tree = ctx.host.a11y.frontmost_tree()
@@ -254,9 +289,13 @@ class ComputerUseSkill(Skill):
                         break  # 模型输出非法 → 停，防失控
                     if action.get("action") == "finish":
                         break
-                    self._apply_marked(action, marks, ctx.host)
+                    allowed, reason = _permit_interaction(ctx, interaction_lease)
+                    if not allowed:
+                        action = {"action": "interrupted", "reason": reason}
+                    else:
+                        self._apply_marked(action, marks, ctx.host)
             if action and action.get("action") == "interrupted":
-                return ActionResult(success=False, error="操作已中断")
+                return ActionResult(success=False, error=action.get("reason") or "操作已中断")
             if action is not None and action.get("action") and action.get("action") != "finish":
                 done.append(action)
                 history.append({"role": "assistant", "content": json.dumps(action, ensure_ascii=False)})
@@ -270,7 +309,8 @@ class ComputerUseSkill(Skill):
             host.input.type_text(str(action.get("text", "")))
 
     def _raw_bbox_step(
-        self, shot, task, history, host, scale, origin=(0.0, 0.0), should_cancel=None
+        self, shot, task, history, host, scale, origin=(0.0, 0.0), should_cancel=None,
+        before_interaction=None,
     ):
         """旧 raw-bbox 回退路径（build_marks 渲染失败时）。"""
         b64 = self._b64(shot)
@@ -281,6 +321,10 @@ class ComputerUseSkill(Skill):
             return {"action": "interrupted"}
         if not action or action.get("action") == "finish":
             return action
+        if before_interaction is not None:
+            allowed, reason = before_interaction()
+            if not allowed:
+                return {"action": "interrupted", "reason": reason}
         self._execute(action, host, scale, origin)
         return action
 
@@ -304,14 +348,20 @@ class ComputerUseSkill(Skill):
         except Exception:
             return None
 
-    @staticmethod
-    def _execute(action: dict, host, scale: float, origin=(0.0, 0.0)) -> None:
+    def _execute(self, action: dict, host, scale: float, origin=(0.0, 0.0)) -> None:
         kind = action.get("action")
         box = action.get("box") or []
         ox, oy = origin
         if kind == "click" and len(box) == 4:
             x1, y1, x2, y2 = (float(v) for v in box)
-            host.input.click(ox + (x1 + x2) / 2 / scale, oy + (y1 + y2) / 2 / scale)
+            x = ox + (x1 + x2) / 2 / scale
+            y = oy + (y1 + y2) / 2 / scale
+            # 原生 bbox 也先命中 AX 元素并触发动作，不移动用户可见鼠标。
+            self._som.resolve(
+                1,
+                [{"id": 1, "source": "bbox", "center": (x, y), "rect": (x, y, x, y)}],
+                host,
+            )
         elif kind == "type":
             host.input.type_text(str(action.get("text", "")))
         elif kind == "scroll":
