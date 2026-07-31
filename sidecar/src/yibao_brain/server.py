@@ -22,12 +22,14 @@ from .ipc import Action, Event, RiskLevel
 from .llm import FakeProvider, GLMProvider, ToolCall
 from .loop import AgentLoop, _offload
 from .memory import FakeMemory, LazyMem0Memory
+from .proactive import ProactiveDispatcher
 from .plugins import LlmChat, get_api, get_mem_namespaces, get_plugin_summaries, get_widgets, panel_payload
 from .safety import Decision, Gate, GatePolicy, RiskClassifier
 from .skills import EchoSkill, SkillRegistry
 from .skills_composite import register_composite_skills
 from .skills_real import ComputerUseSkill, register_real_skills
-from .watch import WatchCtx, build_behaviors, snapshot_from_perception
+from .watch import WatchCtx
+from .watch_service import WatchService
 
 ReadMsg = Callable[[], dict | None]
 WriteMsg = Callable[[dict], None]
@@ -367,14 +369,17 @@ def _gate_proactive_event(ev: dict, settings: dict) -> dict | None:
 
 
 async def _dispatch_reminder(r: dict, *, settings: dict, feed, history, voice,
-                             run_state: dict, write_msg) -> None:
+                             run_state: dict, write_msg, dispatcher=None) -> None:
     """到期提醒分发：Feed/历史照落（可追溯底线）；气泡广播与 TTS 受 proactive.level 管辖。"""
     text = str(r.get("text", ""))
     level = _proactive_level(settings)
-    feed.add("reminder", text, {"rid": r.get("id")})  # 主屏动态：quiet 档也照落
-    if level != "quiet":
-        write_msg({"type": "event", "surface": "pet",
-                   "event": {"kind": "reminder", "text": text, "level": level}})
+    if dispatcher is not None:
+        await dispatcher.dispatch({"kind": "reminder", "text": text, "rid": r.get("id")})
+    else:
+        feed.add("reminder", text, {"rid": r.get("id")})  # compatibility path for tests
+        if level != "quiet":
+            write_msg({"type": "event", "surface": "pet",
+                       "event": {"kind": "reminder", "text": text, "level": level}})
     if history is not None:  # 落历史：用户回「知道了」时大脑有上下文
         try:
             await _offload(history.record_messages,
@@ -383,7 +388,7 @@ async def _dispatch_reminder(r: dict, *, settings: dict, feed, history, voice,
             pass
     # TTS 只在完整档且「主动开口」开着；有任务在跑不打断在播的语音
     task = run_state["task"]
-    if level == "full" and voice is not None and settings.get("proactive_voice", True) \
+    if dispatcher is None and level == "full" and voice is not None and settings.get("proactive_voice", True) \
             and (task is None or task.done()):
         async def _once(t=text):
             yield f"提醒：{t}"
@@ -519,6 +524,9 @@ async def serve_async(
     # 只活在内存，大脑重启即失效（C-4：会话级，不落盘）。
     remembered_confirm: set[str] = set()
 
+    # 用户设置是运行期共享状态，主动分发器、感知与 watch service 都读同一字典。
+    settings = load_settings()
+
     async def batch_confirmer(actions) -> dict[str, tuple[bool, bool]]:
         """批量确认（Task 3 多槽）：list[Action] -> {action.id: (approved, remember)}。
 
@@ -569,21 +577,15 @@ async def serve_async(
     # 主屏 Feed 存储（OS 感 §4.2）：任务播报/提醒触发在此落库，主屏查询时一次拿回。
     # 与审计库同目录；FeedStore 写失败只 print，不拖垮主链路。
     feed = FeedStore(os.path.join(os.path.dirname(db_path), "feed.db"))
-
-    def _on_plugin_event(ev: dict) -> None:
-        """插件主动事件：先落 Feed 再转发壳（surface=None 壳侧按 pet 处理）；播报类受旋钮管辖。"""
-        try:
-            task_meta = ev.get("task") if isinstance(ev, dict) else None
-            feed.add("task" if task_meta else "event", str(ev.get("text", "")), task_meta or {})
-        except Exception:
-            pass
-        gated = _gate_proactive_event(ev, settings)
-        if gated is not None:
-            write_msg({"type": "event", "surface": None, "event": gated})
-
-    # 插件后台线程 → 壳的主动事件通道（如 agents 插件任务完成播报）：
-    # 与下面 memory 状态回调同一跨线程先例（call_soon_threadsafe + write_msg）。
-    _emit_event = lambda ev: ai_loop.call_soon_threadsafe(_on_plugin_event, ev)
+    proactive_dispatcher = ProactiveDispatcher(
+        settings=settings,
+        feed=feed,
+        write_msg=write_msg,
+        voice=voice,
+        run_state=run_state,
+        loop=ai_loop,
+    )
+    _emit_event = proactive_dispatcher.emit
     agent = build_loop(
         read_msg, use_real, db_path, provider, skills_factory, confirmer=batch_confirmer,
         emit_event=_emit_event,
@@ -667,9 +669,6 @@ async def serve_async(
                 print(f"[yibao] widget {ref} 取数异常（已跳过）：{e}", file=sys.stderr)
         return out
 
-    # 用户设置（自主权旋钮等，数据目录 settings.json）：运行期可调，settings_set 即时生效免重启
-    settings = load_settings()
-
     # 感知是增强面：Keychain/SQLite 不可用时保持关闭，绝不降级明文或拖垮大脑。
     pstore = perception_store
     if pstore is None and use_real:
@@ -722,30 +721,28 @@ async def serve_async(
 
     perception_cleanup_task = asyncio.ensure_future(_perception_cleanup_loop())
 
-    # watch mode（slice 1）：主动观察循环。总开关 watch.enabled 默认关；
-    # 每 cadence 秒取感知快照→跑行为→事件经 _gate_proactive_event（proactive.level）出口。
-    async def _watch_loop(store, stgs, vc, wm) -> None:
-        cadence = max(10.0, float(stgs.get("watch.cadence", 60) or 60))
-        behaviors = build_behaviors(stgs)
-        while True:
-            await asyncio.sleep(cadence)
-            try:
-                snap = snapshot_from_perception(store, time.time())
-                for ev in _watch_tick(behaviors, snap, stgs):
-                    wm({"type": "event", "surface": "pet", "event": ev})
-                    if vc is not None and _proactive_level(stgs) == "full" and ev.get("text"):
-                        try:
-                            await ai_loop.run_in_executor(None, vc.speak, ev["text"])
-                        except Exception as e:
-                            print(f"[yibao] watch 语音播报失败：{e}", file=sys.stderr)
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                print(f"[yibao] watch tick 异常（继续）：{e}", file=sys.stderr)
+    _wvision = None
+    if vision_api_key() and computer_use_enabled():
+        try:
+            from .llm import ComputerUseClient
 
-    watch_task = None
-    if settings.get("watch.enabled"):
-        watch_task = asyncio.ensure_future(_watch_loop(pstore, settings, voice, write_msg))
+            _wvision = ComputerUseClient()
+        except Exception as e:
+            print(f"[yibao] watch 视觉不可用（主动搭话禁用）：{e}", file=sys.stderr)
+    try:
+        from .perception import sample_frontmost_bundle_id
+    except Exception:
+        sample_frontmost_bundle_id = None
+    watch_service = WatchService(
+        store=pstore,
+        settings=settings,
+        dispatcher=proactive_dispatcher,
+        host=agent.host,
+        vision=_wvision,
+        frontmost=sample_frontmost_bundle_id,
+        live_state=getattr(perception_sensors, "watch_state", None),
+    )
+    await watch_service.apply_settings()
 
     async def _mem_list() -> list[dict]:
         """记忆管理页数据（OS 感 §4.4）：底座（译宝）+ 各插件命名空间分组列出。单空间失败不拖垮整体。"""
@@ -788,7 +785,8 @@ async def serve_async(
             for r in due:
                 print(f"[yibao] 提醒触发 id={r.get('id')}：{str(r.get('text', ''))[:30]!r}", file=sys.stderr)
                 await _dispatch_reminder(r, settings=settings, feed=feed, history=agent.history,
-                                         voice=voice, run_state=run_state, write_msg=write_msg)
+                                         voice=voice, run_state=run_state, write_msg=write_msg,
+                                         dispatcher=proactive_dispatcher)
 
     reminder_task = asyncio.ensure_future(_reminder_loop())
 
@@ -1021,8 +1019,10 @@ async def serve_async(
             tick_task.cancel()
             reminder_task.cancel()
             perception_cleanup_task.cancel()
-            if watch_task is not None:
-                watch_task.cancel()
+            await watch_service.stop()
+            jobs = getattr(agent.skills, "background_jobs", None)
+            if jobs is not None:
+                jobs.shutdown()
             perception_stop.set()
             if perception_thread is not None:
                 perception_thread.join(timeout=1)
@@ -1168,19 +1168,26 @@ async def serve_async(
             except Exception as e:
                 write_msg({"type": "mem_edited", "id": mid, "ok": False, "error": str(e)})
         elif rtype == "settings_get":
-            write_msg({"type": "settings", "values": dict(settings)})
+            write_msg({"type": "settings", "values": {**settings, "watch.status": watch_service.status()}})
         elif rtype == "settings_set":
             vals = msg.get("values")
             if isinstance(vals, dict):
                 try:
                     accepted = dict(vals)
+                    if accepted.get("watch.enabled"):
+                        accepted["perception.master"] = True
+                        accepted["perception.activity"] = True
+                    if accepted.get("watch.screen_enabled"):
+                        accepted["perception.master"] = True
+                        accepted["perception.app"] = True
                     if pstore is None and accepted.get("perception.master"):
                         accepted["perception.master"] = False
                     save_settings(accepted)  # 只落已知键；写盘成功后重读合并
                     settings.update(load_settings())
+                    await watch_service.apply_settings()
                 except Exception as e:
                     print(f"[yibao] 设置保存失败：{e}", file=sys.stderr)
-            write_msg({"type": "settings", "values": dict(settings)})
+            write_msg({"type": "settings", "values": {**settings, "watch.status": watch_service.status()}})
         elif rtype == "dock_list":
             # 主屏 Dock 查询：pinned 优先 + 频率补齐（详见 _dock_list）
             write_msg({"type": "dock_list", "dock": _dock_list(agent.log, _plugin_summaries_list())})

@@ -6,9 +6,7 @@ click_control 仅走 AX 动作；a11y 找不到/不支持时返回失败并指�
 from __future__ import annotations
 
 import json
-import subprocess
-import threading
-
+from .background_jobs import BackgroundJobManager
 from .grounding import SoMGrounding, _physical_scale
 from .ipc import ActionResult, RiskLevel
 from .skills import Skill, SkillContext, SkillRegistry
@@ -382,17 +380,24 @@ class ComputerUseSkill(Skill):
         # finish / 未知动作 → 不执行
 
 
-def register_real_skills(reg: SkillRegistry) -> None:
+def register_real_skills(
+    reg: SkillRegistry, background_jobs: BackgroundJobManager | None = None
+) -> BackgroundJobManager:
     """把真实原子技能注册到 registry。"""
+    jobs = background_jobs or BackgroundJobManager()
     for skill in (
         ScreenshotSkill(),
         ReadTreeSkill(),
         OpenAppSkill(),
         ClickControlSkill(),
         TypeTextSkill(),
-        WatchCommandSkill(),
+        WatchCommandSkill(jobs),
+        WatchCommandStatusSkill(jobs),
+        CancelWatchCommandSkill(jobs),
     ):
         reg.register(skill)
+    reg.background_jobs = jobs
+    return jobs
 
 
 class WatchCommandSkill(Skill):
@@ -404,6 +409,10 @@ class WatchCommandSkill(Skill):
         "完成或失败时主动报告（退出码 + 末尾输出）。适合要等很久的任务。"
     )
     default_risk = RiskLevel.L3_HIGH  # 跑任意 shell → 走确认闸门
+    allow_session_remember = False
+
+    def __init__(self, jobs: BackgroundJobManager | None = None) -> None:
+        self.jobs = jobs or BackgroundJobManager()
 
     def openai_schema(self) -> dict:
         return {
@@ -413,9 +422,11 @@ class WatchCommandSkill(Skill):
                 "type": "object",
                 "properties": {
                     "command": {"type": "string", "description": "要后台运行的 shell 命令"},
+                    "cwd": {"type": "string", "description": "任务工作目录（必填，绝对路径优先）"},
                     "name": {"type": "string", "description": "任务别名（报告时显示，可选）"},
+                    "timeout": {"type": "number", "description": "超时秒数，默认 600"},
                 },
-                "required": ["command"],
+                "required": ["command", "cwd"],
             },
         }
 
@@ -423,27 +434,80 @@ class WatchCommandSkill(Skill):
         command = str(params.get("command", "")).strip()
         if not command:
             return ActionResult(success=False, error="缺少 command 参数")
+        cwd = str(params.get("cwd", "")).strip()
+        if not cwd:
+            return ActionResult(success=False, error="缺少 cwd 参数")
         label = str(params.get("name", "")).strip() or command
         emit = getattr(ctx, "emit_event", None)
-        threading.Thread(
-            target=_watch_command, args=(command, label, emit), daemon=True, name="yibao-watch-cmd"
-        ).start()
-        return ActionResult(success=True, data={"started": command, "label": label})
-
-
-def _watch_command(command: str, label: str, emit) -> None:
-    """后台跑命令；完成经 emit 播报（无 emit 静默）。单任务异常不影响主进程。"""
-    try:
-        cp = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=600)
-        tail = ((cp.stdout or "") + (cp.stderr or ""))[-500:].strip()
-        ok = cp.returncode == 0
-        text = f"「{label}」{'完成 ✅' if ok else f'失败（退出码 {cp.returncode}）❌'}" + (f"：{tail}" if tail else "")
-    except subprocess.TimeoutExpired:
-        text = f"「{label}」超时（>10 分钟）已停"
-    except Exception as e:  # 命令根本起不来等
-        text = f"「{label}」运行异常：{e}"
-    if emit is not None:
         try:
-            emit({"kind": "reminder", "text": text})
-        except Exception:
-            pass
+            data = self.jobs.start(
+                command,
+                cwd=cwd,
+                name=label,
+                timeout=float(params.get("timeout", 600)),
+                emit=emit,
+            )
+        except (TypeError, ValueError, RuntimeError) as exc:
+            return ActionResult(success=False, error=str(exc))
+        return ActionResult(success=True, data={"started": command, "label": label, **data})
+
+
+class WatchCommandStatusSkill(Skill):
+    id = "watch_command_status"
+    label = "查看后台任务"
+    description = "查看一个后台命令的状态和末尾输出；不传 task_id 时列出最近任务。"
+    default_risk = RiskLevel.L0_READONLY
+
+    def __init__(self, jobs: BackgroundJobManager) -> None:
+        self.jobs = jobs
+
+    def openai_schema(self) -> dict:
+        return {
+            "name": self.id,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {"task_id": {"type": "string"}},
+                "required": [],
+            },
+        }
+
+    def run(self, params: dict, ctx: SkillContext) -> ActionResult:
+        task_id = str(params.get("task_id", "")).strip()
+        if not task_id:
+            return ActionResult(success=True, data={"tasks": self.jobs.list()})
+        job = self.jobs.status(task_id)
+        return (
+            ActionResult(success=True, data=job)
+            if job is not None
+            else ActionResult(success=False, error=f"找不到后台任务：{task_id}")
+        )
+
+
+class CancelWatchCommandSkill(Skill):
+    id = "cancel_watch_command"
+    label = "取消后台任务"
+    description = "取消指定 task_id 的后台命令，并终止它的整个进程组。"
+    default_risk = RiskLevel.L2_MEDIUM
+
+    def __init__(self, jobs: BackgroundJobManager) -> None:
+        self.jobs = jobs
+
+    def openai_schema(self) -> dict:
+        return {
+            "name": self.id,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {"task_id": {"type": "string"}},
+                "required": ["task_id"],
+            },
+        }
+
+    def run(self, params: dict, ctx: SkillContext) -> ActionResult:
+        task_id = str(params.get("task_id", "")).strip()
+        if not task_id:
+            return ActionResult(success=False, error="缺少 task_id 参数")
+        if not self.jobs.cancel(task_id):
+            return ActionResult(success=False, error=f"任务不存在或已结束：{task_id}")
+        return ActionResult(success=True, data={"task_id": task_id, "status": "cancelling"})

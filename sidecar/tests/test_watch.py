@@ -3,9 +3,12 @@ import time
 
 from yibao_brain.watch import (
     Ambient,
+    Budget,
     HealthNudge,
+    ProactiveChat,
     WatchCtx,
     WatchSnapshot,
+    _proactive_look,
     build_behaviors,
     in_quiet_hours,
     snapshot_from_perception,
@@ -130,6 +133,55 @@ def test_snapshot_no_store():
     assert snap.app is None and snap.activity is None and snap.now == 1000.0
 
 
+def test_snapshot_respects_perception_switches_and_freshness():
+    store = _FakeStore(
+        app={"ts": 990.0, "payload": {"app": "Code", "bundle_id": "com.microsoft.VSCode"}},
+        activity={"ts": 990.0, "kind": "active", "payload": {"idle_seconds": 0}},
+    )
+    off = snapshot_from_perception(
+        store,
+        now=1000.0,
+        settings={"perception.master": False, "perception.app": True, "perception.activity": True},
+        max_age=15.0,
+    )
+    assert off.app is None and off.app_id is None and off.activity is None
+
+    stale = snapshot_from_perception(
+        store,
+        now=1010.1,
+        settings={"perception.master": True, "perception.app": True, "perception.activity": True},
+        max_age=15.0,
+    )
+    assert stale.app is None and stale.app_id is None and stale.activity is None
+
+    fresh = snapshot_from_perception(
+        store,
+        now=1000.0,
+        settings={"perception.master": True, "perception.app": True, "perception.activity": True},
+        max_age=15.0,
+    )
+    assert fresh.app == "Code" and fresh.app_id == "com.microsoft.VSCode"
+    assert fresh.activity and fresh.activity["state"] == "active"
+
+
+def test_snapshot_uses_activity_segment_start_from_heartbeat_payload():
+    store = _FakeStore(
+        activity={
+            "ts": 130.0,
+            "kind": "active",
+            "payload": {"idle_seconds": 0, "segment_started_at": 100.0},
+        },
+    )
+    snap = snapshot_from_perception(
+        store,
+        now=135.0,
+        settings={"perception.master": True, "perception.app": False, "perception.activity": True},
+        max_age=15.0,
+    )
+    assert snap.activity["seconds"] == 35.0
+    assert snap.activity["segment_id"] == 100.0
+
+
 # ---------- _watch_tick：行为→gating→出口 ----------
 def test_watch_tick_emits_in_full_swallows_in_quiet():
     """健康节律事件经 _gate_proactive_event：full 放行、quiet 吞掉。"""
@@ -163,3 +215,168 @@ def test_watch_tick_isolates_behavior_errors():
     snap = WatchSnapshot(now=1000, activity={"state": "active", "seconds": 46 * 60, "segment_id": 1})
     out = _watch_tick([_Boom(), ok], snap, {"proactive.level": "full"})
     assert out and out[0]["kind"] == "reminder"  # _Boom 被跳过，ok 照常出
+
+
+# ---------- Budget 预算闸 ----------
+def test_budget_hour_cap_then_slide():
+    now = [1000.0]
+    b = Budget(max_per_hour=2, max_per_day=10, clock=lambda: now[0])
+    assert b.allow() and b.allow()
+    assert b.allow() is False
+    now[0] += 3601
+    assert b.allow()  # 一小时窗口滑过
+
+
+def test_budget_day_cap():
+    now = [0.0]
+    b = Budget(max_per_hour=100, max_per_day=2, clock=lambda: now[0])
+    assert b.allow(); now[0] += 10
+    assert b.allow(); now[0] += 10
+    assert b.allow() is False
+    now[0] += 86401
+    assert b.allow()  # 一天窗口滑过
+
+
+def test_budget_zero_disabled():
+    assert Budget(0, 10).allow() is False
+
+
+# ---------- ProactiveChat 主动搭话 ----------
+def _wait(events, timeout=2.0):
+    for _ in range(int(timeout / 0.02)):
+        if events:
+            return
+        time.sleep(0.02)
+
+
+class _ScreenshotHost:
+    def __init__(self, path):
+        self.screenshotter = type("S", (), {"capture": staticmethod(lambda: str(path))})()
+
+
+class _NoSpeakVision:
+    def __init__(self):
+        self.calls = []
+
+    def observe(self, b64, app):
+        self.calls.append(app)
+        return {"speak": False, "text": ""}
+
+
+def test_proactive_chat_fires_on_segment_change(tmp_path):
+    png = tmp_path / "s.png"
+    png.write_bytes(b"\x89PNG\r\n\x1a\n")  # 占位字节，_b64_of 能读即可
+
+    class _Host:
+        screenshotter = type("S", (), {"capture": staticmethod(lambda: str(png))})()
+
+    class _Vis:
+        def __init__(self):
+            self.calls = []
+
+        def observe(self, b64, app):
+            self.calls.append(app)
+            return {"speak": True, "text": "试试重启"}
+
+    emitted = []
+    v = _Vis()
+    pc = ProactiveChat(observe_apps=["com.microsoft.VSCode"], look_min_gap=0, vision=v,
+                       host=_Host(), budget=Budget(10, 100), emit=emitted.append,
+                       frontmost=lambda: "com.microsoft.VSCode")
+    pc.tick(WatchSnapshot(now=1000, app="VSCode", app_id="com.microsoft.VSCode",
+                          activity={"state": "active", "seconds": 99, "segment_id": 1}), WatchCtx())
+    _wait(emitted)
+    assert emitted and emitted[0]["text"] == "试试重启"
+    assert v.calls == ["VSCode"]
+
+
+def test_proactive_chat_blocked_when_app_not_in_allowlist():
+    pc = ProactiveChat(observe_apps=["VSCode"], vision=object(), host=object(),
+                       budget=Budget(10, 10), emit=lambda e: None)
+    snap = WatchSnapshot(now=1, app="Safari",
+                         activity={"state": "active", "seconds": 9, "segment_id": 1})
+    assert pc.tick(snap, WatchCtx()) is None
+
+
+def test_proactive_chat_throttle_blocks_second_within_gap():
+    import tempfile
+    from pathlib import Path
+
+    png = Path(tempfile.gettempdir()) / "yibao-watch-test.png"
+    png.write_bytes(b"\x89PNG\r\n\x1a\n")
+    b = Budget(10, 100)
+    v = _NoSpeakVision()
+    pc = ProactiveChat(observe_apps=["a.bundle"], look_min_gap=100, vision=v,
+                       host=_ScreenshotHost(png), budget=b, emit=lambda e: None,
+                       frontmost=lambda: "a.bundle")
+    pc.tick(WatchSnapshot(now=1000, app="A", app_id="a.bundle", activity={"state": "active", "seconds": 1, "segment_id": 1}), WatchCtx())
+    _wait(v.calls)
+    pc.tick(WatchSnapshot(now=1050, app="A", app_id="a.bundle", activity={"state": "active", "seconds": 2, "segment_id": 2}), WatchCtx())
+    assert len(v.calls) == 1
+
+
+def test_proactive_chat_app_switch_retriggers_in_same_active_segment(tmp_path):
+    png = tmp_path / "s.png"
+    png.write_bytes(b"\x89PNG\r\n\x1a\n")
+    current = ["a.bundle"]
+    v = _NoSpeakVision()
+    pc = ProactiveChat(
+        observe_apps=["a.bundle", "b.bundle"], look_min_gap=0, vision=v,
+        host=_ScreenshotHost(png), budget=Budget(10, 100), emit=lambda e: None,
+        frontmost=lambda: current[0],
+    )
+    activity = {"state": "active", "seconds": 1, "segment_id": 7}
+    pc.tick(WatchSnapshot(now=1000, app="A", app_id="a.bundle", activity=activity), WatchCtx())
+    _wait(v.calls)
+    current[0] = "b.bundle"
+    pc.tick(WatchSnapshot(now=1001, app="B", app_id="b.bundle", activity=activity), WatchCtx())
+    for _ in range(100):
+        if len(v.calls) == 2:
+            break
+        time.sleep(0.02)
+    assert v.calls == ["A", "B"]
+
+
+def test_proactive_look_discards_capture_when_frontmost_changes(tmp_path):
+    png = tmp_path / "s.png"
+    png.write_bytes(b"\x89PNG\r\n\x1a\n")
+    current = iter(["a.bundle", "mail.bundle"])
+    v = _NoSpeakVision()
+    events = []
+    budget = Budget(10, 100)
+
+    _proactive_look(
+        _ScreenshotHost(png), v, "A", "a.bundle", events.append,
+        frontmost=lambda: next(current), budget=budget,
+    )
+
+    assert v.calls == []
+    assert events == []
+    assert budget._stamps == []
+
+
+def test_proactive_chat_budget_exhausted_blocks():
+    pc = ProactiveChat(observe_apps=["A"], look_min_gap=0, vision=object(),
+                       host=object(), budget=Budget(0, 100), emit=lambda e: None)
+    snap = WatchSnapshot(now=1, app="A", activity={"state": "active", "seconds": 1, "segment_id": 1})
+    assert pc.tick(snap, WatchCtx()) is None
+
+
+def test_proactive_chat_dormant_without_vision():
+    pc = ProactiveChat(observe_apps=["A"], vision=None, host=object(),
+                       budget=Budget(10, 10), emit=lambda e: None)
+    snap = WatchSnapshot(now=1, app="A", activity={"state": "active", "seconds": 1, "segment_id": 1})
+    assert pc.tick(snap, WatchCtx()) is None
+
+
+def test_build_behaviors_proactive_only_when_vision_and_allowlist():
+    deps = dict(
+        host=object(),
+        vision=object(),
+        budget=Budget(1, 1),
+        emit=lambda e: None,
+        frontmost=lambda: "X",
+    )
+    assert any(b.name == "proactive_chat" for b in build_behaviors({"watch.observe_apps": ["X"]}, **deps))
+    assert not any(b.name == "proactive_chat" for b in build_behaviors({}, **deps))  # 白名单空
+    assert not any(b.name == "proactive_chat" for b in build_behaviors({"watch.observe_apps": ["X"]}, host=object(), vision=None, budget=Budget(1, 1), emit=lambda e: None))

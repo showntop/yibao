@@ -144,6 +144,8 @@ def test_register_real_skills_order():
         "click_control",
         "type_text",
         "watch_command",
+        "watch_command_status",
+        "cancel_watch_command",
     ]
 
 
@@ -525,38 +527,58 @@ def _wait_emit(events, timeout_s=2.0):
         time.sleep(0.02)
 
 
-def test_watch_command_starts_and_emits_on_done():
+def test_watch_command_starts_and_emits_on_done(tmp_path):
+    from yibao_brain.background_jobs import BackgroundJobManager
     from yibao_brain.skills_real import WatchCommandSkill
 
     events = []
     ctx = SkillContext()
     ctx.emit_event = events.append
-    r = WatchCommandSkill().run({"command": "echo hello"}, ctx)
+    r = WatchCommandSkill(BackgroundJobManager()).run(
+        {"command": "echo hello", "cwd": str(tmp_path)}, ctx
+    )
     assert r.success and r.data["started"] == "echo hello"
+    assert r.data["task_id"].startswith("job_")
     _wait_emit(events)
     assert events and events[0]["kind"] == "reminder"
     assert "完成" in events[0]["text"] and "hello" in events[0]["text"]
 
 
-def test_watch_command_reports_failure_exit_code():
+def test_watch_command_reports_failure_exit_code(tmp_path):
+    from yibao_brain.background_jobs import BackgroundJobManager
     from yibao_brain.skills_real import WatchCommandSkill
 
     events = []
     ctx = SkillContext()
     ctx.emit_event = events.append
-    WatchCommandSkill().run({"command": "sh -c 'exit 7'"}, ctx)
+    WatchCommandSkill(BackgroundJobManager()).run(
+        {"command": "sh -c 'exit 7'", "cwd": str(tmp_path)}, ctx
+    )
     _wait_emit(events)
     assert events and "失败" in events[0]["text"] and "7" in events[0]["text"]
 
 
-def test_watch_command_no_emit_does_not_crash():
+def test_watch_command_no_emit_does_not_crash(tmp_path):
+    from yibao_brain.background_jobs import BackgroundJobManager
     from yibao_brain.skills_real import WatchCommandSkill
 
-    r = WatchCommandSkill().run({"command": "echo hi"}, SkillContext())  # emit_event=None
+    r = WatchCommandSkill(BackgroundJobManager()).run(
+        {"command": "echo hi", "cwd": str(tmp_path)}, SkillContext()
+    )  # emit_event=None
     assert r.success
 
 
 def test_watch_command_missing_command():
+    from yibao_brain.background_jobs import BackgroundJobManager
     from yibao_brain.skills_real import WatchCommandSkill
 
-    assert not WatchCommandSkill().run({}, SkillContext()).success
+    assert not WatchCommandSkill(BackgroundJobManager()).run({}, SkillContext()).success
+
+
+def test_watch_command_requires_cwd():
+    from yibao_brain.background_jobs import BackgroundJobManager
+    from yibao_brain.skills_real import WatchCommandSkill
+
+    assert not WatchCommandSkill(BackgroundJobManager()).run(
+        {"command": "echo hi"}, SkillContext()
+    ).success

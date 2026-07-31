@@ -14,6 +14,31 @@ from .config import llm_api_key, llm_base_url, llm_model, vision_api_key, vision
 # 避免死连接永久挂住 agent 任务、进而触发看门狗误杀。
 _STREAM_IDLE_TIMEOUT = 60.0
 
+OBSERVE_SYSTEM_PROMPT = (
+    "你看用户当前屏幕截图。只在有明显、值得主动帮忙的点时才开口："
+    "例如报错、编译失败、卡住的对话框、明显困惑。没有值得说的就别说。"
+    '只回一个 JSON：{"speak": true/false, "text": "≤20字中文建议；没有则空串"}。'
+)
+
+
+def parse_observe(content: str) -> dict | None:
+    """从视觉模型回复里取 {"speak","text"}；非法返回 None。"""
+    m = re.search(r"\{.*\}", content or "", re.S)
+    if not m:
+        return None
+    try:
+        obj = json.loads(m.group(0))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(obj, dict) or type(obj.get("speak")) is not bool:
+        return None
+    if obj["speak"] is False:
+        return {"speak": False, "text": ""}
+    text = " ".join(str(obj.get("text", "")).split())[:20]
+    if not text:
+        return None
+    return {"speak": True, "text": text}
+
 
 class ToolCall(BaseModel):
     id: str
@@ -355,6 +380,25 @@ class ComputerUseClient:
         resp = _vision_create_with_retry(lambda: self.client.chat.completions.create(model=self.model, messages=messages))
         content = (resp.choices[0].message.content or "") if resp.choices else ""
         return self._parse_marked_action(content, n_marks)
+
+    def observe(self, screenshot_b64: str, app: str) -> dict | None:
+        """视觉模型看一眼：是否有值得主动搭话的点。返 {"speak":bool,"text":str} 或 None。"""
+        try:
+            resp = _vision_create_with_retry(lambda: self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": OBSERVE_SYSTEM_PROMPT},
+                    {"role": "user", "content": [
+                        {"type": "image_url", "image_url": {"url": screenshot_b64}},
+                        {"type": "text", "text": f"前台应用：{app}。判断是否值得搭话。"},
+                    ]},
+                ],
+            ))
+            content = (resp.choices[0].message.content or "") if resp.choices else ""
+        except Exception as e:
+            print(f"[yibao] 主动搭话视觉调用失败：{e}", file=sys.stderr)
+            return None
+        return parse_observe(content)
 
     @staticmethod
     def _parse_marked_action(content: str, n_marks: int) -> dict | None:

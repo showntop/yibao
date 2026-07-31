@@ -518,6 +518,19 @@ def _localized_app_name(pid: int, fallback: str) -> str:
     return fallback or "未知应用"
 
 
+def _bundle_id_for_pid(pid: int) -> str:
+    """Resolve a stable macOS bundle identity for a running process."""
+    try:
+        from AppKit import NSRunningApplication
+
+        app = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
+        if app is not None:
+            return str(app.bundleIdentifier() or "")
+    except Exception:
+        pass
+    return ""
+
+
 def _ax_frontmost() -> tuple[int, str] | None:
     """从系统级 AX 焦点读取真实前台 pid/title；不依赖 NSWorkspace 通知缓存。"""
     try:
@@ -575,8 +588,8 @@ def _ax_title_for_pid(pid: int) -> str:
     return ""
 
 
-def sample_frontmost() -> tuple[str, str] | None:
-    """取实时前台应用：系统级 AX 优先，WindowServer 与 NSWorkspace 依次退化。"""
+def sample_frontmost_details() -> tuple[str, str, str] | None:
+    """Return the live app name, bundle id and title from one foreground read."""
     if sys.platform != "darwin":
         return None
 
@@ -585,7 +598,7 @@ def sample_frontmost() -> tuple[str, str] | None:
     focused = _ax_frontmost()
     if focused is not None:
         pid, title = focused
-        return _localized_app_name(pid, "未知应用"), title
+        return _localized_app_name(pid, "未知应用"), _bundle_id_for_pid(pid), title
 
     # AX 未授权时，若用户已有屏幕录制权限，WindowServer 仍能给实时前后层级。
     try:
@@ -603,7 +616,7 @@ def sample_frontmost() -> tuple[str, str] | None:
                 continue
             name = _localized_app_name(pid, owner)
             title = _ax_title_for_pid(pid) or str(window.get("kCGWindowName") or "")
-            return name, title
+            return name, _bundle_id_for_pid(pid), title
         except (TypeError, ValueError):
             continue
 
@@ -616,10 +629,25 @@ def sample_frontmost() -> tuple[str, str] | None:
         if app is not None:
             pid = int(app.processIdentifier())
             name = str(app.localizedName() or app.bundleIdentifier() or "未知应用")
-            return name, _ax_title_for_pid(pid)
+            return name, str(app.bundleIdentifier() or ""), _ax_title_for_pid(pid)
     except Exception:
         pass
     return None
+
+
+def sample_frontmost() -> tuple[str, str] | None:
+    """取实时前台应用：系统级 AX 优先，WindowServer 与 NSWorkspace 依次退化。"""
+    details = sample_frontmost_details()
+    if details is None:
+        return None
+    name, _bundle_id, title = details
+    return name, title
+
+
+def sample_frontmost_bundle_id() -> str:
+    """Read the current foreground bundle id; an empty value fails closed."""
+    details = sample_frontmost_details()
+    return details[1] if details is not None else ""
 
 
 def sample_idle_seconds() -> float:
@@ -648,27 +676,48 @@ class PerceptionSensors:
         store: PerceptionStore,
         settings: dict,
         *,
-        app_sampler: Callable[[], tuple[str, str] | None] = sample_frontmost,
+        app_sampler: Callable[[], tuple[str, str] | tuple[str, str, str] | None] = sample_frontmost_details,
         idle_sampler: Callable[[], float] = sample_idle_seconds,
+        clock: Callable[[], float] = time.time,
     ):
         self.store = store
         self.settings = settings
         self.app_sampler = app_sampler
         self.idle_sampler = idle_sampler
-        self._last_app: tuple[str, str] | None = None
+        self.clock = clock
+        self._last_app: tuple[str, ...] | None = None
         self._last_activity: str | None = None
+        self._activity_started_at: float | None = None
+        self._last_sample_at: float | None = None
+        self._sampling = False
+        self._state_lock = threading.Lock()
 
     def tick(self) -> None:
         if not self.settings.get("perception.master", False):
-            self._last_app = None
-            self._last_activity = None
+            with self._state_lock:
+                self._last_app = None
+                self._last_activity = None
+                self._activity_started_at = None
+                self._last_sample_at = None
+                self._sampling = False
             return
+
+        now = self.clock()
+        with self._state_lock:
+            self._sampling = True
 
         if self.settings.get("perception.app", False):
             current = self.app_sampler()
             if current is not None and current != self._last_app:
-                app, title = current
-                self.store.append("app", "frontmost", {"app": app, "title": title}, "S1")
+                if len(current) == 3:
+                    app, bundle_id, title = current
+                else:
+                    app, title = current
+                    bundle_id = ""
+                payload = {"app": app, "title": title}
+                if bundle_id:
+                    payload["bundle_id"] = bundle_id
+                self.store.append("app", "frontmost", payload, "S1", ts=now)
                 self._last_app = current
         else:
             self._last_app = None
@@ -676,11 +725,48 @@ class PerceptionSensors:
         if self.settings.get("perception.activity", False):
             idle_seconds = max(0, int(self.idle_sampler()))
             state = "idle" if idle_seconds >= 60 else "active"
-            if state != self._last_activity:
-                self.store.append("activity", state, {"idle_seconds": idle_seconds}, "S1")
+            changed = state != self._last_activity
+            if changed:
+                self._activity_started_at = now
+            if changed:
+                self.store.append(
+                    "activity",
+                    state,
+                    {
+                        "idle_seconds": idle_seconds,
+                        "segment_started_at": self._activity_started_at or now,
+                    },
+                    "S1",
+                    ts=now,
+                )
                 self._last_activity = state
         else:
             self._last_activity = None
+            self._activity_started_at = None
+        with self._state_lock:
+            self._last_sample_at = now
+            self._sampling = False
+
+    def watch_state(self) -> dict:
+        """Return a fresh in-memory state for watch without persisting heartbeat rows."""
+        with self._state_lock:
+            if self._sampling:
+                return {"sampled_at": None}
+            app = self._last_app
+            if app is not None and len(app) == 3:
+                app_name, app_id, _title = app
+            elif app is not None:
+                app_name, _title = app
+                app_id = ""
+            else:
+                app_name = app_id = ""
+            return {
+                "sampled_at": self._last_sample_at,
+                "app": app_name,
+                "app_id": app_id,
+                "activity": self._last_activity,
+                "activity_started_at": self._activity_started_at,
+            }
 
     def run(self, stop_event: threading.Event, *, interval: float = 5.0) -> None:
         while not stop_event.is_set():

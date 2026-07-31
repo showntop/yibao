@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -259,9 +260,14 @@ _SETTINGS_DEFAULTS: dict = {
     "tts.provider": "edge",
     # watch mode（主动观察；slice1=健康节律+在场陪伴，默认关）
     "watch.enabled": False,
+    "watch.screen_enabled": False,
     "watch.cadence": 60,                  # watch 循环采样间隔（秒）
     "watch.idle_warn_minutes": 45,        # 连续活跃多久提醒久坐
     "watch.quiet_hours": "23:00-07:00",   # 静默时段（HH:MM-HH:MM，跨午夜；空串=关）
+    "watch.observe_apps": [],              # 主动搭话允许观察的前台应用白名单（空=不观察）
+    "watch.look_min_gap": 300,             # 主动搭话两次看之间最小间隔（秒）
+    "watch.look_max_per_hour": 6,          # 主动搭话每小时上限
+    "watch.look_max_per_day": 50,          # 主动搭话每日上限
 }
 
 # 枚举型设置的合法取值；非法值拒收保持原值（防前端/手滑写坏）
@@ -300,8 +306,34 @@ def save_settings(values: dict) -> None:
             allowed = _SETTINGS_ENUMS.get(k)
             if allowed is not None and values[k] not in allowed:
                 continue  # 非法枚举值拒收，保持原值
+            if k == "watch.quiet_hours" and not _valid_quiet_hours(values[k]):
+                continue
+            if k == "watch.observe_apps":
+                if not isinstance(values[k], list) or not all(
+                    isinstance(item, str) and item.strip() for item in values[k]
+                ):
+                    continue
+                values[k] = list(dict.fromkeys(item.strip() for item in values[k]))
+            if k in {
+                "watch.cadence", "watch.idle_warn_minutes", "watch.look_min_gap",
+                "watch.look_max_per_hour", "watch.look_max_per_day",
+            }:
+                if not isinstance(values[k], (int, float)) or values[k] < 0:
+                    continue
             cur[k] = values[k]
     tmp = settings_path() + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(cur, f, ensure_ascii=False, indent=2)
     os.replace(tmp, settings_path())  # 原子替换，别写半个文件
+
+
+def _valid_quiet_hours(value) -> bool:
+    if value == "":
+        return True
+    if not isinstance(value, str):
+        return False
+    match = re.fullmatch(r"(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})", value.strip())
+    return bool(match) and all(
+        number < limit
+        for number, limit in zip((int(x) for x in match.groups()), (24, 60, 24, 60))
+    )

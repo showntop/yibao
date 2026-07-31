@@ -8,6 +8,7 @@ from yibao_brain.llm import (
     merge_tool_call_deltas,
     ToolCallDelta,
     _vision_create_with_retry,
+    parse_observe,
 )
 
 
@@ -56,6 +57,14 @@ def test_vision_create_non_retryable_reraises_immediately():
     except Boom:
         pass
     assert len(calls) == 1  # 非网络类错误不重试，立即抛出
+
+
+def test_parse_observe_requires_strict_boolean_and_bounded_text():
+    assert parse_observe('{"speak": "false", "text": "别说话"}') is None
+    assert parse_observe('{"speak": true, "text": ""}') is None
+    parsed = parse_observe('前缀 {"speak": true, "text": "  这是一个很长很长很长很长很长的建议  "} 后缀')
+    assert parsed == {"speak": True, "text": "这是一个很长很长很长很长很长的建议"[:20]}
+    assert parse_observe('{"speak": false, "text": "不应保留"}') == {"speak": False, "text": ""}
 
 
 def test_tool_call_fields():

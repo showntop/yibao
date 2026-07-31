@@ -4,7 +4,7 @@ import json
 import os
 
 from yibao_brain import plugins
-from yibao_brain.config import load_settings, settings_path
+from yibao_brain.config import load_settings, save_settings, settings_path
 from yibao_brain.llm import FakeProvider
 from yibao_brain.memory import FakeMemory
 from yibao_brain.server import serve_async
@@ -163,9 +163,14 @@ def test_settings_set_persists_and_ignores_unknown(tmp_path, monkeypatch):
         "dock_pinned": [],
         "tts.provider": "edge",
         "watch.enabled": False,
+        "watch.screen_enabled": False,
         "watch.cadence": 60,
         "watch.idle_warn_minutes": 45,
         "watch.quiet_hours": "23:00-07:00",
+        "watch.observe_apps": [],
+        "watch.look_min_gap": 300,
+        "watch.look_max_per_hour": 6,
+        "watch.look_max_per_day": 50,
     }
 
 
@@ -188,6 +193,29 @@ def test_settings_proactive_level_validated(tmp_path, monkeypatch):
     assert rs[2]["values"]["proactive.level"] == "quiet"
 
 
+def test_watch_settings_validate_quiet_hours_numbers_and_bundle_ids(tmp_path, monkeypatch):
+    monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path))
+    save_settings({
+        "watch.quiet_hours": "25:00-07:00",
+        "watch.cadence": -1,
+        "watch.observe_apps": ["", "com.example.App"],
+    })
+    values = load_settings()
+    assert values["watch.quiet_hours"] == "23:00-07:00"
+    assert values["watch.cadence"] == 60
+    assert values["watch.observe_apps"] == []
+
+    save_settings({
+        "watch.quiet_hours": "22:30-06:15",
+        "watch.cadence": 15,
+        "watch.observe_apps": ["com.example.App", "com.example.App"],
+    })
+    values = load_settings()
+    assert values["watch.quiet_hours"] == "22:30-06:15"
+    assert values["watch.cadence"] == 15
+    assert values["watch.observe_apps"] == ["com.example.App"]
+
+
 def test_settings_bad_file_falls_back_to_defaults(tmp_path, monkeypatch):
     monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path))
     os.makedirs(tmp_path, exist_ok=True)
@@ -203,7 +231,12 @@ def test_settings_bad_file_falls_back_to_defaults(tmp_path, monkeypatch):
         "dock_pinned": [],
         "tts.provider": "edge",
         "watch.enabled": False,
+        "watch.screen_enabled": False,
         "watch.cadence": 60,
         "watch.idle_warn_minutes": 45,
         "watch.quiet_hours": "23:00-07:00",
+        "watch.observe_apps": [],
+        "watch.look_min_gap": 300,
+        "watch.look_max_per_hour": 6,
+        "watch.look_max_per_day": 50,
     }

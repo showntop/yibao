@@ -220,6 +220,24 @@ def test_batch_confirm_sync_returns_verdicts_per_id(tmp_path):
     assert out == {a1.id: (True, True), a2.id: (False, False)}
 
 
+def test_apply_verdict_does_not_remember_skill_that_disallows_it(tmp_path):
+    class AlwaysConfirmSkill(Skill):
+        id = "always_confirm"
+        description = "每次确认"
+        default_risk = RiskLevel.L3_HIGH
+        allow_session_remember = False
+
+        def run(self, params, ctx):
+            return ActionResult(success=True)
+
+    inv = make_invoker(tmp_path, [AlwaysConfirmSkill()])
+    action = inv.propose(ToolCall(id="t1", skill_id="always_confirm", params={}))
+
+    inv.apply_verdict(action, approved=True, remember=True)
+
+    assert "always_confirm" not in inv.gate.session_allowed
+
+
 def test_batch_confirm_sync_rejects_when_confirmer_returns_empty(tmp_path):
     """confirmer 返回空 dict（默认值）= 全拒；调用方按 .get(id, (False,False)) 读。"""
     class DangerSkill(Skill):

@@ -85,7 +85,8 @@ class ToolInvoker:
         loop（run/arun）拿到 batch_confirm 的 verdict 后统一调用，消除三处重复写入，
         并补回「本会话不再询问」stderr 日志（原逐个分支里漏打）。
         """
-        if approved and remember:
+        skill = self.skills.get(action.skill_id)
+        if approved and remember and skill.allow_session_remember:
             self.gate.session_allowed.add(action.skill_id)
             import sys
 

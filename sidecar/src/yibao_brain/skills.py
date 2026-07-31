@@ -49,6 +49,8 @@ class Skill(ABC):
     # 敏感工具可以给当前模型完整结果，但审计、壳事件与会话历史只能使用 safe_result。
     # 默认关闭，现有工具行为不变。
     sensitive_output: bool = False
+    # Arbitrary or context-sensitive actions can require confirmation every time.
+    allow_session_remember: bool = True
 
     @abstractmethod
     def run(self, params: dict, ctx: SkillContext) -> ActionResult: ...

@@ -447,6 +447,18 @@ def test_frontmost_sampler_rechecks_systemwide_ax_each_call(monkeypatch):
     assert perception.sample_frontmost() == ("Terminal", "pytest")
 
 
+def test_frontmost_bundle_sampler_rechecks_systemwide_ax_each_call(monkeypatch):
+    focused = iter([(101, "one.py"), (202, "pytest")])
+    bundle_ids = {101: "com.apple.dt.Xcode", 202: "com.apple.Terminal"}
+    monkeypatch.setattr(perception.sys, "platform", "darwin")
+    monkeypatch.setattr(perception, "_ax_frontmost", lambda: next(focused), raising=False)
+    monkeypatch.setattr(perception, "_localized_app_name", lambda pid, fallback: fallback)
+    monkeypatch.setattr(perception, "_bundle_id_for_pid", lambda pid: bundle_ids[pid])
+
+    assert perception.sample_frontmost_bundle_id() == "com.apple.dt.Xcode"
+    assert perception.sample_frontmost_bundle_id() == "com.apple.Terminal"
+
+
 def test_frontmost_sampler_falls_back_to_live_window_order_without_ax(monkeypatch):
     monkeypatch.setattr(perception.sys, "platform", "darwin")
     monkeypatch.setattr(perception, "_ax_frontmost", lambda: None)
@@ -520,6 +532,29 @@ def test_app_sensor_records_only_changes_and_reacts_to_settings(tmp_path):
     ]
 
 
+def test_app_sensor_records_bundle_identity(tmp_path):
+    store = _store(tmp_path)
+    settings = {
+        "perception.master": True,
+        "perception.app": True,
+        "perception.activity": False,
+    }
+    sensors = PerceptionSensors(
+        store,
+        settings,
+        app_sampler=lambda: ("Xcode", "com.apple.dt.Xcode", "one.py"),
+        idle_sampler=lambda: 0.0,
+    )
+
+    sensors.tick()
+
+    assert store.list()[0]["payload"] == {
+        "app": "Xcode",
+        "bundle_id": "com.apple.dt.Xcode",
+        "title": "one.py",
+    }
+
+
 def test_activity_sensor_uses_sixty_second_threshold_and_only_records_switches(tmp_path):
     store = _store(tmp_path)
     settings = {
@@ -551,3 +586,35 @@ def test_activity_sensor_uses_sixty_second_threshold_and_only_records_switches(t
         ("idle", 60),
         ("active", 3),
     ]
+
+
+def test_sensors_expose_fresh_watch_state_without_persisting_heartbeats(tmp_path):
+    store = _store(tmp_path)
+    now = [100.0]
+    settings = {
+        "perception.master": True,
+        "perception.app": True,
+        "perception.activity": True,
+    }
+    sensors = PerceptionSensors(
+        store,
+        settings,
+        app_sampler=lambda: ("Xcode", "com.apple.dt.Xcode", "one.py"),
+        idle_sampler=lambda: 0.0,
+        clock=lambda: now[0],
+    )
+    sensors.tick()
+    now[0] = 131.0
+    sensors.tick()
+
+    app_rows = [item for item in store.list() if item["source"] == "app"]
+    activity_rows = [item for item in store.list() if item["source"] == "activity"]
+    assert len(app_rows) == len(activity_rows) == 1
+    assert activity_rows[0]["payload"]["segment_started_at"] == 100.0
+    assert sensors.watch_state() == {
+        "sampled_at": 131.0,
+        "app": "Xcode",
+        "app_id": "com.apple.dt.Xcode",
+        "activity": "active",
+        "activity_started_at": 100.0,
+    }
