@@ -22,6 +22,7 @@ import {
   getSettingsOnce,
   setSettings,
   getPerceptionOnce,
+  getFeedStatsOnce,
   deletePerception,
   clearPerception,
   type BrainPermissions,
@@ -30,6 +31,7 @@ import {
   type PerceptionItem,
   type SettingsValues,
 } from "../lib/brain";
+import type { TrustStats } from "../lib/brain";
 
 // ---- 分类导航（macOS 系统设置语言）----
 // 原先 11 个分组平铺一列要滚很久，且「感知日志」「记忆管理」这种数据浏览器
@@ -160,6 +162,14 @@ const watchMaxDay = ref(50);
 const watchStatus = ref<SettingsValues["watch.status"] | null>(null);
 const watchErr = ref("");
 const autonErr = ref("");
+
+// 主动行为统计（v1.1 信任仪表读模型）：只读展示，大脑不在线显示零值
+const trustStats = ref<TrustStats | null>(null);
+const trustSummary = computed(() => {
+  const s = trustStats.value;
+  if (!s) return "统计加载中…";
+  return `近 ${s.days} 天共 ${s.total} 条 · 已读率 ${Math.round(s.read_rate * 100)}% · 忽略率 ${Math.round(s.ignored_rate * 100)}%`;
+});
 
 async function toggleProactiveVoice() {
   autonErr.value = "";
@@ -520,6 +530,7 @@ onMounted(async () => {
       syncWatchSettings(s);
     }
   });
+  void getFeedStatsOnce().then((s) => { trustStats.value = s; });
   void loadPerception();
   // 保存触发的重启：大脑上线事件收尾行内提示（掉线过程 UI 复用对话页既有事件）
   unlistenStatus = await onBrainStatus((m) => {
@@ -700,6 +711,23 @@ onUnmounted(() => {
           </div>
           <div v-if="autonErr" class="s-msg err"><YbIcon name="alert" :size="13" />{{ autonErr }}</div>
           <div v-if="watchErr" class="s-msg err"><YbIcon name="alert" :size="13" />{{ watchErr }}</div>
+        </section>
+        <!-- 主动行为统计（v1.1 信任仪表读模型）：只读，数字全部来自 feed 表聚合 -->
+        <section class="s-group">
+          <div class="s-group-title">主动行为统计</div>
+          <div class="s-note">{{ trustSummary }}</div>
+          <div class="s-row">
+            <span class="s-row-label">任务收尾播报</span>
+            <span class="s-row-value">{{ trustStats?.by_kind.task ?? 0 }}</span>
+          </div>
+          <div class="s-row">
+            <span class="s-row-label">提醒触发</span>
+            <span class="s-row-value">{{ trustStats?.by_kind.reminder ?? 0 }}</span>
+          </div>
+          <div class="s-row">
+            <span class="s-row-label">其它主动事件</span>
+            <span class="s-row-value">{{ trustStats?.by_kind.event ?? 0 }}</span>
+          </div>
         </section>
       </template>
 

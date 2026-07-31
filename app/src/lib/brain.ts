@@ -289,6 +289,35 @@ export async function getFeedOnce(limit = 60, timeoutMs = 3000): Promise<FeedRes
   return Promise.race([resp, timeout]);
 }
 
+/** 信任统计（v1.1 收口）：近 N 天主动行为聚合，对应 sidecar FeedStore.stats()。 */
+export interface TrustStats {
+  days: number;
+  since: number;
+  total: number;
+  by_kind: Record<string, number>;
+  by_day: Array<{ day: string; kind: string; count: number }>;
+  read_rate: number;
+  ignored_rate: number;
+}
+
+const EMPTY_STATS: TrustStats = {
+  days: 7, since: 0, total: 0, by_kind: {}, by_day: [], read_rate: 0, ignored_rate: 0,
+};
+
+/** 一次性取信任统计：发查询并等下一条 brain-feed-stats；大脑不在线/超时返回零值。 */
+export async function getFeedStatsOnce(days = 7, timeoutMs = 3000): Promise<TrustStats> {
+  const resp = new Promise<TrustStats>((resolve) => {
+    void once<{ stats: TrustStats }>("brain-feed-stats", (ev) => resolve(ev.payload.stats));
+  });
+  const timeout = new Promise<TrustStats>((resolve) =>
+    setTimeout(() => resolve(EMPTY_STATS), timeoutMs),
+  );
+  try {
+    await invoke("get_feed_stats", { days });
+  } catch { /* 大脑不在线：走超时兜底 */ }
+  return Promise.race([resp, timeout]);
+}
+
 /** 点掉单条 Feed（sidecar 回执经 brain-feed-marked-read 事件来；UI 可乐观置 read=1）。 */
 export function markFeedRead(id: number): Promise<void> {
   return invoke("feed_mark_read", { id });

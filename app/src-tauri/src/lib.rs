@@ -449,6 +449,10 @@ fn spawn_bridge(app: AppHandle, mut rx: tauri::async_runtime::Receiver<CommandEv
                             Some("feed") => {
                                 let _ = app.emit("brain-feed", v);
                             }
+                            // 设置页信任统计响应：整体转发
+                            Some("feed_stats") => {
+                                let _ = app.emit("brain-feed-stats", v);
+                            }
                             // 主屏 widget 响应（插件一瞥卡列表）：整体转发
                             Some("widgets") => {
                                 let _ = app.emit("brain-widgets", v);
@@ -768,6 +772,15 @@ fn get_feed(state: tauri::State<Brain>, limit: Option<u32>) -> Result<(), String
     write_to_brain(
         &state,
         serde_json::json!({ "id": 0, "type": "feed", "limit": limit.unwrap_or(60) }),
+    )
+}
+
+/// 设置页信任统计：大脑回 {"type":"feed_stats","stats":…}，经 brain-feed-stats 事件广播。
+#[tauri::command]
+fn get_feed_stats(state: tauri::State<Brain>, days: Option<u32>) -> Result<(), String> {
+    write_to_brain(
+        &state,
+        serde_json::json!({ "id": 0, "type": "feed_stats", "days": days.unwrap_or(7) }),
     )
 }
 
@@ -1498,6 +1511,7 @@ pub fn run() {
             panel_action,
             list_plugins,
             get_feed,
+            get_feed_stats,
             get_widgets,
             feed_mark_read,
             feed_mark_all_read,
