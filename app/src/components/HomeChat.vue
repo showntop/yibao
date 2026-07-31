@@ -24,11 +24,24 @@ import {
 } from "../lib/brain";
 import { SUGGESTIONS } from "../lib/suggestions";
 import { procLabel, procSkip, procResultSuffix, procDetail } from "../lib/proc";
+import YbIcon from "./YbIcon.vue";
 
 type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
 // proc：过程展示（工具调用行，可点开展开参数/结果）；panelLink：「⇢ 协作」关联气泡
 type ProcInfo = { label: string; action?: BrainEvent["action"]; result?: BrainEvent["result"]; done: boolean; expanded: boolean };
-type BubbleMsg = { role: "user" | "ai" | "sys"; text: string; panelLink?: boolean; proc?: ProcInfo };
+type BubbleMsg = {
+  role: "user" | "ai" | "sys";
+  text: string;
+  panelLink?: boolean;
+  proc?: ProcInfo;
+  halted?: boolean;
+  icon?: "clock" | "alert";
+};
+
+/** 告警气泡：⚠️ 前缀改行首 alert 图标渲染（文案纯净，图标走 YbIcon） */
+function pushWarn(text: string) {
+  bubbles.value.push({ role: "ai", text, icon: "alert" });
+}
 
 // state：同步给父级侧边栏团子；openPanel：关联气泡点击 → 父级切插件页；reminder：父级切回本页
 const emit = defineEmits<{ state: [AvatarState]; openPanel: []; reminder: [] }>();
@@ -151,10 +164,10 @@ function onEvent(e: BrainEvent) {
     }
     case "interrupted":
       if (streamingIdx.value !== null) {
-        bubbles.value[streamingIdx.value].text += " ⛔";
+        bubbles.value[streamingIdx.value].halted = true;
         streamingIdx.value = null;
       } else {
-        bubbles.value.push({ role: "ai", text: "⛔ 已打断" });
+        bubbles.value.push({ role: "ai", text: "已打断", halted: true });
       }
       state.value = "idle";
       break;
@@ -167,13 +180,13 @@ function onEvent(e: BrainEvent) {
       break;
     case "reminder":
       // 主动提醒：落气泡 + 通知父级切回本页（大窗已可见，宠物窗自己管亮窗，两边互不抢）
-      bubbles.value.push({ role: "ai", text: "⏰ " + (e.text ?? "到点了") });
+      bubbles.value.push({ role: "ai", text: e.text ?? "到点了", icon: "clock" });
       emit("reminder");
       break;
     case "error":
       state.value = "idle";
       streamingIdx.value = null;
-      bubbles.value.push({ role: "ai", text: "⚠️ " + (e.text ?? "出错了") });
+      pushWarn(e.text ?? "出错了");
       flashValence("error");
       break;
     case "listening":
@@ -229,7 +242,7 @@ function onStatus(m: BrainStatusMsg) {
   if (!brainDown.value) {
     brainDown.value = true;
     const why = m.detail ? `（${m.detail}）` : "";
-    bubbles.value.push({ role: "ai", text: `⚠️ 大脑掉线${why}，正在自动重启…` });
+    pushWarn(`大脑掉线${why}，正在自动重启…`);
   }
 }
 
@@ -239,7 +252,7 @@ async function submit(text: string) {
   try {
     await runInput(text, "pet");
   } catch (err) {
-    bubbles.value.push({ role: "ai", text: "⚠️ 发送失败：" + String(err) });
+    pushWarn("发送失败：" + String(err));
     state.value = "idle";
   }
 }
@@ -247,14 +260,14 @@ async function submit(text: string) {
 function onMic() {
   // 不乐观置 listen：等大脑 listening 事件确认（语音栈不可用时大脑会回 error，别自欺卡死）
   void voiceStart("pet").catch((err) => {
-    bubbles.value.push({ role: "ai", text: "⚠️ 语音启动失败：" + String(err) });
+    pushWarn("语音启动失败：" + String(err));
   });
 }
 
 function onInterrupt() {
   if (!busy.value) return;
   void interrupt().catch((err) => {
-    bubbles.value.push({ role: "ai", text: "⚠️ 打断失败：" + String(err) });
+    pushWarn("打断失败：" + String(err));
   });
 }
 
@@ -283,7 +296,7 @@ onMounted(async () => {
     bubbles.value.push({ role: "sys", text: e.payload.detail });
   });
   unlistenSetupErr = await listen<string>("setup-error", (e) => {
-    bubbles.value.push({ role: "ai", text: "⚠️ " + e.payload });
+    pushWarn(e.payload);
   });
   unlistenSetupCfg = await listen<string>("setup-config-needed", () => void onSetupNeeded());
   // 主动拉一次配置：setup-config-needed 可能先于挂载发出而丢——靠拉取兜底
@@ -330,19 +343,26 @@ onUnmounted(() => {
         <button v-if="b.panelLink" class="assoc" @click="emit('openPanel')">
           {{ b.text }}<span class="assoc-arrow">前往 ›</span>
         </button>
-        <!-- 过程行：🔧/✅/❌ 工具调用，点「详情」展开参数与结果 -->
+        <!-- 过程行：图标随状态（进行中转圈 / 成功 / 失败），点「详情」展开参数与结果 -->
         <div v-else-if="b.proc" class="proc">
           <button
             class="proc-line"
-            :class="{ fail: b.proc.done && !procOk(b.proc) }"
+            :class="{ done: b.proc.done && procOk(b.proc), fail: b.proc.done && !procOk(b.proc) }"
+            :aria-expanded="b.proc.expanded"
             @click="b.proc && (b.proc.expanded = !b.proc.expanded)"
           >
-            {{ b.proc.done ? (procOk(b.proc) ? "✅" : "❌") : "🔧" }} {{ b.proc.label }}{{ b.proc.done ? procErrSuffix(b.proc) : "" }}
+            <YbIcon
+              class="proc-ic"
+              :name="b.proc.done ? (procOk(b.proc) ? 'check' : 'x') : 'spinner'"
+              :spin="!b.proc.done"
+              :size="13"
+            />
+            <span class="proc-label">{{ b.proc.label }}{{ b.proc.done ? procErrSuffix(b.proc) : "" }}</span>
             <span class="proc-toggle">{{ b.proc.expanded ? "收起" : "详情" }}</span>
           </button>
           <pre v-if="b.proc.expanded" class="proc-detail">{{ procText(b.proc) }}</pre>
         </div>
-        <Bubble v-else :role="b.role" :text="b.text" :streaming="i === streamingIdx" />
+        <Bubble v-else :role="b.role" :text="b.text" :streaming="i === streamingIdx" :halted="b.halted" :icon="b.icon" />
       </template>
       <Bubble v-if="showTyping" role="ai" text="" typing />
     </div>
@@ -359,31 +379,33 @@ onUnmounted(() => {
   height: 100%;
   display: flex;
   flex-direction: column;
-  gap: var(--yb-space-3);
-  padding: 0 var(--yb-space-4) var(--yb-space-3);
+  background: var(--yb-content-bg);
 }
-/* 页头：标题 + 状态胶囊（与宠物窗 header 同款 pill）；整条兼作拖动区 */
+/* 页头：留红绿灯安全区 + 页标题 + 状态胶囊；整条兼作拖动区 */
 .page-head {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: var(--yb-space-3);
-  padding: var(--yb-space-3) 2px 0;
+  padding: var(--yb-titlebar-h) var(--yb-space-5) var(--yb-space-3);
   user-select: none;
 }
 .pg-title {
-  font-size: var(--yb-fs-xl);
-  font-weight: 650;
-  letter-spacing: 0.01em;
+  font-size: 26px;
+  font-weight: var(--yb-fw-bold);
+  letter-spacing: -0.01em;
+  line-height: var(--yb-lh-tight);
+  color: var(--yb-text-strong);
 }
 .status {
-  font-size: 11px;
+  font-size: var(--yb-fs-xs);
   color: var(--yb-text-dim);
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  line-height: 1.4;
+  line-height: var(--yb-lh-ui);
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: var(--yb-radius-pill);
   background: var(--yb-well);
 }
 .status .dot {
@@ -419,22 +441,30 @@ onUnmounted(() => {
 }
 .bubbles {
   flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: var(--yb-space-2);
   overflow-y: auto;
-  padding: 4px 2px 0;
+  padding: 4px var(--yb-space-5) 0;
   scrollbar-width: thin;
   /* 顶部渐隐：滚出视口的消息柔和淡出，不被硬边「切断」 */
   mask-image: linear-gradient(180deg, transparent, #000 14px);
   -webkit-mask-image: linear-gradient(180deg, transparent, #000 14px);
+}
+/* 底部输入区：hairline 分界（与主屏同款），不再靠父级 padding 浮着 */
+.input-slot {
+  flex-shrink: 0;
+  padding: var(--yb-space-3) var(--yb-space-5) var(--yb-space-4);
+  border-top: 1px solid var(--yb-border-base);
+  background: var(--yb-content-bg);
 }
 .bubbles::-webkit-scrollbar {
   width: 6px;
 }
 .bubbles::-webkit-scrollbar-thumb {
   background: var(--yb-surface-border);
-  border-radius: 3px;
+  border-radius: var(--yb-radius-pill);
 }
 /* 「⇢ 协作」关联气泡：拟 AI 气泡但可点击，accent 细边 + hover 上浮（派生入口） */
 .assoc {
@@ -445,16 +475,16 @@ onUnmounted(() => {
   gap: var(--yb-space-2);
   padding: var(--yb-space-2) var(--yb-space-3);
   border: 1px dashed var(--yb-accent);
-  border-radius: var(--yb-radius-md) var(--yb-radius-md) var(--yb-radius-md) 4px;
+  border-radius: var(--yb-radius-md) var(--yb-radius-md) var(--yb-radius-md) var(--yb-radius-xs);
   background: var(--yb-accent-soft);
   color: var(--yb-text);
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: var(--yb-fs-lg);
+  line-height: var(--yb-lh-base);
   font-family: inherit;
   text-align: left;
   cursor: pointer;
-  animation: pop 0.15s ease;
-  transition: all 0.15s ease;
+  animation: pop var(--yb-dur-fast) var(--yb-ease-out);
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
 .assoc:hover {
   transform: translateY(-1px);
@@ -462,7 +492,7 @@ onUnmounted(() => {
 }
 .assoc-arrow {
   color: var(--yb-accent-deep);
-  font-size: 12px;
+  font-size: var(--yb-fs-md);
   white-space: nowrap;
 }
 /* 过程展示：工具调用行（居中淡色小字，同 sys 调性）+ 可展开详情 */
@@ -472,27 +502,45 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  animation: pop 0.15s ease;
+  animation: pop var(--yb-dur-fast) var(--yb-ease-out);
 }
 .proc-line {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--yb-space-1);
   background: transparent;
   border: none;
+  border-radius: var(--yb-radius-sm);
   color: var(--yb-text-dim);
-  font-size: 11.5px;
-  line-height: 1.6;
+  font-family: inherit;
+  font-size: var(--yb-fs-xs);
+  line-height: var(--yb-lh-base);
   cursor: pointer;
-  padding: 0 var(--yb-space-3);
+  padding: 2px var(--yb-space-2);
+  transition: color var(--yb-dur-fast) var(--yb-ease-out);
 }
 .proc-line:hover {
   color: var(--yb-text);
 }
-.proc-line.fail {
+/* 进行中的转圈图标用 accent，成功转 success：颜色本身就是状态信号 */
+.proc-ic {
+  flex-shrink: 0;
+  color: var(--yb-accent);
+}
+.proc-line.done .proc-ic {
+  color: var(--yb-intent-ok);
+}
+.proc-label {
+  text-align: left;
+}
+.proc-line.fail,
+.proc-line.fail .proc-ic {
   color: var(--yb-danger);
 }
 .proc-toggle {
+  flex-shrink: 0;
   opacity: 0.55;
-  margin-left: 4px;
-  font-size: 11px;
+  font-size: var(--yb-fs-xs);
 }
 .proc-detail {
   margin: 4px 0 0;
@@ -500,8 +548,8 @@ onUnmounted(() => {
   background: var(--yb-code-bg);
   border-radius: var(--yb-radius-sm);
   font-family: var(--yb-mono);
-  font-size: 11px;
-  line-height: 1.5;
+  font-size: var(--yb-fs-xs);
+  line-height: var(--yb-lh-base);
   color: var(--yb-text-dim);
   max-width: 100%;
   max-height: 220px;
@@ -523,7 +571,7 @@ onUnmounted(() => {
   justify-content: center;
   gap: 10px;
   color: var(--yb-text-dim);
-  font-size: 13px;
+  font-size: var(--yb-fs-lg);
 }
 .empty-hint p {
   margin: 0 0 2px;
@@ -537,12 +585,12 @@ onUnmounted(() => {
 .chip {
   padding: 5px 12px;
   border: 1px solid var(--yb-surface-border);
-  border-radius: 999px;
+  border-radius: var(--yb-radius-pill);
   background: var(--yb-surface-solid);
   color: var(--yb-accent-deep);
-  font-size: 13px;
+  font-size: var(--yb-fs-lg);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
 .chip:hover {
   background: var(--yb-accent-soft);

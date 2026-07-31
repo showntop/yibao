@@ -1343,18 +1343,23 @@ pub fn run() {
 
             // 大窗（home，完整 APP 主界面）：随 setup 预创建但隐藏——首开快、状态保留；
             // 关窗=隐藏由全局 CloseRequested 拦截。正常窗口：不置顶、不 skipTaskbar（Dock/⌘⇥ 可切换）。
-            // 定位取主窗所在屏中央（面板窗同款算法）。
+            //
+            // 材质用「原生 macOS 应用窗口」而非浮层：TitleBarStyle::Overlay 保留系统红绿灯
+            // 与系统级窗口阴影/圆角/缩放边框，前端不再自绘壳。大窗是可缩放、进 Dock、
+            // 能 ⌘⇥ 切换的正式窗口，用小窗那套玻璃 HUD 语言会与系统观感违和，
+            // 且全屏尺寸下 backdrop-filter 采样面积大、常驻白耗 GPU。
+            // 注意：Overlay 下红绿灯浮在内容上，前端侧栏顶部须留出约 28px 安全区。
             let home = tauri::WebviewWindowBuilder::new(
                 app,
                 "home",
                 tauri::WebviewUrl::App("home.html".into()),
             )
             .title("译宝")
-            .transparent(true)
-            .decorations(false)
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .decorations(true)
             .resizable(true)
-            .inner_size(860.0, 600.0)
-            .min_inner_size(680.0, 480.0)
+            .inner_size(1040.0, 700.0)
+            .min_inner_size(820.0, 560.0)
             .visible(false)
             .build()
             .map_err(|e| format!("创建大窗失败：{e}"))?;
@@ -1365,8 +1370,8 @@ pub fn run() {
                 let sw = mon.size().width as f64 / s;
                 let sh = mon.size().height as f64 / s;
                 let _ = home.set_position(tauri::LogicalPosition::new(
-                    mx + (sw - 860.0) / 2.0,
-                    my + (sh - 600.0) / 2.0,
+                    mx + (sw - 1040.0) / 2.0,
+                    my + (sh - 700.0) / 2.0,
                 ));
             }
 

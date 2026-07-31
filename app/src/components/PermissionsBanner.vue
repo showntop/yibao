@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { checkPermissions, promptPermission, type BrainPermissions } from "../lib/brain";
+import YbIcon from "./YbIcon.vue";
 
 defineProps<{ perms: BrainPermissions }>();
 
@@ -24,7 +25,7 @@ function recheck() {
 
 <template>
   <div class="banner">
-    <div class="title"><span class="icon">🔐</span> 译宝需要以下权限才能操作电脑</div>
+    <div class="title"><YbIcon class="icon" name="lock" :size="16" /> 译宝需要以下权限才能操作电脑</div>
     <div v-if="!perms.ax" class="row">
       <span class="label">辅助功能<span class="why">（读取控件、模拟键鼠）</span></span>
       <button class="ok" @click="grant('ax')">去授权</button>
@@ -51,19 +52,19 @@ function recheck() {
   background: var(--yb-surface-solid);
   border: 1px solid var(--yb-glass-border);
   box-shadow: var(--yb-shadow);
-  font-size: 13px;
+  font-size: var(--yb-fs-lg);
   color: var(--yb-text);
 }
 .title {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-weight: 600;
+  font-weight: var(--yb-fw-bold);
   font-size: var(--yb-fs-lg);
   margin-bottom: var(--yb-space-2);
 }
 .icon {
-  font-size: var(--yb-fs-xl);
+  color: var(--yb-accent);
 }
 .row {
   display: flex;
@@ -82,9 +83,9 @@ button {
   border: none;
   cursor: pointer;
   font-size: var(--yb-fs-md);
-  font-weight: 500;
+  font-weight: var(--yb-fw-medium);
   white-space: nowrap;
-  transition: filter 0.15s;
+  transition: filter var(--yb-dur-fast);
 }
 .ok {
   background: var(--yb-accent);
@@ -104,8 +105,8 @@ button:hover {
   margin-top: 8px;
 }
 .hint {
-  font-size: 11.5px;
+  font-size: var(--yb-fs-sm);
   color: var(--yb-text-dim);
-  line-height: 1.4;
+  line-height: var(--yb-lh-ui);
 }
 </style>
