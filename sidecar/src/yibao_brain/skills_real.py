@@ -6,6 +6,8 @@ click_control 仅走 AX 动作；a11y 找不到/不支持时返回失败并指�
 from __future__ import annotations
 
 import json
+import subprocess
+import threading
 
 from .grounding import SoMGrounding, _physical_scale
 from .ipc import ActionResult, RiskLevel
@@ -381,12 +383,67 @@ class ComputerUseSkill(Skill):
 
 
 def register_real_skills(reg: SkillRegistry) -> None:
-    """把 5 个真实原子技能注册到 registry。"""
+    """把真实原子技能注册到 registry。"""
     for skill in (
         ScreenshotSkill(),
         ReadTreeSkill(),
         OpenAppSkill(),
         ClickControlSkill(),
         TypeTextSkill(),
+        WatchCommandSkill(),
     ):
         reg.register(skill)
+
+
+class WatchCommandSkill(Skill):
+    """后台盯命令：后台跑 shell 命令，完成/失败经 ctx.emit_event 主动报告。不阻塞。"""
+    id = "watch_command"
+    label = "后台盯命令"
+    description = (
+        "后台运行一条 shell 命令（编译/下载/测试/长跑脚本），立即返回不阻塞；"
+        "完成或失败时主动报告（退出码 + 末尾输出）。适合要等很久的任务。"
+    )
+    default_risk = RiskLevel.L3_HIGH  # 跑任意 shell → 走确认闸门
+
+    def openai_schema(self) -> dict:
+        return {
+            "name": self.id,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "要后台运行的 shell 命令"},
+                    "name": {"type": "string", "description": "任务别名（报告时显示，可选）"},
+                },
+                "required": ["command"],
+            },
+        }
+
+    def run(self, params: dict, ctx: SkillContext) -> ActionResult:
+        command = str(params.get("command", "")).strip()
+        if not command:
+            return ActionResult(success=False, error="缺少 command 参数")
+        label = str(params.get("name", "")).strip() or command
+        emit = getattr(ctx, "emit_event", None)
+        threading.Thread(
+            target=_watch_command, args=(command, label, emit), daemon=True, name="yibao-watch-cmd"
+        ).start()
+        return ActionResult(success=True, data={"started": command, "label": label})
+
+
+def _watch_command(command: str, label: str, emit) -> None:
+    """后台跑命令；完成经 emit 播报（无 emit 静默）。单任务异常不影响主进程。"""
+    try:
+        cp = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=600)
+        tail = ((cp.stdout or "") + (cp.stderr or ""))[-500:].strip()
+        ok = cp.returncode == 0
+        text = f"「{label}」{'完成 ✅' if ok else f'失败（退出码 {cp.returncode}）❌'}" + (f"：{tail}" if tail else "")
+    except subprocess.TimeoutExpired:
+        text = f"「{label}」超时（>10 分钟）已停"
+    except Exception as e:  # 命令根本起不来等
+        text = f"「{label}」运行异常：{e}"
+    if emit is not None:
+        try:
+            emit({"kind": "reminder", "text": text})
+        except Exception:
+            pass

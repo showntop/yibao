@@ -34,6 +34,8 @@ class ToolInvoker:
         # 默认空 dict（=全拒），调用方按 .get(id, (False, False)) 读取。
         self.confirmer = confirmer or (lambda _actions: {})
         self.host = host
+        # 真实技能后台线程的主动事件通道（由 serve_async 注入；插件技能走 plugin_ctx 自带）。
+        self.emit_event = None
 
     def propose(self, tc: ToolCall) -> Action:
         """tool_call → Action：查 registry 拿声明，分类风险。"""
@@ -104,6 +106,10 @@ class ToolInvoker:
                 and "host" in skill.plugin_capabilities
             ):
                 ctx.host = self.host
+            # 真实技能（如 watch_command）拿不到 plugin_ctx 的 emit_event——这里补注入，
+            # 且不覆盖插件技能已注入的 emit_event。
+            if getattr(ctx, "emit_event", None) is None and self.emit_event is not None:
+                ctx.emit_event = self.emit_event
             result = skill.run(params, ctx)
         except Exception as e:
             result = ActionResult(success=False, error=f"技能执行异常：{e}")

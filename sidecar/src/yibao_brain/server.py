@@ -583,11 +583,13 @@ async def serve_async(
 
     # 插件后台线程 → 壳的主动事件通道（如 agents 插件任务完成播报）：
     # 与下面 memory 状态回调同一跨线程先例（call_soon_threadsafe + write_msg）。
+    _emit_event = lambda ev: ai_loop.call_soon_threadsafe(_on_plugin_event, ev)
     agent = build_loop(
         read_msg, use_real, db_path, provider, skills_factory, confirmer=batch_confirmer,
-        emit_event=lambda ev: ai_loop.call_soon_threadsafe(_on_plugin_event, ev),
+        emit_event=_emit_event,
         feed=feed,
     )
+    agent.invoker.emit_event = _emit_event  # 真实技能（watch_command）后台通知走同一条 gated 通道
     # 免确认集合接到闸门：命中后 decide 直接 AUTO（连 confirmation_needed 都不发）
     agent.invoker.gate.session_allowed = remembered_confirm
 

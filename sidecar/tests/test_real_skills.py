@@ -143,6 +143,7 @@ def test_register_real_skills_order():
         "open_app",
         "click_control",
         "type_text",
+        "watch_command",
     ]
 
 
@@ -512,3 +513,50 @@ def test_computer_use_missing_task():
 
     r = ComputerUseSkill(client=None).run({}, SkillContext(host=FakeHost()))
     assert not r.success
+
+
+# ---------- watch_command：后台盯命令 ----------
+def _wait_emit(events, timeout_s=2.0):
+    import time
+
+    for _ in range(int(timeout_s / 0.02)):
+        if events:
+            return
+        time.sleep(0.02)
+
+
+def test_watch_command_starts_and_emits_on_done():
+    from yibao_brain.skills_real import WatchCommandSkill
+
+    events = []
+    ctx = SkillContext()
+    ctx.emit_event = events.append
+    r = WatchCommandSkill().run({"command": "echo hello"}, ctx)
+    assert r.success and r.data["started"] == "echo hello"
+    _wait_emit(events)
+    assert events and events[0]["kind"] == "reminder"
+    assert "完成" in events[0]["text"] and "hello" in events[0]["text"]
+
+
+def test_watch_command_reports_failure_exit_code():
+    from yibao_brain.skills_real import WatchCommandSkill
+
+    events = []
+    ctx = SkillContext()
+    ctx.emit_event = events.append
+    WatchCommandSkill().run({"command": "sh -c 'exit 7'"}, ctx)
+    _wait_emit(events)
+    assert events and "失败" in events[0]["text"] and "7" in events[0]["text"]
+
+
+def test_watch_command_no_emit_does_not_crash():
+    from yibao_brain.skills_real import WatchCommandSkill
+
+    r = WatchCommandSkill().run({"command": "echo hi"}, SkillContext())  # emit_event=None
+    assert r.success
+
+
+def test_watch_command_missing_command():
+    from yibao_brain.skills_real import WatchCommandSkill
+
+    assert not WatchCommandSkill().run({}, SkillContext()).success

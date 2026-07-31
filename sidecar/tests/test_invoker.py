@@ -50,6 +50,42 @@ def make_invoker(tmp_path, skills, confirmer=_batch_approve, policy=None):
     )
 
 
+def test_invoker_injects_emit_event_into_real_skill_ctx(tmp_path):
+    """真实技能 ctx.emit_event 由 invoker.emit_event 注入；插件技能自带的 emit_event 不被覆盖。"""
+    from yibao_brain.ipc import Action, ActionResult, RiskLevel
+    from yibao_brain.skills import SkillContext
+
+    captured: dict = {}
+
+    class _Cap(Skill):
+        id = "cap"
+        default_risk = RiskLevel.L0_READONLY
+
+        def run(self, params, ctx):
+            captured["emit"] = getattr(ctx, "emit_event", None)
+            return ActionResult(success=True)
+
+    inv = make_invoker(tmp_path, [_Cap()])
+    inv.emit_event = "CHAN"
+    inv.execute(Action(id="a", skill_id="cap"), {})
+    assert captured["emit"] == "CHAN"
+
+    class _Plug(Skill):
+        id = "plug"
+        default_risk = RiskLevel.L0_READONLY
+        plugin_ctx = SkillContext(emit_event="PLUGIN")
+        plugin_capabilities = frozenset()
+
+        def run(self, params, ctx):
+            captured["plug"] = ctx.emit_event
+            return ActionResult(success=True)
+
+    inv2 = make_invoker(tmp_path, [_Plug()])
+    inv2.emit_event = "CHAN"
+    inv2.execute(Action(id="b", skill_id="plug"), {})
+    assert captured["plug"] == "PLUGIN"  # 插件自带的不被 invoker 覆盖
+
+
 def test_propose_builds_action_with_classified_risk(tmp_path):
     inv = make_invoker(tmp_path, [EchoSkill()])
     action = inv.propose(ToolCall(id="t1", skill_id="echo", params={"text": "hi"}))
