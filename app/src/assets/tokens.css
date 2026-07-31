@@ -200,6 +200,48 @@
   --yb-state-drowsy: #9aa8bb;
 }
 
+/* ============ [D] 大窗：macOS 原生窗口语言 ============
+ * 大窗不是浮层，是可缩放、进 Dock、能 ⌘⇥ 切换的正式应用窗口，
+ * 因此不用玻璃 HUD 语言（那是小窗与面板浮窗的专属）。这批令牌
+ * 对齐 Finder / 邮件 / 系统设置的观感：侧栏浅底、主区实白、
+ * hairline 分界、分组卡片、sticky 分段头。 */
+:root {
+  /* 标题栏 Overlay 下红绿灯浮在内容上，侧栏顶部必须留安全区 */
+  --yb-titlebar-h: 28px;
+
+  /* 侧栏（macOS sidebar）：比主区略深的中性浅底，靠 hairline 与主区分界 */
+  --yb-sidebar-bg: #e8ecf2;
+  --yb-sidebar-w: 200px;
+  /* 选中项：macOS 用填充色块 + 深色字，不用描边 */
+  --yb-sidebar-sel: rgba(var(--yb-c-slate-rgb), 0.11);
+  --yb-sidebar-sel-active: var(--yb-accent);
+  /* 分区小标题（「导航」「工作区」这类 uppercase 灰字） */
+  --yb-sidebar-head: var(--yb-c-ink-400);
+
+  /* 主内容区：实白，页面底 */
+  --yb-content-bg: var(--yb-c-white);
+
+  /* 分组卡片（系统设置 Ventura+ 语言）：圆角卡内多行、行间 hairline */
+  --yb-card-bg: var(--yb-c-white);
+  --yb-card-border: rgba(var(--yb-c-slate-rgb), 0.09);
+  --yb-card-radius: var(--yb-radius-sm);
+  --yb-card-row-line: rgba(var(--yb-c-slate-rgb), 0.07);
+  /* 卡在浅灰页面底上时用 surface-2 反衬（设置页） */
+  --yb-card-page-bg: var(--yb-c-slate-050);
+
+  /* 列表行 hover / 选中（Finder 语义） */
+  --yb-row-hover: rgba(var(--yb-c-slate-rgb), 0.05);
+  --yb-row-selected: rgba(var(--yb-c-sky-rgb), 0.1);
+
+  /* sticky 分段头（通知中心「今天/昨天」）：半透 + blur，滚动时压住内容 */
+  --yb-sticky-bg: rgba(255, 255, 255, 0.82);
+  --yb-sticky-blur: blur(12px);
+
+  /* 分段控件（Segmented Control）：macOS 用凹槽 + 白滑块 */
+  --yb-segment-track: rgba(var(--yb-c-slate-rgb), 0.08);
+  --yb-segment-thumb: var(--yb-c-white);
+}
+
 /* ============ 历史别名 ============
  * App.vue / HomeChat.vue 的状态圆点仍在消费这批短名，保留以免破坏。
  * 新代码请直接用 --yb-state-*。 */

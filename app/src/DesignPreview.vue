@@ -238,59 +238,84 @@ const boardData = {
       </div>
     </section>
 
-    <!-- 6. 收件箱三区：左侧 3px 意图色条 -->
+    <!-- 6+7. 大窗主屏语言：统一时间线（日期分段头 + 类型图标 + hover 操作）+ 右副列 -->
     <section class="block">
-      <h2>收件箱 · 三区色条</h2>
-      <div class="inbox-mock">
-        <div class="iz iz-pending">
-          <div class="iz-title">待批准 · 2</div>
-          <div class="iz-card">
-            <span class="iz-lock"><YbIcon name="lock" :size="13" /></span>
-            <span class="iz-main"><strong>读取日历</strong><em>接下来 7 天日程</em></span>
-            <button class="btn btn-neutral">拒绝</button>
-            <button class="btn btn-primary">批准</button>
-          </div>
-          <div class="iz-card selected">
-            <span class="iz-lock"><YbIcon name="lock" :size="13" /></span>
-            <span class="iz-main"><strong>写入备忘录</strong><em>批量选择态</em></span>
-            <button class="btn btn-neutral">拒绝</button>
-            <button class="btn btn-primary">批准</button>
-          </div>
-        </div>
-        <div class="iz iz-running">
-          <div class="iz-title">进行中 · 1</div>
-          <div class="iz-card"><span class="iz-dot" /><span class="iz-main"><strong>整理上周截图</strong><em>已运行 2 分钟</em></span></div>
-        </div>
-        <div class="iz iz-done">
-          <div class="iz-title">已完成 · 最近 3 条</div>
-          <div class="iz-card"><span class="iz-main"><strong>汇总未读邮件</strong><em>昨天 18:42</em></span></div>
-        </div>
-      </div>
-    </section>
-
-    <!-- 7. Feed 行三态 + 置顶 -->
-    <section class="block">
-      <h2>Feed 行 · 未读 / 跟进 / 忽略 / 置顶</h2>
+      <h2>大窗主屏 · 时间线 + 右副列</h2>
       <div class="feed-mock">
-        <div class="fm-row unread">
-          <YbIcon class="fm-ic" name="chat" :size="14" />
-          <span class="fm-text">未读：小红书评论区有人问「这个桌宠哪买的」</span>
-          <span class="fm-time">3 分钟前</span>
+        <!-- 左主列：时间线 -->
+        <div class="tlm-col">
+          <div class="tlm-head">
+            <div class="segmented">
+              <button class="seg on">全部</button>
+              <button class="seg">未读 <span class="seg-n yb-num">2</span></button>
+              <button class="seg">跟进</button>
+              <button class="seg">已忽略</button>
+            </div>
+            <button class="link-btn">全部标为已读</button>
+          </div>
+          <div class="tlm-date">今天</div>
+          <div class="tlm-row unread">
+            <span class="tlm-ic ic-clock"><YbIcon name="clock" :size="13" /></span>
+            <span class="tlm-main"><span class="tlm-text">周五 14:00 产品评审要带 demo 清单</span></span>
+            <span class="tlm-time yb-num">14:32</span>
+          </div>
+          <div class="tlm-row unread">
+            <span class="tlm-ic ic-check"><YbIcon name="check" :size="13" /></span>
+            <span class="tlm-main">
+              <span class="tlm-text">整理上周设计稿截图，已归档 24 张</span>
+              <span class="tlm-tag">完成</span>
+            </span>
+            <span class="tlm-time yb-num">11:05</span>
+          </div>
+          <div class="tlm-row st-follow">
+            <span class="tlm-ic"><YbIcon name="chat" :size="13" /></span>
+            <span class="tlm-main"><span class="tlm-text">小红书评论区有人问「这个桌宠哪买的」</span></span>
+            <span class="tlm-time yb-num">09:48</span>
+            <span class="tlm-acts"><button class="tlm-act on"><YbIcon name="pin" :size="12" /></button><button class="tlm-act"><YbIcon name="x" :size="12" /></button></span>
+          </div>
+          <div class="tlm-row">
+            <span class="tlm-ic ic-x"><YbIcon name="x" :size="13" /></span>
+            <span class="tlm-main">
+              <span class="tlm-text">生成播客封面图 · 网络超时</span>
+              <span class="tlm-tag tag-failed">失败</span>
+            </span>
+            <span class="tlm-time yb-num">09:12</span>
+          </div>
+          <div class="tlm-date">昨天</div>
+          <div class="tlm-row st-ignore">
+            <span class="tlm-ic"><YbIcon name="chat" :size="13" /></span>
+            <span class="tlm-main"><span class="tlm-text">每周一的磁盘空间检查（已忽略）</span></span>
+            <span class="tlm-time yb-num">18:42</span>
+          </div>
         </div>
-        <div class="fm-row follow">
-          <YbIcon class="fm-ic" name="clock" :size="14" />
-          <span class="fm-text">跟进中：周五产品评审要带的 demo 清单</span>
-          <span class="fm-time">1 小时前</span>
-        </div>
-        <div class="fm-row ignore">
-          <YbIcon class="fm-ic" name="doc" :size="14" />
-          <span class="fm-text">已忽略：每周一的磁盘空间提醒</span>
-          <span class="fm-time">昨天</span>
-        </div>
-        <div class="fm-row pinned">
-          <YbIcon class="fm-ic" name="pin" :size="14" />
-          <span class="fm-text">已置顶：季度目标草稿（长期挂起）</span>
-          <span class="fm-time">置顶</span>
+        <!-- 右副列：待批准 + 进行中 -->
+        <div class="sidem-col">
+          <section class="panel panel-pending">
+            <div class="panel-head">
+              <span class="panel-title"><YbIcon name="lock" :size="12" />待批准 <span class="count yb-num">2</span></span>
+            </div>
+            <div class="panel-body">
+              <div class="ap-card selected">
+                <div class="ap-top">
+                  <label class="ap-check"><input type="checkbox" checked /></label>
+                  <div class="ap-info"><strong>读取日历</strong><span>接下来 7 天日程</span></div>
+                </div>
+                <div class="ap-btns"><button class="btn btn-ghost">拒绝</button><button class="btn btn-primary">批准</button></div>
+              </div>
+            </div>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <span class="panel-title"><YbIcon name="spinner" :size="12" spin />进行中 <span class="count yb-num">1</span></span>
+              <button class="link-btn">查看</button>
+            </div>
+            <div class="panel-body">
+              <div class="run-row">
+                <span class="run-dot" />
+                <span class="run-main"><strong>整理上周截图</strong><span>已运行 2 分钟</span></span>
+              </div>
+            </div>
+          </section>
         </div>
       </div>
     </section>
@@ -631,130 +656,292 @@ const boardData = {
   accent-color: var(--yb-accent);
 }
 
-/* ---- 6. 收件箱三区 mock ---- */
-.inbox-mock {
-  max-width: 520px;
-  padding: var(--yb-space-2);
+/* ---- 6+7. 大窗主屏 mock：时间线 + 右副列 ---- */
+.feed-mock {
+  display: flex;
+  gap: var(--yb-space-5);
+  padding: var(--yb-space-4);
   border: 1px solid var(--yb-border-base);
-  border-radius: var(--yb-radius-lg);
-  background: var(--yb-surface-1);
-  box-shadow: var(--yb-shadow-1);
+  border-radius: var(--yb-radius-md);
+  background: var(--yb-content-bg);
+}
+.tlm-col {
+  flex: 1;
+  min-width: 0;
+}
+.sidem-col {
+  width: 300px;
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
   gap: var(--yb-space-3);
 }
-.iz {
-  border-left: 3px solid transparent;
-  padding-left: var(--yb-space-3);
-}
-.iz-pending {
-  border-left-color: var(--yb-intent-pending);
-}
-.iz-running {
-  border-left-color: var(--yb-accent);
-}
-.iz-done {
-  border-left-color: var(--yb-text-dim);
-}
-.iz-title {
-  font-size: var(--yb-fs-sm);
-  font-weight: var(--yb-fw-bold);
-  color: var(--yb-text-dim);
-  padding-bottom: var(--yb-space-2);
-}
-.iz-pending .iz-title {
-  color: var(--yb-intent-pending-ink);
-}
-.iz-card {
+.tlm-head {
   display: flex;
   align-items: center;
-  gap: var(--yb-space-2);
-  padding: var(--yb-space-2) var(--yb-space-3);
-  margin-bottom: var(--yb-space-2);
-  border: 1px solid var(--yb-border-base);
-  border-radius: var(--yb-radius-md);
-  background: var(--yb-surface-1);
-  box-shadow: var(--yb-shadow-1);
+  justify-content: space-between;
+  gap: var(--yb-space-3);
+  padding-bottom: var(--yb-space-3);
+}
+/* 分段控件（与主屏同款） */
+.segmented {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: var(--yb-radius-xs);
+  background: var(--yb-segment-track);
+}
+.seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px var(--yb-space-3);
+  border: none;
+  border-radius: var(--yb-radius-xs);
+  background: transparent;
+  color: var(--yb-text-dim);
   font-size: var(--yb-fs-md);
+  font-family: inherit;
+  cursor: pointer;
 }
-.iz-card.selected {
-  border-color: var(--yb-accent);
-  background: var(--yb-accent-soft);
+.seg.on {
+  background: var(--yb-segment-thumb);
+  color: var(--yb-text);
+  font-weight: var(--yb-fw-medium);
+  box-shadow: var(--yb-shadow-1);
 }
-.iz-lock {
-  color: var(--yb-intent-pending-ink);
+.seg-n {
+  font-size: var(--yb-fs-xs);
+  color: var(--yb-accent-deep);
+}
+.link-btn {
+  border: none;
+  background: transparent;
+  color: var(--yb-accent-deep);
+  font-size: var(--yb-fs-md);
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+/* sticky 日期分段头 */
+.tlm-date {
+  padding: var(--yb-space-2) var(--yb-space-1);
+  font-size: var(--yb-fs-xs);
+  font-weight: var(--yb-fw-bold);
+  color: var(--yb-text-dim);
+  letter-spacing: 0.04em;
+}
+/* 时间线行：Finder 列表语义（hairline 分隔，无卡片描边） */
+.tlm-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--yb-space-3);
+  padding: var(--yb-space-3) var(--yb-space-2);
+  border-bottom: 1px solid var(--yb-card-row-line);
+  font-size: var(--yb-fs-lg);
+}
+/* 未读：左侧 accent 竖条（macOS 邮件语义） */
+.tlm-row.unread::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 18px;
+  border-radius: var(--yb-radius-pill);
+  background: var(--yb-accent);
+}
+.tlm-row.unread .tlm-text {
+  font-weight: var(--yb-fw-medium);
+}
+.tlm-row.st-follow .tlm-ic {
+  color: var(--yb-accent);
+}
+.tlm-row.st-ignore {
+  opacity: 0.5;
+}
+.tlm-ic {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
   display: grid;
   place-items: center;
-}
-.iz-dot {
-  width: 8px;
-  height: 8px;
   border-radius: 50%;
-  background: var(--yb-accent);
-  box-shadow: 0 0 0 4px var(--yb-accent-soft);
+  background: var(--yb-surface-3);
+  color: var(--yb-text-faint);
 }
-.iz-main {
+.tlm-ic.ic-clock {
+  color: var(--yb-accent);
+}
+.tlm-ic.ic-check {
+  color: var(--yb-intent-ok);
+}
+.tlm-ic.ic-x {
+  color: var(--yb-danger);
+}
+.tlm-main {
   flex: 1;
   min-width: 0;
   display: flex;
-  flex-direction: column;
-}
-.iz-main em {
-  font-style: normal;
-  font-size: var(--yb-fs-sm);
-  color: var(--yb-text-dim);
-}
-
-/* ---- 7. Feed 行 mock ---- */
-.feed-mock {
-  max-width: 520px;
-  display: flex;
-  flex-direction: column;
-}
-.fm-row {
-  display: flex;
   align-items: center;
   gap: var(--yb-space-2);
-  padding: var(--yb-space-2) var(--yb-space-3);
-  margin-bottom: var(--yb-space-2);
-  border: 1px solid var(--yb-border-base);
-  border-radius: var(--yb-radius-md);
-  background: var(--yb-surface-1);
-  box-shadow: var(--yb-shadow-1);
-  font-size: var(--yb-fs-md);
 }
-.fm-row.unread {
-  border-color: var(--yb-accent);
-  background: var(--yb-accent-soft);
-}
-.fm-row.unread .fm-text {
-  font-weight: var(--yb-fw-bold);
-}
-.fm-row.unread .fm-ic {
-  color: var(--yb-accent);
-}
-.fm-row.follow {
-  border-color: var(--yb-accent);
-}
-.fm-row.ignore {
-  opacity: 0.6;
-}
-.fm-row.pinned .fm-ic {
-  color: var(--yb-accent-deep);
-}
-.fm-ic {
-  flex-shrink: 0;
-  color: var(--yb-text-faint);
-}
-.fm-text {
-  flex: 1;
+.tlm-text {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.fm-time {
+.tlm-tag {
   flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: var(--yb-radius-pill);
+  background: var(--yb-btn-neutral);
+  color: var(--yb-text-dim);
+  font-size: var(--yb-fs-xs);
+}
+.tlm-tag.tag-failed {
+  background: var(--yb-danger-soft);
+  color: var(--yb-danger);
+}
+.tlm-time {
+  flex-shrink: 0;
+  font-size: var(--yb-fs-sm);
+  color: var(--yb-text-faint);
+}
+/* 行内操作：走查页常显（真实界面是 hover 才浮现） */
+.tlm-acts {
+  flex-shrink: 0;
+  display: flex;
+  gap: 2px;
+}
+.tlm-act {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: var(--yb-radius-xs);
+  background: transparent;
+  color: var(--yb-text-faint);
+  cursor: pointer;
+}
+.tlm-act.on {
+  background: var(--yb-accent-soft);
+  color: var(--yb-accent-deep);
+}
+/* 右副列分组卡 */
+.panel {
+  border: 1px solid var(--yb-card-border);
+  border-radius: var(--yb-card-radius);
+  background: var(--yb-card-bg);
+  overflow: hidden;
+}
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--yb-space-2);
+  padding: var(--yb-space-2) var(--yb-space-3);
+  border-bottom: 1px solid var(--yb-card-row-line);
+  background: var(--yb-card-page-bg);
+}
+.panel-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--yb-fs-md);
+  font-weight: var(--yb-fw-bold);
+  color: var(--yb-text-dim);
+}
+.count {
+  padding: 0 5px;
+  border-radius: var(--yb-radius-pill);
+  background: var(--yb-btn-neutral);
+  font-size: var(--yb-fs-xs);
+}
+.panel-body {
+  padding: var(--yb-space-2);
+}
+.panel-pending {
+  border-color: var(--yb-intent-pending);
+  box-shadow: var(--yb-shadow-1);
+}
+.panel-pending .panel-head {
+  background: var(--yb-intent-pending-soft);
+}
+.panel-pending .panel-title {
+  color: var(--yb-intent-pending-ink);
+}
+.ap-card {
+  padding: var(--yb-space-2);
+  border-radius: var(--yb-radius-xs);
+}
+.ap-card.selected {
+  background: var(--yb-row-selected);
+}
+.ap-top {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--yb-space-2);
+}
+.ap-check input {
+  margin: 2px 0 0;
+  accent-color: var(--yb-accent);
+}
+.ap-info {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.ap-info strong {
+  font-size: var(--yb-fs-lg);
+  font-weight: var(--yb-fw-medium);
+}
+.ap-info span {
+  font-size: var(--yb-fs-sm);
+  color: var(--yb-text-dim);
+}
+.ap-btns {
+  display: flex;
+  gap: var(--yb-space-2);
+  margin-top: var(--yb-space-2);
+}
+.ap-btns .btn {
+  flex: 1;
+}
+.btn-ghost {
+  border: 1px solid var(--yb-border-strong);
+  background: var(--yb-card-bg);
+  color: var(--yb-text-dim);
+}
+.run-row {
+  display: flex;
+  align-items: center;
+  gap: var(--yb-space-2);
+  padding: var(--yb-space-2);
+}
+.run-dot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--yb-accent);
+  box-shadow: 0 0 0 3px var(--yb-accent-soft);
+}
+.run-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.run-main strong {
+  font-size: var(--yb-fs-md);
+  font-weight: var(--yb-fw-medium);
+}
+.run-main span {
   font-size: var(--yb-fs-sm);
   color: var(--yb-text-dim);
 }

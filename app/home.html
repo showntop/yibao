@@ -5,14 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>译宝</title>
     <style>
-      /* 设计令牌在 src/assets/tokens.css（home.ts 引入）；这里只留窗口级 reset */
+      /* 设计令牌在 src/assets/tokens.css（home.ts 引入）；这里只留窗口级 reset。
+         大窗是原生窗口（非 transparent）：底色给不透明值，避免首帧透出桌面。 */
       html,
       body,
       #app {
         margin: 0;
         height: 100%;
-        background: transparent;
         overflow: hidden;
+      }
+      body {
+        background: #eef2f7;
       }
     </style>
   </head>

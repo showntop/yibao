@@ -338,24 +338,38 @@ onUnmounted(() => {
 
 <template>
   <div class="plugins-page">
-    <header class="page-head" data-tauri-drag-region>
+    <!-- 页头：列表态是页标题（留红绿灯安全区），面板态是返回 + 面板名的层级导航 -->
+    <header class="page-head" :class="{ 'in-panel': !viewingList }" data-tauri-drag-region>
       <template v-if="viewingList">
-        <span class="pg-title" data-tauri-drag-region>插件</span>
+        <div class="head-text" data-tauri-drag-region>
+          <h1 class="pg-title" data-tauri-drag-region>插件</h1>
+          <span class="pg-sub" data-tauri-drag-region>点开任意插件进入它的工作面板</span>
+        </div>
       </template>
       <template v-else>
-        <button class="back" @click="backToList">‹ 插件</button>
-        <span class="pg-title">{{ current?.title ?? "面板" }}</span>
+        <button class="back" title="返回插件列表" @click="backToList">
+          <YbIcon name="x" :size="13" />
+        </button>
+        <span class="crumb">插件</span>
+        <span class="crumb-sep">›</span>
+        <span class="pg-title panel-name">{{ current?.title ?? "面板" }}</span>
       </template>
     </header>
 
-    <!-- 插件列表：点击直达它的主面板 -->
+    <!-- 插件列表：macOS 图标网格（与主屏一瞥卡视觉同源），点击直达主面板 -->
     <div v-if="viewingList" class="plist">
       <div v-if="pluginErr" class="pl-err"><YbIcon name="alert" :size="14" />{{ pluginErr }}</div>
-      <button v-for="p in plugins" :key="p.id" class="pl-row" @click="launchPlugin(p)">
-        <span class="pl-name">{{ p.name }}</span>
-        <span class="pl-id">{{ p.id }}</span>
-      </button>
-      <div v-if="!plugins.length && !pluginErr" class="pl-empty">没有发现插件</div>
+      <div v-if="plugins.length" class="pgrid">
+        <button v-for="p in plugins" :key="p.id" class="pcard" @click="launchPlugin(p)">
+          <span class="pcard-ic">{{ p.name.slice(0, 1) }}</span>
+          <span class="pcard-name">{{ p.name }}</span>
+          <span class="pcard-id">{{ p.id }}</span>
+        </button>
+      </div>
+      <div v-else-if="!pluginErr" class="pl-empty">
+        <YbIcon name="plug" :size="26" :stroke="1.4" />
+        <p>还没装插件<br /><span>插件放在 plugins/ 目录，重启大脑后出现在这里</span></p>
+      </div>
     </div>
 
     <!-- 面板视图：确认统一进主屏收件箱；这里只保留错误细条 / 面板内容 / 工作台条 -->
@@ -428,98 +442,163 @@ onUnmounted(() => {
   height: 100%;
   display: flex;
   flex-direction: column;
-  padding: 0 var(--yb-space-3) var(--yb-space-2);
+  background: var(--yb-content-bg);
 }
-/* 页头：标题（面板视图带返回）；整条兼作拖动区 */
+/* 页头：列表态留红绿灯安全区 + 页标题；面板态压缩成一行层级导航。整条兼作拖动区 */
 .page-head {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: var(--yb-space-2);
-  padding: var(--yb-space-3) 2px var(--yb-space-2);
+  padding: var(--yb-titlebar-h) var(--yb-space-5) var(--yb-space-4);
   user-select: none;
 }
-.pg-title {
-  font-size: var(--yb-fs-xl);
-  font-weight: var(--yb-fw-bold);
-  letter-spacing: 0.01em;
+.page-head.in-panel {
+  padding: var(--yb-titlebar-h) var(--yb-space-4) var(--yb-space-2);
+  border-bottom: 1px solid var(--yb-border-base);
 }
-.back {
-  border: none;
-  background: transparent;
+.head-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pg-title {
+  margin: 0;
+  font-size: 26px;
+  font-weight: var(--yb-fw-bold);
+  letter-spacing: -0.01em;
+  line-height: var(--yb-lh-tight);
+  color: var(--yb-text-strong);
+}
+.pg-sub {
+  font-size: var(--yb-fs-md);
   color: var(--yb-text-dim);
-  font-size: var(--yb-fs-lg);
+}
+/* 面板态：面板名降回常规字号（不再是页标题，是层级末端） */
+.panel-name {
+  font-size: var(--yb-fs-xl);
+}
+.crumb {
+  font-size: var(--yb-fs-xl);
+  color: var(--yb-text-dim);
+  cursor: default;
+}
+.crumb-sep {
+  color: var(--yb-text-faint);
+}
+/* 返回：macOS 用左上角圆形关闭按钮语义（这里是「离开面板回列表」） */
+.back {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 50%;
+  background: var(--yb-btn-neutral);
+  color: var(--yb-text-dim);
   cursor: pointer;
-  padding: 3px 8px;
-  border-radius: var(--yb-radius-sm);
   transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
 .back:hover {
-  color: var(--yb-accent-deep);
-  background: var(--yb-surface-solid);
+  background: var(--yb-btn-neutral-hover);
+  color: var(--yb-text);
 }
 
-/* ---- 插件列表 ---- */
+/* ---- 插件列表：macOS 图标网格 ---- */
 .plist {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: var(--yb-space-2);
-  padding: 2px;
+  padding: 0 var(--yb-space-5) var(--yb-space-4);
   scrollbar-width: thin;
 }
 .plist::-webkit-scrollbar {
-  width: 6px;
+  width: 7px;
 }
 .plist::-webkit-scrollbar-thumb {
-  background: var(--yb-surface-border);
+  background: var(--yb-border-strong);
   border-radius: var(--yb-radius-pill);
 }
 .pl-err {
   display: flex;
   align-items: center;
   gap: var(--yb-space-1);
+  margin-bottom: var(--yb-space-3);
   padding: 6px var(--yb-space-3);
-  border-radius: var(--yb-radius-sm);
+  border-radius: var(--yb-radius-xs);
   background: var(--yb-danger-soft);
   color: var(--yb-danger);
   font-size: var(--yb-fs-md);
 }
-.pl-row {
+/* 自适应网格：窄窗自动减列，卡片不拉伸变形 */
+.pgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: var(--yb-space-3);
+}
+/* 插件卡：与主屏一瞥卡视觉同源（实白 + hairline + 小圆角），hover 抬起 */
+.pcard {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--yb-space-2);
-  padding: var(--yb-space-3) var(--yb-space-4);
-  border: 1px solid var(--yb-surface-border);
-  border-radius: var(--yb-radius-md);
-  background: var(--yb-surface-solid);
-  box-shadow: var(--yb-shadow-soft);
-  cursor: pointer;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--yb-space-1);
+  padding: var(--yb-space-4);
+  border: 1px solid var(--yb-card-border);
+  border-radius: var(--yb-card-radius);
+  background: var(--yb-card-bg);
   font-family: inherit;
   text-align: left;
+  cursor: pointer;
   transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
-.pl-row:hover {
+.pcard:hover {
   border-color: var(--yb-accent);
+  box-shadow: var(--yb-shadow-2);
   transform: translateY(-1px);
 }
-.pl-name {
-  font-size: var(--yb-fs-lg);
-  font-weight: 500;
-  color: var(--yb-text);
-}
-.pl-id {
-  font-size: var(--yb-fs-sm);
-  color: var(--yb-text-dim);
-}
-.pl-empty {
-  flex: 1;
+/* 图标：首字承担（插件无自带图标资源），渐变底与 Dock 同款 */
+.pcard-ic {
+  width: 40px;
+  height: 40px;
+  margin-bottom: var(--yb-space-2);
   display: grid;
   place-items: center;
-  color: var(--yb-text-dim);
+  border-radius: var(--yb-radius-sm);
+  background: linear-gradient(160deg, var(--yb-accent-soft), var(--yb-surface-2));
+  border: 1px solid var(--yb-card-border);
+  color: var(--yb-accent-deep);
+  font-size: 17px;
+  font-weight: var(--yb-fw-bold);
+}
+.pcard-name {
   font-size: var(--yb-fs-lg);
+  font-weight: var(--yb-fw-medium);
+  color: var(--yb-text);
+}
+.pcard-id {
+  font-family: var(--yb-mono);
+  font-size: var(--yb-fs-xs);
+  color: var(--yb-text-faint);
+}
+.pl-empty {
+  height: 100%;
+  min-height: 200px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--yb-space-2);
+  color: var(--yb-text-faint);
+}
+.pl-empty p {
+  margin: 0;
+  text-align: center;
+  font-size: var(--yb-fs-lg);
+  line-height: var(--yb-lh-base);
+}
+.pl-empty span {
+  font-size: var(--yb-fs-md);
 }
 
 /* ---- 面板视图（与浮窗同款） ---- */
@@ -527,9 +606,9 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: var(--yb-space-1);
-  margin: 0 var(--yb-space-2) var(--yb-space-2);
+  margin: var(--yb-space-2) var(--yb-space-4) 0;
   padding: 6px var(--yb-space-3);
-  border-radius: var(--yb-radius-sm);
+  border-radius: var(--yb-radius-xs);
   background: var(--yb-danger-soft);
   color: var(--yb-danger);
   font-size: var(--yb-fs-md);
@@ -537,31 +616,33 @@ onUnmounted(() => {
 .content {
   flex: 1;
   min-height: 0;
-  margin: 0 var(--yb-space-2) var(--yb-space-2);
-  border-radius: var(--yb-radius-md);
-  background: var(--yb-surface);
+  margin: 0;
+  background: var(--yb-content-bg);
 }
 
 /* ---- 工作台条 ---- */
 .bench {
   position: relative;
-  margin: 0 var(--yb-space-2);
+  flex-shrink: 0;
+  padding: var(--yb-space-3) var(--yb-space-4);
+  border-top: 1px solid var(--yb-border-base);
+  background: var(--yb-content-bg);
 }
 .thread {
   position: absolute;
-  left: 4px;
-  right: 4px;
-  bottom: calc(100% + 6px);
+  left: var(--yb-space-4);
+  right: var(--yb-space-4);
+  bottom: calc(100% - var(--yb-space-1));
   max-height: 260px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 6px;
   padding: var(--yb-space-3) var(--yb-space-4);
-  border-radius: var(--yb-radius-lg);
-  background: var(--yb-surface-solid);
-  border: 1px solid var(--yb-surface-border);
-  box-shadow: var(--yb-shadow-soft);
+  border-radius: var(--yb-radius-sm);
+  background: var(--yb-card-bg);
+  border: 1px solid var(--yb-card-border);
+  box-shadow: var(--yb-shadow-3);
   scrollbar-width: thin;
 }
 .thread-x {

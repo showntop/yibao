@@ -379,21 +379,23 @@ onUnmounted(() => {
   height: 100%;
   display: flex;
   flex-direction: column;
-  gap: var(--yb-space-3);
-  padding: 0 var(--yb-space-4) var(--yb-space-3);
+  background: var(--yb-content-bg);
 }
-/* 页头：标题 + 状态胶囊（与宠物窗 header 同款 pill）；整条兼作拖动区 */
+/* 页头：留红绿灯安全区 + 页标题 + 状态胶囊；整条兼作拖动区 */
 .page-head {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: var(--yb-space-3);
-  padding: var(--yb-space-3) 2px 0;
+  padding: var(--yb-titlebar-h) var(--yb-space-5) var(--yb-space-3);
   user-select: none;
 }
 .pg-title {
-  font-size: var(--yb-fs-xl);
+  font-size: 26px;
   font-weight: var(--yb-fw-bold);
-  letter-spacing: 0.01em;
+  letter-spacing: -0.01em;
+  line-height: var(--yb-lh-tight);
+  color: var(--yb-text-strong);
 }
 .status {
   font-size: var(--yb-fs-xs);
@@ -439,15 +441,23 @@ onUnmounted(() => {
 }
 .bubbles {
   flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: var(--yb-space-2);
   overflow-y: auto;
-  padding: 4px 2px 0;
+  padding: 4px var(--yb-space-5) 0;
   scrollbar-width: thin;
   /* 顶部渐隐：滚出视口的消息柔和淡出，不被硬边「切断」 */
   mask-image: linear-gradient(180deg, transparent, #000 14px);
   -webkit-mask-image: linear-gradient(180deg, transparent, #000 14px);
+}
+/* 底部输入区：hairline 分界（与主屏同款），不再靠父级 padding 浮着 */
+.input-slot {
+  flex-shrink: 0;
+  padding: var(--yb-space-3) var(--yb-space-5) var(--yb-space-4);
+  border-top: 1px solid var(--yb-border-base);
+  background: var(--yb-content-bg);
 }
 .bubbles::-webkit-scrollbar {
   width: 6px;
