@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import YbIcon from "./YbIcon.vue";
 
 // 首启设置向导：没配 LLM key 时大脑不会启动（Rust 侧 setup-config-needed 事件触发）。
 // 保存写数据目录 .env，随后 Rust 拉起大脑；主界面靠大脑上线事件自然接管。
@@ -47,7 +48,7 @@ async function save() {
 
 <template>
   <div class="wizard">
-    <div class="title">👋 欢迎使用译宝</div>
+    <div class="title"><YbIcon class="welcome-ic" name="wave" :size="18" /> 欢迎使用译宝</div>
     <p class="intro">译宝靠大模型思考，第一次用先填一下 API Key（存在本机，不上传）。</p>
 
     <label class="field">
@@ -69,7 +70,7 @@ async function save() {
       </select>
     </label>
 
-    <div v-if="err" class="err">⚠️ {{ err }}</div>
+    <div v-if="err" class="err"><YbIcon name="alert" :size="14" />{{ err }}</div>
     <button class="save" :disabled="saving" @click="save">{{ saving ? "保存并启动中…" : "保存并启动" }}</button>
     <p class="hint">也可稍后手改配置：~/Library/Application Support/yibao/.env</p>
   </div>
@@ -82,20 +83,26 @@ async function save() {
   background: var(--yb-surface-solid);
   border: 1px solid var(--yb-glass-border);
   box-shadow: var(--yb-shadow);
-  font-size: 13px;
+  font-size: var(--yb-fs-lg);
   color: var(--yb-text);
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 .title {
-  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: var(--yb-space-2);
+  font-weight: var(--yb-fw-bold);
   font-size: var(--yb-fs-lg);
+}
+.welcome-ic {
+  color: var(--yb-accent);
 }
 .intro {
   margin: 0;
   color: var(--yb-text-dim);
-  line-height: 1.5;
+  line-height: var(--yb-lh-base);
 }
 .field {
   display: flex;
@@ -125,7 +132,10 @@ select:focus {
   border-color: var(--yb-accent);
 }
 .err {
-  color: var(--yb-danger, #d5453c);
+  display: flex;
+  align-items: center;
+  gap: var(--yb-space-1);
+  color: var(--yb-danger);
   font-size: var(--yb-fs-md);
 }
 .save {
@@ -136,8 +146,8 @@ select:focus {
   background: var(--yb-accent);
   color: #fff;
   font-size: var(--yb-fs-md);
-  font-weight: 600;
-  transition: filter 0.15s;
+  font-weight: var(--yb-fw-bold);
+  transition: filter var(--yb-dur-fast);
 }
 .save:hover:not(:disabled) {
   filter: brightness(0.96);
@@ -148,7 +158,7 @@ select:focus {
 }
 .hint {
   margin: 0;
-  font-size: 11.5px;
+  font-size: var(--yb-fs-sm);
   color: var(--yb-text-dim);
 }
 </style>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { canRememberSkill } from "../lib/brain";
+import YbIcon from "./YbIcon.vue";
 
 const props = defineProps<{ skill: string; desc: string }>();
 const emit = defineEmits<{ (e: "approve", remember: boolean): void; (e: "deny"): void }>();
@@ -10,7 +11,7 @@ const canRemember = computed(() => canRememberSkill(props.skill));
 
 <template>
   <div class="dlg">
-    <div class="title"><span class="icon">⚠️</span> 确认执行高风险操作</div>
+    <div class="title"><YbIcon name="alert" :size="16" /> 确认执行高风险操作</div>
     <p><span class="skill">{{ skill }}</span>{{ desc ? " · " + desc : "" }}</p>
     <label v-if="canRemember" class="remember">
       <input type="checkbox" v-model="remember" />
@@ -35,21 +36,18 @@ const canRemember = computed(() => canRememberSkill(props.skill));
   display: flex;
   align-items: center;
   gap: 6px;
-  font-weight: 600;
-  font-size: 14px;
+  font-weight: var(--yb-fw-bold);
+  font-size: var(--yb-fs-lg);
   color: var(--yb-danger);
-}
-.icon {
-  font-size: 16px;
 }
 p {
   margin: var(--yb-space-2) 0 var(--yb-space-3);
   color: var(--yb-text);
-  font-size: 13px;
-  line-height: 1.4;
+  font-size: var(--yb-fs-lg);
+  line-height: var(--yb-lh-ui);
 }
 .skill {
-  font-weight: 600;
+  font-weight: var(--yb-fw-bold);
 }
 .remember {
   display: flex;
@@ -76,8 +74,8 @@ button {
   border: none;
   cursor: pointer;
   font-size: var(--yb-fs-md);
-  font-weight: 500;
-  transition: filter 0.15s;
+  font-weight: var(--yb-fw-medium);
+  transition: filter var(--yb-dur-fast);
 }
 .ok {
   background: var(--yb-accent);

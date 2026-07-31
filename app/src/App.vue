@@ -31,9 +31,17 @@ import {
 import { resetWindowSize, openPanel, setInteractiveFull, setBubbleOn } from "./lib/window";
 import { SUGGESTIONS } from "./lib/suggestions";
 import { procLabel, procSkip, procResultSuffix } from "./lib/proc";
+import YbIcon from "./components/YbIcon.vue";
 
 type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error" | "notify" | "drowsy";
-type BubbleMsg = { role: "user" | "ai" | "sys"; text: string };
+// pstate：过程行状态（图标随态渲染，文案不再拼 emoji）；halted：被打断；icon：行首语义图标
+type BubbleMsg = {
+  role: "user" | "ai" | "sys";
+  text: string;
+  pstate?: "run" | "ok" | "fail";
+  halted?: boolean;
+  icon?: "clock" | "alert" | "doc";
+};
 
 const state = ref<AvatarState>("idle");
 // 环境态原料：attentionNeeded=有事找你（提醒/收起时的播报，展开即消）；drowsy=发呆（连续纯待命超时）
@@ -56,8 +64,13 @@ const brainDown = ref(false); // 大脑掉线/重启中（守护在恢复）
 const perms = ref<BrainPermissions | null>(null); // macOS 权限状态（null=未收到）
 const expanded = ref(false);
 const panelOpen = ref(false); // 面板协作会话进行中（关联气泡只插一次，panel 刷新不重复插）
-// 过程展示：action.id → 过程行（sys 淡色小字）在 bubbles 里的下标，结果回来原地更新 ✅/❌
+// 过程展示：action.id → 过程行（sys 淡色小字）在 bubbles 里的下标，结果回来原地更新
 const procIdx = new Map<string, number>();
+
+/** 告警气泡：⚠️ 前缀改行首 alert 图标渲染（文案纯净，图标走 YbIcon） */
+function pushWarn(text: string) {
+  bubbles.value.push({ role: "ai", text, icon: "alert" });
+}
 
 // ---- 首启设置向导（缺 LLM key 时 Rust 发 setup-config-needed，大脑未启动）----
 const setupNeeded = ref(false);
@@ -294,20 +307,21 @@ function onEvent(e: BrainEvent) {
   switch (e.kind) {
     case "action_proposed":
       state.value = "work";
-      // 过程行：🔧 技能短标签（use_plugin 跳过——成功有 notice，不重复）
+      // 过程行：技能短标签 + pstate 驱动图标（use_plugin 跳过——成功有 notice，不重复）
       if (e.action?.id && !procSkip(e.action)) {
         procIdx.set(e.action.id, bubbles.value.length);
-        bubbles.value.push({ role: "sys", text: "🔧 " + procLabel(e.action) });
+        bubbles.value.push({ role: "sys", text: procLabel(e.action), pstate: "run" });
       }
       break;
     case "action_result": {
       // 双窗口：确认可能在面板窗作答，结果回来即收尾（成功短闪 400ms，spec 选项 ①）
       flashValence("success");
-      // 过程行收尾：✅/❌（失败带 error 摘要）；无匹配行（面板直调等）不动
+      // 过程行收尾：pstate 换图标（失败带 error 摘要）；无匹配行（面板直调等）不动
       const idx = e.action?.id !== undefined ? procIdx.get(e.action.id) : undefined;
       if (idx !== undefined) {
         const ok = e.result?.success !== false;
-        bubbles.value[idx].text = (ok ? "✅ " : "❌ ") + procLabel(e.action) + procResultSuffix(e.result);
+        bubbles.value[idx].pstate = ok ? "ok" : "fail";
+        bubbles.value[idx].text = procLabel(e.action) + procResultSuffix(e.result);
         procIdx.delete(e.action!.id!);
       }
       break;
@@ -349,10 +363,10 @@ function onEvent(e: BrainEvent) {
     }
     case "interrupted":
       if (streamingIdx.value !== null) {
-        bubbles.value[streamingIdx.value].text += " ⛔";
+        bubbles.value[streamingIdx.value].halted = true;
         streamingIdx.value = null;
       } else {
-        bubbles.value.push({ role: "ai", text: "⛔ 已打断" });
+        bubbles.value.push({ role: "ai", text: "已打断", halted: true });
       }
       state.value = "idle";
       closeBubbleNow();
@@ -371,8 +385,8 @@ function onEvent(e: BrainEvent) {
       // 主动提醒：轻提示而非弹窗——亮窗（若隐藏）+ notify 态 + 常驻气泡，等用户点团子来看；
       // 确认闸门（confirmation_needed）不在此列，仍是强制展开。
       // 自主权「气泡」档（e.level）：不主动亮窗，只标「有事找你」；缺省 level 按完整档（兼容旧 sidecar）。
-      const text = "⏰ " + (e.text ?? "到点了");
-      bubbles.value.push({ role: "ai", text });
+      const text = e.text ?? "到点了";
+      bubbles.value.push({ role: "ai", text, icon: "clock" });
       void (async () => {
         try {
           // 大小窗互斥：大窗开着时提醒由大窗呈现，别把宠物窗再弹出来
@@ -396,7 +410,7 @@ function onEvent(e: BrainEvent) {
     case "error":
       state.value = "idle";
       streamingIdx.value = null;
-      bubbles.value.push({ role: "ai", text: "⚠️ " + (e.text ?? "出错了") });
+      pushWarn(e.text ?? "出错了");
       flashValence("error");
       closeBubbleNow();
       break;
@@ -445,7 +459,7 @@ function onStatus(m: BrainStatusMsg) {
   if (!brainDown.value) {
     brainDown.value = true;
     const why = m.detail ? `（${m.detail}）` : "";
-    bubbles.value.push({ role: "ai", text: `⚠️ 大脑掉线${why}，正在自动重启…` });
+    pushWarn(`大脑掉线${why}，正在自动重启…`);
   }
 }
 
@@ -466,13 +480,13 @@ async function submit(text: string) {
   let msg = text;
   if (selectionCtx.value) {
     msg = `用户在前台应用选中了一段文字：\n「${selectionCtx.value}」\n\n用户的指示：${text}`;
-    bubbles.value.push({ role: "sys", text: `📄 已附带选中文字 ${selectionCtx.value.length} 字` });
+    bubbles.value.push({ role: "sys", text: `已附带选中文字 ${selectionCtx.value.length} 字`, icon: "doc" });
     selectionCtx.value = null;
   }
   try {
     await runInput(msg);
   } catch (err) {
-    bubbles.value.push({ role: "ai", text: "⚠️ 发送失败：" + String(err) });
+    pushWarn("发送失败：" + String(err));
     state.value = "idle";
   }
 }
@@ -485,7 +499,7 @@ async function decide(approved: boolean, remember = false) {
     await sendConfirmBatch([{ id, approved, remember: pendingCanRemember.value && remember }]);
     rememberPending.value = false;
   } catch (err) {
-    bubbles.value.push({ role: "ai", text: "⚠️ 确认失败：" + String(err) });
+    pushWarn("确认失败：" + String(err));
   }
 }
 
@@ -496,7 +510,7 @@ async function decideAllPending(approved: boolean) {
   try {
     await sendConfirmBatch(items);
   } catch (err) {
-    bubbles.value.push({ role: "ai", text: "⚠️ 批量确认失败：" + String(err) });
+    pushWarn("批量确认失败：" + String(err));
     state.value = "idle";
   }
 }
@@ -504,21 +518,21 @@ async function decideAllPending(approved: boolean) {
 function onMic() {
   // 不乐观置 listen：等大脑 listening 事件确认（语音栈不可用时大脑会回 error，别自欺卡死）
   void voiceStart().catch((err) => {
-    bubbles.value.push({ role: "ai", text: "⚠️ 语音启动失败：" + String(err) });
+    pushWarn("语音启动失败：" + String(err));
   });
 }
 
 function onMicContinuous() {
   // 长按团子 = 连续对话：答完接着听，说「退出」或点团子结束（会话提示由大脑 notice 落气泡）
   void voiceStart(undefined, true).catch((err) => {
-    bubbles.value.push({ role: "ai", text: "⚠️ 语音启动失败：" + String(err) });
+    pushWarn("语音启动失败：" + String(err));
   });
 }
 
 function onInterrupt() {
   if (!busy.value) return;
   void interrupt().catch((err) => {
-    bubbles.value.push({ role: "ai", text: "⚠️ 打断失败：" + String(err) });
+    pushWarn("打断失败：" + String(err));
   });
 }
 
@@ -582,7 +596,7 @@ onMounted(async () => {
   });
   unlistenSetupErr = await listen<string>("setup-error", (e) => {
     if (!expanded.value) void expand();
-    bubbles.value.push({ role: "ai", text: "⚠️ " + e.payload });
+    pushWarn(e.payload);
   });
   unlistenSetupCfg = await listen<string>("setup-config-needed", () => void onSetupNeeded());
   // 全局唤起：⌘⇧Y 反射键（pet-show 确保展开）/ ⌘⇧U 划词唤起（展开 + 上下文 chip）
@@ -669,7 +683,7 @@ onUnmounted(() => {
           <span class="pl-title">插件</span>
           <button class="pl-back" @click="view = 'chat'">‹ 对话</button>
         </div>
-        <div v-if="pluginErr" class="pl-err">⚠️ {{ pluginErr }}</div>
+        <div v-if="pluginErr" class="pl-err"><YbIcon name="alert" :size="14" />{{ pluginErr }}</div>
         <button v-for="p in plugins" :key="p.id" class="pl-row" @click="launchPlugin(p)">
           <span class="pl-name">{{ p.name }}</span>
           <span class="pl-id">{{ p.id }}</span>
@@ -691,6 +705,9 @@ onUnmounted(() => {
           :role="b.role"
           :text="b.text"
           :streaming="i === streamingIdx"
+          :pstate="b.pstate"
+          :halted="b.halted"
+          :icon="b.icon"
         />
         <Bubble v-if="showTyping" role="ai" text="" typing />
       </div>
@@ -698,7 +715,7 @@ onUnmounted(() => {
       <div v-if="view === 'chat'" class="input-slot">
         <!-- 划词上下文 chip：⌘⇧U 抓到选中文字后等待指示，可 × 掉；发送后自消 -->
         <div v-if="selectionCtx" class="ctx-chip">
-          <span class="ctx-ic">📄</span>
+          <YbIcon class="ctx-ic" name="doc" :size="13" />
           <span class="ctx-text" :title="selectionCtx">{{ ctxPreview }}</span>
           <button class="ctx-x" title="去掉上下文" @click="selectionCtx = null">×</button>
         </div>
@@ -716,7 +733,7 @@ onUnmounted(() => {
         </div>
         <div v-else class="quick-confirm">
           <div class="quick-copy">
-            <strong>⚠️ {{ pending.label || pending.skill }}</strong>
+            <strong><YbIcon class="qc-ic" name="alert" :size="14" />{{ pending.label || pending.skill }}</strong>
             <span v-if="pending.desc">{{ pending.desc }}</span>
           </div>
           <label v-if="pendingCanRemember" class="quick-remember">
@@ -742,8 +759,8 @@ onUnmounted(() => {
   box-sizing: border-box;
   overflow: hidden;
   font-family: var(--yb-font);
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: var(--yb-fs-lg);
+  line-height: var(--yb-lh-base);
   color: var(--yb-text);
 }
 .shell.exp {
@@ -819,7 +836,7 @@ onUnmounted(() => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  line-height: 1.35;
+  line-height: var(--yb-lh-ui);
 }
 .quick-copy strong,
 .batch-confirm-notice strong {
@@ -828,6 +845,11 @@ onUnmounted(() => {
   font-size: var(--yb-fs-md);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 快批条行首图标：待批准意图琥珀，与收件箱同语言 */
+.qc-ic {
+  color: var(--yb-intent-pending-ink);
+  margin-right: var(--yb-space-1);
 }
 .quick-copy span,
 .batch-confirm-notice span {
@@ -908,26 +930,26 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: center;
   gap: 3px;
-  line-height: 1.2;
+  line-height: var(--yb-lh-tight);
   /* 拖动把手区（名称/状态文字上按住可拖窗） */
   cursor: default;
   user-select: none;
 }
 .name {
   font-size: var(--yb-fs-xl);
-  font-weight: 650;
+  font-weight: var(--yb-fw-bold);
   letter-spacing: 0.01em;
 }
 /* 状态 pill：软底小胶囊，比裸文字更有「状态感」 */
 .status {
-  font-size: 11px;
+  font-size: var(--yb-fs-xs);
   color: var(--yb-text-dim);
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  line-height: 1.4;
+  line-height: var(--yb-lh-ui);
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: var(--yb-radius-pill);
   background: var(--yb-well);
 }
 /* 状态点：颜色跟团子状态色环同源 */
@@ -991,7 +1013,7 @@ onUnmounted(() => {
   background: transparent;
   color: var(--yb-text-dim);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
 .collapse-btn svg {
   width: 14px;
@@ -1026,7 +1048,7 @@ onUnmounted(() => {
 }
 .bubbles::-webkit-scrollbar-thumb {
   background: var(--yb-surface-border);
-  border-radius: 3px;
+  border-radius: var(--yb-radius-pill);
 }
 /* 空状态：气泡区占位引导（小号团子 + 一句招呼 + 建议 chip） */
 .empty-hint {
@@ -1037,7 +1059,7 @@ onUnmounted(() => {
   justify-content: center;
   gap: 10px;
   color: var(--yb-text-dim);
-  font-size: 13px;
+  font-size: var(--yb-fs-lg);
 }
 .empty-hint p {
   margin: 0 0 2px;
@@ -1051,12 +1073,12 @@ onUnmounted(() => {
 .chip {
   padding: 5px 12px;
   border: 1px solid var(--yb-surface-border);
-  border-radius: 999px;
+  border-radius: var(--yb-radius-pill);
   background: var(--yb-surface-solid);
   color: var(--yb-accent-deep);
-  font-size: 13px;
+  font-size: var(--yb-fs-lg);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
 .chip:hover {
   background: var(--yb-accent-soft);
@@ -1069,16 +1091,15 @@ onUnmounted(() => {
   align-items: center;
   gap: 6px;
   padding: 5px 10px;
-  border-radius: 999px;
+  border-radius: var(--yb-radius-pill);
   background: var(--yb-accent-soft);
   border: 1px solid rgba(77, 144, 196, 0.25);
   color: var(--yb-accent-deep);
-  font-size: 12px;
-  line-height: 1.4;
+  font-size: var(--yb-fs-md);
+  line-height: var(--yb-lh-ui);
 }
 .ctx-ic {
   flex-shrink: 0;
-  font-size: 12px;
 }
 .ctx-text {
   flex: 1;
@@ -1095,7 +1116,7 @@ onUnmounted(() => {
   border-radius: 50%;
   background: transparent;
   color: var(--yb-accent-deep);
-  font-size: 13px;
+  font-size: var(--yb-fs-lg);
   line-height: 1;
   cursor: pointer;
   display: grid;
@@ -1119,22 +1140,25 @@ onUnmounted(() => {
   border: none;
   background: transparent;
   color: var(--yb-text-dim);
-  font-size: 13px;
+  font-size: var(--yb-fs-lg);
   cursor: pointer;
   padding: 3px 8px;
-  border-radius: 10px;
-  transition: all 0.15s ease;
+  border-radius: var(--yb-radius-sm);
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
 .pl-back:hover {
   color: var(--yb-accent-deep);
   background: var(--yb-surface-solid);
 }
 .pl-err {
+  display: flex;
+  align-items: center;
+  gap: var(--yb-space-1);
   padding: 6px var(--yb-space-3);
-  border-radius: 10px;
+  border-radius: var(--yb-radius-sm);
   background: var(--yb-danger-soft);
   color: var(--yb-danger);
-  font-size: 13px;
+  font-size: var(--yb-fs-md);
 }
 .pl-row {
   display: flex;
@@ -1143,13 +1167,13 @@ onUnmounted(() => {
   gap: var(--yb-space-2);
   padding: var(--yb-space-3) var(--yb-space-4);
   border: 1px solid var(--yb-surface-border);
-  border-radius: 14px;
+  border-radius: var(--yb-radius-md);
   background: var(--yb-surface-solid);
   box-shadow: var(--yb-shadow-soft);
   cursor: pointer;
   font-family: inherit;
   text-align: left;
-  transition: all 0.15s ease;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
 .pl-row:hover {
   border-color: var(--yb-accent);
@@ -1169,6 +1193,6 @@ onUnmounted(() => {
   display: grid;
   place-items: center;
   color: var(--yb-text-dim);
-  font-size: 13px;
+  font-size: var(--yb-fs-lg);
 }
 </style>

@@ -5,6 +5,7 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import { getVersion } from "@tauri-apps/api/app";
 import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import YbIcon from "./YbIcon.vue";
 import {
   getSetupConfig,
   saveSetupConfig,
@@ -110,16 +111,19 @@ function recheck() {
 const confirming = ref<ClearKind | null>(null);
 const clearing = ref<ClearKind | null>(null);
 const clearMsg = ref("");
+const clearErr = ref(false); // 清空结果成/败：驱动 s-msg 色与图标，不再靠 ⚠️ 前缀判错
 
 async function doClear(kind: ClearKind) {
   confirming.value = null;
   clearing.value = kind;
   clearMsg.value = "";
+  clearErr.value = false;
   try {
     await clearBrainData(kind);
     clearMsg.value = kind === "memory" ? "✓ 长期记忆已清空" : "✓ 对话历史已清空";
   } catch (e) {
-    clearMsg.value = "⚠️ " + String(e);
+    clearMsg.value = String(e);
+    clearErr.value = true;
   } finally {
     clearing.value = null;
   }
@@ -561,7 +565,7 @@ onUnmounted(() => {
             <option value="cosyvoice">CosyVoice 本地（离线·可克隆）</option>
           </select>
         </label>
-        <div v-if="ttsErr" class="s-msg err">⚠️ {{ ttsErr }}</div>
+        <div v-if="ttsErr" class="s-msg err"><YbIcon name="alert" :size="13" />{{ ttsErr }}</div>
         <div class="s-row">
           <span class="s-row-label">语音播报与聆听</span>
           <button class="switch" :class="{ on: voiceEnabled }" role="switch" :aria-checked="voiceEnabled" title="语音总开关" @click="voiceEnabled = !voiceEnabled"><i /></button>
@@ -570,7 +574,7 @@ onUnmounted(() => {
 
       <!-- 保存（模型+语音）：写 .env → 重启大脑生效 -->
       <div class="s-actions">
-        <span v-if="saveErr" class="s-msg err">⚠️ {{ saveErr }}</span>
+        <span v-if="saveErr" class="s-msg err"><YbIcon name="alert" :size="13" />{{ saveErr }}</span>
         <span v-else-if="saveMsg" class="s-msg ok">{{ saveMsg }}</span>
         <button class="s-primary" :disabled="saving" @click="save">{{ saving ? "保存中…" : "保存并重启大脑" }}</button>
       </div>
@@ -643,8 +647,8 @@ onUnmounted(() => {
             @click="toggleProactiveVoice"
           ><i /></button>
         </div>
-        <div v-if="autonErr" class="s-msg err">⚠️ {{ autonErr }}</div>
-        <div v-if="watchErr" class="s-msg err">⚠️ {{ watchErr }}</div>
+        <div v-if="autonErr" class="s-msg err"><YbIcon name="alert" :size="13" />{{ autonErr }}</div>
+        <div v-if="watchErr" class="s-msg err"><YbIcon name="alert" :size="13" />{{ watchErr }}</div>
       </section>
 
       <!-- 通用 -->
@@ -654,7 +658,7 @@ onUnmounted(() => {
           <span class="s-row-label">开机自动启动</span>
           <button class="switch" :class="{ on: autoStart }" role="switch" :aria-checked="autoStart" title="开机自动启动" @click="toggleAutostart"><i /></button>
         </div>
-        <div v-if="autoStartErr" class="s-msg err">⚠️ {{ autoStartErr }}</div>
+        <div v-if="autoStartErr" class="s-msg err"><YbIcon name="alert" :size="13" />{{ autoStartErr }}</div>
         <div class="s-row">
           <span class="s-row-label">全局快捷键</span>
           <span class="s-row-value">⌘⇧Y 显示 / 隐藏译宝</span>
@@ -682,7 +686,7 @@ onUnmounted(() => {
           <button class="switch" :class="{ on: perceptionModelAccess }" role="switch" :aria-checked="perceptionModelAccess" title="允许模型读取感知记录" @click="setPerceptionSetting('perception.model_access', !perceptionModelAccess)"><i /></button>
         </div>
         <div class="s-note">{{ perceptionMaster ? "运行中" : "已暂停" }} · {{ perceptionItems.length }} 条已加载观察</div>
-        <div v-if="perceptionErr" class="s-msg err">⚠️ {{ perceptionErr }}</div>
+        <div v-if="perceptionErr" class="s-msg err"><YbIcon name="alert" :size="13" />{{ perceptionErr }}</div>
       </section>
 
       <!-- 感知日志：让用户看到、逐条删、全部清空 -->
@@ -804,7 +808,7 @@ onUnmounted(() => {
             </template>
           </div>
         </template>
-        <div v-if="memErr" class="s-msg err">⚠️ {{ memErr }}</div>
+        <div v-if="memErr" class="s-msg err"><YbIcon name="alert" :size="13" />{{ memErr }}</div>
       </section>
 
       <!-- 数据 -->
@@ -834,7 +838,7 @@ onUnmounted(() => {
             <button v-else class="s-mini" @click="confirming = 'history'">清空…</button>
           </span>
         </div>
-        <div v-if="clearMsg" class="s-msg" :class="clearMsg.startsWith('⚠️') ? 'err' : 'ok'">{{ clearMsg }}</div>
+        <div v-if="clearMsg" class="s-msg" :class="clearErr ? 'err' : 'ok'"><YbIcon v-if="clearErr" name="alert" :size="13" />{{ clearMsg }}</div>
         <div class="s-note">清空会先停大脑再拉起，过程中译宝短暂离线几秒。</div>
         <div class="s-row">
           <span class="s-row-label">数据目录<span class="s-row-why">配置 / 记忆 / 历史文件</span></span>
@@ -1227,11 +1231,14 @@ textarea:focus {
   padding: 0 2px;
 }
 .s-msg {
+  display: flex;
+  align-items: center;
+  gap: var(--yb-space-1);
   font-size: var(--yb-fs-md);
-  line-height: 1.4;
+  line-height: var(--yb-lh-ui);
 }
 .s-msg.ok {
-  color: var(--yb-state-success);
+  color: var(--yb-intent-ok);
 }
 .s-msg.err {
   color: var(--yb-danger);

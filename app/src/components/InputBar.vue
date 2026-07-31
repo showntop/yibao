@@ -93,11 +93,11 @@ defineExpose({ focus: () => inputRef.value?.focus() });
   gap: var(--yb-space-2);
   align-items: center;
   padding: 6px 6px 6px var(--yb-space-3);
-  border-radius: 18px;
+  border-radius: var(--yb-radius-lg);
   background: var(--yb-surface-solid);
   border: 1px solid var(--yb-surface-border);
   box-shadow: var(--yb-shadow-soft);
-  transition: all 0.15s ease;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
 .bar:focus-within {
   border-color: var(--yb-accent);
@@ -107,7 +107,7 @@ input {
   flex: 1;
   border: none;
   background: transparent;
-  font-size: 13px;
+  font-size: var(--yb-fs-lg);
   outline: none;
   color: var(--yb-text);
 }
@@ -123,7 +123,7 @@ input::placeholder {
   cursor: pointer;
   display: grid;
   place-items: center;
-  transition: all 0.15s ease;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
 .icon {
   width: 15px;
@@ -165,7 +165,7 @@ input::placeholder {
 .wave i {
   width: 2.5px;
   height: 5px;
-  border-radius: 2px;
+  border-radius: var(--yb-radius-pill);
   background: #fff;
   animation: wave 1s ease-in-out infinite;
 }
@@ -210,7 +210,7 @@ input::placeholder {
 }
 .swap-enter-active,
 .swap-leave-active {
-  transition: opacity 0.15s ease, transform 0.15s ease;
+  transition: opacity var(--yb-dur-fast) var(--yb-ease-out), transform var(--yb-dur-fast) var(--yb-ease-out);
 }
 .swap-enter-from,
 .swap-leave-to {

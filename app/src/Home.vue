@@ -132,8 +132,8 @@ function close() {
   display: flex;
   overflow: hidden;
   font-family: var(--yb-font);
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: var(--yb-fs-lg);
+  line-height: var(--yb-lh-base);
   color: var(--yb-text);
   background:
     linear-gradient(180deg, rgba(77, 144, 196, 0.09), rgba(77, 144, 196, 0) 128px),
@@ -163,7 +163,7 @@ function close() {
 }
 .rail-name {
   font-size: var(--yb-fs-xl);
-  font-weight: 650;
+  font-weight: var(--yb-fw-bold);
   letter-spacing: 0.01em;
 }
 .rail-nav {
@@ -180,10 +180,10 @@ function close() {
   border-radius: var(--yb-radius-md);
   background: transparent;
   color: var(--yb-text-dim);
-  font-size: 13px;
+  font-size: var(--yb-fs-lg);
   font-family: inherit;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
 .nav-item svg {
   width: 16px;
@@ -209,11 +209,11 @@ function close() {
   padding: 0 4px;
   display: grid;
   place-items: center;
-  border-radius: 9px;
+  border-radius: var(--yb-radius-pill);
   background: var(--yb-danger);
   color: #fff;
-  font-size: 10px;
-  font-weight: 700;
+  font-size: var(--yb-fs-xs);
+  font-weight: var(--yb-fw-bold);
   line-height: 1;
 }
 .rail-foot {
@@ -232,7 +232,7 @@ function close() {
   background: transparent;
   color: var(--yb-text-dim);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
 .rail-x svg {
   width: 14px;

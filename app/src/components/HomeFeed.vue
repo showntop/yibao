@@ -5,6 +5,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import InputBar from "./InputBar.vue";
 import SchemaPanel from "./SchemaPanel.vue";
+import YbIcon from "./YbIcon.vue";
 import {
   getFeedOnce,
   fetchFeed,
@@ -258,10 +259,11 @@ function relTime(ts: number): string {
   return `${d.getMonth() + 1}月${d.getDate()}日`;
 }
 
-function kindIcon(it: FeedItem): string {
-  if (it.kind === "reminder") return "⏰";
-  if (it.kind === "task") return "🛠";
-  return "💬";
+/** 动态类型 → YbIcon 图标名（原先返回 emoji 字符，跨平台字形不可控且与线性 UI 割裂）。 */
+function kindIcon(it: FeedItem): "clock" | "gear" | "chat" {
+  if (it.kind === "reminder") return "clock";
+  if (it.kind === "task") return "gear";
+  return "chat";
 }
 
 function elapsedSince(ts: number): string {
@@ -500,7 +502,7 @@ onUnmounted(() => {
               <input type="checkbox" :checked="isSelected(p.id)" @change="onToggleSelect(p.id, $event)" />
             </label>
             <div class="a-info">
-              <span class="a-label">🔐 {{ p.label || p.skill }}</span>
+              <span class="a-label"><YbIcon name="lock" :size="13" />{{ p.label || p.skill }}</span>
               <span class="a-desc">{{ p.desc || p.skill }}</span>
             </div>
             <label
@@ -631,7 +633,7 @@ onUnmounted(() => {
           @keydown.enter="openInChat(it)"
         >
           <span class="tier-dot" aria-hidden="true"></span>
-          <span class="f-icon">{{ kindIcon(it) }}</span>
+          <span class="f-icon"><YbIcon :name="kindIcon(it)" :size="14" /></span>
           <span class="f-text">{{ it.text }}</span>
           <span class="f-time">{{ relTime(it.ts) }}</span>
           <div class="f-actions" @click.stop>
@@ -670,7 +672,7 @@ onUnmounted(() => {
               @keydown.enter="openInChat(it)"
             >
               <span class="tier-dot" aria-hidden="true"></span>
-              <span class="f-icon">{{ kindIcon(it) }}</span>
+              <span class="f-icon"><YbIcon :name="kindIcon(it)" :size="14" /></span>
               <span class="f-text">{{ it.text }}</span>
               <span class="f-time">{{ relTime(it.ts) }}</span>
               <div class="f-actions" @click.stop>
@@ -705,8 +707,9 @@ onUnmounted(() => {
               class="dock-pin"
               :class="{ on: p.pinned }"
               :title="p.pinned ? '取消固定' : '固定到常用'"
+              :aria-pressed="p.pinned"
               @click="togglePin(p)"
-            >📌</button>
+            ><YbIcon name="pin" :size="13" /></button>
           </div>
           <div v-if="!dock.length" class="f-empty">没有发现插件</div>
         </div>
@@ -739,8 +742,8 @@ onUnmounted(() => {
   flex-wrap: wrap;
 }
 .hero-hi {
-  font-size: 22px;
-  font-weight: 700;
+  font-size: 22px; /* 展示级问候语，UI 字阶之外的单点例外 */
+  font-weight: var(--yb-fw-bold);
   letter-spacing: 0.01em;
   color: var(--yb-text);
 }
@@ -760,7 +763,7 @@ onUnmounted(() => {
 }
 .scroll::-webkit-scrollbar-thumb {
   background: var(--yb-surface-border);
-  border-radius: 3px;
+  border-radius: var(--yb-radius-pill);
 }
 .sec {
   margin-top: var(--yb-space-3);
@@ -768,7 +771,7 @@ onUnmounted(() => {
 .sec-inbox {
   padding: var(--yb-space-2);
   border: 1px solid var(--yb-surface-border);
-  border-radius: 16px;
+  border-radius: var(--yb-radius-lg);
   background: color-mix(in srgb, var(--yb-surface-solid) 88%, transparent);
   box-shadow: var(--yb-shadow-soft);
 }
@@ -780,6 +783,20 @@ onUnmounted(() => {
   margin-top: var(--yb-space-3);
   padding-top: var(--yb-space-3);
   border-top: 1px solid var(--yb-surface-border);
+}
+/* 三区靠左侧 3px 意图色条区分，不再各自换底色（整块染色在叠加窗口上视觉过重） */
+.inbox-zone {
+  border-left: 3px solid transparent;
+  padding-left: var(--yb-space-3);
+}
+.zone-approvals {
+  border-left-color: var(--yb-intent-pending);
+}
+.zone-running {
+  border-left-color: var(--yb-accent);
+}
+.zone-completed {
+  border-left-color: var(--yb-text-dim);
 }
 .zone-title {
   display: flex;
@@ -799,7 +816,7 @@ onUnmounted(() => {
   padding: var(--yb-space-2) var(--yb-space-3);
   margin-bottom: var(--yb-space-2);
   border: 1px solid var(--yb-surface-border);
-  border-radius: 12px;
+  border-radius: var(--yb-radius-md);
   background: var(--yb-surface-solid);
   color: var(--yb-text);
   cursor: pointer;
@@ -860,9 +877,9 @@ onUnmounted(() => {
 .status-failed {
   color: var(--yb-danger);
 }
-/* 待批准卡片：警示淡黄底（与对话/动态区分开），右侧批/拒按钮 */
+/* 待批准区标题：意图琥珀（与左侧色条同色，不再依赖暖棕硬编码） */
 .sec-approvals .zone-title {
-  color: #b7791f;
+  color: var(--yb-intent-pending-ink);
 }
 /* 收件箱头：标题 + 顶部一键全批/全拒（仅 N>1 出现） */
 .inbox-head {
@@ -882,7 +899,7 @@ onUnmounted(() => {
   font-size: var(--yb-fs-sm);
   font-family: inherit;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
 .batch-yes {
   border: none;
@@ -906,21 +923,22 @@ onUnmounted(() => {
   opacity: 0.45;
   cursor: not-allowed;
 }
+/* 待批准卡片：L2 实色卡（琥珀意图由区左色条与锁图标承担，卡片自身不染色） */
 .a-card {
   display: flex;
   align-items: center;
   gap: var(--yb-space-3);
   padding: var(--yb-space-2) var(--yb-space-3);
   margin-bottom: var(--yb-space-2);
-  border: 1px solid rgba(183, 121, 31, 0.35);
-  border-radius: 14px;
-  background: rgba(255, 193, 99, 0.14);
-  transition: border-color 0.15s ease, background 0.15s ease;
+  border: 1px solid var(--yb-surface-border);
+  border-radius: var(--yb-radius-md);
+  background: var(--yb-surface-solid);
+  transition: border-color var(--yb-dur-fast) var(--yb-ease-out), background var(--yb-dur-fast) var(--yb-ease-out);
 }
 /* 选中态：accent 描边强调 */
 .a-card.selected {
   border-color: var(--yb-accent);
-  background: rgba(255, 193, 99, 0.22);
+  background: var(--yb-accent-soft);
 }
 /* 多选 checkbox（仅 N>1 出现） */
 .a-check {
@@ -942,9 +960,16 @@ onUnmounted(() => {
   gap: 1px;
 }
 .a-label {
+  display: flex;
+  align-items: center;
+  gap: var(--yb-space-1);
   font-size: var(--yb-fs-md);
-  font-weight: 600;
+  font-weight: var(--yb-fw-bold);
   color: var(--yb-text);
+}
+/* 锁图标用「待批准」意图色，与区块左侧色条同语言 */
+.a-label :deep(.yb-icon) {
+  color: var(--yb-intent-pending-ink);
 }
 .a-desc {
   font-size: var(--yb-fs-sm);
@@ -984,7 +1009,7 @@ onUnmounted(() => {
   font-size: var(--yb-fs-md);
   font-family: inherit;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
 .a-yes {
   border: none;
@@ -1020,7 +1045,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   border: 1px solid var(--yb-surface-border);
-  border-radius: 14px;
+  border-radius: var(--yb-radius-md);
   background: var(--yb-surface-solid);
   box-shadow: var(--yb-shadow-soft);
   overflow: hidden;
@@ -1050,7 +1075,7 @@ onUnmounted(() => {
 }
 .w-go {
   color: var(--yb-text-dim);
-  font-size: 14px;
+  font-size: var(--yb-fs-lg);
 }
 .w-body {
   height: 148px;
@@ -1078,7 +1103,7 @@ onUnmounted(() => {
   font-family: inherit;
   padding: 2px var(--yb-space-2);
   cursor: pointer;
-  transition: opacity 0.15s ease;
+  transition: opacity var(--yb-dur-fast) var(--yb-ease-out);
 }
 .mark-all:hover {
   opacity: 0.7;
@@ -1094,13 +1119,13 @@ onUnmounted(() => {
   padding: var(--yb-space-2) var(--yb-space-3);
   margin-bottom: var(--yb-space-2);
   border: 1px solid var(--yb-surface-border);
-  border-radius: 14px;
+  border-radius: var(--yb-radius-md);
   background: var(--yb-surface-solid);
   box-shadow: var(--yb-shadow-soft);
   cursor: pointer;
   font-family: inherit;
   text-align: left;
-  transition: all 0.15s ease;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
 .f-row:hover {
   border-color: var(--yb-accent);
@@ -1114,16 +1139,25 @@ onUnmounted(() => {
 .f-row.unread .f-text {
   font-weight: 600;
 }
+/* 图标槽：线性 SVG 取代原 emoji。默认淡色，未读/悬停时随行提亮 */
 .f-icon {
   flex-shrink: 0;
-  font-size: 14px;
-  line-height: 1.6;
+  display: grid;
+  place-items: center;
+  color: var(--yb-text-faint);
+  transition: color var(--yb-dur-fast) var(--yb-ease-out);
+}
+.f-row.unread .f-icon {
+  color: var(--yb-accent);
+}
+.f-row:hover .f-icon {
+  color: var(--yb-text-dim);
 }
 .f-text {
   flex: 1;
   min-width: 0;
   font-size: var(--yb-fs-md);
-  line-height: 1.55;
+  line-height: var(--yb-lh-base);
   color: var(--yb-text);
   white-space: pre-wrap;
   word-break: break-word;
@@ -1136,7 +1170,7 @@ onUnmounted(() => {
   flex-shrink: 0;
   font-size: var(--yb-fs-sm);
   color: var(--yb-text-dim);
-  line-height: 1.8;
+  line-height: var(--yb-lh-base);
 }
 .f-empty {
   padding: var(--yb-space-4) var(--yb-space-3);
@@ -1155,13 +1189,13 @@ onUnmounted(() => {
 .chip {
   padding: 4px var(--yb-space-3);
   border: 1px solid var(--yb-surface-border);
-  border-radius: 999px;
+  border-radius: var(--yb-radius-pill);
   background: var(--yb-surface-solid);
   color: var(--yb-text-dim);
   font-size: var(--yb-fs-sm);
   font-family: inherit;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
 .chip:hover {
   color: var(--yb-text);
@@ -1189,7 +1223,7 @@ onUnmounted(() => {
   font-size: var(--yb-fs-sm);
   font-family: inherit;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
 .f-act:hover {
   color: var(--yb-text);
@@ -1242,13 +1276,13 @@ onUnmounted(() => {
   width: 100%;
   padding: var(--yb-space-2) var(--yb-space-3);
   border: 1px dashed var(--yb-surface-border);
-  border-radius: 12px;
+  border-radius: var(--yb-radius-md);
   background: transparent;
   color: var(--yb-text-dim);
   font-size: var(--yb-fs-sm);
   font-family: inherit;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
 .fold-toggle:hover {
   color: var(--yb-text);
@@ -1306,14 +1340,14 @@ onUnmounted(() => {
   height: 44px;
   display: grid;
   place-items: center;
-  border-radius: 14px;
+  border-radius: var(--yb-radius-md);
   background: linear-gradient(160deg, var(--yb-accent-soft), var(--yb-surface-solid));
   border: 1px solid var(--yb-surface-border);
   box-shadow: var(--yb-shadow-soft);
-  font-size: 18px;
-  font-weight: 600;
+  font-size: 18px; /* 首字图形化展示，UI 字阶之外的单点例外 */
+  font-weight: var(--yb-fw-bold);
   color: var(--yb-accent-deep);
-  transition: all 0.15s ease;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
 .dock-item:hover .dock-icon {
   transform: translateY(-2px);
@@ -1340,12 +1374,20 @@ onUnmounted(() => {
   border-radius: 50%;
   background: var(--yb-surface-solid);
   box-shadow: var(--yb-shadow-soft);
-  font-size: 9px;
+  color: var(--yb-text-dim);
   line-height: 1;
   cursor: pointer;
   padding: 0;
   opacity: 0;
-  transition: opacity 0.15s ease, transform 0.15s ease, background 0.15s ease;
+  transition:
+    opacity var(--yb-dur-fast) var(--yb-ease-out),
+    transform var(--yb-dur-fast) var(--yb-ease-out),
+    background var(--yb-dur-fast) var(--yb-ease-out),
+    color var(--yb-dur-fast) var(--yb-ease-out);
+}
+/* 键盘可达：Tab 到图钉时必须可见，否则焦点看起来「消失」了 */
+.dock-pin:focus-visible {
+  opacity: 1;
 }
 .dock-cell:hover .dock-pin {
   opacity: 0.65;
@@ -1354,10 +1396,12 @@ onUnmounted(() => {
   opacity: 1;
   transform: scale(1.15);
 }
+/* 已固定：accent 实底 + 白图标（原先只换底色，SVG 会蓝底蓝线看不见） */
 .dock-pin.on {
   opacity: 1;
   background: var(--yb-accent);
   border-color: var(--yb-accent);
+  color: var(--yb-text-on-accent);
 }
 
 .bar {

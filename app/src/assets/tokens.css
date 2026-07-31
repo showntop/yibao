@@ -1,102 +1,278 @@
-/* 设计令牌：宠物窗与面板窗共用（main.ts / panel.ts 各 import 一次）。
+/* ============================================================================
+ * 译宝 Yibao — 设计令牌
+ * 宠物窗与面板窗共用（main.ts / panel.ts 各 import 一次）
+ *
  * 主题「天青 Sky」：清爽白底 + 天青蓝 accent + 大圆角 + 弹簧动效。
- * 2026-07-23 由治愈系暖奶油迁移而来（token 驱动，全局一次性切换）。
- * 组件只消费变量；结构令牌（间距/字号/圆角/动效）不变。 */
+ *
+ * 定位：常驻桌面的 AI 桌宠 agent。长时间不被操作，且始终叠在用户的真实
+ * 工作窗口之上。由此推出四条原则：
+ *   1. 静默优先      不交互时视觉噪声趋近于零
+ *   2. 状态可辨优先   24–36px 下九态必须能区分
+ *   3. 叠加友好      半透明在任意底色上都不糊字
+ *   4. 克制的生命感   呼吸/眨眼/张望保留，但幅度收小
+ *
+ * 分层约定（重要）：
+ *   [A] 原始色板  --yb-c-*    私有，只允许在本文件 [C] 映射块内引用
+ *   [B] 结构令牌  尺寸/字阶/圆角/动效，与主题无关
+ *   [C] 语义令牌  组件唯一允许消费的层
+ * 组件消费语义名而非色值，是深色模式「只加覆盖块、不改组件」的前提。
+ * ========================================================================== */
+
+/* ============ [A] 原始色板（私有） ============ */
+:root {
+  /* 冷墨蓝黑 — 文字与描边 */
+  --yb-c-ink-900: #1e2a38;
+  --yb-c-ink-700: #24313f;
+  --yb-c-ink-500: #6b7d91;
+  --yb-c-ink-400: #8a9aac;
+
+  /* 石板灰蓝 — 中性表面与阴影原色 */
+  --yb-c-slate-rgb: 40, 60, 90;
+  --yb-c-slate-050: #f3f6fa;
+  --yb-c-slate-100: #eef2f7;
+  --yb-c-slate-300: #d5e0ee;
+  --yb-c-slate-500: #8498b0;
+  --yb-c-slate-600: #5e7088;
+
+  /* 天青 — 主色 */
+  --yb-c-sky-rgb: 77, 144, 196;
+  --yb-c-sky-050: #e7f0f8;
+  --yb-c-sky-100: #f2f6fb;
+  --yb-c-sky-500: #4d90c4;
+  --yb-c-sky-600: #3d7aa8;
+
+  /* 功能色 */
+  --yb-c-amber-rgb: 242, 160, 60;
+  --yb-c-amber-500: #f2a03c;
+  --yb-c-amber-700: #a86a15;
+  --yb-c-red-rgb: 229, 72, 77;
+  --yb-c-red-500: #e5484d;
+  --yb-c-green-500: #3e8e5a;
+  --yb-c-white: #ffffff;
+}
+
+/* ============ [B] 结构令牌（与主题无关） ============ */
 :root {
   /* 间距梯度 */
   --yb-space-1: 4px;
   --yb-space-2: 8px;
   --yb-space-3: 12px;
   --yb-space-4: 16px;
+  --yb-space-5: 24px;
 
-  /* 字号梯度 */
+  /* 字号梯度：五级封顶，禁止新增中间值 */
+  --yb-fs-xs: 11px;
   --yb-fs-sm: 11.5px;
   --yb-fs-md: 12.5px;
   --yb-fs-lg: 13.5px;
   --yb-fs-xl: 15px;
 
+  /* 行高：正文可读 / UI 单行 / 标题 */
+  --yb-lh-tight: 1.25;
+  --yb-lh-ui: 1.3;
+  --yb-lh-base: 1.6;
+
+  /* 字重：只用 400/500/600。小字号下 700 在 PingFang 上糊成一团 */
+  --yb-fw-normal: 400;
+  --yb-fw-medium: 500;
+  --yb-fw-bold: 600;
+
   /* 字体族：全局统一引用，组件不再各自声明 */
   --yb-font: -apple-system, "PingFang SC", sans-serif;
   --yb-mono: ui-monospace, "SF Mono", Menlo, monospace;
-}
 
-/* ============ 天青 Sky：清爽白底 + 天青蓝 + 大圆角 + 弹簧动效 ============ */
-:root {
-  /* 表面 */
-  --yb-bg: #eef2f7;
-  --yb-shell-bg: rgba(255, 255, 255, 0.94); /* 0.94：底下是白窗也不糊字（0.86 实测看不清） */
-  --yb-glass-border: rgba(255, 255, 255, 0.7);
-  --yb-blur: saturate(140%) blur(20px);
-  --yb-shadow: 0 10px 32px rgba(40, 60, 90, 0.16);
-
-  /* 文字 */
-  --yb-text: #3f372e;
-  --yb-text-dim: #8a9aac;
-
-  /* 主色（天青） */
-  --yb-accent: #4d90c4;
-  --yb-accent-deep: #3d7aa8;
-  --yb-accent-soft: #e7f0f8;
-  --yb-bubble-ai: rgba(255, 255, 255, 0.94);
-  --yb-bubble-user: rgba(231, 240, 248, 0.9);
-  --yb-danger: #e5484d;
-  --yb-danger-soft: rgba(229, 72, 77, 0.24);
-
-  /* 形象身体（天青瓷白胎） */
-  --yb-body-hi: #ffffff;
-  --yb-body-mid: #f2f6fb;
-  --yb-body-lo: #d5e0ee;
-  --yb-body-ink: #3f372e;
-  --yb-body-core-shadow: #8498b0;
-  --yb-body-contact: #5e7088;
-  --yb-body-blush: #ffb89a;
-  --yb-body-stem: #6a7c92;
-
-  /* 天线状态灯（七态 + 环境态 notify） */
-  --yb-state-idle: #aab8c8;
-  --yb-state-listen: #2fb0b5;
-  --yb-state-think: #8e7cf0;
-  --yb-state-work: #f2a03c;
-  --yb-state-say: #58b368;
-  --yb-state-success: #3e8e5a;
-  --yb-state-error: #e5484d;
-  --yb-state-notify: #ee5f8f;
-
-  /* 圆角梯度 */
+  /* 圆角梯度（xs 仅用于气泡尾巴角、行内代码等微小件） */
+  --yb-radius-xs: 4px;
   --yb-radius-sm: 10px;
   --yb-radius-md: 14px;
   --yb-radius-lg: 18px;
   --yb-radius-xl: 24px;
+  --yb-radius-pill: 999px;
   --yb-radius: var(--yb-radius-md);
 
-  /* 动效：弹簧曲线 */
-  --yb-ease: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --yb-dur: 0.22s;
+  /* 动效时长：fast=反馈, base=转场, slow=入场/折叠 */
+  --yb-dur-fast: 0.12s;
+  --yb-dur: 0.2s;
+  --yb-dur-slow: 0.36s;
 
-  /* 组件表面（输入条/卡片/次级按钮） */
-  --yb-surface: rgba(255, 255, 255, 0.78);
-  --yb-surface-solid: #fbfdff;
-  --yb-surface-2: #f3f6fa; /* 次要表面（面板底/嵌套卡），替代旧暖奶油 #f6f1ea */
-  --yb-surface-border: rgba(40, 60, 90, 0.1);
-  --yb-line: rgba(40, 60, 90, 0.08); /* 分割线/分隔细线 */
-  --yb-btn-neutral: rgba(40, 60, 90, 0.07);
-  --yb-well: rgba(40, 60, 90, 0.05);
-  --yb-shadow-soft: 0 2px 8px rgba(40, 60, 90, 0.08);
-
-  /* 代码：围栏块底 / 行内 code 底（accent 淡染） */
-  --yb-code-bg: rgba(40, 60, 90, 0.06);
-  --yb-code-inline-bg: rgba(77, 144, 196, 0.12);
+  /* 缓动：spring 只用于形象与入场，其余用 out */
+  --yb-ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --yb-ease-inout: cubic-bezier(0.4, 0, 0.2, 1);
+  --yb-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --yb-ease: var(--yb-ease-spring); /* 历史名：形象与气泡入场 */
 }
 
-/* ============ 过渡别名：Task 2 重写 Avatar 后可删 ============ */
+/* ============ [C] 语义令牌 ============ */
+:root {
+  /* ---- 表面层级 L1/L2/L3 ----
+   * L1 页面底（无阴影）→ L2 内容卡（实色，叠在用户文档上不糊字）
+   * → L3 浮层（玻璃 + blur，仅气泡/弹窗/Dock）
+   * 玻璃材质只允许出现在 L3，这是「叠加友好」原则的硬约束。 */
+  --yb-bg: var(--yb-c-slate-100);
+  --yb-surface-1: var(--yb-c-white);
+  --yb-surface-2: var(--yb-c-slate-050);
+  --yb-surface-3: rgba(var(--yb-c-slate-rgb), 0.05);
+  --yb-glass: rgba(255, 255, 255, 0.94); /* 0.94：底下是白窗也不糊字（0.86 实测看不清） */
+  --yb-blur: saturate(140%) blur(20px);
+
+  /* ---- 文字 ----
+   * 修：原 --yb-text/#3f372e 是旧奶油主题的暖棕，留在冷天青表面上与
+   * --yb-text-dim 的冷调同屏冲突。统一为冷墨蓝黑。 */
+  --yb-text-strong: var(--yb-c-ink-900);
+  --yb-text: var(--yb-c-ink-900);
+  --yb-text-dim: var(--yb-c-ink-500);
+  --yb-text-faint: var(--yb-c-ink-400);
+  --yb-text-on-accent: var(--yb-c-white);
+
+  /* ---- 描边 ---- */
+  --yb-border-base: rgba(var(--yb-c-slate-rgb), 0.1);
+  --yb-border-strong: rgba(var(--yb-c-slate-rgb), 0.18);
+  --yb-line: rgba(var(--yb-c-slate-rgb), 0.08);
+  --yb-glass-border: rgba(255, 255, 255, 0.7);
+
+  /* ---- 主色 ---- */
+  --yb-accent: var(--yb-c-sky-500);
+  --yb-accent-deep: var(--yb-c-sky-600);
+  --yb-accent-soft: var(--yb-c-sky-050);
+
+  /* ---- 意图色（语义动作）----
+   * 与「天线状态灯」--yb-state-* 彻底分开：state 描述形象在做什么，
+   * intent 描述界面要用户做什么。原先待批准区借用 --yb-state-work
+   * 的琥珀，导致两套语义纠缠。 */
+  --yb-intent-pending: var(--yb-c-amber-500);
+  --yb-intent-pending-ink: var(--yb-c-amber-700);
+  --yb-intent-pending-soft: rgba(var(--yb-c-amber-rgb), 0.12);
+  --yb-intent-ok: var(--yb-c-green-500);
+  --yb-intent-danger: var(--yb-c-red-500);
+  --yb-danger: var(--yb-c-red-500);
+  --yb-danger-soft: rgba(var(--yb-c-red-rgb), 0.24);
+
+  /* ---- 阴影梯度：对应 L1/L2/L3 ---- */
+  --yb-shadow-1: 0 1px 2px rgba(var(--yb-c-slate-rgb), 0.06);
+  --yb-shadow-2: 0 2px 8px rgba(var(--yb-c-slate-rgb), 0.08);
+  --yb-shadow-3: 0 10px 32px rgba(var(--yb-c-slate-rgb), 0.16);
+  --yb-shadow-sm: var(--yb-shadow-1); /* 原被 App.vue:814 引用但从未定义 */
+  --yb-shadow-soft: var(--yb-shadow-2);
+  --yb-shadow: var(--yb-shadow-3);
+
+  /* ---- 焦点环：键盘可达性，当前多数按钮缺失 ---- */
+  --yb-focus-ring: 0 0 0 2px var(--yb-c-white), 0 0 0 4px rgba(var(--yb-c-sky-rgb), 0.55);
+  --yb-border-focus: var(--yb-c-sky-500);
+
+  /* ---- 气泡 ---- */
+  --yb-bubble-ai: rgba(255, 255, 255, 0.94);
+  --yb-bubble-user: rgba(231, 240, 248, 0.9);
+
+  /* ---- 交互表面 ---- */
+  --yb-btn-neutral: rgba(var(--yb-c-slate-rgb), 0.07);
+  --yb-btn-neutral-hover: rgba(var(--yb-c-slate-rgb), 0.12);
+  --yb-well: rgba(var(--yb-c-slate-rgb), 0.05);
+
+  /* ---- 代码 ---- */
+  --yb-code-bg: rgba(var(--yb-c-slate-rgb), 0.06);
+  --yb-code-inline-bg: rgba(var(--yb-c-sky-rgb), 0.12);
+
+  /* ---- 形象身体（天青瓷白胎）----
+   * body-ink 同样修掉暖棕残留：描边与影子改冷墨。 */
+  --yb-body-hi: var(--yb-c-white);
+  --yb-body-mid: var(--yb-c-sky-100);
+  --yb-body-lo: var(--yb-c-slate-300);
+  --yb-body-ink: var(--yb-c-ink-700);
+  --yb-body-core-shadow: var(--yb-c-slate-500);
+  --yb-body-contact: var(--yb-c-slate-600);
+  --yb-body-blush: #ffb89a;
+  --yb-body-stem: #6a7c92;
+  /* 形象装饰件：原先在 Avatar.vue 内硬编码色值 */
+  --yb-body-spark: var(--yb-c-amber-500); /* success 星芒 */
+  --yb-body-sweat: #6a9cc4; /* error 汗滴 */
+  --yb-shadow-ink: var(--yb-c-slate-600); /* 落地投影（原为暖棕 #3f372e） */
+
+  /* ---- 天线状态灯（九态）----
+   * 这是形象的状态信号通道，不可挪作装饰用途。 */
+  --yb-state-idle: #aab8c8;
+  --yb-state-listen: #2fb0b5;
+  --yb-state-think: #8e7cf0;
+  --yb-state-work: var(--yb-c-amber-500);
+  --yb-state-say: #58b368;
+  --yb-state-success: var(--yb-c-green-500);
+  --yb-state-error: var(--yb-c-red-500);
+  --yb-state-notify: #ee5f8f;
+  --yb-state-drowsy: #9aa8bb;
+}
+
+/* ============ 历史别名 ============
+ * App.vue / HomeChat.vue 的状态圆点仍在消费这批短名，保留以免破坏。
+ * 新代码请直接用 --yb-state-*。 */
 :root {
   --yb-idle: var(--yb-state-idle);
   --yb-listen: var(--yb-state-listen);
   --yb-think: var(--yb-state-think);
   --yb-work: var(--yb-state-work);
   --yb-say: var(--yb-state-say);
-  --yb-dumpling-hi: var(--yb-body-hi);
-  --yb-dumpling-lo: var(--yb-body-lo);
-  --yb-dumpling-ink: var(--yb-body-ink);
-  --yb-dumpling-blush: var(--yb-body-blush);
+  --yb-shell-bg: var(--yb-glass);
+  --yb-surface: rgba(255, 255, 255, 0.78);
+  --yb-surface-solid: #fbfdff;
+  --yb-surface-border: var(--yb-border-base);
 }
+
+/* ============ 全局基线 ============ */
+:root {
+  color-scheme: light;
+}
+
+/* 数字与代码：等宽 + 等宽数字，避免计数/时间/统计跳动 */
+.yb-num,
+code,
+kbd,
+pre {
+  font-family: var(--yb-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 键盘可达焦点环：全局基线，组件可覆盖但不该删 */
+:where(button, a, input, textarea, select, [tabindex]):focus-visible {
+  outline: none;
+  box-shadow: var(--yb-focus-ring);
+  border-radius: var(--yb-radius-sm);
+}
+
+/* 禁用态统一 */
+:where(button, [role="button"]):disabled,
+:where(button, [role="button"])[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ============ 无障碍与省电 ============
+ * 常驻桌面软件的底线：系统一旦要求减少动效，所有循环动画必须停。
+ * 形象的呼吸/眨眼/张望/招手都是无限循环，不关会持续占用合成器。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ============ 深色模式骨架（本次不交付） ============
+ * 组件已全部消费 [C] 语义层，因此深色只需在此追加一个覆盖块，
+ * 无需改动任何组件文件：
+ *
+ * [data-theme="dark"] {
+ *   color-scheme: dark;
+ *   --yb-bg: #131a22;
+ *   --yb-surface-1: #1b242e;
+ *   --yb-surface-2: #202b36;
+ *   --yb-glass: rgba(27, 36, 46, 0.92);
+ *   --yb-text: #e6edf5;
+ *   --yb-text-dim: #97a6b8;
+ *   --yb-border-base: rgba(255, 255, 255, 0.1);
+ *   --yb-focus-ring: 0 0 0 2px #131a22, 0 0 0 4px rgba(77, 144, 196, 0.7);
+ *   ...（accent / intent / state 按对比度上调明度）
+ * }
+ *
+ * 注意需重新校验两处：透明窗在深色下的 --yb-glass 不透明度，
+ * 以及形象瓷白胎在深色背景上的描边对比。 */
