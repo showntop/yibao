@@ -275,3 +275,59 @@ def test_feed_status_migration_idempotent(tmp_path):
     f = FeedStore(db)
     f.add("task", "x", {})
     assert f.recent()[0]["status"] == "none"
+
+
+# ---------- 信任统计读模型（v1.1 Slice 0）----------
+def _insert(feed, ts, kind, text="x", read=0, status="none"):
+    """直接 SQL 插入（可指定 ts/read/status，feed.add 只写当前时刻）。"""
+    feed._conn.execute(
+        "INSERT INTO feed (ts, kind, text, meta, read, status) VALUES (?,?,?,'{}',?,?)",
+        (ts, kind, text, read, status),
+    )
+    feed._conn.commit()
+
+
+def test_stats_empty_db(tmp_path):
+    from yibao_brain.feed import FeedStore
+
+    feed = FeedStore(str(tmp_path / "f.db"))
+    s = feed.stats()
+    assert s["total"] == 0
+    assert s["by_kind"] == {"task": 0, "reminder": 0, "event": 0}
+    assert s["by_day"] == []
+    assert s["read_rate"] == 0.0 and s["ignored_rate"] == 0.0
+    feed.close()
+
+
+def test_stats_by_kind_by_day_and_rates(tmp_path):
+    import time
+
+    from yibao_brain.feed import FeedStore
+
+    feed = FeedStore(str(tmp_path / "f.db"))
+    now = time.time()
+    _insert(feed, now, "task", read=1)
+    _insert(feed, now, "task")                              # 未读
+    _insert(feed, now - 86400, "reminder", status="ignore")  # 恰好前一天（必跨日历日）
+    s = feed.stats(days=7)
+    assert s["total"] == 3
+    assert s["by_kind"] == {"task": 2, "reminder": 1, "event": 0}
+    assert s["read_rate"] == round(1 / 3, 4)
+    assert s["ignored_rate"] == round(1 / 3, 4)
+    assert len({row["day"] for row in s["by_day"]}) == 2    # 跨两天分组
+    feed.close()
+
+
+def test_stats_days_window_excludes_old(tmp_path):
+    import time
+
+    from yibao_brain.feed import FeedStore
+
+    feed = FeedStore(str(tmp_path / "f.db"))
+    now = time.time()
+    _insert(feed, now - 8 * 86400, "task")   # 窗口外
+    _insert(feed, now, "event")
+    s = feed.stats(days=7)
+    assert s["total"] == 1
+    assert s["by_kind"]["task"] == 0 and s["by_kind"]["event"] == 1
+    feed.close()

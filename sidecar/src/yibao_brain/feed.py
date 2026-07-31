@@ -182,6 +182,45 @@ class FeedStore:
             print(f"[yibao] feed 计数失败（已降级为 0）：{e}", file=sys.stderr)
             return 0
 
+    def stats(self, days: int = 7) -> dict:
+        """信任统计读模型（v1.1）：近 days 天主动行为聚合——按 kind/天计数 + 已读率/忽略率。
+        读失败只 print 并返回全零结构（Feed 是增强面）。"""
+        days = max(1, int(days))
+        since = time.time() - days * 86400
+        out = {
+            "days": days, "since": since, "total": 0,
+            "by_kind": {k: 0 for k in _KINDS},
+            "by_day": [],
+            "read_rate": 0.0, "ignored_rate": 0.0,
+        }
+        try:
+            with self._lock:
+                for row in self._conn.execute(
+                    "SELECT kind, COUNT(*) AS n FROM feed WHERE ts >= ? GROUP BY kind", (since,)
+                ):
+                    out["by_kind"][row["kind"]] = int(row["n"])
+                    out["total"] += int(row["n"])
+                out["by_day"] = [
+                    {"day": r["d"], "kind": r["kind"], "count": int(r["n"])}
+                    for r in self._conn.execute(
+                        "SELECT date(ts, 'unixepoch', 'localtime') AS d, kind, COUNT(*) AS n "
+                        "FROM feed WHERE ts >= ? GROUP BY d, kind ORDER BY d DESC, kind",
+                        (since,),
+                    )
+                ]
+                row = self._conn.execute(
+                    "SELECT COUNT(*) AS n, COALESCE(SUM(read), 0) AS r, "
+                    "COALESCE(SUM(CASE WHEN status = 'ignore' THEN 1 ELSE 0 END), 0) AS i "
+                    "FROM feed WHERE ts >= ?", (since,),
+                ).fetchone()
+                n = int(row["n"])
+                if n:
+                    out["read_rate"] = round(float(row["r"]) / n, 4)
+                    out["ignored_rate"] = round(float(row["i"]) / n, 4)
+        except Exception as e:
+            print(f"[yibao] feed 统计失败（已降级为零）：{e}", file=sys.stderr)
+        return out
+
     def close(self) -> None:
         with self._lock:
             self._conn.close()
