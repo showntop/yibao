@@ -1120,6 +1120,13 @@ async def serve_async(
                 "stats": _feed_stats(running_tasks),
                 "running_tasks": running_tasks,
             })
+        elif rtype == "feed_stats":
+            # 设置页「主动行为统计」：近 N 天主动行为聚合（默认 7 天）
+            try:
+                days = int(msg.get("days") or 7)
+            except (TypeError, ValueError):
+                days = 7
+            write_msg({"type": "feed_stats", "stats": feed.stats(days=days)})
         elif rtype == "feed_mark_read":
             # 主屏点掉单条：feed.mark_read 容错（坏 id 返回 False，不抛）
             fid = int(msg.get("id", 0))
