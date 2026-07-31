@@ -9,6 +9,7 @@ import SchemaPanel from "./SchemaPanel.vue";
 import WebviewPanel from "./WebviewPanel.vue";
 import Avatar from "./Avatar.vue";
 import InputBar from "./InputBar.vue";
+import YbIcon from "./YbIcon.vue";
 import {
   onBrainEvent,
   onPendingConfirms,
@@ -54,8 +55,14 @@ const chipText = computed(() => {
   return t ? `在看：${t}` : "";
 });
 // ---- 对话浮层（工作台条上方）：输入/回复都留痕成时间线；一轮结束几秒后自动收起，角标可重开 ----
-// proc = 过程展示行（工具调用 🔧→✅/❌，样式同 hint 淡色小字）
-type ThreadMsg = { role: "user" | "ai" | "hint" | "proc"; text: string };
+// proc = 过程展示行（工具调用，样式同 hint 淡色小字）
+// pstate 驱动图标与颜色，不再把状态符号拼进 text——文案与呈现分离，图标才能统一走 YbIcon
+type ThreadMsg = {
+  role: "user" | "ai" | "hint" | "proc";
+  text: string;
+  pstate?: "run" | "ok" | "fail";
+  halted?: boolean; // 被打断：行尾显示中止图标
+};
 const msgs = ref<ThreadMsg[]>([]);
 // 过程展示：action.id → 过程行下标，结果回来原地更新
 const procIdx = new Map<string, number>();
@@ -132,19 +139,20 @@ function onEvent(e: BrainEvent) {
       break;
     case "action_proposed":
       state.value = "work";
-      // 过程行：🔧 技能短标签（use_plugin 跳过——成功有 notice，不重复）
+      // 过程行：技能短标签 + 进行中状态（use_plugin 跳过——成功有 notice，不重复）
       if (e.action?.id && !procSkip(e.action)) {
         procIdx.set(e.action.id, msgs.value.length);
-        msgs.value.push({ role: "proc", text: "🔧 " + procLabel(e.action) });
+        msgs.value.push({ role: "proc", text: procLabel(e.action), pstate: "run" });
         scrollSoon();
       }
       break;
     case "action_result": {
       const idx = e.action?.id !== undefined ? procIdx.get(e.action.id) : undefined;
       if (idx !== undefined) {
-        // 过程行收尾：✅/❌（失败带 error 摘要）
+        // 过程行收尾：成功/失败改 pstate（失败带 error 摘要）
         const ok = e.result?.success !== false;
-        msgs.value[idx].text = (ok ? "✅ " : "❌ ") + procLabel(e.action) + procResultSuffix(e.result);
+        msgs.value[idx].pstate = ok ? "ok" : "fail";
+        msgs.value[idx].text = procLabel(e.action) + procResultSuffix(e.result);
         procIdx.delete(e.action!.id!);
       } else if (e.result && !e.result.success) {
         // 直调失败（如「看 PRD」但还没生成）：结果不是 error 事件，得亮出来，否则点了没反应
@@ -180,7 +188,7 @@ function onEvent(e: BrainEvent) {
     case "interrupted":
       listeningHint.value = false;
       if (streamingIdx.value !== null) {
-        msgs.value[streamingIdx.value].text += " ⛔";
+        msgs.value[streamingIdx.value].halted = true;
         streamingIdx.value = null;
       }
       state.value = "idle";
@@ -390,12 +398,23 @@ onUnmounted(() => {
             v-for="(m, i) in msgs"
             :key="i"
             class="t-row"
-            :class="m.role"
+            :class="[m.role, m.pstate && `is-${m.pstate}`]"
             :title="m.role === 'user' ? m.text : undefined"
           >
-            {{ m.text }}
+            <YbIcon
+              v-if="m.pstate"
+              class="t-ic"
+              :name="m.pstate === 'run' ? 'spinner' : m.pstate === 'ok' ? 'check' : 'x'"
+              :spin="m.pstate === 'run'"
+              :size="12"
+            />
+            <span>{{ m.text }}</span>
+            <YbIcon v-if="m.halted" class="t-ic" name="stop" :size="12" title="已中止" />
           </div>
-          <div v-if="listeningHint" class="t-row hint">🎙 聆听中…（点团子取消）</div>
+          <div v-if="listeningHint" class="t-row hint">
+            <YbIcon class="t-ic" name="mic" :size="12" />
+            <span>聆听中…（点团子取消）</span>
+          </div>
         </div>
       </transition>
       <div class="bench-bar">
@@ -616,18 +635,37 @@ onUnmounted(() => {
   font-size: var(--yb-fs-lg);
   line-height: 1.7;
 }
+/* 提示行与过程行：图标 + 文字横排（不能给 .t-row 全局设 flex——user 行依赖 -webkit-box 截断） */
 .t-row.hint {
   align-self: center;
+  display: flex;
+  align-items: center;
+  gap: var(--yb-space-1);
   color: var(--yb-text-dim);
   font-size: var(--yb-fs-sm);
 }
-/* 过程行：同 hint 淡色小字调性（🔧→✅/❌） */
+/* 过程行：同 hint 淡色小字调性，状态由图标色承载 */
 .t-row.proc {
   align-self: center;
+  display: flex;
+  align-items: center;
+  gap: var(--yb-space-1);
   color: var(--yb-text-dim);
   font-size: var(--yb-fs-sm);
   padding-top: 0;
   padding-bottom: 0;
+}
+.t-ic {
+  flex-shrink: 0;
+}
+.t-row.is-run .t-ic {
+  color: var(--yb-accent);
+}
+.t-row.is-ok .t-ic {
+  color: var(--yb-success);
+}
+.t-row.is-fail {
+  color: var(--yb-danger);
 }
 .thread-open {
   width: 28px;

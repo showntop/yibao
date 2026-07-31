@@ -335,7 +335,7 @@ onUnmounted(() => {
         <div v-else-if="b.proc" class="proc">
           <button
             class="proc-line"
-            :class="{ fail: b.proc.done && !procOk(b.proc) }"
+            :class="{ done: b.proc.done && procOk(b.proc), fail: b.proc.done && !procOk(b.proc) }"
             :aria-expanded="b.proc.expanded"
             @click="b.proc && (b.proc.expanded = !b.proc.expanded)"
           >
@@ -483,24 +483,42 @@ onUnmounted(() => {
   animation: pop 0.15s ease;
 }
 .proc-line {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--yb-space-1);
   background: transparent;
   border: none;
+  border-radius: var(--yb-radius-sm);
   color: var(--yb-text-dim);
-  font-size: 11.5px;
-  line-height: 1.6;
+  font-family: inherit;
+  font-size: var(--yb-fs-xs);
+  line-height: var(--yb-lh-normal);
   cursor: pointer;
-  padding: 0 var(--yb-space-3);
+  padding: 2px var(--yb-space-2);
+  transition: color var(--yb-dur-fast) var(--yb-ease-out);
 }
 .proc-line:hover {
   color: var(--yb-text);
 }
-.proc-line.fail {
+/* 进行中的转圈图标用 accent，成功转 success：颜色本身就是状态信号 */
+.proc-ic {
+  flex-shrink: 0;
+  color: var(--yb-accent);
+}
+.proc-line.done .proc-ic {
+  color: var(--yb-success);
+}
+.proc-label {
+  text-align: left;
+}
+.proc-line.fail,
+.proc-line.fail .proc-ic {
   color: var(--yb-danger);
 }
 .proc-toggle {
+  flex-shrink: 0;
   opacity: 0.55;
-  margin-left: 4px;
-  font-size: 11px;
+  font-size: var(--yb-fs-2xs);
 }
 .proc-detail {
   margin: 4px 0 0;
