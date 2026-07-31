@@ -131,10 +131,16 @@ const proactiveLevel = ref<"quiet" | "bubble" | "full">("full");
 // TTS 引擎（settings.json；切换下次启动生效）
 const ttsProvider = ref<"edge" | "cosyvoice" | "cosyvoice_cloud">("edge");
 const ttsErr = ref("");
-// watch mode（settings.json；重启生效）
+// 主动协助（settings.json；即时生效）
 const watchEnabled = ref(false);
+const watchScreenEnabled = ref(false);
 const watchIdleWarn = ref(45);
 const watchQuietHours = ref("23:00-07:00");
+const watchObserveApps = ref("");
+const watchLookGap = ref(300);
+const watchMaxHour = ref(6);
+const watchMaxDay = ref(50);
+const watchStatus = ref<SettingsValues["watch.status"] | null>(null);
 const watchErr = ref("");
 const autonErr = ref("");
 
@@ -179,12 +185,42 @@ async function _setWatch(patch: Record<string, unknown>, onFail: () => void) {
   if (r === null) {
     onFail();
     watchErr.value = "设置未生效（大脑不在线？）";
+    return;
   }
+  syncWatchSettings(r);
 }
+
+function syncWatchSettings(s: SettingsValues) {
+  watchEnabled.value = s["watch.enabled"] === true;
+  watchScreenEnabled.value = s["watch.screen_enabled"] === true;
+  if (typeof s["watch.idle_warn_minutes"] === "number") watchIdleWarn.value = s["watch.idle_warn_minutes"];
+  if (typeof s["watch.quiet_hours"] === "string") watchQuietHours.value = s["watch.quiet_hours"];
+  if (Array.isArray(s["watch.observe_apps"])) watchObserveApps.value = s["watch.observe_apps"].join("\n");
+  if (typeof s["watch.look_min_gap"] === "number") watchLookGap.value = s["watch.look_min_gap"];
+  if (typeof s["watch.look_max_per_hour"] === "number") watchMaxHour.value = s["watch.look_max_per_hour"];
+  if (typeof s["watch.look_max_per_day"] === "number") watchMaxDay.value = s["watch.look_max_per_day"];
+  const status = s["watch.status"];
+  if (status && typeof status === "object") watchStatus.value = status;
+  syncPerceptionSettings(s);
+}
+
+const watchStatusText = computed(() => {
+  if (!watchStatus.value?.running) return "已停止";
+  const active = [
+    watchEnabled.value && `健康提醒${watchStatus.value.health_available ? "运行中" : "不可用"}`,
+    watchScreenEnabled.value && `屏幕建议${watchStatus.value.screen_available ? "运行中" : "不可用"}`,
+  ].filter(Boolean);
+  return active.join(" · ");
+});
 async function toggleWatch() {
   const next = !watchEnabled.value;
   watchEnabled.value = next;
   await _setWatch({ "watch.enabled": next }, () => { watchEnabled.value = !next; });
+}
+async function toggleWatchScreen() {
+  const next = !watchScreenEnabled.value;
+  watchScreenEnabled.value = next;
+  await _setWatch({ "watch.screen_enabled": next }, () => { watchScreenEnabled.value = !next; });
 }
 async function setWatchIdleWarn(n: number) {
   if (!Number.isFinite(n) || n < 5) return;
@@ -193,9 +229,27 @@ async function setWatchIdleWarn(n: number) {
   await _setWatch({ "watch.idle_warn_minutes": n }, () => { watchIdleWarn.value = prev; });
 }
 async function setWatchQuietHours(v: string) {
+  const normalized = v.trim();
+  if (normalized && !/^(?:[01]?\d|2[0-3]):[0-5]\d-(?:[01]?\d|2[0-3]):[0-5]\d$/.test(normalized)) {
+    watchErr.value = "静默时段格式应为 HH:MM-HH:MM，例如 23:00-07:00";
+    return;
+  }
   const prev = watchQuietHours.value;
-  watchQuietHours.value = v;
-  await _setWatch({ "watch.quiet_hours": v }, () => { watchQuietHours.value = prev; });
+  watchQuietHours.value = normalized;
+  await _setWatch({ "watch.quiet_hours": normalized }, () => { watchQuietHours.value = prev; });
+}
+async function saveWatchScreenOptions() {
+  const apps = watchObserveApps.value.split(/[\n,]/).map((x) => x.trim()).filter(Boolean);
+  if (!apps.every((item) => /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(item))) {
+    watchErr.value = "请填写 bundle id，例如 com.microsoft.VSCode；每行一个";
+    return;
+  }
+  await _setWatch({
+    "watch.observe_apps": apps,
+    "watch.look_min_gap": Math.max(30, watchLookGap.value),
+    "watch.look_max_per_hour": Math.max(1, watchMaxHour.value),
+    "watch.look_max_per_day": Math.max(1, watchMaxDay.value),
+  }, () => {});
 }
 
 // ---- 感知（默认关闭；settings 即时生效；日志内容由 sidecar 临时解密给 UI）----
@@ -446,10 +500,7 @@ onMounted(async () => {
       if (lv === "quiet" || lv === "bubble" || lv === "full") proactiveLevel.value = lv;
       const tp = s["tts.provider"];
       if (tp === "edge" || tp === "cosyvoice" || tp === "cosyvoice_cloud") ttsProvider.value = tp;
-      if (typeof s["watch.enabled"] === "boolean") watchEnabled.value = s["watch.enabled"];
-      if (typeof s["watch.idle_warn_minutes"] === "number") watchIdleWarn.value = s["watch.idle_warn_minutes"];
-      if (typeof s["watch.quiet_hours"] === "string") watchQuietHours.value = s["watch.quiet_hours"];
-      syncPerceptionSettings(s);
+      syncWatchSettings(s);
     }
   });
   void loadPerception();
@@ -513,7 +564,7 @@ onUnmounted(() => {
         <div v-if="ttsErr" class="s-msg err">⚠️ {{ ttsErr }}</div>
         <div class="s-row">
           <span class="s-row-label">语音播报与聆听</span>
-          <button class="switch" :class="{ on: voiceEnabled }" title="语音总开关" @click="voiceEnabled = !voiceEnabled"><i /></button>
+          <button class="switch" :class="{ on: voiceEnabled }" role="switch" :aria-checked="voiceEnabled" title="语音总开关" @click="voiceEnabled = !voiceEnabled"><i /></button>
         </div>
       </section>
 
@@ -524,15 +575,16 @@ onUnmounted(() => {
         <button class="s-primary" :disabled="saving" @click="save">{{ saving ? "保存中…" : "保存并重启大脑" }}</button>
       </div>
 
-      <!-- watch mode（settings.json，重启生效） -->
+      <!-- 主动协助：能力、触达与隐私控制放在同一处 -->
       <section class="s-group">
-        <div class="s-group-title">观察 / watch</div>
+        <div class="s-group-title">主动协助</div>
+        <div class="s-note watch-status">{{ watchStatusText }} · 设置即时生效</div>
         <div class="s-row">
           <span class="s-row-label">
-            主动观察
-            <span class="s-row-why">开启后周期观察前台活动，久坐会提醒（重启大脑生效）</span>
+            健康节律
+            <span class="s-row-why">仅读取活动 / 空闲状态；连续活跃达到阈值后提醒休息</span>
           </span>
-          <button class="switch" :class="{ on: watchEnabled }" title="主动观察总开关" @click="toggleWatch"><i /></button>
+          <button class="switch" :class="{ on: watchEnabled }" role="switch" :aria-checked="watchEnabled" title="健康节律" @click="toggleWatch"><i /></button>
         </div>
         <div v-if="watchEnabled">
           <label class="s-field">
@@ -544,35 +596,36 @@ onUnmounted(() => {
             <input type="text" :value="watchQuietHours" placeholder="23:00-07:00" @change="setWatchQuietHours(($event.target as HTMLInputElement).value)" />
           </label>
         </div>
-        <div v-if="watchErr" class="s-msg err">⚠️ {{ watchErr }}</div>
-      </section>
-
-      <!-- 通用 -->
-      <section class="s-group">
-        <div class="s-group-title">通用</div>
         <div class="s-row">
-          <span class="s-row-label">开机自动启动</span>
-          <button class="switch" :class="{ on: autoStart }" title="开机自动启动" @click="toggleAutostart"><i /></button>
+          <span class="s-row-label">
+            屏幕建议
+            <span class="s-row-why">只在允许的应用中截图判断是否值得提醒；截图前后都会核验当前 bundle id</span>
+          </span>
+          <button class="switch" :class="{ on: watchScreenEnabled }" role="switch" :aria-checked="watchScreenEnabled" title="屏幕建议" @click="toggleWatchScreen"><i /></button>
         </div>
-        <div v-if="autoStartErr" class="s-msg err">⚠️ {{ autoStartErr }}</div>
-        <div class="s-row">
-          <span class="s-row-label">全局快捷键</span>
-          <span class="s-row-value">⌘⇧Y 显示 / 隐藏译宝</span>
+        <div v-if="watchScreenEnabled" class="watch-disclosure">
+          <div class="s-note">截图会发送给当前视觉模型服务，但只允许下列 bundle id；无法实时确认前台应用时不会截图或上传。</div>
+          <label class="s-field">
+            <span class="s-label">允许观察的 bundle id<span class="s-row-why">每行一个，例如 com.microsoft.VSCode</span></span>
+            <textarea v-model="watchObserveApps" rows="3" placeholder="com.microsoft.VSCode" @blur="saveWatchScreenOptions" />
+          </label>
+          <details class="watch-advanced">
+            <summary>频率与预算</summary>
+            <label class="s-field"><span class="s-label">最小间隔（秒）</span><input v-model.number="watchLookGap" type="number" min="30" @change="saveWatchScreenOptions" /></label>
+            <label class="s-field"><span class="s-label">每小时最多观察</span><input v-model.number="watchMaxHour" type="number" min="1" @change="saveWatchScreenOptions" /></label>
+            <label class="s-field"><span class="s-label">每天最多观察</span><input v-model.number="watchMaxDay" type="number" min="1" @change="saveWatchScreenOptions" /></label>
+          </details>
         </div>
-      </section>
-
-      <!-- 自主权（settings.json，即时生效免重启） -->
-      <section class="s-group">
-        <div class="s-group-title">自主权</div>
+        <div class="s-group-title sub-title">通知方式</div>
         <div class="s-row">
           <span class="s-row-label">
             主动找我
             <span class="s-row-why">安静：提醒与播报只记入动态，不打扰；气泡：桌宠冒泡，不亮窗不出声；完整：亮窗 + 气泡</span>
           </span>
           <span class="seg" role="group" aria-label="主动找我频率">
-            <button class="seg-btn" :class="{ on: proactiveLevel === 'quiet' }" @click="setProactiveLevel('quiet')">安静</button>
-            <button class="seg-btn" :class="{ on: proactiveLevel === 'bubble' }" @click="setProactiveLevel('bubble')">气泡</button>
-            <button class="seg-btn" :class="{ on: proactiveLevel === 'full' }" @click="setProactiveLevel('full')">完整</button>
+            <button class="seg-btn" :class="{ on: proactiveLevel === 'quiet' }" :aria-pressed="proactiveLevel === 'quiet'" @click="setProactiveLevel('quiet')">安静</button>
+            <button class="seg-btn" :class="{ on: proactiveLevel === 'bubble' }" :aria-pressed="proactiveLevel === 'bubble'" @click="setProactiveLevel('bubble')">气泡</button>
+            <button class="seg-btn" :class="{ on: proactiveLevel === 'full' }" :aria-pressed="proactiveLevel === 'full'" @click="setProactiveLevel('full')">完整</button>
           </span>
         </div>
         <div class="s-row">
@@ -583,12 +636,29 @@ onUnmounted(() => {
           <button
             class="switch"
             :class="{ on: proactiveVoice }"
+            role="switch"
+            :aria-checked="proactiveVoice"
             :disabled="proactiveLevel !== 'full'"
             title="主动开口播报"
             @click="toggleProactiveVoice"
           ><i /></button>
         </div>
         <div v-if="autonErr" class="s-msg err">⚠️ {{ autonErr }}</div>
+        <div v-if="watchErr" class="s-msg err">⚠️ {{ watchErr }}</div>
+      </section>
+
+      <!-- 通用 -->
+      <section class="s-group">
+        <div class="s-group-title">通用</div>
+        <div class="s-row">
+          <span class="s-row-label">开机自动启动</span>
+          <button class="switch" :class="{ on: autoStart }" role="switch" :aria-checked="autoStart" title="开机自动启动" @click="toggleAutostart"><i /></button>
+        </div>
+        <div v-if="autoStartErr" class="s-msg err">⚠️ {{ autoStartErr }}</div>
+        <div class="s-row">
+          <span class="s-row-label">全局快捷键</span>
+          <span class="s-row-value">⌘⇧Y 显示 / 隐藏译宝</span>
+        </div>
       </section>
 
       <!-- 感知：显式 opt-in；A/C 只收状态，不截屏、不读输入内容 -->
@@ -597,19 +667,19 @@ onUnmounted(() => {
         <div class="s-note">全部默认关闭。观察内容加密存放在本机；只有开启下方模型读取开关并询问最近活动时，所选时间段才会发送给当前模型服务。</div>
         <div class="s-row">
           <span class="s-row-label">启用感知<span class="s-row-why">总开关，关闭后立即停止采样</span></span>
-          <button class="switch" :class="{ on: perceptionMaster }" title="启用感知" @click="setPerceptionSetting('perception.master', !perceptionMaster)"><i /></button>
+          <button class="switch" :class="{ on: perceptionMaster }" role="switch" :aria-checked="perceptionMaster" title="启用感知" @click="setPerceptionSetting('perception.master', !perceptionMaster)"><i /></button>
         </div>
         <div class="s-row">
           <span class="s-row-label">应用与窗口<span class="s-row-why">只在切换时记录应用名和窗口标题</span></span>
-          <button class="switch" :class="{ on: perceptionApp }" :disabled="!perceptionMaster" title="应用与窗口" @click="setPerceptionSetting('perception.app', !perceptionApp)"><i /></button>
+          <button class="switch" :class="{ on: perceptionApp }" role="switch" :aria-checked="perceptionApp" :disabled="!perceptionMaster" title="应用与窗口" @click="setPerceptionSetting('perception.app', !perceptionApp)"><i /></button>
         </div>
         <div class="s-row">
           <span class="s-row-label">活动与空闲<span class="s-row-why">只记录状态切换，不读取输入内容</span></span>
-          <button class="switch" :class="{ on: perceptionActivity }" :disabled="!perceptionMaster" title="活动与空闲" @click="setPerceptionSetting('perception.activity', !perceptionActivity)"><i /></button>
+          <button class="switch" :class="{ on: perceptionActivity }" role="switch" :aria-checked="perceptionActivity" :disabled="!perceptionMaster" title="活动与空闲" @click="setPerceptionSetting('perception.activity', !perceptionActivity)"><i /></button>
         </div>
         <div class="s-row">
           <span class="s-row-label">允许模型读取感知记录<span class="s-row-why">询问最近活动时，将所选时间段的应用名、窗口标题和活动状态发送给当前模型；不发送截图或按键内容</span></span>
-          <button class="switch" :class="{ on: perceptionModelAccess }" title="允许模型读取感知记录" @click="setPerceptionSetting('perception.model_access', !perceptionModelAccess)"><i /></button>
+          <button class="switch" :class="{ on: perceptionModelAccess }" role="switch" :aria-checked="perceptionModelAccess" title="允许模型读取感知记录" @click="setPerceptionSetting('perception.model_access', !perceptionModelAccess)"><i /></button>
         </div>
         <div class="s-note">{{ perceptionMaster ? "运行中" : "已暂停" }} · {{ perceptionItems.length }} 条已加载观察</div>
         <div v-if="perceptionErr" class="s-msg err">⚠️ {{ perceptionErr }}</div>
@@ -864,18 +934,46 @@ onUnmounted(() => {
   color: var(--yb-text-dim);
 }
 input,
-select {
+select,
+textarea {
   padding: 7px 10px;
   border-radius: var(--yb-radius-sm);
   border: 1px solid var(--yb-surface-border);
   background: var(--yb-bg);
   color: var(--yb-text);
   font-size: var(--yb-fs-md);
+  font-family: inherit;
   outline: none;
 }
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   border-color: var(--yb-accent);
+}
+.sub-title {
+  margin-top: var(--yb-space-2);
+  padding-top: var(--yb-space-2);
+  border-top: 1px solid var(--yb-surface-border);
+}
+.watch-status {
+  color: var(--yb-accent-deep);
+}
+.watch-disclosure {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yb-space-2);
+  padding: var(--yb-space-2);
+  border-radius: var(--yb-radius-md);
+  background: var(--yb-accent-soft);
+}
+.watch-disclosure textarea {
+  resize: vertical;
+}
+.watch-advanced summary {
+  cursor: pointer;
+  color: var(--yb-text-dim);
+  font-size: var(--yb-fs-md);
+  margin-bottom: var(--yb-space-2);
 }
 /* 设置行：左标签右控件 */
 .s-row {

@@ -23,6 +23,7 @@ import {
   type BrainEvent,
   type PendingConfirm,
   type PanelFocus,
+  canRememberSkill,
 } from "../lib/brain";
 import { procLabel, procSkip, procResultSuffix } from "../lib/proc";
 
@@ -37,6 +38,7 @@ const current = ref<{
 const errorText = ref(""); // 面板内顶部错误细条（不进对话气泡）
 const pendingConfirms = ref<PendingConfirm[]>([]);
 const pending = computed(() => pendingConfirms.value[0] ?? null);
+const pendingCanRemember = computed(() => canRememberSkill(pending.value?.skill ?? ""));
 const rememberPending = ref(false);
 let unlisten: (() => void) | null = null;
 let unlistenFocus: (() => void) | null = null;
@@ -223,7 +225,7 @@ async function decide(approved: boolean, remember = false) {
   if (!pending.value) return;
   const { id } = pending.value;
   try {
-    await sendConfirmBatch([{ id, approved, remember }]);
+    await sendConfirmBatch([{ id, approved, remember: pendingCanRemember.value && remember }]);
     rememberPending.value = false;
   } catch (err) {
     errorText.value = "确认失败：" + String(err);
@@ -345,7 +347,7 @@ onUnmounted(() => {
     </div>
     <div v-else-if="pending" class="confirm-bar">
       <span class="c-text">⚠️ {{ pending.label || pending.skill }}{{ pending.desc ? " · " + pending.desc : "" }}</span>
-      <label class="c-remember">
+      <label v-if="pendingCanRemember" class="c-remember">
         <input v-model="rememberPending" type="checkbox" />
         本会话不再询问
       </label>

@@ -1,22 +1,24 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
+import { canRememberSkill } from "../lib/brain";
 
-defineProps<{ skill: string; desc: string }>();
+const props = defineProps<{ skill: string; desc: string }>();
 const emit = defineEmits<{ (e: "approve", remember: boolean): void; (e: "deny"): void }>();
 const remember = ref(false);
+const canRemember = computed(() => canRememberSkill(props.skill));
 </script>
 
 <template>
   <div class="dlg">
     <div class="title"><span class="icon">⚠️</span> 确认执行高风险操作</div>
     <p><span class="skill">{{ skill }}</span>{{ desc ? " · " + desc : "" }}</p>
-    <label class="remember">
+    <label v-if="canRemember" class="remember">
       <input type="checkbox" v-model="remember" />
       本会话不再询问这个操作
     </label>
     <div class="btns">
       <button class="deny" @click="emit('deny')">拒绝</button>
-      <button class="ok" @click="emit('approve', remember)">允许执行</button>
+      <button class="ok" @click="emit('approve', canRemember && remember)">允许执行</button>
     </div>
   </div>
 </template>

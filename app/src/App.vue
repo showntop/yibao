@@ -26,6 +26,7 @@ import {
   type BrainStatusMsg,
   type BrainPermissions,
   type PendingConfirm,
+  canRememberSkill,
 } from "./lib/brain";
 import { resetWindowSize, openPanel, setInteractiveFull, setBubbleOn } from "./lib/window";
 import { SUGGESTIONS } from "./lib/suggestions";
@@ -49,6 +50,7 @@ const bubbles = ref<BubbleMsg[]>([]);
 const streamingIdx = ref<number | null>(null); // 正在接收 chunk 的 bubble 下标
 const pendingConfirms = ref<PendingConfirm[]>([]);
 const pending = computed(() => pendingConfirms.value[0] ?? null);
+const pendingCanRemember = computed(() => canRememberSkill(pending.value?.skill ?? ""));
 const rememberPending = ref(false);
 const brainDown = ref(false); // 大脑掉线/重启中（守护在恢复）
 const perms = ref<BrainPermissions | null>(null); // macOS 权限状态（null=未收到）
@@ -480,7 +482,7 @@ async function decide(approved: boolean, remember = false) {
   const { id } = pending.value;
   state.value = "think";
   try {
-    await sendConfirmBatch([{ id, approved, remember }]);
+    await sendConfirmBatch([{ id, approved, remember: pendingCanRemember.value && remember }]);
     rememberPending.value = false;
   } catch (err) {
     bubbles.value.push({ role: "ai", text: "⚠️ 确认失败：" + String(err) });
@@ -717,7 +719,7 @@ onUnmounted(() => {
             <strong>⚠️ {{ pending.label || pending.skill }}</strong>
             <span v-if="pending.desc">{{ pending.desc }}</span>
           </div>
-          <label class="quick-remember">
+          <label v-if="pendingCanRemember" class="quick-remember">
             <input v-model="rememberPending" type="checkbox" />
             本会话不再询问
           </label>

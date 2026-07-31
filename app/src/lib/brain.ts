@@ -422,6 +422,11 @@ export interface PendingConfirm {
   tier?: "Notify" | "Question" | "Review";
 }
 
+/** Arbitrary commands differ per call, so remembering approval by skill id is unsafe. */
+export function canRememberSkill(skill: string): boolean {
+  return skill !== "watch_command";
+}
+
 let _pc: PendingConfirm[] = [];
 const _pcSubs = new Set<(l: PendingConfirm[]) => void>();
 
@@ -591,10 +596,23 @@ export interface SettingsValues {
   proactive_voice: boolean; // 主动开口：提醒触发时语音播报
   "proactive.level": "quiet" | "bubble" | "full"; // 自主权旋钮：触达强度三档
   "tts.provider": "edge" | "cosyvoice" | "cosyvoice_cloud"; // TTS 引擎（重启生效）
-  "watch.enabled": boolean; // watch mode 总开关（重启生效）
+  "watch.enabled": boolean; // 健康节律，即时生效
+  "watch.screen_enabled": boolean; // 屏幕建议，即时生效
   "watch.cadence": number;
   "watch.idle_warn_minutes": number;
   "watch.quiet_hours": string;
+  "watch.observe_apps": string[];
+  "watch.look_min_gap": number;
+  "watch.look_max_per_hour": number;
+  "watch.look_max_per_day": number;
+  "watch.status": {
+    running: boolean;
+    health_enabled: boolean;
+    health_available: boolean;
+    screen_enabled: boolean;
+    screen_available: boolean;
+    last_error: string;
+  };
   "perception.master": boolean;
   "perception.app": boolean;
   "perception.activity": boolean;

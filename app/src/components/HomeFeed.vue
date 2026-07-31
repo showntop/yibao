@@ -31,6 +31,7 @@ import {
   type PendingConfirm,
   type WidgetPayload,
   type DockItem,
+  canRememberSkill,
 } from "../lib/brain";
 
 // chat：提交/点动态 → 切对话页；draft 非空时带给对话页预填
@@ -182,7 +183,8 @@ function onToggleSelect(id: string, e: Event) {
 }
 
 function rememberOf(id: string): boolean {
-  return rememberMap.value[id] ?? false;
+  const approval = approvals.value.find((item) => item.id === id);
+  return approval && canRememberSkill(approval.skill) ? rememberMap.value[id] ?? false : false;
 }
 
 function onToggleRemember(id: string, e: Event) {
@@ -501,7 +503,11 @@ onUnmounted(() => {
               <span class="a-label">🔐 {{ p.label || p.skill }}</span>
               <span class="a-desc">{{ p.desc || p.skill }}</span>
             </div>
-            <label class="a-remember" title="勾选后该技能在本会话内不再询问">
+            <label
+              v-if="canRememberSkill(p.skill)"
+              class="a-remember"
+              title="勾选后该技能在本会话内不再询问"
+            >
               <input type="checkbox" :checked="rememberOf(p.id)" @change="onToggleRemember(p.id, $event)" />
               <span>记住</span>
             </label>
