@@ -5,6 +5,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import InputBar from "./InputBar.vue";
 import SchemaPanel from "./SchemaPanel.vue";
+import YbIcon from "./YbIcon.vue";
 import {
   getFeedOnce,
   fetchFeed,
@@ -258,10 +259,11 @@ function relTime(ts: number): string {
   return `${d.getMonth() + 1}月${d.getDate()}日`;
 }
 
-function kindIcon(it: FeedItem): string {
-  if (it.kind === "reminder") return "⏰";
-  if (it.kind === "task") return "🛠";
-  return "💬";
+/** 动态类型 → YbIcon 图标名（原先返回 emoji 字符，跨平台字形不可控且与线性 UI 割裂）。 */
+function kindIcon(it: FeedItem): "clock" | "gear" | "chat" {
+  if (it.kind === "reminder") return "clock";
+  if (it.kind === "task") return "gear";
+  return "chat";
 }
 
 function elapsedSince(ts: number): string {
@@ -500,7 +502,7 @@ onUnmounted(() => {
               <input type="checkbox" :checked="isSelected(p.id)" @change="onToggleSelect(p.id, $event)" />
             </label>
             <div class="a-info">
-              <span class="a-label">🔐 {{ p.label || p.skill }}</span>
+              <span class="a-label"><YbIcon name="lock" :size="13" />{{ p.label || p.skill }}</span>
               <span class="a-desc">{{ p.desc || p.skill }}</span>
             </div>
             <label
@@ -631,7 +633,7 @@ onUnmounted(() => {
           @keydown.enter="openInChat(it)"
         >
           <span class="tier-dot" aria-hidden="true"></span>
-          <span class="f-icon">{{ kindIcon(it) }}</span>
+          <span class="f-icon"><YbIcon :name="kindIcon(it)" :size="14" /></span>
           <span class="f-text">{{ it.text }}</span>
           <span class="f-time">{{ relTime(it.ts) }}</span>
           <div class="f-actions" @click.stop>
@@ -670,7 +672,7 @@ onUnmounted(() => {
               @keydown.enter="openInChat(it)"
             >
               <span class="tier-dot" aria-hidden="true"></span>
-              <span class="f-icon">{{ kindIcon(it) }}</span>
+              <span class="f-icon"><YbIcon :name="kindIcon(it)" :size="14" /></span>
               <span class="f-text">{{ it.text }}</span>
               <span class="f-time">{{ relTime(it.ts) }}</span>
               <div class="f-actions" @click.stop>
@@ -705,8 +707,9 @@ onUnmounted(() => {
               class="dock-pin"
               :class="{ on: p.pinned }"
               :title="p.pinned ? '取消固定' : '固定到常用'"
+              :aria-pressed="p.pinned"
               @click="togglePin(p)"
-            >📌</button>
+            ><YbIcon name="pin" :size="13" /></button>
           </div>
           <div v-if="!dock.length" class="f-empty">没有发现插件</div>
         </div>
@@ -942,9 +945,16 @@ onUnmounted(() => {
   gap: 1px;
 }
 .a-label {
+  display: flex;
+  align-items: center;
+  gap: var(--yb-space-1);
   font-size: var(--yb-fs-md);
-  font-weight: 600;
+  font-weight: var(--yb-fw-bold);
   color: var(--yb-text);
+}
+/* 锁图标用「待批准」意图色，与区块左侧色条同语言 */
+.a-label :deep(.yb-icon) {
+  color: var(--yb-intent-pending-ink);
 }
 .a-desc {
   font-size: var(--yb-fs-sm);
@@ -1114,10 +1124,19 @@ onUnmounted(() => {
 .f-row.unread .f-text {
   font-weight: 600;
 }
+/* 图标槽：线性 SVG 取代原 emoji。默认淡色，未读/悬停时随行提亮 */
 .f-icon {
   flex-shrink: 0;
-  font-size: 14px;
-  line-height: 1.6;
+  display: grid;
+  place-items: center;
+  color: var(--yb-text-faint);
+  transition: color var(--yb-dur-fast) var(--yb-ease-out);
+}
+.f-row.unread .f-icon {
+  color: var(--yb-accent);
+}
+.f-row:hover .f-icon {
+  color: var(--yb-text-dim);
 }
 .f-text {
   flex: 1;
@@ -1340,12 +1359,20 @@ onUnmounted(() => {
   border-radius: 50%;
   background: var(--yb-surface-solid);
   box-shadow: var(--yb-shadow-soft);
-  font-size: 9px;
+  color: var(--yb-text-dim);
   line-height: 1;
   cursor: pointer;
   padding: 0;
   opacity: 0;
-  transition: opacity 0.15s ease, transform 0.15s ease, background 0.15s ease;
+  transition:
+    opacity var(--yb-dur-fast) var(--yb-ease-out),
+    transform var(--yb-dur-fast) var(--yb-ease-out),
+    background var(--yb-dur-fast) var(--yb-ease-out),
+    color var(--yb-dur-fast) var(--yb-ease-out);
+}
+/* 键盘可达：Tab 到图钉时必须可见，否则焦点看起来「消失」了 */
+.dock-pin:focus-visible {
+  opacity: 1;
 }
 .dock-cell:hover .dock-pin {
   opacity: 0.65;
@@ -1354,10 +1381,12 @@ onUnmounted(() => {
   opacity: 1;
   transform: scale(1.15);
 }
+/* 已固定：accent 实底 + 白图标（原先只换底色，SVG 会蓝底蓝线看不见） */
 .dock-pin.on {
   opacity: 1;
   background: var(--yb-accent);
   border-color: var(--yb-accent);
+  color: var(--yb-text-on-accent);
 }
 
 .bar {

@@ -24,6 +24,7 @@ import {
 } from "../lib/brain";
 import { SUGGESTIONS } from "../lib/suggestions";
 import { procLabel, procSkip, procResultSuffix, procDetail } from "../lib/proc";
+import YbIcon from "./YbIcon.vue";
 
 type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
 // proc：过程展示（工具调用行，可点开展开参数/结果）；panelLink：「⇢ 协作」关联气泡
@@ -167,7 +168,7 @@ function onEvent(e: BrainEvent) {
       break;
     case "reminder":
       // 主动提醒：落气泡 + 通知父级切回本页（大窗已可见，宠物窗自己管亮窗，两边互不抢）
-      bubbles.value.push({ role: "ai", text: "⏰ " + (e.text ?? "到点了") });
+      bubbles.value.push({ role: "ai", text: "⏰ " + (e.text ?? "到��了") });
       emit("reminder");
       break;
     case "error":
@@ -330,14 +331,21 @@ onUnmounted(() => {
         <button v-if="b.panelLink" class="assoc" @click="emit('openPanel')">
           {{ b.text }}<span class="assoc-arrow">前往 ›</span>
         </button>
-        <!-- 过程行：🔧/✅/❌ 工具调用，点「详情」展开参数与结果 -->
+        <!-- 过程行：图标随状态（进行中转圈 / 成功 / 失败），点「详情」展开参数与结果 -->
         <div v-else-if="b.proc" class="proc">
           <button
             class="proc-line"
             :class="{ fail: b.proc.done && !procOk(b.proc) }"
+            :aria-expanded="b.proc.expanded"
             @click="b.proc && (b.proc.expanded = !b.proc.expanded)"
           >
-            {{ b.proc.done ? (procOk(b.proc) ? "✅" : "❌") : "🔧" }} {{ b.proc.label }}{{ b.proc.done ? procErrSuffix(b.proc) : "" }}
+            <YbIcon
+              class="proc-ic"
+              :name="b.proc.done ? (procOk(b.proc) ? 'check' : 'x') : 'spinner'"
+              :spin="!b.proc.done"
+              :size="13"
+            />
+            <span class="proc-label">{{ b.proc.label }}{{ b.proc.done ? procErrSuffix(b.proc) : "" }}</span>
             <span class="proc-toggle">{{ b.proc.expanded ? "收起" : "详情" }}</span>
           </button>
           <pre v-if="b.proc.expanded" class="proc-detail">{{ procText(b.proc) }}</pre>
