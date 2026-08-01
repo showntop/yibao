@@ -17,6 +17,7 @@ from . import permissions
 from .audit import AuditLog
 from .config import a11y_enabled, computer_use_enabled, computer_use_max_steps, history_path, llm_api_key, load_settings, perception_db_path, plugin_data_dir, save_settings, screenshot_dir, stt_model_dir, tts_voice, vad_max_seconds, vad_min_silence, vad_model_path, vision_api_key, voice_enabled
 from .feed import FeedStore
+from .jobstore import JobsStore
 from .history import ConversationHistory
 from .ipc import Action, Event, RiskLevel
 from .llm import FakeProvider, GLMProvider, ToolCall
@@ -476,6 +477,30 @@ def _watch_tick(behaviors, snapshot, stgs) -> list:
     return out
 
 
+def _recover_background_jobs(feed, background_jobs, jobs_store, emit) -> None:
+    """watch_command 跨重启恢复（启动钩子）：store 挂上 manager；
+    上代进程的 running 孤儿能重跑的重跑（Feed 记账），否则标 interrupted（Feed 记账）。
+    恢复是增强面：任何单条失败不拖垮启动。"""
+    if background_jobs is None:
+        return
+    background_jobs._store = jobs_store
+
+    def _restart(orphan: dict):
+        if not os.path.isdir(orphan["cwd"]):
+            return None
+        return background_jobs.start(
+            orphan["command"], cwd=orphan["cwd"], name=orphan["name"],
+            timeout=orphan["timeout"], emit=emit)
+
+    for r in background_jobs.recover_orphans(restart=_restart):
+        if r["outcome"] == "restarted":
+            feed.add("event", f"大脑重启，后台任务已重新执行（原任务 {r['orphan']}）",
+                     {"type": "watch_command"})
+        else:
+            feed.add("event", f"后台任务因大脑重启中断，未重跑（{r['orphan']}）",
+                     {"type": "watch_command"})
+
+
 async def serve_async(
     read_msg: ReadMsg,
     write_msg: WriteMsg,
@@ -592,6 +617,10 @@ async def serve_async(
         feed=feed,
     )
     agent.invoker.emit_event = _emit_event  # 真实技能（watch_command）后台通知走同一条 gated 通道
+    # watch_command 跨重启恢复：任务落 jobs.db；上代进程的 running 孤儿重跑或标失败，全部 Feed 记账
+    jobs_store = JobsStore(os.path.join(os.path.dirname(db_path), "jobs.db"))
+    _recover_background_jobs(feed, getattr(agent.skills, "background_jobs", None),
+                             jobs_store, _emit_event)
     # 免确认集合接到闸门：命中后 decide 直接 AUTO（连 confirmation_needed 都不发）
     agent.invoker.gate.session_allowed = remembered_confirm
 
@@ -1023,6 +1052,7 @@ async def serve_async(
             jobs = getattr(agent.skills, "background_jobs", None)
             if jobs is not None:
                 jobs.shutdown()
+            jobs_store.close()
             perception_stop.set()
             if perception_thread is not None:
                 perception_thread.join(timeout=1)

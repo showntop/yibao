@@ -15,8 +15,9 @@ _TERMINAL = {"completed", "failed", "timed_out", "cancelled"}
 
 
 class BackgroundJobManager:
-    def __init__(self, *, tail_chars: int = 500) -> None:
+    def __init__(self, *, tail_chars: int = 500, store=None) -> None:
         self.tail_chars = max(80, int(tail_chars))
+        self._store = store  # JobsStore | None：持久化钩子（跨重启恢复）
         self._jobs: dict[str, dict] = {}
         self._lock = threading.RLock()
         self._closed = False
@@ -63,6 +64,8 @@ class BackgroundJobManager:
                 name=f"yibao-{task_id}",
             )
             job["thread"] = thread
+            if self._store is not None:
+                self._store.add(self._public(job))
             thread.start()
             return self._public(job)
 
@@ -155,6 +158,8 @@ class BackgroundJobManager:
                 process=None,
             )
             public = self._public(job)
+        if self._store is not None:
+            self._store.finish(task_id, status=status, exit_code=exit_code, output_tail=tail)
         if emit is not None:
             labels = {
                 "completed": "完成 ✅",
@@ -167,6 +172,26 @@ class BackgroundJobManager:
                 emit({"kind": "reminder", "text": text, **public})
             except Exception:
                 pass
+
+    def recover_orphans(self, restart) -> list[dict]:
+        """把 store 里残留的 running 任务（上代进程遗物）逐条处置：
+        先标 interrupted，再交 restart 回调尝试重跑（回调内部失败 → 保持 interrupted）。
+        返回 [{"orphan": task_id, "outcome": "restarted"|"interrupted"}]。"""
+        if self._store is None:
+            return []
+        results = []
+        for orphan in self._store.running():
+            task_id = orphan["task_id"]
+            self._store.mark_interrupted(task_id)
+            outcome = "interrupted"
+            try:
+                restarted = restart(orphan)
+                if restarted is not None:
+                    outcome = "restarted"
+            except Exception:
+                pass
+            results.append({"orphan": task_id, "outcome": outcome})
+        return results
 
     @staticmethod
     def _terminate_group(process: subprocess.Popen) -> None:

@@ -1793,3 +1793,46 @@ def test_set_dock_pin_idempotent(tmp_path, monkeypatch):
     pins = [m for m in out if m["type"] == "dock_pin_set"]
     assert all(p["ok"] for p in pins)
     assert load_settings()["dock_pinned"] == ["notes"]  # 没重复
+
+
+def test_recover_background_jobs_wiring(tmp_path):
+    """启动钩子（模块级）：孤儿重跑/标失败 + Feed 记账 + store 挂接。"""
+    from yibao_brain.background_jobs import BackgroundJobManager
+    from yibao_brain.feed import FeedStore
+    from yibao_brain.jobstore import JobsStore
+    from yibao_brain.server import _recover_background_jobs
+
+    store = JobsStore(str(tmp_path / "jobs.db"))
+    store.add({"task_id": "job_ok", "command": "exit 0", "cwd": str(tmp_path),
+               "name": "可重跑", "timeout": 60.0, "status": "running", "exit_code": None,
+               "output_tail": "", "started_at": 1.0, "finished_at": None})
+    store.add({"task_id": "job_bad", "command": "exit 0", "cwd": "/definitely/not/exist",
+               "name": "不可重跑", "timeout": 60.0, "status": "running", "exit_code": None,
+               "output_tail": "", "started_at": 2.0, "finished_at": None})
+    feed = FeedStore(str(tmp_path / "feed.db"))
+    jobs = BackgroundJobManager()
+
+    _recover_background_jobs(feed, jobs, store, lambda e: None)
+
+    assert jobs._store is store
+    items = feed.recent()
+    assert any("已重新执行" in it["text"] and "job_ok" in it["text"] for it in items), items
+    assert any("中断，未重跑" in it["text"] and "job_bad" in it["text"] for it in items), items
+    # 重跑的新任务已落库（running 或瞬完 completed）；job_bad 已标 interrupted
+    assert all(j["task_id"] != "job_bad" for j in store.running())
+    jobs.shutdown()
+    store.close()
+    feed.close()
+
+
+def test_recover_background_jobs_no_manager_is_noop(tmp_path):
+    from yibao_brain.feed import FeedStore
+    from yibao_brain.jobstore import JobsStore
+    from yibao_brain.server import _recover_background_jobs
+
+    feed = FeedStore(str(tmp_path / "feed.db"))
+    store = JobsStore(str(tmp_path / "jobs.db"))
+    _recover_background_jobs(feed, None, store, lambda e: None)  # 不抛
+    assert feed.recent() == []
+    store.close()
+    feed.close()
