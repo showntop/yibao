@@ -1909,3 +1909,9 @@ def test_serve_async_feed_feedback_roundtrip(tmp_path):
     assert {"type": "feed_feedback_set", "id": 999, "ok": False} in receipts
     feed_msg = [m for m in out if m["type"] == "feed"][0]
     assert feed_msg["items"][0]["meta"].get("feedback") == "down"
+
+
+def test_system_prompt_distinguishes_frontmost_from_visible():
+    from yibao_brain.loop import SYSTEM_PROMPT
+
+    assert "可见窗口" in SYSTEM_PROMPT and "前台应用" in SYSTEM_PROMPT

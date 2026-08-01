@@ -41,8 +41,11 @@ def _permit_interaction(ctx: SkillContext, lease) -> tuple[bool, str | None]:
 class ScreenshotSkill(Skill):
     id = "screenshot"
     label = "截屏看屏幕"
-    description = "截取当前主屏幕，保存为图片并返回路径。"
+    description = "截取当前主屏幕，保存为图片并返回路径；配置了视觉模型时附可见窗口描述。"
     default_risk = RiskLevel.L0_READONLY
+
+    def __init__(self, describe=None) -> None:
+        self._describe = describe  # callable(path)->str|None；None=无视觉（只回路径）
 
     def openai_schema(self) -> dict:
         return {
@@ -55,7 +58,15 @@ class ScreenshotSkill(Skill):
         if ctx.host is None:
             return _no_host()
         path = ctx.host.screenshotter.capture()
-        return ActionResult(success=True, data={"path": path}, screenshot_path=path)
+        data: dict = {"path": path}
+        if self._describe is not None:
+            try:
+                desc = self._describe(path)
+            except Exception:
+                desc = None
+            if desc:
+                data["description"] = desc
+        return ActionResult(success=True, data=data, screenshot_path=path)
 
 
 class ReadTreeSkill(Skill):
@@ -390,12 +401,13 @@ class ComputerUseSkill(Skill):
 
 
 def register_real_skills(
-    reg: SkillRegistry, background_jobs: BackgroundJobManager | None = None
+    reg: SkillRegistry, background_jobs: BackgroundJobManager | None = None,
+    describe=None,
 ) -> BackgroundJobManager:
-    """把真实原子技能注册到 registry。"""
+    """把真实原子技能注册到 registry。describe：截屏附视觉描述（无视觉 None）。"""
     jobs = background_jobs or BackgroundJobManager()
     for skill in (
-        ScreenshotSkill(),
+        ScreenshotSkill(describe=describe),
         ReadTreeSkill(),
         OpenAppSkill(),
         ClickControlSkill(),

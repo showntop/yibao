@@ -608,3 +608,20 @@ def test_watch_command_requires_cwd():
     assert not WatchCommandSkill(BackgroundJobManager()).run(
         {"command": "echo hi"}, SkillContext()
     ).success
+
+
+def test_screenshot_with_describe_attaches_description():
+    host = FakeHost()
+    skill = ScreenshotSkill(
+        describe=lambda path: "终端(左) + 译宝(右上)" if path == host.screenshotter.path else None)
+    r = skill.run({}, _ctx(host))
+    assert r.success
+    assert r.data["description"] == "终端(左) + 译宝(右上)"
+
+
+def test_screenshot_describe_failure_still_returns_path():
+    host = FakeHost()
+    skill = ScreenshotSkill(describe=lambda path: None)
+    r = skill.run({}, _ctx(host))
+    assert r.success
+    assert "description" not in r.data

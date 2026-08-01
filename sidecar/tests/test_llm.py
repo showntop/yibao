@@ -389,3 +389,48 @@ def test_choose_action_prompt_mentions_zones():
     assert action == {"action": "zoom", "zone": "B"}
     user_text = captured["messages"][-1]["content"][-1]["text"]
     assert "字母区域" in user_text and "A-F" in user_text
+
+
+def test_describe_screen_returns_text_and_prompt_asks_window_list():
+    captured = {}
+
+    class FakeResp:
+        choices = [type("C", (), {"message": type("M", (), {"content": "终端(左，代码)；译宝(右上，桌宠)"})()})()]
+
+    class FakeClient:
+        def __init__(self, **kw):
+            pass
+
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**kw):
+                    captured.update(kw)
+                    return FakeResp()
+
+    from yibao_brain.llm import ComputerUseClient, describe_screen
+
+    c = ComputerUseClient(api_key="x", model="glm-4.6v-flash",
+                          base_url="https://open.bigmodel.cn/api/paas/v4/",
+                          client_factory=FakeClient)
+    desc = describe_screen(c, "data:image/png;base64,x")
+    assert desc == "终端(左，代码)；译宝(右上，桌宠)"
+    sys_prompt = captured["messages"][0]["content"]
+    assert "窗口" in sys_prompt and "遗漏" in sys_prompt
+
+
+def test_describe_screen_failure_returns_none():
+    class BoomClient:
+        def __init__(self, **kw):
+            pass
+
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**kw):
+                    raise RuntimeError("api down")
+
+    from yibao_brain.llm import ComputerUseClient, describe_screen
+
+    c = ComputerUseClient(api_key="x", model="m", base_url="https://x", client_factory=BoomClient)
+    assert describe_screen(c, "data:image/png;base64,x") is None

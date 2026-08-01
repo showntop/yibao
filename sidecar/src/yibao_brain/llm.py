@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from collections.abc import AsyncIterator
 from typing import Protocol
 
@@ -276,6 +277,28 @@ def _vision_create_with_retry(create_fn, *, retries: int = 2, base_delay: float 
 
 
 CHOOSE_TEMPERATURE = 0.1  # SoM 选号要确定性，低温降抖动
+
+SCREEN_DESCRIBE_PROMPT = (
+    "列出这张屏幕截图里可见的应用窗口：每个窗口一行，给出应用名、大致位置（左/右/上/下/全屏）"
+    "和大致内容（80 字以内）。不要遗漏占画面比例大的窗口。只输出清单本身。"
+)
+
+
+def describe_screen(client, b64: str) -> str | None:
+    """屏幕可见窗口枚举（截屏看屏幕/截图唤起共用）。client 为 ComputerUseClient；失败返 None。"""
+    try:
+        resp = _vision_create_with_retry(lambda: client.client.chat.completions.create(
+            model=client.model,
+            messages=[
+                {"role": "system", "content": SCREEN_DESCRIBE_PROMPT},
+                {"role": "user", "content": [{"type": "image_url", "image_url": {"url": b64}}]},
+            ],
+        ))
+        text = (resp.choices[0].message.content or "").strip() if resp.choices else ""
+        return text[:200] or None
+    except Exception as e:
+        print(f"[yibao] 屏幕描述失败（已跳过）：{e}", file=sys.stderr)
+        return None
 
 
 class ComputerUseClient:

@@ -89,15 +89,35 @@ def build_loop(
     if not skills_factory:
         reg.register(EchoSkill())
         if real_a11y:
-            register_real_skills(reg)
-            register_composite_skills(reg)
+            cu_client = None
+            describe = None
             if vision_api_key() and computer_use_enabled():
                 try:
-                    from .llm import ComputerUseClient
+                    from .llm import ComputerUseClient, describe_screen
 
-                    reg.register(ComputerUseSkill(ComputerUseClient(), max_steps=computer_use_max_steps()))
+                    cu_client = ComputerUseClient()
+
+                    def describe(path, _c=cu_client):
+                        """截屏文件 → b64 → 可见窗口枚举；任何失败返 None。"""
+                        try:
+                            import base64
+
+                            with open(path, "rb") as f:
+                                b64 = "data:image/png;base64," + base64.b64encode(f.read()).decode()
+                            return describe_screen(_c, b64)
+                        except Exception:
+                            return None
+
                 except Exception as e:
                     print(f"[yibao] computer-use 兜底未启用：{e}", file=sys.stderr)
+                    cu_client = None
+            register_real_skills(reg, describe=describe)
+            register_composite_skills(reg)
+            if cu_client is not None:
+                try:
+                    reg.register(ComputerUseSkill(cu_client, max_steps=computer_use_max_steps()))
+                except Exception as e:
+                    print(f"[yibao] computer-use 技能注册失败：{e}", file=sys.stderr)
 
     if provider is not None:
         prov = provider
@@ -511,21 +531,9 @@ def _consume_invoke_context(invoke_ctx: dict) -> str | None:
 
 def _describe_screen(client, b64: str) -> str | None:
     """一句话描述屏幕内容（截图唤起上下文注入用）；任何失败返 None（静默跳过）。"""
-    from .llm import _vision_create_with_retry
+    from .llm import describe_screen
 
-    try:
-        resp = _vision_create_with_retry(lambda: client.client.chat.completions.create(
-            model=client.model,
-            messages=[
-                {"role": "system", "content": "用一句话（20 字以内）描述用户屏幕上正在发生什么，只输出这句话。"},
-                {"role": "user", "content": [{"type": "image_url", "image_url": {"url": b64}}]},
-            ],
-        ))
-        text = (resp.choices[0].message.content or "").strip() if resp.choices else ""
-        return text[:80] or None
-    except Exception as e:
-        print(f"[yibao] 屏幕描述失败（已跳过）：{e}", file=sys.stderr)
-        return None
+    return describe_screen(client, b64)
 
 
 async def serve_async(
