@@ -98,10 +98,30 @@ def run_som(client, som, sc, scale):
     return som.predict(action.get("mark"), marks)
 
 
+def _window_rect(tree):
+    """前台 a11y 树 → 主窗口逻辑 rect（生产 capture_window 的离线等价）。无则 None。"""
+    for node in (tree or {}).get("children") or []:
+        if node.get("role") == "AXWindow":
+            bbox = node.get("bbox")
+            if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+                return tuple(float(v) for v in bbox)
+    return None
+
+
+def run_win(client, sc, scale):
+    """生产真实路径模拟：裁窗口 → 原生 bbox → 映射回屏幕（zoom_ground 复用）。"""
+    rect = _window_rect(sc.get("tree") or {})
+    if rect is None:
+        return None
+    from yibao_brain.grounding import zoom_ground
+    return zoom_ground(client, sc["screenshot"], rect, scale, sc["target"])
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--scenarios", required=False, help="场景目录（每文件一 JSON）")
     ap.add_argument("--model", default=None, help="覆盖视觉模型（默认走 YIBAO_VISION_MODEL 配置）")
+    ap.add_argument("--win-only", action="store_true", help="只跑裁窗路径（省 baseline/SoM 调用）")
     ap.add_argument("--capture", action="store_true", help="交互采集一个场景")
     ap.add_argument("--name", default="scene")
     ap.add_argument("--target", default="")
@@ -125,11 +145,12 @@ def main():
     rows = []
     for sc in scs:
         scale = _scenario_scale(sc, sc["screenshot"])
-        b = run_baseline(client, som, sc, scale)
-        s = run_som(client, som, sc, scale)
+        b = None if args.win_only else run_baseline(client, som, sc, scale)
+        s = None if args.win_only else run_som(client, som, sc, scale)
+        w = run_win(client, sc, scale)
         rows.append({
             "name": sc.get("name", "?"),
-            "baseline": b, "som": s, "gt": sc["gt"],
+            "baseline": b, "som": s, "win": w, "gt": sc["gt"],
         })
     _report(rows)
 
@@ -138,16 +159,19 @@ def _report(rows):
     n = len(rows)
     b_hit = sum(1 for r in rows if r["baseline"] and hit(r["baseline"], r["gt"]))
     s_hit = sum(1 for r in rows if r["som"] and hit(r["som"], r["gt"]))
+    w_hit = sum(1 for r in rows if r["win"] and hit(r["win"], r["gt"]))
     b_d = [center_distance(r["baseline"], r["gt"]) for r in rows if r["baseline"]]
     s_d = [center_distance(r["som"], r["gt"]) for r in rows if r["som"]]
-    print(f"{'场景':<16}{'baseline':<22}{'SoM':<22}")
+    w_d = [center_distance(r["win"], r["gt"]) for r in rows if r["win"]]
+    print(f"{'场景':<16}{'baseline':<22}{'SoM':<22}{'win':<22}")
     for r in rows:
-        print(f"{r['name']:<16}{_fmt(r['baseline']):<22}{_fmt(r['som']):<22}")
+        print(f"{r['name']:<16}{_fmt(r['baseline']):<22}{_fmt(r['som']):<22}{_fmt(r['win']):<22}")
     print("-" * 60)
-    print(f"hit-rate:  baseline {b_hit}/{n} = {b_hit/n:.0%}   SoM {s_hit}/{n} = {s_hit/n:.0%}")
+    print(f"hit-rate:  baseline {b_hit}/{n} = {b_hit/n:.0%}   SoM {s_hit}/{n} = {s_hit/n:.0%}   win {w_hit}/{n} = {w_hit/n:.0%}")
     b_avg = sum(b_d) / len(b_d) if b_d else float("inf")
     s_avg = sum(s_d) / len(s_d) if s_d else float("inf")
-    print(f"平均距离:  baseline {b_avg:.1f}px   SoM {s_avg:.1f}px  (仅成功预测)")
+    w_avg = sum(w_d) / len(w_d) if w_d else float("inf")
+    print(f"平均距离:  baseline {b_avg:.1f}px   SoM {s_avg:.1f}px   win {w_avg:.1f}px  (仅成功预测)")
 
 
 def _fmt(p):
