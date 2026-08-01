@@ -80,7 +80,7 @@ def _zones(logical_w: float, logical_h: float) -> list[dict]:
 
 
 def _dashed_rect(draw, rect, color, width: int, dash: int = 10, gap: int = 7) -> None:
-    """PIL 无原生源线：四边按 dash/gap 分段画。"""
+    """PIL 无原生虚线：四边按 dash/gap 分段画。"""
     x1, y1, x2, y2 = rect
 
     def segments(a, b):
