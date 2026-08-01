@@ -97,6 +97,34 @@ def _dashed_rect(draw, rect, color, width: int, dash: int = 10, gap: int = 7) ->
         draw.line([(x2, ya), (x2, yb)], fill=color, width=width)
 
 
+def zoom_ground(client, shot_path: str, zone_rect, scale: float, target: str):
+    """Stage 2 区域放大：裁切区域 → client.next_action 原生 bbox → 映射回屏幕逻辑坐标。
+    任一步失败（裁切/无 box/非 click）返回 None。"""
+    try:
+        from PIL import Image
+        zx1, zy1 = float(zone_rect[0]), float(zone_rect[1])
+        with Image.open(shot_path) as _raw:
+            im = _raw.convert("RGB")
+            box = [int(round(float(v) * scale)) for v in zone_rect]
+            box[0], box[1] = max(0, box[0]), max(0, box[1])
+            box[2], box[3] = min(im.width, box[2]), min(im.height, box[3])
+            if box[2] - box[0] < 8 or box[3] - box[1] < 8:
+                return None
+            buf = io.BytesIO()
+            im.crop(box).save(buf, format="PNG")
+        b64 = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+        action = client.next_action(b64, target, [])
+        if not action or action.get("action") != "click":
+            return None
+        bbox = action.get("box") or []
+        if len(bbox) != 4:
+            return None
+        x1, y1, x2, y2 = (float(v) for v in bbox)
+        return ((x1 + x2) / 2 / scale + zx1, (y1 + y2) / 2 / scale + zy1)
+    except Exception:
+        return None
+
+
 class SoMGrounding:
     def __init__(self, max_marks: int = MAX_MARKS):
         self._max = max_marks
@@ -171,11 +199,14 @@ class SoMGrounding:
         return marks[mark_id - 1]["center"]
 
     def resolve(self, mark_id, marks, host) -> dict:
-        """mark_id → element_at 取 handle 做 AX-press（确定性），失败回退坐标点击。"""
+        """mark_id(1-based) → 逻辑中心 → resolve_point。非法 → miss。不动作。"""
         center = self.predict(mark_id, marks)
         if center is None:
             return {"method": "miss"}
-        cx, cy = center
+        return self.resolve_point(center[0], center[1], host)
+
+    def resolve_point(self, cx, cy, host) -> dict:
+        """逻辑坐标点 → element_at 取 handle 做 AX-press（确定性），失败回退坐标点击。"""
         handle = None
         element_at = getattr(host.a11y, "element_at", None)
         if callable(element_at):

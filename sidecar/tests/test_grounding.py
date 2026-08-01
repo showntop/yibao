@@ -117,3 +117,43 @@ def test_build_marks_collects_outline_rows(tmp_path):
     _, marks, _ = SoMGrounding().build_marks(_shot(tmp_path, 400, 400), tree, scale=1.0)
     rows = [m for m in marks if m["source"] == "a11y" and m["rect"] == (0.0, 100.0, 215.0, 128.0)]
     assert len(rows) == 1
+
+
+class _FakeZoomClient:
+    def __init__(self, action):
+        self._action = action
+        self.calls = []
+
+    def next_action(self, b64, task, history):
+        self.calls.append((b64, task))
+        return self._action
+
+
+def test_zoom_ground_maps_crop_box_to_screen(tmp_path):
+    from yibao_brain.grounding import zoom_ground
+
+    shot = _shot(tmp_path, 400, 200)  # 物理 400x200，scale=1.0
+    client = _FakeZoomClient({"action": "click", "box": [10, 10, 30, 30]})
+    point = zoom_ground(client, shot, (100.0, 50.0, 200.0, 100.0), 1.0, "目标")
+    assert point == (120.0, 70.0)  # crop 内中心 (20,20) + 区域原点 (100,50)
+    assert client.calls and client.calls[0][1] == "目标"
+
+
+def test_zoom_ground_scales_physical_back_to_logical(tmp_path):
+    from yibao_brain.grounding import zoom_ground
+
+    shot = _shot(tmp_path, 400, 200)  # scale=2.0 → 逻辑 200x100
+    client = _FakeZoomClient({"action": "click", "box": [20, 20, 60, 60]})
+    point = zoom_ground(client, shot, (0.0, 0.0, 100.0, 50.0), 2.0, "t")
+    assert point == (20.0, 20.0)  # crop 内物理中心 (40,40) / 2
+
+
+def test_zoom_ground_failures_return_none(tmp_path):
+    from yibao_brain.grounding import zoom_ground
+
+    shot = _shot(tmp_path)
+    assert zoom_ground(_FakeZoomClient({"action": "finish"}), shot, (0, 0, 50, 50), 1.0, "t") is None
+    assert zoom_ground(_FakeZoomClient({"action": "click"}), shot, (0, 0, 50, 50), 1.0, "t") is None
+    assert zoom_ground(_FakeZoomClient(None), shot, (0, 0, 50, 50), 1.0, "t") is None
+    assert zoom_ground(_FakeZoomClient({"action": "click", "box": [0, 0, 1, 1]}),
+                       "/nope/missing.png", (0, 0, 50, 50), 1.0, "t") is None
