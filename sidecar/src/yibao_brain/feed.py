@@ -182,6 +182,36 @@ class FeedStore:
             print(f"[yibao] feed 计数失败（已降级为 0）：{e}", file=sys.stderr)
             return 0
 
+    def set_feedback(self, feed_id: int, feedback: str) -> bool:
+        """写 meta.feedback（up/down/none，信任仪表写侧）。写失败只 print 不抛，返回 False。"""
+        if feedback not in ("up", "down", "none"):
+            return False
+        try:
+            with self._lock:
+                cur = self._conn.execute(
+                    "UPDATE feed SET meta = json_set(meta, '$.feedback', ?) WHERE id = ?",
+                    (feedback, feed_id),
+                )
+                self._conn.commit()
+            return cur.rowcount > 0
+        except Exception as e:
+            print(f"[yibao] feed 反馈写入失败（已跳过）：{e}", file=sys.stderr)
+            return False
+
+    def count_feedback_by_type(self, mtype: str, feedback: str, since: float) -> int:
+        """since 以来同类（meta.type）条目的某反馈数（降频判断用）。读失败降级 0。"""
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT COUNT(*) AS n FROM feed WHERE json_extract(meta,'$.type') = ? "
+                    "AND json_extract(meta,'$.feedback') = ? AND ts >= ?",
+                    (mtype, feedback, since),
+                ).fetchone()
+            return int(row["n"]) if row else 0
+        except Exception as e:
+            print(f"[yibao] feed 反馈计数失败（已降级为 0）：{e}", file=sys.stderr)
+            return 0
+
     def stats(self, days: int = 7) -> dict:
         """信任统计读模型（v1.1）：近 days 天主动行为聚合——按 kind/天计数 + 已读率/忽略率。
         读失败只 print 并返回全零结构（Feed 是增强面）。"""

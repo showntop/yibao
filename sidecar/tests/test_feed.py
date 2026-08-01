@@ -331,3 +331,28 @@ def test_stats_days_window_excludes_old(tmp_path):
     assert s["total"] == 1
     assert s["by_kind"]["task"] == 0 and s["by_kind"]["event"] == 1
     feed.close()
+
+
+def test_set_feedback_and_count_by_type(tmp_path):
+    import time
+
+    from yibao_brain.feed import FeedStore
+
+    feed = FeedStore(str(tmp_path / "f.db"))
+    feed.add("reminder", "坐久了", {"type": "health_nudge"})
+    feed.add("reminder", "又坐久了", {"type": "health_nudge"})
+    feed.add("event", "任务完成", {"type": "watch_command"})
+    assert feed.set_feedback(1, "down") is True
+    assert feed.set_feedback(2, "down") is True
+    assert feed.set_feedback(3, "up") is True
+    assert feed.set_feedback(999, "down") is False
+    assert feed.set_feedback(1, "bad") is False
+    now = time.time()
+    assert feed.count_feedback_by_type("health_nudge", "down", now - 86400) == 2
+    assert feed.count_feedback_by_type("watch_command", "down", now - 86400) == 0
+    # recent() 能读出 meta.feedback
+    items = feed.recent()
+    by_id = {it["id"]: it for it in items}
+    assert by_id[1]["meta"].get("feedback") == "down"
+    assert by_id[3]["meta"].get("feedback") == "up"
+    feed.close()

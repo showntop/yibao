@@ -11,7 +11,7 @@
 type IconName =
   | "clock" | "chat" | "gear" | "spinner" | "check" | "x" | "stop"
   | "lock" | "pin" | "doc" | "alert" | "inbox" | "sparkle" | "plug"
-  | "dumpling" | "mic" | "wave";
+  | "dumpling" | "mic" | "wave" | "thumb-up" | "thumb-down";
 
 withDefaults(
   defineProps<{
@@ -64,6 +64,11 @@ const paths: Record<IconName, string> = {
   // 招手（欢迎）：简化线稿手掌
   wave:
     '<path d="M8 11.5V6a1.5 1.5 0 0 1 3 0v4.5m0-6a1.5 1.5 0 0 1 3 0V11m0-4a1.5 1.5 0 0 1 3 0v5.5m0-2.5a1.5 1.5 0 0 1 3 0v3.5c0 4.1-2.7 7-6.8 7-2.7 0-4.4-1-5.9-3.1l-2.7-3.9a1.55 1.55 0 0 1 2.5-1.8l1.9 2.3"/>',
+  // 误报反馈（信任仪表写侧）：拇指 up/down
+  "thumb-up":
+    '<path d="M7 10.4v9.1M7 11.2 11.3 4c.5-.9 1.9-.6 2 .4l.3 3.6h5.2a2 2 0 0 1 2 2.4l-1.3 6.8a2.5 2.5 0 0 1-2.4 2H7"/><path d="M7 11v8.5H4.5a1 1 0 0 1-1-1V12a1 1 0 0 1 1-1z"/>',
+  "thumb-down":
+    '<path d="M7 13.6V4.5M7 12.8 11.3 20c.5.9 1.9.6 2-.4l.3-3.6h5.2a2 2 0 0 0 2-2.4l-1.3-6.8a2.5 2.5 0 0 0-2.4-2H7"/><path d="M7 13V4.5H4.5a1 1 0 0 0-1 1V12a1 1 0 0 0 1 1z"/>',
 };
 </script>
 

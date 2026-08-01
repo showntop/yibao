@@ -1220,6 +1220,11 @@ async def serve_async(
             status = str(msg.get("status", "none"))
             ok = feed.set_status(fid, status)
             write_msg({"type": "feed_status_set", "id": fid, "status": status, "ok": ok})
+        elif rtype == "feed_feedback":
+            # 误报反馈（信任仪表写侧）：👍/👎 落 meta.feedback，同类降频由 dispatcher 执行
+            fid = int(msg.get("id", 0))
+            ok = feed.set_feedback(fid, str(msg.get("feedback", "none")))
+            write_msg({"type": "feed_feedback_set", "id": fid, "ok": ok})
         elif rtype == "widgets":
             # 主屏查询：插件 widget 卡片逐个取数（panel_payload 形状 + open 跳转方法）
             write_msg({"type": "widgets", "widgets": await _collect_widgets()})

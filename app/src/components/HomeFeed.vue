@@ -28,6 +28,7 @@ import {
   markFeedRead,
   markAllFeedRead,
   markFeedStatus,
+  sendFeedFeedback,
   feedTierOf,
   type FeedItem,
   type FeedStats,
@@ -358,6 +359,27 @@ function toggleStatus(it: FeedItem, target: "follow" | "ignore") {
   void setStatus(it, it.status === target ? "none" : target);
 }
 
+// ---- 误报反馈（信任仪表写侧）：👍/👎 落 meta.feedback，同类 24h≥2👎 大脑降 quiet ----
+
+/** 写反馈：乐观改 it.meta.feedback + 失败回滚。 */
+async function setFeedback(it: FeedItem, feedback: "up" | "down" | "none") {
+  const prev = (it.meta?.feedback as string | undefined) ?? "none";
+  if (prev === feedback) return; // 幂等
+  if (!it.meta) it.meta = {};
+  it.meta.feedback = feedback;
+  try {
+    await sendFeedFeedback(it.id, feedback);
+  } catch {
+    it.meta.feedback = prev; // 失败回滚
+  }
+}
+
+/** 👍/👎 按钮：点已在态则取消回 none，否则切到该态。 */
+function toggleFeedback(it: FeedItem, target: "up" | "down") {
+  const cur = (it.meta?.feedback as string | undefined) ?? "none";
+  void setFeedback(it, cur === target ? "none" : target);
+}
+
 /** tier 轻着色 class（Review 蓝 / Notify 灰，按 kind 推导）。 */
 function tierClass(it: FeedItem): string {
   return `tier-${feedTierOf(it.kind).toLowerCase()}`;
@@ -469,6 +491,22 @@ onUnmounted(() => {
                 <span class="tl-time yb-num">{{ itemTime(it.ts) }}</span>
                 <!-- 行内操作：macOS 惯例——hover 才浮现，不常驻占位 -->
                 <span class="tl-acts" @click.stop>
+                  <button
+                    class="tl-act"
+                    :class="{ on: it.meta?.feedback === 'up' }"
+                    :title="it.meta?.feedback === 'up' ? '取消「有用」' : '有用'"
+                    @click="toggleFeedback(it, 'up')"
+                  >
+                    <YbIcon name="thumb-up" :size="12" />
+                  </button>
+                  <button
+                    class="tl-act"
+                    :class="{ on: it.meta?.feedback === 'down' }"
+                    :title="it.meta?.feedback === 'down' ? '取消「误报」' : '误报（同类将减少打扰）'"
+                    @click="toggleFeedback(it, 'down')"
+                  >
+                    <YbIcon name="thumb-down" :size="12" />
+                  </button>
                   <button
                     class="tl-act"
                     :class="{ on: it.status === 'follow' }"

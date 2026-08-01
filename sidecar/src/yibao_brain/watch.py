@@ -102,7 +102,7 @@ class HealthNudge:
         if in_quiet_hours(snapshot.now, self._quiet_hours):
             return None
         self._warned_segment = seg
-        return {"kind": "reminder", "text": "坐久了，起来活动一下吧 🧘"}
+        return {"kind": "reminder", "type": "health_nudge", "text": "坐久了，起来活动一下吧 🧘"}
 
 
 class Ambient:
@@ -139,7 +139,7 @@ def _proactive_look(host, vision, app: str, app_id: str, emit, *, frontmost, bud
             return
         res = vision.observe(b64, app)
         if isinstance(res, dict) and res.get("speak") and res.get("text"):
-            emit({"kind": "reminder", "text": str(res["text"])})
+            emit({"kind": "reminder", "type": "proactive_chat", "text": str(res["text"])})
     except Exception as e:
         print(f"[yibao] 主动搭话视觉调用失败（跳过）：{e}", file=sys.stderr)
 

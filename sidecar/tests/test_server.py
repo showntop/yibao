@@ -1885,3 +1885,27 @@ def test_serve_async_invoke_context_branch_silent_without_host(tmp_path):
         )
     )
     assert any(m.get("type") == "pong" for m in out)
+
+
+def test_serve_async_feed_feedback_roundtrip(tmp_path):
+    """feed_feedback IPC 往返：👎 落 meta，坏 id 返 ok=False。"""
+    _seed_feed(tmp_path / "a.db", [("reminder", "坐久了", {"type": "health_nudge"})])
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([
+                {"type": "feed_feedback", "id": 1, "feedback": "down"},
+                {"type": "feed_feedback", "id": 999, "feedback": "down"},
+                {"type": "feed"},
+            ]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+        )
+    )
+    receipts = [m for m in out if m["type"] == "feed_feedback_set"]
+    assert {"type": "feed_feedback_set", "id": 1, "ok": True} in receipts
+    assert {"type": "feed_feedback_set", "id": 999, "ok": False} in receipts
+    feed_msg = [m for m in out if m["type"] == "feed"][0]
+    assert feed_msg["items"][0]["meta"].get("feedback") == "down"

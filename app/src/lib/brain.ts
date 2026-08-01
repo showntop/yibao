@@ -338,6 +338,11 @@ export function markFeedStatus(id: number, status: "none" | "follow" | "ignore")
   return invoke("feed_mark_status", { id, status });
 }
 
+/** 误报反馈（信任仪表写侧）：👍/👎/none 落 meta.feedback；同类 24h≥2👎 的主动事件会被大脑降 quiet。 */
+export function sendFeedFeedback(id: number, feedback: "up" | "down" | "none"): Promise<void> {
+  return invoke("feed_feedback", { id, feedback });
+}
+
 /** tier 三分级（按 kind 自动推导）：task→Review、reminder/event→Notify。 */
 export type FeedTier = "Notify" | "Review";
 export function feedTierOf(kind: FeedItem["kind"]): FeedTier {

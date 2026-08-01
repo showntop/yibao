@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import time
 
 
 def proactive_level(settings: dict) -> str:
@@ -32,18 +33,34 @@ class ProactiveDispatcher:
         except RuntimeError:
             pass  # event loop is already shutting down
 
+    def _downvotes(self, etype: str) -> int:
+        """同类 24h 👎 数（feed 无计数方法的老 fake → 0，不降级）。"""
+        counter = getattr(self.feed, "count_feedback_by_type", None)
+        if not callable(counter):
+            return 0
+        try:
+            return int(counter(etype, "down", time.time() - 86400))
+        except Exception:
+            return 0
+
     async def dispatch(self, event: dict) -> None:
         if not isinstance(event, dict):
             return
         text = str(event.get("text", ""))
         task_meta = event.get("task") if isinstance(event.get("task"), dict) else {}
         try:
-            self.feed.add("task" if task_meta else "event", text, task_meta)
+            meta = dict(task_meta)
+            if event.get("type"):
+                meta["type"] = event["type"]  # 信任仪表：反馈降频按 type 归组
+            self.feed.add("task" if task_meta else "event", text, meta)
         except Exception:
             pass
         if event.get("kind") != "reminder":
             self.write_msg({"type": "event", "surface": None, "event": event})
             return
+        etype = event.get("type")
+        if etype and self._downvotes(etype) >= 2:
+            return  # 同类 24h≥2 👎 → 降级 quiet（Feed 已记账，不弹不播）
         level = proactive_level(self.settings)
         if level == "quiet":
             return

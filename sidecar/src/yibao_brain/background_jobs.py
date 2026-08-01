@@ -169,7 +169,7 @@ class BackgroundJobManager:
             }
             text = f"「{job['name']}」{labels[status]}" + (f"：{tail}" if tail else "")
             try:
-                emit({"kind": "reminder", "text": text, **public})
+                emit({"kind": "reminder", "type": "watch_command", "text": text, **public})
             except Exception:
                 pass
 

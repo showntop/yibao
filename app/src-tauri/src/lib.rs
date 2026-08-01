@@ -469,6 +469,10 @@ fn spawn_bridge(app: AppHandle, mut rx: tauri::async_runtime::Receiver<CommandEv
                             Some("feed_status_set") => {
                                 let _ = app.emit("brain-feed-status-set", v);
                             }
+                            // Feed 误报反馈回执：整体转发
+                            Some("feed_feedback_set") => {
+                                let _ = app.emit("brain-feed-feedback-set", v);
+                            }
                             // 主屏 Dock 列表：整体转发
                             Some("dock_list") => {
                                 let _ = app.emit("brain-dock-list", v);
@@ -826,6 +830,16 @@ fn feed_mark_status(
     write_to_brain(
         &state,
         serde_json::json!({ "type": "feed_mark_status", "id": id, "status": status }),
+    )
+}
+
+/// 误报反馈（信任仪表写侧）：👍/👎 落 meta.feedback（大脑回 {"type":"feed_feedback_set",…}
+/// 经 brain-feed-feedback-set 广播）。注：sidecar 直读 msg["id"]，故不写 "id":0 占位。
+#[tauri::command]
+fn feed_feedback(state: tauri::State<Brain>, id: i64, feedback: String) -> Result<(), String> {
+    write_to_brain(
+        &state,
+        serde_json::json!({ "type": "feed_feedback", "id": id, "feedback": feedback }),
     )
 }
 
@@ -1526,6 +1540,7 @@ pub fn run() {
             feed_mark_read,
             feed_mark_all_read,
             feed_mark_status,
+            feed_feedback,
             dock_list,
             set_dock_pin,
             get_mem_list,
