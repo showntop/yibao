@@ -143,8 +143,15 @@ class SoMGrounding:
                 for m in marks:
                     x1, y1, x2, y2 = (v * scale for v in m["rect"])  # 逻辑→物理
                     draw.rectangle([x1, y1, x2, y2], outline=(226, 32, 32), width=lw)
-                    cx, cy = (v * scale for v in m["center"])
-                    draw.text((cx + 2, cy + 2), str(m["id"]), fill=(226, 32, 32), font=font)
+                    # 标签放框内左上角 + 字号随标记缩放：不压控件字符（slice1 诊断证据）
+                    w, h = x2 - x1, y2 - y1
+                    fs = max(12, min(im.width // 40, int(min(w, h) * 0.45)))
+                    try:
+                        mfont = ImageFont.truetype(
+                            "/System/Library/Fonts/Supplemental/Arial Bold.ttf", fs)
+                    except Exception:
+                        mfont = font
+                    draw.text((x1 + 2, y1 + 2), str(m["id"]), fill=(226, 32, 32), font=mfont)
                 im.save(buf, format="JPEG", quality=80)  # jpeg 省 token
             return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
         except Exception:
