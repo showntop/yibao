@@ -1,6 +1,6 @@
 """Set-of-Marks 视觉 grounding：截图叠编号标记 → VLM 选号 → 确定性解析。
 
-a11y 交互元素 frame 优先编号；稀疏区叠网格补齐；封顶保持 VLM 可读。
+a11y 交互元素 frame 优先编号；网格恒常兜底 a11y 未覆盖的盲区（剔除被 a11y 覆盖 ≥50% 的格子）；封顶保持 VLM 可读。
 坐标约定：marks 存逻辑坐标（屏幕点，可直接 click / element_at）；渲染叠加用物理像素。
 """
 from __future__ import annotations
@@ -16,7 +16,7 @@ INTERACTIVE_ROLES = frozenset({
     "AXComboBox", "AXIncrementor", "AXDisclosureTriangle",
 })
 MAX_MARKS = 40
-GRID_TRIGGER = 8      # a11y 交互元素 < 此数 → 叠网格补齐（疑似自绘 UI）
+GRID_CELL_COVER_DROP = 0.5  # 网格格被 a11y 覆盖面积 ≥ 此比例 → 已有标记，不再兜底
 GRID_COLS, GRID_ROWS = 6, 4
 
 
@@ -79,6 +79,20 @@ def _grid_cells(logical_w: float, logical_h: float) -> list[dict]:
     return out
 
 
+def _covered_ratio(cell, rects) -> float:
+    """cell 被 rects 覆盖的面积比（0..1）。rects 间重叠会重复计，最终 clamp 到 1。"""
+    cx1, cy1, cx2, cy2 = cell
+    area = (cx2 - cx1) * (cy2 - cy1)
+    if area <= 0:
+        return 1.0
+    covered = 0.0
+    for r in rects:
+        ix1, iy1 = max(cx1, r[0]), max(cy1, r[1])
+        ix2, iy2 = min(cx2, r[2]), min(cy2, r[3])
+        covered += max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+    return min(1.0, covered / area)
+
+
 class SoMGrounding:
     def __init__(self, max_marks: int = MAX_MARKS):
         self._max = max_marks
@@ -97,8 +111,9 @@ class SoMGrounding:
         except Exception:
             return None, []  # 截图打不开 → 回退 raw-bbox
         logical_w, logical_h = phys_w / scale, phys_h / scale
-        if len(items) < GRID_TRIGGER:
-            items.extend(_grid_cells(logical_w, logical_h))
+        a11y_rects = [it["rect"] for it in items]
+        items.extend(c for c in _grid_cells(logical_w, logical_h)
+                     if _covered_ratio(c["rect"], a11y_rects) < GRID_CELL_COVER_DROP)
         # 封顶：a11y 优先保序，网格在后
         a11y = [it for it in items if it["source"] == "a11y"]
         grid = [it for it in items if it["source"] == "grid"]
