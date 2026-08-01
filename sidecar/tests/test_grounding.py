@@ -103,3 +103,17 @@ def test_predict_returns_center_only():
     marks = [{"id": 1, "source": "a11y", "center": (3.0, 4.0), "rect": (0, 0, 6, 8)}]
     assert SoMGrounding().predict(1, marks) == (3.0, 4.0)
     assert SoMGrounding().predict(5, marks) is None
+
+
+def test_build_marks_collects_outline_rows(tmp_path):
+    """AXOutline 的 AXRow（系统设置侧边栏行实证角色）应入标记。"""
+    tree = {"role": "AXApp", "children": [
+        {"role": "AXOutline", "bbox": [0, 0, 200, 400], "children": [
+            {"role": "AXRow", "bbox": [0, 100, 215, 128], "children": [
+                {"role": "AXCell", "bbox": [10, 100, 195, 128], "children": []},
+            ]},
+        ]},
+    ]}
+    _, marks = SoMGrounding().build_marks(_shot(tmp_path, 400, 400), tree, scale=1.0)
+    rows = [m for m in marks if m["source"] == "a11y" and m["rect"] == (0.0, 100.0, 215.0, 128.0)]
+    assert len(rows) == 1

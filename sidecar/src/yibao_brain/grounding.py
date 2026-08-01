@@ -8,9 +8,11 @@ from __future__ import annotations
 import base64
 import io
 
+# AXRow：大纲/列表行（系统设置侧边栏、Finder 列表等可点行）
 INTERACTIVE_ROLES = frozenset({
     "AXButton", "AXLink", "AXTextField", "AXTextArea", "AXCheckBox",
     "AXPopUpButton", "AXMenuItem", "AXTab", "AXSlider", "AXRadioButton",
+    "AXRow",
     "AXComboBox", "AXIncrementor", "AXDisclosureTriangle",
 })
 MAX_MARKS = 40
