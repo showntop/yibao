@@ -90,6 +90,7 @@ async def _main() -> int:
             print(f"SKIP {speaker.name}：未配置或依赖缺失（见 .env.example 的 YIBAO_TTS_* / YIBAO_COSYVOICE_*）")
             continue
         before = _peak_rss_bytes()
+        await speaker._synth_pcm("预热")  # 冷启动（模型加载/连接建立）不计入稳态延迟，结果丢弃
         measured = await measure_provider(speaker, SENTENCES)
         mem = (_peak_rss_bytes() - before) if speaker.name == "cosyvoice" else None
         verdict = evaluate(measured, mem_bytes=mem)
@@ -100,6 +101,9 @@ async def _main() -> int:
         print(f"{mark} {speaker.name}: 延迟 {lat}{mem_text}")
         for f in verdict["failures"]:
             print(f"  - {f}")
+
+    if not reports:
+        print("无可用 provider，本次未产生有效判定（配置见 .env.example 的 YIBAO_TTS_* / YIBAO_COSYVOICE_*）")
 
     out_dir = Path(__file__).resolve().parent / "eval_reports"
     out_dir.mkdir(exist_ok=True)
