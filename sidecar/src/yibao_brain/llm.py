@@ -294,10 +294,11 @@ class ComputerUseClient:
     )
 
     MARK_SYSTEM_PROMPT = (
-        "你是桌面 GUI 操作助手。屏幕上每个可交互元素或区域都标了编号(1..N)。"
-        "根据用户任务给出【下一个动作】：点击某目标就输出它的编号（一个整数）；"
+        "你是桌面 GUI 操作助手。屏幕上红色数字框是可交互元素(1..N)，灰色字母框是区域(A..F)。"
+        "根据用户任务给出【下一个动作】：目标在某个红框元素上就输出它的数字编号（一个整数）；"
+        "目标不在任何红框元素上（如网页、画布等自绘内容），输出它所在的字母区域（一个字母）；"
         "需要输入文字时输出 JSON {\"action\":\"type\",\"text\":\"...\"}；"
-        "任务完成时输出 finish。点击目标只输出整数编号，不要任何其他文字。"
+        "任务完成时输出 finish。只输出整数编号或一个字母，不要任何其他文字。"
     )
 
     def __init__(self, api_key=None, model=None, base_url=None, client_factory=None):
@@ -369,22 +370,24 @@ class ComputerUseClient:
         except json.JSONDecodeError:
             return None
 
-    def choose_action(self, marked_image_b64: str, task: str, n_marks: int, history: list | None = None):
+    def choose_action(self, marked_image_b64: str, task: str, n_marks: int,
+                      history: list | None = None, n_zones: int = 0):
         messages: list[dict] = [{"role": "system", "content": self.MARK_SYSTEM_PROMPT}]
         if history:
             messages.extend(history)
+        zone_hint = f"和 {n_zones} 个灰框字母区域(A-{chr(64 + n_zones)})" if n_zones else ""
         messages.append({
             "role": "user",
             "content": [
                 {"type": "image_url", "image_url": {"url": marked_image_b64}},
-                {"type": "text", "text": f"任务：{task}\n共有 {n_marks} 个编号标记(1-{n_marks})。给出下一个动作。"},
+                {"type": "text", "text": f"任务：{task}\n共有 {n_marks} 个红框数字标记(1-{n_marks}){zone_hint}。给出下一个动作。"},
             ],
         })
         resp = _vision_create_with_retry(lambda: self.client.chat.completions.create(
             model=self.model, messages=messages, temperature=CHOOSE_TEMPERATURE,
         ))
         content = (resp.choices[0].message.content or "") if resp.choices else ""
-        return self._parse_marked_action(content, n_marks)
+        return self._parse_marked_action(content, n_marks, n_zones)
 
     def observe(self, screenshot_b64: str, app: str) -> dict | None:
         """视觉模型看一眼：是否有值得主动搭话的点。返 {"speak":bool,"text":str} 或 None。"""
@@ -406,7 +409,7 @@ class ComputerUseClient:
         return parse_observe(content)
 
     @staticmethod
-    def _parse_marked_action(content: str, n_marks: int) -> dict | None:
+    def _parse_marked_action(content: str, n_marks: int, n_zones: int = 0) -> dict | None:
         s = (content or "").strip()
         m = re.search(r"\{.*\}", s, re.S)
         if m:
@@ -417,10 +420,21 @@ class ComputerUseClient:
                     if mk is not None and not (isinstance(mk, int) and 1 <= mk <= n_marks):
                         return None
                     return obj
+                if obj.get("action") == "zoom":
+                    zone = str(obj.get("zone") or "").upper()
+                    if n_zones and len(zone) == 1 and "A" <= zone < chr(65 + n_zones):
+                        return {"action": "zoom", "zone": zone}
+                    return None
             except json.JSONDecodeError:
                 pass
         if "finish" in s.lower():
             return {"action": "finish"}
+        lm = re.fullmatch(r"([A-Za-z])\.?", s)
+        if lm and n_zones:
+            zone = lm.group(1).upper()
+            if "A" <= zone < chr(65 + n_zones):
+                return {"action": "zoom", "zone": zone}
+            return None
         m2 = re.search(r"\d+", s)
         if m2:
             val = int(m2.group(0))

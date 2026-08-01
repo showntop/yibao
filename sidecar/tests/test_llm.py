@@ -349,3 +349,43 @@ def test_choose_action_uses_low_temperature():
     action = c.choose_action("data:image/jpeg;base64,x", "点按钮", 5, [])
     assert action == {"action": "click", "mark": 3}
     assert captured.get("temperature") == 0.1
+
+
+def test_parse_marked_action_zoom_letter():
+    from yibao_brain.llm import ComputerUseClient
+
+    assert ComputerUseClient._parse_marked_action("B", 5, 6) == {"action": "zoom", "zone": "B"}
+    assert ComputerUseClient._parse_marked_action("B.", 5, 6) == {"action": "zoom", "zone": "B"}
+    assert ComputerUseClient._parse_marked_action('{"action":"zoom","zone":"C"}', 5, 6) == {"action": "zoom", "zone": "C"}
+    assert ComputerUseClient._parse_marked_action("G", 5, 6) is None   # 超出 A-F
+    assert ComputerUseClient._parse_marked_action("B", 5, 0) is None   # 无区域轨
+    assert ComputerUseClient._parse_marked_action("3", 5, 6) == {"action": "click", "mark": 3}
+    assert ComputerUseClient._parse_marked_action('{"action":"zoom","zone":"Z"}', 5, 6) is None
+
+
+def test_choose_action_prompt_mentions_zones():
+    from yibao_brain.llm import ComputerUseClient
+
+    captured = {}
+
+    class FakeResp:
+        choices = [type("C", (), {"message": type("M", (), {"content": "B"})()})()]
+
+    class FakeClient:
+        def __init__(self, **kw):
+            pass
+
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**kw):
+                    captured.update(kw)
+                    return FakeResp()
+
+    c = ComputerUseClient(api_key="x", model="glm-4.6v-flash",
+                          base_url="https://open.bigmodel.cn/api/paas/v4/",
+                          client_factory=FakeClient)
+    action = c.choose_action("data:image/jpeg;base64,x", "点按钮", 5, [], n_zones=6)
+    assert action == {"action": "zoom", "zone": "B"}
+    user_text = captured["messages"][-1]["content"][-1]["text"]
+    assert "字母区域" in user_text and "A-F" in user_text

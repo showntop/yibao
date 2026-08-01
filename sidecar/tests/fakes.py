@@ -126,8 +126,8 @@ class FakeComputerUseClient:
             return self.actions.pop(0)
         return {"action": "finish"}
 
-    def choose_action(self, marked_b64, task, n_marks, history=None):
-        self.choose_calls.append({"task": task, "n_marks": n_marks})
+    def choose_action(self, marked_b64, task, n_marks, history=None, n_zones=0):
+        self.choose_calls.append({"task": task, "n_marks": n_marks, "n_zones": n_zones})
         if self.marked_actions:
             return self.marked_actions.pop(0)
         return {"action": "finish"}
