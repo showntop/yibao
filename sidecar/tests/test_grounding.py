@@ -34,28 +34,13 @@ def test_build_marks_stores_logical_coords_under_hidpi(tmp_path):
     assert a11y["center"] == (20.0, 20.0)
 
 
-def test_build_marks_rich_a11y_full_cover_drops_grid(tmp_path):
-    """a11y 铺满全图（每格覆盖≥0.5）→ 无网格兜底（不产生冗余标记）。"""
-    nodes = []
-    for r in range(4):
-        for c in range(3):
-            x1, y1 = c * 34, r * 25
-            nodes.append({"role": "AXButton", "bbox": [x1, y1, x1 + 34, y1 + 25], "children": []})
+def test_build_marks_enough_a11y_skips_grid(tmp_path):
+    nodes = [{"role": "AXLink", "bbox": [i * 10, 0, i * 10 + 5, 5], "children": []}
+             for i in range(10)]
     tree = {"role": "AXApp", "children": nodes}
     _, marks = SoMGrounding().build_marks(_shot(tmp_path), tree, scale=1.0)
-    assert all(m["source"] == "a11y" for m in marks)
-
-
-def test_build_marks_rich_a11y_keeps_blind_grid(tmp_path):
-    """a11y 密集但只堆在角落（≥8 个）→ 盲区格子仍兜底（新契约核心）。"""
-    nodes = [{"role": "AXLink", "bbox": [i * 10, 0, i * 10 + 10, 13], "children": []}
-             for i in range(10)]  # 10 个铺满顶行（x 0..100, y 0..13）
-    tree = {"role": "AXApp", "children": nodes}
-    _, marks = SoMGrounding().build_marks(_shot(tmp_path), tree, scale=1.0)
-    sources = {m["source"] for m in marks}
-    assert "a11y" in sources and "grid" in sources  # 旧契约（≥8 不叠网格）已废除
-    grid = [m for m in marks if m["source"] == "grid"]
-    assert all(m["center"][1] > 12.5 for m in grid)  # 含 a11y 的顶行格不兜底
+    assert all(m["source"] == "a11y" for m in marks)  # ≥8 → 不补网格
+    assert len(marks) == 10
 
 
 def test_build_marks_caps_total(tmp_path):
@@ -132,13 +117,3 @@ def test_build_marks_collects_outline_rows(tmp_path):
     _, marks = SoMGrounding().build_marks(_shot(tmp_path, 400, 400), tree, scale=1.0)
     rows = [m for m in marks if m["source"] == "a11y" and m["rect"] == (0.0, 100.0, 215.0, 128.0)]
     assert len(rows) == 1
-
-
-def test_covered_ratio_full_none_partial():
-    from yibao_brain.grounding import _covered_ratio
-
-    cell = (0.0, 0.0, 100.0, 100.0)
-    assert _covered_ratio(cell, [(0.0, 0.0, 100.0, 100.0)]) == 1.0
-    assert _covered_ratio(cell, [(200.0, 200.0, 300.0, 300.0)]) == 0.0
-    assert _covered_ratio(cell, [(0.0, 0.0, 50.0, 100.0)]) == 0.5
-    assert _covered_ratio((0.0, 0.0, 0.0, 0.0), []) == 1.0  # 零面积格视为已覆盖
