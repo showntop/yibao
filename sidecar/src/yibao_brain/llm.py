@@ -377,7 +377,9 @@ class ComputerUseClient:
                 {"type": "text", "text": f"任务：{task}\n共有 {n_marks} 个编号标记(1-{n_marks})。给出下一个动作。"},
             ],
         })
-        resp = _vision_create_with_retry(lambda: self.client.chat.completions.create(model=self.model, messages=messages))
+        resp = _vision_create_with_retry(lambda: self.client.chat.completions.create(
+            model=self.model, messages=messages, temperature=CHOOSE_TEMPERATURE,
+        ))
         content = (resp.choices[0].message.content or "") if resp.choices else ""
         return self._parse_marked_action(content, n_marks)
 
@@ -422,3 +424,7 @@ class ComputerUseClient:
             if 1 <= val <= n_marks:
                 return {"action": "click", "mark": val}
         return None
+
+
+
+CHOOSE_TEMPERATURE = 0.1  # SoM 选号要确定性，低温降抖动

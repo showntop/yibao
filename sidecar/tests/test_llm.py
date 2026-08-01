@@ -321,3 +321,31 @@ def test_computer_use_vision_provider_falls_back_to_main(monkeypatch):
 
     monkeypatch.setenv("YIBAO_LLM_BASE_URL", "https://api.deepseek.com")
     assert config.computer_use_enabled() is False
+
+
+
+def test_choose_action_uses_low_temperature():
+    from yibao_brain.llm import ComputerUseClient
+
+    captured = {}
+
+    class FakeResp:
+        choices = [type("C", (), {"message": type("M", (), {"content": "3"})()})()]
+
+    class FakeClient:
+        def __init__(self, **kw):
+            pass
+
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**kw):
+                    captured.update(kw)
+                    return FakeResp()
+
+    c = ComputerUseClient(api_key="x", model="glm-4.6v-flash",
+                          base_url="https://open.bigmodel.cn/api/paas/v4/",
+                          client_factory=FakeClient)
+    action = c.choose_action("data:image/jpeg;base64,x", "点按钮", 5, [])
+    assert action == {"action": "click", "mark": 3}
+    assert captured.get("temperature") == 0.1
