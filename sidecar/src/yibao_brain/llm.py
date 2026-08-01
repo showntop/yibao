@@ -275,6 +275,9 @@ def _vision_create_with_retry(create_fn, *, retries: int = 2, base_delay: float 
             time.sleep(base_delay * (attempt + 1))
 
 
+CHOOSE_TEMPERATURE = 0.1  # SoM 选号要确定性，低温降抖动
+
+
 class ComputerUseClient:
     """GLM-4.6V 视觉 grounding 兜底：截图 + 任务 → 下一步动作 JSON。
 
@@ -425,6 +428,3 @@ class ComputerUseClient:
                 return {"action": "click", "mark": val}
         return None
 
-
-
-CHOOSE_TEMPERATURE = 0.1  # SoM 选号要确定性，低温降抖动
