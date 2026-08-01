@@ -144,7 +144,7 @@ select:focus {
   border: none;
   cursor: pointer;
   background: var(--yb-accent);
-  color: #fff;
+  color: var(--yb-text-on-accent);
   font-size: var(--yb-fs-md);
   font-weight: var(--yb-fw-bold);
   transition: filter var(--yb-dur-fast);

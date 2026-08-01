@@ -47,6 +47,7 @@
   --yb-c-amber-700: #a86a15;
   --yb-c-red-rgb: 229, 72, 77;
   --yb-c-red-500: #e5484d;
+  --yb-c-notify-rgb: 238, 95, 143;
   --yb-c-green-500: #3e8e5a;
   --yb-c-white: #ffffff;
 }
@@ -146,6 +147,8 @@
   --yb-intent-danger: var(--yb-c-red-500);
   --yb-danger: var(--yb-c-red-500);
   --yb-danger-soft: rgba(var(--yb-c-red-rgb), 0.24);
+  --yb-intent-notify: #d13d72;
+  --yb-intent-notify-soft: rgba(var(--yb-c-notify-rgb), 0.12);
 
   /* ---- 阴影梯度：对应 L1/L2/L3 ---- */
   --yb-shadow-1: 0 1px 2px rgba(var(--yb-c-slate-rgb), 0.06);
@@ -259,7 +262,7 @@
 
 /* ============ 全局基线 ============ */
 :root {
-  color-scheme: light;
+  color-scheme: light dark;
 }
 
 /* 数字与代码：等宽 + 等宽数字，避免计数/时间/统计跳动 */
@@ -299,22 +302,86 @@ pre {
   }
 }
 
-/* ============ 深色模式骨架（本次不交付） ============
- * 组件已全部消费 [C] 语义层，因此深色只需在此追加一个覆盖块，
- * 无需改动任何组件文件：
- *
- * [data-theme="dark"] {
- *   color-scheme: dark;
- *   --yb-bg: #131a22;
- *   --yb-surface-1: #1b242e;
- *   --yb-surface-2: #202b36;
- *   --yb-glass: rgba(27, 36, 46, 0.92);
- *   --yb-text: #e6edf5;
- *   --yb-text-dim: #97a6b8;
- *   --yb-border-base: rgba(255, 255, 255, 0.1);
- *   --yb-focus-ring: 0 0 0 2px #131a22, 0 0 0 4px rgba(77, 144, 196, 0.7);
- *   ...（accent / intent / state 按对比度上调明度）
- * }
- *
- * 注意需重新校验两处：透明窗在深色下的 --yb-glass 不透明度，
- * 以及形象瓷白胎在深色背景上的描边对比。 */
+/* ============ 深色模式（系统跟随） ============
+ * 组件全部消费 [C] 语义层，深色只需本覆盖块，不动组件文件。
+ * 中性覆盖由 slate 深色系换为白系透明（深色上深色叠加不可见）；
+ * 形象瓷白胎保留（深色上更醒目），仅描边提浅。 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    /* ---- 表面层级（深石板，L1→L3 抬升） ---- */
+    --yb-bg: #10161d;
+    --yb-surface-1: #18212b;
+    --yb-surface-2: #1f2a36;
+    --yb-surface-3: rgba(255, 255, 255, 0.06);
+    --yb-glass: rgba(24, 33, 43, 0.94);
+
+    /* ---- 文字 ---- */
+    --yb-text-strong: #e8eef6;
+    --yb-text: #dbe4ee;
+    --yb-text-dim: #93a3b6;
+    --yb-text-faint: #6d7f93;
+
+    /* ---- 描边（深色 slate 叠加不可见 → 白系透明） ---- */
+    --yb-border-base: rgba(255, 255, 255, 0.1);
+    --yb-border-strong: rgba(255, 255, 255, 0.18);
+    --yb-line: rgba(255, 255, 255, 0.08);
+    --yb-glass-border: rgba(255, 255, 255, 0.16);
+
+    /* ---- 主色（明度上调保对比） ---- */
+    --yb-accent: #5ea0d2;
+    --yb-accent-deep: #4d90c4;
+    --yb-accent-soft: rgba(77, 144, 196, 0.22);
+
+    /* ---- 意图色 ---- */
+    --yb-intent-pending-ink: #f0b25c;
+    --yb-intent-pending-soft: rgba(242, 160, 60, 0.18);
+    --yb-danger-soft: rgba(229, 72, 77, 0.3);
+    --yb-intent-notify: #f07aa8;
+    --yb-intent-notify-soft: rgba(var(--yb-c-notify-rgb), 0.2);
+
+    /* ---- 阴影（深色下更重更黑） ---- */
+    --yb-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --yb-shadow-2: 0 2px 8px rgba(0, 0, 0, 0.45);
+    --yb-shadow-3: 0 10px 32px rgba(0, 0, 0, 0.55);
+
+    /* ---- 焦点环 ---- */
+    --yb-focus-ring: 0 0 0 2px #10161d, 0 0 0 4px rgba(77, 144, 196, 0.7);
+
+    /* ---- 气泡 ---- */
+    --yb-bubble-ai: rgba(31, 42, 54, 0.94);
+    --yb-bubble-user: rgba(45, 62, 82, 0.9);
+
+    /* ---- 交互表面 ---- */
+    --yb-btn-neutral: rgba(255, 255, 255, 0.08);
+    --yb-btn-neutral-hover: rgba(255, 255, 255, 0.13);
+    --yb-well: rgba(255, 255, 255, 0.06);
+
+    /* ---- 代码 ---- */
+    --yb-code-bg: rgba(255, 255, 255, 0.07);
+    --yb-code-inline-bg: rgba(77, 144, 196, 0.2);
+
+    /* ---- 形象身体：瓷白胎保留，描边提浅 ---- */
+    --yb-body-ink: #d5e0ee;
+
+    /* ---- 大窗 ---- */
+    --yb-sidebar-bg: #161e27;
+    --yb-sidebar-sel: rgba(255, 255, 255, 0.1);
+    --yb-sidebar-head: #6d7f93;
+    --yb-content-bg: #10161d;
+    --yb-card-bg: #18212b;
+    --yb-card-border: rgba(255, 255, 255, 0.09);
+    --yb-card-row-line: rgba(255, 255, 255, 0.07);
+    --yb-card-page-bg: #10161d;
+    --yb-row-hover: rgba(255, 255, 255, 0.05);
+    --yb-row-selected: rgba(77, 144, 196, 0.22);
+    --yb-sticky-bg: rgba(16, 22, 29, 0.82);
+    --yb-segment-track: rgba(255, 255, 255, 0.1);
+    --yb-segment-thumb: #3a4a5c;
+
+    /* ---- 历史别名 ---- */
+    --yb-surface: rgba(24, 33, 43, 0.78);
+    --yb-surface-solid: #1f2a36;
+  }
+}

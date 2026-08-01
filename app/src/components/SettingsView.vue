@@ -1262,7 +1262,7 @@ textarea:focus {
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--yb-segment-thumb);
   box-shadow: var(--yb-shadow-1);
   transition: transform var(--yb-dur-fast) var(--yb-ease-out);
 }
@@ -1370,11 +1370,11 @@ textarea:focus {
 .s-mini.danger {
   border-color: var(--yb-danger);
   background: var(--yb-danger);
-  color: #fff;
+  color: var(--yb-text-on-accent);
 }
 .s-mini.danger:hover:not(:disabled) {
   background: var(--yb-danger);
-  color: #fff;
+  color: var(--yb-text-on-accent);
   filter: brightness(0.94);
 }
 .s-mini:disabled {

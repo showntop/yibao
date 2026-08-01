@@ -79,7 +79,7 @@ button {
 }
 .ok {
   background: var(--yb-accent);
-  color: #fff;
+  color: var(--yb-text-on-accent);
 }
 .deny {
   background: var(--yb-btn-neutral);

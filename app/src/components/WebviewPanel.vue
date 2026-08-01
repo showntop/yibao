@@ -175,6 +175,6 @@ onBeforeUnmount(() => {
   height: 100%;
   border: none;
   border-radius: var(--yb-radius-md);
-  background: #fffaf4;
+  background: var(--yb-surface-1);
 }
 </style>

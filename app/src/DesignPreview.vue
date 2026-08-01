@@ -636,7 +636,7 @@ const boardData = {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--yb-segment-thumb);
   box-shadow: var(--yb-shadow-1);
   transition: transform var(--yb-dur-fast) var(--yb-ease-out);
 }

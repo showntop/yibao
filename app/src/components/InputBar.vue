@@ -142,18 +142,18 @@ input::placeholder {
 .mic.listening {
   background: var(--yb-danger);
   border-color: transparent;
-  color: #fff;
+  color: var(--yb-text-on-accent);
   animation: mic-pulse 1.6s ease-out infinite;
 }
 @keyframes mic-pulse {
   0% {
-    box-shadow: 0 0 0 0 rgba(229, 72, 77, 0.35);
+    box-shadow: 0 0 0 0 rgba(var(--yb-c-red-rgb), 0.35);
   }
   70% {
-    box-shadow: 0 0 0 8px rgba(229, 72, 77, 0);
+    box-shadow: 0 0 0 8px rgba(var(--yb-c-red-rgb), 0);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(229, 72, 77, 0);
+    box-shadow: 0 0 0 0 rgba(var(--yb-c-red-rgb), 0);
   }
 }
 .wave {
@@ -166,7 +166,7 @@ input::placeholder {
   width: 2.5px;
   height: 5px;
   border-radius: var(--yb-radius-pill);
-  background: #fff;
+  background: var(--yb-surface-1);
   animation: wave 1s ease-in-out infinite;
 }
 .wave i:nth-child(2) {
@@ -188,8 +188,8 @@ input::placeholder {
 .main {
   border: none;
   background: var(--yb-accent);
-  color: #fff;
-  box-shadow: 0 2px 6px rgba(77, 144, 196, 0.35);
+  color: var(--yb-text-on-accent);
+  box-shadow: 0 2px 6px rgba(var(--yb-c-sky-rgb), 0.35);
 }
 .main:hover:not(:disabled) {
   background: var(--yb-accent-deep);

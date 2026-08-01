@@ -85,7 +85,7 @@ const html = computed(() => (props.role === "ai" && !props.typing ? renderMarkdo
 }
 .user {
   background: linear-gradient(135deg, var(--yb-accent), var(--yb-accent-deep));
-  color: #fff;
+  color: var(--yb-text-on-accent);
   align-self: flex-end;
   box-shadow: 0 2px 8px rgba(77, 144, 196, 0.3);
   /* 尾巴角：靠右下的角收窄 */

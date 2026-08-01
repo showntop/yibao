@@ -767,7 +767,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   background:
-    linear-gradient(180deg, rgba(77, 144, 196, 0.09), rgba(77, 144, 196, 0) 128px),
+    linear-gradient(180deg, rgba(var(--yb-c-sky-rgb), 0.09), rgba(var(--yb-c-sky-rgb), 0) 128px),
     var(--yb-shell-bg);
   -webkit-backdrop-filter: var(--yb-blur);
   backdrop-filter: var(--yb-blur);
@@ -892,7 +892,7 @@ onUnmounted(() => {
 }
 .quick-allow,
 .confirm-open {
-  color: #fff;
+  color: var(--yb-text-on-accent);
   background: var(--yb-accent);
 }
 .ctx-chip {
@@ -916,7 +916,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 10px;
   padding: 10px var(--yb-space-3) 9px;
-  background: linear-gradient(180deg, rgba(77, 144, 196, 0.14), rgba(77, 144, 196, 0.08));
+  background: linear-gradient(180deg, rgba(var(--yb-c-sky-rgb), 0.14), rgba(var(--yb-c-sky-rgb), 0.08));
   border-bottom: 1px solid var(--yb-surface-border);
 }
 /* 锚点在右侧时（dir=ne/se）镜像头部，团子+meta 成团靠右（row-reverse 默认即靠右） */
@@ -992,8 +992,8 @@ onUnmounted(() => {
 }
 .status.notify {
   --dot: var(--yb-state-notify);
-  background: rgba(238, 95, 143, 0.12);
-  color: #d13d72;
+  background: var(--yb-intent-notify-soft);
+  color: var(--yb-intent-notify);
 }
 .status.drowsy {
   --dot: var(--yb-state-idle);
@@ -1093,7 +1093,7 @@ onUnmounted(() => {
   padding: 5px 10px;
   border-radius: var(--yb-radius-pill);
   background: var(--yb-accent-soft);
-  border: 1px solid rgba(77, 144, 196, 0.25);
+  border: 1px solid rgba(var(--yb-c-sky-rgb), 0.25);
   color: var(--yb-accent-deep);
   font-size: var(--yb-fs-md);
   line-height: var(--yb-lh-ui);
@@ -1123,7 +1123,7 @@ onUnmounted(() => {
   place-items: center;
 }
 .ctx-x:hover {
-  background: rgba(77, 144, 196, 0.18);
+  background: rgba(var(--yb-c-sky-rgb), 0.18);
 }
 /* ---- 插件启动器 ---- */
 .pl-head {

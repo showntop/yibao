@@ -352,8 +352,8 @@ const fallbackJson = computed(() =>
 }
 .btn.primary {
   background: var(--yb-accent);
-  color: #fff;
-  box-shadow: 0 2px 6px rgba(77, 144, 196, 0.35);
+  color: var(--yb-text-on-accent);
+  box-shadow: 0 2px 6px rgba(var(--yb-c-sky-rgb), 0.35);
 }
 .btn.primary:hover {
   background: var(--yb-accent-deep);
@@ -383,7 +383,7 @@ const fallbackJson = computed(() =>
   gap: 10px;
   padding: 11px 14px;
   border-radius: 14px;
-  background: #ffffff;
+  background: var(--yb-card-bg);
   border: 1px solid var(--yb-surface-border);
   box-shadow: var(--yb-shadow);
   margin-bottom: 8px;
@@ -427,7 +427,7 @@ const fallbackJson = computed(() =>
   min-height: 0;
   padding: 10px;
   border-radius: 14px;
-  background: #ffffff;
+  background: var(--yb-card-bg);
   border: 1px solid var(--yb-surface-border);
   box-shadow: var(--yb-shadow);
   transition: all 0.15s ease;
@@ -570,7 +570,7 @@ const fallbackJson = computed(() =>
 }
 /* ---- detail：字段卡片 + 主/次按钮行 ---- */
 .detail-card {
-  background: #ffffff;
+  background: var(--yb-card-bg);
   border: 1px solid var(--yb-surface-border);
   border-radius: 14px;
   box-shadow: var(--yb-shadow);
@@ -610,7 +610,7 @@ const fallbackJson = computed(() =>
   padding: 2px 4px 10px;
 }
 .doc-body {
-  background: #ffffff;
+  background: var(--yb-card-bg);
   border: 1px solid var(--yb-surface-border);
   border-radius: 14px;
   padding: 12px 16px;
@@ -670,7 +670,7 @@ const fallbackJson = computed(() =>
   padding: 8px 12px;
   font-size: 13px;
   font-family: inherit;
-  background: #ffffff;
+  background: var(--yb-card-bg);
   color: var(--yb-text);
   outline: none;
   resize: vertical;
@@ -698,7 +698,7 @@ const fallbackJson = computed(() =>
 .fallback pre {
   margin: 10px 0 0;
   padding: 12px 14px;
-  background: #ffffff;
+  background: var(--yb-card-bg);
   border: 1px solid var(--yb-surface-border);
   border-radius: 14px;
   font: 12.5px/1.6 var(--yb-mono);
