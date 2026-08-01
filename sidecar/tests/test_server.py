@@ -1836,3 +1836,52 @@ def test_recover_background_jobs_no_manager_is_noop(tmp_path):
     assert feed.recent() == []
     store.close()
     feed.close()
+
+
+def test_serve_async_invoke_context_injects_into_next_run(tmp_path):
+    """invoke_context 暂存描述 → 下一次 run 的 LLM 输入带 [屏幕上下文] 前缀。"""
+    provider = FakeProvider(chunks=["你好"])
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([{"type": "run", "text": "这个报错什么意思"}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=provider,
+            invoke_context_text="用户在看 VS Code 的报错弹窗",
+        )
+    )
+    assert provider.astream_calls, out
+    first_msgs = provider.astream_calls[0]["messages"]
+    assert any("[屏幕上下文] 用户在看 VS Code 的报错弹窗" in str(m.get("content"))
+               for m in first_msgs), first_msgs
+
+
+def test_consume_invoke_context_fresh_once_and_stale():
+    """一次性：新鲜→返回并清空；再取→None；过期→None 并清空。"""
+    import time
+
+    from yibao_brain.server import _consume_invoke_context
+
+    stash = {"text": "用户在看浏览器", "ts": time.time()}
+    assert _consume_invoke_context(stash) == "用户在看浏览器"
+    assert _consume_invoke_context(stash) is None  # 已一次性清空
+    stale = {"text": "旧屏幕", "ts": time.time() - 120}
+    assert _consume_invoke_context(stale) is None
+    assert stale["text"] is None
+
+
+def test_serve_async_invoke_context_branch_silent_without_host(tmp_path):
+    """use_real=False（无 host/vision）：invoke_context 分支静默跳过，不炸。"""
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([{"type": "invoke_context"}, {"type": "ping"}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+        )
+    )
+    assert any(m.get("type") == "pong" for m in out)

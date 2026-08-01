@@ -77,6 +77,11 @@ export function runInput(text: string, surface?: string): Promise<void> {
   return invoke("run_input", { text, surface: surface ?? _surface });
 }
 
+/** 截图唤起（v1.1）：⌘⇧Y 唤起主窗时通知大脑抓屏描述，下次 run 注入屏幕上下文（静默失败）。 */
+export function invokeContext(): Promise<void> {
+  return invoke("invoke_context");
+}
+
 /** 批量回复确认：一次回 N 条裁决（Task 4 Rust `confirm_batch` 命令）。
  *  items 里 id = confirmation_needed 事件中每条 action.id（攒批场景）。
  *  本窗口作答的卡立即从共享队列乐观出队；IPC 失败时恢复，允许用户重试。 */

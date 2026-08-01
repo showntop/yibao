@@ -501,6 +501,33 @@ def _recover_background_jobs(feed, background_jobs, jobs_store, emit) -> None:
                      {"type": "watch_command"})
 
 
+def _consume_invoke_context(invoke_ctx: dict) -> str | None:
+    """取出新鲜（<60s）的唤起屏幕描述并清空暂存（一次性）；没有/过期 → None 并清空。"""
+    text = invoke_ctx.get("text")
+    fresh = bool(text) and time.time() - float(invoke_ctx.get("ts") or 0.0) < 60
+    invoke_ctx.update({"text": None, "ts": 0.0})
+    return str(text) if fresh else None
+
+
+def _describe_screen(client, b64: str) -> str | None:
+    """一句话描述屏幕内容（截图唤起上下文注入用）；任何失败返 None（静默跳过）。"""
+    from .llm import _vision_create_with_retry
+
+    try:
+        resp = _vision_create_with_retry(lambda: client.client.chat.completions.create(
+            model=client.model,
+            messages=[
+                {"role": "system", "content": "用一句话（20 字以内）描述用户屏幕上正在发生什么，只输出这句话。"},
+                {"role": "user", "content": [{"type": "image_url", "image_url": {"url": b64}}]},
+            ],
+        ))
+        text = (resp.choices[0].message.content or "").strip() if resp.choices else ""
+        return text[:80] or None
+    except Exception as e:
+        print(f"[yibao] 屏幕描述失败（已跳过）：{e}", file=sys.stderr)
+        return None
+
+
 async def serve_async(
     read_msg: ReadMsg,
     write_msg: WriteMsg,
@@ -512,6 +539,7 @@ async def serve_async(
     skills_factory=None,
     perception_store=None,
     perception_sensors=None,
+    invoke_context_text: str | None = None,  # 测试注入：生产 None 时 invoke_context 走真实截图+vision
 ) -> None:
     """异步控制平面：stdin 读线程 → asyncio.Queue → 分发；支持 interrupt 打断。
 
@@ -621,6 +649,8 @@ async def serve_async(
     jobs_store = JobsStore(os.path.join(os.path.dirname(db_path), "jobs.db"))
     _recover_background_jobs(feed, getattr(agent.skills, "background_jobs", None),
                              jobs_store, _emit_event)
+    # 截图唤起（v1.1）：invoke_context 暂存屏幕描述，下一次 run 注入后清空
+    invoke_ctx = {"text": invoke_context_text, "ts": time.time() if invoke_context_text else 0.0}
     # 免确认集合接到闸门：命中后 decide 直接 AUTO（连 confirmation_needed 都不发）
     agent.invoker.gate.session_allowed = remembered_confirm
 
@@ -1077,6 +1107,10 @@ async def serve_async(
             run_state["surface"] = surface  # 受理即记录：下次 dispatch 判断同/跨 surface 无调度竞态
             if rtype == "run":
                 text, rid = msg.get("text", ""), msg.get("id")
+                # 截图唤起：新鲜（<60s）的屏幕描述注入本次 run，一次性消费
+                ctx_text = _consume_invoke_context(invoke_ctx)
+                if ctx_text:
+                    text = f"[屏幕上下文] {ctx_text}\n\n{text}"
                 start = lambda c, t=text, r=rid, s=surface: _drive_run(t, r, c, s)
                 print(f"[yibao] run 受理 rid={rid} surface={surface}：{text[:30]!r}", file=sys.stderr)
             elif voice is not None:
@@ -1157,6 +1191,20 @@ async def serve_async(
             except (TypeError, ValueError):
                 days = 7
             write_msg({"type": "feed_stats", "stats": feed.stats(days=days)})
+        elif rtype == "invoke_context":
+            # 截图唤起（v1.1）：抓屏 → vision 一句话描述 → 暂存待下次 run 注入。
+            # 无截图能力/无视觉配置/描述失败一律静默跳过；测试可注入 invoke_context_text。
+            if invoke_context_text is None and agent.host is not None and _wvision is not None:
+                try:
+                    shot = agent.host.screenshotter.capture()
+                    with open(shot, "rb") as f:
+                        import base64 as _b64mod
+                        b64 = "data:image/png;base64," + _b64mod.b64encode(f.read()).decode()
+                    desc = _describe_screen(_wvision, b64)
+                    if desc:
+                        invoke_ctx.update({"text": desc, "ts": time.time()})
+                except Exception as e:
+                    print(f"[yibao] 唤起抓屏失败（已跳过）：{e}", file=sys.stderr)
         elif rtype == "feed_mark_read":
             # 主屏点掉单条：feed.mark_read 容错（坏 id 返回 False，不抛）
             fid = int(msg.get("id", 0))

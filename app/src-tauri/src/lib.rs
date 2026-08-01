@@ -732,6 +732,15 @@ fn run_input(state: tauri::State<Brain>, text: String, surface: Option<String>) 
     )
 }
 
+/// 截图唤起（v1.1）：⌘⇧Y 唤起主窗时前端触发，通知大脑抓屏描述（下次 run 注入屏幕上下文）。
+#[tauri::command]
+fn invoke_context(state: tauri::State<Brain>) -> Result<(), String> {
+    write_to_brain(
+        &state,
+        serde_json::json!({ "id": 0, "type": "invoke_context" }),
+    )
+}
+
 /// 批量确认条目（前端 Task 5 传 camelCase：{id, approved, remember}）。
 /// id = confirmation_needed 事件里 action.id（单条时等于 confirmation_id）。
 #[derive(serde::Deserialize)]
@@ -1507,6 +1516,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             run_input,
+            invoke_context,
             confirm_batch,
             panel_action,
             list_plugins,

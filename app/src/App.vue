@@ -18,6 +18,7 @@ import {
   onPendingConfirms,
   openHomeWindow,
   runInput,
+  invokeContext,
   sendConfirmBatch,
   voiceStart,
   interrupt,
@@ -286,6 +287,7 @@ async function onPetShow() {
   // Rust 侧已按 可见性×展开态 决策（显隐不经过前端）：pet-show 只需确保展开 + 输入就绪
   if (!expanded.value) await expand();
   void nextTick(() => inputBarRef.value?.focus());
+  void invokeContext().catch(() => {}); // 截图唤起：抓屏描述暂存，下次 run 注入屏幕上下文（静默失败）
 }
 
 // 展开态同步给 Rust（全局热键在 Rust 侧决定 显示/展开/隐藏 的依据）
