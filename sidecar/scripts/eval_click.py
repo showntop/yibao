@@ -81,11 +81,19 @@ def run_baseline(client, som, sc, scale):
 
 
 def run_som(client, som, sc, scale):
-    marked, marks = som.build_marks(sc["screenshot"], sc.get("tree") or {}, scale)
+    marked, marks, zones = som.build_marks(sc["screenshot"], sc.get("tree") or {}, scale)
     if not marked:
         return None
-    action = client.choose_action(marked, sc["target"], len(marks), [])
-    if not action or action.get("action") != "click":
+    action = client.choose_action(marked, sc["target"], len(marks), [], n_zones=len(zones))
+    if not action:
+        return None
+    if action.get("action") == "zoom":
+        from yibao_brain.grounding import zoom_ground
+        zone = next((z for z in zones if z["letter"] == action.get("zone")), None)
+        if zone is None:
+            return None
+        return zoom_ground(client, sc["screenshot"], zone["rect"], scale, sc["target"])
+    if action.get("action") != "click":
         return None
     return som.predict(action.get("mark"), marks)
 

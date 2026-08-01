@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 from .background_jobs import BackgroundJobManager
-from .grounding import SoMGrounding, _physical_scale
+from .grounding import SoMGrounding, _physical_scale, zoom_ground
 from .ipc import ActionResult, RiskLevel
 from .skills import Skill, SkillContext, SkillRegistry
 
@@ -278,11 +278,12 @@ class ComputerUseSkill(Skill):
                 )  # 模型原生 grounding
             else:
                 tree = ctx.host.a11y.frontmost_tree()
-                marked, marks = self._som.build_marks(shot, tree, scale)
+                marked, marks, zones = self._som.build_marks(shot, tree, scale)
                 if marked is None:
                     action = self._raw_bbox_step(shot, task, history, ctx.host, scale)  # 回退
                 else:
-                    action = self._client.choose_action(marked, task, len(marks), history)
+                    action = self._client.choose_action(marked, task, len(marks), history,
+                                                        n_zones=len(zones))
                     if cancelled():
                         return ActionResult(success=False, error="操作已中断")
                     if action is None:
@@ -293,7 +294,8 @@ class ComputerUseSkill(Skill):
                     if not allowed:
                         action = {"action": "interrupted", "reason": reason}
                     else:
-                        self._apply_marked(action, marks, ctx.host)
+                        self._apply_marked(action, marks, ctx.host,
+                                           zones=zones, shot=shot, scale=scale, task=task)
             if action and action.get("action") == "interrupted":
                 return ActionResult(success=False, error=action.get("reason") or "操作已中断")
             if action is not None and action.get("action") and action.get("action") != "finish":
@@ -301,12 +303,19 @@ class ComputerUseSkill(Skill):
                 history.append({"role": "assistant", "content": json.dumps(action, ensure_ascii=False)})
         return ActionResult(success=True, data={"steps": len(done), "actions": done})
 
-    def _apply_marked(self, action: dict, marks: list[dict], host) -> None:
+    def _apply_marked(self, action, marks, host, *, zones=(), shot=None, scale=1.0, task=""):
         kind = action.get("action")
         if kind == "click":
             self._som.resolve(action.get("mark"), marks, host)
         elif kind == "type":
             host.input.type_text(str(action.get("text", "")))
+        elif kind == "zoom" and shot is not None:
+            zone = next((z for z in zones if z["letter"] == action.get("zone")), None)
+            if zone is None:
+                return
+            point = zoom_ground(self._client, shot, zone["rect"], scale, task)
+            if point is not None:
+                self._som.resolve_point(point[0], point[1], host)
 
     def _raw_bbox_step(
         self, shot, task, history, host, scale, origin=(0.0, 0.0), should_cancel=None,

@@ -500,7 +500,7 @@ def test_computer_use_none_action_stops(tmp_path, monkeypatch):
     from yibao_brain.skills_real import ComputerUseSkill
 
     class _NoneClient:
-        def choose_action(self, b, t, n, history=None):
+        def choose_action(self, b, t, n, history=None, n_zones=0):
             return None
 
     monkeypatch.setattr(pyautogui, "size", lambda: _size_obj(100, 100))
@@ -515,6 +515,32 @@ def test_computer_use_missing_task():
 
     r = ComputerUseSkill(client=None).run({}, SkillContext(host=FakeHost()))
     assert not r.success
+
+
+def test_computer_use_zoom_action_grounds_and_clicks(tmp_path, monkeypatch):
+    """SoM 路径模型选字母区域 → zoom_ground 精化 → resolve_point 点击。"""
+    from PIL import Image
+
+    from yibao_brain import skills_real
+    from yibao_brain.skills_real import ComputerUseSkill
+
+    class FakeClient:
+        prefers_raw_bbox = False
+
+        def choose_action(self, marked, task, n_marks, history=None, n_zones=0):
+            return {"action": "zoom", "zone": "A"}
+
+    monkeypatch.setattr(skills_real, "zoom_ground", lambda client, shot, rect, scale, task: (50.0, 60.0))
+    host = FakeHost()  # element_at 返回 None → 走坐标点击
+    shot = tmp_path / "s.png"
+    Image.new("RGB", (100, 80), "white").save(shot)
+    host.screenshotter = type("S", (), {"capture": lambda self: str(shot)})()
+    host.a11y.frontmost_tree = lambda: {"role": "AXApp", "children": []}
+    ctx = SkillContext(host=host)
+    skill = ComputerUseSkill(FakeClient())
+    r = skill.run({"task": "点按钮", "app": "x"}, ctx)
+    assert r.success, r.error
+    assert host.input.clicks == [(50.0, 60.0)]
 
 
 # ---------- watch_command：后台盯命令 ----------

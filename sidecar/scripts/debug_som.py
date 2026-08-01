@@ -28,7 +28,7 @@ def main() -> None:
     for name in names:
         sc = json.loads((sc_dir / f"{name}.json").read_text())
         scale = float(sc.get("scale") or 1.0)
-        marked, marks = som.build_marks(sc["screenshot"], sc.get("tree") or {}, scale)
+        marked, marks, _zones = som.build_marks(sc["screenshot"], sc.get("tree") or {}, scale)
         if not marked:
             print(f"== {name}: build_marks 失败"); continue
 
