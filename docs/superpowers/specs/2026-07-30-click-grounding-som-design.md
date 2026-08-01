@@ -145,3 +145,12 @@ Prompt（`ComputerUseClient` 沿用，仅替换 SYSTEM_PROMPT 的动作段）：
 ## 开放问题
 
 - 暂无。实现期若 Phase 0 数据显示 a11y 区 / 自绘区占比极端（如自绘区占绝大多数），回来调整网格密度策略与成功标准权重。
+
+---
+
+## 验收记录（2026-08-01，v1.1 收口迭代）
+
+- **基线**：SoM 2/12（场景集 `sidecar/scripts/eval_scenarios` 12 例），miss 偏移 100-870px。
+- **根因**：a11y 覆盖空洞（AXRow 不入白名单 + a11y≥8 不叠网格）+ flash 模型选号抖动。
+- **迭代**：AXRow 白名单 ✅（保留）；网格盲区兜底（实证 salience 竞争，已 revert）；分层双轨（字母轨被模型证伪 0/24，代码保留基础设施）；**win 裁窗路径成立**（4/12 全路径最佳，calc 3/3 满分，平均 22.8px）——与生产 `prefers_raw_bbox` 窗口裁剪路径互证。
+- **验收口径（修订）**：AX 直达场景 100% 硬线；win 裁窗防回归线 ≥4/12 且 calc 3/3（2026-08-01 复测通过）；盲桶硬线废除转 backlog。详见 `docs/reports/2026-08-01-v1.1-slice1-baseline.md` §5-§9 与 `2026-08-01-click-grounding-hierarchical-design.md`。

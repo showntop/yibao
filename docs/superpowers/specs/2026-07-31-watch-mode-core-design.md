@@ -83,3 +83,11 @@ slice 1 只读 app/activity（现有 perception 已加密落库、且受 `percep
 3. watch 循环（serve_async 启停 + tick 分发 + gating）+ 总开关/cadence config。
 4. settings（idle_warn/quiet_hours）+ 设置 UI 开关。
 5. 在场陪伴占位行为 + 循环注册两个行为。
+
+---
+
+## 验收记录（2026-08-01，v1.1 收口迭代）
+
+- **触发验收**：`test_watch.py` + `test_watch_acceptance.py` 共 32 例全绿——久坐触发/静默时段抑制/白名单双侧/预算/前台校验/dispatcher 落真实 feed/后台命令线程 emit 链路，满足「该触发 100%、误触发 0」契约。
+- **watch_command 跨重启恢复**：已落地（jobs.db 持久化 + 启动孤儿重跑/标 interrupted + Feed 记账），恢复测试 ×3 确定性通过。
+- **误报反馈回路**：事件 type 归一（health_nudge/proactive_chat/watch_command/reminder），Feed 条目 👍/👎 落 meta.feedback，同类 24h≥2👎 的 reminder 事件由 dispatcher 降级 quiet。

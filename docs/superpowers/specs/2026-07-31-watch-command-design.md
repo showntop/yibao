@@ -30,3 +30,11 @@
 - [ ] 让译宝「后台盯 `npm run build`（或任意长命令）」→ 确认后立即回「已开始盯」；完成收到结果播报（成功/失败 + 末尾几行）。
 - [ ] 「主动找我」=安静 → 完成只落动态不响；=完整 → 气泡+语音。
 - [ ] 多个 watch_command 并发互不干扰。
+
+---
+
+## 验收记录（2026-08-01，v1.1 收口迭代）
+
+- **触发验收**：`test_watch.py` + `test_watch_acceptance.py` 共 32 例全绿——久坐触发/静默时段抑制/白名单双侧/预算/前台校验/dispatcher 落真实 feed/后台命令线程 emit 链路，满足「该触发 100%、误触发 0」契约。
+- **watch_command 跨重启恢复**：已落地（jobs.db 持久化 + 启动孤儿重跑/标 interrupted + Feed 记账），恢复测试 ×3 确定性通过。
+- **误报反馈回路**：事件 type 归一（health_nudge/proactive_chat/watch_command/reminder），Feed 条目 👍/👎 落 meta.feedback，同类 24h≥2👎 的 reminder 事件由 dispatcher 降级 quiet。

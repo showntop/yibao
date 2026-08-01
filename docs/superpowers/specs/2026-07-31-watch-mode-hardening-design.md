@@ -106,3 +106,11 @@
 2. 只允许代码编辑器，快速切到邮件后触发候选，确认没有截图上云或主动建议。
 3. 后台运行一条指定 cwd 的短命令，查看状态并取消一条长命令；完成/取消均进入动态。
 4. quiet/bubble/full 各验证一次 Feed、气泡和语音行为。
+
+---
+
+## 验收记录（2026-08-01，v1.1 收口迭代）
+
+- **触发验收**：`test_watch.py` + `test_watch_acceptance.py` 共 32 例全绿——久坐触发/静默时段抑制/白名单双侧/预算/前台校验/dispatcher 落真实 feed/后台命令线程 emit 链路，满足「该触发 100%、误触发 0」契约。
+- **watch_command 跨重启恢复**：已落地（jobs.db 持久化 + 启动孤儿重跑/标 interrupted + Feed 记账），恢复测试 ×3 确定性通过。
+- **误报反馈回路**：事件 type 归一（health_nudge/proactive_chat/watch_command/reminder），Feed 条目 👍/👎 落 meta.feedback，同类 24h≥2👎 的 reminder 事件由 dispatcher 降级 quiet。

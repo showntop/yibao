@@ -1,8 +1,9 @@
 # 译宝 · 桌面壳（Tauri v2 + Vue 3）
 
-译宝的桌面外壳：全局快捷键唤起、置顶透明形象窗、文字/语音输入，经 stdio 行分隔 JSON 桥接 Python 大脑 sidecar（`../sidecar`），渲染对话与形象状态，高风险（L2+）操作弹窗确认。sidecar 崩溃自动重启（看门狗守护），macOS 权限缺失时引导授权。
+译宝的桌面外壳：全局快捷键唤起、置顶透明形象窗（桌宠「团子」——天青鹅蛋 + 天线状态灯九态）、macOS 原生大窗三页（对话/动态/插件），文字/语音输入，经 stdio 行分隔 JSON 桥接 Python 大脑 sidecar（`../sidecar`），渲染对话与形象状态，高风险（L2+）操作弹窗确认。sidecar 崩溃自动重启（看门狗守护），macOS 权限缺失时引导授权。设计令牌体系（`src/assets/tokens.css`）支持深色模式（系统跟随）。
 
 - 架构与设计：`../docs/superpowers/specs/2026-07-16-desktop-agent-design.md`
+- 形象与令牌：`../docs/superpowers/specs/2026-07-23-yibao-avatar-identity-design.md`、`../docs/plan/ui-plan.md`
 - IPC 协议与本计划：`../docs/superpowers/plans/2026-07-16-yibao-v1-plan2-shell-and-ipc.md`
 
 ## 目录约定
@@ -74,4 +75,4 @@ npm run tauri -- build --debug   # debug 打包（较快）
 
 ## 已知限制（v1 范围）
 - 一次只处理一个 `run`（单对话）；并发对话需改 server。
-- 形象为状态驱动 emoji 占位；Live2D 留待后续 Plan。
+- Live2D 形象留待后续 Plan（当前为天青几何形象「团子」，SVG 烘焙 + 状态灯）。

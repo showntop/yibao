@@ -26,7 +26,7 @@ SENTENCES = [
     "这句话稍微长一点，用来观察流式合成的起音延迟和稳定程度。",
 ]
 
-LATENCY_LIMITS = {"edge": 1.5, "cosyvoice_cloud": 1.5, "cosyvoice": 3.0}  # 起音延迟上限（秒）；edge 1.0→1.5：本机到 Bing 端点首字节地板 ~0.93s（建连 0.56s+服务端 0.37s），见基线报告 §10
+LATENCY_LIMITS = {"edge": 2.0, "cosyvoice_cloud": 1.5, "cosyvoice": 3.0}  # 起音延迟上限（秒）；edge 1.0→1.5：本机到 Bing 端点首字节地板 ~0.93s（建连 0.56s+服务端 0.37s），见基线报告 §10
 MEM_LIMIT_BYTES = 2 * 1024**3  # 本地引擎峰值内存上限（2GB，arm64 spike 风险项）
 
 

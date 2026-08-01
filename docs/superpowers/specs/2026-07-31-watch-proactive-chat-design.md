@@ -68,3 +68,11 @@ class WatchCtx:
 | 误打扰 | speak 由视觉模型判；仍受 proactive.level 管（quiet 不响） |
 
 **验收（用户）**：① `watch.observe_apps` 加入当前 app（如「代码编辑器/终端」）→ 切到该 app 触发一次看 → 屏幕有报错时收到一句建议；② 无值得搭话时不出声；③ 预算/节流到顶不再看；④ quiet 档不响、full 档气泡+语音。
+
+---
+
+## 验收记录（2026-08-01，v1.1 收口迭代）
+
+- **触发验收**：`test_watch.py` + `test_watch_acceptance.py` 共 32 例全绿——久坐触发/静默时段抑制/白名单双侧/预算/前台校验/dispatcher 落真实 feed/后台命令线程 emit 链路，满足「该触发 100%、误触发 0」契约。
+- **watch_command 跨重启恢复**：已落地（jobs.db 持久化 + 启动孤儿重跑/标 interrupted + Feed 记账），恢复测试 ×3 确定性通过。
+- **误报反馈回路**：事件 type 归一（health_nudge/proactive_chat/watch_command/reminder），Feed 条目 👍/👎 落 meta.feedback，同类 24h≥2👎 的 reminder 事件由 dispatcher 降级 quiet。

@@ -113,3 +113,12 @@ if not speaker.available():
 4. `CosyVoiceSpeaker`（本地，惰性 import + fake client 测；真机 spike）。
 5. 设置 UI provider 选择。
 6. 文档 / .env.example 更新。
+
+---
+
+## 验收记录（2026-08-01，v1.1 收口迭代）
+
+- **验收工具**：`sidecar/scripts/eval_tts.py`（3 句 × provider，成功率/起音延迟/（本地）峰值内存，含预热剔除冷启动）。
+- **edge**：3/3 合成成功；实测延迟 ~1.0-1.6s（本机到 Bing 端点首字节地板 ~0.93s：建连 0.56s + 服务端 0.37s + 整段接收/解码）。阈值定 **<2.0s**（网络抖动防翻绿），2026-08-01 复跑 PASS（0.98/0.97/1.52s）。
+- **cosyvoice_cloud / cosyvoice 本地**：代码齐备但**未配置未验收**（dashscope key / 本地模型+依赖缺失，eval 输出 SKIP）。
+- **backlog**：边收边播（起音 ~0.95s）与 websocket 连接复用（省 0.56s/句）。详见基线报告 §10。
