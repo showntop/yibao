@@ -93,6 +93,7 @@ def run_som(client, som, sc, scale):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--scenarios", required=False, help="场景目录（每文件一 JSON）")
+    ap.add_argument("--model", default=None, help="覆盖视觉模型（默认走 YIBAO_VISION_MODEL 配置）")
     ap.add_argument("--capture", action="store_true", help="交互采集一个场景")
     ap.add_argument("--name", default="scene")
     ap.add_argument("--target", default="")
@@ -110,7 +111,8 @@ def main():
     from yibao_brain.llm import ComputerUseClient
     from yibao_brain.grounding import SoMGrounding
 
-    client = ComputerUseClient()
+    client = ComputerUseClient(model=args.model or None)
+    print(f"model = {client.model}")
     som = SoMGrounding()
     rows = []
     for sc in scs:
