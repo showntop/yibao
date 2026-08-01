@@ -47,7 +47,7 @@ def test_build_marks_rich_a11y_full_cover_drops_grid(tmp_path):
 
 
 def test_build_marks_rich_a11y_keeps_blind_grid(tmp_path):
-    """a11y 密集但只铺满顶行（≥8 个）→ 盲区格子仍兜底（新契约核心）。"""
+    """a11y 密集但只堆在角落（≥8 个）→ 盲区格子仍兜底（新契约核心）。"""
     nodes = [{"role": "AXLink", "bbox": [i * 10, 0, i * 10 + 10, 13], "children": []}
              for i in range(10)]  # 10 个铺满顶行（x 0..100, y 0..13）
     tree = {"role": "AXApp", "children": nodes}
