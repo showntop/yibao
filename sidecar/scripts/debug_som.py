@@ -28,7 +28,7 @@ def main() -> None:
     for name in names:
         sc = json.loads((sc_dir / f"{name}.json").read_text())
         scale = float(sc.get("scale") or 1.0)
-        marked, marks, _zones = som.build_marks(sc["screenshot"], sc.get("tree") or {}, scale)
+        marked, marks, zones = som.build_marks(sc["screenshot"], sc.get("tree") or {}, scale)
         if not marked:
             print(f"== {name}: build_marks 失败"); continue
 
@@ -47,29 +47,37 @@ def main() -> None:
                 correct = m["id"]
                 break
         a11y_n = sum(1 for m in marks if m["source"] == "a11y")
-        print(f"\n== {name}: target={sc['target']!r} marks={len(marks)} (a11y {a11y_n} + grid {len(marks)-a11y_n})")
+        print(f"\n== {name}: target={sc['target']!r} marks={len(marks)} (a11y {a11y_n}) + zones {len(zones)}")
         print(f"   GT center=({gcx:.0f},{gcy:.0f}) → 正确 mark id = {correct}")
         for m in marks:
             x1, y1, x2, y2 = (round(v) for v in m["rect"])
             tag = " ← 正确" if m["id"] == correct else ""
             print(f"   #{m['id']:>2} {m['source']:<5} rect=[{x1},{y1},{x2},{y2}]{tag}")
 
-        # 3) 真实调用，打印模型原始回答
+        # 3) 真实调用，打印模型原始回答（与生产 choose_action 同 prompt/同温度/同解析）
         import yibao_brain.llm as llm_mod
+        zone_hint = f"和 {len(zones)} 个灰框字母区域(A-{chr(64 + len(zones))})" if zones else ""
         resp = llm_mod._vision_create_with_retry(lambda: client.client.chat.completions.create(
             model=client.model,
+            temperature=llm_mod.CHOOSE_TEMPERATURE,
             messages=[
                 {"role": "system", "content": client.MARK_SYSTEM_PROMPT},
                 {"role": "user", "content": [
                     {"type": "image_url", "image_url": {"url": marked}},
-                    {"type": "text", "text": f"任务：{sc['target']}\n共有 {len(marks)} 个编号标记(1-{len(marks)})。给出下一个动作。"},
+                    {"type": "text", "text": f"任务：{sc['target']}\n共有 {len(marks)} 个红框数字标记(1-{len(marks)}){zone_hint}。给出下一个动作。"},
                 ]},
             ],
         ))
         content = (resp.choices[0].message.content or "") if resp.choices else ""
-        parsed = client._parse_marked_action(content, len(marks))
+        parsed = client._parse_marked_action(content, len(marks), len(zones))
         print(f"   模型原始回答: {content[:300]!r}")
         print(f"   解析结果: {parsed}")
+        # 4) zoom 动作则继续精化（与 eval run_som 同路径），便于归因 stage1/stage2
+        if parsed and parsed.get("action") == "zoom":
+            from yibao_brain.grounding import zoom_ground
+            zone = next((z for z in zones if z["letter"] == parsed.get("zone")), None)
+            point = zoom_ground(client, sc["screenshot"], zone["rect"], scale, sc["target"]) if zone else None
+            print(f"   zoom 精化点: {point}（GT center ({gcx:.0f},{gcy:.0f})）")
         print(f"   标记图: {img_path}")
 
 
