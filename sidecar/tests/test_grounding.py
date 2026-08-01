@@ -11,17 +11,16 @@ def _shot(tmp_path, w=100, h=100):
     return str(p)
 
 
-def test_build_marks_collects_a11y_and_fills_grid(tmp_path):
+def test_build_marks_collects_a11y_and_zones(tmp_path):
     tree = {"role": "AXApp", "children": [
         {"role": "AXButton", "bbox": [10, 10, 30, 30], "children": []},
     ]}
-    b64, marks = SoMGrounding().build_marks(_shot(tmp_path), tree, scale=1.0)
+    b64, marks, zones = SoMGrounding().build_marks(_shot(tmp_path), tree, scale=1.0)
     assert b64 is not None and b64.startswith("data:image/")
-    sources = {m["source"] for m in marks}
-    assert "a11y" in sources and "grid" in sources  # <8 个 → 网格补齐
+    assert all(m["source"] == "a11y" for m in marks)  # 网格已废除，数字轨只有 a11y
+    assert [z["letter"] for z in zones] == ["A", "B", "C", "D", "E", "F"]
     assert marks[0]["id"] == 1
-    a11y = [m for m in marks if m["source"] == "a11y"][0]
-    assert a11y["center"] == (20.0, 20.0)  # bbox 中心，逻辑坐标
+    assert marks[0]["center"] == (20.0, 20.0)  # bbox 中心，逻辑坐标
 
 
 def test_build_marks_stores_logical_coords_under_hidpi(tmp_path):
@@ -29,25 +28,26 @@ def test_build_marks_stores_logical_coords_under_hidpi(tmp_path):
     tree = {"role": "AXApp", "children": [
         {"role": "AXButton", "bbox": [10, 10, 30, 30], "children": []},
     ]}
-    _, marks = SoMGrounding().build_marks(_shot(tmp_path, 200, 200), tree, scale=2.0)
+    _, marks, _ = SoMGrounding().build_marks(_shot(tmp_path, 200, 200), tree, scale=2.0)
     a11y = [m for m in marks if m["source"] == "a11y"][0]
     assert a11y["center"] == (20.0, 20.0)
 
 
-def test_build_marks_enough_a11y_skips_grid(tmp_path):
-    nodes = [{"role": "AXLink", "bbox": [i * 10, 0, i * 10 + 5, 5], "children": []}
-             for i in range(10)]
-    tree = {"role": "AXApp", "children": nodes}
-    _, marks = SoMGrounding().build_marks(_shot(tmp_path), tree, scale=1.0)
-    assert all(m["source"] == "a11y" for m in marks)  # ≥8 → 不补网格
-    assert len(marks) == 10
+def test_zones_geometry_row_major(tmp_path):
+    """区域恒常 6 个、3 列 2 行行优先；rect/center 为逻辑坐标。"""
+    _, _, zones = SoMGrounding().build_marks(_shot(tmp_path, 300, 200), {}, scale=1.0)
+    assert len(zones) == 6
+    assert zones[0]["rect"] == (0.0, 0.0, 100.0, 100.0)
+    assert zones[0]["center"] == (50.0, 50.0)
+    assert zones[3]["rect"] == (0.0, 100.0, 100.0, 200.0)
+    assert zones[5]["letter"] == "F" and zones[5]["center"] == (250.0, 150.0)
 
 
 def test_build_marks_caps_total(tmp_path):
     nodes = [{"role": "AXButton", "bbox": [i * 3, 0, i * 3 + 2, 2], "children": []}
              for i in range(MAX_MARKS + 5)]
     tree = {"role": "AXApp", "children": nodes}
-    _, marks = SoMGrounding().build_marks(_shot(tmp_path, 400, 400), tree, scale=1.0)
+    _, marks, _ = SoMGrounding().build_marks(_shot(tmp_path, 400, 400), tree, scale=1.0)
     assert len(marks) <= MAX_MARKS
 
 
@@ -56,14 +56,14 @@ def test_build_marks_dedupes_overlap(tmp_path):
         {"role": "AXButton", "bbox": [10, 10, 30, 30], "children": []},
         {"role": "AXButton", "bbox": [11, 11, 31, 31], "children": []},  # IoU>0.8 → 合并
     ]}
-    _, marks = SoMGrounding().build_marks(_shot(tmp_path, 400, 400), tree, scale=1.0)
+    _, marks, _ = SoMGrounding().build_marks(_shot(tmp_path, 400, 400), tree, scale=1.0)
     assert len([m for m in marks if m["source"] == "a11y"]) == 1
 
 
 def test_build_marks_render_failure_returns_none(tmp_path):
-    # 截图路径不存在 → 渲染失败 → (None, [])
-    b64, marks = SoMGrounding().build_marks("/nope/missing.png", {"role": "AXApp"}, scale=1.0)
-    assert b64 is None and marks == []
+    # 截图路径不存在 → 渲染失败 → (None, [], [])
+    b64, marks, zones = SoMGrounding().build_marks("/nope/missing.png", {"role": "AXApp"}, scale=1.0)
+    assert b64 is None and marks == [] and zones == []
 
 
 def test_resolve_ax_press_via_element_at():
@@ -114,6 +114,6 @@ def test_build_marks_collects_outline_rows(tmp_path):
             ]},
         ]},
     ]}
-    _, marks = SoMGrounding().build_marks(_shot(tmp_path, 400, 400), tree, scale=1.0)
+    _, marks, _ = SoMGrounding().build_marks(_shot(tmp_path, 400, 400), tree, scale=1.0)
     rows = [m for m in marks if m["source"] == "a11y" and m["rect"] == (0.0, 100.0, 215.0, 128.0)]
     assert len(rows) == 1

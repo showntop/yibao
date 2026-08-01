@@ -1,6 +1,6 @@
-"""Set-of-Marks 视觉 grounding：截图叠编号标记 → VLM 选号 → 确定性解析。
+"""Set-of-Marks 分层视觉 grounding：a11y 数字红框 + 区域字母灰框双轨；模型选元素直点，选区域裁切放大二次精化（zoom_ground）。坐标约定同前：marks/zones 存逻辑坐标，渲染叠加用物理像素。
 
-a11y 交互元素 frame 优先编号；稀疏区叠网格补齐；封顶保持 VLM 可读。
+a11y 交互元素 frame 优先编号；封顶保持 VLM 可读。
 坐标约定：marks 存逻辑坐标（屏幕点，可直接 click / element_at）；渲染叠加用物理像素。
 """
 from __future__ import annotations
@@ -16,8 +16,7 @@ INTERACTIVE_ROLES = frozenset({
     "AXComboBox", "AXIncrementor", "AXDisclosureTriangle",
 })
 MAX_MARKS = 40
-GRID_TRIGGER = 8      # a11y 交互元素 < 此数 → 叠网格补齐（疑似自绘 UI）
-GRID_COLS, GRID_ROWS = 6, 4
+ZONE_COLS, ZONE_ROWS = 3, 2
 
 
 def _physical_scale(shot_path: str) -> float:
@@ -66,17 +65,36 @@ def _dedupe(items: list[dict], iou_thresh: float = 0.8) -> list[dict]:
     return kept
 
 
-def _grid_cells(logical_w: float, logical_h: float) -> list[dict]:
-    cw, ch = logical_w / GRID_COLS, logical_h / GRID_ROWS
+def _zones(logical_w: float, logical_h: float) -> list[dict]:
+    """字母轨区域：3 列 2 行行优先 A-F，逻辑坐标。"""
+    zw, zh = logical_w / ZONE_COLS, logical_h / ZONE_ROWS
     out = []
-    for r in range(GRID_ROWS):
-        for c in range(GRID_COLS):
-            x1, y1 = c * cw, r * ch
-            x2, y2 = x1 + cw, y1 + ch
-            out.append({"source": "grid",
-                        "center": ((x1 + x2) / 2, (y1 + y2) / 2),
-                        "rect": (x1, y1, x2, y2)})
+    for r in range(ZONE_ROWS):
+        for c in range(ZONE_COLS):
+            x1, y1 = c * zw, r * zh
+            x2, y2 = x1 + zw, y1 + zh
+            out.append({"letter": chr(ord("A") + r * ZONE_COLS + c),
+                        "rect": (x1, y1, x2, y2),
+                        "center": ((x1 + x2) / 2, (y1 + y2) / 2)})
     return out
+
+
+def _dashed_rect(draw, rect, color, width: int, dash: int = 10, gap: int = 7) -> None:
+    """PIL 无原生源线：四边按 dash/gap 分段画。"""
+    x1, y1, x2, y2 = rect
+
+    def segments(a, b):
+        pos = a
+        while pos < b:
+            yield pos, min(pos + dash, b)
+            pos += dash + gap
+
+    for xa, xb in segments(x1, x2):
+        draw.line([(xa, y1), (xb, y1)], fill=color, width=width)
+        draw.line([(xa, y2), (xb, y2)], fill=color, width=width)
+    for ya, yb in segments(y1, y2):
+        draw.line([(x1, ya), (x1, yb)], fill=color, width=width)
+        draw.line([(x2, ya), (x2, yb)], fill=color, width=width)
 
 
 class SoMGrounding:
@@ -95,22 +113,14 @@ class SoMGrounding:
             with Image.open(shot_path) as im:
                 phys_w, phys_h = im.size
         except Exception:
-            return None, []  # 截图打不开 → 回退 raw-bbox
+            return None, [], []  # 截图打不开 → 回退 raw-bbox
         logical_w, logical_h = phys_w / scale, phys_h / scale
-        if len(items) < GRID_TRIGGER:
-            items.extend(_grid_cells(logical_w, logical_h))
-        # 封顶：a11y 优先保序，网格在后
-        a11y = [it for it in items if it["source"] == "a11y"]
-        grid = [it for it in items if it["source"] == "grid"]
-        if len(items) > self._max:
-            grid_budget = max(0, self._max - len(a11y))
-            a11y = a11y[: self._max]
-            items = a11y + grid[:grid_budget]
+        zones = _zones(logical_w, logical_h)
         marks = [{**it, "id": i + 1} for i, it in enumerate(items[: self._max])]
-        b64 = self._render(shot_path, marks, scale)
-        return (b64, marks) if b64 else (None, [])
+        b64 = self._render(shot_path, marks, zones, scale)
+        return (b64, marks, zones) if b64 else (None, [], [])
 
-    def _render(self, shot_path: str, marks: list[dict], scale: float):
+    def _render(self, shot_path: str, marks: list[dict], zones: list[dict], scale: float):
         try:
             from PIL import Image, ImageDraw, ImageFont
             buf = io.BytesIO()
@@ -125,6 +135,18 @@ class SoMGrounding:
                 except Exception:
                     font = None
                 lw = max(2, im.width // 400)
+                zfont = None
+                try:
+                    zfont = ImageFont.truetype(
+                        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+                        max(28, im.width // 24),
+                    )
+                except Exception:
+                    zfont = font
+                for z in zones:
+                    zx1, zy1, zx2, zy2 = (v * scale for v in z["rect"])
+                    _dashed_rect(draw, [zx1, zy1, zx2, zy2], (120, 120, 120), max(1, lw - 1))
+                    draw.text((zx1 + 6, zy1 + 4), z["letter"], fill=(120, 120, 120), font=zfont)
                 for m in marks:
                     x1, y1, x2, y2 = (v * scale for v in m["rect"])  # 逻辑→物理
                     draw.rectangle([x1, y1, x2, y2], outline=(226, 32, 32), width=lw)
