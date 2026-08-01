@@ -1,4 +1,4 @@
-"""Slice 2 诊断：看 SoM 各组件边界的真实数据（手动跑，用完可删）。
+"""SoM 诊断工具：看各组件边界的真实数据（手动跑，非 CI）。
 对指定场景：保存标记图、打印 marks 清单、找 GT 对应的正确 mark、打印模型原始回答。
 用法：uv run python scripts/debug_som.py calc_eq [更多场景名...]
 """
