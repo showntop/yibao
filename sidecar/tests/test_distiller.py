@@ -304,7 +304,7 @@ def test_run_yesterday_bad_llm_output(tmp_path):
 
 def test_run_yesterday_llm_exception(tmp_path):
     class _Boom:
-        def chat(self, messages, tools=None):
+        def chat(self, messages, tools=None, timeout=None):
             raise RuntimeError("网络炸了")
 
     p = _pstore(tmp_path)
@@ -350,5 +350,29 @@ def test_run_yesterday_mutex(tmp_path):
         assert result["status"] == "already_running"
     finally:
         d._run_lock.release()
+    d.store.close()
+    p.close()
+
+
+def test_run_yesterday_passes_timeout_60(tmp_path):
+    """离线提炼的 LLM 调用必须带 60s 超时（防僵死连接挂住调度循环）。"""
+    from yibao_brain.llm import LLMResponse
+
+    class _Rec:
+        def __init__(self):
+            self.chat_kwargs: dict | None = None
+
+        def chat(self, messages, tools=None, **kwargs):
+            self.chat_kwargs = kwargs
+            return LLMResponse(text=_GOOD_JSON)
+
+    p = _pstore(tmp_path)
+    day, start, end = yesterday_window()
+    p.append("app", "frontmost", {"app": "VSCode", "title": "a.py"}, "S1", ts=start + 100)
+    rec = _Rec()
+    d, mem, feed = _distiller(tmp_path, rec, p)
+    result = d.run_yesterday("manual")
+    assert result["status"] == "ok"
+    assert rec.chat_kwargs == {"timeout": 60}
     d.store.close()
     p.close()

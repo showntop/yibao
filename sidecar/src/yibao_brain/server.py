@@ -861,10 +861,10 @@ async def serve_async(
                     print(f"[yibao] 提炼原料清理失败：{e}", file=sys.stderr)
 
     async def _distiller_loop() -> None:
-        """每日 04:17 自动提炼昨日；perception.distill 关闭时零出站。"""
+        """每日 04:17 自动提炼昨日；master 或 perception.distill 关闭时零出站。"""
         while True:
             await asyncio.sleep(60)
-            if distiller is None or not settings.get("perception.distill"):
+            if distiller is None or not (settings.get("perception.master") and settings.get("perception.distill")):
                 continue
             try:
                 last = await _offload(distiller.store.last_auto_run_day)
@@ -1281,8 +1281,8 @@ async def serve_async(
                 "running_tasks": running_tasks,
             })
         elif rtype == "distill_now":
-            # 设置页「立即提炼昨日」：开关关闭时直接拒绝（零出站）；运行可长达 60s，挪线程池
-            if distiller is None or not settings.get("perception.distill"):
+            # 设置页「立即提炼昨日」：master/distill 任一关闭直接拒绝（零出站）；运行可长达 60s，挪线程池
+            if distiller is None or not (settings.get("perception.master") and settings.get("perception.distill")):
                 write_msg({"type": "distill_now", "ok": False, "reason": "disabled"})
             else:
                 result = await _offload(distiller.run_yesterday, "manual")

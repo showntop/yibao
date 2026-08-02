@@ -72,7 +72,9 @@ class LLMDelta(BaseModel):
 
 
 class LLMProvider(Protocol):
-    def chat(self, messages: list[dict], tools: list[dict] | None = None) -> LLMResponse: ...
+    def chat(
+        self, messages: list[dict], tools: list[dict] | None = None, timeout: float | None = None
+    ) -> LLMResponse: ...
 
     async def astream(
         self, messages: list[dict], tools: list[dict] | None = None
@@ -123,7 +125,9 @@ class FakeProvider:
         self.calls: list[dict] = []
         self.astream_calls: list[dict] = []
 
-    def chat(self, messages: list[dict], tools: list[dict] | None = None) -> LLMResponse:
+    def chat(
+        self, messages: list[dict], tools: list[dict] | None = None, timeout: float | None = None
+    ) -> LLMResponse:
         self.calls.append({"messages": messages, "tools": tools})
         return LLMResponse(text=self._text, tool_calls=list(self._tool_calls))
 
@@ -187,13 +191,17 @@ class GLMProvider:
             )
         return self._async_client
 
-    def chat(self, messages: list[dict], tools: list[dict] | None = None) -> LLMResponse:
+    def chat(
+        self, messages: list[dict], tools: list[dict] | None = None, timeout: float | None = None
+    ) -> LLMResponse:
         kwargs = {"model": self.model, "messages": messages}
         if tools:
             kwargs["tools"] = [
                 {"type": "function", "function": t} if "function" not in t else t
                 for t in tools
             ]
+        if timeout is not None:  # 仅显式传入时下发（如 Distiller 离线提炼 60s）；主对话回路保持 SDK 默认
+            kwargs["timeout"] = timeout
         resp = self.client.chat.completions.create(**kwargs)
         msg = resp.choices[0].message
         tool_calls: list[ToolCall] = []

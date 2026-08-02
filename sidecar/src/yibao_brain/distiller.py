@@ -363,7 +363,7 @@ class Distiller:
             resp = self.provider.chat([
                 {"role": "system", "content": _DISTILL_PROMPT},
                 {"role": "user", "content": summary},
-            ])
+            ], timeout=60)  # 离线批处理：单次调用 60s 上限，防僵死连接挂住调度循环
             result = parse_distill_output(resp.text)
             if result is None:
                 self.store.record_run(run_day, target_day, source, "failed", "LLM 输出无法解析")

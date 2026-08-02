@@ -107,6 +107,38 @@ def test_glm_provider_parses_openai_response():
     assert resp.tool_calls == []
 
 
+def test_glm_chat_forwards_timeout_only_when_given():
+    # Distiller 离线调用显式传 60s 上限；不传时不下发，保持主对话回路 SDK 默认行为
+    captured = {}
+
+    class FakeMsg:
+        content = "ok"
+        tool_calls = None
+
+    class FakeChoice:
+        message = FakeMsg()
+
+    class FakeResp:
+        choices = [FakeChoice()]
+
+    class FakeClient:
+        def __init__(self, **kw):
+            pass
+
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**kw):
+                    captured.update(kw)
+                    return FakeResp()
+
+    p = GLMProvider(api_key="x", model="glm-4.6", client_factory=FakeClient)
+    p.chat(messages=[{"role": "user", "content": "hi"}])
+    assert "timeout" not in captured
+    p.chat(messages=[{"role": "user", "content": "hi"}], timeout=60)
+    assert captured["timeout"] == 60
+
+
 def test_merge_tool_call_deltas_accumulates_arguments():
     # 同一 index 的 arguments 片段要拼接后解析成 params
     deltas = [
