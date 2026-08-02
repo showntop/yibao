@@ -777,7 +777,7 @@ onUnmounted(() => {
             <button class="switch" :class="{ on: perceptionActivity }" role="switch" :aria-checked="perceptionActivity" :disabled="!perceptionMaster" title="活动与空闲" @click="setPerceptionSetting('perception.activity', !perceptionActivity)"><i /></button>
           </div>
           <div class="s-row">
-            <span class="s-row-label">允许模型读取感知记录<span class="s-row-why">询问最近活动时，将所选时间段的应用名、窗口标题和活动状态发送给当前模型；不发送截图或按键内容</span></span>
+            <span class="s-row-label">允许模型读取感知记录<span class="s-row-why">询问最近活动时，将所选时间段的应用名、窗口标题和活动状态发送给当前模型；开启屏幕内容后，还包括界面结构文本与截图概括；不发送截图原图或按键内容</span></span>
             <button class="switch" :class="{ on: perceptionModelAccess }" role="switch" :aria-checked="perceptionModelAccess" title="允许模型读取感知记录" @click="setPerceptionSetting('perception.model_access', !perceptionModelAccess)"><i /></button>
           </div>
           <div class="s-row">
