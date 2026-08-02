@@ -25,6 +25,7 @@ import {
   getFeedStatsOnce,
   deletePerception,
   clearPerception,
+  distillNow,
   type BrainPermissions,
   type ClearKind,
   type MemItem,
@@ -295,6 +296,11 @@ const perceptionConfirming = ref<number | "all" | null>(null);
 const perceptionDeleting = ref<number | "all" | null>(null);
 // screen 开关行内两段确认：开启涉及持续观察与截图外发，须先看清说明再确认
 const screenConfirming = ref(false);
+// distill 开关同样两段确认：每日提炼会把昨日感知内容外发给当前模型
+const perceptionDistill = ref(false);
+const distillConfirming = ref(false);
+const distillRunning = ref(false);
+const distillResult = ref("");
 
 function syncPerceptionSettings(s: SettingsValues) {
   perceptionMaster.value = s["perception.master"] === true;
@@ -302,6 +308,7 @@ function syncPerceptionSettings(s: SettingsValues) {
   perceptionActivity.value = s["perception.activity"] === true;
   perceptionModelAccess.value = s["perception.model_access"] === true;
   perceptionScreen.value = s["perception.screen"] === true;
+  perceptionDistill.value = s["perception.distill"] === true;
 }
 
 async function setPerceptionSetting(
@@ -310,7 +317,8 @@ async function setPerceptionSetting(
     | "perception.app"
     | "perception.activity"
     | "perception.model_access"
-    | "perception.screen",
+    | "perception.screen"
+    | "perception.distill",
   next: boolean,
 ) {
   perceptionErr.value = "";
@@ -321,12 +329,14 @@ async function setPerceptionSetting(
     "perception.activity": perceptionActivity.value,
     "perception.model_access": perceptionModelAccess.value,
     "perception.screen": perceptionScreen.value,
+    "perception.distill": perceptionDistill.value,
   };
   if (key === "perception.master") perceptionMaster.value = next;
   if (key === "perception.app") perceptionApp.value = next;
   if (key === "perception.activity") perceptionActivity.value = next;
   if (key === "perception.model_access") perceptionModelAccess.value = next;
   if (key === "perception.screen") perceptionScreen.value = next;
+  if (key === "perception.distill") perceptionDistill.value = next;
   const r = await setSettings({ [key]: next });
   if (r === null) {
     perceptionMaster.value = old["perception.master"];
@@ -334,6 +344,7 @@ async function setPerceptionSetting(
     perceptionActivity.value = old["perception.activity"];
     perceptionModelAccess.value = old["perception.model_access"];
     perceptionScreen.value = old["perception.screen"];
+    perceptionDistill.value = old["perception.distill"];
     perceptionErr.value = "设置未生效（大脑不在线？）";
     return;
   }
@@ -355,6 +366,42 @@ function onScreenToggle() {
 async function confirmScreenEnable() {
   screenConfirming.value = false;
   await setPerceptionSetting("perception.screen", true);
+}
+
+// distill 开关：关闭直接生效；开启先弹行内说明，确认才写入（照屏幕内容的行内两段确认模式）
+function onDistillToggle() {
+  if (perceptionDistill.value) {
+    void setPerceptionSetting("perception.distill", false);
+  } else {
+    distillConfirming.value = true;
+  }
+}
+
+async function confirmDistillEnable() {
+  distillConfirming.value = false;
+  await setPerceptionSetting("perception.distill", true);
+}
+
+// 「立即提炼昨日」：最长 90s（LLM 60s 超时 + 余量），结果一次性展示
+async function onDistillNow() {
+  distillRunning.value = true;
+  distillResult.value = "";
+  const r = await distillNow();
+  distillRunning.value = false;
+  if (!r.ok) {
+    distillResult.value = r.reason === "timeout" ? "提炼超时，请稍后再试" : "提炼未开启或大脑不在线";
+    return;
+  }
+  const st = r.result?.status;
+  if (st === "ok") {
+    distillResult.value = `已提炼 ${r.result?.day ?? "昨日"}：洞察 ${r.result?.insights ?? 0} 条、模式 ${r.result?.patterns ?? 0} 条、事件 ${r.result?.events ?? 0} 条`;
+  } else if (st === "no_data") {
+    distillResult.value = "昨日没有感知观察，未提炼";
+  } else if (st === "already_running") {
+    distillResult.value = "提炼正在进行中";
+  } else {
+    distillResult.value = "提炼失败，请稍后再试";
+  }
 }
 
 async function loadPerception(more = false) {
@@ -792,6 +839,25 @@ onUnmounted(() => {
               <button class="s-mini" @click="screenConfirming = false">取消</button>
             </span>
           </div>
+          <div class="s-row">
+            <span class="s-row-label">每日提炼<span class="s-row-why">每日凌晨将昨日感知内容发送给当前模型做提炼，产出模式记忆与效率洞察</span></span>
+            <button class="switch" :class="{ on: perceptionDistill }" role="switch" :aria-checked="perceptionDistill" :disabled="!perceptionMaster" title="每日提炼" @click="onDistillToggle"><i /></button>
+          </div>
+          <!-- 开启每日提炼的行内两段确认：说明外发边界后，确认才写入 -->
+          <div v-if="distillConfirming" class="s-row">
+            <span class="s-row-label"><span class="s-row-why">确认后，每日 04:17 自动将昨日全天感知内容（应用名、窗口标题、活动状态、界面结构文本与截图概括）发送给当前模型做提炼；不发送截图原图或按键内容</span></span>
+            <span class="s-row-btns">
+              <button class="s-mini danger" @click="confirmDistillEnable">确认开启</button>
+              <button class="s-mini" @click="distillConfirming = false">取消</button>
+            </span>
+          </div>
+          <div v-if="perceptionDistill" class="s-row">
+            <span class="s-row-label"><span class="s-row-why">{{ perceptionScreen ? "提炼含应用、活动与屏幕内容" : "未开启屏幕内容，提炼只含应用与活动数据" }}</span></span>
+            <span class="s-row-btns">
+              <button class="s-mini" :disabled="distillRunning" @click="onDistillNow">{{ distillRunning ? "提炼中…" : "立即提炼昨日" }}</button>
+            </span>
+          </div>
+          <div v-if="distillResult" class="s-note">{{ distillResult }}</div>
           <div class="s-note">{{ perceptionMaster ? "运行中" : "已暂停" }} · {{ perceptionItems.length }} 条已加载观察</div>
           <div v-if="perceptionErr" class="s-msg err"><YbIcon name="alert" :size="13" />{{ perceptionErr }}</div>
         </section>
