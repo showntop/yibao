@@ -126,3 +126,11 @@ sidecar（Python，`sidecar/src/yibao_brain/`）：
 - 主动建议旋钮闸门（`proactive_level` 扩展）、使用统计：v4。
 - 对话 → mem0 在线路径迁移：保持现状（分层统一决策）。
 - Distiller 独立模型配置：复用主 GLMProvider 配置（与 mem0 一致）。
+
+## 9. 实装记录（2026-08-02）
+
+- 已实现：`distiller.py`（DistillerStore / yesterday_window / gather_summary / parse_distill_output / Distiller 编排）、server 接线（`perception.distill` 设置键、每日 04:17 `_distiller_loop`、`distill_now` IPC、purge 并入每小时清理）、Rust/TS 转发（`brain-distill-now` 事件）、设置页开关（行内两段确认）+「立即提炼昨日」按钮。
+- 终审加固三处：Distiller 的 LLM 调用 60s 超时（`GLMProvider.chat` 新增可选 timeout，主回路不传不受影响）；出站闸门对齐 UI 从属语义 = `perception.master AND perception.distill`（master 关闭时零出站）；补 `distill_now` IPC 端到端集成测试（双闸门负路径 + 全链路正路径）。
+- 自动验证：sidecar 756 passed（733 基线 + 23 新增）；vue-tsc、Vite build、cargo check/test 全部 exit 0。
+- 沙盒真实 LLM 端到端验收（虚构数据 + 真实 GLM，`scripts/e2e_distill_real.py`）：回包 ok、9 条原料落库、0.5 置信洞察被过滤未投影、Feed 2 条洞察 + 事件按小时合并、runs 落 ok 记录；master 关闭负路径 disabled 零出站。LLM 产出人话具体带数字。
+- 待真机目验（留人工）：设置页开关渲染与行内确认视觉走查；生产环境次日 04:17 自动触发观察。
