@@ -202,3 +202,153 @@ def test_parse_invalid_outputs():
     out2 = parse_distill_output('{"patterns": [{"no_text": 1}, {"text": "好", "confidence": 3}], "insights": [], "events": []}')
     assert [p["text"] for p in out2["patterns"]] == ["好"]
     assert out2["patterns"][0]["confidence"] == 1.0  # 钳到 0-1
+
+
+from yibao_brain.distiller import Distiller  # noqa: E402
+from yibao_brain.feed import FeedStore  # noqa: E402
+from yibao_brain.llm import FakeProvider  # noqa: E402
+
+_GOOD_JSON = (
+    '{"patterns": [{"text": "上午深度用 VSCode", "confidence": 0.9}],'
+    ' "insights": [{"text": "低置信洞察", "confidence": 0.4},'
+    ' {"text": "洞察A", "confidence": 0.9}, {"text": "洞察B", "confidence": 0.8},'
+    ' {"text": "洞察C", "confidence": 0.7}, {"text": "洞察D", "confidence": 0.65}],'
+    ' "events": [{"text": "凌晨 2 点仍活跃", "confidence": 0.9}]}'
+)
+
+
+class _Mem:
+    def __init__(self):
+        self.added: list[str] = []
+
+    def add(self, text, user_id):
+        self.added.append(text)
+        return True
+
+    def recall(self, query, user_id):
+        return []
+
+
+def _distiller(tmp_path, provider, p=None):
+    p = p or _pstore(tmp_path)
+    feed = FeedStore(str(tmp_path / "feed.db"))
+    mem = _Mem()
+    d = Distiller(
+        store=_store(tmp_path), pstore=p, provider=provider,
+        memory=mem, feed=feed, user_id="default",
+    )
+    return d, mem, feed
+
+
+def test_run_yesterday_end_to_end(tmp_path):
+    p = _pstore(tmp_path)
+    day, start, end = yesterday_window()
+    p.append("app", "frontmost", {"app": "VSCode", "title": "a.py"}, "S1", ts=start + 100)
+    p.append("screen", "tree", {"app": "VSCode", "title": "a.py", "text": "代码"}, "S3", ts=start + 200)
+    provider = FakeProvider(text=_GOOD_JSON)
+    d, mem, feed = _distiller(tmp_path, provider, p)
+
+    result = d.run_yesterday("manual")
+    assert result["status"] == "ok"
+    assert result["day"] == day
+
+    # 原料全落库：1 pattern + 5 insight + 1 event
+    items = d.store.day_items(day)
+    assert len([i for i in items if i["kind"] == "pattern"]) == 1
+    assert len([i for i in items if i["kind"] == "insight"]) == 5
+    assert len([i for i in items if i["kind"] == "event"]) == 1
+
+    # pattern → mem0（只写 pattern）
+    assert mem.added == ["上午深度用 VSCode"]
+
+    # insight 投影：置信度 ≥0.6 的前 3 条（D 0.65 落选，低置信 0.4 过滤）
+    feed_items = feed.recent(limit=20)  # ts 倒序；reversed 恢复写入顺序
+    insights = [f for f in reversed(feed_items) if f["meta"].get("type") == "distill_insight"]
+    assert [f["text"] for f in insights] == ["洞察A", "洞察B", "洞察C"]
+    assert all(f["meta"]["distill_id"] for f in insights)
+
+    # event 走 append_hourly 合并写
+    events = [f for f in feed_items if f["meta"].get("type") == "distill_event"]
+    assert any("凌晨 2 点仍活跃" in f["text"] for f in events)
+
+    # runs 表记录
+    assert d.store.last_auto_run_day() is None  # manual 不算 auto
+    d.store.close()
+    p.close()
+
+
+def test_run_yesterday_no_data_skips_llm(tmp_path):
+    provider = FakeProvider(text=_GOOD_JSON)
+    d, mem, feed = _distiller(tmp_path, provider)
+    result = d.run_yesterday("auto")
+    assert result["status"] == "no_data"
+    assert provider.calls == []            # 空数据零出站
+    assert feed.recent() == []
+    assert d.store.last_auto_run_day() is not None  # 但运行记录落库（防重跑）
+    d.store.close()
+
+
+def test_run_yesterday_bad_llm_output(tmp_path):
+    p = _pstore(tmp_path)
+    day, start, end = yesterday_window()
+    p.append("app", "frontmost", {"app": "VSCode", "title": "a.py"}, "S1", ts=start + 100)
+    provider = FakeProvider(text="模型抽风输出")
+    d, mem, feed = _distiller(tmp_path, provider, p)
+    result = d.run_yesterday("auto")
+    assert result["status"] == "failed"
+    assert feed.recent() == []             # 未解析文本绝不投影
+    assert mem.added == []
+    d.store.close()
+    p.close()
+
+
+def test_run_yesterday_llm_exception(tmp_path):
+    class _Boom:
+        def chat(self, messages, tools=None):
+            raise RuntimeError("网络炸了")
+
+    p = _pstore(tmp_path)
+    day, start, end = yesterday_window()
+    p.append("app", "frontmost", {"app": "VSCode", "title": "a.py"}, "S1", ts=start + 100)
+    d, mem, feed = _distiller(tmp_path, _Boom(), p)
+    result = d.run_yesterday("auto")       # 不抛异常
+    assert result["status"] == "failed"
+    assert "网络炸了" in result["error"]
+    assert feed.recent() == []
+    d.store.close()
+    p.close()
+
+
+def test_run_yesterday_memory_failure_still_projects_feed(tmp_path):
+    class _BadMem(_Mem):
+        def add(self, text, user_id):
+            raise RuntimeError("mem0 挂了")
+
+    p = _pstore(tmp_path)
+    day, start, end = yesterday_window()
+    p.append("app", "frontmost", {"app": "VSCode", "title": "a.py"}, "S1", ts=start + 100)
+    provider = FakeProvider(text=_GOOD_JSON)
+    feed = FeedStore(str(tmp_path / "feed.db"))
+    d = Distiller(store=_store(tmp_path), pstore=p, provider=provider,
+                  memory=_BadMem(), feed=feed, user_id="default")
+    result = d.run_yesterday("manual")
+    assert result["status"] == "ok"        # mem0 挂不影响整体
+    assert any(f["meta"].get("type") == "distill_insight" for f in feed.recent())
+    d.store.close()
+    p.close()
+
+
+def test_run_yesterday_mutex(tmp_path):
+    p = _pstore(tmp_path)
+    day, start, end = yesterday_window()
+    p.append("app", "frontmost", {"app": "VSCode", "title": "a.py"}, "S1", ts=start + 100)
+    provider = FakeProvider(text=_GOOD_JSON)
+    d, mem, feed = _distiller(tmp_path, provider, p)
+    assert d._run_lock.acquire(blocking=False)  # 模拟进行中的任务
+    try:
+        result = d.run_yesterday("manual")
+        assert result["status"] == "already_running"
+    finally:
+        d._run_lock.release()
+    d.store.close()
+    p.close()

@@ -315,3 +315,128 @@ def parse_distill_output(text: str | None) -> dict | None:
             })
         out[key] = cleaned
     return out
+
+
+class Distiller:
+    """昨日提炼编排：汇集 → 预聚合 → LLM → 落库 → 投影。绝不抛异常。"""
+
+    def __init__(
+        self,
+        *,
+        store: DistillerStore,
+        pstore,
+        provider,
+        memory,
+        feed,
+        memories_fn=None,   # () -> list[str] | None；近期记忆佐证（只读）
+        history_fn=None,    # () -> list[dict] | None；近期对话佐证（只读）
+        user_id: str = "default",
+        char_budget: int = _SUMMARY_CHAR_BUDGET,
+    ):
+        self.store = store
+        self.pstore = pstore
+        self.provider = provider
+        self.memory = memory
+        self.feed = feed
+        self.memories_fn = memories_fn
+        self.history_fn = history_fn
+        self.user_id = user_id
+        self.char_budget = char_budget
+        self._run_lock = threading.Lock()
+
+    def run_yesterday(self, source: str = "auto") -> dict:
+        """跑一次昨日提炼。source: "auto" | "manual"。绝不抛异常。"""
+        if not self._run_lock.acquire(blocking=False):
+            return {"status": "already_running"}
+        run_day = date.today().isoformat()
+        target_day, start_ts, end_ts = yesterday_window()
+        try:
+            memories = self._safe_call(self.memories_fn)
+            history = self._safe_call(self.history_fn)
+            summary, stats = gather_summary(
+                self.pstore, start_ts, end_ts,
+                memories=memories, history=history, char_budget=self.char_budget,
+            )
+            if stats["app_count"] == 0 and stats["screen_count"] == 0:
+                self.store.record_run(run_day, target_day, source, "no_data")
+                return {"status": "no_data", "day": target_day}
+            resp = self.provider.chat([
+                {"role": "system", "content": _DISTILL_PROMPT},
+                {"role": "user", "content": summary},
+            ])
+            result = parse_distill_output(resp.text)
+            if result is None:
+                self.store.record_run(run_day, target_day, source, "failed", "LLM 输出无法解析")
+                return {"status": "failed", "day": target_day, "error": "parse"}
+            counts = self._project(target_day, result)
+            self.store.record_run(run_day, target_day, source, "ok")
+            return {"status": "ok", "day": target_day, **counts}
+        except Exception as e:
+            print(f"[yibao] 提炼失败：{e}", file=sys.stderr)
+            try:
+                self.store.record_run(run_day, target_day, source, "failed", str(e)[:200])
+            except Exception:
+                pass
+            return {"status": "failed", "day": target_day, "error": str(e)[:200]}
+        finally:
+            self._run_lock.release()
+
+    def _safe_call(self, fn):
+        """佐证读取失败只 print，返回 None 继续（佐证不是必需品）。"""
+        if fn is None:
+            return None
+        try:
+            return fn()
+        except Exception as e:
+            print(f"[yibao] 提炼佐证读取失败：{e}", file=sys.stderr)
+            return None
+
+    def _project(self, day: str, result: dict) -> dict:
+        """全量落库 → pattern 写 mem0、insight 前 3 条投影 Feed、event 按小时合并。"""
+        saved: dict[str, list[tuple[int, dict]]] = {"pattern": [], "insight": [], "event": []}
+        for kind, key in (("pattern", "patterns"), ("insight", "insights"), ("event", "events")):
+            for item in result[key]:
+                did = self.store.add(day, kind, item["text"],
+                                     data=item.get("data"), confidence=item["confidence"])
+                if did is not None:
+                    saved[kind].append((did, item))
+
+        projected: list[int] = []
+        # pattern → mem0（只写 pattern；mem0 自身去重；失败只 print）
+        for did, item in saved["pattern"]:
+            try:
+                self.memory.add(item["text"], self.user_id)
+                projected.append(did)
+            except Exception as e:
+                print(f"[yibao] 模式写记忆失败：{e}", file=sys.stderr)
+        # insight → Feed：置信度 ≥0.6 的前 3 条，带 distill_id 回指
+        ranked = sorted(saved["insight"], key=lambda x: -x[1]["confidence"])
+        for did, item in [
+            i for i in ranked if i[1]["confidence"] >= _INSIGHT_MIN_CONFIDENCE
+        ][:_INSIGHT_MAX_PER_DAY]:
+            try:
+                self.feed.add("event", item["text"],
+                              {"type": "distill_insight", "distill_id": did})
+                projected.append(did)
+            except Exception as e:
+                print(f"[yibao] 洞察投影 Feed 失败：{e}", file=sys.stderr)
+        # event → Feed 按小时合并，防刷屏
+        if saved["event"]:
+            h = int(time.time()) // 3600 * 3600
+            for did, item in saved["event"]:
+                try:
+                    self.feed.append_hourly(
+                        "event", item["text"],
+                        {"type": "distill_event", "hour": h, "distill_id": did}, h,
+                    )
+                    projected.append(did)
+                except Exception as e:
+                    print(f"[yibao] 事件投影 Feed 失败：{e}", file=sys.stderr)
+        if projected:
+            self.store.mark_projected(projected)
+        return {
+            "patterns": len(saved["pattern"]),
+            "insights": len(saved["insight"]),
+            "events": len(saved["event"]),
+            "projected": len(projected),
+        }
