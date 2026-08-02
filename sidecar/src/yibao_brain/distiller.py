@@ -260,3 +260,58 @@ def gather_summary(
     summary = f"{head_text}\n{marker}\n{body}"
     stats = {"app_count": len(app_seconds), "screen_count": len(kept)}
     return summary, stats
+
+
+_DISTILL_PROMPT = """你是个人数字生活的分析助手。根据用户昨日的设备使用摘要，提炼三类结论，严格输出 JSON（不要输出任何其他文字）：
+
+{
+  "patterns": [{"text": "……", "confidence": 0.0-1.0}],
+  "insights": [{"text": "……", "confidence": 0.0-1.0}],
+  "events": [{"text": "……", "confidence": 0.0-1.0}]
+}
+
+- patterns：稳定可复用的使用/作息模式（将写入长期记忆），宁缺毋滥，≤5 条
+- insights：可执行的效率观察与建议（如长时间卡在同一问题、频繁在应用间切换），≤5 条
+- events：值得记账的重要事件（如深夜工作、超长连续专注），≤5 条
+每条 text 用中文一句话，具体、带数字。没有就给空数组。"""
+
+
+def parse_distill_output(text: str | None) -> dict | None:
+    """解析 LLM 提炼输出；任何不合法返回 None（未解析文本绝不投影）。"""
+    if not text:
+        return None
+    t = text.strip()
+    if t.startswith("```"):
+        t = t.strip("`").strip()
+        if t[:4].lower() == "json":
+            t = t[4:].strip()
+    try:
+        obj = json.loads(t)
+    except Exception:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    out: dict[str, list[dict]] = {}
+    for key in ("patterns", "insights", "events"):
+        items = obj.get(key) or []
+        if not isinstance(items, list):
+            return None
+        cleaned: list[dict] = []
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            txt = str(it.get("text") or "").strip()
+            if not txt:
+                continue
+            try:
+                conf = float(it.get("confidence", 0.5))
+            except (TypeError, ValueError):
+                conf = 0.5
+            data = it.get("data")
+            cleaned.append({
+                "text": txt,
+                "confidence": max(0.0, min(1.0, conf)),
+                "data": data if isinstance(data, dict) else {},
+            })
+        out[key] = cleaned
+    return out

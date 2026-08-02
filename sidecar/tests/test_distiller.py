@@ -163,3 +163,42 @@ def test_gather_summary_context_evidence(tmp_path):
     assert "近期对话" in summary and "帮我看看这个报错" in summary
     assert "- tool:" not in summary  # tool 消息不进佐证
     p.close()
+
+
+from yibao_brain.distiller import parse_distill_output  # noqa: E402
+
+
+def test_parse_valid_output():
+    text = '{"patterns": [{"text": "上午深度用 VSCode", "confidence": 0.9}],' \
+           ' "insights": [{"text": "同个报错查了 3 次", "confidence": 0.75, "data": {"app": "Chrome"}}],' \
+           ' "events": []}'
+    out = parse_distill_output(text)
+    assert out is not None
+    assert out["patterns"][0]["text"] == "上午深度用 VSCode"
+    assert out["patterns"][0]["confidence"] == 0.9
+    assert out["patterns"][0]["data"] == {}
+    assert out["insights"][0]["data"] == {"app": "Chrome"}
+    assert out["events"] == []
+
+
+def test_parse_fenced_output():
+    text = "```json\n{\"patterns\": [], \"insights\": [], \"events\": [{\"text\": \"凌晨 2 点仍活跃\"}]}\n```"
+    out = parse_distill_output(text)
+    assert out is not None
+    assert out["events"][0]["text"] == "凌晨 2 点仍活跃"
+    assert out["events"][0]["confidence"] == 0.5  # 缺省置信度
+
+
+def test_parse_invalid_outputs():
+    assert parse_distill_output("") is None
+    assert parse_distill_output(None) is None
+    assert parse_distill_output("这不是 JSON") is None
+    assert parse_distill_output("[1,2,3]") is None                      # 不是 dict
+    assert parse_distill_output('{"patterns": "oops"}') is None         # 键类型错
+    # 坏条目被丢弃而不是整体失败
+    out = parse_distill_output('{"patterns": [{"no_text": 1}, {"text": "好"}], "insights": 5, "events": []}')
+    # patterns 里无 text 的被丢；insights 类型错 → 整体 None
+    assert out is None
+    out2 = parse_distill_output('{"patterns": [{"no_text": 1}, {"text": "好", "confidence": 3}], "insights": [], "events": []}')
+    assert [p["text"] for p in out2["patterns"]] == ["好"]
+    assert out2["patterns"][0]["confidence"] == 1.0  # 钳到 0-1
