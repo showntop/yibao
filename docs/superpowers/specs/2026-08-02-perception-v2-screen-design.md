@@ -53,3 +53,13 @@
 ## 8. 非目标
 
 晨间反刍/时间线/Distiller/巩固 job（感知 roadmap v3+）；B 源与 watch 主动建议合流；SQLCipher/Touch ID（v2 加密增强）；E/D 源。
+
+---
+
+## 实装记录（2026-08-02）
+
+- **已实现**：B 源采集（变化/300s 心跳触发，a11y 树文本优先、截图 GLM 概括兜底）；三层过滤（内置+可配黑名单、浏览器隐私窗启发式、secure input 弃帧 + 概括敏感正则）；日预算（120 事件/30 概括）；observations.db 加密落库（S3，7 天留存）；截图帧即清（过滤/概括后删原图堵明文残留）；敏感概括丢弃也去抖。
+- **已实现**：`perception.screen` 独立开关（默认关，行内两段确认明示 GLM 概括出站）；`perception.blacklist` 可配；`load_screen_content` L0 消费工具（minutes/limit 收敛、model_access 拦截、safe_result 摘要、notice「已参考屏幕内容」）；感知日志「屏幕」徽章（vision 前缀「概括 ·」）；团子观察中青白叠加点（不占 state 通道）。
+- **真机验收（2026-08-02 通过）**：开关明示/状态灯亮灭、Safari/系统设置/VS Code tree 条目与 Excalidraw vision 概括、1Password 黑名单无条目、「我刚才看的页面讲了什么」引用屏幕内容并带 notice、model_access 关闭拦截引导、关闭后无新条目——7 步全过。
+- **自动验证**：sidecar 733 passed；vue-tsc + vite build、cargo check 全绿。
+- **backlog**：sampler 先判去抖再采样（IO 优化）；状态灯小尺寸辨识度微调；日志「概括 ·」前缀观感。
