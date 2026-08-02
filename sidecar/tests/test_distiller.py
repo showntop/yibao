@@ -376,3 +376,96 @@ def test_run_yesterday_passes_timeout_60(tmp_path):
     assert rec.chat_kwargs == {"timeout": 60}
     d.store.close()
     p.close()
+
+
+# ---------- serve_async 集成：{"type":"distill_now"} IPC 端到端（感知 v3） ----------
+
+import asyncio  # noqa: E402
+import json  # noqa: E402
+
+from yibao_brain.memory import FakeMemory  # noqa: E402
+from yibao_brain.server import serve_async  # noqa: E402
+
+
+def _make_reader(msgs):
+    it = iter(msgs + [None])  # 末尾 None = stdin 结束
+    return lambda: next(it)
+
+
+def _run_async(coro):
+    return asyncio.run(coro)
+
+
+def _write_settings(tmp_path, values: dict):
+    (tmp_path / "settings.json").write_text(json.dumps(values), encoding="utf-8")
+
+
+def test_distill_now_disabled_when_distill_off_or_master_off(tmp_path, monkeypatch):
+    """出站闸门 = master AND distill（与设置页从属语义对齐）：任一关闭 → disabled 回包，零出站。"""
+    monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path))
+    p = _pstore(tmp_path)
+    for overrides in (
+        {"perception.master": True, "perception.distill": False},   # distill 关
+        {"perception.master": False, "perception.distill": True},   # master 关（从属语义）
+    ):
+        _write_settings(tmp_path, overrides)
+        provider = FakeProvider(text=_GOOD_JSON)
+        out = []
+        _run_async(serve_async(
+            _make_reader([{"type": "distill_now"}]),
+            out.append,
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=provider,
+            perception_store=p,
+        ))
+        replies = [m for m in out if m["type"] == "distill_now"]
+        assert replies == [{"type": "distill_now", "ok": False, "reason": "disabled"}]
+        assert provider.calls == []  # 零出站
+    p.close()
+
+
+def test_distill_now_end_to_end(tmp_path, monkeypatch):
+    """master+distill 双开：昨日 A 源观察 → LLM 提炼 → distill.db 落原料 + Feed 投影 + mem0 收 pattern。"""
+    monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path))
+    _write_settings(tmp_path, {"perception.master": True, "perception.distill": True})
+    p = _pstore(tmp_path)
+    day, start, end = yesterday_window()
+    p.append("app", "frontmost", {"app": "VSCode", "title": "a.py"}, "S1", ts=start + 100)
+    p.append("screen", "tree", {"app": "VSCode", "title": "a.py", "text": "代码"}, "S3", ts=start + 200)
+    mem = FakeMemory()
+    # 注入受控记忆实例（test_mem_settings 同款手法），断言 pattern 真的进了 mem0
+    monkeypatch.setattr("yibao_brain.server.FakeMemory", lambda: mem)
+    provider = FakeProvider(text=_GOOD_JSON)
+
+    out = []
+    _run_async(serve_async(
+        _make_reader([{"type": "distill_now"}]),
+        out.append,
+        use_real=False,
+        db_path=str(tmp_path / "a.db"),
+        provider=provider,
+        perception_store=p,
+    ))
+
+    replies = [m for m in out if m["type"] == "distill_now"]
+    assert len(replies) == 1
+    assert replies[0]["ok"] is True
+    assert replies[0]["result"]["status"] == "ok"
+    assert replies[0]["result"]["day"] == day
+
+    # 原料落 distill.db（serve_async 把库建在 dirname(db_path) 下）
+    store = DistillerStore(str(tmp_path / "distill.db"))
+    kinds = {i["kind"] for i in store.day_items(day)}
+    assert kinds == {"pattern", "insight", "event"}
+    store.close()
+
+    # insight（置信度 ≥0.6 的前 3 条）投影 Feed
+    feed = FeedStore(str(tmp_path / "feed.db"))
+    insights = [f for f in feed.recent(limit=50) if f["meta"].get("type") == "distill_insight"]
+    assert [f["text"] for f in reversed(insights)] == ["洞察A", "洞察B", "洞察C"]
+    feed.close()
+
+    # pattern 写 mem0
+    assert "上午深度用 VSCode" in [m["text"] for m in mem.list_all("default")]
+    p.close()
