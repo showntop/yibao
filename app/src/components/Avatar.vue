@@ -32,6 +32,8 @@ const props = withDefaults(
     size?: number;
     /** 小尺寸模式：去光晕、放大状态灯并加白描边。默认由 size < 40 自动判定 */
     compact?: boolean;
+    /** 感知观察中叠加点：右上角青白小点，独立于 state 编码通道 */
+    observing?: boolean;
   }>(),
   { size: 64 },
 );
@@ -319,6 +321,8 @@ onUnmounted(() => { if (blinkTimer) clearTimeout(blinkTimer); });
           :stroke-width="compact ? 1.4 : 0"
         />
       </g>
+      <!-- 感知观察中叠加点：独立 prop，不占用 state 状态编码通道 -->
+      <circle v-if="observing" cx="86" cy="20" r="3" fill="#cfe8f5" opacity="0.9" />
 
       <!-- success 星芒（真对称星形） -->
       <path

@@ -11,7 +11,7 @@ import HomeFeed from "./components/HomeFeed.vue";
 import HomeChat from "./components/HomeChat.vue";
 import HomePlugins from "./components/HomePlugins.vue";
 import SettingsView from "./components/SettingsView.vue";
-import { onPendingConfirms } from "./lib/brain";
+import { onPendingConfirms, onSettings, getSettingsOnce, type SettingsValues } from "./lib/brain";
 
 type Tab = "home" | "chat" | "plugins" | "settings";
 type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
@@ -35,11 +35,25 @@ const chatDraft = ref("");
 const approvalCount = ref(0);
 // 未读动态数：sidebar 徽标（HomeFeed 经 emit 同步，stats.unread）
 const feedUnread = ref(0);
+// 感知观察中叠加点（Avatar observing prop）：总开关 + 任一采集源开启即视为观察中
+const observing = ref(false);
+function syncObserving(s: SettingsValues | null) {
+  observing.value = !!(
+    s?.["perception.master"] &&
+    (s?.["perception.app"] || s?.["perception.activity"] || s?.["perception.screen"])
+  );
+}
 let unApprovals: (() => void) | null = null;
-onMounted(() => {
+let unSettings: (() => void) | null = null;
+onMounted(async () => {
   unApprovals = onPendingConfirms((l) => (approvalCount.value = l.length));
+  void getSettingsOnce().then(syncObserving);
+  unSettings = await onSettings(syncObserving);
 });
-onUnmounted(() => unApprovals?.());
+onUnmounted(() => {
+  unApprovals?.();
+  unSettings?.();
+});
 
 function onFeedChat(draft?: string) {
   tab.value = "chat";
@@ -74,7 +88,7 @@ function close() {
       <div class="titlebar-safe" data-tauri-drag-region></div>
 
       <div class="identity" data-tauri-drag-region>
-        <Avatar :state="railState" :size="30" />
+        <Avatar :state="railState" :size="30" :observing="observing" />
         <div class="id-meta" data-tauri-drag-region>
           <span class="id-name" data-tauri-drag-region>译宝</span>
           <span class="id-state" :class="railState" data-tauri-drag-region>

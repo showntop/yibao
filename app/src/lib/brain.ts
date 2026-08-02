@@ -656,6 +656,7 @@ export interface SettingsValues {
   "perception.app": boolean;
   "perception.activity": boolean;
   "perception.model_access": boolean;
+  "perception.screen"?: boolean;
   [k: string]: unknown;
 }
 
@@ -687,6 +688,11 @@ export async function setSettings(values: Partial<SettingsValues>, timeoutMs = 3
   }
   const r = await Promise.race([resp, timeout]);
   return r ? r.values : null;
+}
+
+/** 订阅设置变更回推（settings_set 生效后大脑广播 brain-settings）。 */
+export function onSettings(cb: (s: SettingsValues) => void): Promise<UnlistenFn> {
+  return listen<{ values: SettingsValues }>("brain-settings", (ev) => cb(ev.payload.values));
 }
 
 // ---- 感知（默认关闭、payload 加密落盘；这里只接收 sidecar 解密后的短暂 UI 数据）----

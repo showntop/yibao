@@ -16,6 +16,8 @@ import {
   onBrainPermissions,
   onPanelClosed,
   onPendingConfirms,
+  onSettings,
+  getSettingsOnce,
   openHomeWindow,
   runInput,
   invokeContext,
@@ -27,6 +29,7 @@ import {
   type BrainStatusMsg,
   type BrainPermissions,
   type PendingConfirm,
+  type SettingsValues,
   canRememberSkill,
 } from "./lib/brain";
 import { resetWindowSize, openPanel, setInteractiveFull, setBubbleOn } from "./lib/window";
@@ -63,6 +66,14 @@ const pendingCanRemember = computed(() => canRememberSkill(pending.value?.skill 
 const rememberPending = ref(false);
 const brainDown = ref(false); // 大脑掉线/重启中（守护在恢复）
 const perms = ref<BrainPermissions | null>(null); // macOS 权限状态（null=未收到）
+// 感知观察中叠加点（Avatar observing prop）：总开关 + 任一采集源开启即视为观察中
+const observing = ref(false);
+function syncObserving(s: SettingsValues | null) {
+  observing.value = !!(
+    s?.["perception.master"] &&
+    (s?.["perception.app"] || s?.["perception.activity"] || s?.["perception.screen"])
+  );
+}
 const expanded = ref(false);
 const panelOpen = ref(false); // 面板协作会话进行中（关联气泡只插一次，panel 刷新不重复插）
 // 过程展示：action.id → 过程行（sys 淡色小字）在 bubbles 里的下标，结果回来原地更新
@@ -151,6 +162,7 @@ let unlistenSetupCfg: (() => void) | null = null;
 let unlistenInvoke: (() => void) | null = null;
 let unlistenInvokeSel: (() => void) | null = null;
 let unlistenApprovals: (() => void) | null = null;
+let unlistenSettings: (() => void) | null = null;
 
 const statusText = computed(
   () => ({
@@ -591,6 +603,9 @@ onMounted(async () => {
       void expand();
     }
   });
+  // 感知观察中叠加点：一次性取数兜底 + brain-settings 回推刷新（设置页改开关即时反映）
+  void getSettingsOnce().then(syncObserving);
+  unlistenSettings = await onSettings(syncObserving);
   // 首启引导（生产打包首跑：装 Python 环境/下模型，大脑还没起来，走 Tauri 事件直推）
   unlistenSetup = await listen<{ stage: string; detail: string }>("setup-progress", (e) => {
     if (e.payload.stage !== "done" && !expanded.value) void expand();
@@ -624,6 +639,7 @@ onUnmounted(() => {
   unlistenInvoke?.();
   unlistenInvokeSel?.();
   unlistenApprovals?.();
+  unlistenSettings?.();
   window.removeEventListener("keydown", onKeydown);
   if (clickTimer !== null) clearTimeout(clickTimer);
   if (bubbleTimer !== null) clearTimeout(bubbleTimer);
@@ -646,14 +662,14 @@ onUnmounted(() => {
         />
       </div>
       <div class="pet-wrap" @pointerenter="onPetHover">
-        <Avatar class="pet" :state="petState" :size="88" @click="onPetClick" @longpress="onMicContinuous" />
+        <Avatar class="pet" :state="petState" :size="88" :observing="observing" @click="onPetClick" @longpress="onMicContinuous" />
       </div>
     </template>
 
     <!-- 对话：header（头像+名称+状态+收起，一体化贴边）/ 内容区（权限引导/气泡流/输入条） -->
     <template v-else>
       <header class="chat-header flip" data-tauri-drag-region>
-        <Avatar :state="petState" :size="38" @click="collapse" />
+        <Avatar :state="petState" :size="38" :observing="observing" @click="collapse" />
         <div class="meta" data-tauri-drag-region>
           <span class="name">译宝</span>
           <span class="status" :class="petState"><i class="dot" />{{ statusText }}</span>

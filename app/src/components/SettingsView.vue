@@ -284,6 +284,7 @@ const perceptionMaster = ref(false);
 const perceptionApp = ref(false);
 const perceptionActivity = ref(false);
 const perceptionModelAccess = ref(false);
+const perceptionScreen = ref(false);
 const perceptionItems = ref<PerceptionItem[]>([]);
 const perceptionAvailable = ref(true);
 const perceptionLoaded = ref(false);
@@ -292,12 +293,15 @@ const perceptionHasMore = ref(false);
 const perceptionErr = ref("");
 const perceptionConfirming = ref<number | "all" | null>(null);
 const perceptionDeleting = ref<number | "all" | null>(null);
+// screen 开关行内两段确认：开启涉及持续观察与截图外发，须先看清说明再确认
+const screenConfirming = ref(false);
 
 function syncPerceptionSettings(s: SettingsValues) {
   perceptionMaster.value = s["perception.master"] === true;
   perceptionApp.value = s["perception.app"] === true;
   perceptionActivity.value = s["perception.activity"] === true;
   perceptionModelAccess.value = s["perception.model_access"] === true;
+  perceptionScreen.value = s["perception.screen"] === true;
 }
 
 async function setPerceptionSetting(
@@ -305,26 +309,31 @@ async function setPerceptionSetting(
     | "perception.master"
     | "perception.app"
     | "perception.activity"
-    | "perception.model_access",
+    | "perception.model_access"
+    | "perception.screen",
   next: boolean,
 ) {
   perceptionErr.value = "";
+  if (key === "perception.master" && !next) screenConfirming.value = false;
   const old = {
     "perception.master": perceptionMaster.value,
     "perception.app": perceptionApp.value,
     "perception.activity": perceptionActivity.value,
     "perception.model_access": perceptionModelAccess.value,
+    "perception.screen": perceptionScreen.value,
   };
   if (key === "perception.master") perceptionMaster.value = next;
   if (key === "perception.app") perceptionApp.value = next;
   if (key === "perception.activity") perceptionActivity.value = next;
   if (key === "perception.model_access") perceptionModelAccess.value = next;
+  if (key === "perception.screen") perceptionScreen.value = next;
   const r = await setSettings({ [key]: next });
   if (r === null) {
     perceptionMaster.value = old["perception.master"];
     perceptionApp.value = old["perception.app"];
     perceptionActivity.value = old["perception.activity"];
     perceptionModelAccess.value = old["perception.model_access"];
+    perceptionScreen.value = old["perception.screen"];
     perceptionErr.value = "设置未生效（大脑不在线？）";
     return;
   }
@@ -332,6 +341,20 @@ async function setPerceptionSetting(
   if (key === "perception.master" && next && !perceptionMaster.value) {
     perceptionErr.value = "感知存储不可用，已保持关闭";
   }
+}
+
+// screen 开关：关闭直接生效；开启先弹行内说明，确认才写入（照删除的行内两段确认模式）
+function onScreenToggle() {
+  if (perceptionScreen.value) {
+    void setPerceptionSetting("perception.screen", false);
+  } else {
+    screenConfirming.value = true;
+  }
+}
+
+async function confirmScreenEnable() {
+  screenConfirming.value = false;
+  await setPerceptionSetting("perception.screen", true);
 }
 
 async function loadPerception(more = false) {
@@ -364,11 +387,16 @@ function perceptionText(item: PerceptionItem): string {
     const seconds = Number(item.payload.idle_seconds || 0);
     return item.kind === "idle" ? `进入空闲 · ${Math.max(1, Math.round(seconds / 60))} 分钟` : "恢复活跃";
   }
+  if (item.source === "screen") {
+    const text = String(item.payload.text || "");
+    const cut = text.length > 60 ? `${text.slice(0, 60)}…` : text;
+    return item.kind === "vision" ? `概括 · ${cut}` : cut;
+  }
   return String(item.payload.text || item.kind);
 }
 
 function perceptionSource(item: PerceptionItem): string {
-  return item.source === "app" ? "应用" : item.source === "activity" ? "活动" : item.source;
+  return item.source === "app" ? "应用" : item.source === "activity" ? "活动" : item.source === "screen" ? "屏幕" : item.source;
 }
 
 function relativeTime(ts: number): string {
@@ -751,6 +779,18 @@ onUnmounted(() => {
           <div class="s-row">
             <span class="s-row-label">允许模型读取感知记录<span class="s-row-why">询问最近活动时，将所选时间段的应用名、窗口标题和活动状态发送给当前模型；不发送截图或按键内容</span></span>
             <button class="switch" :class="{ on: perceptionModelAccess }" role="switch" :aria-checked="perceptionModelAccess" title="允许模型读取感知记录" @click="setPerceptionSetting('perception.model_access', !perceptionModelAccess)"><i /></button>
+          </div>
+          <div class="s-row">
+            <span class="s-row-label">屏幕内容<span class="s-row-why">读取界面结构文本；无法读取时截图概括</span></span>
+            <button class="switch" :class="{ on: perceptionScreen }" role="switch" :aria-checked="perceptionScreen" :disabled="!perceptionMaster" title="屏幕内容" @click="onScreenToggle"><i /></button>
+          </div>
+          <!-- 开启屏幕观察的行内两段确认：说明外发边界后，确认才写入 -->
+          <div v-if="screenConfirming" class="s-row">
+            <span class="s-row-label"><span class="s-row-why">屏幕内容将被持续观察；界面结构文本只存本机，无法读取结构时的截图会发送给智谱 GLM 做概括</span></span>
+            <span class="s-row-btns">
+              <button class="s-mini danger" @click="confirmScreenEnable">确认开启</button>
+              <button class="s-mini" @click="screenConfirming = false">取消</button>
+            </span>
           </div>
           <div class="s-note">{{ perceptionMaster ? "运行中" : "已暂停" }} · {{ perceptionItems.length }} 条已加载观察</div>
           <div v-if="perceptionErr" class="s-msg err"><YbIcon name="alert" :size="13" />{{ perceptionErr }}</div>
