@@ -161,5 +161,5 @@ def test_gather_summary_context_evidence(tmp_path):
     )
     assert "近期记忆" in summary and "23 点后休息" in summary
     assert "近期对话" in summary and "帮我看看这个报错" in summary
-    assert '"role": "tool"' not in summary  # tool 消息不进佐证
+    assert "- tool:" not in summary  # tool 消息不进佐证
     p.close()
