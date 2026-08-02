@@ -158,3 +158,105 @@ def auto_run_due(now: float, last_run_day: str | None, hour: int = 4, minute: in
     if (lt.tm_hour, lt.tm_min) < (hour, minute):
         return False
     return last_run_day != date.fromtimestamp(now).isoformat()
+
+
+def yesterday_window(now: float | None = None) -> tuple[str, float, float]:
+    """昨日本地自然日的 (day_str, start_ts, end_ts)。"""
+    today = date.fromtimestamp(now if now is not None else time.time())
+    yday = today - timedelta(days=1)
+    start = datetime(yday.year, yday.month, yday.day).timestamp()
+    end = datetime(today.year, today.month, today.day).timestamp()
+    return yday.isoformat(), start, end
+
+
+def gather_summary(
+    pstore,
+    start_ts: float,
+    end_ts: float,
+    *,
+    memories: list[str] | None = None,
+    history: list[dict] | None = None,
+    char_budget: int = _SUMMARY_CHAR_BUDGET,
+) -> tuple[str, dict]:
+    """汇集窗口内观察并预聚合成紧凑文本（本地，零 LLM）。
+
+    返回 (摘要, {"app_count", "screen_count"})。B 源条目去重（app+前50字），
+    超预算时从最早的 B 源条目开始弃，保最近；头部统计不丢。
+    """
+    # A/C 源 → 时间线段
+    rows = pstore.query_window(start_ts, end_ts, limit=2001)
+    seeds = [
+        s for s in (
+            pstore.latest_before("app", start_ts),
+            pstore.latest_before("activity", start_ts),
+        )
+        if s
+    ]
+    segments, _ = build_activity_segments(rows, seeds, start_ts, end_ts)
+
+    head: list[str] = ["【应用使用（时长降序）】"]
+    app_seconds: dict[str, float] = {}
+    for seg in segments:
+        app = seg.get("app")
+        if app:
+            app_seconds[app] = app_seconds.get(app, 0.0) + (seg["end_ts"] - seg["start_ts"])
+    for app, secs in sorted(app_seconds.items(), key=lambda kv: -kv[1]):
+        head.append(f"- {app}: {secs / 3600:.1f} 小时")
+    if not app_seconds:
+        head.append("- （无记录）")
+
+    head.append("\n【活跃时段（≥30 分钟）】")
+    active_blocks = 0
+    for seg in segments:
+        if seg.get("activity") == "active" and seg["end_ts"] - seg["start_ts"] >= 1800:
+            s = time.strftime("%H:%M", time.localtime(seg["start_ts"]))
+            e = time.strftime("%H:%M", time.localtime(seg["end_ts"]))
+            head.append(f"- {s}–{e}")
+            active_blocks += 1
+    if not active_blocks:
+        head.append("- （无记录）")
+
+    # B 源 → 去重文本条目（保留到预算内最近的若干条）
+    rows_b = pstore.query_window(start_ts, end_ts, limit=2001, sources=("screen",))
+    seen: set[tuple[str, str]] = set()
+    b_lines: list[str] = []
+    for row in rows_b:
+        payload = row.get("payload") or {}
+        text = str(payload.get("text") or "")[:_B_ENTRY_TEXT_LIMIT]
+        app = str(payload.get("app") or "")
+        key = (app, text[:50])
+        if not text or key in seen:
+            continue
+        seen.add(key)
+        ts = time.strftime("%H:%M", time.localtime(row["ts"]))
+        b_lines.append(f"- [{ts}] {app}: {text}")
+
+    # 佐证：近期记忆 + 近期对话（只读，不双写）
+    ctx: list[str] = []
+    if memories:
+        ctx.append("\n【近期记忆（佐证）】")
+        ctx.extend(f"- {str(m)[:120]}" for m in memories[:10])
+    if history:
+        ctx.append("\n【近期对话（佐证）】")
+        for m in history[-10:]:
+            if m.get("role") in ("user", "assistant") and isinstance(m.get("content"), str):
+                ctx.append(f"- {m['role']}: {m['content'][:120]}")
+
+    head_text = "\n".join(head) + "\n" + "\n".join(ctx)
+    kept: list[str] = []
+    used = len(head_text)
+    for line in reversed(b_lines):  # 从最新往旧加，超预算即弃最旧
+        need = len(line) + 1
+        if used + need > char_budget:
+            break
+        kept.append(line)
+        used += need
+    kept.reverse()
+    if b_lines and not kept:
+        kept = [b_lines[-1]]  # 至少保一条最新的
+
+    body = "\n".join(kept) if kept else "- （无记录）"
+    marker = "【屏幕内容条目】（仅含最近部分）" if len(kept) < len(b_lines) else "【屏幕内容条目】"
+    summary = f"{head_text}\n{marker}\n{body}"
+    stats = {"app_count": len(app_seconds), "screen_count": len(kept)}
+    return summary, stats

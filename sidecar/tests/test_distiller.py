@@ -9,6 +9,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from yibao_brain.distiller import DistillerStore, auto_run_due  # noqa: E402
 
+from cryptography.fernet import Fernet  # noqa: E402
+
+from yibao_brain.distiller import gather_summary, yesterday_window  # noqa: E402
+from yibao_brain.perception import PerceptionStore  # noqa: E402
+
 
 def _store(tmp_path):
     return DistillerStore(str(tmp_path / "distill.db"))
@@ -85,3 +90,76 @@ def test_auto_run_due():
     assert auto_run_due(morning, "2026-08-01") is True   # 上次跑是昨天
     assert auto_run_due(morning, "2026-08-02") is False  # 今日已跑
     assert auto_run_due(early, None) is False            # 还没到 04:17
+
+
+def _pstore(tmp_path):
+    return PerceptionStore(str(tmp_path / "obs.db"), key=Fernet.generate_key())
+
+
+def test_yesterday_window():
+    now = time.mktime((2026, 8, 2, 15, 30, 0, 0, 0, -1))
+    day, start, end = yesterday_window(now)
+    assert day == "2026-08-01"
+    assert end - start == 86400
+    assert time.localtime(start).tm_hour == 0
+    assert time.localtime(end) == time.localtime(time.mktime((2026, 8, 2, 0, 0, 0, 0, 0, -1)))
+
+
+def test_gather_summary_basic(tmp_path):
+    p = _pstore(tmp_path)
+    day, start, end = yesterday_window()
+    p.append("app", "frontmost", {"app": "VSCode", "title": "a.py"}, "S1", ts=start + 100)
+    p.append("app", "frontmost", {"app": "Chrome", "title": "文档"}, "S1", ts=start + 3700)
+    p.append("activity", "active", {"idle_seconds": 0}, "S1", ts=start + 100)
+    p.append("activity", "idle", {"idle_seconds": 90}, "S1", ts=start + 4000)
+    p.append("screen", "tree", {"app": "VSCode", "title": "a.py", "text": "def main() ..."}, "S3",
+             ts=start + 200)
+    p.append("screen", "tree", {"app": "VSCode", "title": "a.py", "text": "def main() ..."}, "S3",
+             ts=start + 300)  # 重复条目应去重
+    summary, stats = gather_summary(p, start, end)
+    assert stats["app_count"] == 2
+    assert stats["screen_count"] == 1
+    assert "VSCode" in summary
+    assert "Chrome" in summary
+    assert summary.count("def main()") == 1
+    assert "应用使用" in summary
+    p.close()
+
+
+def test_gather_summary_empty(tmp_path):
+    p = _pstore(tmp_path)
+    day, start, end = yesterday_window()
+    summary, stats = gather_summary(p, start, end)
+    assert stats["app_count"] == 0
+    assert stats["screen_count"] == 0
+    p.close()
+
+
+def test_gather_summary_budget_keeps_recent(tmp_path):
+    p = _pstore(tmp_path)
+    day, start, end = yesterday_window()
+    p.append("app", "frontmost", {"app": "VSCode", "title": "a.py"}, "S1", ts=start + 10)
+    for i in range(50):
+        p.append("screen", "tree", {"app": "Chrome", "title": f"p{i}", "text": f"第{i}条 " + "x" * 100},
+                 "S3", ts=start + 100 + i * 60)
+    summary, stats = gather_summary(p, start, end, char_budget=3000)
+    assert len(summary) <= 3100
+    assert "第49条" in summary   # 保最近
+    assert "第0条" not in summary  # 弃最旧
+    assert "VSCode" in summary   # 头部统计不丢
+    p.close()
+
+
+def test_gather_summary_context_evidence(tmp_path):
+    p = _pstore(tmp_path)
+    day, start, end = yesterday_window()
+    p.append("app", "frontmost", {"app": "VSCode", "title": "a.py"}, "S1", ts=start + 10)
+    summary, _ = gather_summary(
+        p, start, end,
+        memories=["用户通常在 23 点后休息"],
+        history=[{"role": "user", "content": "帮我看看这个报错"}, {"role": "tool", "content": "x"}],
+    )
+    assert "近期记忆" in summary and "23 点后休息" in summary
+    assert "近期对话" in summary and "帮我看看这个报错" in summary
+    assert '"role": "tool"' not in summary  # tool 消息不进佐证
+    p.close()
