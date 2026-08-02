@@ -280,6 +280,35 @@ export function fetchFeed(limit = 60): Promise<void> {
   return invoke("get_feed", { limit });
 }
 
+/** 手动提炼回包（distill_now 的响应，经 brain-distill-now 事件回来）。 */
+export interface DistillNowResponse {
+  ok: boolean;
+  reason?: string;
+  result?: {
+    status: string;
+    day?: string;
+    patterns?: number;
+    insights?: number;
+    events?: number;
+    projected?: number;
+    error?: string;
+  };
+}
+
+/** 一次性手动提炼：发请求并等下一条 brain-distill-now；大脑不在线/超时返回 ok:false。 */
+export async function distillNow(timeoutMs = 90000): Promise<DistillNowResponse> {
+  const resp = new Promise<DistillNowResponse>((resolve) => {
+    void once<DistillNowResponse>("brain-distill-now", (ev) => resolve(ev.payload));
+  });
+  const timeout = new Promise<DistillNowResponse>((resolve) =>
+    setTimeout(() => resolve({ ok: false, reason: "timeout" }), timeoutMs),
+  );
+  try {
+    await invoke("distill_now");
+  } catch { /* 大脑不在线：走超时兜底 */ }
+  return Promise.race([resp, timeout]);
+}
+
 /** 一次性取 Feed：发查询并等下一条 brain-feed；大脑不在线/超时返回空（主屏照常渲染空态）。 */
 export async function getFeedOnce(limit = 60, timeoutMs = 3000): Promise<FeedResponse> {
   const resp = new Promise<FeedResponse>((resolve) => {
@@ -657,6 +686,7 @@ export interface SettingsValues {
   "perception.activity": boolean;
   "perception.model_access": boolean;
   "perception.screen"?: boolean;
+  "perception.distill"?: boolean;
   [k: string]: unknown;
 }
 

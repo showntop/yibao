@@ -449,6 +449,10 @@ fn spawn_bridge(app: AppHandle, mut rx: tauri::async_runtime::Receiver<CommandEv
                             Some("feed") => {
                                 let _ = app.emit("brain-feed", v);
                             }
+                            // 手动提炼响应（distill_now）：整体转发，设置页一次性取用
+                            Some("distill_now") => {
+                                let _ = app.emit("brain-distill-now", v);
+                            }
                             // 设置页信任统计响应：整体转发
                             Some("feed_stats") => {
                                 let _ = app.emit("brain-feed-stats", v);
@@ -785,6 +789,15 @@ fn get_feed(state: tauri::State<Brain>, limit: Option<u32>) -> Result<(), String
     write_to_brain(
         &state,
         serde_json::json!({ "id": 0, "type": "feed", "limit": limit.unwrap_or(60) }),
+    )
+}
+
+/// 手动触发昨日提炼：大脑回 {"type":"distill_now","ok":…,"result":…}，经 brain-distill-now 事件广播。
+#[tauri::command]
+fn distill_now(state: tauri::State<Brain>) -> Result<(), String> {
+    write_to_brain(
+        &state,
+        serde_json::json!({ "id": 0, "type": "distill_now" }),
     )
 }
 
@@ -1535,6 +1548,7 @@ pub fn run() {
             panel_action,
             list_plugins,
             get_feed,
+            distill_now,
             get_feed_stats,
             get_widgets,
             feed_mark_read,
