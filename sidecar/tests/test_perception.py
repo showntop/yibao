@@ -774,3 +774,38 @@ def test_screen_sensitive_vision_discard_still_debounces(tmp_path):
     assert [r for r in store.list() if r["source"] == "screen"] == []
     assert len(calls) == 1  # 敏感丢弃但已去抖：只调一次
     store.close()
+
+
+def test_screen_filtered_frame_file_removed(tmp_path):
+    """被黑名单过滤的截图帧：文件即删（明文不残留）。"""
+    from yibao_brain.perception import PerceptionStore
+
+    store = _store(tmp_path)
+    shot = tmp_path / "frame.png"
+    shot.write_bytes(b"png")
+    settings = {"perception.master": True, "perception.screen": True}
+    s = _screen_sensor(store, settings,
+                       screen_sampler=lambda: ("empty", None, str(shot), "1Password", "com.1password.1password", "x"))
+    s.tick()
+    assert [r for r in store.list() if r["source"] == "screen"] == []
+    assert not shot.exists()
+    store.close()
+
+
+def test_screen_vision_frame_removed_after_summary(tmp_path):
+    """vision 概括完成后原图即删（概括文本留存，payload 留 path 溯源）。"""
+    from yibao_brain.perception import PerceptionStore
+
+    store = _store(tmp_path)
+    shot = tmp_path / "frame.png"
+    shot.write_bytes(b"png")
+    settings = {"perception.master": True, "perception.screen": True}
+    s = _screen_sensor(store, settings,
+                       screen_sampler=lambda: ("empty", None, str(shot), "Canvas", "com.y", "画板"),
+                       vision_summarizer=lambda p: "Excalidraw 画板，有一个矩形")
+    s.tick()
+    rows = [r for r in store.list() if r["source"] == "screen"]
+    assert len(rows) == 1 and rows[0]["kind"] == "vision"
+    assert rows[0]["payload"]["path"] == str(shot)
+    assert not shot.exists()
+    store.close()

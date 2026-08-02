@@ -824,10 +824,13 @@ class PerceptionSensors:
         status, tree, shot, app, bundle_id, title = sample
         key = (app, title)
         if key == self._last_screen_key and now - self._last_screen_ts < SCREEN_HEARTBEAT_SECONDS:
+            self._discard_shot(shot)  # 去抖跳过的帧同样即清，不留明文
             return
         if self._is_screen_filtered(bundle_id, title):
+            self._discard_shot(shot)
             return
         if self.secure_input_checker and self.secure_input_checker():
+            self._discard_shot(shot)
             return
         if status == "tree" and tree:
             text = serialize_tree_text(tree)
@@ -838,6 +841,9 @@ class PerceptionSensors:
             self._last_screen_key, self._last_screen_ts = key, now
         elif shot and self.vision_summarizer and self._screen_visions < SCREEN_DAILY_VISION_CAP:
             summary = self.vision_summarizer(shot)
+            # 概括后即删（生命周期表口径）：入库/敏感丢弃/概括失败都删，只留概括文本；
+            # 失败帧删除后下一轮重新截图，重试语义不变（不去抖）。
+            self._discard_shot(shot)
             if summary:
                 # 拿到概括即去抖：敏感丢弃的帧不得每 tick 重复外发截图；
                 # 概括失败（None）不更新去抖，下一轮允许重试。
@@ -847,6 +853,21 @@ class PerceptionSensors:
                                       {"app": app, "title": title, "text": summary, "path": shot}, "S3", ts=now)
                     self._screen_events += 1
                     self._screen_visions += 1
+        elif shot:
+            # vision 预算耗尽或无 summarizer：帧不入库也不残留
+            self._discard_shot(shot)
+
+    @staticmethod
+    def _discard_shot(path: str | None) -> None:
+        """B 源截图帧即清：过滤/概括后删除原图，堵「过滤前落盘」的明文残留。只 print 不抛。"""
+        if not path:
+            return
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass  # 已不存在（测试假路径/重复清理）属正常
+        except OSError as exc:
+            print(f"[yibao] B 源截图帧清理失败（已跳过）：{exc}", file=sys.stderr)
 
     def _roll_screen_day(self, now: float) -> None:
         day = time.strftime("%Y-%m-%d", time.localtime(now))
