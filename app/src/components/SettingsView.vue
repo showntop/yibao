@@ -322,7 +322,10 @@ async function setPerceptionSetting(
   next: boolean,
 ) {
   perceptionErr.value = "";
-  if (key === "perception.master" && !next) screenConfirming.value = false;
+  if (key === "perception.master" && !next) {
+    screenConfirming.value = false;
+    distillConfirming.value = false;
+  }
   const old = {
     "perception.master": perceptionMaster.value,
     "perception.app": perceptionApp.value,
