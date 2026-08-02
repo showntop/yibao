@@ -763,9 +763,59 @@ async def serve_async(
         if use_real or perception_sensors is not None:
             try:
                 if perception_sensors is None:
-                    from .perception import PerceptionSensors
+                    from .perception import (
+                        PerceptionSensors,
+                        sample_frontmost_details,
+                        serialize_tree_text,
+                    )
 
-                    perception_sensors = PerceptionSensors(pstore, settings)
+                    # B 源采样器：a11y 树优先；树空 → 截图留 path 待概括；secure input 查 Quartz。
+                    # 前台 app/bundle/title 与 A 源同款取法（sample_frontmost_details）。
+                    def _screen_sampler():
+                        if agent.host is None:
+                            return None
+                        try:
+                            details = sample_frontmost_details()
+                            if details is None:
+                                return None
+                            app, bundle_id, title = details
+                            tree = agent.host.a11y.frontmost_tree()
+                            if tree and serialize_tree_text(tree):
+                                return ("tree", tree, None, app, bundle_id, title)
+                            shot = agent.host.screenshotter.capture()
+                            return ("empty", None, shot, app, bundle_id, title)
+                        except Exception:
+                            return None
+
+                    def _vision_summarizer(path: str):
+                        # 整体容错：线程先于下方 _wvision 赋值启动时引用会抛 NameError
+                        try:
+                            if _wvision is None:
+                                return None
+                            import base64
+
+                            with open(path, "rb") as f:
+                                b64 = "data:image/png;base64," + base64.b64encode(f.read()).decode()
+                            from .llm import summarize_screen
+
+                            return summarize_screen(_wvision, b64)
+                        except Exception:
+                            return None
+
+                    def _secure_input_checker() -> bool:
+                        try:
+                            import Quartz
+
+                            return bool(Quartz.IsSecureEventInputEnabled())
+                        except Exception:
+                            return False
+
+                    perception_sensors = PerceptionSensors(
+                        pstore, settings,
+                        screen_sampler=_screen_sampler if agent.host is not None else None,
+                        vision_summarizer=_vision_summarizer,
+                        secure_input_checker=_secure_input_checker,
+                    )
                 perception_thread = threading.Thread(
                     target=perception_sensors.run,
                     args=(perception_stop,),

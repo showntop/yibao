@@ -434,3 +434,45 @@ def test_describe_screen_failure_returns_none():
 
     c = ComputerUseClient(api_key="x", model="m", base_url="https://x", client_factory=BoomClient)
     assert describe_screen(c, "data:image/png;base64,x") is None
+
+
+def test_summarize_screen_prompt_and_result():
+    captured = {}
+
+    class FakeResp:
+        choices = [type("C", (), {"message": type("M", (), {"content": "VS Code 编辑 App.vue，左侧文件树"})()})()]
+
+    class FakeClient:
+        def __init__(self, **kw):
+            pass
+
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**kw):
+                    captured.update(kw)
+                    return FakeResp()
+
+    from yibao_brain.llm import ComputerUseClient, summarize_screen
+
+    c = ComputerUseClient(api_key="x", model="m", base_url="https://x", client_factory=FakeClient)
+    out = summarize_screen(c, "data:image/png;base64,x")
+    assert out == "VS Code 编辑 App.vue，左侧文件树"
+    assert "概括" in captured["messages"][0]["content"]
+
+
+def test_summarize_screen_failure_returns_none():
+    class BoomClient:
+        def __init__(self, **kw):
+            pass
+
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**kw):
+                    raise RuntimeError("api down")
+
+    from yibao_brain.llm import ComputerUseClient, summarize_screen
+
+    c = ComputerUseClient(api_key="x", model="m", base_url="https://x", client_factory=BoomClient)
+    assert summarize_screen(c, "data:image/png;base64,x") is None

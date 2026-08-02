@@ -1915,3 +1915,26 @@ def test_system_prompt_distinguishes_frontmost_from_visible():
     from yibao_brain.loop import SYSTEM_PROMPT
 
     assert "可见窗口" in SYSTEM_PROMPT and "前台应用" in SYSTEM_PROMPT
+
+
+def test_config_perception_screen_defaults(tmp_path, monkeypatch):
+    monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path))
+    from yibao_brain.config import load_settings
+
+    s = load_settings()
+    assert s.get("perception.screen") is False
+    assert isinstance(s.get("perception.blacklist"), list)
+
+
+def test_config_perception_screen_keys_saveable(tmp_path, monkeypatch):
+    """新键是已知键：save_settings 落 perception.screen/blacklist，未知键仍被拒。"""
+    monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path))
+    from yibao_brain.config import load_settings, save_settings
+
+    save_settings({"perception.screen": True,
+                   "perception.blacklist": ["com.example.bank"],
+                   "perception.unknown": True})
+    s = load_settings()
+    assert s["perception.screen"] is True
+    assert s["perception.blacklist"] == ["com.example.bank"]
+    assert "perception.unknown" not in s

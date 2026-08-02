@@ -301,6 +301,29 @@ def describe_screen(client, b64: str) -> str | None:
         return None
 
 
+SCREEN_SUMMARY_PROMPT = (
+    "用一句话（80 字以内）概括这张屏幕截图里前台应用正在显示的内容："
+    "应用名 + 内容主题 + 可见的关键文字。只输出这句话。"
+)
+
+
+def summarize_screen(client, b64: str) -> str | None:
+    """B 源截图兜底概括。client 为 ComputerUseClient；失败返 None。"""
+    try:
+        resp = _vision_create_with_retry(lambda: client.client.chat.completions.create(
+            model=client.model,
+            messages=[
+                {"role": "system", "content": SCREEN_SUMMARY_PROMPT},
+                {"role": "user", "content": [{"type": "image_url", "image_url": {"url": b64}}]},
+            ],
+        ))
+        text = (resp.choices[0].message.content or "").strip() if resp.choices else ""
+        return text[:120] or None
+    except Exception as e:
+        print(f"[yibao] B 源截图概括失败（已跳过）：{e}", file=sys.stderr)
+        return None
+
+
 class ComputerUseClient:
     """GLM-4.6V 视觉 grounding 兜底：截图 + 任务 → 下一步动作 JSON。
 

@@ -254,6 +254,9 @@ _SETTINGS_DEFAULTS: dict = {
     "perception.app": False,
     "perception.activity": False,
     "perception.model_access": False,
+    # B 源（屏幕内容，S3）：默认关；blacklist 为附加 bundle id 黑名单（内置含 1Password/钥匙串）
+    "perception.screen": False,
+    "perception.blacklist": [],
     # 用户手动固定到 Dock 的插件 id（上限 5，Task 8 Dock 排序用；空 = 不固定）
     "dock_pinned": [],
     # TTS 引擎选择（UI 下拉；env YIBAO_TTS_PROVIDER 优先；切换下次启动生效）
