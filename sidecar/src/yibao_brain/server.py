@@ -748,10 +748,11 @@ async def serve_async(
             print(f"[yibao] 感知不可用（保持关闭）：{e}", file=sys.stderr)
 
     if pstore is not None:
-        from .perception import LoadUserActivitySkill
+        from .perception import LoadScreenContentSkill, LoadUserActivitySkill
 
         # 与 sensors 共用同一 store、与 settings_set 共用同一可变字典，开关即时生效。
         agent.skills.register(LoadUserActivitySkill(pstore, settings))
+        agent.skills.register(LoadScreenContentSkill(pstore, settings))
 
     perception_stop = threading.Event()
     perception_thread = None

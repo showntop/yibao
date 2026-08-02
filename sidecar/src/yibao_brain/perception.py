@@ -540,6 +540,118 @@ class LoadUserActivitySkill(Skill):
         return None
 
 
+class LoadScreenContentSkill(Skill):
+    """按模型选择的回看分钟数加载本机屏幕内容记录（B 源：tree/vision 文本）。"""
+
+    id = "load_screen_content"
+    label = "加载屏幕内容"
+    default_risk = RiskLevel.L0_READONLY
+    sensitive_output = True
+    description = (
+        "仅在用户询问屏幕上看到的内容、当前或刚才页面/窗口上的文字时，加载本机屏幕内容记录；"
+        "不得为无关的个性化回答调用。minutes 为向前回看的分钟数（默认 30，最多 1440），"
+        "limit 为返回条数（默认 10，最多 20），按时间倒序返回最新条目。"
+    )
+
+    def __init__(
+        self,
+        store: PerceptionStore,
+        settings: dict,
+        *,
+        now_provider: Callable[[], datetime] | None = None,
+    ):
+        self.store = store
+        self.settings = settings
+        self.now_provider = now_provider or (lambda: datetime.now().astimezone())
+
+    def openai_schema(self) -> dict:
+        return {
+            "name": self.id,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "minutes": {
+                        "type": "integer",
+                        "description": "向前回看的分钟数，默认 30，最大 1440（24 小时）",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "返回条数，默认 10，最大 20",
+                    },
+                },
+            },
+        }
+
+    def precheck(self, params: dict) -> str | None:
+        if not self.settings.get("perception.model_access", False):
+            return "模型读取感知记录未开启，请先在设置的感知区域开启"
+        return None
+
+    @staticmethod
+    def _bounded_int(value: object, default: int, lo: int, hi: int) -> int:
+        try:
+            parsed = int(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return default
+        return max(lo, min(hi, parsed))
+
+    def run(self, params: dict, ctx: SkillContext) -> ActionResult:
+        blocked = self.precheck(params)
+        if blocked:
+            return ActionResult(success=False, error=blocked)
+        minutes = self._bounded_int(params.get("minutes", 30), 30, 1, 1440)
+        limit = self._bounded_int(params.get("limit", 10), 10, 1, 20)
+
+        end = self.now_provider().timestamp()
+        start = end - minutes * 60
+        try:
+            rows = self.store.query_window(start, end, limit=limit + 1, sources=("screen",))
+        except Exception as exc:
+            return ActionResult(success=False, error=f"无法读取感知记录：{exc}")
+
+        truncated = len(rows) > limit
+        if truncated:
+            rows = rows[-limit:]
+        items = [
+            {
+                "ts": float(row.get("ts", 0)),
+                "app": str(row["payload"].get("app") or ""),
+                "kind": str(row.get("kind") or ""),
+                "text": str(row["payload"].get("text") or ""),
+            }
+            for row in reversed(rows)  # 查询返回正序，对模型按时间倒序呈现最新内容
+            if row.get("payload")
+        ]
+        return ActionResult(
+            success=True,
+            data={
+                "minutes": minutes,
+                "items": items,
+                "count": len(items),
+                "truncated": truncated,
+            },
+        )
+
+    def safe_result(self, result: ActionResult) -> ActionResult:
+        if not result.success:
+            return ActionResult(success=False, error=result.error)
+        data = result.data or {}
+        return ActionResult(
+            success=True,
+            data={
+                "minutes": int(data.get("minutes", 0)),
+                "count": int(data.get("count", 0)),
+                "truncated": bool(data.get("truncated", False)),
+            },
+        )
+
+    def post_reply_notice(self, result: ActionResult) -> str | None:
+        if result.success and (result.data or {}).get("items"):
+            return "已参考屏幕内容"
+        return None
+
+
 def _window_snapshot() -> list[dict]:
     """实时窗口层级快照；每次调用直读 WindowServer，不依赖 Cocoa 通知缓存。"""
     from Quartz import (
