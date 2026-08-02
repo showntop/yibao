@@ -838,12 +838,15 @@ class PerceptionSensors:
             self._last_screen_key, self._last_screen_ts = key, now
         elif shot and self.vision_summarizer and self._screen_visions < SCREEN_DAILY_VISION_CAP:
             summary = self.vision_summarizer(shot)
-            if summary and not _sensitive_text(summary):
-                self.store.append("screen", "vision",
-                                  {"app": app, "title": title, "text": summary, "path": shot}, "S3", ts=now)
-                self._screen_events += 1
-                self._screen_visions += 1
+            if summary:
+                # 拿到概括即去抖：敏感丢弃的帧不得每 tick 重复外发截图；
+                # 概括失败（None）不更新去抖，下一轮允许重试。
                 self._last_screen_key, self._last_screen_ts = key, now
+                if not _sensitive_text(summary):
+                    self.store.append("screen", "vision",
+                                      {"app": app, "title": title, "text": summary, "path": shot}, "S3", ts=now)
+                    self._screen_events += 1
+                    self._screen_visions += 1
 
     def _roll_screen_day(self, now: float) -> None:
         day = time.strftime("%Y-%m-%d", time.localtime(now))

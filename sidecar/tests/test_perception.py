@@ -758,3 +758,19 @@ def test_query_window_sources_param(tmp_path):
     with_screen = store.query_window(0, 200, sources=("screen",))
     assert len(with_screen) == 1 and with_screen[0]["source"] == "screen"
     store.close()
+
+
+def test_screen_sensitive_vision_discard_still_debounces(tmp_path):
+    """敏感概括丢弃后同画面不再重复调 vision（去抖），但概括失败(None)允许重试。"""
+    from yibao_brain.perception import PerceptionStore
+
+    store = _store(tmp_path)
+    settings = {"perception.master": True, "perception.screen": True}
+    calls = []
+    s = _screen_sensor(store, settings,
+                       screen_sampler=lambda: ("empty", None, "/tmp/s.png", "App", "com.x", "银行"),
+                       vision_summarizer=lambda p: calls.append(p) or "卡号 6222000000000000")
+    s.tick(); s.tick(); s.tick()
+    assert [r for r in store.list() if r["source"] == "screen"] == []
+    assert len(calls) == 1  # 敏感丢弃但已去抖：只调一次
+    store.close()
