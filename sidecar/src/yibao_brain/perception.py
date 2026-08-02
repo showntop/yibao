@@ -8,6 +8,7 @@ from __future__ import annotations
 import getpass
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -23,6 +24,52 @@ from .skills import Skill, SkillContext
 
 _KEYCHAIN_SERVICE = "com.yibao.perception"
 _DAY = 86400
+
+SCREEN_HEARTBEAT_SECONDS = 300.0
+SCREEN_DAILY_EVENT_CAP = 120
+SCREEN_DAILY_VISION_CAP = 30
+_BUILTIN_BLACKLIST = frozenset({
+    "com.1password.1password", "com.apple.keychainaccess",
+})
+_PRIVATE_TITLE_MARKERS = ("无痕", "隐私浏览", "incognito", "inprivate", "private browsing")
+_BROWSER_BUNDLES = frozenset({
+    "com.google.Chrome", "com.apple.Safari", "com.microsoft.edgemac",
+    "company.thebrowser.Browser",
+})
+_SENSITIVE_RES = (
+    re.compile(r"\b\d{15,19}\b"),                     # 卡号
+    re.compile(r"\b\d{17}[\dXx]\b"),                  # 身份证
+    re.compile(r"(?i)(password|passwd|密码)[:：=]\s*\S+"),
+)
+
+
+def _sensitive_text(text: str) -> bool:
+    text = text or ""
+    if any(p.search(text) for p in _SENSITIVE_RES):
+        return True
+    # 卡号/身份证常按 4 位一组带空格或短横分隔；去掉数字间分隔符后再判一次
+    compact = re.sub(r"(?<=\d)[\s-]+(?=\d)", "", text)
+    return compact != text and any(p.search(compact) for p in _SENSITIVE_RES[:2])
+
+
+def serialize_tree_text(tree: dict, max_chars: int = 4096) -> str:
+    """a11y 树 → 紧凑文本（B 源存储用）：DFS 缩进行 role: 标题或值。
+    预算：300 行 / 每父 50 子 / 缩进 ≤8 层 / 单值 ≤80 字 / 总 ≤max_chars。空→""。"""
+    lines: list[str] = []
+
+    def walk(node: dict, depth: int) -> None:
+        if len(lines) >= 300 or not isinstance(node, dict):
+            return
+        role = str(node.get("role") or "")
+        label = str(node.get("title") or node.get("value") or "").strip()
+        if role and label:
+            lines.append("  " * min(depth, 8) + f"{role}: {label[:80]}")
+        for child in (node.get("children") or [])[:50]:
+            walk(child, depth + 1)
+
+    walk(tree, 0)
+    text = "\n".join(lines)
+    return text[:max_chars] + ("…" if len(text) > max_chars else "") if text else ""
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS observations (
@@ -183,18 +230,24 @@ class PerceptionStore:
         return [self._decode_row(row) for row in rows]
 
     def query_window(
-        self, start_ts: float, end_ts: float, limit: int = 2000
+        self,
+        start_ts: float,
+        end_ts: float,
+        limit: int = 2000,
+        sources: tuple[str, ...] | None = None,
     ) -> list[dict]:
-        """按时间正序读取 A/C 观察；损坏行保留为空 payload，交给上层计数跳过。"""
+        """按时间正序读取观察；默认只取 A/C 源，损坏行保留为空 payload，交给上层计数跳过。"""
         bounded_limit = max(1, min(int(limit), 2001))
+        source_set = tuple(sources) if sources else ("app", "activity")
+        placeholders = ", ".join("?" for _ in source_set)
         with self._lock:
             rows = self._conn.execute(
                 "SELECT id, ts, source, kind, payload, sensitivity FROM ("
                 "SELECT id, ts, source, kind, payload, sensitivity FROM observations "
-                "WHERE ts >= ? AND ts <= ? AND source IN ('app', 'activity') "
+                f"WHERE ts >= ? AND ts <= ? AND source IN ({placeholders}) "
                 "ORDER BY ts DESC, id DESC LIMIT ?"
                 ") ORDER BY ts ASC, id ASC",
-                (float(start_ts), float(end_ts), bounded_limit),
+                (float(start_ts), float(end_ts), *source_set, bounded_limit),
             ).fetchall()
         return [self._decode_row(row) for row in rows]
 
@@ -678,12 +731,18 @@ class PerceptionSensors:
         *,
         app_sampler: Callable[[], tuple[str, str] | tuple[str, str, str] | None] = sample_frontmost_details,
         idle_sampler: Callable[[], float] = sample_idle_seconds,
+        screen_sampler: Callable[[], tuple | None] | None = None,
+        vision_summarizer: Callable[[str], str | None] | None = None,
+        secure_input_checker: Callable[[], bool] | None = None,
         clock: Callable[[], float] = time.time,
     ):
         self.store = store
         self.settings = settings
         self.app_sampler = app_sampler
         self.idle_sampler = idle_sampler
+        self.screen_sampler = screen_sampler
+        self.vision_summarizer = vision_summarizer
+        self.secure_input_checker = secure_input_checker
         self.clock = clock
         self._last_app: tuple[str, ...] | None = None
         self._last_activity: str | None = None
@@ -691,6 +750,11 @@ class PerceptionSensors:
         self._last_sample_at: float | None = None
         self._sampling = False
         self._state_lock = threading.Lock()
+        self._last_screen_key: tuple[str, str] | None = None
+        self._last_screen_ts = 0.0
+        self._screen_day = ""
+        self._screen_events = 0
+        self._screen_visions = 0
 
     def tick(self) -> None:
         if not self.settings.get("perception.master", False):
@@ -746,6 +810,54 @@ class PerceptionSensors:
         with self._state_lock:
             self._last_sample_at = now
             self._sampling = False
+
+        # ---- B 源（屏幕内容，S3）：变化/心跳触发，三层过滤，树优先截图兜底 ----
+        if not self.settings.get("perception.master") or not self.settings.get("perception.screen"):
+            self._last_screen_key = None
+            return
+        self._roll_screen_day(now)
+        if self._screen_events >= SCREEN_DAILY_EVENT_CAP:
+            return
+        sample = self.screen_sampler() if self.screen_sampler else None
+        if not sample:
+            return
+        status, tree, shot, app, bundle_id, title = sample
+        key = (app, title)
+        if key == self._last_screen_key and now - self._last_screen_ts < SCREEN_HEARTBEAT_SECONDS:
+            return
+        if self._is_screen_filtered(bundle_id, title):
+            return
+        if self.secure_input_checker and self.secure_input_checker():
+            return
+        if status == "tree" and tree:
+            text = serialize_tree_text(tree)
+            if not text:
+                return
+            self.store.append("screen", "tree", {"app": app, "title": title, "text": text}, "S3", ts=now)
+            self._screen_events += 1
+            self._last_screen_key, self._last_screen_ts = key, now
+        elif shot and self.vision_summarizer and self._screen_visions < SCREEN_DAILY_VISION_CAP:
+            summary = self.vision_summarizer(shot)
+            if summary and not _sensitive_text(summary):
+                self.store.append("screen", "vision",
+                                  {"app": app, "title": title, "text": summary, "path": shot}, "S3", ts=now)
+                self._screen_events += 1
+                self._screen_visions += 1
+                self._last_screen_key, self._last_screen_ts = key, now
+
+    def _roll_screen_day(self, now: float) -> None:
+        day = time.strftime("%Y-%m-%d", time.localtime(now))
+        if day != self._screen_day:
+            self._screen_day, self._screen_events, self._screen_visions = day, 0, 0
+
+    def _is_screen_filtered(self, bundle_id: str, title: str) -> bool:
+        blocked = set(_BUILTIN_BLACKLIST) | set(self.settings.get("perception.blacklist") or [])
+        if bundle_id in blocked:
+            return True
+        if bundle_id in _BROWSER_BUNDLES:
+            t = (title or "").lower()
+            return any(m in t for m in _PRIVATE_TITLE_MARKERS)
+        return False
 
     def watch_state(self) -> dict:
         """Return a fresh in-memory state for watch without persisting heartbeat rows."""

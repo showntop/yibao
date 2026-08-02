@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import subprocess
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -618,3 +619,142 @@ def test_sensors_expose_fresh_watch_state_without_persisting_heartbeats(tmp_path
         "activity": "active",
         "activity_started_at": 100.0,
     }
+
+
+# ---------- B 源：树文本序列化 ----------
+def test_serialize_tree_text_compact_and_budget():
+    from yibao_brain.perception import serialize_tree_text
+
+    tree = {"role": "AXWindow", "title": "主窗", "children": [
+        {"role": "AXButton", "title": "保存", "children": []},
+        {"role": "AXTextArea", "value": "你好世界", "children": []},
+        {"role": "AXGroup", "children": [
+            {"role": "AXStaticText", "value": "深层文字", "children": []},
+        ]},
+    ]}
+    text = serialize_tree_text(tree)
+    assert "AXWindow: 主窗" in text and "AXButton: 保存" in text
+    assert "AXTextArea: 你好世界" in text and "AXStaticText: 深层文字" in text
+    assert serialize_tree_text({"role": "AXWindow", "children": []}) == ""
+    big = {"role": "AXWindow", "title": "x" * 200, "children": []}
+    assert len(serialize_tree_text(big, max_chars=50)) <= 51  # 截断+省略号
+
+
+# ---------- B 源：sensors screen 段 ----------
+def _screen_sensor(store, settings, *, screen_sampler, vision_summarizer=None,
+                   secure_input_checker=None, clock=None):
+    from yibao_brain.perception import PerceptionSensors
+
+    s = PerceptionSensors(store, settings, app_sampler=lambda: None, idle_sampler=lambda: None,
+                          screen_sampler=screen_sampler, vision_summarizer=vision_summarizer,
+                          secure_input_checker=secure_input_checker, clock=clock or time.time)
+    return s
+
+
+def test_screen_event_on_change_stores_tree(tmp_path):
+    from yibao_brain.perception import PerceptionStore
+
+    store = _store(tmp_path)
+    settings = {"perception.master": True, "perception.screen": True}
+    tree = {"role": "AXWindow", "title": "Safari — 天气", "children": []}
+    samples = iter([("tree", tree, None, "Safari", "com.apple.Safari", "天气")])
+    s = _screen_sensor(store, settings,
+                       screen_sampler=lambda: next(samples))
+    s.tick()
+    rows = [r for r in store.list() if r["source"] == "screen"]
+    assert len(rows) == 1 and rows[0]["kind"] == "tree" and rows[0]["sensitivity"] == "S3"
+    assert "Safari — 天气" in rows[0]["payload"]["text"]
+    store.close()
+
+
+def test_screen_skips_unchanged_and_fires_heartbeat(tmp_path):
+    from yibao_brain.perception import PerceptionStore
+
+    store = _store(tmp_path)
+    settings = {"perception.master": True, "perception.screen": True}
+    tree = {"role": "AXWindow", "title": "同页", "children": []}
+    now = [1000.0]
+    s = _screen_sensor(store, settings,
+                       screen_sampler=lambda: ("tree", tree, None, "App", "com.x", "同页"),
+                       clock=lambda: now[0])
+    s.tick()                      # t=1000：首次记一条
+    s.tick(); s.tick()            # 无变化不记
+    assert len([r for r in store.list() if r["source"] == "screen"]) == 1
+    now[0] += 301                 # t=1301：超心跳间隔 → 再记
+    s.tick()
+    assert len([r for r in store.list() if r["source"] == "screen"]) == 2
+    store.close()
+
+
+def test_screen_blacklist_and_privacy_window_and_secure_input(tmp_path):
+    from yibao_brain.perception import PerceptionStore
+
+    store = _store(tmp_path)
+    settings = {"perception.master": True, "perception.screen": True}
+    tree = {"role": "AXWindow", "title": "x", "children": []}
+    # L1 黑名单（内置 1Password）
+    s = _screen_sensor(store, settings,
+                       screen_sampler=lambda: ("tree", tree, None, "1Password", "com.1password.1password", "x"))
+    s.tick()
+    # L2 隐私窗（Chrome 无痕）
+    s2 = _screen_sensor(store, settings,
+                        screen_sampler=lambda: ("tree", tree, None, "Chrome", "com.google.Chrome", "新标签页 - 无痕浏览"))
+    s2.tick()
+    # L3 secure input
+    s3 = _screen_sensor(store, settings,
+                        screen_sampler=lambda: ("tree", tree, None, "App", "com.x", "y"),
+                        secure_input_checker=lambda: True)
+    s3.tick()
+    assert [r for r in store.list() if r["source"] == "screen"] == []
+    store.close()
+
+
+def test_screen_tree_missing_uses_vision_with_sensitive_filter(tmp_path):
+    from yibao_brain.perception import PerceptionStore
+
+    store = _store(tmp_path)
+    settings = {"perception.master": True, "perception.screen": True}
+    # 树为空 → vision 兜底；概括含卡号 → 敏感丢弃
+    s = _screen_sensor(store, settings,
+                       screen_sampler=lambda: ("empty", None, "/tmp/shot.png", "Canvas", "com.x", "画板"),
+                       vision_summarizer=lambda path: "卡号 6222 0000 0000 0000 可见")
+    s.tick()
+    assert [r for r in store.list() if r["source"] == "screen"] == []
+    # 概括正常 → 存 vision 条目（payload 含 path）
+    s2 = _screen_sensor(store, settings,
+                        screen_sampler=lambda: ("empty", None, "/tmp/shot.png", "Canvas", "com.y", "画板"),
+                        vision_summarizer=lambda path: "Excalidraw 画板，有一个矩形")
+    s2.tick()
+    rows = [r for r in store.list() if r["source"] == "screen"]
+    assert len(rows) == 1 and rows[0]["kind"] == "vision" and rows[0]["payload"]["path"] == "/tmp/shot.png"
+    store.close()
+
+
+def test_screen_daily_budget(tmp_path):
+    from yibao_brain.perception import PerceptionStore
+
+    store = _store(tmp_path)
+    settings = {"perception.master": True, "perception.screen": True}
+    tree = {"role": "AXWindow", "title": "x", "children": []}
+    n = [0]
+    def sampler():
+        n[0] += 1
+        return ("tree", tree, None, "App", "com.x", f"第{n[0]}页")
+    s = _screen_sensor(store, settings, screen_sampler=sampler)
+    for _ in range(125):
+        s.tick()
+    assert len([r for r in store.list(limit=200) if r["source"] == "screen"]) == 120  # 预算闸
+    store.close()
+
+
+def test_query_window_sources_param(tmp_path):
+    from yibao_brain.perception import PerceptionStore
+
+    store = _store(tmp_path)
+    store.append("app", "frontmost", {"app": "A"}, "S1", ts=100.0)
+    store.append("screen", "tree", {"text": "T"}, "S3", ts=101.0)
+    default = store.query_window(0, 200)
+    assert all(r["source"] != "screen" for r in default)          # 旧语义不含 screen
+    with_screen = store.query_window(0, 200, sources=("screen",))
+    assert len(with_screen) == 1 and with_screen[0]["source"] == "screen"
+    store.close()
