@@ -17,6 +17,7 @@ from . import permissions
 from .audit import AuditLog
 from .config import a11y_enabled, computer_use_enabled, computer_use_max_steps, history_path, llm_api_key, load_settings, perception_db_path, plugin_data_dir, save_settings, screenshot_dir, stt_model_dir, tts_voice, vad_max_seconds, vad_min_silence, vad_model_path, vision_api_key, voice_enabled
 from .feed import FeedStore
+from .distiller import Distiller, DistillerStore, auto_run_due
 from .jobstore import JobsStore
 from .history import ConversationHistory
 from .ipc import Action, Event, RiskLevel
@@ -747,6 +748,23 @@ async def serve_async(
             settings["perception.master"] = False
             print(f"[yibao] 感知不可用（保持关闭）：{e}", file=sys.stderr)
 
+    # Distiller（感知 v3）：离线深加工层。perception.distill 关闭时调度循环直接跳过，零出站。
+    distiller = None
+    if pstore is not None:
+        try:
+            distiller = Distiller(
+                store=DistillerStore(os.path.join(os.path.dirname(db_path), "distill.db")),
+                pstore=pstore,
+                provider=agent.provider,
+                memory=agent.memory,
+                feed=feed,
+                memories_fn=lambda: agent.memory.recall("作息 使用习惯 工作模式", "default"),
+                history_fn=lambda: agent.history.messages()[-10:],
+            )
+        except Exception as e:
+            print(f"[yibao] 提炼器初始化失败（不影响主链路）：{e}", file=sys.stderr)
+            distiller = None
+
     if pstore is not None:
         from .perception import LoadScreenContentSkill, LoadUserActivitySkill
 
@@ -836,8 +854,27 @@ async def serve_async(
                     await _offload(pstore.purge)
                 except Exception as e:
                     print(f"[yibao] 感知过期清理失败：{e}", file=sys.stderr)
+            if distiller is not None:
+                try:
+                    await _offload(distiller.store.purge)
+                except Exception as e:
+                    print(f"[yibao] 提炼原料清理失败：{e}", file=sys.stderr)
+
+    async def _distiller_loop() -> None:
+        """每日 04:17 自动提炼昨日；perception.distill 关闭时零出站。"""
+        while True:
+            await asyncio.sleep(60)
+            if distiller is None or not settings.get("perception.distill"):
+                continue
+            try:
+                last = await _offload(distiller.store.last_auto_run_day)
+                if auto_run_due(time.time(), last):
+                    await _offload(distiller.run_yesterday, "auto")
+            except Exception as e:
+                print(f"[yibao] 自动提炼失败：{e}", file=sys.stderr)
 
     perception_cleanup_task = asyncio.ensure_future(_perception_cleanup_loop())
+    distiller_task = asyncio.ensure_future(_distiller_loop())
 
     _wvision = None
     if vision_api_key() and computer_use_enabled():
@@ -1243,6 +1280,13 @@ async def serve_async(
                 "stats": _feed_stats(running_tasks),
                 "running_tasks": running_tasks,
             })
+        elif rtype == "distill_now":
+            # 设置页「立即提炼昨日」：开关关闭时直接拒绝（零出站）；运行可长达 60s，挪线程池
+            if distiller is None or not settings.get("perception.distill"):
+                write_msg({"type": "distill_now", "ok": False, "reason": "disabled"})
+            else:
+                result = await _offload(distiller.run_yesterday, "manual")
+                write_msg({"type": "distill_now", "ok": True, "result": result})
         elif rtype == "feed_stats":
             # 设置页「主动行为统计」：近 N 天主动行为聚合（默认 7 天）
             try:

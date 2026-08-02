@@ -254,6 +254,8 @@ _SETTINGS_DEFAULTS: dict = {
     "perception.app": False,
     "perception.activity": False,
     "perception.model_access": False,
+    # Distiller（每日离线提炼）：默认关；开=每日 04:17 将昨日全天感知内容发给当前模型提炼
+    "perception.distill": False,
     # B 源（屏幕内容，S3）：默认关；blacklist 为附加 bundle id 黑名单（内置含 1Password/钥匙串）
     "perception.screen": False,
     "perception.blacklist": [],
