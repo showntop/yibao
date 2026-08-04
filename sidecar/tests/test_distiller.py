@@ -480,3 +480,17 @@ def test_gather_summary_returns_activity_stats(tmp_path):
     assert "app_seconds" in stats and "active_ranges" in stats
     assert stats["app_seconds"]["VSCode"] > 0
     assert all(isinstance(r, list) and len(r) == 2 for r in stats["active_ranges"])
+
+
+def test_run_yesterday_persists_activity_stats(tmp_path):
+    p = _pstore(tmp_path)
+    day, start, end = yesterday_window()
+    p.append("app", "frontmost", {"app": "VSCode", "title": "a.py"}, "S1", ts=start + 100)
+    provider = FakeProvider(text=_GOOD_JSON)
+    d, mem, feed = _distiller(tmp_path, provider, p)
+    d.run_yesterday("manual")
+    row = d.store._conn.execute(
+        "SELECT stats FROM runs WHERE target_day=? AND status='ok'", (day,)).fetchone()
+    import json
+    stats = json.loads(row["stats"])
+    assert stats["app_seconds"]["VSCode"] > 0

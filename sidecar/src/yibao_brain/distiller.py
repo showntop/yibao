@@ -420,7 +420,7 @@ class Distiller:
                 self.store.record_run(run_day, target_day, source, "failed", "LLM 输出无法解析")
                 return {"status": "failed", "day": target_day, "error": "parse"}
             counts = self._project(target_day, result)
-            self.store.record_run(run_day, target_day, source, "ok")
+            self.store.record_run(run_day, target_day, source, "ok", stats=stats)
             return {"status": "ok", "day": target_day, **counts}
         except Exception as e:
             print(f"[yibao] 提炼失败：{e}", file=sys.stderr)
