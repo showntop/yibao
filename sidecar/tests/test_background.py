@@ -113,3 +113,43 @@ def test_distiller_tick_store_failure_no_raise(monkeypatch):
     b = Boom()
     asyncio.run(_distiller_tick({"perception.master": True, "perception.distill": True}, b))
     assert b.ran == []
+
+
+from yibao_brain.background import _reminder_tick  # noqa: E402
+
+
+def _run_reminder_tick(store, due_or_exc):
+    """构造 store（pop_due 返 due_or_exc 或抛），跑一次 tick，返回 dispatch 调用 id 列表。"""
+    calls: list = []
+
+    class Store:
+        def pop_due(self, now):
+            if isinstance(due_or_exc, BaseException):
+                raise due_or_exc
+            return due_or_exc
+
+    async def fake_dispatch(r, **kw):
+        calls.append(r.get("id"))
+
+    # 直接替换 background 命名空间里的 _dispatch_reminder
+    import yibao_brain.background as bg
+    orig = bg._dispatch_reminder
+    bg._dispatch_reminder = fake_dispatch  # type: ignore[assignment]
+    try:
+        agent = type("A", (), {"history": None})()
+        asyncio.run(_reminder_tick(store=Store(), agent=agent, settings={"proactive.level": "quiet"},
+                                   feed=None, voice=None, run_state={}, write_msg=lambda m: None,
+                                   dispatcher=None))
+    finally:
+        bg._dispatch_reminder = orig  # type: ignore[assignment]
+    return calls
+
+
+def test_reminder_tick_dispatches_each_due():
+    calls = _run_reminder_tick(None, [{"id": 1, "text": "a"}, {"id": 2, "text": "b"}])
+    assert calls == [1, 2]
+
+
+def test_reminder_tick_pop_failure_no_dispatch():
+    calls = _run_reminder_tick(None, RuntimeError("db"))
+    assert calls == []

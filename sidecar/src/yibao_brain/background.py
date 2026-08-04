@@ -222,3 +222,30 @@ async def _distiller_loop(settings: dict, distiller) -> None:
     while True:
         await asyncio.sleep(60)
         await _distiller_tick(settings, distiller)
+
+
+async def _reminder_tick(*, store, agent, settings, feed, voice, run_state,
+                         write_msg, dispatcher) -> None:
+    """单轮到期提醒扫描：pop_due → 逐条 _dispatch_reminder。pop_due 失败只 print 不抛。"""
+    try:
+        due = await _offload(store.pop_due, time.time())
+    except Exception as e:
+        print(f"[yibao] 提醒扫描失败：{e}", file=sys.stderr)
+        return
+    for r in due:
+        print(f"[yibao] 提醒触发 id={r.get('id')}：{str(r.get('text', ''))[:30]!r}", file=sys.stderr)
+        await _dispatch_reminder(r, settings=settings, feed=feed, history=agent.history,
+                                 voice=voice, run_state=run_state, write_msg=write_msg,
+                                 dispatcher=dispatcher)
+
+
+async def _reminder_loop(*, agent, settings, feed, voice, run_state, write_msg, dispatcher) -> None:
+    """主动能力：每 10s 扫到期提醒 → 按自主权档位分发。无 reminder_store 则循环即退（保留原语义）。"""
+    store = getattr(agent, "reminder_store", None)
+    if store is None:
+        return
+    while True:
+        await asyncio.sleep(10)
+        await _reminder_tick(store=store, agent=agent, settings=settings, feed=feed,
+                             voice=voice, run_state=run_state, write_msg=write_msg,
+                             dispatcher=dispatcher)

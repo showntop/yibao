@@ -27,6 +27,7 @@ from .background import (
     _proactive_level,
     _recover_background_jobs,
     _perception_cleanup_loop,
+    _reminder_loop,
     _watch_tick,
 )
 from .config import a11y_enabled, computer_use_enabled, computer_use_max_steps, history_path, llm_api_key, load_settings, perception_db_path, plugin_data_dir, save_settings, screenshot_dir, stt_model_dir, tts_voice, vad_max_seconds, vad_min_silence, vad_model_path, vision_api_key, voice_enabled
@@ -764,25 +765,9 @@ async def serve_async(
     # 启动握手：壳靠它确认大脑上线（守护重启后也靠它判断已恢复）
     write_msg({"type": "hello", "version": 1, "permissions": _permissions_status()})
 
-    async def _reminder_loop() -> None:
-        """主动能力：每 10s 扫到期提醒 → 按自主权档位分发（广播/气泡/语音）。"""
-        store = getattr(agent, "reminder_store", None)
-        if store is None:
-            return
-        while True:
-            await asyncio.sleep(10)
-            try:
-                due = await _offload(store.pop_due, time.time())
-            except Exception as e:
-                print(f"[yibao] 提醒扫描失败：{e}", file=sys.stderr)
-                continue
-            for r in due:
-                print(f"[yibao] 提醒触发 id={r.get('id')}：{str(r.get('text', ''))[:30]!r}", file=sys.stderr)
-                await _dispatch_reminder(r, settings=settings, feed=feed, history=agent.history,
-                                         voice=voice, run_state=run_state, write_msg=write_msg,
-                                         dispatcher=proactive_dispatcher)
-
-    reminder_task = asyncio.ensure_future(_reminder_loop())
+    reminder_task = asyncio.ensure_future(_reminder_loop(
+        agent=agent, settings=settings, feed=feed, voice=voice,
+        run_state=run_state, write_msg=write_msg, dispatcher=proactive_dispatcher))
 
     def _reader():
         while True:
