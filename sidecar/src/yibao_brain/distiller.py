@@ -134,7 +134,8 @@ class DistillerStore:
             row = self._conn.execute(
                 "SELECT value FROM meta WHERE key='recap_last_day'").fetchone()
             return str(row["value"]) if row else None
-        except Exception:
+        except Exception as e:
+            print(f"[yibao] recap 标记读取失败：{e}", file=sys.stderr)
             return None
 
     def record_run(self, run_day: str, target_day: str, source: str,

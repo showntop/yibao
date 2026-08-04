@@ -411,8 +411,8 @@ function onEvent(e: BrainEvent) {
       // 自主权「气泡」档（e.level）：不主动亮窗，只标「有事找你」；缺省 level 按完整档（兼容旧 sidecar）。
       // morning_recap：气泡可点击 → deep-link 进 home 回顾视图（Task 12）
       const text = e.text ?? "到点了";
-      const isRecap = (e as { type?: string }).type === "morning_recap";
-      const recapDay = (e as { day?: string }).day;
+      const isRecap = e.type === "morning_recap";
+      const recapDay = e.day;
       bubbles.value.push({ role: "ai", text, icon: "clock", recap: isRecap ? recapDay : undefined });
       void (async () => {
         try {

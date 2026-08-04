@@ -61,6 +61,9 @@ export interface BrainEvent {
   surface?: string;
   /** 自主权档位（reminder 类主动事件；缺省按 full 处理，兼容旧 sidecar） */
   level?: "quiet" | "bubble" | "full";
+  /** morning_recap 深链接：反刍提醒携带 type/day 供 deep-link */
+  type?: string;
+  day?: string;
 }
 
 // ---- 会话分流（v2 §5）：run/语音/面板调用带 surface 标签，大脑透传回事件流与历史 ----
