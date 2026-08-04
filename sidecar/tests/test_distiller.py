@@ -469,3 +469,14 @@ def test_distill_now_end_to_end(tmp_path, monkeypatch):
     # pattern 写 mem0
     assert "上午深度用 VSCode" in [m["text"] for m in mem.list_all("default")]
     p.close()
+
+
+def test_gather_summary_returns_activity_stats(tmp_path):
+    p = _pstore(tmp_path)
+    day, start, end = yesterday_window()
+    p.append("app", "frontmost", {"app": "VSCode", "title": "a.py"}, "S1", ts=start + 100)
+    p.append("app", "frontmost", {"app": "VSCode", "title": "b.py"}, "S2", ts=start + 2000)
+    _summary, stats = gather_summary(p, start, end)
+    assert "app_seconds" in stats and "active_ranges" in stats
+    assert stats["app_seconds"]["VSCode"] > 0
+    assert all(isinstance(r, list) and len(r) == 2 for r in stats["active_ranges"])

@@ -255,11 +255,13 @@ def gather_summary(
 
     head.append("\n【活跃时段（≥30 分钟）】")
     active_blocks = 0
+    active_ranges: list[list[float]] = []
     for seg in segments:
         if seg.get("activity") == "active" and seg["end_ts"] - seg["start_ts"] >= 1800:
             s = time.strftime("%H:%M", time.localtime(seg["start_ts"]))
             e = time.strftime("%H:%M", time.localtime(seg["end_ts"]))
             head.append(f"- {s}–{e}")
+            active_ranges.append([seg["start_ts"], seg["end_ts"]])
             active_blocks += 1
     if not active_blocks:
         head.append("- （无记录）")
@@ -306,7 +308,8 @@ def gather_summary(
     body = "\n".join(kept) if kept else "- （无记录）"
     marker = "【屏幕内容条目】（仅含最近部分）" if len(kept) < len(b_lines) else "【屏幕内容条目】"
     summary = f"{head_text}\n{marker}\n{body}"
-    stats = {"app_count": len(app_seconds), "screen_count": len(kept)}
+    stats = {"app_count": len(app_seconds), "screen_count": len(kept),
+             "app_seconds": dict(app_seconds), "active_ranges": active_ranges}
     return summary, stats
 
 
