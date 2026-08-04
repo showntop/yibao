@@ -1,4 +1,669 @@
-<!DOCTYPE html><html><head><meta charset="utf-8"><title>编码</title></head>
-<body><div id="app">编码面板（建设中）</div>
-<script>window.yibao && window.yibao.onInit && window.yibao.onInit(function(d){ console.log("init", d); });</script>
-</body></html>
+<!DOCTYPE html>
+<!-- 编码对话面板（webview）：项目选择 + Claude Code 流式回显 + 文件改动 diff + 起停。
+     运行在 iframe sandbox + srcdoc 里，无 Tauri IPC、无原生网络。
+     能力调用全部经 window.yibao.invoke（postMessage 桥 → api.toml 白名单 + 风险闸门）；
+     流式回显经 window.yibao.onInit（每条 panel_data 推一次，data = {session_id, event:{kind,...}}，
+     按事件 kind ACCUMULATE 到 #log，不能用 data 整体替换）。
+     桥 JS 由父侧注入（提供 window.yibao.invoke/onInit），本文件不自带。
+
+     v1 离线约束：Monaco 经 jsdelivr CDN 懒加载——个人工具、通常联网场景接受；
+     若 CDN 不可达，文件改动卡片降级为"修改：path" + 纯文本 diff（行级 LCS），
+     不阻塞流程。后续如需离线，把 Monaco 打包进 panel 资源即可。 -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>编码对话</title>
+<style>
+  /* 设计 token 与 tools.html / editor.html 对齐（iframe 沙箱吃不到 tokens.css，内联写死） */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #f6f1ea; --card: #ffffff; --border: #eee4d6; --border-soft: #f3ecdf;
+    --text: #3f372e; --muted: #a89a86; --faint: #c9bcab;
+    --accent: #ff8a5c; --accent-deep: #f2703f; --accent-soft: #fff0e8;
+    --green-bg: #dcf0e2; --green: #3e8e5a; --green-bar: #8fd0a6;
+    --red-bg: #fce7e3; --red: #c0574b; --red-bar: #f0aaa1;
+    --ai-bg: #fff8f3; --user-bg: #ff8a5c;
+    --mono: 12.5px/1.6 "SF Mono", ui-monospace, Menlo, monospace;
+  }
+  html, body { height: 100%; }
+  body {
+    font: 13px/1.6 -apple-system, "PingFang SC", sans-serif;
+    background: var(--bg); color: var(--text);
+    display: flex; flex-direction: column;
+  }
+  .hidden { display: none !important; }
+
+  /* ---- 顶栏：cwd 输入 + 固定 agent 徽标 ---- */
+  header {
+    flex: none; display: flex; align-items: center; gap: 8px;
+    padding: 10px 14px; border-bottom: 1px solid var(--border-soft);
+    background: var(--card);
+  }
+  header .lbl { font-size: 12px; color: var(--muted); flex: none; }
+  #cwd {
+    flex: 1; min-width: 0; border: 1px solid #e3d7c4; border-radius: 10px;
+    padding: 6px 10px; font-size: 12.5px; font-family: var(--mono);
+    background: #fff; color: var(--text); outline: none; transition: border-color .15s ease;
+  }
+  #cwd:focus { border-color: var(--accent); }
+  #cwd::placeholder { color: var(--faint); font-family: -apple-system, "PingFang SC", sans-serif; }
+  #agent {
+    flex: none; display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11.5px; color: var(--accent-deep); background: var(--accent-soft);
+    border-radius: 999px; padding: 4px 10px; font-weight: 600;
+  }
+  #agent::before { content: "●"; font-size: 9px; color: var(--accent); }
+
+  /* ---- 主区：流式日志 ---- */
+  #log {
+    flex: 1; overflow-y: auto; padding: 14px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .row { display: flex; width: 100%; }
+  .row.user { justify-content: flex-end; }
+  .row.ai { justify-content: flex-start; }
+
+  .bubble {
+    max-width: 86%; padding: 9px 13px; border-radius: 14px;
+    font-size: 13px; line-height: 1.7; word-break: break-word; white-space: pre-wrap;
+  }
+  .row.user .bubble { background: var(--user-bg); color: #fff; border-bottom-right-radius: 4px; }
+  .row.ai .bubble { background: var(--ai-bg); border: 1px solid var(--border-soft); border-bottom-left-radius: 4px; }
+  .row.ai .bubble.done::after {
+    content: " ✓"; color: var(--green); font-weight: 600; font-size: 11px;
+  }
+
+  /* 文件改动 / 工具调用卡片（v1 单列；Monaco 加载后内嵌） */
+  .card {
+    max-width: 86%; background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; overflow: hidden; box-shadow: 0 1px 2px rgba(90,70,50,.04);
+  }
+  .card-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 11px; background: #faf7f2; border-bottom: 1px solid var(--border-soft);
+    font-size: 12px;
+  }
+  .card-head .ic { flex: none; }
+  .card-head .lbl { font-weight: 600; color: var(--text); flex: none; }
+  .card-head .path {
+    flex: 1; min-width: 0; font: var(--mono); color: var(--accent-deep);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .card-head .tool {
+    flex: none; font-size: 11px; color: var(--muted);
+    background: #fff; border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px;
+  }
+  .card-head .spacer { flex: 1; }
+  .card-head .mini {
+    flex: none; border: none; background: transparent; color: var(--muted); cursor: pointer;
+    font-size: 11.5px; padding: 2px 8px; border-radius: 7px; transition: all .15s ease;
+  }
+  .card-head .mini:hover { background: var(--accent-soft); color: var(--accent-deep); }
+  .card.fileedit .card-head .ic { color: var(--accent-deep); }
+  .card.tooluse .card-head .ic { color: var(--muted); }
+  .card-body { padding: 0; }
+  .card-body.collapsed { display: none; }
+  .card-body.open { display: block; }
+  .card-body .note {
+    padding: 10px 13px; font-size: 12px; color: var(--muted); font-style: italic;
+  }
+  .card-body .dl {
+    font: var(--mono); padding: 1px 12px 1px 18px; white-space: pre-wrap; word-break: break-word;
+    min-height: 1.6em;
+  }
+  .card-body .dl.s { color: var(--muted); }
+  .card-body .dl.d { background: var(--red-bg); box-shadow: inset 3px 0 var(--red-bar); color: var(--red); }
+  .card-body .dl.a { background: var(--green-bg); box-shadow: inset 3px 0 var(--green-bar); color: var(--green); }
+  .card-body .monaco-host { height: 320px; border-top: 1px solid var(--border-soft); }
+
+  /* 终止标 / 错误 */
+  .marker {
+    align-self: center; font-size: 11.5px; color: var(--faint);
+    padding: 2px 10px; border-radius: 999px; background: #faf3ea;
+  }
+  .marker.err { color: var(--red); background: var(--red-bg); }
+
+  /* ---- 底栏：输入 + 起停 ---- */
+  footer {
+    flex: none; border-top: 1px solid var(--border-soft); background: var(--card);
+    padding: 10px 14px; display: flex; flex-direction: column; gap: 6px;
+  }
+  #prompt {
+    width: 100%; border: 1px solid #e3d7c4; border-radius: 10px; padding: 8px 11px;
+    font: 13px/1.6 -apple-system, "PingFang SC", sans-serif; background: #fff; color: var(--text);
+    outline: none; resize: none; min-height: 56px; max-height: 160px; transition: border-color .15s ease;
+  }
+  #prompt:focus { border-color: var(--accent); }
+  #prompt::placeholder { color: var(--faint); }
+  .actions { display: flex; align-items: center; gap: 8px; }
+  .actions .spacer { flex: 1; }
+  #status { font-size: 11.5px; color: var(--muted); min-height: 18px; flex: 1; }
+  #status.err { color: var(--red); }
+  button.act {
+    border: none; border-radius: 10px; padding: 7px 18px; cursor: pointer;
+    background: var(--accent); color: #fff; font-size: 12.5px; font-weight: 600;
+    box-shadow: 0 2px 6px rgba(242,112,63,.3); transition: all .15s ease;
+  }
+  button.act:hover { background: var(--accent-deep); }
+  button.act:active { transform: scale(.97); }
+  button.act:disabled { opacity: .5; cursor: default; box-shadow: none; }
+  button.ghost {
+    background: transparent; color: #8a7a66; border: 1px solid #e3d7c4;
+    box-shadow: none; font-weight: 500;
+  }
+  button.ghost:hover { background: #faf3ea; color: var(--text); border-color: #d8c9b2; }
+  button.ghost:disabled { opacity: .5; cursor: default; }
+
+  /* 设计预览态（无 window.yibao 桥时） */
+  #bridge-warn {
+    padding: 6px 12px; background: #fdf3e0; color: #b98a2f; font-size: 11.5px;
+    text-align: center; border-bottom: 1px solid #f0dfa8;
+  }
+</style>
+</head>
+<body>
+
+<!-- 桥缺失时可见，提示这是设计预览 -->
+<div id="bridge-warn" class="hidden">设计预览：未检测到译宝桥（window.yibao），起停/流式回显不可用。</div>
+
+<header>
+  <span class="lbl">项目</span>
+  <input id="cwd" type="text" spellcheck="false" placeholder="粘贴项目路径（如 /Users/.../myapp）">
+  <span id="agent">agent: Claude Code</span>
+</header>
+
+<main id="log"></main>
+
+<footer>
+  <textarea id="prompt" placeholder="描述要做的事（⌘/Ctrl + Enter 发送）；Claude Code 会在上面的项目目录里执行" rows="2"></textarea>
+  <div class="actions">
+    <span id="status"></span>
+    <span class="spacer"></span>
+    <button id="stop" class="act ghost" disabled>中断</button>
+    <button id="send" class="act">发送</button>
+  </div>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+
+  // ============================================================
+  //   桥检测 + 设计预览兜底
+  // ============================================================
+  var hasBridge = !!(window.yibao && window.yibao.invoke && window.yibao.onInit);
+  if (!hasBridge) {
+    document.getElementById("bridge-warn").classList.remove("hidden");
+    // 预置一段示例对话，让设计预览不空
+    renderPreviewSample();
+  }
+
+  // ============================================================
+  //   状态
+  // ============================================================
+  var $ = function (id) { return document.getElementById(id); };
+  var currentSession = null;   // 当前活动 session_id（coding.start 返回值；过滤陈旧流用）
+  var currentBubble = null;    // 当前 assistant 文本气泡 DOM 引用；非文本事件会置空（下次 text 重建）
+  var atBottom = true;         // 用户是否贴底（true 才自动跟随滚动）
+  var sending = false;         // send 按钮 re-entry 保护
+
+  // Monaco 状态：pending → ready/failed（singleton Promise 保证只加载一次）
+  var monacoStatus = "pending";
+  var monacoPromise = null;
+  var monacoNS = null;
+
+  // ============================================================
+  //   工具函数
+  // ============================================================
+  function esc(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function emsg(e) { return e && e.message ? e.message : String(e || ""); }
+
+  function setStatus(text, isErr) {
+    var s = $("status");
+    s.textContent = text || "";
+    s.className = isErr ? "err" : "";
+  }
+
+  function scrollIfAtBottom() {
+    var log = $("log");
+    if (atBottom) log.scrollTop = log.scrollHeight;
+  }
+  $("log").addEventListener("scroll", function () {
+    var log = $("log");
+    // 距底 < 60px 视为贴底（容忍亚像素与 padding 误差）
+    atBottom = (log.scrollHeight - log.scrollTop - log.clientHeight) < 60;
+  });
+
+  // ============================================================
+  //   气泡构造
+  // ============================================================
+  function appendUser(text) {
+    var row = document.createElement("div");
+    row.className = "row user";
+    var b = document.createElement("div");
+    b.className = "bubble";
+    b.textContent = text;
+    row.appendChild(b);
+    $("log").appendChild(row);
+    scrollIfAtBottom();
+  }
+
+  // 返回文本容器节点（之后往里 appendChild 文本节点）
+  function appendAssistantBubble() {
+    var row = document.createElement("div");
+    row.className = "row ai";
+    var b = document.createElement("div");
+    b.className = "bubble";
+    row.appendChild(b);
+    $("log").appendChild(row);
+    scrollIfAtBottom();
+    return b;
+  }
+
+  function appendTextToBubble(bubble, text) {
+    bubble.appendChild(document.createTextNode(text));
+    scrollIfAtBottom();
+  }
+
+  function appendMarker(text, isErr) {
+    var m = document.createElement("div");
+    m.className = "marker" + (isErr ? " err" : "");
+    m.textContent = text;
+    $("log").appendChild(m);
+    scrollIfAtBottom();
+  }
+
+  function appendError(text) {
+    var row = document.createElement("div");
+    row.className = "row ai";
+    var b = document.createElement("div");
+    b.className = "bubble";
+    b.style.color = "var(--red)";
+    b.style.background = "var(--red-bg)";
+    b.style.borderColor = "#f5d5d0";
+    b.textContent = "✗ " + text;
+    row.appendChild(b);
+    $("log").appendChild(row);
+    scrollIfAtBottom();
+  }
+
+  // ---- 文件改动卡片（折叠/展开） ----
+  function appendFileEdit(ev) {
+    var path = ev.path || "(未知路径)";
+    var tool = ev.tool || "";
+    var card = document.createElement("div");
+    card.className = "card fileedit";
+
+    var head = document.createElement("div");
+    head.className = "card-head";
+    head.innerHTML =
+      '<span class="ic">✎</span>' +
+      '<span class="lbl">修改</span>' +
+      '<span class="path" title="' + esc(path) + '">' + esc(path) + '</span>' +
+      (tool ? '<span class="tool">' + esc(tool) + '</span>' : '') +
+      '<span class="spacer"></span>' +
+      '<button type="button" class="mini toggle">展开</button>';
+
+    var body = document.createElement("div");
+    body.className = "card-body collapsed";
+
+    head.querySelector(".toggle").addEventListener("click", function () {
+      var willOpen = body.classList.contains("collapsed");
+      body.classList.toggle("collapsed");
+      body.classList.toggle("open", willOpen);
+      head.querySelector(".toggle").textContent = willOpen ? "收起" : "展开";
+      if (willOpen && !body.dataset.populated) {
+        body.dataset.populated = "1";
+        populateFileEditBody(body, ev);
+      }
+    });
+
+    card.appendChild(head);
+    card.appendChild(body);
+
+    var row = document.createElement("div");
+    row.className = "row ai";
+    row.appendChild(card);
+    $("log").appendChild(row);
+    scrollIfAtBottom();
+  }
+
+  function populateFileEditBody(body, ev) {
+    if (ev.old != null && ev.new != null) {
+      // 有前后内容 → 上 Monaco diff（CDN 不可达降级为纯文本 LCS diff）
+      setStatus("加载 Monaco…");
+      ensureMonaco().then(function (ok) {
+        if (ok) renderMonacoDiff(body, ev);
+        else renderTextDiff(body, ev.old, ev.new);
+      });
+    } else {
+      // v1 runner 暂未推送前后内容 → 仅显示路径说明
+      var note = document.createElement("div");
+      note.className = "note";
+      note.textContent =
+        "v1 仅记录改动路径（runner 未推送 old/new）；" + toolHint(ev.tool) +
+        "后续 runner 推送内容后此处自动展示 diff。";
+      body.appendChild(note);
+    }
+  }
+
+  function toolHint(tool) {
+    if (!tool) return "";
+    return "工具：" + tool + "。";
+  }
+
+  function renderMonacoDiff(body, ev) {
+    var host = document.createElement("div");
+    host.className = "monaco-host";
+    body.appendChild(host);
+    try {
+      var lang = guessLangFromPath(ev.path);
+      var orig = monacoNS.editor.createModel(String(ev.old), lang);
+      var modi = monacoNS.editor.createModel(String(ev.new), lang);
+      var diff = monacoNS.editor.createDiffEditor(host, {
+        readOnly: true,
+        renderSideBySide: true,
+        automaticLayout: true,
+        minimap: { enabled: false },
+        scrollBeyondLastLine: false,
+      });
+      diff.setModel({ original: orig, modified: modi });
+      setStatus("");
+    } catch (e) {
+      // Monaco 报错也算降级路径，绝不崩
+      host.remove();
+      renderTextDiff(body, ev.old, ev.new);
+      setStatus("Monaco 渲染失败，已降级文本 diff", true);
+    }
+  }
+
+  // 路径扩展名 → Monaco 语言 id（粗映射，缺省纯文本）
+  function guessLangFromPath(p) {
+    var ext = (String(p || "").match(/\.([a-z0-9]+)$/i) || [])[1];
+    if (!ext) return "text/plain";
+    ext = ext.toLowerCase();
+    var map = {
+      js: "javascript", jsx: "javascript", mjs: "javascript",
+      ts: "typescript", tsx: "typescript",
+      py: "python", rb: "ruby", go: "go", rs: "rust", java: "java",
+      kt: "kotlin", swift: "swift", php: "php", c: "c", h: "c",
+      cpp: "cpp", cc: "cpp", hpp: "cpp", cs: "csharp",
+      html: "html", htm: "html", css: "css", scss: "scss", less: "less",
+      json: "json", xml: "xml", yaml: "yaml", yml: "yaml",
+      toml: "ini", ini: "ini", md: "markdown", markdown: "markdown",
+      sh: "shell", bash: "shell", zsh: "shell",
+      sql: "sql", vue: "html", svelte: "html",
+    };
+    return map[ext] || "text/plain";
+  }
+
+  // 行级 LCS diff → 渲染为带背景色的纯文本（Monaco 不可用时的兜底）
+  function renderTextDiff(body, oldText, newText) {
+    var A = String(oldText).split("\n");
+    var B = String(newText).split("\n");
+    var n = A.length, m = B.length;
+    // dp[i][j] = A[i:] 与 B[j:] 的 LCS 长度
+    var dp = new Array(n + 1);
+    for (var i = 0; i <= n; i++) {
+      dp[i] = new Int32Array(m + 1);
+    }
+    for (i = n - 1; i >= 0; i--) {
+      for (var j = m - 1; j >= 0; j--) {
+        dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1
+                                 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+    var out = [];
+    i = 0; j = 0;
+    while (i < n && j < m) {
+      if (A[i] === B[j]) { out.push({ t: "s", s: A[i] }); i++; j++; }
+      else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ t: "d", s: A[i] }); i++; }
+      else { out.push({ t: "a", s: B[j] }); j++; }
+    }
+    for (; i < n; i++) out.push({ t: "d", s: A[i] });
+    for (; j < m; j++) out.push({ t: "a", s: B[j] });
+
+    var frag = document.createDocumentFragment();
+    out.forEach(function (r) {
+      var div = document.createElement("div");
+      div.className = "dl " + r.t;
+      div.textContent = r.s || " ";
+      frag.appendChild(div);
+    });
+    body.appendChild(frag);
+  }
+
+  // ---- 工具调用卡片（折叠/展开） ----
+  function appendToolUse(ev) {
+    var tool = ev.tool || "(未知工具)";
+    var card = document.createElement("div");
+    card.className = "card tooluse";
+    var head = document.createElement("div");
+    head.className = "card-head";
+    head.innerHTML =
+      '<span class="ic">⚙</span>' +
+      '<span class="lbl">工具</span>' +
+      '<span class="path">' + esc(tool) + '</span>' +
+      '<span class="spacer"></span>' +
+      '<button type="button" class="mini toggle">展开</button>';
+    var body = document.createElement("div");
+    body.className = "card-body collapsed";
+    head.querySelector(".toggle").addEventListener("click", function () {
+      var willOpen = body.classList.contains("collapsed");
+      body.classList.toggle("collapsed");
+      body.classList.toggle("open", willOpen);
+      head.querySelector(".toggle").textContent = willOpen ? "收起" : "展开";
+    });
+    var note = document.createElement("div");
+    note.className = "note";
+    note.textContent = "工具调用详情暂未上报（runner normalize 仅传 tool 名）。";
+    body.appendChild(note);
+    card.appendChild(head);
+    card.appendChild(body);
+    var row = document.createElement("div");
+    row.className = "row ai";
+    row.appendChild(card);
+    $("log").appendChild(row);
+    scrollIfAtBottom();
+  }
+
+  // ============================================================
+  //   Monaco 懒加载（singleton；失败永久降级，不重复打 CDN）
+  // ============================================================
+  function ensureMonaco() {
+    if (monacoPromise) return monacoPromise;
+    monacoPromise = new Promise(function (resolve) {
+      if (monacoStatus === "ready") return resolve(true);
+      if (monacoStatus === "failed") return resolve(false);
+
+      var loaderSrc = "https://cdn.jsdelivr.net/npm/monaco-editor/min/vs/loader.js";
+      var s = document.createElement("script");
+      s.src = loaderSrc;
+      s.async = true;
+
+      // 10s 超时：CDN 慢/挂直接降级，不让用户干等
+      var to = setTimeout(function () {
+        if (monacoStatus === "pending") { monacoStatus = "failed"; resolve(false); }
+      }, 10000);
+
+      s.onerror = function () {
+        clearTimeout(to);
+        if (monacoStatus === "pending") { monacoStatus = "failed"; resolve(false); }
+      };
+      s.onload = function () {
+        clearTimeout(to);
+        var req = window.require;
+        if (!req || !req.config) { monacoStatus = "failed"; resolve(false); return; }
+        req.config({ paths: { vs: "https://cdn.jsdelivr.net/npm/monaco-editor/min/vs" } });
+        req(["vs/editor/editor.main"], function () {
+          monacoNS = window.monaco;
+          if (!monacoNS) { monacoStatus = "failed"; resolve(false); return; }
+          monacoStatus = "ready";
+          resolve(true);
+        }, function (err) {
+          monacoStatus = "failed";
+          resolve(false);
+        });
+      };
+      document.head.appendChild(s);
+    });
+    return monacoPromise;
+  }
+
+  // ============================================================
+  //   onInit：流式事件累加（每条 panel_data 调一次）
+  //   关键：append 到 #log / 当前气泡，绝不用 data 替换 #log。
+  // ============================================================
+  function handleInitData(data) {
+    if (!data || !data.event) return;
+    var sid = data.session_id;
+    // 过滤陈旧/异会话流：有 currentSession 且不匹配 → 忽略
+    // （currentSession 未设置时放行，覆盖 invoke 返回前就到达的首条流式块）
+    if (currentSession != null && sid != null && sid !== currentSession) return;
+
+    var ev = data.event;
+    switch (ev.kind) {
+      case "text_delta":
+        if (!currentBubble) currentBubble = appendAssistantBubble();
+        appendTextToBubble(currentBubble, ev.text || "");
+        break;
+      case "file_edit":
+        // 非文本事件切断当前文本气泡：下次 text_delta 起新气泡
+        currentBubble = null;
+        appendFileEdit(ev);
+        break;
+      case "tool_use":
+        currentBubble = null;
+        appendToolUse(ev);
+        break;
+      case "done":
+        if (currentBubble) {
+          currentBubble.classList.add("done");
+        } else {
+          appendMarker("完成", false);
+        }
+        currentBubble = null;
+        onSessionEnded();
+        break;
+      case "error":
+        currentBubble = null;
+        appendError(ev.text || "未知错误");
+        onSessionEnded();
+        break;
+      default:
+        // 未知 kind 静默忽略（前向兼容）
+        break;
+    }
+  }
+
+  function onSessionEnded() {
+    currentSession = null;     // 下次 send 可新建
+    $("stop").disabled = true;
+    $("send").disabled = false;
+  }
+
+  // ============================================================
+  //   发送 / 中断
+  // ============================================================
+  function send() {
+    if (sending) return;
+    if (!hasBridge) {
+      setStatus("设计预览模式：未连译宝桥，无法发送", true);
+      return;
+    }
+    var cwd = $("cwd").value.trim();
+    var prompt = $("prompt").value.trim();
+    if (!cwd) { setStatus("请先填写项目路径（cwd）", true); $("cwd").focus(); return; }
+    if (!prompt) { setStatus("请输入任务描述", true); $("prompt").focus(); return; }
+
+    sending = true;
+    $("send").disabled = true;
+    setStatus("提交中…");
+
+    // 用户气泡先入列，再起会话
+    appendUser(prompt);
+    currentBubble = null;  // 用户气泡不属于 assistant 流
+
+    window.yibao.invoke("coding.start", { cwd: cwd, prompt: prompt }).then(function (r) {
+      var sid = r && r.session_id;
+      if (!sid) throw new Error("未返回 session_id");
+      currentSession = sid;
+      $("prompt").value = "";
+      $("stop").disabled = false;
+      setStatus("会话 " + sid + " 运行中…");
+    }).catch(function (e) {
+      appendError("启动失败：" + emsg(e));
+      setStatus("启动失败：" + emsg(e), true);
+    }).finally(function () {
+      sending = false;
+      $("send").disabled = false;
+    });
+  }
+
+  function stop() {
+    if (!hasBridge) return;
+    if (!currentSession) { setStatus("没有活动会话可中断", true); return; }
+    var sid = currentSession;
+    $("stop").disabled = true;
+    setStatus("中断 " + sid + "…");
+    window.yibao.invoke("coding.stop", { id: sid }).then(function () {
+      setStatus("已请求中断 " + sid);
+      // 真正的 stopped 终态会经 done/error 流回来；按钮由 onSessionEnded 复位
+    }).catch(function (e) {
+      setStatus("中断失败：" + emsg(e), true);
+      $("stop").disabled = false;
+    });
+  }
+
+  $("send").addEventListener("click", send);
+  $("stop").addEventListener("click", stop);
+  $("prompt").addEventListener("keydown", function (e) {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      send();
+    }
+  });
+
+  // ============================================================
+  //   初次进入：预填 cwd（从最近一次会话取，没填过就留空）
+  // ============================================================
+  function prefillCwd() {
+    if (!hasBridge) return;
+    window.yibao.invoke("coding.list", {}).then(function (r) {
+      var rows = (r && r.sessions) || [];
+      if (rows.length && rows[0].cwd && !$("cwd").value) {
+        $("cwd").value = rows[0].cwd;
+      }
+    }).catch(function () { /* 静默：首次使用无会话 */ });
+  }
+
+  // ============================================================
+  //   注册 onInit（每条 panel_data 触发一次）
+  // ============================================================
+  if (hasBridge) {
+    window.yibao.onInit(handleInitData);
+    prefillCwd();
+  }
+
+  // ============================================================
+  //   设计预览：无桥时塞一段示例对话，便于看样式
+  // ============================================================
+  function renderPreviewSample() {
+    // 延迟到 DOM 就绪（本脚本在 body 末尾，已就绪，但桥缺失分支更安全）
+    try {
+      appendUser("帮我看一下 src/main.rs 的入口在哪");
+      var b = appendAssistantBubble();
+      appendTextToBubble(b, "我打开项目看一下 main.rs 的结构…");
+      appendFileEdit({ tool: "Read", path: "src/main.rs" });
+      var b2 = appendAssistantBubble();
+      appendTextToBubble(b2, "入口在 src/main.rs:12 的 fn main()。需要我加点日志吗？");
+      b2.classList.add("done");
+    } catch (e) { /* 预览失败无所谓 */ }
+  }
+})();
+</script>
+</body>
+</html>
