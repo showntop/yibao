@@ -354,6 +354,23 @@ def test_run_yesterday_mutex(tmp_path):
     p.close()
 
 
+def test_advice_bearing_insight_flows_through(tmp_path):
+    """prompt 升级后 LLM 产出的『现象+建议』insight 应原样落库、可被选材。"""
+    p = _pstore(tmp_path)
+    day, start, end = yesterday_window()
+    p.append("app", "frontmost", {"app": "VSCode", "title": "a.py"}, "S1", ts=start + 100)
+    advice_json = ('{"patterns":[],"insights":['
+        '{"text":"下午同个报错在编辑器/浏览器间切了 14 次——建议把报错全文贴给 AI 一次问清，省掉来回切换",'
+        '"confidence":0.85}],"events":[]}')
+    provider = FakeProvider(text=advice_json)
+    d, mem, feed = _distiller(tmp_path, provider, p)
+    d.run_yesterday("manual")
+    items = d.store.day_items(day)
+    assert any("建议" in i["text"] for i in items if i["kind"] == "insight")
+    d.store.close()
+    p.close()
+
+
 def test_run_yesterday_passes_timeout_60(tmp_path):
     """离线提炼的 LLM 调用必须带 60s 超时（防僵死连接挂住调度循环）。"""
     from yibao_brain.llm import LLMResponse
