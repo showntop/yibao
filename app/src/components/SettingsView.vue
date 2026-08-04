@@ -301,6 +301,9 @@ const perceptionDistill = ref(false);
 const distillConfirming = ref(false);
 const distillRunning = ref(false);
 const distillResult = ref("");
+// recap 开关同样两段确认：晨间反刍把昨日提炼的洞察与建议主动端给用户
+const perceptionRecap = ref(false);
+const recapConfirming = ref(false);
 
 function syncPerceptionSettings(s: SettingsValues) {
   perceptionMaster.value = s["perception.master"] === true;
@@ -309,6 +312,7 @@ function syncPerceptionSettings(s: SettingsValues) {
   perceptionModelAccess.value = s["perception.model_access"] === true;
   perceptionScreen.value = s["perception.screen"] === true;
   perceptionDistill.value = s["perception.distill"] === true;
+  perceptionRecap.value = s["perception.recap"] === true;
 }
 
 async function setPerceptionSetting(
@@ -318,13 +322,15 @@ async function setPerceptionSetting(
     | "perception.activity"
     | "perception.model_access"
     | "perception.screen"
-    | "perception.distill",
+    | "perception.distill"
+    | "perception.recap",
   next: boolean,
 ) {
   perceptionErr.value = "";
   if (key === "perception.master" && !next) {
     screenConfirming.value = false;
     distillConfirming.value = false;
+    recapConfirming.value = false;
   }
   const old = {
     "perception.master": perceptionMaster.value,
@@ -333,6 +339,7 @@ async function setPerceptionSetting(
     "perception.model_access": perceptionModelAccess.value,
     "perception.screen": perceptionScreen.value,
     "perception.distill": perceptionDistill.value,
+    "perception.recap": perceptionRecap.value,
   };
   if (key === "perception.master") perceptionMaster.value = next;
   if (key === "perception.app") perceptionApp.value = next;
@@ -340,6 +347,7 @@ async function setPerceptionSetting(
   if (key === "perception.model_access") perceptionModelAccess.value = next;
   if (key === "perception.screen") perceptionScreen.value = next;
   if (key === "perception.distill") perceptionDistill.value = next;
+  if (key === "perception.recap") perceptionRecap.value = next;
   const r = await setSettings({ [key]: next });
   if (r === null) {
     perceptionMaster.value = old["perception.master"];
@@ -348,6 +356,7 @@ async function setPerceptionSetting(
     perceptionModelAccess.value = old["perception.model_access"];
     perceptionScreen.value = old["perception.screen"];
     perceptionDistill.value = old["perception.distill"];
+    perceptionRecap.value = old["perception.recap"];
     perceptionErr.value = "设置未生效（大脑不在线？）";
     return;
   }
@@ -374,6 +383,8 @@ async function confirmScreenEnable() {
 // distill 开关：关闭直接生效；开启先弹行内说明，确认才写入（照屏幕内容的行内两段确认模式）
 function onDistillToggle() {
   if (perceptionDistill.value) {
+    // 关闭 distill 会连带让 recap 失去依赖：一并撤回 recap 的行内确认，避免悬空
+    recapConfirming.value = false;
     void setPerceptionSetting("perception.distill", false);
   } else {
     distillConfirming.value = true;
@@ -383,6 +394,21 @@ function onDistillToggle() {
 async function confirmDistillEnable() {
   distillConfirming.value = false;
   await setPerceptionSetting("perception.distill", true);
+}
+
+// recap 开关：依赖 distill；关闭直接生效，开启先弹行内说明，确认才写入
+function onRecapToggle() {
+  if (!perceptionDistill.value) return; // 依赖未满足：按钮已 disabled，兜底防误触
+  if (perceptionRecap.value) {
+    void setPerceptionSetting("perception.recap", false);
+  } else {
+    recapConfirming.value = true;
+  }
+}
+
+async function confirmRecapEnable() {
+  recapConfirming.value = false;
+  await setPerceptionSetting("perception.recap", true);
 }
 
 // 「立即提炼昨日」：最长 90s（LLM 60s 超时 + 余量），结果一次性展示
@@ -861,6 +887,18 @@ onUnmounted(() => {
             </span>
           </div>
           <div v-if="distillResult" class="s-note">{{ distillResult }}</div>
+          <div class="s-row">
+            <span class="s-row-label">晨间反刍<span class="s-row-why">{{ perceptionDistill ? "每天首次打开主窗时，主动端出昨日提炼的洞察与建议" : "需先开启每日提炼" }}</span></span>
+            <button class="switch" :class="{ on: perceptionRecap }" role="switch" :aria-checked="perceptionRecap" :disabled="!perceptionDistill" title="晨间反刍" @click="onRecapToggle"><i /></button>
+          </div>
+          <!-- 开启晨间反刍的行内两段确认：说明触发时机与打扰度边界后，确认才写入 -->
+          <div v-if="recapConfirming" class="s-row">
+            <span class="s-row-label"><span class="s-row-why">确认后，每天首次打开主窗时，译宝会主动把昨日的效率洞察与建议端给你（受打扰度旋钮管，可随时关）</span></span>
+            <span class="s-row-btns">
+              <button class="s-mini danger" @click="confirmRecapEnable">确认开启</button>
+              <button class="s-mini" @click="recapConfirming = false">取消</button>
+            </span>
+          </div>
           <div class="s-note">{{ perceptionMaster ? "运行中" : "已暂停" }} · {{ perceptionItems.length }} 条已加载观察</div>
           <div v-if="perceptionErr" class="s-msg err"><YbIcon name="alert" :size="13" />{{ perceptionErr }}</div>
         </section>
