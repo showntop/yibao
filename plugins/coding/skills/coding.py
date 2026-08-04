@@ -113,8 +113,11 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
 
     def on_event(ev: dict) -> None:
         if emit_event is not None:
-            emit_event({"kind": "panel_data", "panel": "coding:chat",
-                        "data": {"session_id": sid, "event": ev}})
+            # panel/data 必须包在 payload 下：PanelApp.vue 的 panel_data 处理读
+            # e.payload?.panel / e.payload?.data，shell proactive→Rust→PanelApp 不再加包装。
+            emit_event({"kind": "panel_data",
+                        "payload": {"panel": "coding:chat",
+                                    "data": {"session_id": sid, "event": ev}}})
         if ev.get("kind") == "error":
             state["error"] = True
 

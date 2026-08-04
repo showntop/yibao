@@ -46,6 +46,10 @@ class ProactiveDispatcher:
     async def dispatch(self, event: dict) -> None:
         if not isinstance(event, dict):
             return
+        if event.get("kind") == "panel_data":
+            # 流式面板数据：直送 shell 转发对应 panel，绝不进 feed（否则每条 chunk 一条空 feed 记录）
+            self.write_msg({"type": "event", "surface": None, "event": event})
+            return
         text = str(event.get("text", ""))
         task_meta = event.get("task") if isinstance(event.get("task"), dict) else {}
         try:

@@ -6,9 +6,11 @@
      按事件 kind ACCUMULATE 到 #log，不能用 data 整体替换）。
      桥 JS 由父侧注入（提供 window.yibao.invoke/onInit），本文件不自带。
 
-     v1 离线约束：Monaco 经 jsdelivr CDN 懒加载——个人工具、通常联网场景接受；
-     若 CDN 不可达，文件改动卡片降级为"修改：path" + 纯文本 diff（行级 LCS），
-     不阻塞流程。后续如需离线，把 Monaco 打包进 panel 资源即可。 -->
+     v1 离线约束：共享 webview（WebviewPanel.vue）注入 CSP
+     （default-src 'none'; script-src 'unsafe-inline'），完全屏蔽 CDN 脚本——
+     Monaco 在线懒加载实际永不可达，无论联网与否。因此 v1 文件改动卡片恒走降级路径：
+     有 old/new 时显示纯文本 diff（行级 LCS），runner 只推 {tool,path}（v1 file_edit 无 old/new）
+     时显示"修改：path"说明。完整 Monaco diff 须后续将 Monaco 打包进 panel 资源（绕开 CSP）。 -->
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">

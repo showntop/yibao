@@ -8,7 +8,6 @@ panel = "coding:chat"
 name = "coding.stop"
 handler = "coding.stop"
 direct = true
-refresh = "coding.list"
 
 [[method]]
 name = "coding.list"

@@ -21,12 +21,15 @@ def normalize(msg: Any) -> dict | None:
 
     返回 dict → runner 调 on_event；返回 None → 忽略本条。
     输入契约（FakeSDK 锁定）：
+      - None（SDK 偶发空消息）→ None（忽略）
       - 文本类（.text 非空）→ {"kind":"text_delta","text":...}
       - 文件编辑工具（.tool ∈ {Write,Edit,MultiEdit} 或 .path 非空）→ {"kind":"file_edit","tool":...,"path":...}
       - 其余工具调用 → {"kind":"tool_use","tool":...}
     真实 SDK 消息（AssistantMessage/ToolUseBlock 等）字段形态在 C7 实装验收时微调，
     但本函数对 duck-typed 输入的判别契约由 test_coding_plugin.py 锁定。
     """
+    if msg is None:
+        return None
     tool = getattr(msg, "tool", None) or _deep_get(msg, ("tool", "name"))
     path = getattr(msg, "path", None) or _deep_get(msg, ("path",)) or _deep_get(msg, ("file_path",))
     if tool in _FILE_EDIT_TOOLS or path:
