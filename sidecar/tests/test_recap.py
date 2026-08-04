@@ -92,3 +92,36 @@ def test_build_recap_text_format():
     assert txt.startswith("早上好")
     assert "①" in txt and "建议A" in txt and "②" in txt and "建议B" in txt
     assert build_recap_text([]) == ""
+
+from yibao_brain.server import _recap_decide  # noqa: E402
+
+def test_recap_decide_gates_off():
+    """闸门任一关 → 不出。"""
+    assert _recap_decide(settings={"perception.master": False,
+        "perception.distill": True, "perception.recap": True},
+        last_recap_day="2026-08-04", today="2026-08-05",
+        yesterday_items=[_item("insight", "x", 0.9)]) is None
+    assert _recap_decide(settings={"perception.master": True,
+        "perception.distill": True, "perception.recap": False},
+        last_recap_day=None, today="2026-08-05",
+        yesterday_items=[_item("insight", "x", 0.9)]) is None
+
+def test_recap_decide_dedup_today():
+    """今天已反刍 → 不出。"""
+    assert _recap_decide(settings={"perception.master": True,
+        "perception.distill": True, "perception.recap": True},
+        last_recap_day="2026-08-05", today="2026-08-05",
+        yesterday_items=[_item("insight", "x", 0.9)]) is None
+
+def test_recap_decide_no_content():
+    """昨日无产物 → 不出。"""
+    assert _recap_decide(settings={"perception.master": True,
+        "perception.distill": True, "perception.recap": True},
+        last_recap_day=None, today="2026-08-05", yesterday_items=[]) is None
+
+def test_recap_decide_returns_text_and_day():
+    r = _recap_decide(settings={"perception.master": True,
+        "perception.distill": True, "perception.recap": True},
+        last_recap_day=None, today="2026-08-05",
+        yesterday_items=[_item("insight", "切了14次——建议…", 0.9)])
+    assert r is not None and "建议" in r["text"] and r["day"] is not None

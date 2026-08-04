@@ -390,6 +390,25 @@ def _gate_proactive_event(ev: dict, settings: dict) -> dict | None:
     return {**ev, "level": level}
 
 
+def _recap_decide(*, settings: dict, last_recap_day: str | None, today: str,
+                  yesterday_items: list[dict]) -> dict | None:
+    """反刍编排（纯逻辑，可单测）：闸门→去重→选材→拼装。返回 {text, day} 或 None。"""
+    if not (settings.get("perception.master") and settings.get("perception.distill")
+            and settings.get("perception.recap")):
+        return None
+    if last_recap_day == today:
+        return None
+    from .distiller import recap_select, build_recap_text, yesterday_window
+    selected = recap_select(yesterday_items)
+    if not selected:
+        return None
+    text = build_recap_text(selected)
+    if not text:
+        return None
+    _day, _s, _e = yesterday_window()   # 目标日 = 昨天
+    return {"text": text, "day": _day}
+
+
 async def _dispatch_reminder(r: dict, *, settings: dict, feed, history, voice,
                              run_state: dict, write_msg, dispatcher=None) -> None:
     """到期提醒分发：Feed/历史照落（可追溯底线）；气泡广播与 TTS 受 proactive.level 管辖。"""
@@ -1287,6 +1306,35 @@ async def serve_async(
             else:
                 result = await _offload(distiller.run_yesterday, "manual")
                 write_msg({"type": "distill_now", "ok": True, "result": result})
+        elif rtype == "recap_check":
+            # 晨间反刍（fire-and-forget）：闸门→去重→选材→emit reminder(morning_recap)→标记今天
+            try:
+                import datetime as _dt
+                today = _dt.date.today().isoformat()
+                decide = _recap_decide(
+                    settings=settings,
+                    last_recap_day=distiller.store.recap_last_day() if distiller else None,
+                    today=today,
+                    yesterday_items=(distiller.store.day_items(
+                        (_dt.date.today() - _dt.timedelta(days=1)).isoformat())
+                        if distiller else []),
+                )
+                if decide is not None:
+                    _emit_event({"kind": "reminder", "type": "morning_recap",
+                                 "text": decide["text"], "day": decide["day"]})
+                    if distiller is not None:
+                        distiller.store.set_recap_day(today)
+            except Exception as e:
+                print(f"[yibao] recap_check 失败：{e}", file=sys.stderr)
+        elif rtype == "distill_timeline":
+            # 设置页/回顾视图：近 N 天提炼聚合（distiller 不在则空数组）
+            try:
+                days = int(msg.get("days") or 14)
+                write_msg({"type": "distill_timeline",
+                           "days": distiller.store.recent_days(days) if distiller else []})
+            except Exception as e:
+                print(f"[yibao] distill_timeline 失败：{e}", file=sys.stderr)
+                write_msg({"type": "distill_timeline", "days": []})
         elif rtype == "feed_stats":
             # 设置页「主动行为统计」：近 N 天主动行为聚合（默认 7 天）
             try:
