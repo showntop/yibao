@@ -1,0 +1,16 @@
+[[method]]
+name = "coding.start"
+handler = "coding.start"
+direct = true
+panel = "coding:chat"
+
+[[method]]
+name = "coding.stop"
+handler = "coding.stop"
+direct = true
+refresh = "coding.list"
+
+[[method]]
+name = "coding.list"
+handler = "coding.list"
+direct = true

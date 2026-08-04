@@ -1,0 +1,26 @@
+id = "coding"
+name = "编码"
+description = "统一 coding 聊天：选项目 + Claude Code，提任务后台流式跑，面板回显 + 文件改动 diff。v1 单 agent、用户显式选、不 auto-routing。"
+capabilities = ["db"]   # in-process SDK，非子进程；不要 process
+
+[code]
+entry = "skills"
+
+[[table]]
+name = "sessions"
+columns = [
+  {name = "id", type = "text", pk = true},
+  {name = "agent", type = "text", default = "claude-code"},
+  {name = "cwd", type = "text"},
+  {name = "prompt", type = "text"},
+  {name = "status", type = "text", default = "running"},   # running/done/stopped/failed
+  {name = "created_at", type = "integer"},
+  {name = "finished_at", type = "integer", default = 0},
+]
+indexes = ["status", "created_at"]
+
+[[panel]]
+type = "webview"
+name = "chat"
+label = "编码对话"
+src = "panel/chat.html"
