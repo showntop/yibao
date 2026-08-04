@@ -20,6 +20,7 @@ from .background import (
     _consume_invoke_context,
     _describe_screen,
     _dispatch_reminder,
+    _distiller_loop,
     _dock_list,
     _gate_proactive_event,
     _plugin_summaries_list,
@@ -711,21 +712,8 @@ async def serve_async(
                 settings["perception.master"] = False
                 print(f"[yibao] 感知采样器启动失败（保持关闭）：{e}", file=sys.stderr)
 
-    async def _distiller_loop() -> None:
-        """每日 04:17 自动提炼昨日；master 或 perception.distill 关闭时零出站。"""
-        while True:
-            await asyncio.sleep(60)
-            if distiller is None or not (settings.get("perception.master") and settings.get("perception.distill")):
-                continue
-            try:
-                last = await _offload(distiller.store.last_auto_run_day)
-                if auto_run_due(time.time(), last):
-                    await _offload(distiller.run_yesterday, "auto")
-            except Exception as e:
-                print(f"[yibao] 自动提炼失败：{e}", file=sys.stderr)
-
     perception_cleanup_task = asyncio.ensure_future(_perception_cleanup_loop(pstore, distiller))
-    distiller_task = asyncio.ensure_future(_distiller_loop())
+    distiller_task = asyncio.ensure_future(_distiller_loop(settings, distiller))
 
     _wvision = None
     if vision_api_key() and computer_use_enabled():

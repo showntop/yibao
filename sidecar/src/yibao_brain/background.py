@@ -9,6 +9,7 @@ import os
 import sys
 import time
 
+from .distiller import auto_run_due
 from .loop import _offload
 from .plugins import get_plugin_summaries
 from .watch import WatchCtx
@@ -202,3 +203,22 @@ async def _perception_cleanup_loop(pstore, distiller) -> None:
     while True:
         await asyncio.sleep(3600)
         await _perception_cleanup_tick(pstore, distiller)
+
+
+async def _distiller_tick(settings: dict, distiller) -> None:
+    """单轮自动提炼判定：闸门(master AND distill) → 到期则 run_yesterday("auto")。"""
+    if distiller is None or not (settings.get("perception.master") and settings.get("perception.distill")):
+        return
+    try:
+        last = await _offload(distiller.store.last_auto_run_day)
+        if auto_run_due(time.time(), last):
+            await _offload(distiller.run_yesterday, "auto")
+    except Exception as e:
+        print(f"[yibao] 自动提炼失败：{e}", file=sys.stderr)
+
+
+async def _distiller_loop(settings: dict, distiller) -> None:
+    """每日 04:17 自动提炼昨日；master 或 perception.distill 关闭时零出站。"""
+    while True:
+        await asyncio.sleep(60)
+        await _distiller_tick(settings, distiller)
