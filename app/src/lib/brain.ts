@@ -1,6 +1,6 @@
 // 封装与大脑 sidecar 的通信（经 Tauri Rust 桥）。
 import { invoke } from "@tauri-apps/api/core";
-import { listen, once, type UnlistenFn } from "@tauri-apps/api/event";
+import { emit, listen, once, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type BrainEventKind =
   | "thought"
@@ -307,6 +307,41 @@ export async function distillNow(timeoutMs = 90000): Promise<DistillNowResponse>
     await invoke("distill_now");
   } catch { /* 大脑不在线：走超时兜底 */ }
   return Promise.race([resp, timeout]);
+}
+
+// ---- 晨间反刍 + 每日回顾（Task 9：recap 触发 + distill timeline 查询 + deep-link）----
+
+/** 反刍：开窗时 fire-and-forget 触发，大脑自行决定推不推。 */
+export function recapCheck(): Promise<void> {
+  return invoke("recap_check");
+}
+
+export interface DistillDay {
+  day: string;
+  status: string;        // ok | failed | no_data | pending
+  stats: { app_seconds?: Record<string, number>; active_ranges?: number[][]; [k: string]: unknown };
+  items: { id: number; kind: string; text: string; confidence?: number }[];
+}
+
+/** 每日回顾：发查询并等 brain-distill-timeline；大脑不在线/超时返回空。 */
+export async function getDistillTimelineOnce(days = 14, timeoutMs = 3000): Promise<DistillDay[]> {
+  return new Promise((resolve) => {
+    once<{ days: DistillDay[] }>("brain-distill-timeline", (ev) => resolve(ev.payload.days));
+    void invoke("get_distill_timeline", { days });
+    setTimeout(() => resolve([]), timeoutMs);
+  });
+}
+
+export function fetchDistillTimeline(days = 14): Promise<void> {
+  return invoke("get_distill_timeline", { days });
+}
+
+/** deep-link：pet 窗气泡点击 → 通知 home 窗切回顾 mode + 跳当天。 */
+export function emitRecapOpen(day: string): Promise<void> {
+  return emit("recap-open", { day });
+}
+export function onRecapOpen(cb: (day: string) => void): Promise<UnlistenFn> {
+  return listen<{ day: string }>("recap-open", (e) => cb(e.payload.day));
 }
 
 /** 一次性取 Feed：发查询并等下一条 brain-feed；大脑不在线/超时返回空（主屏照常渲染空态）。 */
