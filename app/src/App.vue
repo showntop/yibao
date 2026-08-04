@@ -19,6 +19,7 @@ import {
   onSettings,
   getSettingsOnce,
   openHomeWindow,
+  emitRecapOpen,
   runInput,
   invokeContext,
   sendConfirmBatch,
@@ -45,6 +46,8 @@ type BubbleMsg = {
   pstate?: "run" | "ok" | "fail";
   halted?: boolean;
   icon?: "clock" | "alert" | "doc";
+  /** 晨间反刍 deep-link：morning_recap 提醒气泡携带 day 字符串时，点击切到 home 回顾视图 */
+  recap?: string;
 };
 
 const state = ref<AvatarState>("idle");
@@ -287,6 +290,13 @@ function openHome() {
   void openHomeWindow().catch(() => {});
 }
 
+/** morning_recap 气泡点击 → 确保 home 窗可见 + 通知 HomeFeed 切到回顾 mode 并跳到当天。 */
+function onRecapClick(day?: string) {
+  if (!day) return;
+  void openHomeWindow().catch(() => {});
+  void emitRecapOpen(day);
+}
+
 // ---- 全局唤起（⌘⇧Y 反射键 / ⌘⇧U 划词唤起，Rust 抓完选中文字发事件）----
 const inputBarRef = ref<{ focus: () => void } | null>(null);
 const selectionCtx = ref<string | null>(null); // 划词上下文（chip 展示，发送时拼进给大脑的消息）
@@ -399,8 +409,11 @@ function onEvent(e: BrainEvent) {
       // 主动提醒：轻提示而非弹窗——亮窗（若隐藏）+ notify 态 + 常驻气泡，等用户点团子来看；
       // 确认闸门（confirmation_needed）不在此列，仍是强制展开。
       // 自主权「气泡」档（e.level）：不主动亮窗，只标「有事找你」；缺省 level 按完整档（兼容旧 sidecar）。
+      // morning_recap：气泡可点击 → deep-link 进 home 回顾视图（Task 12）
       const text = e.text ?? "到点了";
-      bubbles.value.push({ role: "ai", text, icon: "clock" });
+      const isRecap = (e as { type?: string }).type === "morning_recap";
+      const recapDay = (e as { day?: string }).day;
+      bubbles.value.push({ role: "ai", text, icon: "clock", recap: isRecap ? recapDay : undefined });
       void (async () => {
         try {
           // 大小窗互斥：大窗开着时提醒由大窗呈现，别把宠物窗再弹出来
@@ -726,6 +739,8 @@ onUnmounted(() => {
           :pstate="b.pstate"
           :halted="b.halted"
           :icon="b.icon"
+          :class="{ 'recap-clickable': !!b.recap }"
+          @click="onRecapClick(b.recap)"
         />
         <Bubble v-if="showTyping" role="ai" text="" typing />
       </div>
@@ -1067,6 +1082,14 @@ onUnmounted(() => {
 .bubbles::-webkit-scrollbar-thumb {
   background: var(--yb-surface-border);
   border-radius: var(--yb-radius-pill);
+}
+/* morning_recap 气泡可点击 deep-link 到回顾（class 经 fallthrough 落到 Bubble 根 div） */
+.recap-clickable {
+  cursor: pointer;
+  transition: filter var(--yb-dur-fast) var(--yb-ease-out);
+}
+.recap-clickable:hover {
+  filter: brightness(0.96);
 }
 /* 空状态：气泡区占位引导（小号团子 + 一句招呼 + 建议 chip） */
 .empty-hint {
