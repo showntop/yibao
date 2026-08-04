@@ -409,7 +409,7 @@ git commit -m "feat(coding): AgentRunner + ClaudeCodeRunner（流式/取消/容�
 追加到 `tests/test_coding_plugin.py`：
 ```python
 import coding as codingmod  # noqa: E402
-from coding import _stop_session, _ Sessions  # 见 Step 3 命名
+from coding import _stop_session  # noqa: E402
 
 
 class _FakeDB:
