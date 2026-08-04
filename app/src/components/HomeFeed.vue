@@ -10,6 +10,7 @@
 //   4. Dock 移出主屏 → 归到插件页（那才是它的家），主屏不再有第二套插件入口。
 //   5. 筛选从独立一行 chips 改为时间线头部的分段控件（Segmented Control）。
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import InputBar from "./InputBar.vue";
 import SchemaPanel from "./SchemaPanel.vue";
 import YbIcon from "./YbIcon.vue";
@@ -30,11 +31,15 @@ import {
   markFeedStatus,
   sendFeedFeedback,
   feedTierOf,
+  recapCheck,
+  getDistillTimelineOnce,
+  onRecapOpen,
   type FeedItem,
   type FeedStats,
   type RunningTask,
   type PendingConfirm,
   type WidgetPayload,
+  type DistillDay,
   canRememberSkill,
 } from "../lib/brain";
 
@@ -139,6 +144,53 @@ const emptyTitle = computed(() => {
 const STARTERS = ["帮我记一下今天的想法", "提醒我 30 分钟后休息", "看看我最近在忙什么"];
 
 const unreadCount = computed(() => timelineAll.value.filter((it) => it.read === 0).length);
+
+// ---- 视图切换：动态 | 回顾（晨间反刍 + 每日回顾）----
+type FeedView = "feed" | "recap";
+const view = ref<FeedView>("feed");
+const recapDays = ref<DistillDay[]>([]);
+const recapLoaded = ref(false);
+const recapFocusDay = ref<string | null>(null);
+
+async function loadRecap() {
+  recapDays.value = await getDistillTimelineOnce(14);
+  recapLoaded.value = true;
+}
+
+/** 秒 → "1.2h"；0 返回空串（不显示该 app）。 */
+function fmtHours(sec: number): string {
+  return sec > 0 ? `${(sec / 3600).toFixed(1)}h` : "";
+}
+
+/** 深度专注段："09:30–11:00 · 14:00–15:30"（最多 3 段）。 */
+function activeRangesLabel(stats: DistillDay["stats"]): string {
+  const rs = stats.active_ranges ?? [];
+  if (!rs.length) return "";
+  const f = (t: number) =>
+    `${String(new Date(t * 1000).getHours()).padStart(2, "0")}:${String(new Date(t * 1000).getMinutes()).padStart(2, "0")}`;
+  return rs.slice(0, 3).map((r) => `${f(r[0])}–${f(r[1])}`).join(" · ");
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  ok: "已提炼",
+  failed: "提炼失败",
+  no_data: "当日无数据",
+  pending: "未提炼",
+};
+function statusLabel(s: string): string {
+  return STATUS_LABELS[s] ?? s;
+}
+function recapInsights(d: DistillDay) {
+  return d.items.filter((i) => i.kind === "insight");
+}
+function recapEvents(d: DistillDay) {
+  return d.items.filter((i) => i.kind === "event");
+}
+
+// 切到回顾 mode 时按需加载（首次进入才拉一次）
+watch(view, (v) => {
+  if (v === "recap" && !recapLoaded.value) void loadRecap();
+});
 
 async function reload() {
   const r = await getFeedOnce();
@@ -396,6 +448,9 @@ let unFeed: (() => void) | null = null;
 let unWidgets: (() => void) | null = null;
 let unEvent: (() => void) | null = null;
 let unApprovals: (() => void) | null = null;
+// 回顾：开窗 recap_check 的可见性监听 + recap-open deep-link
+let unRecapVisible: (() => void) | null = null;
+let unRecapOpen: (() => void) | null = null;
 let refetchTimer: ReturnType<typeof setTimeout> | null = null;
 
 function scheduleFeedRefresh() {
@@ -422,12 +477,34 @@ onMounted(async () => {
       && !!e.action?.skill_id?.startsWith("agents.");
     if (e.kind === "reminder" || agentChanged) scheduleFeedRefresh();
   });
+
+  // 回顾：开窗触发 recap_check——大脑侧按 recap_last_day 去重，重复 fire 无害。
+  // onVisibleChange 在 @tauri-apps/api 2.x 不存在；用 onFocusChanged + isVisible() 兜底
+  // （PanelApp.vue 同款套路：窗口被聚焦≈被唤醒）。
+  void (async () => {
+    try {
+      const win = getCurrentWindow();
+      const fire = () => { void recapCheck().catch(() => {}); };
+      if (await win.isVisible()) fire();
+      unRecapVisible = await win.onFocusChanged(async ({ payload: focused }) => {
+        if (focused && await win.isVisible()) fire();
+      });
+    } catch { /* 非 tauri 环境（Vite 设计预览）忽略 */ }
+  })();
+  // deep-link：pet 窗气泡点击 → 切回顾 mode + 跳指定天
+  unRecapOpen = await onRecapOpen((day) => {
+    view.value = "recap";
+    recapFocusDay.value = day;
+    if (!recapLoaded.value) void loadRecap();
+  });
 });
 onUnmounted(() => {
   unFeed?.();
   unWidgets?.();
   unEvent?.();
   unApprovals?.();
+  unRecapVisible?.();
+  unRecapOpen?.();
   if (refetchTimer !== null) clearTimeout(refetchTimer);
 });
 </script>
@@ -452,6 +529,13 @@ onUnmounted(() => {
     <div class="body">
       <!-- ===== 左主列：统一时间线 ===== -->
       <section class="timeline-col">
+        <!-- 顶部视图切换：动态｜回顾（macOS Segmented，复用 .segmented 样式） -->
+        <div class="segmented view-toggle">
+          <button class="seg" :class="{ on: view === 'feed' }" @click="view = 'feed'">动态</button>
+          <button class="seg" :class="{ on: view === 'recap' }" @click="view = 'recap'">回顾</button>
+        </div>
+
+        <template v-if="view === 'feed'">
         <div class="tl-head">
           <div class="segmented">
             <button
@@ -537,6 +621,47 @@ onUnmounted(() => {
             </div>
           </div>
         </div>
+        </template>
+
+        <!-- 回顾视图：按天卡片（app 时长 + 深度专注段 + 洞察/事件 + 状态徽章） -->
+        <section v-else class="recap-list">
+          <div
+            v-for="d in recapDays"
+            :key="d.day"
+            class="recap-day"
+            :class="{ focus: d.day === recapFocusDay }"
+          >
+            <div class="rd-head">
+              <strong class="rd-date yb-num">{{ d.day }}</strong>
+              <span class="rd-status" :class="`st-${d.status}`">{{ statusLabel(d.status) }}</span>
+            </div>
+            <div v-if="d.status === 'ok'" class="rd-body">
+              <p
+                v-if="Object.keys(d.stats.app_seconds ?? {}).length"
+                class="rd-stats yb-num"
+              >
+                {{
+                  Object.entries(d.stats.app_seconds ?? {})
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 4)
+                    .map(([k, v]) => `${k} ${fmtHours(v)}`)
+                    .join(" · ")
+                }}
+              </p>
+              <p v-if="activeRangesLabel(d.stats)" class="rd-blocks">深度专注 {{ activeRangesLabel(d.stats) }}</p>
+              <ul class="rd-items">
+                <li v-for="i in recapInsights(d)" :key="i.id" class="rd-item insight">💡 {{ i.text }}</li>
+                <li v-for="i in recapEvents(d)" :key="i.id" class="rd-item event">📌 {{ i.text }}</li>
+              </ul>
+              <p
+                v-if="!recapInsights(d).length && !recapEvents(d).length"
+                class="rd-empty"
+              >这天没有洞察</p>
+            </div>
+            <p v-else class="rd-empty">{{ statusLabel(d.status) }}</p>
+          </div>
+          <p v-if="recapLoaded && !recapDays.length" class="rd-empty">暂时没有回顾</p>
+        </section>
       </section>
 
       <!-- ===== 右副列：需要你动手的事 =====
@@ -1224,5 +1349,82 @@ onUnmounted(() => {
   padding: var(--yb-space-3) var(--yb-space-5) var(--yb-space-4);
   border-top: 1px solid var(--yb-border-base);
   background: var(--yb-content-bg);
+}
+
+/* ---- 回顾视图：按天卡片 ---- */
+/* 视图切换行：复用 .segmented 样式，独立一行（与下方筛选 segmented 不挤在一起） */
+.view-toggle {
+  flex-shrink: 0;
+  margin-bottom: var(--yb-space-3);
+}
+.recap-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  padding-bottom: var(--yb-space-3);
+}
+.recap-list::-webkit-scrollbar {
+  width: 7px;
+}
+.recap-list::-webkit-scrollbar-thumb {
+  background: var(--yb-border-strong);
+  border-radius: var(--yb-radius-pill);
+}
+.recap-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+.recap-day {
+  padding: var(--yb-space-3) 0;
+  border-bottom: 1px solid var(--yb-card-row-line);
+}
+.recap-day.focus {
+  /* deep-link 高亮：柔和强调，不抢主信息 */
+  background: var(--yb-accent-soft);
+  border-radius: var(--yb-radius-xs);
+  padding-left: var(--yb-space-2);
+  padding-right: var(--yb-space-2);
+}
+.rd-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.rd-date {
+  font-size: var(--yb-fs-lg);
+  font-weight: var(--yb-fw-bold);
+  color: var(--yb-text-strong);
+}
+.rd-status {
+  font-size: var(--yb-fs-xs);
+  color: var(--yb-text-dim);
+}
+/* 状态色：失败用琥珀提醒，pending 用中性 */
+.rd-status.st-failed { color: var(--yb-accent-deep); }
+.rd-stats,
+.rd-blocks {
+  margin: var(--yb-space-1) 0;
+  font-size: var(--yb-fs-md);
+  color: var(--yb-text-dim);
+}
+.rd-items {
+  list-style: none;
+  margin: var(--yb-space-2) 0 0;
+  padding: 0;
+}
+.rd-item {
+  padding: 4px 0;
+  font-size: var(--yb-fs-lg);
+  line-height: var(--yb-lh-ui);
+}
+.rd-item.insight {
+  color: var(--yb-text);
+}
+.rd-item.event {
+  color: var(--yb-text-dim);
+}
+.rd-empty {
+  color: var(--yb-text-faint);
+  font-size: var(--yb-fs-md);
 }
 </style>
