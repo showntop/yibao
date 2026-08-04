@@ -43,19 +43,19 @@ def test_runner_streams_and_done():
 
 
 def test_runner_cancel_mid_stream():
-    events = []
-    # 第三条之前设置 cancel
+    sent = []
     msgs = [_FakeMsg("assistant", text="a"), _FakeMsg("assistant", text="b"), _FakeMsg("assistant", text="c")]
     runner = ClaudeCodeRunner(client_factory=lambda cwd, tools: _FakeClient(msgs))
     cancel = asyncio.Event()
-    sent = []
     def on_event(e):
         sent.append(e)
         if len(sent) == 2:
             cancel.set()
     _run(runner.run("p", "/tmp", on_event=on_event, cancel_event=cancel))
-    # 被取消 → 不该跑到第三条之后 / 不该 done
-    assert all(e.get("kind") != "done" for e in events) or events[-1]["kind"] != "done"
+    kinds = [e["kind"] for e in sent]
+    assert "done" not in kinds            # cancel suppressed the terminal done
+    assert kinds[:2] == ["text_delta", "text_delta"]   # first two streamed
+    assert len(sent) == 2                 # third message discarded after cancel
 
 
 def test_runner_error_isolated():
