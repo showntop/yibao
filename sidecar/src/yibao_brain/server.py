@@ -32,7 +32,7 @@ from .background import (
 )
 from .config import a11y_enabled, computer_use_enabled, computer_use_max_steps, history_path, llm_api_key, load_settings, perception_db_path, plugin_data_dir, save_settings, screenshot_dir, stt_model_dir, tts_voice, vad_max_seconds, vad_min_silence, vad_model_path, vision_api_key, voice_enabled
 from .feed import FeedStore
-from .distiller import Distiller, DistillerStore, auto_run_due
+from .distiller import Distiller, DistillerStore
 from .jobstore import JobsStore
 from .history import ConversationHistory
 from .ipc import Action, Event, RiskLevel

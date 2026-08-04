@@ -118,7 +118,7 @@ def test_distiller_tick_store_failure_no_raise(monkeypatch):
 from yibao_brain.background import _reminder_tick  # noqa: E402
 
 
-def _run_reminder_tick(store, due_or_exc):
+def _run_reminder_tick(due_or_exc):
     """构造 store（pop_due 返 due_or_exc 或抛），跑一次 tick，返回 dispatch 调用 id 列表。"""
     calls: list = []
 
@@ -146,10 +146,10 @@ def _run_reminder_tick(store, due_or_exc):
 
 
 def test_reminder_tick_dispatches_each_due():
-    calls = _run_reminder_tick(None, [{"id": 1, "text": "a"}, {"id": 2, "text": "b"}])
+    calls = _run_reminder_tick([{"id": 1, "text": "a"}, {"id": 2, "text": "b"}])
     assert calls == [1, 2]
 
 
 def test_reminder_tick_pop_failure_no_dispatch():
-    calls = _run_reminder_tick(None, RuntimeError("db"))
+    calls = _run_reminder_tick(RuntimeError("db"))
     assert calls == []
