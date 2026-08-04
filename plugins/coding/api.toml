@@ -13,3 +13,4 @@ direct = true
 name = "coding.list"
 handler = "coding.list"
 direct = true
+panel = "coding:chat"
