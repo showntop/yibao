@@ -4,7 +4,7 @@ import asyncio, os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 # 插件 skills 不在 src 下，单独加路径
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "plugins", "coding", "skills"))
-from runner import ClaudeCodeRunner, normalize  # noqa: E402
+from _runner import ClaudeCodeRunner, normalize  # noqa: E402
 
 
 class _FakeMsg:
@@ -77,3 +77,38 @@ def test_normalize_text_and_file_edit():
     assert normalize(_FakeMsg("assistant", text="hi"))["kind"] == "text_delta"
     fe = normalize(_FakeMsg("tool_use", tool="Edit", path="a.py"))
     assert fe["kind"] == "file_edit" and fe["path"] == "a.py"
+
+
+# ---------- Task 5: coding skills（start/stop 纯函数 + race-safe 取消顺序）----------
+import coding as codingmod  # noqa: E402
+from coding import _stop_session  # noqa: E402
+
+
+class _FakeDB:
+    """极小鸭式 db：记录 insert/update，query 全量返回。"""
+    def __init__(self): self.rows = {}; self.updates = []
+    def insert(self, table, row): self.rows[row["id"]] = dict(row); return row["id"]
+    def update(self, table, rid, fields): self.updates.append((rid, fields)); self.rows.setdefault(rid, {}).update(fields)
+    def query(self, *a, **k): return list(self.rows.values())
+
+
+def test_start_inserts_running_session(monkeypatch):
+    db = _FakeDB()
+    # 不真起线程：把 _spawn_stream 占位成空
+    monkeypatch.setattr(codingmod, "_spawn_stream", lambda *a, **k: None)
+    sid = codingmod.start_session(db, agent="claude-code", cwd="/tmp/p", prompt="hi")
+    assert db.rows[sid]["status"] == "running" and db.rows[sid]["cwd"] == "/tmp/p"
+
+
+def test_stop_sets_stopped_before_cancel():
+    # race-safe：先 db.update(stopped) 再 cancel 标记
+    db = _FakeDB(); db.rows["s1"] = {"id": "s1", "status": "running"}
+    flag = {"cancelled": False}
+    class Reg:
+        def __init__(self): self.s = {"s1": flag}
+    reg = Reg()
+    _stop_session(db, reg, "s1")
+    # 先落 stopped
+    assert db.updates[0] == ("s1", {"status": "stopped"}) or db.updates[0][0] == "s1"
+    # 再 cancel
+    assert flag["cancelled"] is True

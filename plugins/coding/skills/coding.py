@@ -1,0 +1,287 @@
+"""coding 插件 skills：start（建 session + 后台流式）/ stop（race-safe 取消）/ list。
+
+三件事：
+1. start_session：纯函数，往 sessions 表插一行 running（测试直接打）。
+2. _spawn_stream：起 daemon 线程，线程内开自己的 asyncio loop 跑 ClaudeCodeRunner，
+   每条 SDK 事件 normalize 后经 ctx.emit_event → panel_data 推 coding:chat 面板。
+3. _stop_session：race-safe 取消——先 db.update(stopped) 再 set cancel（仿 agents.task_stop），
+   保证收尾线程的 done/failed 落库不覆盖用户主动停止。
+
+与 agents 插件的关键差异：agents 跑子进程（Popen + proc.wait + 单条 reminder），
+coding 在 daemon 线程的 asyncio loop 里跑 SDK runner，按 chunk 流式推 panel_data。
+cancel 用 threading.Event——runner 在自己的 loop 里 .is_set() 轮询，跨线程读安全。
+ctx.emit_event 本身线程安全（proactive_dispatcher → call_soon_threadsafe），daemon 线程直调。
+"""
+from __future__ import annotations
+
+import asyncio
+import importlib.util
+import sys
+import threading
+import time
+import uuid
+from pathlib import Path
+from typing import Any
+
+from yibao_brain.ipc import ActionResult, RiskLevel
+from yibao_brain.skills import Skill
+
+
+def _sibling(stem: str):
+    """按路径加载同目录兄弟模块并缓存进 sys.modules（仿 agents._sibling）。
+
+    插件加载器按文件路径 import 本模块、名挂在 yibao_plugin_coding_coding；
+    兄弟 helper（_runner）不是包内模块，普通 import 拿不到，只能 spec_from_file_location。
+    先挂 sys.modules 再 exec：重复触发也拿到同一实例。
+    """
+    name = f"yibao_plugin_coding_{stem}"
+    mod = sys.modules.get(name)
+    if mod is None:
+        spec = importlib.util.spec_from_file_location(
+            name, Path(__file__).with_name(f"{stem}.py"))
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[name] = mod
+        spec.loader.exec_module(mod)
+    return mod
+
+
+_runner = _sibling("_runner")
+ClaudeCodeRunner = _runner.ClaudeCodeRunner   # 生产默认 runner factory
+
+# sid -> {"cancel": threading.Event}。stop 经此拿 cancel 信号；线程收尾后 pop。
+# 跨进程丢失（底座重启）无碍——sessions 表 status 仍 running，但 cancel 信号没了，
+# C7 集成验收时再加对账（仿 agents._reconcile_orphans）；v1 不做。
+_SESSIONS: dict[str, dict] = {}
+
+
+def start_session(db, *, agent: str, cwd: str, prompt: str) -> str:
+    """纯函数：往 sessions 表插一行 running，返回 sid。不碰线程/runner（测试可直打）。"""
+    sid = uuid.uuid4().hex[:12]
+    db.insert("sessions", {
+        "id": sid, "agent": agent, "cwd": cwd, "prompt": prompt,
+        "status": "running", "created_at": int(time.time()), "finished_at": 0,
+    })
+    return sid
+
+
+class _AsyncShield:
+    """把 threading.Event 适配成 runner 期望的 cancel_event（.is_set()）。
+
+    runner 在自己的 asyncio loop 里轮询 .is_set()——threading.Event 的 is_set 是原子读，
+    跨线程安全。包一层是为了语义显式（取消信号源是外部 threading.Event，不是 loop 内 asyncio.Event）。
+    """
+    def __init__(self, ev: threading.Event): self._ev = ev
+    def is_set(self) -> bool: return self._ev.is_set()
+
+
+def _spawn_stream(db, sid: str, cwd: str, prompt: str, runner, emit_event) -> None:
+    """起 daemon 线程跑 runner（线程内自带 asyncio loop）。
+
+    emit_event 已线程安全（proactive_dispatcher.emit → call_soon_threadsafe），
+    daemon 线程直调即可。db 经参数链一路传到 _stream（落最终状态用）。
+    """
+    cancel = threading.Event()
+    _SESSIONS[sid] = {"cancel": cancel}
+
+    def _thread():
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(
+                _stream(db, sid, cwd, prompt, runner, emit_event, cancel))
+        except Exception as e:  # 兜底：流式线程任何意外都不许炸出来
+            print(f"[yibao/coding] session {sid} stream 线程崩：{type(e).__name__}: {e}",
+                  file=sys.stderr)
+            try:
+                db.update("sessions", sid, {"status": "failed", "finished_at": int(time.time())})
+            except Exception:
+                pass
+        finally:
+            loop.close()
+            _SESSIONS.pop(sid, None)
+
+    threading.Thread(target=_thread, daemon=True, name=f"yibao-coding-{sid}").start()
+
+
+async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cancel) -> None:
+    """跑 runner；每条事件转 panel_data 推面板；结束按 cancel/error/done 落最终状态。
+
+    落库前先查当前 status——用户主动 stop 时 _stop_session 已先写 stopped，
+    这里保留 stopped 不被 done/failed 覆盖（race-safe，仿 agents._common._wait:66-73）。
+    """
+    state = {"error": False}
+
+    def on_event(ev: dict) -> None:
+        if emit_event is not None:
+            emit_event({"kind": "panel_data", "panel": "coding:chat",
+                        "data": {"session_id": sid, "event": ev}})
+        if ev.get("kind") == "error":
+            state["error"] = True
+
+    try:
+        await runner.run(prompt, cwd, on_event=on_event, cancel_event=_AsyncShield(cancel))
+    except Exception as e:  # runner 内部应已吞异常→error 事件；框架级异常兜底
+        print(f"[yibao/coding] session {sid} runner 框架异常：{type(e).__name__}: {e}",
+              file=sys.stderr)
+        state["error"] = True
+
+    # 定最终状态：stopped（用户主动停）> error > done
+    try:
+        prev = db.query("sessions", where={"id": sid})
+    except Exception:
+        prev = []
+    cur = prev[0]["status"] if prev else "running"
+    if cur == "stopped":
+        final = "stopped"        # 用户已主动停：保留，不被覆盖
+    elif cancel.is_set():
+        final = "stopped"        # cancel 已 set（_stop_session 先写 stopped 再 set，正常走上一分支；
+                                 # 此分支兜底 db.update 失败的极端情形，意图与 stop 一致）
+    elif state["error"]:
+        final = "failed"
+    else:
+        final = "done"
+    try:
+        db.update("sessions", sid, {"status": final, "finished_at": int(time.time())})
+    except Exception as e:
+        print(f"[yibao/coding] session {sid} 落最终状态失败：{type(e).__name__}: {e}",
+              file=sys.stderr)
+
+
+def _stop_session(db, registry, sid: str) -> bool:
+    """race-safe 取消：先 db.update(stopped)，再 set cancel（仿 agents.task_stop:343-345）。
+
+    先落 stopped：收尾线程（_stream 末尾的落库）读到 stopped 会保留它；
+    反过来先 set cancel，runner 早退 → _stream 可能在本 update 前就把状态翻成 done/stopped
+    （竞态）。registry 鸭式：生产 _SESSIONS（dict sid->{"cancel":Event}）或测试替身
+    （.s 属性 / .get 方法，条目 {"cancel":Event} 或 {"cancelled":bool}）。
+    """
+    db.update("sessions", sid, {"status": "stopped", "finished_at": int(time.time())})
+    entry = None
+    if hasattr(registry, "s"):           # 仿 agents 测试替身形态 + 本插件生产 _SESSIONS 形态
+        entry = registry.s.get(sid)
+    if entry is None and hasattr(registry, "get"):
+        entry = registry.get(sid)
+    if entry is None:
+        return False
+    cancel = entry.get("cancel") if isinstance(entry, dict) else getattr(entry, "cancel", None)
+    if cancel is not None and hasattr(cancel, "set"):
+        cancel.set()                     # 生产：threading.Event
+    elif isinstance(entry, dict):
+        entry["cancelled"] = True        # 测试替身：{"cancelled": False}
+    else:
+        try:
+            entry.cancelled = True
+        except Exception:
+            pass
+    return True
+
+
+class StartSkill(Skill):
+    id = "coding.start"
+    label = "开始编码会话"
+    description = (
+        "开始一个 coding 会话：选项目目录 + Claude Code，提交任务后台流式跑，"
+        "面板实时回显文本/文件改动。立即返回，完成主动推 panel_data。"
+        "【需要】cwd（用户显式选的工作目录）、prompt（任务描述）。"
+    )
+    default_risk = RiskLevel.L2_MEDIUM   # 改文件
+
+    def openai_schema(self) -> dict:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.id,
+                "description": self.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "cwd": {"type": "string", "description": "工作目录（用户显式选）"},
+                        "prompt": {"type": "string", "description": "任务描述"},
+                        "agent": {"type": "string", "description": "智能体（v1 固定 claude-code）"},
+                    },
+                    "required": ["cwd", "prompt"],
+                },
+            },
+        }
+
+    def run(self, params: dict, ctx: Any) -> ActionResult:
+        cwd = str(params.get("cwd") or "").strip()
+        if not cwd:
+            return ActionResult(success=False, error="缺少工作目录 cwd（用户需显式选）")
+        prompt = str(params.get("prompt") or "").strip()
+        if not prompt:
+            return ActionResult(success=False, error="缺少任务描述 prompt")
+        agent = str(params.get("agent") or "claude-code").strip() or "claude-code"
+        sid = start_session(ctx.db, agent=agent, cwd=cwd, prompt=prompt)
+        # 生产默认 runner；测试经 monkeypatch _spawn_stream 不真起线程
+        _spawn_stream(ctx.db, sid, cwd, prompt, ClaudeCodeRunner(), ctx.emit_event)
+        return ActionResult(success=True, data={
+            "session_id": sid,
+            "panel": "coding:chat",
+            "human": f"已开始编码会话 {sid}，面板实时回显",
+        })
+
+
+class StopSkill(Skill):
+    id = "coding.stop"
+    label = "停止编码会话"
+    description = "停止一个还在运行的 coding 会话（race-safe 取消：先落 stopped 再发取消信号）。"
+    default_risk = RiskLevel.L0_READONLY  # 只停，不改文件
+    refresh = "coding.list"
+
+    def openai_schema(self) -> dict:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.id,
+                "description": self.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string", "description": "会话 id（coding.start 返回的 session_id）"},
+                    },
+                    "required": ["id"],
+                },
+            },
+        }
+
+    def run(self, params: dict, ctx: Any) -> ActionResult:
+        sid = str(params.get("id") or "").strip()
+        if not sid:
+            return ActionResult(success=False, error="缺少会话 id")
+        rows = ctx.db.query("sessions", where={"id": sid})
+        if not rows:
+            return ActionResult(success=False, error=f"会话不存在：{sid}")
+        if rows[0].get("status") not in ("running",):
+            return ActionResult(success=False, error=f"会话已结束（{rows[0].get('status')}），无需停止")
+        _stop_session(ctx.db, _SESSIONS, sid)
+        return ActionResult(success=True, data={
+            "id": sid,
+            "human": f"已停止会话 {sid}",
+        })
+
+
+class ListSkill(Skill):
+    id = "coding.list"
+    label = "编码会话列表"
+    description = "列出 coding 会话（按创建时间倒序）。"
+    default_risk = RiskLevel.L0_READONLY
+
+    def openai_schema(self) -> dict:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.id,
+                "description": self.description,
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        }
+
+    def run(self, params: dict, ctx: Any) -> ActionResult:
+        rows = ctx.db.query("sessions", order="created_at DESC")
+        return ActionResult(success=True, data={"sessions": rows, "panel": "coding:chat"})
+
+
+def make_tools(ctx: Any) -> list[Skill]:
+    """插件加载器入口（_load_code_tools 遍历 skills/*.py 调本函数）。"""
+    return [StartSkill(), StopSkill(), ListSkill()]
