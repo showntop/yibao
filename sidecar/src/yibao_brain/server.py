@@ -25,6 +25,7 @@ from .background import (
     _plugin_summaries_list,
     _proactive_level,
     _recover_background_jobs,
+    _perception_cleanup_loop,
     _watch_tick,
 )
 from .config import a11y_enabled, computer_use_enabled, computer_use_max_steps, history_path, llm_api_key, load_settings, perception_db_path, plugin_data_dir, save_settings, screenshot_dir, stt_model_dir, tts_voice, vad_max_seconds, vad_min_silence, vad_model_path, vision_api_key, voice_enabled
@@ -710,20 +711,6 @@ async def serve_async(
                 settings["perception.master"] = False
                 print(f"[yibao] 感知采样器启动失败（保持关闭）：{e}", file=sys.stderr)
 
-    async def _perception_cleanup_loop() -> None:
-        while True:
-            await asyncio.sleep(3600)
-            if pstore is not None:
-                try:
-                    await _offload(pstore.purge)
-                except Exception as e:
-                    print(f"[yibao] 感知过期清理失败：{e}", file=sys.stderr)
-            if distiller is not None:
-                try:
-                    await _offload(distiller.store.purge)
-                except Exception as e:
-                    print(f"[yibao] 提炼原料清理失败：{e}", file=sys.stderr)
-
     async def _distiller_loop() -> None:
         """每日 04:17 自动提炼昨日；master 或 perception.distill 关闭时零出站。"""
         while True:
@@ -737,7 +724,7 @@ async def serve_async(
             except Exception as e:
                 print(f"[yibao] 自动提炼失败：{e}", file=sys.stderr)
 
-    perception_cleanup_task = asyncio.ensure_future(_perception_cleanup_loop())
+    perception_cleanup_task = asyncio.ensure_future(_perception_cleanup_loop(pstore, distiller))
     distiller_task = asyncio.ensure_future(_distiller_loop())
 
     _wvision = None

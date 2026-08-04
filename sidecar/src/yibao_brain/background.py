@@ -182,3 +182,23 @@ def _describe_screen(client, b64: str) -> str | None:
     from .llm import describe_screen
 
     return describe_screen(client, b64)
+
+
+async def _perception_cleanup_tick(pstore, distiller) -> None:
+    """单轮感知过期清理：purge pstore 与 distiller.store，各自 try/except 互不传染。"""
+    if pstore is not None:
+        try:
+            await _offload(pstore.purge)
+        except Exception as e:
+            print(f"[yibao] 感知过期清理失败：{e}", file=sys.stderr)
+    if distiller is not None:
+        try:
+            await _offload(distiller.store.purge)
+        except Exception as e:
+            print(f"[yibao] 提炼原料清理失败：{e}", file=sys.stderr)
+
+
+async def _perception_cleanup_loop(pstore, distiller) -> None:
+    while True:
+        await asyncio.sleep(3600)
+        await _perception_cleanup_tick(pstore, distiller)
