@@ -42,3 +42,20 @@ def test_runs_stats_migration_idempotent(tmp_path):
     db = str(tmp_path / "distill.db")
     DistillerStore(db).close()
     DistillerStore(db).close()  # 不抛即过
+
+def test_recent_days_aggregates_status_stats_items(tmp_path):
+    s = _store(tmp_path)
+    s.add("2026-08-03", "insight", "切了 14 次", confidence=0.8)
+    s.record_run("2026-08-04", "2026-08-03", "auto", "ok",
+                 stats={"app_seconds": {"VSCode": 11520}})
+    days = s.recent_days(3)
+    by_day = {d["day"]: d for d in days}
+    assert by_day["2026-08-03"]["status"] == "ok"
+    assert by_day["2026-08-03"]["stats"]["app_seconds"]["VSCode"] == 11520
+    assert len(by_day["2026-08-03"]["items"]) == 1
+    # 没提炼的天：pending + 空
+    assert by_day["2026-08-02"]["status"] == "pending"
+    assert by_day["2026-08-02"]["items"] == []
+    # 倒序
+    assert days[0]["day"] > days[1]["day"]
+    s.close()
