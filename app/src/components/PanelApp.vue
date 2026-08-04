@@ -125,9 +125,18 @@ function setCurrent(v: typeof current.value) {
 }
 
 function onEvent(e: BrainEvent) {
-  // 会话分流：宠物窗的对话事件不归这里；panel 事件例外（新面板内容必须接）
-  if (e.kind !== "panel" && e.surface === "pet") return;
+  // 会话分流：宠物窗的对话事件不归这里；panel/panel_data 例外（面板内容必须接）
+  if (e.kind !== "panel" && e.kind !== "panel_data" && e.surface === "pet") return;
   switch (e.kind) {
+    case "panel_data":
+      // 流式增量：同面板才合并；只动 data（webview/schema/title 不动 → srcdoc 不变 → iframe 不重载）
+      if (current.value?.panel === (e.payload?.panel ?? "")) {
+        current.value = {
+          ...current.value,
+          data: { ...(current.value.data ?? {}), ...(e.payload?.data ?? {}) },
+        };
+      }
+      break;
     case "panel":
       setCurrent({
         panel: e.payload?.panel ?? "",
