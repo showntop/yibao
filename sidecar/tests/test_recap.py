@@ -63,3 +63,32 @@ def test_recent_days_aggregates_status_stats_items(tmp_path):
     # 倒序
     assert days[0]["day"] > days[1]["day"]
     s.close()
+
+from yibao_brain.distiller import recap_select, build_recap_text  # noqa: E402
+
+def _item(kind, text, conf=None, id=1):
+    d = {"id": id, "day": "2026-08-03", "kind": kind, "text": text,
+         "data": {}, "confidence": conf, "projected": 0, "created_at": 0.0}
+    return d
+
+def test_recap_select_insights_by_confidence():
+    items = [_item("insight", "低", 0.4), _item("insight", "高", 0.9),
+             _item("insight", "中", 0.7), _item("insight", "四", 0.65)]
+    sel = recap_select(items)
+    assert [s["text"] for s in sel] == ["高", "中", "四"]   # 降序 ≤3，0.4 被挤掉
+
+def test_recap_select_falls_back_to_event():
+    items = [_item("pattern", "模式", 0.9), _item("event", "深夜活跃", 0.9, id=2)]
+    sel = recap_select(items)
+    assert len(sel) == 1 and sel[0]["kind"] == "event"
+
+def test_recap_select_empty_when_nothing():
+    assert recap_select([]) == []
+    assert recap_select([_item("pattern", "仅模式", 0.9)]) == []
+
+def test_build_recap_text_format():
+    sel = [_item("insight", "建议A"), _item("insight", "建议B")]
+    txt = build_recap_text(sel)
+    assert txt.startswith("早上好")
+    assert "①" in txt and "建议A" in txt and "②" in txt and "建议B" in txt
+    assert build_recap_text([]) == ""

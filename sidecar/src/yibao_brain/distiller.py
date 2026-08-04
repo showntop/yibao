@@ -368,6 +368,26 @@ def parse_distill_output(text: str | None) -> dict | None:
     return out
 
 
+def recap_select(items: list[dict]) -> list[dict]:
+    """反刍选材：insight 置信降序 ≤3；无则最新 event 1 条兜底；pattern 不入选；空返 []。"""
+    insights = [i for i in items if i.get("kind") == "insight"]
+    if insights:
+        return sorted(insights, key=lambda x: -(x.get("confidence") or 0))[:3]
+    events = [i for i in items if i.get("kind") == "event"]
+    if events:
+        return [sorted(events, key=lambda x: x.get("id", 0))[-1]]
+    return []
+
+
+def build_recap_text(items: list[dict]) -> str:
+    """模板拼昨日简报。空输入返空串（调用方据此跳过）。"""
+    if not items:
+        return ""
+    nums = "①②③④⑤⑥⑦⑧⑨⑩"
+    lines = [f"{nums[i]} {it['text']}" for i, it in enumerate(items[:3])]
+    return "早上好。昨天我注意到：\n" + "\n".join(lines)
+
+
 class Distiller:
     """昨日提炼编排：汇集 → 预聚合 → LLM → 落库 → 投影。绝不抛异常。"""
 
