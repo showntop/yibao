@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import os
 import sys
 import threading
 import time
@@ -211,6 +212,9 @@ class StartSkill(Skill):
         cwd = str(params.get("cwd") or "").strip()
         if not cwd:
             return ActionResult(success=False, error="缺少工作目录 cwd（用户需显式选）")
+        cwd = os.path.expanduser(cwd)  # 展开 ~（SDK/CLI 不自动展开，否则 ~/Work/x 字面找名为 ~ 的目录）
+        if not os.path.isdir(cwd):
+            return ActionResult(success=False, error=f"项目目录不存在：{cwd}")
         prompt = str(params.get("prompt") or "").strip()
         if not prompt:
             return ActionResult(success=False, error="缺少任务描述 prompt")
