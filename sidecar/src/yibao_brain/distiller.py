@@ -176,22 +176,25 @@ class DistillerStore:
 
     def recent_days(self, n: int = 14) -> list[dict]:
         """近 n 天：每天聚合 runs(状态+stats) 与 distillations(items)。无 run 的天 status=pending。"""
-        from datetime import date, timedelta
-        today = date.today()
-        days = [(today - timedelta(days=i)).isoformat() for i in range(n)]
-        out: list[dict] = []
-        for day in days:
-            items = self.day_items(day)
-            row = self._conn.execute(
-                "SELECT status, stats FROM runs WHERE target_day=? "
-                "ORDER BY id DESC LIMIT 1", (day,)).fetchone()
-            if row:
-                status = str(row["status"])
-                stats = json.loads(row["stats"] or "{}")
-            else:
-                status, stats = "pending", {}
-            out.append({"day": day, "status": status, "stats": stats, "items": items})
-        return out
+        try:
+            today = date.today()
+            days = [(today - timedelta(days=i)).isoformat() for i in range(n)]
+            out: list[dict] = []
+            for day in days:
+                items = self.day_items(day)
+                row = self._conn.execute(
+                    "SELECT status, stats FROM runs WHERE target_day=? "
+                    "ORDER BY id DESC LIMIT 1", (day,)).fetchone()
+                if row:
+                    status = str(row["status"])
+                    stats = json.loads(row["stats"] or "{}")
+                else:
+                    status, stats = "pending", {}
+                out.append({"day": day, "status": status, "stats": stats, "items": items})
+            return out
+        except Exception as e:
+            print(f"[yibao] recent_days 查询失败：{e}", file=sys.stderr)
+            return []
 
     def close(self) -> None:
         self._conn.close()
