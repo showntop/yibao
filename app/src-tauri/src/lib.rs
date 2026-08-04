@@ -457,6 +457,10 @@ fn spawn_bridge(app: AppHandle, mut rx: tauri::async_runtime::Receiver<CommandEv
                             Some("feed_stats") => {
                                 let _ = app.emit("brain-feed-stats", v);
                             }
+                            // 每日回顾响应：整体转发
+                            Some("distill_timeline") => {
+                                let _ = app.emit("brain-distill-timeline", v);
+                            }
                             // 主屏 widget 响应（插件一瞥卡列表）：整体转发
                             Some("widgets") => {
                                 let _ = app.emit("brain-widgets", v);
@@ -807,6 +811,21 @@ fn get_feed_stats(state: tauri::State<Brain>, days: Option<u32>) -> Result<(), S
     write_to_brain(
         &state,
         serde_json::json!({ "id": 0, "type": "feed_stats", "days": days.unwrap_or(7) }),
+    )
+}
+
+/// 晨间反刍探测：开窗时前端调用，大脑自行决定推不推（fire-and-forget）。
+#[tauri::command]
+fn recap_check(state: tauri::State<Brain>) -> Result<(), String> {
+    write_to_brain(&state, serde_json::json!({ "id": 0, "type": "recap_check" }))
+}
+
+/// 每日回顾查询：大脑回 {"type":"distill_timeline","days":[…]}，经 brain-distill-timeline 事件广播。
+#[tauri::command]
+fn get_distill_timeline(state: tauri::State<Brain>, days: Option<u32>) -> Result<(), String> {
+    write_to_brain(
+        &state,
+        serde_json::json!({ "id": 0, "type": "distill_timeline", "days": days.unwrap_or(14) }),
     )
 }
 
@@ -1550,6 +1569,8 @@ pub fn run() {
             get_feed,
             distill_now,
             get_feed_stats,
+            recap_check,
+            get_distill_timeline,
             get_widgets,
             feed_mark_read,
             feed_mark_all_read,
