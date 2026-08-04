@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS runs (
   error TEXT,
   created_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 """
 
 _KINDS = ("pattern", "insight", "event")
@@ -61,6 +62,12 @@ class DistillerStore:
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
+        try:
+            self._conn.execute("ALTER TABLE runs ADD COLUMN stats TEXT")
+            self._conn.commit()
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
         self._lock = threading.Lock()
 
     def add(self, day: str, kind: str, text: str,
@@ -112,14 +119,33 @@ class DistillerStore:
             for r in rows
         ]
 
-    def record_run(self, run_day: str, target_day: str, source: str,
-                   status: str, error: str | None = None) -> None:
+    def set_recap_day(self, day: str) -> None:
         try:
             with self._lock:
                 self._conn.execute(
-                    "INSERT INTO runs (run_day, target_day, source, status, error, created_at)"
-                    " VALUES (?, ?, ?, ?, ?, ?)",
-                    (run_day, target_day, source, status, error, time.time()),
+                    "INSERT INTO meta(key,value) VALUES('recap_last_day',?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (day,))
+                self._conn.commit()
+        except Exception as e:
+            print(f"[yibao] recap 标记失败：{e}", file=sys.stderr)
+
+    def recap_last_day(self) -> str | None:
+        try:
+            row = self._conn.execute(
+                "SELECT value FROM meta WHERE key='recap_last_day'").fetchone()
+            return str(row["value"]) if row else None
+        except Exception:
+            return None
+
+    def record_run(self, run_day: str, target_day: str, source: str,
+                   status: str, error: str | None = None, stats: dict | None = None) -> None:
+        try:
+            with self._lock:
+                self._conn.execute(
+                    "INSERT INTO runs (run_day, target_day, source, status, error, stats, created_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (run_day, target_day, source, status, error,
+                     json.dumps(stats, ensure_ascii=False) if stats else None, time.time()),
                 )
                 self._conn.commit()
         except Exception as e:
