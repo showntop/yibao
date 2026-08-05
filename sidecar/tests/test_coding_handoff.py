@@ -47,3 +47,25 @@ def test_read_conversation_tail_and_incomplete(tmp_path):
 def test_git_summary_runs_or_empty(tmp_path):
     # 非 git 目录 → 返 ""，不抛
     assert git_summary(str(tmp_path / "nope")) == ""
+
+
+from _brief import build_brief  # noqa: E402
+
+
+class _FakeProv:
+    def __init__(self, text): self._t = text; self.calls = []
+    def chat(self, msgs, timeout=None):
+        self.calls.append(msgs); return type("R", (), {"text": self._t})()
+
+
+def test_build_brief_returns_summary():
+    prov = _FakeProv("任务：实现登录\n已完成：auth.py\n下一步：token 刷新")
+    out = build_brief(prov, [{"role": "user", "text": "实现登录"}, {"role": "assistant", "text": "好的"}],
+                      "【近提交】abc")
+    assert out and "登录" in out
+
+
+def test_build_brief_provider_failure_returns_none():
+    class Boom:
+        def chat(self, msgs, timeout=None): raise RuntimeError("llm down")
+    assert build_brief(Boom(), [{"role": "user", "text": "x"}], "") is None
