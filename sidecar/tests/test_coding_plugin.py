@@ -284,3 +284,91 @@ def test_stream_preserves_stopped_and_still_records_cc_session_id():
     last = db.updates[-1][1]
     assert last["status"] == "stopped"                 # 不被覆盖
     assert last["cc_session_id"] == "cc-sess-stop"     # 仍记录
+
+
+# ---------- Task 3: coding.send（resume 接续）----------
+from coding import SendSkill, StartSkill  # noqa: E402
+
+
+class _Ctx:
+    """最小 ctx 鸭式：db + emit_event（SendSkill.run 只用这俩）。"""
+    def __init__(self, db): self.db = db; self.emit_event = lambda *a, **k: None
+
+
+def test_send_skill_resumes_with_cc_session_id(monkeypatch):
+    """cc_session_id 非空 → _spawn_stream 收到 resume_session_id=cc。"""
+    db = _FakeDB()
+    db.rows["s1"] = {"id": "s1", "cwd": "/tmp/p", "cc_session_id": "cc-old-1"}
+    captured = {}
+    monkeypatch.setattr(
+        codingmod, "_spawn_stream",
+        lambda *a, **k: captured.update({"args": a, "kwargs": k}))
+    res = SendSkill().run({"id": "s1", "prompt": "再来一轮"}, _Ctx(db))
+    assert res.success is True
+    assert res.data["session_id"] == "s1"
+    # resume 透传到 _spawn_stream
+    assert captured["kwargs"].get("resume_session_id") == "cc-old-1"
+    # spawn 前已重置 running（finished_at=0）
+    reset = next((u for u in db.updates if u[0] == "s1" and u[1].get("status") == "running"), None)
+    assert reset is not None and reset[1].get("finished_at") == 0
+
+
+def test_send_skill_missing_row_errors(monkeypatch):
+    """会话不存在 → success=False，不调 _spawn_stream。"""
+    db = _FakeDB()
+    called = {"n": 0}
+    monkeypatch.setattr(codingmod, "_spawn_stream",
+                        lambda *a, **k: called.__setitem__("n", called["n"] + 1))
+    res = SendSkill().run({"id": "ghost", "prompt": "x"}, _Ctx(db))
+    assert res.success is False and "不存在" in res.error
+    assert called["n"] == 0
+
+
+def test_send_skill_empty_cc_session_id_errors(monkeypatch):
+    """cc_session_id 为空 → 友好错误，提示先首条开始，不调 _spawn_stream。"""
+    db = _FakeDB()
+    db.rows["s2"] = {"id": "s2", "cwd": "/tmp/p", "cc_session_id": ""}
+    called = {"n": 0}
+    monkeypatch.setattr(codingmod, "_spawn_stream",
+                        lambda *a, **k: called.__setitem__("n", called["n"] + 1))
+    res = SendSkill().run({"id": "s2", "prompt": "x"}, _Ctx(db))
+    assert res.success is False and "尚未建立" in res.error
+    assert called["n"] == 0
+
+
+def test_send_skill_missing_prompt_errors(monkeypatch):
+    """缺少 prompt → 早退报错，不查库、不调 _spawn_stream。"""
+    db = _FakeDB()
+    called = {"n": 0}
+    monkeypatch.setattr(codingmod, "_spawn_stream",
+                        lambda *a, **k: called.__setitem__("n", called["n"] + 1))
+    res = SendSkill().run({"id": "s1"}, _Ctx(db))   # 无 prompt
+    assert res.success is False and "prompt" in res.error
+    assert called["n"] == 0
+
+
+def test_send_skill_openai_schema_shape():
+    schema = SendSkill().openai_schema()
+    assert schema["function"]["name"] == "coding.send"
+    props = schema["function"]["parameters"]["properties"]
+    assert set(props.keys()) == {"id", "prompt"}
+    assert schema["function"]["parameters"]["required"] == ["id", "prompt"]
+
+
+def test_make_tools_includes_send():
+    """make_tools 返回 StartSkill/SendSkill/StopSkill/ListSkill 四件。"""
+    tools = codingmod.make_tools(type("C", (), {"db": None, "emit_event": None})())
+    ids = [t.id for t in tools]
+    assert "coding.send" in ids
+    assert ids == ["coding.start", "coding.send", "coding.stop", "coding.list"]
+
+
+def test_start_skill_does_not_pass_resume(monkeypatch):
+    """回归保护：StartSkill 调 _spawn_stream 不传 resume_session_id（fresh）。"""
+    db = _FakeDB()
+    captured = {}
+    monkeypatch.setattr(codingmod, "_spawn_stream",
+                        lambda *a, **k: captured.update({"kwargs": k}))
+    monkeypatch.setattr(codingmod, "ClaudeCodeRunner", lambda: object())
+    StartSkill().run({"cwd": "/tmp", "prompt": "p"}, _Ctx(db))
+    assert captured["kwargs"].get("resume_session_id") is None

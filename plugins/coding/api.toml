@@ -5,6 +5,12 @@ direct = true
 panel = "coding:chat"
 
 [[method]]
+name = "coding.send"
+handler = "coding.send"
+direct = true
+panel = "coding:chat"
+
+[[method]]
 name = "coding.stop"
 handler = "coding.stop"
 direct = true

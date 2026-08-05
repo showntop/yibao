@@ -75,11 +75,14 @@ class _AsyncShield:
     def is_set(self) -> bool: return self._ev.is_set()
 
 
-def _spawn_stream(db, sid: str, cwd: str, prompt: str, runner, emit_event) -> None:
+def _spawn_stream(db, sid: str, cwd: str, prompt: str, runner, emit_event,
+                  resume_session_id: str | None = None) -> None:
     """起 daemon 线程跑 runner（线程内自带 asyncio loop）。
 
     emit_event 已线程安全（proactive_dispatcher.emit → call_soon_threadsafe），
     daemon 线程直调即可。db 经参数链一路传到 _stream（落最终状态用）。
+    resume_session_id：非 None 时透传 runner.run，续上同一 CC 会话历史（多轮）；
+        None（StartSkill 路径）→ 全新会话。
     """
     cancel = threading.Event()
     _SESSIONS[sid] = {"cancel": cancel}
@@ -89,7 +92,8 @@ def _spawn_stream(db, sid: str, cwd: str, prompt: str, runner, emit_event) -> No
         try:
             asyncio.set_event_loop(loop)
             loop.run_until_complete(
-                _stream(db, sid, cwd, prompt, runner, emit_event, cancel))
+                _stream(db, sid, cwd, prompt, runner, emit_event, cancel,
+                        resume_session_id=resume_session_id))
         except Exception as e:  # 兜底：流式线程任何意外都不许炸出来
             print(f"[yibao/coding] session {sid} stream 线程崩：{type(e).__name__}: {e}",
                   file=sys.stderr)
@@ -104,11 +108,13 @@ def _spawn_stream(db, sid: str, cwd: str, prompt: str, runner, emit_event) -> No
     threading.Thread(target=_thread, daemon=True, name=f"yibao-coding-{sid}").start()
 
 
-async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cancel) -> None:
+async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cancel,
+                  resume_session_id: str | None = None) -> None:
     """跑 runner；每条事件转 panel_data 推面板；结束按 cancel/error/done 落最终状态。
 
     落库前先查当前 status——用户主动 stop 时 _stop_session 已先写 stopped，
     这里保留 stopped 不被 done/failed 覆盖（race-safe，仿 agents._common._wait:66-73）。
+    resume_session_id：非 None 时透传 runner.run，续上同一 CC 会话历史（多轮）。
     """
     state = {"error": False}
     cc_sid: str | None = None   # runner.run 返回值（ResultMessage.session_id）；None=取消/失败
@@ -124,7 +130,8 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
             state["error"] = True
 
     try:
-        cc_sid = await runner.run(prompt, cwd, on_event=on_event, cancel_event=_AsyncShield(cancel))
+        cc_sid = await runner.run(prompt, cwd, on_event=on_event, cancel_event=_AsyncShield(cancel),
+                                  resume_session_id=resume_session_id)
     except Exception as e:  # runner 内部应已吞异常→error 事件；框架级异常兜底
         print(f"[yibao/coding] session {sid} runner 框架异常：{type(e).__name__}: {e}",
               file=sys.stderr)
@@ -228,11 +235,69 @@ class StartSkill(Skill):
         agent = str(params.get("agent") or "claude-code").strip() or "claude-code"
         sid = start_session(ctx.db, agent=agent, cwd=cwd, prompt=prompt)
         # 生产默认 runner；测试经 monkeypatch _spawn_stream 不真起线程
+        # resume_session_id 不传 → None → 全新 CC 会话（首条消息）
         _spawn_stream(ctx.db, sid, cwd, prompt, ClaudeCodeRunner(), ctx.emit_event)
         return ActionResult(success=True, data={
             "session_id": sid,
             "panel": "coding:chat",
             "human": f"已开始编码会话 {sid}，面板实时回显",
+        })
+
+
+class SendSkill(Skill):
+    id = "coding.send"
+    label = "接续编码会话"
+    description = (
+        "向既有 coding 会话追加一条消息（多轮）：用 cc_session_id resume 同一 Claude Code 历史，"
+        "继续在同一上下文里干活，面板实时回显。立即返回，完成主动推 panel_data。"
+        "【需要】id（coding.start 返回的 session_id）、prompt（本轮任务描述）。"
+    )
+    default_risk = RiskLevel.L2_MEDIUM   # 改文件
+    refresh = "coding.list"
+
+    def openai_schema(self) -> dict:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.id,
+                "description": self.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string", "description": "会话 id（coding.start 返回的 session_id）"},
+                        "prompt": {"type": "string", "description": "本轮任务描述"},
+                    },
+                    "required": ["id", "prompt"],
+                },
+            },
+        }
+
+    def run(self, params: dict, ctx: Any) -> ActionResult:
+        sid = str(params.get("id") or "").strip()
+        if not sid:
+            return ActionResult(success=False, error="缺少会话 id")
+        prompt = str(params.get("prompt") or "").strip()
+        if not prompt:
+            return ActionResult(success=False, error="缺少任务描述 prompt")
+        rows = ctx.db.query("sessions", where={"id": sid})
+        if not rows:
+            return ActionResult(success=False, error=f"会话不存在：{sid}")
+        row = rows[0]
+        cc = row.get("cc_session_id") or ""
+        if not cc:
+            return ActionResult(
+                success=False,
+                error="该会话尚未建立上下文（cc_session_id 为空），请先用首条消息开始",
+            )
+        cwd = row.get("cwd") or ""
+        # 重置 running 状态：resume 是新一轮流式，finished_at 归零
+        ctx.db.update("sessions", sid, {"status": "running", "finished_at": 0})
+        _spawn_stream(ctx.db, sid, cwd, prompt, ClaudeCodeRunner(), ctx.emit_event,
+                      resume_session_id=cc)
+        return ActionResult(success=True, data={
+            "session_id": sid,
+            "panel": "coding:chat",
+            "human": f"已接续会话 {sid}，面板实时回显",
         })
 
 
@@ -298,4 +363,4 @@ class ListSkill(Skill):
 
 def make_tools(ctx: Any) -> list[Skill]:
     """插件加载器入口（_load_code_tools 遍历 skills/*.py 调本函数）。"""
-    return [StartSkill(), StopSkill(), ListSkill()]
+    return [StartSkill(), SendSkill(), StopSkill(), ListSkill()]
