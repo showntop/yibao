@@ -164,6 +164,92 @@
   button.ghost:hover { background: #faf3ea; color: var(--text); border-color: #d8c9b2; }
   button.ghost:disabled { opacity: .5; cursor: default; }
 
+  /* ---- 从 Codex 接续：顶栏按钮 ---- */
+  #handoff {
+    flex: none; border: 1px solid #e3d7c4; background: transparent;
+    color: #8a7a66; font-size: 12px; padding: 5px 12px; border-radius: 8px;
+    cursor: pointer; font-weight: 500; transition: all .15s ease;
+  }
+  #handoff:hover { background: var(--accent-soft); color: var(--accent-deep); border-color: var(--accent); }
+  #handoff:disabled { opacity: .5; cursor: default; }
+
+  /* ---- Codex session 选择器（fixed 浮层；iframe srcdoc 里 absolute 含块不可靠） ---- */
+  #handoff-backdrop { position: fixed; inset: 0; z-index: 40; }
+  #handoff-picker {
+    position: fixed; z-index: 50; width: min(420px, 92vw); max-height: 320px; overflow-y: auto;
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(90,70,50,.16); padding: 6px;
+  }
+  #handoff-picker .pick-item {
+    padding: 8px 10px; border-radius: 8px; cursor: pointer; transition: background .12s ease;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  #handoff-picker .pick-item:hover { background: var(--accent-soft); }
+  #handoff-picker .pick-item .ts { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+  #handoff-picker .pick-item .fl {
+    font-size: 12.5px; color: var(--text);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  #handoff-picker .pick-close {
+    display: block; margin: 6px auto 2px; padding: 4px 14px; font-size: 11.5px;
+    border: 1px solid var(--border); background: transparent; color: var(--muted);
+    cursor: pointer; border-radius: 6px; transition: all .15s ease;
+  }
+  #handoff-picker .pick-close:hover { background: #faf3ea; color: var(--text); border-color: #d8c9b2; }
+
+  /* ---- 交接卡：session 起点（区别于普通文件改动/工具卡片，整宽 + 强调色左边条） ---- */
+  .card.handoff {
+    max-width: 96%; border: 1px solid var(--accent); border-left: 3px solid var(--accent);
+    background: var(--card);
+  }
+  .card.handoff .card-head {
+    background: var(--accent-soft); border-bottom: 1px solid #f7d9c5;
+  }
+  .card.handoff .card-head .ic,
+  .card.handoff .card-head .lbl { color: var(--accent-deep); }
+  .card.handoff .card-head .sid {
+    flex: none; font: var(--mono); font-size: 11px; color: var(--muted);
+    background: #fff; border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px;
+  }
+  .card.handoff .card-head .warn {
+    flex: none; font-size: 11px; color: #b98a2f; font-style: italic;
+  }
+  .card.handoff.sealed {
+    border: 1px solid var(--green-bar); border-left: 3px solid var(--green);
+    background: #fbfdfc;
+  }
+  .card.handoff.sealed .card-head {
+    background: var(--green-bg); border-bottom: 1px solid #c8e6d1;
+  }
+  .card.handoff.sealed .card-head .ic,
+  .card.handoff.sealed .card-head .lbl { color: var(--green); }
+  .card.handoff .card-body { padding: 10px 12px; }
+  .card.handoff .card-body.open { display: block; }
+  .card.handoff .card-body .note.err { color: var(--red); font-style: normal; }
+  .card.handoff textarea.brief {
+    width: 100%; min-height: 160px; resize: vertical;
+    border: 1px solid #e3d7c4; border-radius: 8px; padding: 9px 11px;
+    font: 13px/1.65 -apple-system, "PingFang SC", sans-serif;
+    background: #fff; color: var(--text); outline: none; transition: border-color .15s ease;
+  }
+  .card.handoff textarea.brief:focus { border-color: var(--accent); }
+  .card.handoff textarea.brief[readonly] { background: #faf7f2; color: #4a4035; }
+  .card.handoff textarea.brief::placeholder { color: var(--faint); }
+  .card.handoff .card-foot {
+    display: flex; justify-content: flex-end; gap: 8px; padding: 8px 12px 10px;
+    border-top: 1px solid var(--border-soft); background: #faf7f2;
+  }
+  .card.handoff .card-foot button {
+    border-radius: 8px; padding: 6px 16px; font-size: 12px; cursor: pointer; font-weight: 500;
+    border: 1px solid #e3d7c4; background: #fff; color: #8a7a66; transition: all .15s ease;
+  }
+  .card.handoff .card-foot button:hover { background: #faf3ea; color: var(--text); border-color: #d8c9b2; }
+  .card.handoff .card-foot button.primary {
+    background: var(--accent); color: #fff; border-color: var(--accent);
+    box-shadow: 0 2px 6px rgba(242,112,63,.3); font-weight: 600;
+  }
+  .card.handoff .card-foot button.primary:hover { background: var(--accent-deep); }
+
   /* 设计预览态（无 window.yibao 桥时） */
   #bridge-warn {
     padding: 6px 12px; background: #fdf3e0; color: #b98a2f; font-size: 11.5px;
@@ -180,6 +266,7 @@
   <span class="lbl">项目</span>
   <input id="cwd" type="text" spellcheck="false" placeholder="粘贴项目路径（如 /Users/.../myapp）">
   <span id="agent">agent: Claude Code</span>
+  <button id="handoff" type="button" title="从 Codex 会话接续：读取该项目下的 Codex 会话，生成交接 brief 后用 Claude Code 接续">↩ 从 Codex 接续</button>
   <button id="new-chat" type="button" title="清空当前对话，开新会话（下次发送走 coding.start）" disabled>新对话</button>
 </header>
 
@@ -621,6 +708,8 @@
     $("send").disabled = false;
     // 有活动会话才允许「新对话」（首次进入 / 已重置后无可重置对象）
     $("new-chat").disabled = !currentSession;
+    // handoff 在流式中被禁用；会话终态后放开（仍受 streaming guard 在 handoff() 里兜底）
+    $("handoff").disabled = false;
   }
 
   // ============================================================
@@ -705,9 +794,257 @@
     setStatus("新对话");
   }
 
+  // ============================================================
+  //   从 Codex 接续：handoff_list → picker / 直进 → handoff_brief →
+  //   可编辑交接卡 → 封存 + coding.start（source=codex:<sid>）
+  //   关键：交接卡是 #log 里的 chat-flow 元素（非 modal），封存后作为可见的
+  //   session 起点；brief 作为 coding.start 的 prompt，source 标记来源。
+  // ============================================================
+  function handoff() {
+    if (!hasBridge) { setStatus("未连译宝桥（设计预览模式）", true); return; }
+    if (streaming) { setStatus("当前会话运行中，请先中断再接续", true); return; }
+    var cwd = $("cwd").value.trim();
+    if (!cwd) { setStatus("请先填写项目路径（cwd）", true); $("cwd").focus(); return; }
+
+    closeHandoffPicker();
+    setStatus("读取 Codex 会话列表…");
+    window.yibao.invoke("coding.handoff_list", { cwd: cwd }).then(function (r) {
+      var sessions = (r && r.sessions) || [];
+      if (sessions.length === 0) {
+        setStatus("该项目没有 Codex session");
+        return;
+      }
+      setStatus("");
+      if (sessions.length === 1) {
+        handoffBrief(sessions[0].session_id);
+      } else {
+        showHandoffPicker(sessions);
+      }
+    }).catch(function (e) {
+      setStatus("读取 Codex 会话失败：" + emsg(e), true);
+    });
+  }
+
+  function showHandoffPicker(sessions) {
+    closeHandoffPicker();  // 防重复
+
+    var backdrop = document.createElement("div");
+    backdrop.id = "handoff-backdrop";
+    backdrop.addEventListener("click", closeHandoffPicker);
+
+    var picker = document.createElement("div");
+    picker.id = "handoff-picker";
+
+    sessions.forEach(function (s) {
+      var item = document.createElement("div");
+      item.className = "pick-item";
+      var ts = document.createElement("span");
+      ts.className = "ts";
+      ts.textContent = fmtTs(s.timestamp) || "(未知时间)";
+      var fl = document.createElement("span");
+      fl.className = "fl";
+      fl.textContent = s.first_line || "(无摘要)";
+      item.appendChild(ts);
+      item.appendChild(fl);
+      item.addEventListener("click", function () {
+        var sid = s.session_id;
+        closeHandoffPicker();
+        handoffBrief(sid);
+      });
+      picker.appendChild(item);
+    });
+
+    var close = document.createElement("button");
+    close.type = "button";
+    close.className = "pick-close";
+    close.textContent = "取消";
+    close.addEventListener("click", closeHandoffPicker);
+    picker.appendChild(close);
+
+    document.body.appendChild(backdrop);
+    document.body.appendChild(picker);
+
+    // 定位：紧贴 handoff 按钮下方，右对齐按钮右边（防溢出左移）
+    var rect = $("handoff").getBoundingClientRect();
+    picker.style.top = (rect.bottom + 6) + "px";
+    var rightOffset = window.innerWidth - rect.right;
+    var maxRight = window.innerWidth - 14 - picker.offsetWidth;
+    picker.style.right = Math.max(14, Math.min(rightOffset, maxRight)) + "px";
+  }
+
+  function closeHandoffPicker() {
+    var p = document.getElementById("handoff-picker");
+    if (p) p.remove();
+    var b = document.getElementById("handoff-backdrop");
+    if (b) b.remove();
+  }
+
+  // Codex 推送的 timestamp 兼容 ISO 字符串 / epoch 数字 / 已格式化字符串
+  function fmtTs(ts) {
+    if (!ts) return "";
+    var d = new Date(ts);
+    if (isNaN(d.getTime())) return String(ts);
+    function pad(n) { return n < 10 ? "0" + n : "" + n; }
+    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) +
+           " " + pad(d.getHours()) + ":" + pad(d.getMinutes());
+  }
+
+  function shortSid(sid) {
+    var s = String(sid == null ? "" : sid);
+    return s.length > 10 ? s.slice(0, 8) + "…" : s;
+  }
+
+  function handoffBrief(sid) {
+    if (!sid) return;
+    var cwd = $("cwd").value.trim();
+    setStatus("生成 Codex 交接 brief…");
+    window.yibao.invoke("coding.handoff_brief", { session_id: sid, cwd: cwd }).then(function (r) {
+      var brief = r && r.brief;
+      var incomplete = !!(r && r.incomplete);
+      renderHandoffCard(sid, brief, incomplete, null);
+      setStatus("");
+    }).catch(function (e) {
+      // 失败也开卡：用户可手动粘贴；不阻断接续流程
+      renderHandoffCard(sid, null, false, "读取 brief 失败：" + emsg(e));
+      setStatus("读取 brief 失败，可手动粘贴或取消", true);
+    });
+  }
+
+  // 渲染交接卡（editable 态）。errMsg 非空时在 body 顶部插入红色错误说明。
+  function renderHandoffCard(sid, brief, incomplete, errMsg) {
+    var card = document.createElement("div");
+    card.className = "card handoff";
+    card.dataset.sid = sid;
+
+    var head = document.createElement("div");
+    head.className = "card-head";
+    head.innerHTML =
+      '<span class="ic">↩</span>' +
+      '<span class="lbl">来自 Codex</span>' +
+      '<span class="sid" title="' + esc(sid) + '">' + esc(shortSid(sid)) + '</span>' +
+      (incomplete ? '<span class="warn">（基于不完整记录）</span>' : '') +
+      '<span class="spacer"></span>';
+
+    var body = document.createElement("div");
+    body.className = "card-body open";
+
+    if (errMsg) {
+      var errNote = document.createElement("div");
+      errNote.className = "note err";
+      errNote.textContent = "✗ " + errMsg;
+      body.appendChild(errNote);
+    }
+
+    var ta = document.createElement("textarea");
+    ta.className = "brief";
+    ta.placeholder = "自动生成失败，可手动粘贴交接内容";
+    if (brief) ta.value = brief;
+    body.appendChild(ta);
+
+    var foot = document.createElement("div");
+    foot.className = "card-foot";
+
+    var cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.textContent = "取消";
+    cancel.addEventListener("click", function () {
+      card.remove();
+      setStatus("已取消 Codex 接续");
+    });
+
+    var start = document.createElement("button");
+    start.type = "button";
+    start.className = "primary";
+    start.textContent = "用它开始 → Claude Code";
+    start.addEventListener("click", function () {
+      if (streaming) {
+        setStatus("当前会话运行中，请先中断再「用它开始」", true);
+        return;
+      }
+      var edited = ta.value.trim();
+      if (!edited) {
+        ta.focus();
+        setStatus("交接内容为空，无法开始", true);
+        return;
+      }
+      sealHandoffCard(card, ta);
+      startHandoffSession(sid, edited);
+    });
+
+    foot.appendChild(cancel);
+    foot.appendChild(start);
+
+    card.appendChild(head);
+    card.appendChild(body);
+    card.appendChild(foot);
+
+    var row = document.createElement("div");
+    row.className = "row ai";
+    row.appendChild(card);
+    $("log").appendChild(row);
+    scrollIfAtBottom();
+  }
+
+  // 封存：textarea 转只读、头部改文案、移除底部按钮、整体改 sealed 配色
+  function sealHandoffCard(card, textarea) {
+    textarea.setAttribute("readonly", "readonly");
+    textarea.style.minHeight = "60px";
+    textarea.style.maxHeight = "260px";
+    var head = card.querySelector(".card-head");
+    if (head) {
+      var lbl = head.querySelector(".lbl");
+      if (lbl) lbl.textContent = "已从 Codex 接续";
+      var warn = head.querySelector(".warn");
+      if (warn) warn.remove();
+    }
+    var foot = card.querySelector(".card-foot");
+    if (foot) foot.remove();
+    card.classList.add("sealed");
+  }
+
+  // brief 作为 coding.start 的 prompt；source=codex:<sid> 标记来源
+  // brief 已在封存卡内可见，不再入列用户气泡，让卡作为 session 起点
+  function startHandoffSession(sid, brief) {
+    var cwd = $("cwd").value.trim();
+    if (!cwd) { setStatus("内部错误：cwd 丢失", true); return; }
+
+    sending = true;
+    streaming = true;
+    $("send").disabled = true;
+    $("new-chat").disabled = true;
+    $("handoff").disabled = true;
+    $("stop").disabled = false;
+    setStatus("Codex 接续启动中…");
+
+    currentBubble = null;
+
+    window.yibao.invoke("coding.start", {
+      cwd: cwd,
+      prompt: brief,
+      source: "codex:" + sid
+    }).then(function (r) {
+      var csid = r && r.session_id;
+      if (!csid) throw new Error("未返回 session_id");
+      currentSession = csid;
+      setStatus("Codex 接续会话 " + csid + " 启动，运行中…");
+    }).catch(function (e) {
+      appendError("Codex 接续启动失败：" + emsg(e));
+      setStatus("Codex 接续启动失败：" + emsg(e), true);
+      streaming = false;
+      $("stop").disabled = true;
+      $("send").disabled = false;
+      $("handoff").disabled = false;
+    }).finally(function () {
+      sending = false;
+      $("new-chat").disabled = !currentSession || streaming;
+      $("handoff").disabled = streaming;
+    });
+  }
+
   $("send").addEventListener("click", send);
   $("stop").addEventListener("click", stop);
   $("new-chat").addEventListener("click", newChat);
+  $("handoff").addEventListener("click", handoff);
   $("prompt").addEventListener("keydown", function (e) {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
