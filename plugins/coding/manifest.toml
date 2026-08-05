@@ -1,7 +1,9 @@
 id = "coding"
 name = "编码"
 description = "统一 coding 聊天：选项目 + Claude Code，提任务后台流式跑，面板回显 + 文件改动 diff。v1 单 agent、用户显式选、不 auto-routing。"
-capabilities = ["db"]   # in-process SDK，非子进程；不要 process
+# llm：HandoffBriefSkill 用 ctx.llm 摘要交接（plugins.py:240 校验）。
+# process：声明性，本插件 v1 仍为 in-process SDK；加是为交接链路上对齐 agents。
+capabilities = ["db", "llm", "process"]
 
 [code]
 entry = "skills"
@@ -17,6 +19,7 @@ columns = [
   {name = "created_at", type = "integer"},
   {name = "finished_at", type = "integer", default = 0},
   {name = "cc_session_id", type = "text", default = ""},   # Claude Code 会话 id（runner.run 返回；后续多轮 resume 用）
+  {name = "source", type = "text", default = ""},           # 会话来源：""=用户直起；"codex:<sid>"=交接切过来
 ]
 indexes = ["status", "created_at"]
 

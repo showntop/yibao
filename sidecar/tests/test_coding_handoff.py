@@ -69,3 +69,29 @@ def test_build_brief_provider_failure_returns_none():
     class Boom:
         def chat(self, msgs, timeout=None): raise RuntimeError("llm down")
     assert build_brief(Boom(), [{"role": "user", "text": "x"}], "") is None
+
+
+# ---------- Task 3: start_session source 透传（handoff 路径可追溯）----------
+from coding import start_session  # noqa: E402
+
+
+class _FakeDB:
+    """与 test_coding_plugin 同款极小鸭式 db：记 insert 行，query 全量回。"""
+    def __init__(self): self.rows = {}
+    def insert(self, table, row): self.rows[row["id"]] = dict(row); return row["id"]
+    def update(self, table, rid, fields): self.rows.setdefault(rid, {}).update(fields)
+    def query(self, *a, **k): return list(self.rows.values())
+
+
+def test_start_session_records_source_when_provided():
+    """handoff 路径：source='codex:sid' 写入行 source 字段。"""
+    db = _FakeDB()
+    sid = start_session(db, agent="claude-code", cwd="/tmp/p", prompt="hi", source="codex:sid")
+    assert db.rows[sid]["source"] == "codex:sid"
+
+
+def test_start_session_source_defaults_empty():
+    """用户直起（不传 source）→ 行 source == ''，保证既有 StartSkill 调用人不破。"""
+    db = _FakeDB()
+    sid = start_session(db, agent="claude-code", cwd="/tmp/p", prompt="hi")
+    assert db.rows[sid]["source"] == ""

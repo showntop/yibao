@@ -55,12 +55,17 @@ ClaudeCodeRunner = _runner.ClaudeCodeRunner   # 生产默认 runner factory
 _SESSIONS: dict[str, dict] = {}
 
 
-def start_session(db, *, agent: str, cwd: str, prompt: str) -> str:
-    """纯函数：往 sessions 表插一行 running，返回 sid。不碰线程/runner（测试可直打）。"""
+def start_session(db, *, agent: str, cwd: str, prompt: str, source: str = "") -> str:
+    """纯函数：往 sessions 表插一行 running，返回 sid。不碰线程/runner（测试可直打）。
+
+    source：会话来源标记——""=用户直起；"codex:<sid>"=从 codex 交接切过来（HandoffSkill 起）。
+    透传落库，便于后续面板/审计按来源过滤；不参与 runner 行为。
+    """
     sid = uuid.uuid4().hex[:12]
     db.insert("sessions", {
         "id": sid, "agent": agent, "cwd": cwd, "prompt": prompt,
         "status": "running", "created_at": int(time.time()), "finished_at": 0,
+        "source": source,
     })
     return sid
 
@@ -216,6 +221,7 @@ class StartSkill(Skill):
                         "cwd": {"type": "string", "description": "工作目录（用户显式选）"},
                         "prompt": {"type": "string", "description": "任务描述"},
                         "agent": {"type": "string", "description": "智能体（v1 固定 claude-code）"},
+                        "source": {"type": "string", "description": "会话来源（可选）：用户直起留空；交接路径传 'codex:<sid>'"},
                     },
                     "required": ["cwd", "prompt"],
                 },
@@ -233,7 +239,8 @@ class StartSkill(Skill):
         if not prompt:
             return ActionResult(success=False, error="缺少任务描述 prompt")
         agent = str(params.get("agent") or "claude-code").strip() or "claude-code"
-        sid = start_session(ctx.db, agent=agent, cwd=cwd, prompt=prompt)
+        source = str(params.get("source") or "").strip()
+        sid = start_session(ctx.db, agent=agent, cwd=cwd, prompt=prompt, source=source)
         # 生产默认 runner；测试经 monkeypatch _spawn_stream 不真起线程
         # resume_session_id 不传 → None → 全新 CC 会话（首条消息）
         _spawn_stream(ctx.db, sid, cwd, prompt, ClaudeCodeRunner(), ctx.emit_event)
