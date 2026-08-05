@@ -45,7 +45,7 @@ def _run(coro): return asyncio.run(coro)
 def test_runner_streams_and_done():
     events = []
     msgs = [_FakeAssistant([_FakeText("hello")]), _FakeResultMessage("success")]
-    runner = ClaudeCodeRunner(client_factory=lambda cwd, tools: _FakeClient(msgs))
+    runner = ClaudeCodeRunner(client_factory=lambda cwd, tools, resume=None: _FakeClient(msgs))
     cancel = asyncio.Event()
     _run(runner.run("do X", "/tmp", on_event=events.append, cancel_event=cancel))
     kinds = [e["kind"] for e in events]
@@ -60,7 +60,7 @@ def test_runner_cancel_mid_stream():
         _FakeAssistant([_FakeText("c")]),
         _FakeResultMessage("success"),
     ]
-    runner = ClaudeCodeRunner(client_factory=lambda cwd, tools: _FakeClient(msgs))
+    runner = ClaudeCodeRunner(client_factory=lambda cwd, tools, resume=None: _FakeClient(msgs))
     cancel = asyncio.Event()
     def on_event(e):
         sent.append(e)
@@ -75,7 +75,7 @@ def test_runner_cancel_mid_stream():
 
 def test_runner_error_isolated():
     events = []
-    def factory(cwd, tools):
+    def factory(cwd, tools, resume=None):
         class Bad:
             async def __aenter__(self): return self
             async def __aexit__(self, *a): return False
@@ -86,6 +86,42 @@ def test_runner_error_isolated():
     runner = ClaudeCodeRunner(client_factory=factory)
     _run(runner.run("p", "/tmp", on_event=events.append, cancel_event=asyncio.Event()))
     assert any(e["kind"] == "error" for e in events)
+
+
+# ---------- runner：resume + cc_session_id 捕获 ----------
+class _FakeResultWithSession:
+    """终态 ResultMessage-like：带 .session_id（duck-typed normalize→done）。"""
+    def __init__(self, subtype="success", session_id="cc-sess-x"):
+        self.subtype = subtype; self.is_error = False; self.session_id = session_id
+
+
+def test_runner_returns_cc_session_id():
+    captured = []
+    msgs = [_FakeAssistant([_FakeText("hi")]), _FakeResultWithSession(session_id="cc-sess-123")]
+    runner = ClaudeCodeRunner(client_factory=lambda cwd, tools, resume=None: _FakeClient(msgs))
+    sid = _run(runner.run("p", "/tmp", on_event=captured.append, cancel_event=asyncio.Event()))
+    assert sid == "cc-sess-123"
+    assert any(e["kind"] == "done" for e in captured)
+
+
+def test_runner_resume_passes_session_id():
+    seen = {}
+    def factory(cwd, tools, resume=None):
+        seen["resume"] = resume
+        class C:
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def query(self, p): pass
+            async def receive_response(self):
+                class R:
+                    subtype = "success"; is_error = False; session_id = "cc-sess-999"
+                yield R()
+        return C()
+    runner = ClaudeCodeRunner(client_factory=factory)
+    sid = _run(runner.run("p", "/tmp", on_event=lambda e: None,
+                          cancel_event=asyncio.Event(), resume_session_id="cc-old-1"))
+    assert seen["resume"] == "cc-old-1"
+    assert sid == "cc-sess-999"
 
 
 # ---------- normalize：真 SDK 块形态 ----------

@@ -100,7 +100,8 @@ def _normalize_flat(msg: Any) -> dict | None:
 
 class AgentRunner(Protocol):
     async def run(self, prompt: str, cwd: str, *,
-                  on_event: Callable[[dict], None], cancel_event) -> None: ...
+                  on_event: Callable[[dict], None], cancel_event,
+                  resume_session_id: str | None = None) -> str | None: ...
 
 
 class ClaudeCodeRunner:
@@ -111,31 +112,44 @@ class ClaudeCodeRunner:
         self._allowed_tools = allowed_tools or ["Read", "Write", "Edit", "MultiEdit", "Bash", "Glob", "Grep"]
         self._client_factory = client_factory  # None → 生产用真 SDK（lazy 导入）
 
-    def _default_factory(self, cwd: str, tools: list[str]):
+    def _default_factory(self, cwd: str, tools: list[str], resume: str | None = None):
         from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions  # lazy：测试不依赖真 SDK
-        options = ClaudeAgentOptions(cwd=cwd, permission_mode="acceptEdits", allowed_tools=tools)
+        options = ClaudeAgentOptions(
+            cwd=cwd, permission_mode="acceptEdits", allowed_tools=tools, resume=resume,
+        )
         return ClaudeSDKClient(options=options)
 
-    async def run(self, prompt: str, cwd: str, *, on_event, cancel_event) -> None:
+    async def run(self, prompt: str, cwd: str, *, on_event, cancel_event,
+                  resume_session_id: str | None = None) -> str | None:
         """流式跑 prompt；每条 SDK 消息 normalize 后 on_event；取消则早退；异常隔离成 error 事件。
 
+        - resume_session_id：非 None 时透传 ClaudeAgentOptions.resume，续上同一 CC 会话历史。
+        - cc_session_id 捕获：流中遇到 ResultMessage（duck-typed 带 .session_id）时缓存其值，
+          run 结束返回（str | None）。失败/取消时返回 None。
         - 取消语义：在每条 SDK 消息前查 cancel_event.is_set() → True 则立即 return（不发 done）。
         - 容错语义：run 内任何异常 → on_event({"kind":"error","text":str(e)})，绝不向调用方抛。
         - 正常结束：on_event({"kind":"done"})。
         """
         factory = self._client_factory or self._default_factory
+        cc_sid: str | None = None
         try:
-            client = factory(cwd, self._allowed_tools)
+            client = factory(cwd, self._allowed_tools, resume=resume_session_id)
             async with client as c:
                 await c.query(prompt)
                 async for msg in c.receive_response():
                     if cancel_event.is_set():
-                        return
+                        return None
+                    # ResultMessage 携 session_id：先从原 msg 读，再 normalize
+                    sid = getattr(msg, "session_id", None)
+                    if sid:
+                        cc_sid = sid
                     for ev in normalize(msg):
                         on_event(ev)
                         if ev.get("kind") == "done":
-                            return
+                            return cc_sid
             on_event({"kind": "done"})
+            return cc_sid
         except Exception as e:
             print(f"[yibao/coding] runner 失败：{e}", file=sys.stderr)
             on_event({"kind": "error", "text": str(e)})
+            return None
