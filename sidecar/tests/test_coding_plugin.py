@@ -236,3 +236,51 @@ def test_stop_sets_stopped_before_cancel():
     assert db.updates[0] == ("s1", {"status": "stopped"}) or db.updates[0][0] == "s1"
     # 再 cancel
     assert flag["cancelled"] is True
+
+
+# ---------- Task 2: _stream 存 cc_session_id ----------
+import threading as _threading  # noqa: E402
+from coding import _stream  # noqa: E402
+
+
+class _FakeRunner:
+    """鸭式 runner：run() 返回预设 cc_sid；记录传入参数。"""
+    def __init__(self, cc_sid): self._cc_sid = cc_sid; self.called_with = None
+    async def run(self, prompt, cwd, *, on_event, cancel_event, resume_session_id=None):
+        self.called_with = {"prompt": prompt, "cwd": cwd, "resume": resume_session_id}
+        if self._cc_sid is not None:
+            on_event({"kind": "done"})
+        return self._cc_sid
+
+
+def test_stream_stores_cc_session_id_on_done():
+    """runner 返回 cc_sid 时，_stream 最终 db.update 含 cc_session_id=cc_sid。"""
+    db = _FakeDB(); db.rows["s1"] = {"id": "s1", "status": "running"}
+    runner = _FakeRunner(cc_sid="cc-sess-abc")
+    cancel = _threading.Event()
+    _run(_stream(db, "s1", "/tmp/p", "hi", runner, emit_event=None, cancel=cancel))
+    # 末次 update 写入 final 状态 + cc_session_id
+    last = db.updates[-1][1]
+    assert last["status"] == "done"
+    assert last["cc_session_id"] == "cc-sess-abc"
+
+
+def test_stream_stores_empty_cc_session_id_when_runner_returns_none():
+    """runner 返回 None（取消/失败）时，cc_session_id 落 ""。"""
+    db = _FakeDB(); db.rows["s2"] = {"id": "s2", "status": "running"}
+    runner = _FakeRunner(cc_sid=None)
+    cancel = _threading.Event()
+    _run(_stream(db, "s2", "/tmp/p", "hi", runner, emit_event=None, cancel=cancel))
+    last = db.updates[-1][1]
+    assert last["cc_session_id"] == ""
+
+
+def test_stream_preserves_stopped_and_still_records_cc_session_id():
+    """race-safe：用户先停（status=stopped）→ _stream 保留 stopped，但仍记 cc_session_id。"""
+    db = _FakeDB(); db.rows["s3"] = {"id": "s3", "status": "stopped"}
+    runner = _FakeRunner(cc_sid="cc-sess-stop")
+    cancel = _threading.Event(); cancel.set()   # 模拟 stop 已 set
+    _run(_stream(db, "s3", "/tmp/p", "hi", runner, emit_event=None, cancel=cancel))
+    last = db.updates[-1][1]
+    assert last["status"] == "stopped"                 # 不被覆盖
+    assert last["cc_session_id"] == "cc-sess-stop"     # 仍记录

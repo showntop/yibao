@@ -111,6 +111,7 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
     这里保留 stopped 不被 done/failed 覆盖（race-safe，仿 agents._common._wait:66-73）。
     """
     state = {"error": False}
+    cc_sid: str | None = None   # runner.run 返回值（ResultMessage.session_id）；None=取消/失败
 
     def on_event(ev: dict) -> None:
         if emit_event is not None:
@@ -123,7 +124,7 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
             state["error"] = True
 
     try:
-        await runner.run(prompt, cwd, on_event=on_event, cancel_event=_AsyncShield(cancel))
+        cc_sid = await runner.run(prompt, cwd, on_event=on_event, cancel_event=_AsyncShield(cancel))
     except Exception as e:  # runner 内部应已吞异常→error 事件；框架级异常兜底
         print(f"[yibao/coding] session {sid} runner 框架异常：{type(e).__name__}: {e}",
               file=sys.stderr)
@@ -145,7 +146,13 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
     else:
         final = "done"
     try:
-        db.update("sessions", sid, {"status": final, "finished_at": int(time.time())})
+        # cc_session_id 一并落库：即便 final=stopped（用户主动停）也要记录 cc_sid，
+        # 后续多轮 resume 仍需它；runner 未拿到（取消/失败）则存 ""。
+        db.update("sessions", sid, {
+            "status": final,
+            "finished_at": int(time.time()),
+            "cc_session_id": cc_sid or "",
+        })
     except Exception as e:
         print(f"[yibao/coding] session {sid} 落最终状态失败：{type(e).__name__}: {e}",
               file=sys.stderr)
