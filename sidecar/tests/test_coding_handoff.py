@@ -95,3 +95,68 @@ def test_start_session_source_defaults_empty():
     db = _FakeDB()
     sid = start_session(db, agent="claude-code", cwd="/tmp/p", prompt="hi")
     assert db.rows[sid]["source"] == ""
+
+
+# ---------- Task 4: HandoffListSkill + HandoffBriefSkill ----------
+import coding as codingmod  # noqa: E402
+from coding import HandoffListSkill, HandoffBriefSkill  # noqa: E402
+
+
+class _Ctx:
+    """最小鸭式 ctx：db/llm/emit_event 三属性。"""
+    db = None
+    llm = None
+    emit_event = None
+
+
+def test_handoff_list_skill(tmp_path, monkeypatch):
+    """HandoffListSkill 经 monkeypatch 后的 root 读 tmp session → 返回 sessions 列表。"""
+    root = str(tmp_path / "sessions"); proj = str(tmp_path / "p"); os.makedirs(proj)
+    _write_session(root, "2026/08/05/a.jsonl", proj, "sid-a", "2026-08-05T10:00:00Z", [("user", "hi")])
+    monkeypatch.setattr(codingmod, "_codex_sessions_root", lambda: root)
+    r = HandoffListSkill().run({"cwd": proj}, _Ctx())
+    assert r.success and r.data["sessions"][0]["session_id"] == "sid-a"
+
+
+def test_handoff_list_skill_cwd_empty():
+    """cwd 缺失 → success=False，便于前端提示用户选目录。"""
+    r = HandoffListSkill().run({}, _Ctx())
+    assert not r.success and "cwd" in r.error
+
+
+def test_handoff_brief_skill(tmp_path, monkeypatch):
+    """HandoffBriefSkill：monkeypatch root + _build_brief → 返回 brief='BRIEF'，sid 透传。"""
+    root = str(tmp_path / "sessions"); proj = str(tmp_path / "p"); os.makedirs(proj)
+    _write_session(root, "2026/08/05/a.jsonl", proj, "sid-a", "2026-08-05T10:00:00Z",
+                   [("user", "实现登录"), ("assistant", "好的")])
+    monkeypatch.setattr(codingmod, "_codex_sessions_root", lambda: root)
+    monkeypatch.setattr(codingmod, "_build_brief", lambda prov, conv, git: "BRIEF")
+
+    class _CtxWithLlm(_Ctx):
+        class llm:
+            @staticmethod
+            def chat(m, timeout=None): return type("R", (), {"text": "BRIEF"})()
+
+    r = HandoffBriefSkill().run({"session_id": "sid-a", "cwd": proj}, _CtxWithLlm())
+    assert r.success and r.data["brief"] == "BRIEF" and r.data["session_id"] == "sid-a"
+
+
+def test_handoff_brief_skill_session_not_found(tmp_path, monkeypatch):
+    """session_id 在 cwd 的 session 列表中找不到 → success=False。"""
+    root = str(tmp_path / "sessions"); proj = str(tmp_path / "p"); os.makedirs(proj)
+    _write_session(root, "2026/08/05/a.jsonl", proj, "sid-a", "2026-08-05T10:00:00Z",
+                   [("user", "hi")])
+    monkeypatch.setattr(codingmod, "_codex_sessions_root", lambda: root)
+    r = HandoffBriefSkill().run({"session_id": "nope", "cwd": proj}, _Ctx())
+    assert not r.success and "nope" in r.error
+
+
+def test_handoff_brief_skill_no_llm(tmp_path, monkeypatch):
+    """ctx.llm None（capability 未声明）→ error '未声明 llm capability'。"""
+    root = str(tmp_path / "sessions"); proj = str(tmp_path / "p"); os.makedirs(proj)
+    _write_session(root, "2026/08/05/a.jsonl", proj, "sid-a", "2026-08-05T10:00:00Z",
+                   [("user", "hi")])
+    monkeypatch.setattr(codingmod, "_codex_sessions_root", lambda: root)
+    # _Ctx 默认 llm=None
+    r = HandoffBriefSkill().run({"session_id": "sid-a", "cwd": proj}, _Ctx())
+    assert not r.success and "llm" in r.error

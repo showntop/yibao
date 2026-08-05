@@ -20,3 +20,13 @@ name = "coding.list"
 handler = "coding.list"
 direct = true
 panel = "coding:chat"
+
+[[method]]
+name = "coding.handoff_list"
+handler = "coding.handoff_list"
+direct = true
+
+[[method]]
+name = "coding.handoff_brief"
+handler = "coding.handoff_brief"
+direct = true

@@ -49,6 +49,19 @@ def _sibling(stem: str):
 _runner = _sibling("_runner")
 ClaudeCodeRunner = _runner.ClaudeCodeRunner   # 生产默认 runner factory
 
+# codex_reader / _brief 也是同目录兄弟模块（非包内），经 _sibling 加载（同 _runner）。
+# _build_brief / _codex_sessions_root 做模块级间接：测试 monkeypatch 这两个属性即可
+# 隔离真实文件系统与 LLM，不污染 yibao_plugin_coding__brief / codex_reader 模块本身。
+_codex = _sibling("codex_reader")
+_brief_mod = _sibling("_brief")
+_build_brief = _brief_mod.build_brief
+
+
+def _codex_sessions_root() -> str:
+    """Codex session JSONL 根目录（间接层，供测试 monkeypatch 改道到 tmp 目录）。"""
+    return os.path.expanduser("~/.codex/sessions")
+
+
 # sid -> {"cancel": threading.Event}。stop 经此拿 cancel 信号；线程收尾后 pop。
 # 跨进程丢失（底座重启）无碍——sessions 表 status 仍 running，但 cancel 信号没了，
 # C7 集成验收时再加对账（仿 agents._reconcile_orphans）；v1 不做。
@@ -368,6 +381,115 @@ class ListSkill(Skill):
         return ActionResult(success=True, data={"sessions": rows, "panel": "coding:chat"})
 
 
+class HandoffListSkill(Skill):
+    """列指定项目下 Codex 的会话（跨 agent 交接入口；只读）。
+
+    经模块级 `_codex_sessions_root()` 取 session 根 → `_codex.list_sessions(cwd)`，
+    返回按时间倒序的 session 列表（含 session_id / path / first_line）。L0 只读。
+    """
+    id = "coding.handoff_list"
+    label = "Codex 会话列表"
+    description = (
+        "列出指定项目目录下 Codex 的会话记录（按时间倒序），用于跨 agent 交接。"
+        "返回 {sessions: [{session_id, cwd, timestamp, path, first_line}]}。"
+        "【需要】cwd（项目目录）。"
+    )
+    default_risk = RiskLevel.L0_READONLY
+
+    def openai_schema(self) -> dict:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.id,
+                "description": self.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "cwd": {"type": "string", "description": "项目目录（用户显式选）"},
+                    },
+                    "required": ["cwd"],
+                },
+            },
+        }
+
+    def run(self, params: dict, ctx: Any) -> ActionResult:
+        cwd = str(params.get("cwd") or "").strip()
+        if not cwd:
+            return ActionResult(success=False, error="缺少工作目录 cwd（用户需显式选）")
+        try:
+            sessions = _codex.list_sessions(cwd, root=_codex_sessions_root())
+        except Exception as e:
+            return ActionResult(success=False, error=f"读取 Codex 会话失败：{type(e).__name__}: {e}")
+        return ActionResult(success=True, data={"sessions": sessions})
+
+
+class HandoffBriefSkill(Skill):
+    """针对某条 Codex 会话生成交接 Brief（LLM 凝练 → Claude Code 接续上下文）。
+
+    流程：list_sessions 匹配 session_id → read_conversation + git_summary →
+    `_build_brief(ctx.llm, turns, git)`。brief=None（LLM 失败）仍 success=True，
+    data.brief=None → 前端走手动粘贴兜底。L0 只读。
+    """
+    id = "coding.handoff_brief"
+    label = "生成交接 Brief"
+    description = (
+        "针对某条 Codex 会话生成「交接 Brief」（任务/已完成/卡点/下一步），"
+        "供 Claude Code 接续上下文。返回 {brief, session_id, incomplete}；"
+        "brief 为 None 表示 LLM 生成失败，前端走手动粘贴兜底。"
+        "【需要】session_id（Codex 会话 id）、cwd（项目目录）。"
+    )
+    default_risk = RiskLevel.L0_READONLY
+
+    def openai_schema(self) -> dict:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.id,
+                "description": self.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "session_id": {"type": "string", "description": "Codex 会话 id"},
+                        "cwd": {"type": "string", "description": "项目目录（用户显式选）"},
+                    },
+                    "required": ["session_id", "cwd"],
+                },
+            },
+        }
+
+    def run(self, params: dict, ctx: Any) -> ActionResult:
+        sid = str(params.get("session_id") or "").strip()
+        if not sid:
+            return ActionResult(success=False, error="缺少 session_id")
+        cwd = str(params.get("cwd") or "").strip()
+        if not cwd:
+            return ActionResult(success=False, error="缺少工作目录 cwd（用户需显式选）")
+        # 找 session path：经 list_sessions（已按 cwd 过滤 + 排序）；命中第一条同 sid 的
+        try:
+            sessions = _codex.list_sessions(cwd, root=_codex_sessions_root())
+        except Exception as e:
+            return ActionResult(success=False, error=f"读取 Codex 会话失败：{type(e).__name__}: {e}")
+        match = next((s for s in sessions if s.get("session_id") == sid), None)
+        if match is None:
+            return ActionResult(success=False, error=f"未找到 session：{sid}")
+        # llm capability 守卫：H3 后 manifest 已声明，正常 ctx.llm 非 None；防御性检查
+        if getattr(ctx, "llm", None) is None:
+            return ActionResult(success=False, error="未声明 llm capability（无法生成 Brief）")
+        try:
+            conv = _codex.read_conversation(match["path"])
+            git = _codex.git_summary(cwd)
+        except Exception as e:
+            return ActionResult(success=False, error=f"读取会话内容失败：{type(e).__name__}: {e}")
+        # brief 可能 None（provider 失败 / 空响应）→ 仍 success=True，前端走手动粘贴兜底
+        brief = _build_brief(ctx.llm, conv["turns"], git)
+        return ActionResult(success=True, data={
+            "brief": brief,
+            "session_id": sid,
+            "incomplete": conv["incomplete"],
+        })
+
+
 def make_tools(ctx: Any) -> list[Skill]:
     """插件加载器入口（_load_code_tools 遍历 skills/*.py 调本函数）。"""
-    return [StartSkill(), SendSkill(), StopSkill(), ListSkill()]
+    return [StartSkill(), SendSkill(), StopSkill(), ListSkill(),
+            HandoffListSkill(), HandoffBriefSkill()]
