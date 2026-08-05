@@ -1,47 +1,101 @@
 """AgentRunner：程序化驱动 coding agent 流式跑。v1 实装 ClaudeCodeRunner（claude-agent-sdk）。"""
 from __future__ import annotations
-import sys
+import json, sys
 from typing import Protocol, Callable, Any
 
 _FILE_EDIT_TOOLS = {"Write", "Edit", "MultiEdit"}
 
 
-def _deep_get(obj, path):
-    """沿属性/键路径取值；任一步为 None 则返回 None。"""
-    cur = obj
-    for p in path:
-        if cur is None:
-            return None
-        cur = getattr(cur, p, None) if not isinstance(cur, dict) else cur.get(p)
-    return cur
+def normalize(msg: Any) -> list[dict]:
+    """把一条 SDK 消息归一成 coding_event 列表（一条 AssistantMessage 可拆出多块 → 多事件）。
 
-
-def normalize(msg: Any) -> dict | None:
-    """把 SDK 消息归一成 coding_event dict。duck-typed：按常见字段判别。
-
-    返回 dict → runner 调 on_event；返回 None → 忽略本条。
-    输入契约（FakeSDK 锁定）：
-      - None（SDK 偶发空消息）→ None（忽略）
-      - 文本类（.text 非空）→ {"kind":"text_delta","text":...}
-      - 文件编辑工具（.tool ∈ {Write,Edit,MultiEdit} 或 .path 非空）→ {"kind":"file_edit","tool":...,"path":...}
-      - 其余工具调用 → {"kind":"tool_use","tool":...}
-    真实 SDK 消息（AssistantMessage/ToolUseBlock 等）字段形态在 C7 实装验收时微调，
-    但本函数对 duck-typed 输入的判别契约由 test_coding_plugin.py 锁定。
+    优先匹配真 claude-agent-sdk（0.2.x）消息形态：
+      - AssistantMessage（.content: list[ContentBlock]）→ 逐块归一：
+          · TextBlock（.text）→ {"kind":"text_delta","text":...}
+          · ToolUseBlock（.name+.input）→
+              name ∈ {Write,Edit,MultiEdit} → {"kind":"file_edit","tool","path","old","new"}
+              其余（Read/Bash/Glob/Grep…）        → {"kind":"tool_use","tool","input"}
+      - ResultMessage（type 名含 "Result"，或 duck-typed .subtype+.is_error）→ [{"kind":"done"}]
+      - SystemMessage / UserMessage / 未知 → []（v1 忽略）
+    None → []。
+    末尾保留 duck-typed 扁平 fallback（.text / .tool+.path / .type∈{result,done}），
+    仅为兼容历史 trivial fake；真 SDK 走上面的分支。
     """
     if msg is None:
+        return []
+    mtype = type(msg).__name__
+    # v1 显式忽略：用户/系统消息（SystemMessage 也有 .subtype，须先排除）
+    if "User" in mtype or "System" in mtype:
+        return []
+
+    events: list[dict] = []
+    content = getattr(msg, "content", None)
+    # 1) AssistantMessage-like：.content 是块列表
+    if isinstance(content, list):
+        for block in content:
+            ev = _normalize_block(block)
+            if ev is not None:
+                events.append(ev)
+        return events
+
+    # 2) ResultMessage-like：终态
+    if "Result" in mtype or (hasattr(msg, "subtype") and hasattr(msg, "is_error")):
+        return [{"kind": "done"}]
+
+    # 3) duck-typed fallback（trivial fakes）
+    ev = _normalize_flat(msg)
+    return [ev] if ev is not None else []
+
+
+def _normalize_block(block: Any) -> dict | None:
+    """归一单个 ContentBlock（TextBlock / ToolUseBlock；其余返回 None）。"""
+    if block is None:
         return None
-    tool = getattr(msg, "tool", None) or _deep_get(msg, ("tool", "name"))
-    path = getattr(msg, "path", None) or _deep_get(msg, ("path",)) or _deep_get(msg, ("file_path",))
+    name = getattr(block, "name", None)
+    inp = getattr(block, "input", None)
+    if name is not None and inp is not None:
+        if name in _FILE_EDIT_TOOLS:
+            return _file_edit_event(name, inp)
+        return {"kind": "tool_use", "tool": name, "input": inp}
+    text = getattr(block, "text", None)
+    if text is not None:
+        return {"kind": "text_delta", "text": str(text)}
+    return None
+
+
+def _file_edit_event(tool: str, inp: Any) -> dict:
+    """Write/Edit/MultiEdit 的 input → file_edit 事件（带 path/old/new）。"""
+    d = inp if isinstance(inp, dict) else {}
+    path = d.get("file_path") or d.get("path")
+    if tool == "Edit":
+        old = d.get("old_string")
+        new = d.get("new_string")
+    elif tool == "Write":
+        old = None
+        new = d.get("content")
+    else:  # MultiEdit
+        old = None
+        new = json.dumps(d.get("edits"), ensure_ascii=False) if d.get("edits") is not None else None
+    return {"kind": "file_edit", "tool": tool, "path": path, "old": old, "new": new}
+
+
+def _normalize_flat(msg: Any) -> dict | None:
+    """duck-typed fallback：扁平 .text / .tool+.path / .type∈{result,done}。
+
+    不再凭空捏造 tool_use（旧实现的 "(未知工具)" 正是 v1 bug 来源）；
+    无真实工具信号时返回 None。
+    """
+    tool = getattr(msg, "tool", None)
+    path = getattr(msg, "path", None)
     if tool in _FILE_EDIT_TOOLS or path:
-        return {"kind": "file_edit", "tool": tool, "path": path}
-    text = getattr(msg, "text", None) or _deep_get(msg, ("text", "content"))
+        return {"kind": "file_edit", "tool": tool, "path": path, "old": None, "new": None}
+    text = getattr(msg, "text", None)
     if text:
         return {"kind": "text_delta", "text": str(text)}
     mtype = getattr(msg, "type", "")
     if mtype in ("result", "done"):
         return {"kind": "done"}
-    # 其余（无关工具调用等）→ 归一成 tool_use（不丢信号）
-    return {"kind": "tool_use", "tool": str(tool or mtype)}
+    return None
 
 
 class AgentRunner(Protocol):
@@ -77,8 +131,7 @@ class ClaudeCodeRunner:
                 async for msg in c.receive_response():
                     if cancel_event.is_set():
                         return
-                    ev = normalize(msg)
-                    if ev is not None:
+                    for ev in normalize(msg):
                         on_event(ev)
                         if ev.get("kind") == "done":
                             return

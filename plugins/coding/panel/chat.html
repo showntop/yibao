@@ -9,8 +9,9 @@
      v1 离线约束：共享 webview（WebviewPanel.vue）注入 CSP
      （default-src 'none'; script-src 'unsafe-inline'），完全屏蔽 CDN 脚本——
      Monaco 在线懒加载实际永不可达，无论联网与否。因此 v1 文件改动卡片恒走降级路径：
-     有 old/new 时显示纯文本 diff（行级 LCS），runner 只推 {tool,path}（v1 file_edit 无 old/new）
-     时显示"修改：path"说明。完整 Monaco diff 须后续将 Monaco 打包进 panel 资源（绕开 CSP）。 -->
+     Edit 推 old/new 时显示纯文本 diff（行级 LCS）；Write/MultiEdit 仅推 new 时显示纯文本内容；
+     runner 未推内容时显示"修改：path"说明。完整 Monaco diff 须后续将 Monaco 打包进 panel 资源
+     （绕开 CSP）。工具调用卡片折叠展示 input 的 JSON（Read/Bash/Grep 等的参数）。 -->
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
@@ -335,21 +336,37 @@
 
   function populateFileEditBody(body, ev) {
     if (ev.old != null && ev.new != null) {
-      // 有前后内容 → 上 Monaco diff（CDN 不可达降级为纯文本 LCS diff）
+      // Edit：有前后内容 → 上 Monaco diff（CDN 不可达降级为纯文本 LCS diff）
       setStatus("加载 Monaco…");
       ensureMonaco().then(function (ok) {
         if (ok) renderMonacoDiff(body, ev);
         else renderTextDiff(body, ev.old, ev.new);
       });
+    } else if (ev.new != null) {
+      // Write / MultiEdit：只有新内容（无 old 可 diff）→ 纯文本展示
+      renderPlainContent(body, ev.new);
     } else {
-      // v1 runner 暂未推送前后内容 → 仅显示路径说明
+      // runner 未推送内容 → 仅显示路径说明
       var note = document.createElement("div");
       note.className = "note";
       note.textContent =
-        "v1 仅记录改动路径（runner 未推送 old/new）；" + toolHint(ev.tool) +
-        "后续 runner 推送内容后此处自动展示 diff。";
+        "仅记录改动路径（runner 未推送 old/new）；" + toolHint(ev.tool) +
+        "后续 runner 推送内容后此处自动展示。";
       body.appendChild(note);
     }
+  }
+
+  // 纯文本内容展示（Write 全量新文件 / MultiEdit 的 edits JSON）
+  function renderPlainContent(body, text) {
+    var lines = String(text == null ? "" : text).split("\n");
+    var frag = document.createDocumentFragment();
+    lines.forEach(function (ln) {
+      var div = document.createElement("div");
+      div.className = "dl s";
+      div.textContent = ln || " ";
+      frag.appendChild(div);
+    });
+    body.appendChild(frag);
   }
 
   function toolHint(tool) {
@@ -441,6 +458,7 @@
   // ---- 工具调用卡片（折叠/展开） ----
   function appendToolUse(ev) {
     var tool = ev.tool || "(未知工具)";
+    var input = ev.input || null;
     var card = document.createElement("div");
     card.className = "card tooluse";
     var head = document.createElement("div");
@@ -458,11 +476,11 @@
       body.classList.toggle("collapsed");
       body.classList.toggle("open", willOpen);
       head.querySelector(".toggle").textContent = willOpen ? "收起" : "展开";
+      if (willOpen && !body.dataset.populated) {
+        body.dataset.populated = "1";
+        populateToolUseBody(body, tool, input);
+      }
     });
-    var note = document.createElement("div");
-    note.className = "note";
-    note.textContent = "工具调用详情暂未上报（runner normalize 仅传 tool 名）。";
-    body.appendChild(note);
     card.appendChild(head);
     card.appendChild(body);
     var row = document.createElement("div");
@@ -470,6 +488,27 @@
     row.appendChild(card);
     $("log").appendChild(row);
     scrollIfAtBottom();
+  }
+
+  // 工具调用 body：有 input → 折叠 JSON；无 → 说明
+  function populateToolUseBody(body, tool, input) {
+    if (input != null) {
+      var pre = document.createElement("pre");
+      pre.className = "dl s";
+      pre.style.whiteSpace = "pre-wrap";
+      pre.style.padding = "8px 12px 8px 18px";
+      try {
+        pre.textContent = JSON.stringify(input, null, 2);
+      } catch (e) {
+        pre.textContent = String(input);
+      }
+      body.appendChild(pre);
+    } else {
+      var note = document.createElement("div");
+      note.className = "note";
+      note.textContent = "工具 " + tool + " 未上报参数（runner normalize 仅传 tool 名）。";
+      body.appendChild(note);
+    }
   }
 
   // ============================================================
@@ -660,6 +699,7 @@
       var b = appendAssistantBubble();
       appendTextToBubble(b, "我打开项目看一下 main.rs 的结构…");
       appendFileEdit({ tool: "Read", path: "src/main.rs" });
+      appendToolUse({ tool: "Bash", input: { command: "wc -l src/main.rs", description: "统计行数" } });
       var b2 = appendAssistantBubble();
       appendTextToBubble(b2, "入口在 src/main.rs:12 的 fn main()。需要我加点日志吗？");
       b2.classList.add("done");
