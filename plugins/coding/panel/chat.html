@@ -56,6 +56,13 @@
     border-radius: 999px; padding: 4px 10px; font-weight: 600;
   }
   #agent::before { content: "●"; font-size: 9px; color: var(--accent); }
+  #new-chat {
+    flex: none; border: 1px solid #e3d7c4; background: transparent;
+    color: #8a7a66; font-size: 12px; padding: 5px 12px; border-radius: 8px;
+    cursor: pointer; font-weight: 500; transition: all .15s ease;
+  }
+  #new-chat:hover { background: var(--accent-soft); color: var(--accent-deep); border-color: var(--accent); }
+  #new-chat:disabled { opacity: .5; cursor: default; }
 
   /* ---- 主区：流式日志 ---- */
   #log {
@@ -173,6 +180,7 @@
   <span class="lbl">项目</span>
   <input id="cwd" type="text" spellcheck="false" placeholder="粘贴项目路径（如 /Users/.../myapp）">
   <span id="agent">agent: Claude Code</span>
+  <button id="new-chat" type="button" title="清空当前对话，开新会话（下次发送走 coding.start）" disabled>新对话</button>
 </header>
 
 <main id="log"></main>
@@ -208,7 +216,9 @@
   var currentSession = null;   // 当前活动 session_id（coding.start 返回值；过滤陈旧流用）
   var currentBubble = null;    // 当前 assistant 文本气泡 DOM 引用；非文本事件会置空（下次 text 重建）
   var atBottom = true;         // 用户是否贴底（true 才自动跟随滚动）
-  var sending = false;         // send 按钮 re-entry 保护
+  var sending = false;         // send 按钮 re-entry 保护（仅覆盖 invoke 同步窗）
+  var streaming = false;       // 流式进行中（invoke 返回 → done/error）；为 true 时锁定「新对话」
+  var discardedSessions = {};  // 被「新对话」抛弃的 session_id → true 集合；防陈旧流块污染新对话
 
   // Monaco 状态：pending → ready/failed（singleton Promise 保证只加载一次）
   var monacoStatus = "pending";
@@ -561,8 +571,11 @@
   function handleInitData(data) {
     if (!data || !data.event) return;
     var sid = data.session_id;
-    // 过滤陈旧/异会话流：有 currentSession 且不匹配 → 忽略
-    // （currentSession 未设置时放行，覆盖 invoke 返回前就到达的首条流式块）
+    // 过滤陈旧/异会话流：
+    //   1) 被「新对话」抛弃的会话 → 丢弃（防清空后迟到的旧块污染新对话）；
+    //   2) currentSession 已设置且 sid 不匹配 → 丢弃；
+    //   3) currentSession 未设置（invoke 未返回 / 已重置）→ 放行，覆盖首条流式块早于 invoke 返回的竞态。
+    if (sid != null && discardedSessions[sid]) return;
     if (currentSession != null && sid != null && sid !== currentSession) return;
 
     var ev = data.event;
@@ -601,9 +614,13 @@
   }
 
   function onSessionEnded() {
-    currentSession = null;     // 下次 send 可新建
+    // 多轮保持：不清 currentSession —— 下次 send 走 coding.send 接续同一 CC 会话；
+    // 仅靠「新对话」按钮显式重置。
+    streaming = false;
     $("stop").disabled = true;
     $("send").disabled = false;
+    // 有活动会话才允许「新对话」（首次进入 / 已重置后无可重置对象）
+    $("new-chat").disabled = !currentSession;
   }
 
   // ============================================================
@@ -622,25 +639,37 @@
 
     sending = true;
     $("send").disabled = true;
+    $("new-chat").disabled = true;
     setStatus("提交中…");
 
     // 用户气泡先入列，再起会话
     appendUser(prompt);
     currentBubble = null;  // 用户气泡不属于 assistant 流
 
-    window.yibao.invoke("coding.start", { cwd: cwd, prompt: prompt }).then(function (r) {
+    // 多轮路由：currentSession 为空 → coding.start 新建；否则 → coding.send 接续同一会话。
+    // 这是本次多轮修复的核心：第二条起走 send(resume)，被驱动的 CC 才能拿到历史上下文。
+    var isStart = !currentSession;
+    var method = isStart ? "coding.start" : "coding.send";
+    var params = isStart ? { cwd: cwd, prompt: prompt }
+                         : { id: currentSession, prompt: prompt };
+    var verb = isStart ? "启动" : "接续";
+
+    window.yibao.invoke(method, params).then(function (r) {
       var sid = r && r.session_id;
       if (!sid) throw new Error("未返回 session_id");
-      currentSession = sid;
+      currentSession = sid;       // start 回填新 id；send 路径下 sid 与原 id 一致（保留不动）
+      streaming = true;
       $("prompt").value = "";
       $("stop").disabled = false;
-      setStatus("会话 " + sid + " 运行中…");
+      setStatus("会话 " + sid + (isStart ? " 启动" : " 接续") + "，运行中…");
     }).catch(function (e) {
-      appendError("启动失败：" + emsg(e));
-      setStatus("启动失败：" + emsg(e), true);
+      appendError(verb + "失败：" + emsg(e));
+      setStatus(verb + "失败：" + emsg(e), true);
     }).finally(function () {
       sending = false;
       $("send").disabled = false;
+      // 「新对话」仅在非流式且有活动会话时可点
+      $("new-chat").disabled = !currentSession || streaming;
     });
   }
 
@@ -659,8 +688,26 @@
     });
   }
 
+  function newChat() {
+    // 显式重置：清掉 currentSession，下次 send 走 coding.start 开新 CC 会话。
+    // 流式中已被禁用（onSessionEnded 才放行），到这里时理论上无活动流；
+    // 但为防 done/error 与点击之间的竞态，仍把旧 session_id 加入 discardedSessions ——
+    // handleInitData 会据此丢弃任何迟到的旧块，避免污染新对话。
+    if (currentSession) discardedSessions[currentSession] = true;
+    currentSession = null;
+    currentBubble = null;
+    streaming = false;
+    sending = false;
+    $("log").innerHTML = "";
+    $("stop").disabled = true;
+    $("send").disabled = false;
+    $("new-chat").disabled = true;
+    setStatus("新对话");
+  }
+
   $("send").addEventListener("click", send);
   $("stop").addEventListener("click", stop);
+  $("new-chat").addEventListener("click", newChat);
   $("prompt").addEventListener("keydown", function (e) {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
