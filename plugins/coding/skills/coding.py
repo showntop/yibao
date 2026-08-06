@@ -52,7 +52,7 @@ ClaudeCodeRunner = _runner.ClaudeCodeRunner   # 生产默认 runner factory
 # codex_reader / _brief 也是同目录兄弟模块（非包内），经 _sibling 加载（同 _runner）。
 # _build_brief / _codex_sessions_root 做模块级间接：测试 monkeypatch 这两个属性即可
 # 隔离真实文件系统与 LLM，不污染 yibao_plugin_coding__brief / codex_reader 模块本身。
-_codex = _sibling("codex_reader")
+_codex = _sibling("_codex_reader")
 _brief_mod = _sibling("_brief")
 _build_brief = _brief_mod.build_brief
 

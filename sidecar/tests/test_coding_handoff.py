@@ -3,7 +3,7 @@ from __future__ import annotations
 import json, os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "plugins", "coding", "skills"))
-from codex_reader import list_sessions, read_conversation, git_summary  # noqa: E402
+from _codex_reader import list_sessions, read_conversation, git_summary  # noqa: E402
 
 
 def _write_session(root, rel, cwd, sid, ts, turns):
