@@ -19,14 +19,30 @@
 <style>
   /* 设计 token 与 tools.html / editor.html 对齐（iframe 沙箱吃不到 tokens.css，内联写死） */
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  /* 与译宝主 UI tokens.css 对齐的冷 slate/sky 配色（iframe 沙箱吃不到 tokens.css，内联写死） */
   :root {
-    --bg: #f6f1ea; --card: #ffffff; --border: #eee4d6; --border-soft: #f3ecdf;
-    --text: #3f372e; --muted: #a89a86; --faint: #c9bcab;
-    --accent: #ff8a5c; --accent-deep: #f2703f; --accent-soft: #fff0e8;
-    --green-bg: #dcf0e2; --green: #3e8e5a; --green-bar: #8fd0a6;
-    --red-bg: #fce7e3; --red: #c0574b; --red-bar: #f0aaa1;
-    --ai-bg: #fff8f3; --user-bg: #ff8a5c;
+    --bg: #eef2f7;              /* slate-100 主区底 */
+    --card: #ffffff;            /* 表面 L1：卡 / 工具栏 / 输入条 */
+    --surface-2: #f3f6fa;       /* slate-050：头部底 / 输入填充 / 卡头 */
+    --text: #1e2a38;            /* ink-900 */
+    --muted: #6b7d91;           /* ink-500 次要文本 */
+    --faint: #8a9aac;           /* ink-400 占位 / 极弱 */
+    --accent: #4d90c4;          /* sky-500 主色 */
+    --accent-deep: #3d7aa8;     /* sky-600 hover / 强调 */
+    --accent-soft: #e7f0f8;     /* sky-050 薄膜 */
+    --border: rgba(40,60,90,0.10);
+    --border-strong: rgba(40,60,90,0.18);
+    --border-soft: rgba(40,60,90,0.08);  /* hairline 分界（= --line） */
+    --line: rgba(40,60,90,0.08);
+    --green-bg: #dceee3; --green: #3e8e5a; --green-bar: #8fd0a6;
+    --red-bg: #f4dedb; --red: #b6554a; --red-bar: #dca59e;
+    --ai-bg: #ffffff;           /* AI 气泡：白底 + 描边 */
+    --user-bg: #4d90c4;         /* 用户气泡：sky-500 */
+    --sans: -apple-system, "PingFang SC", sans-serif;
     --mono: 12.5px/1.6 "SF Mono", ui-monospace, Menlo, monospace;
+    --r-sm: 10px; --r-md: 14px; --r-pill: 999px;
+    --shadow-card: 0 1px 2px rgba(30,42,56,0.04);
+    --shadow-pop: 0 8px 24px rgba(30,42,56,0.14);
   }
   html, body { height: 100%; }
   body {
@@ -36,49 +52,60 @@
   }
   .hidden { display: none !important; }
 
-  /* ---- 顶栏：cwd 输入 + 固定 agent 徽标 ---- */
+  /* ---- 顶栏：极简工具条（cwd 项目药丸 + agent 徽标 + 右侧安静 ghost 按钮） ---- */
   header {
     flex: none; display: flex; align-items: center; gap: 8px;
-    padding: 10px 14px; border-bottom: 1px solid var(--border-soft);
+    padding: 8px 14px; border-bottom: 1px solid var(--line);
     background: var(--card);
   }
   header .lbl { font-size: 12px; color: var(--muted); flex: none; }
+  header .spacer { flex: 1; }
+  /* cwd：项目药丸（可点击编辑的"标签"），不再像对话输入框 */
   #cwd {
-    flex: 1; min-width: 0; border: 1px solid #e3d7c4; border-radius: 10px;
-    padding: 6px 10px; font-size: 12.5px; font-family: var(--mono);
-    background: #fff; color: var(--text); outline: none; transition: border-color .15s ease;
+    flex: 0 1 auto; min-width: 120px; max-width: 280px;
+    border: 1px solid transparent; border-radius: var(--r-pill);
+    padding: 4px 12px 4px 26px; font-size: 12px; font-family: var(--mono);
+    background: var(--surface-2) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7d91' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'/></svg>") no-repeat 10px 50%;
+    color: var(--text); outline: none; cursor: text;
+    transition: border-color .15s ease, background-color .15s ease;
+    overflow: hidden; text-overflow: ellipsis;
   }
-  #cwd:focus { border-color: var(--accent); }
-  #cwd::placeholder { color: var(--faint); font-family: -apple-system, "PingFang SC", sans-serif; }
+  #cwd:hover { background-color: #e9edf3; }
+  #cwd:focus { border-color: var(--accent); background-color: var(--card); }
+  #cwd::placeholder { color: var(--faint); font-family: var(--sans); }
   #agent {
     flex: none; display: inline-flex; align-items: center; gap: 5px;
     font-size: 11.5px; color: var(--accent-deep); background: var(--accent-soft);
-    border-radius: 999px; padding: 4px 10px; font-weight: 600;
+    border-radius: var(--r-pill); padding: 4px 10px; font-weight: 600;
   }
   #agent::before { content: "●"; font-size: 9px; color: var(--accent); }
-  #new-chat {
-    flex: none; border: 1px solid #e3d7c4; background: transparent;
-    color: #8a7a66; font-size: 12px; padding: 5px 12px; border-radius: 8px;
+  /* 右上工具按钮：安静 ghost（#new-chat / #handoff 共用） */
+  #new-chat, #handoff {
+    flex: none; border: 1px solid transparent; background: transparent;
+    color: var(--muted); font-size: 12px; padding: 5px 12px; border-radius: 8px;
     cursor: pointer; font-weight: 500; transition: all .15s ease;
   }
-  #new-chat:hover { background: var(--accent-soft); color: var(--accent-deep); border-color: var(--accent); }
-  #new-chat:disabled { opacity: .5; cursor: default; }
+  #new-chat:hover, #handoff:hover {
+    background: var(--surface-2); color: var(--accent-deep); border-color: var(--border);
+  }
+  #new-chat:disabled, #handoff:disabled { opacity: .5; cursor: default; }
 
-  /* ---- 主区：流式日志 ---- */
+  /* ---- 主区：流式日志（唯一视觉焦点） ---- */
   #log {
-    flex: 1; overflow-y: auto; padding: 14px;
+    flex: 1; overflow-y: auto; padding: 16px 14px;
     display: flex; flex-direction: column; gap: 10px;
+    background: var(--bg);
   }
   .row { display: flex; width: 100%; }
   .row.user { justify-content: flex-end; }
   .row.ai { justify-content: flex-start; }
 
   .bubble {
-    max-width: 86%; padding: 9px 13px; border-radius: 14px;
+    max-width: 86%; padding: 9px 13px; border-radius: var(--r-md);
     font-size: 13px; line-height: 1.7; word-break: break-word; white-space: pre-wrap;
   }
   .row.user .bubble { background: var(--user-bg); color: #fff; border-bottom-right-radius: 4px; }
-  .row.ai .bubble { background: var(--ai-bg); border: 1px solid var(--border-soft); border-bottom-left-radius: 4px; }
+  .row.ai .bubble { background: var(--ai-bg); color: var(--text); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
   .row.ai .bubble.done::after {
     content: " ✓"; color: var(--green); font-weight: 600; font-size: 11px;
   }
@@ -86,11 +113,11 @@
   /* 文件改动 / 工具调用卡片（v1 单列；Monaco 加载后内嵌） */
   .card {
     max-width: 86%; background: var(--card); border: 1px solid var(--border);
-    border-radius: 12px; overflow: hidden; box-shadow: 0 1px 2px rgba(90,70,50,.04);
+    border-radius: var(--r-md); overflow: hidden; box-shadow: var(--shadow-card);
   }
   .card-head {
     display: flex; align-items: center; gap: 8px;
-    padding: 7px 11px; background: #faf7f2; border-bottom: 1px solid var(--border-soft);
+    padding: 7px 11px; background: var(--surface-2); border-bottom: 1px solid var(--line);
     font-size: 12px;
   }
   .card-head .ic { flex: none; }
@@ -101,7 +128,7 @@
   }
   .card-head .tool {
     flex: none; font-size: 11px; color: var(--muted);
-    background: #fff; border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px;
   }
   .card-head .spacer { flex: 1; }
   .card-head .mini {
@@ -111,7 +138,7 @@
   .card-head .mini:hover { background: var(--accent-soft); color: var(--accent-deep); }
   .card.fileedit .card-head .ic { color: var(--accent-deep); }
   .card.tooluse .card-head .ic { color: var(--muted); }
-  .card-body { padding: 0; }
+  .card-body { padding: 0; background: var(--card); }
   .card-body.collapsed { display: none; }
   .card-body.open { display: block; }
   .card-body .note {
@@ -124,61 +151,53 @@
   .card-body .dl.s { color: var(--muted); }
   .card-body .dl.d { background: var(--red-bg); box-shadow: inset 3px 0 var(--red-bar); color: var(--red); }
   .card-body .dl.a { background: var(--green-bg); box-shadow: inset 3px 0 var(--green-bar); color: var(--green); }
-  .card-body .monaco-host { height: 320px; border-top: 1px solid var(--border-soft); }
+  .card-body .monaco-host { height: 320px; border-top: 1px solid var(--line); }
 
   /* 终止标 / 错误 */
   .marker {
     align-self: center; font-size: 11.5px; color: var(--faint);
-    padding: 2px 10px; border-radius: 999px; background: #faf3ea;
+    padding: 2px 10px; border-radius: var(--r-pill); background: var(--surface-2);
   }
   .marker.err { color: var(--red); background: var(--red-bg); }
 
-  /* ---- 底栏：输入 + 起停 ---- */
+  /* ---- 底栏：flush 输入条（连续对话，非第二个对话窗口） ---- */
   footer {
-    flex: none; border-top: 1px solid var(--border-soft); background: var(--card);
-    padding: 10px 14px; display: flex; flex-direction: column; gap: 6px;
+    flex: none; border-top: 1px solid var(--line); background: var(--card);
+    padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 8px;
   }
   #prompt {
-    width: 100%; border: 1px solid #e3d7c4; border-radius: 10px; padding: 8px 11px;
-    font: 13px/1.6 -apple-system, "PingFang SC", sans-serif; background: #fff; color: var(--text);
-    outline: none; resize: none; min-height: 56px; max-height: 160px; transition: border-color .15s ease;
+    width: 100%; border: 1px solid transparent; border-radius: var(--r-md); padding: 10px 12px;
+    font: 13px/1.6 var(--sans); background: var(--surface-2); color: var(--text);
+    outline: none; resize: none; min-height: 56px; max-height: 160px;
+    transition: border-color .15s ease, background-color .15s ease;
   }
-  #prompt:focus { border-color: var(--accent); }
+  #prompt:focus { border-color: var(--border-strong); background: var(--card); }
   #prompt::placeholder { color: var(--faint); }
   .actions { display: flex; align-items: center; gap: 8px; }
   .actions .spacer { flex: 1; }
   #status { font-size: 11.5px; color: var(--muted); min-height: 18px; flex: 1; }
   #status.err { color: var(--red); }
   button.act {
-    border: none; border-radius: 10px; padding: 7px 18px; cursor: pointer;
+    border: none; border-radius: var(--r-pill); padding: 7px 20px; cursor: pointer;
     background: var(--accent); color: #fff; font-size: 12.5px; font-weight: 600;
-    box-shadow: 0 2px 6px rgba(242,112,63,.3); transition: all .15s ease;
+    box-shadow: 0 1px 3px rgba(77,144,196,0.25); transition: all .15s ease;
   }
   button.act:hover { background: var(--accent-deep); }
   button.act:active { transform: scale(.97); }
   button.act:disabled { opacity: .5; cursor: default; box-shadow: none; }
   button.ghost {
-    background: transparent; color: #8a7a66; border: 1px solid #e3d7c4;
+    background: transparent; color: var(--muted); border: 1px solid var(--border-strong);
     box-shadow: none; font-weight: 500;
   }
-  button.ghost:hover { background: #faf3ea; color: var(--text); border-color: #d8c9b2; }
+  button.ghost:hover { background: var(--surface-2); color: var(--text); border-color: var(--border-strong); }
   button.ghost:disabled { opacity: .5; cursor: default; }
-
-  /* ---- 从 Codex 接续：顶栏按钮 ---- */
-  #handoff {
-    flex: none; border: 1px solid #e3d7c4; background: transparent;
-    color: #8a7a66; font-size: 12px; padding: 5px 12px; border-radius: 8px;
-    cursor: pointer; font-weight: 500; transition: all .15s ease;
-  }
-  #handoff:hover { background: var(--accent-soft); color: var(--accent-deep); border-color: var(--accent); }
-  #handoff:disabled { opacity: .5; cursor: default; }
 
   /* ---- Codex session 选择器（fixed 浮层；iframe srcdoc 里 absolute 含块不可靠） ---- */
   #handoff-backdrop { position: fixed; inset: 0; z-index: 40; }
   #handoff-picker {
     position: fixed; z-index: 50; width: min(420px, 92vw); max-height: 320px; overflow-y: auto;
-    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
-    box-shadow: 0 8px 24px rgba(90,70,50,.16); padding: 6px;
+    background: var(--card); border: 1px solid var(--border); border-radius: var(--r-md);
+    box-shadow: var(--shadow-pop); padding: 6px;
   }
   #handoff-picker .pick-item {
     padding: 8px 10px; border-radius: 8px; cursor: pointer; transition: background .12s ease;
@@ -195,65 +214,66 @@
     border: 1px solid var(--border); background: transparent; color: var(--muted);
     cursor: pointer; border-radius: 6px; transition: all .15s ease;
   }
-  #handoff-picker .pick-close:hover { background: #faf3ea; color: var(--text); border-color: #d8c9b2; }
+  #handoff-picker .pick-close:hover { background: var(--surface-2); color: var(--text); border-color: var(--border-strong); }
 
-  /* ---- 交接卡：session 起点（区别于普通文件改动/工具卡片，整宽 + 强调色左边条） ---- */
+  /* ---- 交接卡：session 起点（区别于普通文件改动/工具卡片，整宽 + sky 强调色左边条） ---- */
   .card.handoff {
     max-width: 96%; border: 1px solid var(--accent); border-left: 3px solid var(--accent);
     background: var(--card);
   }
   .card.handoff .card-head {
-    background: var(--accent-soft); border-bottom: 1px solid #f7d9c5;
+    background: var(--accent-soft); border-bottom: 1px solid #cfe0ed;
   }
   .card.handoff .card-head .ic,
   .card.handoff .card-head .lbl { color: var(--accent-deep); }
   .card.handoff .card-head .sid {
     flex: none; font: var(--mono); font-size: 11px; color: var(--muted);
-    background: #fff; border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px;
   }
   .card.handoff .card-head .warn {
-    flex: none; font-size: 11px; color: #b98a2f; font-style: italic;
+    flex: none; font-size: 11px; color: #9a7b28; font-style: italic;
   }
   .card.handoff.sealed {
     border: 1px solid var(--green-bar); border-left: 3px solid var(--green);
-    background: #fbfdfc;
+    background: var(--card);
   }
   .card.handoff.sealed .card-head {
-    background: var(--green-bg); border-bottom: 1px solid #c8e6d1;
+    background: var(--green-bg); border-bottom: 1px solid #c4e0cf;
   }
   .card.handoff.sealed .card-head .ic,
   .card.handoff.sealed .card-head .lbl { color: var(--green); }
-  .card.handoff .card-body { padding: 10px 12px; }
+  .card.handoff .card-body { padding: 10px 12px; background: var(--card); }
   .card.handoff .card-body.open { display: block; }
   .card.handoff .card-body .note.err { color: var(--red); font-style: normal; }
   .card.handoff textarea.brief {
     width: 100%; min-height: 160px; resize: vertical;
-    border: 1px solid #e3d7c4; border-radius: 8px; padding: 9px 11px;
-    font: 13px/1.65 -apple-system, "PingFang SC", sans-serif;
-    background: #fff; color: var(--text); outline: none; transition: border-color .15s ease;
+    border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px;
+    font: 13px/1.65 var(--sans);
+    background: var(--surface-2); color: var(--text); outline: none;
+    transition: border-color .15s ease, background-color .15s ease;
   }
-  .card.handoff textarea.brief:focus { border-color: var(--accent); }
-  .card.handoff textarea.brief[readonly] { background: #faf7f2; color: #4a4035; }
+  .card.handoff textarea.brief:focus { border-color: var(--accent); background: var(--card); }
+  .card.handoff textarea.brief[readonly] { background: var(--surface-2); color: var(--muted); }
   .card.handoff textarea.brief::placeholder { color: var(--faint); }
   .card.handoff .card-foot {
     display: flex; justify-content: flex-end; gap: 8px; padding: 8px 12px 10px;
-    border-top: 1px solid var(--border-soft); background: #faf7f2;
+    border-top: 1px solid var(--line); background: var(--surface-2);
   }
   .card.handoff .card-foot button {
     border-radius: 8px; padding: 6px 16px; font-size: 12px; cursor: pointer; font-weight: 500;
-    border: 1px solid #e3d7c4; background: #fff; color: #8a7a66; transition: all .15s ease;
+    border: 1px solid var(--border-strong); background: var(--card); color: var(--muted); transition: all .15s ease;
   }
-  .card.handoff .card-foot button:hover { background: #faf3ea; color: var(--text); border-color: #d8c9b2; }
+  .card.handoff .card-foot button:hover { background: var(--surface-2); color: var(--text); border-color: var(--border-strong); }
   .card.handoff .card-foot button.primary {
     background: var(--accent); color: #fff; border-color: var(--accent);
-    box-shadow: 0 2px 6px rgba(242,112,63,.3); font-weight: 600;
+    box-shadow: 0 1px 3px rgba(77,144,196,0.25); font-weight: 600;
   }
   .card.handoff .card-foot button.primary:hover { background: var(--accent-deep); }
 
   /* 设计预览态（无 window.yibao 桥时） */
   #bridge-warn {
-    padding: 6px 12px; background: #fdf3e0; color: #b98a2f; font-size: 11.5px;
-    text-align: center; border-bottom: 1px solid #f0dfa8;
+    padding: 6px 12px; background: var(--accent-soft); color: var(--accent-deep); font-size: 11.5px;
+    text-align: center; border-bottom: 1px solid #cfe0ed;
   }
 </style>
 </head>
@@ -264,8 +284,9 @@
 
 <header>
   <span class="lbl">项目</span>
-  <input id="cwd" type="text" spellcheck="false" placeholder="粘贴项目路径（如 /Users/.../myapp）">
+  <input id="cwd" type="text" spellcheck="false" placeholder="项目路径（如 /Users/.../myapp）">
   <span id="agent">agent: Claude Code</span>
+  <span class="spacer"></span>
   <button id="handoff" type="button" title="从 Codex 会话接续：读取该项目下的 Codex 会话，生成交接 brief 后用 Claude Code 接续">↩ 从 Codex 接续</button>
   <button id="new-chat" type="button" title="清空当前对话，开新会话（下次发送走 coding.start）" disabled>新对话</button>
 </header>
