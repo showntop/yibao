@@ -12,12 +12,12 @@ _PROMPT = """你是交接助手。下面是用户在 Codex（另一个 coding ag
 """
 
 
-def build_brief(provider, conversation: list[dict], git_summary: str) -> str | None:
+def build_brief(llm, conversation: list[dict], git_summary: str) -> str | None:
     dialog = "\n".join(f"{t['role']}: {t['text']}" for t in conversation) or "（无）"
+    prompt = _PROMPT.format(dialog=dialog, git=git_summary or "（无）")
     try:
-        resp = provider.chat([{"role": "user", "content": _PROMPT.format(dialog=dialog, git=git_summary or "（无）")}],
-                             timeout=60)
-        text = (getattr(resp, "text", None) or "").strip()
+        # ctx.llm 是 LlmChat 包装：chat(prompt:str) -> str（非原始 provider 的 chat(messages,timeout)）
+        text = (llm.chat(prompt) or "").strip()
         return text or None
     except Exception as e:
         import sys; print(f"[yibao/coding] brief 生成失败：{e}", file=sys.stderr)

@@ -54,8 +54,8 @@ from _brief import build_brief  # noqa: E402
 
 class _FakeProv:
     def __init__(self, text): self._t = text; self.calls = []
-    def chat(self, msgs, timeout=None):
-        self.calls.append(msgs); return type("R", (), {"text": self._t})()
+    def chat(self, prompt):                   # mock LlmChat：chat(prompt:str)->str
+        self.calls.append(prompt); return self._t
 
 
 def test_build_brief_returns_summary():
@@ -67,7 +67,7 @@ def test_build_brief_returns_summary():
 
 def test_build_brief_provider_failure_returns_none():
     class Boom:
-        def chat(self, msgs, timeout=None): raise RuntimeError("llm down")
+        def chat(self, prompt): raise RuntimeError("llm down")
     assert build_brief(Boom(), [{"role": "user", "text": "x"}], "") is None
 
 
