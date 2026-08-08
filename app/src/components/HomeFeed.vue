@@ -63,6 +63,14 @@ const dateLine = computed(() => {
   return `${d.getMonth() + 1} 月 ${d.getDate()} 日 星期${week}`;
 });
 
+// 时钟 widget（主屏小组件：实时时间大字 + 副行日期，秒级刷新）
+const now = ref(new Date());
+let clockTimer: ReturnType<typeof setInterval> | null = null;
+const clockTime = computed(() =>
+  `${String(now.value.getHours()).padStart(2, "0")}:${String(now.value.getMinutes()).padStart(2, "0")}`,
+);
+const clockWeekday = computed(() => "日一二三四五六"[now.value.getDay()]);
+
 // 概览数字条：把原问候里的叙事拆成可扫读的三个数（0 的项不显，全 0 显「暂时清净」）
 const overview = computed(() => {
   const o: { key: string; n: number; label: string }[] = [];
@@ -325,11 +333,6 @@ function widgetSchema(w: WidgetPayload): Record<string, any> | null {
   return w.schema && typeof w.schema === "object" ? (w.schema as Record<string, any>) : null;
 }
 
-/** 右副列是否有内容：全空则整列不渲染（否则空着占 320px，页面重心偏左）。 */
-const hasSideContent = computed(
-  () => approvals.value.length > 0 || runningTasks.value.length > 0 || widgets.value.length > 0,
-);
-
 /** 相对时间：组内只显示时刻（日期已由分组头承担），跨日项显示月日。 */
 function itemTime(ts: number): string {
   const d = new Date(ts * 1000);
@@ -497,6 +500,7 @@ onMounted(async () => {
     recapFocusDay.value = day;
     if (!recapLoaded.value) void loadRecap();
   });
+  clockTimer = setInterval(() => (now.value = new Date()), 1000);
 });
 onUnmounted(() => {
   unFeed?.();
@@ -506,6 +510,7 @@ onUnmounted(() => {
   unRecapVisible?.();
   unRecapOpen?.();
   if (refetchTimer !== null) clearTimeout(refetchTimer);
+  if (clockTimer !== null) clearInterval(clockTimer);
 });
 </script>
 
@@ -517,15 +522,90 @@ onUnmounted(() => {
         <h1 class="greet" data-tauri-drag-region>{{ greeting }}</h1>
         <span class="date yb-num" data-tauri-drag-region>{{ dateLine }}</span>
       </div>
-      <div v-if="overview.length" class="overview">
-        <span v-for="o in overview" :key="o.key" class="ov-item">
-          <strong class="yb-num">{{ o.n }}</strong>{{ o.label }}
-        </span>
-      </div>
-      <div v-else-if="loaded" class="overview quiet">暂时清净，随时叫我</div>
     </header>
 
-    <!-- 主体：左时间线 + 右侧栏（待批准 / 进行中 / 一瞥卡） -->
+    <!-- widget 网格（2 列）：时钟 / 今日概览 / 待批准 / 进行中 / 插件一瞥 -->
+    <div class="w-grid">
+      <section class="w-card w-clock">
+        <div class="w-clock-time yb-num">{{ clockTime }}</div>
+        <div class="w-clock-sub">周{{ clockWeekday }} · {{ dateLine }}</div>
+      </section>
+
+      <section class="w-card">
+        <div class="w-card-title">今日</div>
+        <div v-if="overview.length" class="w-ov-list">
+          <span v-for="o in overview" :key="o.key" class="w-ov">
+            <strong class="yb-num">{{ o.n }}</strong>
+            <em>{{ o.label }}</em>
+          </span>
+        </div>
+        <div v-else-if="loaded" class="w-quiet">暂时清净，随时叫我</div>
+      </section>
+
+      <section v-if="approvals.length" class="w-card w-pending">
+        <div class="w-card-title">待批准 <span class="count yb-num">{{ approvals.length }}</span></div>
+        <div class="w-card-body">
+          <div
+            v-for="p in approvals"
+            :key="p.id"
+            class="ap-card"
+            :class="{ selected: approvals.length > 1 && isSelected(p.id) }"
+          >
+            <div class="ap-top">
+              <label v-if="approvals.length > 1" class="ap-check" title="选中后可一键批量">
+                <input type="checkbox" :checked="isSelected(p.id)" @change="onToggleSelect(p.id, $event)" />
+              </label>
+              <div class="ap-info">
+                <strong class="ap-label">{{ p.label || p.skill }}</strong>
+                <span class="ap-desc">{{ p.desc || p.skill }}</span>
+              </div>
+            </div>
+            <label v-if="canRememberSkill(p.skill)" class="ap-remember" title="勾选后该技能在本会话内不再询问">
+              <input type="checkbox" :checked="rememberOf(p.id)" @change="onToggleRemember(p.id, $event)" />
+              <span>本会话不再询问</span>
+            </label>
+            <div class="ap-btns">
+              <button class="btn-ghost" @click="decideApproval(p, false)">拒绝</button>
+              <button class="btn-primary" @click="decideApproval(p, true)">批准</button>
+            </div>
+          </div>
+          <div v-if="approvals.length > 1" class="ap-batch">
+            <button class="btn-ghost" :disabled="selectedCount === 0" @click="batchDecide(false)">
+              拒绝选中{{ selectedCount ? ` (${selectedCount})` : "" }}
+            </button>
+            <button class="btn-primary" :disabled="selectedCount === 0" @click="batchDecide(true)">
+              批准选中{{ selectedCount ? ` (${selectedCount})` : "" }}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section v-if="runningTasks.length" class="w-card">
+        <div class="w-card-title">进行中 <span class="count yb-num">{{ runningTasks.length }}</span></div>
+        <div class="w-card-body">
+          <button v-for="t in runningTasks" :key="t.id" class="run-row" @click="openTasks">
+            <span class="run-dot" />
+            <span class="run-main">
+              <strong>{{ t.label }}</strong>
+              <span>{{ t.prompt }}</span>
+            </span>
+            <span class="run-time">{{ elapsedSince(t.created_at) }}</span>
+          </button>
+        </div>
+      </section>
+
+      <section v-for="w in widgets" :key="w.panel" class="w-card w-wide">
+        <div class="w-card-title">
+          {{ w.title }}
+          <button v-if="w.open" class="link-btn" @click="openWidget(w)">打开</button>
+        </div>
+        <div class="w-card-body">
+          <SchemaPanel :panel="w.panel" :schema="widgetSchema(w)" :data="widgetData(w)" />
+        </div>
+      </section>
+    </div>
+
+    <!-- 主体：时间线（动态/回顾） -->
     <div class="body">
       <!-- ===== 左主列：统一时间线 ===== -->
       <section class="timeline-col">
@@ -664,87 +744,6 @@ onUnmounted(() => {
         </section>
       </section>
 
-      <!-- ===== 右副列：需要你动手的事 =====
-           全空则整列不渲染——空着占 320px 会让时间线偏左、右边一片死白。 -->
-      <aside v-if="hasSideContent" class="side-col">
-        <div class="side-scroll">
-          <!-- 待批准：全页唯一允许琥珀强调处 -->
-          <section v-if="approvals.length" class="panel panel-pending">
-            <div class="panel-head">
-              <span class="panel-title">
-                <YbIcon name="lock" :size="12" />待批准
-                <span class="count yb-num">{{ approvals.length }}</span>
-              </span>
-            </div>
-            <div class="panel-body">
-              <div
-                v-for="p in approvals"
-                :key="p.id"
-                class="ap-card"
-                :class="{ selected: approvals.length > 1 && isSelected(p.id) }"
-              >
-                <div class="ap-top">
-                  <label v-if="approvals.length > 1" class="ap-check" title="选中后可一键批量">
-                    <input type="checkbox" :checked="isSelected(p.id)" @change="onToggleSelect(p.id, $event)" />
-                  </label>
-                  <div class="ap-info">
-                    <strong class="ap-label">{{ p.label || p.skill }}</strong>
-                    <span class="ap-desc">{{ p.desc || p.skill }}</span>
-                  </div>
-                </div>
-                <label v-if="canRememberSkill(p.skill)" class="ap-remember" title="勾选后该技能在本会话内不再询问">
-                  <input type="checkbox" :checked="rememberOf(p.id)" @change="onToggleRemember(p.id, $event)" />
-                  <span>本会话不再询问</span>
-                </label>
-                <div class="ap-btns">
-                  <button class="btn-ghost" @click="decideApproval(p, false)">拒绝</button>
-                  <button class="btn-primary" @click="decideApproval(p, true)">批准</button>
-                </div>
-              </div>
-              <div v-if="approvals.length > 1" class="ap-batch">
-                <button class="btn-ghost" :disabled="selectedCount === 0" @click="batchDecide(false)">
-                  拒绝选中{{ selectedCount ? ` (${selectedCount})` : "" }}
-                </button>
-                <button class="btn-primary" :disabled="selectedCount === 0" @click="batchDecide(true)">
-                  批准选中{{ selectedCount ? ` (${selectedCount})` : "" }}
-                </button>
-              </div>
-            </div>
-          </section>
-
-          <!-- 进行中 -->
-          <section v-if="runningTasks.length" class="panel">
-            <div class="panel-head">
-              <span class="panel-title">
-                <YbIcon name="spinner" :size="12" spin />进行中
-                <span class="count yb-num">{{ runningTasks.length }}</span>
-              </span>
-              <button class="link-btn" @click="openTasks">查看</button>
-            </div>
-            <div class="panel-body">
-              <button v-for="t in runningTasks" :key="t.id" class="run-row" @click="openTasks">
-                <span class="run-dot" />
-                <span class="run-main">
-                  <strong>{{ t.label }}</strong>
-                  <span>{{ t.prompt }}</span>
-                </span>
-                <span class="run-time">{{ elapsedSince(t.created_at) }}</span>
-              </button>
-            </div>
-          </section>
-
-          <!-- 插件一瞥卡 -->
-          <section v-for="w in widgets" :key="w.panel" class="panel">
-            <div class="panel-head">
-              <span class="panel-title">{{ w.title }}</span>
-              <button v-if="w.open" class="link-btn" @click="openWidget(w)">打开</button>
-            </div>
-            <div class="panel-body w-body">
-              <SchemaPanel :panel="w.panel" :schema="widgetSchema(w)" :data="widgetData(w)" />
-            </div>
-          </section>
-        </div>
-      </aside>
     </div>
 
     <!-- 常驻输入条：提交后切对话页看回复 -->
@@ -760,6 +759,111 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   background: var(--yb-content-bg);
+}
+
+/* ---- 主屏 widget 网格：2 列卡片（macOS 通知中心语言） ---- */
+.w-grid {
+  flex-shrink: 0;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  padding: 0 var(--yb-space-5) var(--yb-space-4);
+}
+.w-card {
+  box-sizing: border-box;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--yb-card-border);
+  border-radius: var(--yb-card-radius);
+  background: var(--yb-card-bg);
+  box-shadow: var(--yb-shadow-1);
+}
+.w-card.w-wide {
+  grid-column: 1 / -1;
+}
+.w-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--yb-fs-sm);
+  font-weight: var(--yb-fw-bold);
+  color: var(--yb-text-dim);
+  letter-spacing: 0.02em;
+}
+.w-card-title .link-btn {
+  margin-left: auto;
+  font-size: var(--yb-fs-sm);
+}
+.w-card-body {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  margin: 0 -4px;
+  padding: 0 4px;
+}
+/* 时钟卡：大字时间 + 副行日期（右上角一抹天青） */
+.w-clock {
+  justify-content: center;
+  background:
+    radial-gradient(120% 140% at 90% -20%, rgba(var(--yb-c-sky-rgb), 0.12), transparent 55%),
+    var(--yb-card-bg);
+}
+.w-clock-time {
+  font-size: 38px;
+  font-weight: var(--yb-fw-bold);
+  line-height: 1.05;
+  letter-spacing: 0.01em;
+  color: var(--yb-text);
+}
+.w-clock-sub {
+  font-size: var(--yb-fs-sm);
+  color: var(--yb-text-dim);
+}
+/* 今日概览卡 */
+.w-ov-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.w-ov {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.w-ov strong {
+  min-width: 30px;
+  font-size: 24px;
+  font-weight: var(--yb-fw-bold);
+  line-height: 1;
+  color: var(--yb-accent-deep);
+}
+.w-ov em {
+  font-style: normal;
+  font-size: var(--yb-fs-md);
+  color: var(--yb-text-dim);
+}
+.w-quiet {
+  font-size: var(--yb-fs-md);
+  color: var(--yb-text-dim);
+  line-height: 1.4;
+}
+/* 待批准：琥珀强调语义保留（全页唯一允许处） */
+.w-pending .w-card-title {
+  color: var(--yb-amber);
+}
+.w-card .count {
+  margin-left: 2px;
+  padding: 0 7px;
+  border-radius: var(--yb-radius-pill);
+  background: var(--yb-well);
+  font-size: var(--yb-fs-sm);
 }
 
 /* ---- 页头 ---- */
