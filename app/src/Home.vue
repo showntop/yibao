@@ -211,14 +211,11 @@ function close() {
   gap: 8px;
   min-width: 0;
 }
-/* 顶栏品牌 = 天青鹅蛋角色本体（Avatar compact 20px，自带状态灯/呼吸） */
+/* 顶栏品牌 = 天青鹅蛋角色本体（Avatar compact 20px，自带状态灯/呼吸），
+ * 纯角色无徽章底 */
 .tb-brand {
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 7px;
-  background: rgba(var(--yb-c-sky-rgb), 0.08);
   user-select: none;
   cursor: default;
 }
