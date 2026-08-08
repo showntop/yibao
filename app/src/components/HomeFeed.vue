@@ -966,8 +966,8 @@ onUnmounted(() => {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  /* 无右列时限宽：宽窗下单行拉到 1000px 会难扫读（macOS 列表同样限宽） */
-  max-width: 760px;
+  /* 主屏无右副列了——时间线占满主体（之前限宽是为避免与右列争空间） */
+  max-width: none;
 }
 /* ---- 时间线头：分段控件 + 全部已读 ---- */
 .tl-head {
