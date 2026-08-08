@@ -90,7 +90,9 @@ const html = computed(() => (props.role === "ai" && !props.typing ? renderMarkdo
   border: 1px solid var(--yb-surface-border);
   color: var(--yb-text);
   align-self: flex-start;
-  box-shadow: var(--yb-shadow-soft);
+  box-shadow:
+    0 1px 2px rgba(var(--yb-c-slate-rgb), 0.05),
+    0 2px 8px rgba(var(--yb-c-slate-rgb), 0.08);
   /* 尾巴角：靠左下的角收窄，拟小尾巴 */
   border-radius: var(--yb-radius-md) var(--yb-radius-md) var(--yb-radius-md) var(--yb-radius-xs);
 }

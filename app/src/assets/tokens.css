@@ -129,8 +129,8 @@
   --yb-border-base: rgba(var(--yb-c-slate-rgb), 0.1);
   --yb-border-strong: rgba(var(--yb-c-slate-rgb), 0.18);
   --yb-line: rgba(var(--yb-c-slate-rgb), 0.08);
-  /* 玻璃边：浅色下深细灰边（白底可见，避免小窗融在白底里），深色下白透明 */
-  --yb-glass-border: rgba(54, 78, 102, 0.10);
+  /* 玻璃边：浅色下深细灰边（白底可见），深色下白透明 */
+  --yb-glass-border: rgba(54, 78, 102, 0.18);
 
   /* ---- 主色 ---- */
   --yb-accent: var(--yb-c-sky-500);
@@ -155,9 +155,10 @@
   --yb-shadow-1: 0 1px 2px rgba(var(--yb-c-slate-rgb), 0.06);
   --yb-shadow-2: 0 2px 8px rgba(var(--yb-c-slate-rgb), 0.08);
   --yb-shadow-3:
-    0 1px 2px rgba(var(--yb-c-slate-rgb), 0.05),
-    0 10px 32px rgba(var(--yb-c-slate-rgb), 0.18),
-    0 24px 60px -12px rgba(var(--yb-c-slate-rgb), 0.14);
+    0 1px 2px rgba(var(--yb-c-slate-rgb), 0.06),
+    0 4px 12px rgba(var(--yb-c-slate-rgb), 0.10),
+    0 16px 40px rgba(var(--yb-c-slate-rgb), 0.16),
+    0 32px 80px -16px rgba(var(--yb-c-slate-rgb), 0.12);
   --yb-shadow-sm: var(--yb-shadow-1); /* 原被 App.vue:814 引用但从未定义 */
   --yb-shadow-soft: var(--yb-shadow-2);
   --yb-shadow: var(--yb-shadow-3);
@@ -271,8 +272,8 @@
   --yb-think: var(--yb-state-think);
   --yb-work: var(--yb-state-work);
   --yb-say: var(--yb-state-say);
-  /* 对话窗壳背景：浅色实色白 + border + shadow 浮起；告别白底融在一起 */
-  --yb-shell-bg: #ffffff;
+  /* 对话窗壳背景：极淡灰白（与桌面纯白差一阶，让小窗"切割"出来）+ shadow 浮起 */
+  --yb-shell-bg: #fafbfd;
   --yb-surface: rgba(255, 255, 255, 0.78);
   --yb-surface-solid: #fbfdff;
   --yb-surface-border: var(--yb-border-base);
