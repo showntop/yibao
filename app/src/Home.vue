@@ -7,6 +7,7 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import YbIcon from "./components/YbIcon.vue";
+import Avatar from "./components/Avatar.vue";
 import CommandPalette, { type PaletteTab } from "./components/CommandPalette.vue";
 import HomeChat from "./components/HomeChat.vue";
 import HomePlugins from "./components/HomePlugins.vue";
@@ -110,8 +111,11 @@ function close() {
     <header class="topbar">
       <div class="titlebar-safe" data-tauri-drag-region></div>
       <div class="topbar-row">
-        <div class="topbar-brand" data-tauri-drag-region>
-          <YbIcon class="tb-brand-ic" name="dumpling" :size="18" />
+        <div class="topbar-brand">
+          <!-- 天青鹅蛋角色（译宝本体）：compact 模式带状态灯/呼吸，顶栏品牌即角色 -->
+          <span class="tb-brand" data-tauri-drag-region>
+            <Avatar :state="railState" :size="20" :observing="observing" />
+          </span>
           <span class="tb-name" data-tauri-drag-region>译宝</span>
           <span class="tb-state" :class="railState" data-tauri-drag-region>
             <i class="tb-dot" />{{ stateText }}
@@ -207,10 +211,22 @@ function close() {
   gap: 8px;
   min-width: 0;
 }
-.tb-brand-ic {
-  color: var(--yb-accent);
-  /* 团子光晕：让品牌在顶栏有「发光」质感 */
-  filter: drop-shadow(0 0 5px rgba(var(--yb-c-sky-rgb), 0.35));
+/* 顶栏品牌 = 天青鹅蛋角色本体（Avatar compact 20px，自带状态灯/呼吸） */
+.tb-brand {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  background: rgba(var(--yb-c-sky-rgb), 0.08);
+  user-select: none;
+  cursor: default;
+}
+.tb-brand :deep(.av) {
+  cursor: default;
+}
+.tb-brand :deep(.av:active) {
+  cursor: default;
 }
 .tb-name {
   font-size: var(--yb-fs-lg);
