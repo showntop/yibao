@@ -4,18 +4,18 @@
 // 顶栏留 --yb-titlebar-h 安全区给浮在内容上的红绿灯；导航从「侧栏强 tab」改为「顶栏 tabs +
 // ⌘K 命令面板」（Raycast/Linear 风格：找页面用搜/说，不是点）。
 // 各页常驻挂载（v-show 切显隐）：事件订阅不断、气泡/面板状态切页不丢。
-import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import YbIcon from "./components/YbIcon.vue";
 import CommandPalette from "./components/CommandPalette.vue";
-import HomeFeed from "./components/HomeFeed.vue";
 import HomeChat from "./components/HomeChat.vue";
 import HomePlugins from "./components/HomePlugins.vue";
 import DataView from "./components/DataView.vue";
 import SettingsView from "./components/SettingsView.vue";
 import { onPendingConfirms, onSettings, getSettingsOnce, type SettingsValues } from "./lib/brain";
 
-type Tab = "home" | "chat" | "plugins" | "data" | "settings";
+// 主屏（home）= 对话 + 信息面板的融合体（AI 原生：对话是主入口，动态/回顾/插件一瞥都在右侧）
+type Tab = "home" | "plugins" | "data" | "settings";
 type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
 
 const tab = ref<Tab>("home");
@@ -31,12 +31,8 @@ const stateText = computed(
     success: "完成", error: "出错了",
   }[railState.value]),
 );
-// 主屏 → 对话页的草稿传递（Feed 点击带上下文追问）
-const chatDraft = ref("");
-// 待批准数：顶栏徽标（收件箱有待处理的事，一眼可见）
+// 待批准数：顶栏「主屏」徽标（收件箱有待处理的事，一眼可见）
 const approvalCount = ref(0);
-// 未读动态数：顶栏徽标（HomeFeed 经 emit 同步，stats.unread）
-const feedUnread = ref(0);
 // 感知观察中叠加点（顶栏状态点）
 const observing = ref(false);
 function syncObserving(s: SettingsValues | null) {
@@ -56,15 +52,14 @@ function onPaletteNavigate(t: Tab) {
   paletteOpen.value = false;
 }
 
-// 全局快捷键：⌘K 命令面板；⌘1-4 / ⌘, 直接切页（macOS 标准）
-const NAV: { id: Tab; label: string; icon: "inbox" | "chat" | "plug" | "doc"; shortcut: string }[] = [
+// 全局快捷键：⌘K 命令面板；⌘1-3 / ⌘, 直接切页（macOS 标准）
+const NAV: { id: Tab; label: string; icon: "inbox" | "plug" | "doc"; shortcut: string }[] = [
   { id: "home", label: "主屏", icon: "inbox", shortcut: "1" },
-  { id: "chat", label: "对话", icon: "chat", shortcut: "2" },
-  { id: "plugins", label: "插件", icon: "plug", shortcut: "3" },
-  { id: "data", label: "数据", icon: "doc", shortcut: "4" },
+  { id: "plugins", label: "插件", icon: "plug", shortcut: "2" },
+  { id: "data", label: "数据", icon: "doc", shortcut: "3" },
 ];
 const TAB_SHORTCUTS: Record<string, Tab> = {
-  "1": "home", "2": "chat", "3": "plugins", "4": "data",
+  "1": "home", "2": "plugins", "3": "data",
 };
 function onGlobalKeydown(e: KeyboardEvent) {
   if (!e.metaKey && !e.ctrlKey) return;
@@ -86,8 +81,8 @@ function onGlobalKeydown(e: KeyboardEvent) {
   }
 }
 
-// 徽标：主屏显未读动态数，其次待批准数（都为 0 则不显）
-const homeBadge = computed(() => (feedUnread.value > 0 ? feedUnread.value : approvalCount.value));
+// 徽标：主屏显待批准数（收件箱有待你动手的事）
+const homeBadge = computed(() => approvalCount.value);
 
 let unApprovals: (() => void) | null = null;
 let unSettings: (() => void) | null = null;
@@ -102,17 +97,6 @@ onUnmounted(() => {
   unSettings?.();
   window.removeEventListener("keydown", onGlobalKeydown);
 });
-
-function onFeedChat(draft?: string) {
-  tab.value = "chat";
-  if (!draft) {
-    chatDraft.value = "";
-    return;
-  }
-  // 同一条动态重复点击也要重新填入：先清空、下一拍再设回，强制触发 InputBar 的 watch
-  chatDraft.value = "";
-  void nextTick(() => (chatDraft.value = draft));
-}
 
 function close() {
   // 收起大窗 = 隐藏 + 回小窗模式（Rust 侧还原宠物窗/面板浮窗）
@@ -165,10 +149,9 @@ function close() {
     </header>
 
     <!-- 内容区：各页常驻挂载，切页只切显隐。
-         reminder / 新面板打开 → 自动切到对应页；主屏提交/点动态 → 切对话页 -->
+         主屏 = 对话 + 信息面板融合体（AI 交互主入口）；插件面板打开 → 自动切插件页 -->
     <main class="content">
-      <HomeFeed v-show="tab === 'home'" @chat="onFeedChat" @unread="feedUnread = $event" />
-      <HomeChat v-show="tab === 'chat'" :draft="chatDraft" @state="chatState = $event" @open-panel="tab = 'plugins'" @reminder="tab = 'chat'" />
+      <HomeChat v-show="tab === 'home'" @state="chatState = $event" @open-panel="tab = 'plugins'" @reminder="tab = 'home'" />
       <HomePlugins v-show="tab === 'plugins'" @state="panelState = $event" @panel="tab = 'plugins'" />
       <DataView v-show="tab === 'data'" />
       <SettingsView v-show="tab === 'settings'" />

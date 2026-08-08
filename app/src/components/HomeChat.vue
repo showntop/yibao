@@ -10,6 +10,7 @@ import InputBar from "./InputBar.vue";
 import Bubble from "./Bubble.vue";
 import PermissionsBanner from "./PermissionsBanner.vue";
 import SetupWizard from "./SetupWizard.vue";
+import HomeInfoPanel from "./HomeInfoPanel.vue";
 import {
   onBrainEvent,
   onBrainStatus,
@@ -43,10 +44,27 @@ function pushWarn(text: string) {
   bubbles.value.push({ role: "ai", text, icon: "alert" });
 }
 
-// state：同步给父级侧边栏团子；openPanel：关联气泡点击 → 父级切插件页；reminder：父级切回本页
+// state：同步给父级顶栏状态；openPanel：关联气泡点击 → 父级切插件页；reminder：父级切回本页
 const emit = defineEmits<{ state: [AvatarState]; openPanel: []; reminder: [] }>();
-// draft：主屏 Feed 点击带过来的自包含草稿，直接转给 InputBar（它自己 watch 填入+聚焦）
-defineProps<{ draft?: string }>();
+// draft：主屏 Feed/信息面板点击带过来的自包含草稿，直接转给 InputBar（它自己 watch 填入+聚焦）
+const props = defineProps<{ draft?: string }>();
+
+// 本地草稿：父级 draft 单向同步；右侧信息面板点动态也经此填入（强制重置触发 InputBar watch）
+const draftRef = ref<string | undefined>(undefined);
+watch(
+  () => props.draft,
+  (d) => {
+    if (d) {
+      draftRef.value = "";
+      void nextTick(() => (draftRef.value = d));
+    }
+  },
+);
+/** 右侧信息面板点动态/回顾 → 带上下文进输入框（先清空、下一拍设回，强制触发）。 */
+function onInfoChat(d: string) {
+  draftRef.value = "";
+  void nextTick(() => (draftRef.value = d));
+}
 
 const state = ref<AvatarState>("idle");
 const bubbles = ref<BubbleMsg[]>([]);
@@ -320,63 +338,77 @@ onUnmounted(() => {
 
 <template>
   <div class="chat-page">
-    <header class="page-head" data-tauri-drag-region>
-      <span class="pg-title" data-tauri-drag-region>对话</span>
-      <span class="status" :class="state"><i class="dot" />{{ statusText }}</span>
-    </header>
+    <!-- 左：对话主区（AI 交互主入口） -->
+    <div class="chat-main">
+      <header class="page-head" data-tauri-drag-region>
+        <span class="pg-title" data-tauri-drag-region>对话</span>
+        <span class="status" :class="state"><i class="dot" />{{ statusText }}</span>
+      </header>
 
-    <SetupWizard v-if="setupNeeded" :model="setupCfg.model" :base-url="setupCfg.baseUrl" :voice="setupCfg.voice" @saved="onSetupSaved" />
+      <SetupWizard v-if="setupNeeded" :model="setupCfg.model" :base-url="setupCfg.baseUrl" :voice="setupCfg.voice" @saved="onSetupSaved" />
 
-    <template v-if="!setupNeeded">
-    <PermissionsBanner v-if="missingPerms && perms" :perms="perms" />
+      <template v-if="!setupNeeded">
+      <PermissionsBanner v-if="missingPerms && perms" :perms="perms" />
 
-    <div class="bubbles" ref="bubblesRef">
-      <div v-if="!bubbles.length && !showTyping" class="empty-hint">
-        <Avatar :state="state" :size="56" />
-        <p>叫我做什么都行～</p>
-        <div class="chips">
-          <button v-for="c in suggestions" :key="c" class="chip" @click="submit(c)">{{ c }}</button>
+      <div class="bubbles" ref="bubblesRef">
+        <div v-if="!bubbles.length && !showTyping" class="empty-hint">
+          <Avatar :state="state" :size="56" />
+          <p>叫我做什么都行～</p>
+          <div class="chips">
+            <button v-for="c in suggestions" :key="c" class="chip" @click="submit(c)">{{ c }}</button>
+          </div>
         </div>
-      </div>
-      <template v-for="(b, i) in bubbles" :key="i">
-        <!-- 「⇢ 协作」关联气泡：可点击，直达插件页（派生入口，§主/子 agent 关联） -->
-        <button v-if="b.panelLink" class="assoc" @click="emit('openPanel')">
-          {{ b.text }}<span class="assoc-arrow">前往 ›</span>
-        </button>
-        <!-- 过程行：图标随状态（进行中转圈 / 成功 / 失败），点「详情」展开参数与结果 -->
-        <div v-else-if="b.proc" class="proc">
-          <button
-            class="proc-line"
-            :class="{ done: b.proc.done && procOk(b.proc), fail: b.proc.done && !procOk(b.proc) }"
-            :aria-expanded="b.proc.expanded"
-            @click="b.proc && (b.proc.expanded = !b.proc.expanded)"
-          >
-            <YbIcon
-              class="proc-ic"
-              :name="b.proc.done ? (procOk(b.proc) ? 'check' : 'x') : 'spinner'"
-              :spin="!b.proc.done"
-              :size="13"
-            />
-            <span class="proc-label">{{ b.proc.label }}{{ b.proc.done ? procErrSuffix(b.proc) : "" }}</span>
-            <span class="proc-toggle">{{ b.proc.expanded ? "收起" : "详情" }}</span>
+        <template v-for="(b, i) in bubbles" :key="i">
+          <!-- 「⇢ 协作」关联气泡：可点击，直达插件页（派生入口，§主/子 agent 关联） -->
+          <button v-if="b.panelLink" class="assoc" @click="emit('openPanel')">
+            {{ b.text }}<span class="assoc-arrow">前往 ›</span>
           </button>
-          <pre v-if="b.proc.expanded" class="proc-detail">{{ procText(b.proc) }}</pre>
-        </div>
-        <Bubble v-else :role="b.role" :text="b.text" :streaming="i === streamingIdx" :halted="b.halted" :icon="b.icon" />
+          <!-- 过程行：图标随状态（进行中转圈 / 成功 / 失败），点「详情」展开参数与结果 -->
+          <div v-else-if="b.proc" class="proc">
+            <button
+              class="proc-line"
+              :class="{ done: b.proc.done && procOk(b.proc), fail: b.proc.done && !procOk(b.proc) }"
+              :aria-expanded="b.proc.expanded"
+              @click="b.proc && (b.proc.expanded = !b.proc.expanded)"
+            >
+              <YbIcon
+                class="proc-ic"
+                :name="b.proc.done ? (procOk(b.proc) ? 'check' : 'x') : 'spinner'"
+                :spin="!b.proc.done"
+                :size="13"
+              />
+              <span class="proc-label">{{ b.proc.label }}{{ b.proc.done ? procErrSuffix(b.proc) : "" }}</span>
+              <span class="proc-toggle">{{ b.proc.expanded ? "收起" : "详情" }}</span>
+            </button>
+            <pre v-if="b.proc.expanded" class="proc-detail">{{ procText(b.proc) }}</pre>
+          </div>
+          <Bubble v-else :role="b.role" :text="b.text" :streaming="i === streamingIdx" :halted="b.halted" :icon="b.icon" />
+        </template>
+        <Bubble v-if="showTyping" role="ai" text="" typing />
+      </div>
+
+      <div class="input-slot">
+        <InputBar :busy="busy" :listening="state === 'listen'" :draft="draftRef" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
+      </div>
       </template>
-      <Bubble v-if="showTyping" role="ai" text="" typing />
     </div>
 
-    <div class="input-slot">
-      <InputBar :busy="busy" :listening="state === 'listen'" :draft="draft" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
-    </div>
-    </template>
+    <!-- 右：信息面板（AI 此刻 / 插件入口 / 动态 / 回顾） -->
+    <HomeInfoPanel @chat="onInfoChat" />
   </div>
 </template>
 
 <style scoped>
 .chat-page {
   height: 100%;
+  display: flex;
+  flex-direction: row;
+  background: var(--yb-content-bg);
+}
+/* 左：对话主区 */
+.chat-main {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   background: var(--yb-content-bg);

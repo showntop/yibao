@@ -9,7 +9,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import YbIcon from "./YbIcon.vue";
 import { clearBrainData, openDataDir, restartBrain } from "../lib/brain";
 
-export type PaletteTab = "home" | "chat" | "plugins" | "data" | "settings";
+export type PaletteTab = "home" | "plugins" | "data" | "settings";
 
 const props = defineProps<{ open: boolean }>();
 const emit = defineEmits<{ close: []; navigate: [tab: PaletteTab]; collapse: [] }>();
@@ -31,9 +31,8 @@ interface Cmd {
 
 const PAGES: { id: PaletteTab; label: string; icon: PaletteIcon; shortcut: string }[] = [
   { id: "home", label: "主屏", icon: "inbox", shortcut: "⌘1" },
-  { id: "chat", label: "对话", icon: "chat", shortcut: "⌘2" },
-  { id: "plugins", label: "插件", icon: "plug", shortcut: "⌘3" },
-  { id: "data", label: "数据", icon: "doc", shortcut: "⌘4" },
+  { id: "plugins", label: "插件", icon: "plug", shortcut: "⌘2" },
+  { id: "data", label: "数据", icon: "doc", shortcut: "⌘3" },
   { id: "settings", label: "设置", icon: "gear", shortcut: "⌘," },
 ];
 
