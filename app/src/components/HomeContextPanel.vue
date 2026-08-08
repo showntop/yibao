@@ -480,16 +480,21 @@ onUnmounted(() => {
   font-family: inherit;
   text-align: left;
   cursor: pointer;
-  transition: background var(--yb-dur-fast) var(--yb-ease-out);
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
 .cp-recap:hover {
-  background: var(--yb-row-hover);
+  background: var(--yb-accent-soft);
+}
+.cp-recap:hover svg {
+  color: var(--yb-accent);
+  transform: translateX(2px);
 }
 .cp-recap svg {
   flex-shrink: 0;
   width: 11px;
   height: 11px;
   color: var(--yb-text-faint);
+  transition: transform var(--yb-dur-fast) var(--yb-ease-out), color var(--yb-dur-fast) var(--yb-ease-out);
 }
 .cp-recap-day {
   flex-shrink: 0;

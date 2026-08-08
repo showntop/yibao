@@ -1,18 +1,24 @@
 <script setup lang="ts">
 /* AgentBrain — 智能体栏：AI 的「内心」人格化可视化。
  *
- * 大团子角色居中 = AI 本体；周围一圈记忆词云 = 大脑里流动的想法
+ * 大团子角色居中 = AI 本体；周围记忆词云 = 大脑里流动的想法
  * （记忆条目提取关键词，缓慢漂浮 + 呼吸 + 深浅层次，像星云）。
- * 点击记忆词 → 带完整记忆进对话（「关于『XXX』：」）。
- * 底部：记忆 / 技能计数（它能记得什么、能干什么）。
+ * 人格化细节：
+ * - 状态文案多样化（性格化台词，状态切换换一句）
+ * - think 态大脑光晕转紫 + 词云加速（"在思考"的感觉）
+ * - 点击角色 → 说一句台词（本地气泡，不打扰对话）
+ * - 点击记忆词 → 带完整记忆进对话
+ * - 记忆按命名空间分类（全部 / 底座 / 插件）可切换
+ * - 空记忆时星云种子 + 引导语
  */
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import Avatar from "./Avatar.vue";
 import YbIcon from "./YbIcon.vue";
-import { getMemListOnce, type MemItem } from "../lib/brain";
+import { getMemListOnce, onBrainEvent, type MemItem } from "../lib/brain";
 
-defineProps<{ state: "idle" | "listen" | "think" | "work" | "say" | "success" | "error" }>();
+type AgentState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
+const props = defineProps<{ state: AgentState }>();
 const emit = defineEmits<{ chat: [draft: string] }>();
 
 interface PluginInfo { id: string; name: string }
@@ -32,19 +38,23 @@ const plugins = ref<PluginInfo[]>([]);
 const loaded = ref(false);
 const memFailed = ref(false);
 
-onMounted(async () => {
-  const m = await getMemListOnce();
-  memories.value = m.items;
-  memFailed.value = m.failed ?? false;
-  loaded.value = true;
-  plugins.value = await invoke<PluginInfo[]>("list_plugins").catch(() => []);
+// ---- 记忆命名空间分类 ----
+const memFilter = ref<string | null>(null); // null=全部；""=底座；其余=插件 ns
+const memNamespaces = computed(() => {
+  const map = new Map<string, string>(); // ns → label
+  for (const m of memories.value) {
+    if (!map.has(m.ns)) map.set(m.ns, m.label || "译宝");
+  }
+  return [...map.entries()];
 });
-onUnmounted(() => {});
+const visibleMemories = computed(() =>
+  memFilter.value === null ? memories.value : memories.value.filter((m) => m.ns === memFilter.value),
+);
 
-/** 记忆 → 词云词：文本拆词（标点/空白切分），取前 2 段拼合；随机位置/尺寸/节奏。 */
+/** 记忆 → 词云词。 */
 const words = computed<MemWord[]>(() => {
   const out: MemWord[] = [];
-  for (const m of memories.value.slice(0, 20)) {
+  for (const m of visibleMemories.value.slice(0, 22)) {
     const parts = m.text
       .replace(/[，。！？、；：""''（）【】\n]/g, " ")
       .split(/\s+/)
@@ -66,44 +76,121 @@ const words = computed<MemWord[]>(() => {
   return out;
 });
 
-const memoryCount = computed(() => memories.value.length);
+const memoryCount = computed(() => visibleMemories.value.length);
 const skillCount = computed(() => plugins.value.length);
+
+// ---- 实时增词：轮询（记忆不频繁变化，45s 一次）+ 对话事件后刷新 ----
+let memTimer: ReturnType<typeof setInterval> | null = null;
+let unBrain: (() => void) | null = null;
+async function refreshMem() {
+  const m = await getMemListOnce();
+  memories.value = m.items;
+  memFailed.value = m.failed;
+  loaded.value = true;
+}
+onMounted(async () => {
+  await refreshMem();
+  plugins.value = await invoke<PluginInfo[]>("list_plugins").catch(() => []);
+  memTimer = setInterval(() => void refreshMem(), 45000);
+  // 对话有结果/动作后可能沉淀记忆 → 顺手刷新
+  unBrain = await onBrainEvent((e) => {
+    if (e.kind === "final_reply" || e.kind === "action_result") void refreshMem();
+  });
+});
+onUnmounted(() => {
+  if (memTimer !== null) clearInterval(memTimer);
+  unBrain?.();
+});
+
+// ---- 状态人格化文案：性格化台词，状态切换换一句 ----
+const stateIdx = ref(0);
+const STATE_LINES: Record<string, string[]> = {
+  idle: ["待命中", "在呢～", "随时听候"],
+  listen: ["聆听中…", "在听呢"],
+  think: ["思考中…", "让我想想…"],
+  work: ["操作中…", "正在办"],
+  say: ["说话中…", "在说呢"],
+  success: ["搞定！", "完成！"],
+  error: ["出错了…", "哎哟"],
+};
+const stateText = computed(() => {
+  const lines = STATE_LINES[props.state] ?? STATE_LINES.idle;
+  return lines[stateIdx.value % lines.length];
+});
+watch(
+  () => props.state,
+  () => { stateIdx.value += 1; },
+);
+
+// ---- 角色点击：说一句台词（本地气泡，不打扰对话）----
+const GREETINGS = [
+  "在呢～叫我做什么都行",
+  "今天想干点啥？",
+  "我看到你最近在忙…要不要一起整理下？",
+  "记住的东西都在这啦，点一下就能聊",
+];
+const line = ref("");
+let lineTimer: ReturnType<typeof setTimeout> | null = null;
+function onAgentClick() {
+  line.value = GREETINGS[Math.floor(Math.random() * GREETINGS.length)];
+  if (lineTimer !== null) clearTimeout(lineTimer);
+  lineTimer = setTimeout(() => { line.value = ""; }, 3200);
+}
+onUnmounted(() => { if (lineTimer !== null) clearTimeout(lineTimer); });
 
 /** 点记忆词 → 带完整记忆进对话。 */
 function ask(w: MemWord) {
   emit("chat", `关于「${w.full.length > 40 ? w.full.slice(0, 40) + "…" : w.full}」：`);
 }
+
+/** 技能点击 → 让 AI 打开它。 */
+function launchSkill(p: PluginInfo) {
+  emit("chat", `打开${p.name}面板`);
+}
+
+// ---- 空态星云种子（无记忆时的引导粒子）----
+const SEEDS = Array.from({ length: 6 }, () => ({
+  x: 40 + Math.random() * 120,
+  y: 45 + Math.random() * 100,
+  delay: Math.random() * 3,
+  dur: 2.5 + Math.random() * 2,
+}));
 </script>
 
 <template>
-  <aside class="agent">
+  <aside class="agent" :class="state">
     <!-- 大脑：角色 + 记忆词云（人格化核心） -->
     <div class="brain">
       <div class="brain-glow" />
+      <!-- 空态星云种子：几颗闪烁的星，暗示大脑正在形成 -->
+      <span v-if="loaded && !memoryCount && !memFailed" v-for="s in SEEDS" :key="s.x + s.y" class="seed" :style="{ left: s.x + 'px', top: s.y + 'px', animationDelay: s.delay + 's', animationDuration: s.dur + 's' }" />
       <!-- 记忆词：星云式漂浮 -->
-      <button
-        v-for="(w, i) in words"
-        :key="i"
-        class="mem-word"
-        :class="`t${w.tone}`"
-        :title="w.full"
-        :style="{
-          fontSize: w.size + 'px',
-          '--wx': w.x + 'px',
-          '--wy': w.y + 'px',
-          '--wd': w.delay + 's',
-          '--wt': w.dur + 's',
-        }"
-        @click="ask(w)"
-      >{{ w.text }}</button>
-      <!-- 角色本体（呼吸核心） -->
-      <div class="brain-core">
+      <span v-for="(w, i) in words" :key="i" class="mem-wrap" :style="{ '--wx': w.x + 'px', '--wy': w.y + 'px', '--wd': w.delay + 's', '--wt': w.dur + 's' }">
+        <button
+          class="mem-word"
+          :class="`t${w.tone}`"
+          :style="{ fontSize: w.size + 'px' }"
+          :title="w.full"
+          @click="ask(w)"
+        >{{ w.text }}</button>
+      </span>
+      <!-- 角色本体（呼吸核心），点击说台词 -->
+      <div class="brain-core" @click="onAgentClick">
         <Avatar :state="state" :size="76" />
+        <transition name="say-line">
+          <span v-if="line" class="say-line">{{ line }}</span>
+        </transition>
       </div>
     </div>
 
     <div class="agent-name">译宝</div>
-    <div class="agent-state" :class="state"><i class="ag-dot" />{{ state === 'idle' ? '待命中' : state === 'think' ? '思考中' : state === 'work' ? '操作中' : state === 'listen' ? '聆听中' : state === 'say' ? '说话中' : '出错了' }}</div>
+    <div class="agent-state" :class="state"><i class="ag-dot" />{{ stateText }}</div>
+
+    <!-- 记忆分类标签（全部 / 底座 / 插件） -->
+    <div v-if="memNamespaces.length > 1" class="agent-filters">
+      <button class="ag-filter" :class="{ on: memFilter === null }" @click="memFilter = null">全部</button>
+      <button v-for="[ns, label] in memNamespaces" :key="ns" class="ag-filter" :class="{ on: memFilter === ns }" @click="memFilter = ns">{{ label }}</button>
+    </div>
 
     <div class="agent-meta">
       <div class="ag-item" :title="memFailed ? '记忆后端暂不可用' : '它记得你什么'">
@@ -116,6 +203,14 @@ function ask(w: MemWord) {
         <span>技能</span>
         <b class="yb-num">{{ loaded ? skillCount : "…" }}</b>
       </div>
+    </div>
+
+    <!-- 技能入口：点击让 AI 打开 -->
+    <div v-if="plugins.length" class="agent-skills">
+      <button v-for="p in plugins.slice(0, 4)" :key="p.id" class="ag-skill" @click="launchSkill(p)">
+        {{ p.name }}
+      </button>
+      <span v-if="plugins.length > 4" class="ag-more">+{{ plugins.length - 4 }}</span>
     </div>
 
     <p v-if="loaded && !memoryCount && !memFailed" class="agent-hint">
@@ -148,7 +243,7 @@ function ask(w: MemWord) {
   height: 200px;
   flex-shrink: 0;
 }
-/* 大脑光晕：accent 星云底，缓慢呼吸 */
+/* 大脑光晕：accent 星云底，缓慢呼吸；think 态转紫 + 加速（"在思考"） */
 .brain-glow {
   position: absolute;
   inset: 8px;
@@ -157,22 +252,74 @@ function ask(w: MemWord) {
     radial-gradient(60% 60% at 50% 42%, rgba(var(--yb-c-sky-rgb), 0.16), rgba(var(--yb-c-sky-rgb), 0) 70%);
   filter: blur(2px);
   animation: glow-breathe 5s ease-in-out infinite;
+  transition: background var(--yb-dur-fast) var(--yb-ease-out);
 }
-/* 角色：中心，在词云之下（词浮在角色周围） */
+.agent.think .brain-glow {
+  background:
+    radial-gradient(60% 60% at 50% 42%, rgba(142, 124, 240, 0.20), rgba(142, 124, 240, 0) 70%);
+  animation-duration: 2.4s;
+}
+/* 角色：中心，词浮在周围 */
 .brain-core {
   position: absolute;
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
   z-index: 1;
-  pointer-events: none;
+  cursor: pointer;
+}
+/* 台词气泡：点击角色浮现 */
+.say-line {
+  position: absolute;
+  left: 50%;
+  bottom: -22px;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: 180px;
+  padding: 4px 10px;
+  border-radius: var(--yb-radius-sm);
+  background: var(--yb-card-bg);
+  border: 1px solid var(--yb-surface-border);
+  box-shadow: var(--yb-shadow-2);
+  color: var(--yb-text);
+  font-size: var(--yb-fs-sm);
+  line-height: 1.4;
+  white-space: nowrap;
+  text-align: center;
+  z-index: 2;
+}
+.say-line-enter-active,
+.say-line-leave-active {
+  transition: opacity var(--yb-dur-fast) var(--yb-ease-out), transform var(--yb-dur-fast) var(--yb-ease-out);
+}
+.say-line-enter-from,
+.say-line-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(4px);
+}
+.say-line-enter-to {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }
 
 /* ---- 记忆词云 ---- */
-.mem-word {
+.mem-wrap {
   position: absolute;
   left: 50%;
   top: 50%;
+  transform: translate(calc(-50% + var(--wx)), calc(-50% + var(--wy)));
+  animation: word-float var(--wt) ease-in-out var(--wd) infinite;
+}
+@keyframes word-float {
+  0%, 100% {
+    transform: translate(calc(-50% + var(--wx)), calc(-50% + var(--wy)));
+  }
+  50% {
+    transform: translate(calc(-50% + var(--wx)), calc(-50% + var(--wy) - 7px));
+  }
+}
+.mem-word {
+  display: block;
   border: none;
   background: transparent;
   padding: 0;
@@ -181,28 +328,37 @@ function ask(w: MemWord) {
   font-weight: var(--yb-fw-medium);
   line-height: 1;
   cursor: pointer;
-  transform: translate(calc(-50% + var(--wx)), calc(-50% + var(--wy)));
-  animation: word-float var(--wt) ease-in-out var(--wd) infinite;
-  transition: color var(--yb-dur-fast) var(--yb-ease-out), opacity var(--yb-dur-fast) var(--yb-ease-out);
+  opacity: 0.55;
+  transition: opacity var(--yb-dur-fast) var(--yb-ease-out), transform var(--yb-dur-fast) var(--yb-ease-out);
 }
-@keyframes word-float {
-  0%, 100% {
-    transform: translate(calc(-50% + var(--wx)), calc(-50% + var(--wy)));
-    opacity: 0.45;
-  }
-  50% {
-    transform: translate(calc(-50% + var(--wx)), calc(-50% + var(--wy) - 7px));
-    opacity: 0.9;
-  }
+/* hover：放大 + 高亮（内层缩放，不与漂浮动画冲突） */
+.mem-word:hover {
+  opacity: 1;
+  transform: scale(1.18);
 }
-/* 色阶：深→浅（天青系），越深的词越「重要」 */
+/* 色阶：深→浅（天青系） */
 .mem-word.t0 { color: var(--yb-c-sky-600); }
 .mem-word.t1 { color: #5b96c4; }
 .mem-word.t2 { color: #7fb0d6; }
 .mem-word.t3 { color: #a5c8e2; }
-.mem-word:hover {
-  color: var(--yb-accent);
-  opacity: 1;
+/* think 态：词云加速（大脑活跃） */
+.agent.think .mem-wrap {
+  animation-duration: calc(var(--wt) * 0.55);
+}
+
+/* 空态星云种子 */
+.seed {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--yb-accent);
+  opacity: 0;
+  animation: seed-twinkle ease-in-out infinite;
+}
+@keyframes seed-twinkle {
+  0%, 100% { opacity: 0; transform: scale(0.6); }
+  50% { opacity: 0.7; transform: scale(1.2); }
 }
 
 /* ---- 名字与状态 ---- */
@@ -233,6 +389,35 @@ function ask(w: MemWord) {
 .agent-state.success { --dot: var(--yb-state-success); }
 .agent-state.error { --dot: var(--yb-state-error); }
 
+/* ---- 记忆分类标签 ---- */
+.agent-filters {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
+  margin-top: 2px;
+}
+.ag-filter {
+  padding: 2px 8px;
+  border: 1px solid var(--yb-border-base);
+  border-radius: var(--yb-radius-pill);
+  background: transparent;
+  color: var(--yb-text-dim);
+  font-size: var(--yb-fs-xs);
+  font-family: inherit;
+  cursor: pointer;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
+}
+.ag-filter:hover {
+  color: var(--yb-text);
+}
+.ag-filter.on {
+  background: var(--yb-accent-soft);
+  border-color: var(--yb-accent);
+  color: var(--yb-accent-deep);
+  font-weight: var(--yb-fw-medium);
+}
+
 /* ---- 记忆/技能计数 ---- */
 .agent-meta {
   display: flex;
@@ -256,6 +441,37 @@ function ask(w: MemWord) {
 .ag-item b {
   font-size: var(--yb-fs-md);
   color: var(--yb-accent-deep);
+}
+
+/* ---- 技能入口 ---- */
+.agent-skills {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
+  margin-top: 6px;
+}
+.ag-skill {
+  padding: 2px 9px;
+  border: 1px dashed var(--yb-card-border);
+  border-radius: var(--yb-radius-sm);
+  background: var(--yb-surface-2);
+  color: var(--yb-accent-deep);
+  font-size: var(--yb-fs-xs);
+  font-family: inherit;
+  cursor: pointer;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
+}
+.ag-skill:hover {
+  border-color: var(--yb-accent);
+  border-style: solid;
+  background: var(--yb-accent-soft);
+}
+.ag-more {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--yb-fs-xs);
+  color: var(--yb-text-faint);
 }
 
 /* ---- 新用户引导 ---- */
