@@ -105,6 +105,40 @@ class HealthNudge:
         return {"kind": "reminder", "type": "health_nudge", "text": "坐久了，起来活动一下吧 🧘"}
 
 
+class LateNightNudge:
+    """深夜劝睡（反应式宠物 C）：静默时段内仍连续活跃 ≥ 阈值 → 打哈欠劝睡。
+    每晚最多 max_per_night 次、间隔 ≥ cooldown_s；出静默时段清零重计。
+    与 HealthNudge 互斥天然成立：久坐提醒在静默时段被抑制，本行为只在静默时段触发。"""
+    name = "late_night"
+
+    def __init__(self, active_minutes: int = 45, quiet_hours: str = "23:00-07:00",
+                 max_per_night: int = 2, cooldown_s: float = 3600.0):
+        self._active_s = max(1, int(active_minutes)) * 60
+        self._quiet_hours = quiet_hours
+        self._max_per_night = max(0, int(max_per_night))
+        self._cooldown = float(cooldown_s)
+        self._fired: list[float] = []  # 当晚已触发时刻（snapshot.now 系）
+
+    def tick(self, snapshot: WatchSnapshot, ctx: WatchCtx) -> dict | None:
+        if not in_quiet_hours(snapshot.now, self._quiet_hours):
+            if self._fired:
+                self._fired = []  # 天亮出静默时段：清零，明晚重新计
+            return None
+        act = snapshot.activity
+        if not act or act.get("state") != "active":
+            return None
+        if float(act.get("seconds", 0)) < self._active_s:
+            return None
+        if len(self._fired) >= self._max_per_night:
+            return None
+        if self._fired and snapshot.now - self._fired[-1] < self._cooldown:
+            return None
+        self._fired.append(snapshot.now)
+        text = ("很晚了，还在忙吗？早点休息 🌙" if len(self._fired) == 1
+                else "深夜了还在忙，收尾就睡吧 😴")
+        return {"kind": "reminder", "type": "late_night", "text": text}
+
+
 class Ambient:
     """在场陪伴（slice 1）：占位，不出声。预留 snapshot_history 供 slice 3 主动搭话。"""
     name = "ambient"
@@ -197,6 +231,9 @@ def build_behaviors(settings: dict, *, host=None, vision=None, budget=None, emit
     behaviors = [
         HealthNudge(
             idle_warn_minutes=int(settings.get("watch.idle_warn_minutes", 45)),
+            quiet_hours=str(settings.get("watch.quiet_hours", "23:00-07:00")),
+        ),
+        LateNightNudge(
             quiet_hours=str(settings.get("watch.quiet_hours", "23:00-07:00")),
         ),
         Ambient(),

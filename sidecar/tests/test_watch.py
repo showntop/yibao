@@ -5,6 +5,7 @@ from yibao_brain.watch import (
     Ambient,
     Budget,
     HealthNudge,
+    LateNightNudge,
     ProactiveChat,
     WatchCtx,
     WatchSnapshot,
@@ -94,7 +95,57 @@ def test_ambient_silent():
 
 def test_build_behaviors_slice1():
     bs = build_behaviors({"watch.idle_warn_minutes": 30, "watch.quiet_hours": "00:00-06:00"})
-    assert [b.name for b in bs] == ["health_nudge", "ambient"]
+    assert [b.name for b in bs] == ["health_nudge", "late_night", "ambient"]
+
+
+# ---------- LateNightNudge（深夜劝睡）----------
+def test_late_night_fires_in_quiet_hours_when_active_long():
+    n = LateNightNudge(active_minutes=45, quiet_hours="23:00-07:00")
+    snap = WatchSnapshot(now=_lt(23, 30), activity={"state": "active", "seconds": 46 * 60, "segment_id": 1})
+    ev = n.tick(snap, WatchCtx())
+    assert ev and ev["kind"] == "reminder" and ev["type"] == "late_night"
+    assert "早点休息" in ev["text"]
+
+
+def test_late_night_silent_outside_quiet_hours():
+    n = LateNightNudge(active_minutes=45, quiet_hours="23:00-07:00")
+    snap = WatchSnapshot(now=_lt(15, 0), activity={"state": "active", "seconds": 99 * 60, "segment_id": 1})
+    assert n.tick(snap, WatchCtx()) is None
+
+
+def test_late_night_below_active_threshold_and_idle():
+    n = LateNightNudge(active_minutes=45, quiet_hours="23:00-07:00")
+    short = WatchSnapshot(now=_lt(23, 30), activity={"state": "active", "seconds": 20 * 60, "segment_id": 1})
+    assert n.tick(short, WatchCtx()) is None
+    idle = WatchSnapshot(now=_lt(23, 30), activity={"state": "idle", "seconds": 99 * 60, "segment_id": 1})
+    assert n.tick(idle, WatchCtx()) is None
+
+
+def test_late_night_cooldown_and_nightly_cap():
+    n = LateNightNudge(active_minutes=45, quiet_hours="23:00-07:00", max_per_night=2, cooldown_s=3600)
+    s = lambda mi: WatchSnapshot(now=_lt(23, 30) + mi * 60, activity={"state": "active", "seconds": 99 * 60, "segment_id": 1})
+    assert n.tick(s(0), WatchCtx()) is not None       # 第 1 次
+    assert n.tick(s(30), WatchCtx()) is None          # 30 分钟后再触发：冷却内
+    ev = n.tick(s(70), WatchCtx())                    # 70 分钟后：第 2 次
+    assert ev and "收尾就睡" in ev["text"]
+    assert n.tick(s(200), WatchCtx()) is None         # 第 3 次：每晚上限 2
+    assert n.tick(s(260), WatchCtx()) is None
+
+
+def test_late_night_resets_after_quiet_hours():
+    n = LateNightNudge(active_minutes=45, quiet_hours="23:00-07:00", max_per_night=2)
+    late = WatchSnapshot(now=_lt(23, 30), activity={"state": "active", "seconds": 99 * 60, "segment_id": 1})
+    assert n.tick(late, WatchCtx()) is not None
+    n.tick(late, WatchCtx())  # 可能被冷却拦，无所谓
+    day = WatchSnapshot(now=_lt(12, 0), activity={"state": "active", "seconds": 99 * 60, "segment_id": 2})
+    assert n.tick(day, WatchCtx()) is None            # 白天不触发，并清零当晚计数
+    late2 = WatchSnapshot(now=_lt(12, 0) + 12 * 3600, activity={"state": "active", "seconds": 99 * 60, "segment_id": 3})
+    assert n.tick(late2, WatchCtx()) is not None      # 第二天深夜重新可触发
+
+
+def test_build_behaviors_includes_late_night():
+    bs = build_behaviors({"watch.idle_warn_minutes": 30, "watch.quiet_hours": "00:00-06:00"})
+    assert [b.name for b in bs] == ["health_nudge", "late_night", "ambient"]
 
 
 # ---------- snapshot_from_perception ----------
