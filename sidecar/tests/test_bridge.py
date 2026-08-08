@@ -135,3 +135,36 @@ def test_route_empty_text_400_and_bad_mode_400_and_confirm_403():
         assert status == 403 and obj["ok"] is False
 
     _run(main())
+
+
+def test_zimeiti_api_toml_has_quiet_bridge_entries():
+    """真 api.toml：invoke_mat_save / invoke_add_topic 都是 direct+quiet（桥回执不发 panel 事件）。"""
+    from pathlib import Path
+
+    from yibao_brain import plugins
+    from yibao_brain.skills import Skill, SkillRegistry
+
+    class _Dummy(Skill):
+        description = "dummy"
+
+        def run(self, params, ctx):
+            raise NotImplementedError
+
+    reg = SkillRegistry()
+    for sid in ("zimeiti.mat_save", "zimeiti.add"):
+        d = _Dummy()
+        d.id = sid
+        reg.register(d, plugin="zimeiti")
+    # fixture 已种入桥条目（Task 3 路由测试用）；先摘掉，确保断言命中真 api.toml 加载结果
+    plugins._API.pop("zimeiti.invoke_mat_save", None)
+    plugins._API.pop("zimeiti.invoke_add_topic", None)
+    api_path = Path(__file__).resolve().parents[2] / "plugins" / "zimeiti" / "api.toml"
+    plugins._load_api("zimeiti", api_path, reg)
+    try:
+        for name in ("zimeiti.invoke_mat_save", "zimeiti.invoke_add_topic"):
+            m = plugins.get_api(name)
+            assert m is not None, name
+            assert m.direct is True and m.quiet is True, name
+    finally:
+        plugins._API.pop("zimeiti.invoke_mat_save", None)
+        plugins._API.pop("zimeiti.invoke_add_topic", None)
