@@ -1364,24 +1364,18 @@ fn wait_clipboard_change<F: FnMut() -> Option<String>>(
  *  已知限制：pbpaste/pbcopy 只保真文本——剪贴板里是图片等富格式且被覆盖时还原不回原类型。
  *  无选中（剪贴板未变）或权限缺失（⌘C 静默失败）→ None，调用方退化为普通唤起。 */
 fn grab_selected_text() -> Option<String> {
-    let t0 = std::time::Instant::now(); // [诊断] 定位 ⌘⇧U 6s 延迟，定位后移除全部 invoke-t 探针
     let old = pb_paste();
-    eprintln!("[yibao][invoke-t] old clipboard read: {}ms", t0.elapsed().as_millis());
     if post_shift_keyup().is_err() {
         return None;
     }
-    eprintln!("[yibao][invoke-t] shift keyup posted: {}ms", t0.elapsed().as_millis());
     if post_cmd_c().is_err() {
         return None;
     }
-    eprintln!("[yibao][invoke-t] cmd+c posted: {}ms", t0.elapsed().as_millis());
     let new = wait_clipboard_change(&old, pb_paste, 400)?;
-    eprintln!("[yibao][invoke-t] clipboard changed: {}ms", t0.elapsed().as_millis());
     match &old {
         Some(o) => pb_copy(o),
         None => pb_copy(""),
     }
-    eprintln!("[yibao][invoke-t] clipboard restored: {}ms", t0.elapsed().as_millis());
     if new.trim().is_empty() {
         None
     } else {
@@ -1430,16 +1424,12 @@ pub fn run() {
             ) {
                 let handle = app.clone();
                 std::thread::spawn(move || {
-                    let t0 = std::time::Instant::now(); // [诊断] ⌘⇧U 6s 延迟
                     let text = grab_selected_text();
-                    eprintln!("[yibao][invoke-t] grab total: {}ms", t0.elapsed().as_millis());
                     if let Some(win) = handle.get_webview_window("main") {
                         let _ = win.show().and_then(|_| win.set_focus());
                     }
-                    eprintln!("[yibao][invoke-t] main show+focus: {}ms", t0.elapsed().as_millis());
                     let has_text = text.is_some();
                     let _ = handle.emit("pet-invoke-selection", serde_json::json!({ "text": text }));
-                    eprintln!("[yibao][invoke-t] emit done: {}ms", t0.elapsed().as_millis());
                     // 动作条：有选中文字才弹（无选中退化为旧唤起，不弹空菜单）
                     if has_text {
                         if let Some(bar) = handle.get_webview_window("invoke-bar") {
@@ -1459,7 +1449,6 @@ pub fn run() {
                                 Some(m) => Some(m),
                                 None => bar.current_monitor().ok().flatten(),
                             };
-                            eprintln!("[yibao][invoke-t] monitor found: {}ms", t0.elapsed().as_millis());
                             if let Some(mon) = mon {
                                 let s = mon.scale_factor();
                                 let mon_rect = (
@@ -1472,7 +1461,6 @@ pub fn run() {
                                 let _ = bar.set_position(tauri::LogicalPosition::new(bx, by));
                             }
                             let _ = bar.show().and_then(|_| bar.set_focus());
-                            eprintln!("[yibao][invoke-t] bar show+focus done: {}ms", t0.elapsed().as_millis());
                         }
                     }
                 });
