@@ -420,8 +420,9 @@ function openHome() {
 
 let avatarClickTimer: ReturnType<typeof setTimeout> | null = null;
 /** 单击团子收起；双击打开大窗。
- * 注意不能用原生 dblclick：Avatar 根元素 @pointerdown.prevent 阻止了原生
- * 双击事件链，只能靠 220ms 判定窗口——第二击取消定时器并放大窗。 */
+ * 不能用原生 dblclick（Avatar 根元素 @pointerdown.prevent 阻止原生双击事件链），
+ * 靠 450ms 判定窗口（接近系统双击间隔）——第二击取消定时器并放大窗。
+ * 判定窗口太短（原 220ms）会让慢速双击的第一击先触发收起，窗口收起后第二击落空。 */
 function onAvatarClick() {
   if (avatarClickTimer !== null) {
     clearTimeout(avatarClickTimer);
@@ -432,7 +433,7 @@ function onAvatarClick() {
   avatarClickTimer = setTimeout(() => {
     avatarClickTimer = null;
     void collapse();
-  }, 220);
+  }, 450);
 }
 
 /** morning_recap 气泡点击 → 确保 home 窗可见 + 通知 HomeFeed 切到回顾 mode 并跳到当天。 */
@@ -942,8 +943,8 @@ onUnmounted(() => {
 
     <!-- 对话：header（头像+名称+状态+收起，一体化贴边）/ 内容区（权限引导/气泡流/输入条） -->
     <template v-else>
-      <header class="chat-header flip" data-tauri-drag-region>
-        <div class="hbtns" data-tauri-drag-region>
+      <header class="chat-header flip" data-tauri-drag-region @dblclick="openHome">
+        <div class="hbtns" data-tauri-drag-region @dblclick.stop>
           <button class="hbtn" title="收起" @click="collapse">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
               <line x1="6" y1="12" x2="18" y2="12" />
