@@ -65,6 +65,11 @@ export interface BrainEvent {
   /** morning_recap 深链接：反刍提醒携带 type/day 供 deep-link */
   type?: string;
   day?: string;
+  /** 反应式渲染原料：agents 任务完成事件携带 */
+  task?: { id?: string; status?: string; label?: string; prompt?: string };
+  /** watch_command 完成事件携带（completed/failed/timed_out/cancelled） */
+  status?: string;
+  exit_code?: number;
 }
 
 // ---- 会话分流（v2 §5）：run/语音/面板调用带 surface 标签，大脑透传回事件流与历史 ----

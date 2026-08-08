@@ -47,7 +47,7 @@ import { SUGGESTIONS } from "./lib/suggestions";
 import { procLabel, procSkip, procResultSuffix } from "./lib/proc";
 import YbIcon from "./components/YbIcon.vue";
 
-type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error" | "notify" | "drowsy";
+type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error" | "notify" | "drowsy" | "stretch";
 // pstate：过程行状态（图标随态渲染，文案不再拼 emoji）；halted：被打断；icon：行首语义图标
 type BubbleMsg = {
   role: "user" | "ai" | "sys";
@@ -151,7 +151,7 @@ let rectTimer: ReturnType<typeof setInterval> | null = null;
 const statusText = computed(
   () => ({
     idle: "待命中", listen: "聆听中", think: "思考中…", work: "操作中…", say: "说话中…",
-    success: "完成", error: "出错了", notify: "有事找你", drowsy: "发呆中",
+    success: "完成", error: "出错了", notify: "有事找你", drowsy: "发呆中", stretch: "伸展中",
   }[petState.value]),
 );
 // success/error 是短暂 valence（不可打断），不算 busy
@@ -593,6 +593,16 @@ function onEvent(e: BrainEvent) {
       const isRecap = e.type === "morning_recap";
       const recapDay = e.day;
       bubbles.value.push({ role: "ai", text, icon: "clock", recap: isRecap ? recapDay : undefined });
+      // —— 反应式渲染（C 最小版）：确定性信号 → 一次性闪现；提醒纪律（档位/互斥/TTS）不变 ——
+      if (e.type === "health_nudge") {
+        flashState("stretch", 1500); // 久坐 → 一套伸展操
+      } else if (e.type === "late_night") {
+        flashState("drowsy", 3000); // 深夜 → 打哈欠（Zz）
+      } else if (e.task?.status === "done" || (e.type === "watch_command" && e.status === "completed")) {
+        flashState("success", 1200); // 任务完成 → 星芒欢呼
+      } else if (e.task?.status === "failed" || (e.type === "watch_command" && e.status === "failed")) {
+        flashState("error", 900); // 任务失败 → 叹气
+      }
       void (async () => {
         try {
           // 大小窗互斥：大窗开着时提醒由大窗呈现，别把宠物窗再弹出来
@@ -761,15 +771,18 @@ function onInterrupt() {
   });
 }
 
-// ---- 短暂 valence（success/error）：400ms 闪现后回 idle，期间不可打断 ----
-let valenceTimer: ReturnType<typeof setTimeout> | null = null;
-function flashValence(v: "success" | "error") {
-  if (valenceTimer) clearTimeout(valenceTimer);
+// ---- 短暂闪现（success/error/stretch/drowsy…）：ms 后回 idle，期间不可打断（busy 是 allowlist，闪现态天然不在内）----
+let flashTimer: ReturnType<typeof setTimeout> | null = null;
+function flashState(v: AvatarState, ms = 400) {
+  if (flashTimer) clearTimeout(flashTimer);
   state.value = v;
-  valenceTimer = setTimeout(() => {
+  flashTimer = setTimeout(() => {
     if (state.value === v) state.value = "idle";
-    valenceTimer = null;
-  }, 400);
+    flashTimer = null;
+  }, ms);
+}
+function flashValence(v: "success" | "error") {
+  flashState(v, 400);
 }
 
 function onKeydown(e: KeyboardEvent) {
@@ -885,7 +898,7 @@ onUnmounted(() => {
   if (speechTimer) clearTimeout(speechTimer);
   window.removeEventListener("keydown", onKeydown);
   if (clickTimer !== null) clearTimeout(clickTimer);
-  if (valenceTimer !== null) clearTimeout(valenceTimer);
+  if (flashTimer !== null) clearTimeout(flashTimer);
   if (drowsyTimer !== null) clearTimeout(drowsyTimer);
 });
 </script>
