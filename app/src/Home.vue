@@ -10,10 +10,11 @@ import YbIcon from "./components/YbIcon.vue";
 import HomeFeed from "./components/HomeFeed.vue";
 import HomeChat from "./components/HomeChat.vue";
 import HomePlugins from "./components/HomePlugins.vue";
+import DataView from "./components/DataView.vue";
 import SettingsView from "./components/SettingsView.vue";
 import { onPendingConfirms, onSettings, getSettingsOnce, type SettingsValues } from "./lib/brain";
 
-type Tab = "home" | "chat" | "plugins" | "settings";
+type Tab = "home" | "chat" | "plugins" | "data" | "settings";
 type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
 
 const tab = ref<Tab>("home");
@@ -67,10 +68,11 @@ function onFeedChat(draft?: string) {
 }
 
 // sidebar 分区（macOS 惯例：用小标题把导航项按语义分组，而非一列平铺）
-const NAV: { id: Tab; label: string; icon: "inbox" | "chat" | "plug" | "gear" }[] = [
+const NAV: { id: Tab; label: string; icon: "inbox" | "chat" | "plug" | "doc" | "gear" }[] = [
   { id: "home", label: "主屏", icon: "inbox" },
   { id: "chat", label: "对话", icon: "chat" },
   { id: "plugins", label: "插件", icon: "plug" },
+  { id: "data", label: "数据", icon: "doc" },
 ];
 // 徽标：主屏显未读动态数，其次待批准数（都为 0 则不显）
 const homeBadge = computed(() => (feedUnread.value > 0 ? feedUnread.value : approvalCount.value));
@@ -124,12 +126,13 @@ function close() {
       </div>
     </aside>
 
-    <!-- 内容区：四页常驻挂载，切页只切显隐。
+    <!-- 内容区：各页常驻挂载，切页只切显隐。
          reminder / 新面板打开 → 自动切到对应页；主屏提交/点动态 → 切对话页 -->
     <main class="content">
       <HomeFeed v-show="tab === 'home'" @chat="onFeedChat" @unread="feedUnread = $event" />
       <HomeChat v-show="tab === 'chat'" :draft="chatDraft" @state="chatState = $event" @open-panel="tab = 'plugins'" @reminder="tab = 'chat'" />
       <HomePlugins v-show="tab === 'plugins'" @state="panelState = $event" @panel="tab = 'plugins'" />
+      <DataView v-show="tab === 'data'" />
       <SettingsView v-show="tab === 'settings'" />
     </main>
   </div>

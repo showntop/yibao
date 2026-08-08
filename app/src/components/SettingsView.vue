@@ -10,26 +10,15 @@ import {
   getSetupConfig,
   saveSetupConfig,
   restartBrain,
-  clearBrainData,
-  openDataDir,
   checkPermissions,
   promptPermission,
   onBrainStatus,
   onBrainPermissions,
-  getMemListOnce,
-  memDelete,
-  memEdit,
   getSettingsOnce,
   setSettings,
-  getPerceptionOnce,
   getFeedStatsOnce,
-  deletePerception,
-  clearPerception,
   distillNow,
   type BrainPermissions,
-  type ClearKind,
-  type MemItem,
-  type PerceptionItem,
   type SettingsValues,
 } from "../lib/brain";
 import type { TrustStats } from "../lib/brain";
@@ -37,13 +26,12 @@ import type { TrustStats } from "../lib/brain";
 // ---- 分类导航（macOS 系统设置语言）----
 // 原先 11 个分组平铺一列要滚很久，且「感知日志」「记忆管理」这种数据浏览器
 // 混在开关中间。按语义收成 4 类，每类内仍是分组卡片。
-type Cat = "general" | "proactive" | "privacy" | "data";
+type Cat = "general" | "proactive" | "privacy";
 const cat = ref<Cat>("general");
-const CATS: { id: Cat; label: string; icon: "gear" | "sparkle" | "lock" | "doc" }[] = [
+const CATS: { id: Cat; label: string; icon: "gear" | "sparkle" | "lock" }[] = [
   { id: "general", label: "通用", icon: "gear" },
   { id: "proactive", label: "主动协助", icon: "sparkle" },
   { id: "privacy", label: "隐私与权限", icon: "lock" },
-  { id: "data", label: "数据与记忆", icon: "doc" },
 ];
 
 // ---- 模型 / 语音（写 .env，重启大脑生效）----
@@ -138,28 +126,6 @@ function grant(which: "ax" | "screen" | "input") {
 
 function recheck() {
   void checkPermissions().catch(() => {});
-}
-
-// ---- 数据：清空（行内二次确认）----
-const confirming = ref<ClearKind | null>(null);
-const clearing = ref<ClearKind | null>(null);
-const clearMsg = ref("");
-const clearErr = ref(false); // 清空结果成/败：驱动 s-msg 色与图标，不再靠 ⚠️ 前缀判错
-
-async function doClear(kind: ClearKind) {
-  confirming.value = null;
-  clearing.value = kind;
-  clearMsg.value = "";
-  clearErr.value = false;
-  try {
-    await clearBrainData(kind);
-    clearMsg.value = kind === "memory" ? "✓ 长期记忆已清空" : "✓ 对话历史已清空";
-  } catch (e) {
-    clearMsg.value = String(e);
-    clearErr.value = true;
-  } finally {
-    clearing.value = null;
-  }
 }
 
 // ---- 自主权（数据目录 settings.json，即时生效免重启）----
@@ -303,14 +269,8 @@ const perceptionApp = ref(false);
 const perceptionActivity = ref(false);
 const perceptionModelAccess = ref(false);
 const perceptionScreen = ref(false);
-const perceptionItems = ref<PerceptionItem[]>([]);
-const perceptionAvailable = ref(true);
-const perceptionLoaded = ref(false);
-const perceptionLoading = ref(false);
-const perceptionHasMore = ref(false);
+// 感知开关行内错误提示（如感知存储不可用；与日志页的 perceptionErr 无关）
 const perceptionErr = ref("");
-const perceptionConfirming = ref<number | "all" | null>(null);
-const perceptionDeleting = ref<number | "all" | null>(null);
 // screen 开关行内两段确认：开启涉及持续观察与截图外发，须先看清说明再确认
 const screenConfirming = ref(false);
 // distill 开关同样两段确认：每日提炼会把昨日感知内容外发给当前模型
@@ -450,169 +410,7 @@ async function onDistillNow() {
   }
 }
 
-async function loadPerception(more = false) {
-  perceptionLoading.value = true;
-  perceptionErr.value = "";
-  const beforeId = more && perceptionItems.value.length
-    ? perceptionItems.value[perceptionItems.value.length - 1].id
-    : undefined;
-  const r = await getPerceptionOnce(50, beforeId);
-  perceptionAvailable.value = r.available;
-  if (r.error) perceptionErr.value = r.error;
-  if (more) {
-    const known = new Set(perceptionItems.value.map((x) => x.id));
-    perceptionItems.value.push(...r.items.filter((x) => !known.has(x.id)));
-  } else {
-    perceptionItems.value = r.items;
-  }
-  perceptionHasMore.value = r.items.length === 50;
-  perceptionLoaded.value = true;
-  perceptionLoading.value = false;
-}
-
-function perceptionText(item: PerceptionItem): string {
-  if (item.source === "app") {
-    const app = String(item.payload.app || "未知应用");
-    const title = String(item.payload.title || "");
-    return title ? `${app} — ${title}` : app;
-  }
-  if (item.source === "activity") {
-    const seconds = Number(item.payload.idle_seconds || 0);
-    return item.kind === "idle" ? `进入空闲 · ${Math.max(1, Math.round(seconds / 60))} 分钟` : "恢复活跃";
-  }
-  if (item.source === "screen") {
-    const text = String(item.payload.text || "");
-    const cut = text.length > 60 ? `${text.slice(0, 60)}…` : text;
-    return item.kind === "vision" ? `概括 · ${cut}` : cut;
-  }
-  return String(item.payload.text || item.kind);
-}
-
-function perceptionSource(item: PerceptionItem): string {
-  return item.source === "app" ? "应用" : item.source === "activity" ? "活动" : item.source === "screen" ? "屏幕" : item.source;
-}
-
-function relativeTime(ts: number): string {
-  const seconds = Math.max(0, Math.round(Date.now() / 1000 - ts));
-  if (seconds < 60) return "刚刚";
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)} 小时前`;
-  return `${Math.floor(seconds / 86400)} 天前`;
-}
-
-async function doPerceptionDelete(id: number) {
-  perceptionConfirming.value = null;
-  perceptionDeleting.value = id;
-  const r = await deletePerception(id);
-  perceptionDeleting.value = null;
-  if (r.ok) perceptionItems.value = perceptionItems.value.filter((x) => x.id !== id);
-  else perceptionErr.value = r.error || "删除失败";
-}
-
-async function doPerceptionClear() {
-  perceptionConfirming.value = null;
-  perceptionDeleting.value = "all";
-  const r = await clearPerception();
-  perceptionDeleting.value = null;
-  if (!r.error) {
-    perceptionItems.value = [];
-    perceptionHasMore.value = false;
-  } else {
-    perceptionErr.value = r.error;
-  }
-}
-
-// ---- 记忆管理（「它记得我什么」必须可见、可改、可删）----
-const memItems = ref<MemItem[]>([]);
-const memReady = ref(true);
-const memFailed = ref(false);
-const memLoaded = ref(false);
-const memConfirming = ref<string | null>(null);
-const memDeleting = ref<string | null>(null);
-const memErr = ref("");
-// 行内编辑
-const memEditing = ref<string | null>(null);
-const memDraft = ref("");
-const memSaving = ref<string | null>(null);
-// 命名空间筛选（null = 全部）与全文展开
-const memFilter = ref<string | null>(null);
-const memExpanded = ref(new Set<string>());
-
-const memNamespaces = computed(() => {
-  const map = new Map<string, { ns: string; label: string; count: number }>();
-  for (const m of memItems.value) {
-    const cur = map.get(m.ns);
-    if (cur) cur.count += 1;
-    else map.set(m.ns, { ns: m.ns, label: m.label, count: 1 });
-  }
-  return [...map.values()];
-});
-
-const memFiltered = computed(() =>
-  memFilter.value === null ? memItems.value : memItems.value.filter((m) => m.ns === memFilter.value),
-);
-
-function fmtMemTime(iso?: string): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "";
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getMonth() + 1}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-}
-
-async function loadMem() {
-  memErr.value = "";
-  const r = await getMemListOnce();
-  memItems.value = r.items;
-  memReady.value = r.ready;
-  memFailed.value = r.failed;
-  memLoaded.value = true;
-}
-
-async function doMemDelete(id: string) {
-  memConfirming.value = null;
-  memDeleting.value = id;
-  memErr.value = "";
-  const r = await memDelete(id);
-  memDeleting.value = null;
-  if (r.ok) memItems.value = memItems.value.filter((m) => m.id !== id);
-  else memErr.value = r.error || "删除失败";
-}
-
-function startMemEdit(m: MemItem) {
-  memConfirming.value = null;
-  memEditing.value = m.id;
-  memDraft.value = m.text;
-  memErr.value = "";
-}
-
-function cancelMemEdit() {
-  memEditing.value = null;
-  memDraft.value = "";
-}
-
-async function doMemEdit(id: string) {
-  const text = memDraft.value.trim();
-  if (!text) return;
-  memSaving.value = id;
-  memErr.value = "";
-  const r = await memEdit(id, text);
-  memSaving.value = null;
-  if (r.ok) {
-    const it = memItems.value.find((m) => m.id === id);
-    if (it) it.text = text;
-    cancelMemEdit();
-  } else {
-    memErr.value = r.error || "保存失败";
-  }
-}
-
-function toggleMemExpand(id: string) {
-  const s = new Set(memExpanded.value);
-  if (s.has(id)) s.delete(id);
-  else s.add(id);
-  memExpanded.value = s;
-}
+// ---- 感知日志 / 记忆管理 / 清空：已移出到「数据」页（DataView.vue）----
 
 // ---- 关于 ----
 const version = ref("…");
@@ -640,7 +438,6 @@ onMounted(async () => {
   try {
     version.value = await getVersion();
   } catch { /* 保留占位 */ }
-  void loadMem(); // 记忆管理列表（异步，不阻塞设置页首屏）
   void getSettingsOnce().then((s) => { // 自主权旋钮当前值（大脑不在线则保持默认）
     if (s) {
       if (typeof s.proactive_voice === "boolean") proactiveVoice.value = s.proactive_voice;
@@ -653,7 +450,6 @@ onMounted(async () => {
     }
   });
   void getFeedStatsOnce().then((s) => { trustStats.value = s; });
-  void loadPerception();
   // 保存触发的重启：大脑上线事件收尾行内提示（掉线过程 UI 复用对话页既有事件）
   unlistenStatus = await onBrainStatus((m) => {
     if (m.status === "up" && saveMsg.value === "已保存，正在重启大脑…") {
@@ -778,6 +574,14 @@ onUnmounted(() => {
             <span class="s-row-value">19527（YIBAO_HTTP_PORT 可覆盖，重启大脑生效）</span>
           </div>
           <div class="s-note">安装：chrome://extensions → 开发者模式 → 加载已解压 → 选仓库 extension/ 目录；扩展选项页粘贴 token。右键或工具栏按钮即可「存素材 / 存为选题」。</div>
+        </section>
+
+        <section class="s-group">
+          <div class="s-group-title">关于</div>
+          <div class="s-row">
+            <span class="s-row-label">译宝</span>
+            <span class="s-row-value">v{{ version }}</span>
+          </div>
         </section>
       </template>
 
@@ -943,44 +747,8 @@ onUnmounted(() => {
               <button class="s-mini" @click="recapConfirming = false">取消</button>
             </span>
           </div>
-          <div class="s-note">{{ perceptionMaster ? "运行中" : "已暂停" }} · {{ perceptionItems.length }} 条已加载观察</div>
+          <div class="s-note">{{ perceptionMaster ? "运行中" : "已暂停" }}</div>
           <div v-if="perceptionErr" class="s-msg err"><YbIcon name="alert" :size="13" />{{ perceptionErr }}</div>
-        </section>
-
-        <!-- 感知日志：让用户看到、逐条删、全部清空 -->
-        <section class="s-group">
-          <div class="s-group-title">感知日志<template v-if="perceptionItems.length"> · {{ perceptionItems.length }}</template></div>
-          <div v-if="perceptionLoaded && !perceptionAvailable" class="s-note">感知存储不可用；总开关会保持关闭。</div>
-          <div v-else-if="perceptionLoaded && !perceptionItems.length" class="s-note">
-            {{ perceptionMaster ? "还没有观察——切换一次应用或等待进入空闲。" : "感知未开启；已有记录仍可在开启前审阅和删除。" }}
-          </div>
-          <!-- 长列表：限高自滚，避免把下方权限卡推到视野外 -->
-          <div v-if="perceptionItems.length" class="log-scroll">
-            <div v-for="item in perceptionItems" :key="item.id" class="p-row">
-              <span class="m-ns">{{ perceptionSource(item) }}</span>
-              <span class="p-main">
-                <span class="p-text">{{ perceptionText(item) }}</span>
-                <span class="p-meta">{{ relativeTime(item.ts) }} · {{ item.sensitivity }}</span>
-              </span>
-              <span class="s-row-btns">
-                <template v-if="perceptionConfirming === item.id">
-                  <button class="s-mini danger" :disabled="perceptionDeleting === item.id" @click="doPerceptionDelete(item.id)">确认</button>
-                  <button class="s-mini" @click="perceptionConfirming = null">取消</button>
-                </template>
-                <button v-else class="s-mini" :disabled="perceptionDeleting === item.id" @click="perceptionConfirming = item.id">删除</button>
-              </span>
-            </div>
-          </div>
-          <div class="p-actions">
-            <button class="s-mini" :disabled="perceptionLoading" @click="loadPerception(false)">{{ perceptionLoading ? "读取中…" : "刷新" }}</button>
-            <button v-if="perceptionHasMore" class="s-mini" :disabled="perceptionLoading" @click="loadPerception(true)">加载更早</button>
-            <span class="p-spacer" />
-            <template v-if="perceptionConfirming === 'all'">
-              <button class="s-mini danger" :disabled="perceptionDeleting === 'all'" @click="doPerceptionClear">确认清空</button>
-              <button class="s-mini" @click="perceptionConfirming = null">取消</button>
-            </template>
-            <button v-else class="s-mini" :disabled="!perceptionItems.length || perceptionDeleting === 'all'" @click="perceptionConfirming = 'all'">清空…</button>
-          </div>
         </section>
 
         <section class="s-group">
@@ -1016,109 +784,6 @@ onUnmounted(() => {
         </section>
       </template>
 
-      <!-- ============ 数据：记忆管理 / 清空 / 数据目录 / 关于 ============ -->
-      <template v-else>
-        <!-- 记忆管理（「它记得我什么」：按命名空间列出，可单条删除；彻底清空走下方数据区） -->
-        <section class="s-group">
-          <div class="s-group-title">记忆管理<template v-if="memLoaded && memItems.length"> · {{ memItems.length }}</template></div>
-          <div v-if="memFailed" class="s-note">长期记忆不可用（本次运行记不住事）——检查模型配置或重启译宝。</div>
-          <div v-else-if="!memReady" class="s-note">
-            记忆接入中… <button class="s-mini" @click="loadMem">刷新</button>
-          </div>
-          <template v-else>
-            <div v-if="memLoaded && !memItems.length" class="s-note">还没有记住什么——跟译宝聊聊你的偏好和习惯。</div>
-            <div v-if="memNamespaces.length > 1" class="m-chips">
-              <button class="m-chip" :class="{ on: memFilter === null }" @click="memFilter = null">
-                全部 · {{ memItems.length }}
-              </button>
-              <button
-                v-for="n in memNamespaces"
-                :key="n.ns"
-                class="m-chip"
-                :class="{ on: memFilter === n.ns }"
-                @click="memFilter = n.ns"
-              >{{ n.label }} · {{ n.count }}</button>
-            </div>
-            <!-- 长列表：限高自滚（与感知日志同策略） -->
-            <div v-if="memFiltered.length" class="log-scroll">
-              <div v-for="m in memFiltered" :key="m.id" class="m-row">
-                <span class="m-ns">{{ m.label }}</span>
-                <template v-if="memEditing === m.id">
-                  <textarea v-model="memDraft" class="m-edit" rows="2" :disabled="memSaving === m.id" />
-                  <span class="s-row-btns">
-                    <button class="s-mini" :disabled="memSaving === m.id || !memDraft.trim()" @click="doMemEdit(m.id)">
-                      {{ memSaving === m.id ? "保存中…" : "保存" }}
-                    </button>
-                    <button class="s-mini" :disabled="memSaving === m.id" @click="cancelMemEdit">取消</button>
-                  </span>
-                </template>
-                <template v-else>
-                  <span
-                    class="m-text"
-                    :class="{ open: memExpanded.has(m.id) }"
-                    :title="memExpanded.has(m.id) ? '点击收起' : '点击展开全文'"
-                    @click="toggleMemExpand(m.id)"
-                  >{{ m.text }}</span>
-                  <span v-if="m.created_at" class="m-time">{{ fmtMemTime(m.created_at) }}</span>
-                  <span class="s-row-btns">
-                    <button class="s-mini" @click="startMemEdit(m)">编辑</button>
-                    <template v-if="memConfirming === m.id">
-                      <button class="s-mini danger" :disabled="memDeleting === m.id" @click="doMemDelete(m.id)">
-                        {{ memDeleting === m.id ? "删除中…" : "确认" }}
-                      </button>
-                      <button class="s-mini" :disabled="memDeleting === m.id" @click="memConfirming = null">取消</button>
-                    </template>
-                    <button v-else class="s-mini" @click="memConfirming = m.id">删除</button>
-                  </span>
-                </template>
-              </div>
-            </div>
-          </template>
-          <div v-if="memErr" class="s-msg err"><YbIcon name="alert" :size="13" />{{ memErr }}</div>
-        </section>
-
-        <section class="s-group">
-          <div class="s-group-title">清空与文件</div>
-          <div class="s-row">
-            <span class="s-row-label">长期记忆<span class="s-row-why">记住的偏好与事实</span></span>
-            <span class="s-row-btns">
-              <template v-if="confirming === 'memory'">
-                <button class="s-mini danger" :disabled="clearing === 'memory'" @click="doClear('memory')">
-                  {{ clearing === "memory" ? "清空中…" : "确认清空" }}
-                </button>
-                <button class="s-mini" :disabled="clearing === 'memory'" @click="confirming = null">取消</button>
-              </template>
-              <button v-else class="s-mini" @click="confirming = 'memory'">清空…</button>
-            </span>
-          </div>
-          <div class="s-row">
-            <span class="s-row-label">对话历史<span class="s-row-why">跨会话的聊天记录</span></span>
-            <span class="s-row-btns">
-              <template v-if="confirming === 'history'">
-                <button class="s-mini danger" :disabled="clearing === 'history'" @click="doClear('history')">
-                  {{ clearing === "history" ? "清空中…" : "确认清空" }}
-                </button>
-                <button class="s-mini" :disabled="clearing === 'history'" @click="confirming = null">取消</button>
-              </template>
-              <button v-else class="s-mini" @click="confirming = 'history'">清空…</button>
-            </span>
-          </div>
-          <div v-if="clearMsg" class="s-msg" :class="clearErr ? 'err' : 'ok'"><YbIcon v-if="clearErr" name="alert" :size="13" />{{ clearMsg }}</div>
-          <div class="s-note">清空会先停大脑再拉起，过程中译宝短暂离线几秒。</div>
-          <div class="s-row">
-            <span class="s-row-label">数据目录<span class="s-row-why">配置 / 记忆 / 历史文件</span></span>
-            <button class="s-mini" @click="openDataDir">在 Finder 打开</button>
-          </div>
-        </section>
-
-        <section class="s-group">
-          <div class="s-group-title">关于</div>
-          <div class="s-row">
-            <span class="s-row-label">译宝</span>
-            <span class="s-row-value">v{{ version }}</span>
-          </div>
-        </section>
-      </template>
     </div>
   </div>
 </template>
