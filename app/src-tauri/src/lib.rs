@@ -1306,24 +1306,20 @@ fn pb_copy(text: &str) {
     }
 }
 
-// 读当前物理修饰键状态（CGEventSourceFlagsState 未被 core-graphics crate 包装，直接 FFI）
-#[link(name = "CoreGraphics", kind = "framework")]
-extern "C" {
-    fn CGEventSourceFlagsState(state_id: i32) -> u64;
-}
-
-/** 等用户松开热键的修饰键（⇧/⌘）：合成 ⌘C 会被系统与物理按住中的 ⇧ 合并成 ⇧⌘C
- * （调色板就是这么被打开的）。最多等 2s，超时照发（退化为旧行为）。 */
-fn wait_modifiers_released() {
-    const COMBINED_SESSION_STATE: i32 = 1;
-    const SHIFT_OR_CMD: u64 = 0x2_0000 | 0x10_0000; // kCGEventFlagMaskShift | kCGEventFlagMaskCommand
-    for _ in 0..50 {
-        let flags = unsafe { CGEventSourceFlagsState(COMBINED_SESSION_STATE) };
-        if flags & SHIFT_OR_CMD == 0 {
-            return;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(40));
+/** 合成 ⇧ keyup（kVK_Shift_L=56 / Shift_R=60）：物理按住 ⇧ 时直接发 ⌘C 会被 WindowServer 与物理 ⇧
+ *  状态合并成 ⇧⌘C（调色板就是这么被打开的）——曾用「等用户松手」规避，按下到松手多久就卡多久（实测烧满 2s）。
+ *  正解：先把事件流里的 ⇧ 抬成松开态，⌘C 就是纯 ⌘C；用户物理松手时硬件 keyup 自然到来（重复 keyup 无害）。 */
+fn post_shift_keyup() -> Result<(), String> {
+    use core_graphics::event::{CGEvent, CGEventTapLocation};
+    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+    let src = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
+        .map_err(|_| "创建 CGEventSource 失败".to_string())?;
+    for key in [56u16, 60u16] {
+        // keyup：flags 默认空（不带 Shift），事件流即视为 ⇧ 已松开
+        let up = CGEvent::new_keyboard_event(src.clone(), key, false).map_err(|_| "创建 ⇧keyup 失败")?;
+        up.post(CGEventTapLocation::HID);
     }
+    Ok(())
 }
 
 /** 直接经 CGEvent 发 ⌘C（kVK_ANSI_C=8）：与应用本体同一个辅助功能信任域（pyautogui 能注入靠的就是它），
@@ -1364,20 +1360,28 @@ fn wait_clipboard_change<F: FnMut() -> Option<String>>(
     }
 }
 
-/** 读前台应用选中文字：暂存剪贴板 → 等物理修饰键松开 → 模拟 ⌘C → 轮询读回（变了即返，超时 400ms）→ 还原。
+/** 读前台应用选中文字：暂存剪贴板 → 合成 ⇧ keyup（防 ⇧⌘C 合并）→ 模拟 ⌘C → 轮询读回（变了即返，超时 400ms）→ 还原。
  *  已知限制：pbpaste/pbcopy 只保真文本——剪贴板里是图片等富格式且被覆盖时还原不回原类型。
  *  无选中（剪贴板未变）或权限缺失（⌘C 静默失败）→ None，调用方退化为普通唤起。 */
 fn grab_selected_text() -> Option<String> {
+    let t0 = std::time::Instant::now(); // [诊断] 定位 ⌘⇧U 6s 延迟，定位后移除全部 invoke-t 探针
     let old = pb_paste();
-    wait_modifiers_released();
+    eprintln!("[yibao][invoke-t] old clipboard read: {}ms", t0.elapsed().as_millis());
+    if post_shift_keyup().is_err() {
+        return None;
+    }
+    eprintln!("[yibao][invoke-t] shift keyup posted: {}ms", t0.elapsed().as_millis());
     if post_cmd_c().is_err() {
         return None;
     }
+    eprintln!("[yibao][invoke-t] cmd+c posted: {}ms", t0.elapsed().as_millis());
     let new = wait_clipboard_change(&old, pb_paste, 400)?;
+    eprintln!("[yibao][invoke-t] clipboard changed: {}ms", t0.elapsed().as_millis());
     match &old {
         Some(o) => pb_copy(o),
         None => pb_copy(""),
     }
+    eprintln!("[yibao][invoke-t] clipboard restored: {}ms", t0.elapsed().as_millis());
     if new.trim().is_empty() {
         None
     } else {
@@ -1426,12 +1430,16 @@ pub fn run() {
             ) {
                 let handle = app.clone();
                 std::thread::spawn(move || {
+                    let t0 = std::time::Instant::now(); // [诊断] ⌘⇧U 6s 延迟
                     let text = grab_selected_text();
+                    eprintln!("[yibao][invoke-t] grab total: {}ms", t0.elapsed().as_millis());
                     if let Some(win) = handle.get_webview_window("main") {
                         let _ = win.show().and_then(|_| win.set_focus());
                     }
+                    eprintln!("[yibao][invoke-t] main show+focus: {}ms", t0.elapsed().as_millis());
                     let has_text = text.is_some();
                     let _ = handle.emit("pet-invoke-selection", serde_json::json!({ "text": text }));
+                    eprintln!("[yibao][invoke-t] emit done: {}ms", t0.elapsed().as_millis());
                     // 动作条：有选中文字才弹（无选中退化为旧唤起，不弹空菜单）
                     if has_text {
                         if let Some(bar) = handle.get_webview_window("invoke-bar") {
@@ -1451,6 +1459,7 @@ pub fn run() {
                                 Some(m) => Some(m),
                                 None => bar.current_monitor().ok().flatten(),
                             };
+                            eprintln!("[yibao][invoke-t] monitor found: {}ms", t0.elapsed().as_millis());
                             if let Some(mon) = mon {
                                 let s = mon.scale_factor();
                                 let mon_rect = (
@@ -1463,6 +1472,7 @@ pub fn run() {
                                 let _ = bar.set_position(tauri::LogicalPosition::new(bx, by));
                             }
                             let _ = bar.show().and_then(|_| bar.set_focus());
+                            eprintln!("[yibao][invoke-t] bar show+focus done: {}ms", t0.elapsed().as_millis());
                         }
                     }
                 });
