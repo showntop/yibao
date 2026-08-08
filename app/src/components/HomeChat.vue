@@ -334,7 +334,8 @@ onUnmounted(() => {
   <div class="chat-page">
     <SetupWizard v-if="setupNeeded" :model="setupCfg.model" :base-url="setupCfg.baseUrl" :voice="setupCfg.voice" @saved="onSetupSaved" />
 
-    <template v-if="!setupNeeded">
+    <!-- 对话列：上下文带 + 气泡 + 输入条，限宽居中（聚焦感，像专业 AI 对话应用） -->
+    <div v-else class="chat-col">
     <!-- 上下文带：AI 此刻 / 动态 / 插件快捷 / 回顾（对话头顶的一体化流，非独立面板） -->
     <HomeContextBar @chat="onInfoChat" />
 
@@ -381,7 +382,7 @@ onUnmounted(() => {
     <div class="input-slot">
       <InputBar :busy="busy" :listening="state === 'listen'" :draft="draftRef" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
     </div>
-    </template>
+    </div>
   </div>
 </template>
 
@@ -390,7 +391,17 @@ onUnmounted(() => {
   height: 100%;
   display: flex;
   flex-direction: column;
+  align-items: center;
   background: var(--yb-content-bg);
+}
+/* 对话列：限宽居中（920px），左右留白给呼吸——聚焦感 */
+.chat-col {
+  width: 100%;
+  max-width: 920px;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 .bubbles {
   flex: 1;
@@ -405,12 +416,10 @@ onUnmounted(() => {
   mask-image: linear-gradient(180deg, transparent, #000 14px);
   -webkit-mask-image: linear-gradient(180deg, transparent, #000 14px);
 }
-/* 底部输入区：hairline 分界（与主屏同款），不再靠父级 padding 浮着 */
+/* 底部输入区：无边框无背景——InputBar 自带胶囊浮起，悬在对话下方更轻盈 */
 .input-slot {
   flex-shrink: 0;
   padding: var(--yb-space-3) var(--yb-space-5) var(--yb-space-4);
-  border-top: 1px solid var(--yb-border-base);
-  background: var(--yb-content-bg);
 }
 .bubbles::-webkit-scrollbar {
   width: 6px;

@@ -7,7 +7,7 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import YbIcon from "./components/YbIcon.vue";
-import CommandPalette from "./components/CommandPalette.vue";
+import CommandPalette, { type PaletteTab } from "./components/CommandPalette.vue";
 import HomeChat from "./components/HomeChat.vue";
 import HomePlugins from "./components/HomePlugins.vue";
 import DataView from "./components/DataView.vue";
@@ -47,8 +47,8 @@ const paletteOpen = ref(false);
 function togglePalette() {
   paletteOpen.value = !paletteOpen.value;
 }
-function onPaletteNavigate(t: Tab) {
-  tab.value = t;
+function onPaletteNavigate(t: PaletteTab) {
+  tab.value = t as Tab;
   paletteOpen.value = false;
 }
 
@@ -182,7 +182,10 @@ function close() {
   display: flex;
   flex-direction: column;
   border-bottom: 1px solid var(--yb-border-base);
-  background: var(--yb-content-bg);
+  /* 极淡 accent 微光（自上而下淡出），与内容区氛围光衔接成一体 */
+  background:
+    linear-gradient(180deg, rgba(var(--yb-c-sky-rgb), 0.045), rgba(var(--yb-c-sky-rgb), 0) 100%),
+    var(--yb-content-bg);
 }
 /* 红绿灯安全区：Overlay 标题栏下按钮浮在内容上，这块只作留白 + 拖窗把手 */
 .titlebar-safe {
@@ -206,6 +209,8 @@ function close() {
 }
 .tb-brand-ic {
   color: var(--yb-accent);
+  /* 团子光晕：让品牌在顶栏有「发光」质感 */
+  filter: drop-shadow(0 0 5px rgba(var(--yb-c-sky-rgb), 0.35));
 }
 .tb-name {
   font-size: var(--yb-fs-lg);
