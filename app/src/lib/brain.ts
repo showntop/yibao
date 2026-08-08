@@ -741,6 +741,7 @@ export interface SettingsValues {
   "perception.model_access": boolean;
   "perception.screen"?: boolean;
   "perception.distill"?: boolean;
+  "http.token": string; // 浏览器扩展桥共享 token（设置页「浏览器扩展」展示供复制）
   [k: string]: unknown;
 }
 
