@@ -18,6 +18,7 @@ export default defineConfig(async () => ({
         home: fileURLToPath(new URL("./home.html", import.meta.url)),
         design: fileURLToPath(new URL("./design.html", import.meta.url)),
         invoke: fileURLToPath(new URL("./invoke.html", import.meta.url)),
+        snip: fileURLToPath(new URL("./snip.html", import.meta.url)),
       },
     },
   },

@@ -1126,6 +1126,54 @@ fn hide_invoke_bar(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(serde::Deserialize)]
+struct SnipRect {
+    left: f64,
+    top: f64,
+    width: f64,
+    height: f64,
+}
+
+/// 框选完成：隐藏 overlay → 逻辑选区换算物理像素 → 通知大脑区域截图 → 广播 snip-captured 让主窗展开。
+#[tauri::command]
+fn finish_snip(app: AppHandle, state: tauri::State<Brain>, rect: SnipRect) -> Result<(), String> {
+    if let Some(snip) = app.get_webview_window("snip") {
+        let _ = snip.hide();
+        if let Ok(Some(mon)) = snip.current_monitor() {
+            let scale = mon.scale_factor();
+            let origin = (mon.position().x as i64, mon.position().y as i64);
+            let (l, t, w, h) = snip_abs_rect((rect.left, rect.top, rect.width, rect.height), origin, scale);
+            write_to_brain(
+                &state,
+                serde_json::json!({
+                    "id": 0, "type": "snip_capture",
+                    "left": l, "top": t, "width": w, "height": h,
+                }),
+            )?;
+            let _ = app.emit("snip-captured", serde_json::json!({ "width": w, "height": h }));
+        }
+    }
+    Ok(())
+}
+
+/// 取消框选（Esc / 单击 / 过小选区）：只收 overlay，不打扰。
+#[tauri::command]
+fn cancel_snip(app: AppHandle) -> Result<(), String> {
+    if let Some(snip) = app.get_webview_window("snip") {
+        let _ = snip.hide();
+    }
+    Ok(())
+}
+
+/// 截图即问：问题转发大脑（暂存的区域截图 + 问题 → vision 直答）。
+#[tauri::command]
+fn vision_query(state: tauri::State<Brain>, question: String) -> Result<(), String> {
+    write_to_brain(
+        &state,
+        serde_json::json!({ "id": 0, "type": "vision_query", "question": question }),
+    )
+}
+
 /// 面板窗挂载后补拉最近一次的 panel 载荷（首开时 brain-event 先于窗口订阅发出）。
 #[tauri::command]
 fn get_current_panel(state: tauri::State<Brain>) -> Result<Option<Value>, String> {
@@ -1383,6 +1431,42 @@ pub fn run() {
                 });
                 return;
             }
+            // 截图即问：overlay 铺满光标所在显示器，等前端拖拽选区（finish_snip/cancel_snip）
+            if shortcut == &tauri_plugin_global_shortcut::Shortcut::new(
+                Some(tauri_plugin_global_shortcut::Modifiers::SUPER | tauri_plugin_global_shortcut::Modifiers::SHIFT),
+                tauri_plugin_global_shortcut::Code::KeyI,
+            ) {
+                let handle = app.clone();
+                std::thread::spawn(move || {
+                    let (cmx, cmy) = device_query::DeviceState::new().get_mouse().coords;
+                    if let Some(snip) = handle.get_webview_window("snip") {
+                        if let Ok(mons) = snip.available_monitors() {
+                            let hit = mons.into_iter().find(|m| {
+                                let s = m.scale_factor();
+                                let x = m.position().x as f64 / s;
+                                let y = m.position().y as f64 / s;
+                                let w = m.size().width as f64 / s;
+                                let h = m.size().height as f64 / s;
+                                (cmx as f64) >= x && (cmx as f64) < x + w && (cmy as f64) >= y && (cmy as f64) < y + h
+                            });
+                            if let Some(mon) = hit {
+                                let s = mon.scale_factor();
+                                let _ = snip.set_position(tauri::LogicalPosition::new(
+                                    mon.position().x as f64 / s,
+                                    mon.position().y as f64 / s,
+                                ));
+                                let _ = snip.set_size(tauri::LogicalSize::new(
+                                    mon.size().width as f64 / s,
+                                    mon.size().height as f64 / s,
+                                ));
+                            }
+                        }
+                        let _ = snip.show().and_then(|_| snip.set_focus());
+                        let _ = handle.emit("snip-start", ());
+                    }
+                });
+                return;
+            }
             // 反射键：大窗开着 = 收起大窗回小窗（互斥）；否则按 可见性×展开态 决策（显隐全在 Rust 侧）
             if let Some(home) = app.get_webview_window("home") {
                 if home.is_visible().unwrap_or(false) {
@@ -1511,13 +1595,29 @@ pub fn run() {
                 .build()
                 .map_err(|e| format!("创建唤起条失败：{e}"))?;
 
-            // 注册全局热键：⌘⇧Y 反射键（唤起/收起）；⌘⇧U 划词唤起（带选中文字上下文）
+            // 截图框选层：预创建隐藏；⌘⇧I 时铺满光标所在显示器（drag 选区 → finish_snip）
+            tauri::WebviewWindowBuilder::new(app, "snip", tauri::WebviewUrl::App("snip.html".into()))
+                .title("")
+                .transparent(true)
+                .decorations(false)
+                .always_on_top(true)
+                .skip_taskbar(true)
+                .resizable(false)
+                .inner_size(800.0, 600.0) // 占位，唤起时按显示器重设
+                .visible(false)
+                .build()
+                .map_err(|e| format!("创建截图层失败：{e}"))?;
+
+            // 注册全局热键：⌘⇧Y 反射键（唤起/收起）；⌘⇧U 划词唤起（带选中文字上下文）；⌘⇧I 截图即问
             #[cfg(desktop)]
             {
                 if let Err(e) = app.global_shortcut().register("Super+Shift+Y") {
                     eprintln!("[yibao] 注册热键失败：{e}");
                 }
                 if let Err(e) = app.global_shortcut().register("Super+Shift+U") {
+                    eprintln!("[yibao] 注册热键失败：{e}");
+                }
+                if let Err(e) = app.global_shortcut().register("Super+Shift+I") {
                     eprintln!("[yibao] 注册热键失败：{e}");
                 }
             }
@@ -1657,6 +1757,9 @@ pub fn run() {
             open_panel_window,
             close_panel_window,
             hide_invoke_bar,
+            finish_snip,
+            cancel_snip,
+            vision_query,
             get_current_panel,
             voice_start,
             interrupt,
