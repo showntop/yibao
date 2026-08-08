@@ -391,13 +391,11 @@ onUnmounted(() => {
   height: 100%;
   display: flex;
   flex-direction: column;
-  align-items: center;
   background: var(--yb-content-bg);
 }
-/* 对话列：限宽居中（920px），左右留白给呼吸——聚焦感 */
+/* 对话列：全宽展开（气泡自身限宽），两侧不留白 */
 .chat-col {
   width: 100%;
-  max-width: 920px;
   height: 100%;
   min-height: 0;
   display: flex;
@@ -420,6 +418,10 @@ onUnmounted(() => {
 .input-slot {
   flex-shrink: 0;
   padding: var(--yb-space-3) var(--yb-space-5) var(--yb-space-4);
+}
+/* 气泡内容限宽：AI 左 / 用户右自然交替，窄窗 70%、宽窗封顶 640px（可读又饱满） */
+.bubbles :deep(.bubble) {
+  max-width: min(70%, 640px);
 }
 .bubbles::-webkit-scrollbar {
   width: 6px;
