@@ -1010,16 +1010,13 @@ onUnmounted(() => {
           <button class="pl-back" @click="view = 'chat'">‹ 对话</button>
         </div>
         <div v-if="pluginErr" class="pl-err"><YbIcon name="alert" :size="14" />{{ pluginErr }}</div>
-        <button v-for="p in plugins" :key="p.id" class="pl-row" @click="launchPlugin(p)">
-          <span class="pl-ico" :style="iconStyle(p.id)">{{ initial(p.name) }}</span>
-          <span class="pl-main">
-            <span class="pl-name">{{ p.name }}</span>
-            <span class="pl-id">{{ p.id }}</span>
-          </span>
-          <svg class="pl-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M9 6l6 6-6 6" />
-          </svg>
-        </button>
+        <div class="pl-grid">
+          <button v-for="p in plugins" :key="p.id" class="pl-card" @click="launchPlugin(p)">
+            <span class="pl-card-ico" :style="iconStyle(p.id)">{{ initial(p.name) }}</span>
+            <span class="pl-card-name">{{ p.name }}</span>
+            <span class="pl-card-id">{{ p.id }}</span>
+          </button>
+        </div>
         <div v-if="!plugins.length && !pluginErr" class="pl-empty">没有发现插件</div>
       </div>
 
@@ -1567,74 +1564,64 @@ onUnmounted(() => {
   color: var(--yb-danger);
   font-size: var(--yb-fs-md);
 }
-/* 插件行卡片：左 icon 块（按 id 哈希到 5 色调色板）+ 主区（名字+id 两行）+ 右 chevron
- * hover 整行上浮 + 边变 accent + chevron 滑入右移，质感拉满 */
-.pl-row {
-  display: flex;
-  align-items: center;
+/* 插件 grid（Launchpad 式）：2 列网格卡，上大 icon + 下名字/id，hover 上浮 */
+.pl-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
   gap: 10px;
-  width: 100%;
-  padding: 7px 9px 7px 7px;
-  margin-bottom: 7px;
+  padding: 2px;
+}
+.pl-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 14px 8px 12px;
   border: 1px solid var(--yb-surface-border);
   border-radius: var(--yb-radius-md);
   background: var(--yb-card-bg);
   box-shadow: var(--yb-shadow-1);
-  text-align: left;
   cursor: pointer;
   font-family: inherit;
   transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
-.pl-row:hover {
+.pl-card:hover {
   border-color: var(--yb-accent);
   background: var(--yb-surface-solid);
-  transform: translateY(-1px);
+  transform: translateY(-2px);
   box-shadow: var(--yb-shadow-2);
 }
-.pl-row:active {
-  transform: scale(0.99);
+.pl-card:active {
+  transform: scale(0.97);
 }
-.pl-ico {
-  flex-shrink: 0;
-  width: 30px;
-  height: 30px;
+.pl-card-ico {
+  width: 42px;
+  height: 42px;
   display: grid;
   place-items: center;
-  border-radius: var(--yb-radius-sm);
-  font-size: var(--yb-fs-lg);
+  border-radius: var(--yb-radius-md);
+  font-size: 18px;
   font-weight: var(--yb-fw-bold);
   font-family: var(--yb-font);
 }
-.pl-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-.pl-name {
+.pl-card-name {
   font-size: var(--yb-fs-lg);
   font-weight: var(--yb-fw-medium);
   color: var(--yb-text);
   line-height: 1.3;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.pl-id {
-  font-size: var(--yb-fs-sm);
+.pl-card-id {
+  font-size: var(--yb-fs-xs);
   color: var(--yb-text-dim);
-  line-height: 1.3;
-  letter-spacing: 0.02em;
-}
-.pl-chev {
-  flex-shrink: 0;
-  width: 12px;
-  height: 12px;
-  color: var(--yb-text-dim);
-  transition: transform var(--yb-dur-fast) var(--yb-ease-out),
-              color var(--yb-dur-fast) var(--yb-ease-out);
-}
-.pl-row:hover .pl-chev {
-  color: var(--yb-accent);
-  transform: translateX(2px);
+  line-height: 1.2;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .pl-empty {
   flex: 1;
