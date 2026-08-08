@@ -20,6 +20,7 @@ import {
   onSettings,
   getSettingsOnce,
   openHomeWindow,
+  openHomePlugins,
   emitRecapOpen,
   runInput,
   invokeContext,
@@ -413,9 +414,35 @@ async function launchPlugin(p: PluginInfo) {
   }
 }
 
-/** header「扩充」钮 → 打开大窗（完整 APP 主界面，与小窗互斥，宠物窗保持纯粹）。 */
+/** header「大窗」钮 → 打开大窗（完整 APP 主界面，与小窗互斥，宠物窗保持纯粹）。 */
 function openHome() {
   void openHomeWindow().catch(() => {});
+}
+
+/** header「插件」钮 → 打开大窗并切到插件页。 */
+function openPlugins() {
+  void openHomePlugins().catch(() => {});
+}
+
+let avatarClickTimer: ReturnType<typeof setTimeout> | null = null;
+/** 单击团子收起；双击打开大窗（220ms 判定窗口区分单/双击，双击不触发收起）。 */
+function onAvatarClick() {
+  if (avatarClickTimer) {
+    clearTimeout(avatarClickTimer);
+    avatarClickTimer = null;
+    return;
+  }
+  avatarClickTimer = setTimeout(() => {
+    avatarClickTimer = null;
+    collapse();
+  }, 220);
+}
+function onAvatarDblclick() {
+  if (avatarClickTimer) {
+    clearTimeout(avatarClickTimer);
+    avatarClickTimer = null;
+  }
+  openHome();
 }
 
 /** morning_recap 气泡点击 → 确保 home 窗可见 + 通知 HomeFeed 切到回顾 mode 并跳到当天。 */
@@ -926,24 +953,34 @@ onUnmounted(() => {
     <!-- 对话：header（头像+名称+状态+收起，一体化贴边）/ 内容区（权限引导/气泡流/输入条） -->
     <template v-else>
       <header class="chat-header flip" data-tauri-drag-region>
-        <Avatar :state="petState" :size="38" :observing="observing" @click="collapse" />
+        <div class="hbtns" data-tauri-drag-region>
+          <button class="hbtn" title="收起" @click="collapse">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+              <line x1="6" y1="12" x2="18" y2="12" />
+            </svg>
+          </button>
+          <button class="hbtn" title="打开大窗（完整界面）" @click="openHome">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M15 3h6v6" />
+              <path d="M9 21H3v-6" />
+              <path d="M21 3l-7 7" />
+              <path d="M3 21l7-7" />
+            </svg>
+          </button>
+          <button class="hbtn" title="插件" @click="openPlugins">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="7" height="7" rx="1.5" />
+              <rect x="14" y="3" width="7" height="7" rx="1.5" />
+              <rect x="3" y="14" width="7" height="7" rx="1.5" />
+              <rect x="14" y="14" width="7" height="7" rx="1.5" />
+            </svg>
+          </button>
+        </div>
+        <Avatar :state="petState" :size="38" :observing="observing" @click="onAvatarClick" @dblclick="onAvatarDblclick" />
         <div class="meta" data-tauri-drag-region>
           <span class="name">译宝</span>
           <span class="status" :class="petState"><i class="dot" />{{ statusText }}</span>
         </div>
-        <button class="collapse-btn" title="收起" @click="collapse">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-            <line x1="6" y1="12" x2="18" y2="12" />
-          </svg>
-        </button>
-        <button class="collapse-btn expand-btn" title="打开大窗（完整界面）" @click="openHome">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M15 3h6v6" />
-            <path d="M9 21H3v-6" />
-            <path d="M21 3l-7 7" />
-            <path d="M3 21l7-7" />
-          </svg>
-        </button>
       </header>
 
       <div class="chat-body">
@@ -1335,38 +1372,43 @@ onUnmounted(() => {
 .status.drowsy {
   --dot: var(--yb-state-idle);
 }
-/* 收起：幽灵圆钮 + minus（macOS 最小化语义），hover 才显底；绝对定位钉在 header 最左 */
-.collapse-btn {
+/* header 按钮组：分组胶囊（macOS 工具栏分段按钮语言），浅底 + 细边 + 微阴影，
+ * 每个按钮有 hover 底 + active 按压，比幽灵圆钮更有质感 */
+.hbtns {
   position: absolute;
   left: 10px;
   top: 50%;
   transform: translateY(-50%);
+  display: flex;
+  gap: 1px;
+  padding: 2px;
+  background: var(--yb-surface-1);
+  border: 1px solid var(--yb-surface-border);
+  border-radius: var(--yb-radius-sm);
+  box-shadow: var(--yb-shadow-1);
+}
+.hbtn {
   width: 24px;
   height: 24px;
   display: grid;
   place-items: center;
   border: none;
-  border-radius: 50%;
+  border-radius: calc(var(--yb-radius-sm) - 2px);
   background: transparent;
   color: var(--yb-text-dim);
   cursor: pointer;
   transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
-.collapse-btn svg {
-  width: 14px;
-  height: 14px;
-}
-.collapse-btn:hover {
-  background: var(--yb-well);
+.hbtn:hover {
+  background: var(--yb-surface-2);
   color: var(--yb-text);
 }
-/* 「扩充」钮：与收起钮同款幽灵风，挨着它站（收起钮 left:10，扩充紧随其后）——打开设置大窗 */
-.expand-btn {
-  left: 40px;
+.hbtn:active {
+  transform: scale(0.92);
 }
-.expand-btn svg {
-  width: 14px;
-  height: 14px;
+.hbtn svg {
+  width: 13px;
+  height: 13px;
 }
 .bubbles {
   flex: 1;
