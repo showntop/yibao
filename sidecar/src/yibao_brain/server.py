@@ -332,9 +332,10 @@ async def handle_panel_action(msg: dict, agent: AgentLoop, write_msg: WriteMsg, 
         else:
             if result.success and api.panel is not None:
                 result.panel = api.panel  # method 声明的面板优先于 tool 自带引用（如 webview 编辑器）
-            payload = panel_payload(result)
-            if payload is not None:
-                emit(Event(kind="panel", payload=payload))
+            if not api.quiet:  # quiet：不弹面板（唤起条存素材等静默直调）
+                payload = panel_payload(result)
+                if payload is not None:
+                    emit(Event(kind="panel", payload=payload))
         write_msg({"type": "run_done", "id": rid})
     except Exception as e:  # 兜底：任何意外都要给壳一个交代，别让面板卡死
         emit(Event(kind="error", text=f"面板操作失败：{e}", action=tag))

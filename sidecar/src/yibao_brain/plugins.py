@@ -397,6 +397,7 @@ class ApiMethod:
     plugin_id: str
     refresh: str | None = None  # 直调成功后跟一次查询 tool，面板拿刷新数据而非操作回执
     panel: str | None = None    # 直调成功后改用该面板发 panel 事件（覆盖 tool 自带引用，如 webview 编辑器）
+    quiet: bool = False         # 直调成功后不发 panel 事件（唤起条等静默场景，action_result 照发）
 
 
 _API: dict[str, ApiMethod] = {}
@@ -445,6 +446,7 @@ def _load_api(pid: str, path: Path, registry: SkillRegistry) -> None:
             name=full, handler=handler,
             direct=bool(m.get("direct", False)), intent=m.get("intent"),
             risk=risk, plugin_id=pid, refresh=refresh, panel=panel,
+            quiet=bool(m.get("quiet", False)),
         )
     _API_EVENTS[pid] = [str(e["name"]) for e in doc.get("event") or [] if e.get("name")]
 
