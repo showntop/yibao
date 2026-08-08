@@ -1164,6 +1164,7 @@ fn open_panel_window(app: AppHandle) -> Result<(), String> {
             .title("译宝面板")
             .transparent(true)
             .decorations(false)
+            .visible_on_all_workspaces(true)
             .resizable(true)
             .inner_size(780.0, 580.0)
             .build()
@@ -1714,6 +1715,7 @@ pub fn run() {
             .resizable(true)
             .inner_size(1040.0, 700.0)
             .min_inner_size(820.0, 560.0)
+            .visible_on_all_workspaces(true)
             .visible(false)
             .build()
             .map_err(|e| format!("创建大窗失败：{e}"))?;
@@ -1736,6 +1738,7 @@ pub fn run() {
                 .decorations(false)
                 .always_on_top(true)
                 .skip_taskbar(true)
+                .visible_on_all_workspaces(true)
                 .resizable(false)
                 .inner_size(328.0, 56.0)
                 .visible(false)
@@ -1749,6 +1752,7 @@ pub fn run() {
                 .decorations(false)
                 .always_on_top(true)
                 .skip_taskbar(true)
+                .visible_on_all_workspaces(true)
                 .resizable(false)
                 .inner_size(800.0, 600.0) // 占位，唤起时按显示器重设
                 .visible(false)
