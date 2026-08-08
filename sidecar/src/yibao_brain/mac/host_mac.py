@@ -152,6 +152,22 @@ class MacScreenshotter:
         scale = raw.size.width / logical_w if logical_w else 1.0
         return path, (left, top), scale
 
+    def capture_region(self, left: int, top: int, width: int, height: int) -> str:
+        """任意矩形区域截图（截图即问 overlay 选区）。返回 PNG 绝对路径。"""
+        region = {
+            "left": int(left),
+            "top": int(top),
+            "width": max(1, int(width)),
+            "height": max(1, int(height)),
+        }
+        os.makedirs(self.dir, exist_ok=True)
+        path = os.path.join(self.dir, f"yibao-snip-{time.time_ns()}.png")
+        with mss.mss() as sct:
+            raw = sct.grab(region)
+            img = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
+            img.save(path)
+        return path
+
 
 class MacInputInjector:
     def click(self, x: float, y: float) -> None:
