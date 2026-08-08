@@ -52,14 +52,19 @@ const html = computed(() => (props.role === "ai" && !props.typing ? renderMarkdo
   outline: none;
   box-shadow: none;
 }
-/* 文字选中：实色 accent 背景会让双击选中的整段显示成"实色蓝条"（选区盒比文字高，
- * 视觉突兀）。改半透明淡蓝高亮 + 保留文字原色（系统正常观感）；
- * user 蓝底上继续用半透明白翻转（与气泡对比强）。 */
+/* 文字选中：选中底色只作用于**文字 span**，不延伸到气泡 padding——
+ * 否则双击全选时选区把气泡 padding 也包进去，在气泡底色上形成一截"淡蓝带"。
+ * .bubble 的 padding 区域选区透明，仅内层 span（v-html 渲染的 + 文本 span）着淡蓝。 */
 .bubble::selection {
+  background: transparent;
+}
+.bubble :deep(span)::selection,
+.bubble span::selection {
   background: rgba(var(--yb-c-sky-rgb), 0.22);
   color: var(--yb-text);
 }
-.bubble.user::selection {
+.bubble.user :deep(span)::selection,
+.bubble.user span::selection {
   background: rgba(255, 255, 255, 0.4);
   color: var(--yb-text-on-accent);
 }
