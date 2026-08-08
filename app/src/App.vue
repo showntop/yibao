@@ -635,14 +635,22 @@ function onEvent(e: BrainEvent) {
       const recapDay = e.day;
       bubbles.value.push({ role: "ai", text, icon: "clock", recap: isRecap ? recapDay : undefined });
       // —— 反应式渲染（C 最小版）：确定性信号 → 一次性闪现；提醒纪律（档位/互斥/TTS）不变 ——
+      const taskDone = e.task?.status === "done" || (e.type === "watch_command" && e.status === "completed");
+      const taskFail = e.task?.status === "failed" || (e.type === "watch_command" && e.status === "failed");
       if (e.type === "health_nudge") {
         flashState("stretch", 1500); // 久坐 → 一套伸展操
       } else if (e.type === "late_night") {
         flashState("drowsy", 3000); // 深夜 → 打哈欠（Zz）
-      } else if (e.task?.status === "done" || (e.type === "watch_command" && e.status === "completed")) {
-        flashState("success", 1200); // 任务完成 → 星芒欢呼
-      } else if (e.task?.status === "failed" || (e.type === "watch_command" && e.status === "failed")) {
-        flashState("error", 900); // 任务失败 → 叹气
+      } else if (taskDone || taskFail) {
+        // 任务结果 = 轻反应：闪现 + 4s 自收气泡。不弹窗/不常驻/不标「有事找你」——
+        // 欢呼不该以打断姿态出现（记录照落 bubbles/Feed，窗藏时闪现不可见也无妨）
+        flashState(taskDone ? "success" : "error", taskDone ? 1200 : 900);
+        speech.value = text;
+        speechStreaming.value = false;
+        showSpeechBubble();
+        if (speechTimer) clearTimeout(speechTimer);
+        speechTimer = setTimeout(hideSpeechBubble, 4000);
+        break;
       }
       void (async () => {
         try {
