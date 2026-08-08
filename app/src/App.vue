@@ -362,6 +362,29 @@ function onQuickInterrupt() {
 // ---- 插件启动器（双击团子）----
 type PetView = "chat" | "plugins";
 interface PluginInfo { id: string; name: string }
+
+/* 插件启动器：按 id 哈希到 5 色调色板（与 QuickPanel 一致，主题感知 CSS 变量）。
+ * inline 复刻避免动 QuickPanel；后续若多处复用可抽 lib/icons.ts。 */
+const ICON_PALETTE = [
+  { bg: "var(--yb-icon-bg-0)", fg: "var(--yb-icon-fg-0)" },
+  { bg: "var(--yb-icon-bg-1)", fg: "var(--yb-icon-fg-1)" },
+  { bg: "var(--yb-icon-bg-2)", fg: "var(--yb-icon-fg-2)" },
+  { bg: "var(--yb-icon-bg-3)", fg: "var(--yb-icon-fg-3)" },
+  { bg: "var(--yb-icon-bg-4)", fg: "var(--yb-icon-fg-4)" },
+] as const;
+function djb2(s: string): number {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+function iconStyle(id: string) {
+  const c = ICON_PALETTE[djb2(id) % ICON_PALETTE.length];
+  return { background: c.bg, color: c.fg };
+}
+function initial(name: string): string {
+  const ch = name.trim().charAt(0);
+  return ch ? ch.toUpperCase() : "?";
+}
 const view = ref<PetView>("chat");
 const plugins = ref<PluginInfo[]>([]);
 const pluginErr = ref("");
@@ -988,8 +1011,14 @@ onUnmounted(() => {
         </div>
         <div v-if="pluginErr" class="pl-err"><YbIcon name="alert" :size="14" />{{ pluginErr }}</div>
         <button v-for="p in plugins" :key="p.id" class="pl-row" @click="launchPlugin(p)">
-          <span class="pl-name">{{ p.name }}</span>
-          <span class="pl-id">{{ p.id }}</span>
+          <span class="pl-ico" :style="iconStyle(p.id)">{{ initial(p.name) }}</span>
+          <span class="pl-main">
+            <span class="pl-name">{{ p.name }}</span>
+            <span class="pl-id">{{ p.id }}</span>
+          </span>
+          <svg class="pl-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 6l6 6-6 6" />
+          </svg>
         </button>
         <div v-if="!plugins.length && !pluginErr" class="pl-empty">没有发现插件</div>
       </div>
@@ -1538,33 +1567,74 @@ onUnmounted(() => {
   color: var(--yb-danger);
   font-size: var(--yb-fs-md);
 }
+/* 插件行卡片：左 icon 块（按 id 哈希到 5 色调色板）+ 主区（名字+id 两行）+ 右 chevron
+ * hover 整行上浮 + 边变 accent + chevron 滑入右移，质感拉满 */
 .pl-row {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--yb-space-2);
-  padding: var(--yb-space-3) var(--yb-space-4);
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 9px 7px 7px;
+  margin-bottom: 7px;
   border: 1px solid var(--yb-surface-border);
   border-radius: var(--yb-radius-md);
-  background: var(--yb-surface-solid);
-  box-shadow: var(--yb-shadow-soft);
+  background: var(--yb-card-bg);
+  box-shadow: var(--yb-shadow-1);
+  text-align: left;
   cursor: pointer;
   font-family: inherit;
-  text-align: left;
   transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
 .pl-row:hover {
   border-color: var(--yb-accent);
+  background: var(--yb-surface-solid);
   transform: translateY(-1px);
+  box-shadow: var(--yb-shadow-2);
+}
+.pl-row:active {
+  transform: scale(0.99);
+}
+.pl-ico {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--yb-radius-sm);
+  font-size: var(--yb-fs-lg);
+  font-weight: var(--yb-fw-bold);
+  font-family: var(--yb-font);
+}
+.pl-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
 .pl-name {
   font-size: var(--yb-fs-lg);
   font-weight: var(--yb-fw-medium);
   color: var(--yb-text);
+  line-height: 1.3;
 }
 .pl-id {
   font-size: var(--yb-fs-sm);
   color: var(--yb-text-dim);
+  line-height: 1.3;
+  letter-spacing: 0.02em;
+}
+.pl-chev {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  color: var(--yb-text-dim);
+  transition: transform var(--yb-dur-fast) var(--yb-ease-out),
+              color var(--yb-dur-fast) var(--yb-ease-out);
+}
+.pl-row:hover .pl-chev {
+  color: var(--yb-accent);
+  transform: translateX(2px);
 }
 .pl-empty {
   flex: 1;
