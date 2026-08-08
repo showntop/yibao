@@ -386,7 +386,8 @@ def _make_bridge_route(agent: AgentLoop, write_msg: WriteMsg, token: str, *, emi
             return 400, {"ok": False, "error": "text 为空"}
         if mode == "material":
             api_name = "zimeiti.invoke_mat_save"
-            params = {"url": url, "text": f"{title}\n\n{text}" if title else text}
+            # 先存后整理：defer 跳过 LLM 摘要立刻落库（秒回），mat_enrich 后台补元数据
+            params = {"url": url, "text": f"{title}\n\n{text}" if title else text, "title": title, "defer": True}
         elif mode == "topic":
             api_name = "zimeiti.invoke_add_topic"
             params = {"title": title or text[:30], "source": url or "浏览器扩展"}
@@ -407,9 +408,28 @@ def _make_bridge_route(agent: AgentLoop, write_msg: WriteMsg, token: str, *, emi
         _emit(action, result)
         if not result.success:
             return 500, {"ok": False, "error": result.error or "执行失败"}
-        return 200, {"ok": True, "title": (result.data or {}).get("title", title)}
+        data = result.data or {}
+        if mode == "material" and data.get("pending"):
+            asyncio.ensure_future(_enrich_later(agent, data.get("id")))
+        return 200, {"ok": True, "title": data.get("title", title)}
 
     return _route
+
+
+async def _enrich_later(agent: AgentLoop, material_id: str | None) -> None:
+    """先存后整理的后半拍：LLM 摘要/标签后台补写。失败静默——素材本体已在库，即席元数据可用。"""
+    if not material_id:
+        return
+    try:
+        action = agent.invoker.propose(
+            ToolCall(id=f"pa_enrich_{material_id}", skill_id="zimeiti.mat_enrich", params={"id": material_id})
+        )
+        action.id = f"pa_enrich_{material_id}"
+        if agent.invoker.decide(action) != Decision.AUTO:
+            return
+        await _offload(agent.invoker.execute, action, {"id": material_id})
+    except Exception as e:
+        print(f"[yibao] 素材后台精整失败（已跳过）：{e}", file=sys.stderr)
 
 
 async def _start_bridge(agent: AgentLoop, write_msg: WriteMsg, settings: dict) -> "asyncio.AbstractServer | None":

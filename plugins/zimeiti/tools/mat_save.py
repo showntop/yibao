@@ -85,6 +85,8 @@ class MatSave(Skill):
                     "url": {"type": "string", "description": "网页链接（仅传它时抓正文；与 text 同给时仅作来源，不重抓）"},
                     "text": {"type": "string", "description": "直接存的文本内容（无 url 时必填；与 url 同给时为正文）"},
                     "topic_id": {"type": "string", "description": "关联到某个选题时传选题 id"},
+                    "title": {"type": "string", "description": "调用方给的即席标题（如页面标题；defer 时用作初始标题）"},
+                    "defer": {"type": "boolean", "description": "true=先存后整理：跳过 LLM 摘要立刻落库，元数据由 zimeiti.mat_enrich 后台补"},
                 },
             },
         }
@@ -106,13 +108,23 @@ class MatSave(Skill):
             if not text:
                 return ActionResult(success=False, error="抓到了页面但没提取出文字内容")
         # url+text 同给：text 为正文、url 仅作来源元数据（浏览器扩展链路，不重抓）
+        defer = bool(params.get("defer"))
         llm = getattr(ctx, "llm", None)
-        if llm is None:
-            return ActionResult(success=False, error="底座未提供 LLM 能力")
-        try:
-            meta = _summarize(llm, text)
-        except Exception as e:
-            return ActionResult(success=False, error=f"摘要生成失败：{e}")
+        if defer:
+            # 先存后整理：即席元数据立刻落库（秒回），LLM 摘要/标签由 zimeiti.mat_enrich 后台补
+            head = text.strip().split("\n", 1)[0][:20] or "未命名素材"
+            meta = {
+                "title": str(params.get("title") or "").strip()[:60] or head,
+                "summary": text[:200],
+                "tags": [],
+            }
+        else:
+            if llm is None:
+                return ActionResult(success=False, error="底座未提供 LLM 能力")
+            try:
+                meta = _summarize(llm, text)
+            except Exception as e:
+                return ActionResult(success=False, error=f"摘要生成失败：{e}")
 
         now = int(time.time())
         row = {
@@ -131,6 +143,7 @@ class MatSave(Skill):
         rid = ctx.db.insert("materials", row)
         result = ActionResult(success=True, data={
             "id": rid, "title": meta["title"], "summary": meta["summary"], "tags": meta["tags"],
+            "pending": defer,  # defer 落库的元数据是即席的，mat_enrich 后台补完后还是这条 id
         })
         result.panel = "zimeiti:materials"
         return result

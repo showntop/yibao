@@ -168,3 +168,24 @@ def test_zimeiti_api_toml_has_quiet_bridge_entries():
     finally:
         plugins._API.pop("zimeiti.invoke_mat_save", None)
         plugins._API.pop("zimeiti.invoke_add_topic", None)
+
+
+def test_route_material_defers_and_schedules_enrich():
+    """material：mat_save 带 defer/title 秒回 → 响应后后台调度 mat_enrich 补元数据（失败静默）。"""
+
+    async def main():
+        invoker = _FakeInvoker(result=ActionResult(success=True, data={"id": "m1", "title": "页面标题", "pending": True}))
+        route = _route(invoker, [])
+        status, obj = await route(
+            "POST", "/save", {"x-yibao-token": "tok"},
+            {"url": "https://a.com/x", "title": "页面标题", "text": "正文", "mode": "material"},
+        )
+        assert status == 200 and obj["title"] == "页面标题"
+        save_call = [c for c in invoker.calls if c[0] == "execute"][0]
+        assert save_call[1] == "zimeiti.mat_save"
+        assert save_call[2]["defer"] is True and save_call[2]["title"] == "页面标题"
+        await asyncio.sleep(0.05)  # 让后台 enrich 任务跑一轮
+        enrich = [c for c in invoker.calls if c[0] == "execute" and c[1] == "zimeiti.mat_enrich"]
+        assert enrich and enrich[0][2] == {"id": "m1"}
+
+    _run(main())
