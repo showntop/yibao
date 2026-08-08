@@ -12,7 +12,6 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import InputBar from "./InputBar.vue";
-import SchemaPanel from "./SchemaPanel.vue";
 import YbIcon from "./YbIcon.vue";
 import {
   getFeedOnce,
@@ -315,21 +314,11 @@ async function reloadWidgets() {
   widgets.value = r.widgets;
 }
 
-/** 点 widget 标题 → 调声明的 open 方法开全面板（panel 事件回来，插件页自动接管切页）。 */
+/** 点 widget 入口 → 调声明的 open 方法开全面板（panel 事件回来，插件页自动接管切页）。 */
 function openWidget(w: WidgetPayload) {
   if (!w.open) return;
   const pid = w.panel.split(":")[0];
   void panelAction(w.open, {}, undefined, `panel:${pid}`).catch(() => {});
-}
-
-/** widget 数据兜底：取数异常时给 {}（SchemaPanel 要求 Record）。 */
-function widgetData(w: WidgetPayload): Record<string, unknown> {
-  return (w.data && typeof w.data === "object" ? w.data : {}) as Record<string, unknown>;
-}
-
-/** widget schema：后端给 unknown，非对象时给 null 让 SchemaPanel 走未知降级。 */
-function widgetSchema(w: WidgetPayload): Record<string, any> | null {
-  return w.schema && typeof w.schema === "object" ? (w.schema as Record<string, any>) : null;
 }
 
 /** 相对时间：组内只显示时刻（日期已由分组头承担），跨日项显示月日。 */
@@ -548,14 +537,20 @@ onUnmounted(() => {
             <span class="run-time">{{ elapsedSince(t.created_at) }}</span>
           </button>
         </div>
-        <!-- 插件 widget 一瞥：做进「此刻」，点标题打开全面板 -->
-        <div v-for="w in widgets" :key="w.panel" class="now-widget">
-          <div class="now-widget-head">
-            <span class="now-widget-title">{{ w.title }}</span>
-            <button v-if="w.open" class="link-btn" @click="openWidget(w)">打开</button>
-          </div>
-          <SchemaPanel :panel="w.panel" :schema="widgetSchema(w)" :data="widgetData(w)" />
-        </div>
+        <!-- 插件 widget 入口行：仅显示标题 + chevron，点全行打开全面板
+         * 详细内容在主屏不展开（AI 原生：widget 是入口，不是详情聚合） -->
+        <button
+          v-for="w in widgets"
+          :key="w.panel"
+          class="now-widget"
+          :disabled="!w.open"
+          @click="openWidget(w)"
+        >
+          <span class="now-widget-title">{{ w.title }}</span>
+          <svg class="now-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 6l6 6-6 6" />
+          </svg>
+        </button>
         <div v-if="loaded && !overview.length && !runningTasks.length && !widgets.length" class="now-quiet">
           此刻很清净，随时叫我
         </div>
@@ -760,7 +755,7 @@ onUnmounted(() => {
   background: var(--yb-content-bg);
 }
 
-/* ---- 「此刻」卡：AI 正在为你做什么（状态 + 进行中 + 插件 widget 一瞥） ---- */
+/* ---- 「此刻」卡：AI 正在为你做什么（状态 + 进行中 + widget 入口） ---- */
 .now-card {
   flex-shrink: 0;
   margin: 0 var(--yb-space-5) var(--yb-space-3);
@@ -769,6 +764,10 @@ onUnmounted(() => {
   background: var(--yb-card-bg);
   box-shadow: var(--yb-shadow-1);
   overflow: hidden;
+  /* 兜底：极端情况下（widget 很多+正在跑任务多）整体卡限高，主体时间线不被挤没 */
+  max-height: 320px;
+  overflow-y: auto;
+  scrollbar-width: thin;
 }
 .now-title {
   display: flex;
@@ -831,59 +830,53 @@ onUnmounted(() => {
   color: var(--yb-text-faint);
   letter-spacing: 0.03em;
 }
-/* 插件 widget 一瞥：内嵌于此刻，淡底区分，点标题打开全面板
- * 限高 240px + 内部自滚 + 底部渐隐：避免 widget 详情把"此刻"卡撑成详情卡
- * （macOS 通知中心语言：内容超出有渐隐边缘暗示可滚） */
+/* 插件 widget 入口行：单行紧凑（标题 + chevron），点全行打开全面板
+ * AI 原生：主屏只暴露 widget 入口，不展示完整内容（详情去插件页） */
 .now-widget {
-  position: relative;
-  border: 1px dashed var(--yb-card-border);
-  border-radius: var(--yb-radius-sm);
-  background: var(--yb-surface-2);
-  padding: var(--yb-space-2) var(--yb-space-3);
-  display: flex;
-  flex-direction: column;
-  gap: var(--yb-space-2);
-  max-height: 240px;
-  overflow: hidden;
-}
-.now-widget > :deep(*) {
-  flex-shrink: 0;
-}
-.now-widget > :deep(div):not(.now-widget-head) {
-  /* 内部内容（SchemaPanel 渲染）自滚：保留 head 不动 */
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  margin: 0 -4px;
-  padding: 0 4px;
-}
-/* 底部渐隐：内容超 240px 时给"还有更多"暗示 */
-.now-widget::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 28px;
-  background: linear-gradient(180deg, transparent, var(--yb-surface-2));
-  pointer-events: none;
-  border-bottom-left-radius: var(--yb-radius-sm);
-  border-bottom-right-radius: var(--yb-radius-sm);
-}
-.now-widget-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--yb-space-2);
+  width: 100%;
+  padding: 7px var(--yb-space-3);
+  border: 1px dashed var(--yb-card-border);
+  border-radius: var(--yb-radius-sm);
+  background: var(--yb-surface-2);
+  color: var(--yb-text);
+  font-family: inherit;
+  font-size: var(--yb-fs-md);
+  text-align: left;
+  cursor: pointer;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
+}
+.now-widget:hover:not(:disabled) {
+  border-color: var(--yb-accent);
+  background: var(--yb-surface-3);
+  border-style: solid;
+}
+.now-widget:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 .now-widget-title {
-  font-size: var(--yb-fs-md);
-  font-weight: var(--yb-fw-bold);
-  color: var(--yb-text);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--yb-fw-medium);
 }
-.now-widget .link-btn {
-  font-size: var(--yb-fs-sm);
+.now-chev {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  color: var(--yb-text-faint);
+  transition: transform var(--yb-dur-fast) var(--yb-ease-out),
+              color var(--yb-dur-fast) var(--yb-ease-out);
+}
+.now-widget:hover:not(:disabled) .now-chev {
+  color: var(--yb-accent);
+  transform: translateX(2px);
 }
 .now-quiet {
   font-size: var(--yb-fs-md);
