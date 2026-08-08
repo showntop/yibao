@@ -1266,7 +1266,7 @@ input:focus,
 select:focus,
 textarea:focus {
   border-color: var(--yb-accent);
-  box-shadow: 0 0 0 3px rgba(var(--yb-c-sky-rgb), 0.22);
+  box-shadow: var(--yb-focus-ring);
 }
 .sub-title {
   margin-top: var(--yb-space-2);

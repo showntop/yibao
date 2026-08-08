@@ -891,6 +891,7 @@ onUnmounted(() => {
   padding: 2px 0;
   cursor: pointer;
   white-space: nowrap;
+  transition: color var(--yb-dur-fast) var(--yb-ease-out);
 }
 .link-btn:hover:not(:disabled) {
   text-decoration: underline;
@@ -1254,7 +1255,7 @@ onUnmounted(() => {
 .btn-primary,
 .btn-ghost {
   padding: 5px var(--yb-space-3);
-  border-radius: var(--yb-radius-xs);
+  border-radius: var(--yb-radius-sm);
   font-size: var(--yb-fs-md);
   font-family: inherit;
   font-weight: var(--yb-fw-medium);

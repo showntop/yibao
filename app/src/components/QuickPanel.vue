@@ -52,13 +52,15 @@ function onDock(slot: DockSlot) {
   else emit("launch", { id: "", name: "全部" });
 }
 
-// ---- 插件图标配色：按 id 哈希到 5 色调色板 ----
+// ---- 插件图标配色：按 id 哈希到 5 色调色板。
+// 色值引用 tokens.css 的 --yb-icon-* 变量：深浅主题自动切换，
+// 深色模式字母字提亮、底色透明度略升（可读性）。
 const ICON_PALETTE = [
-  { bg: "rgba(77,144,196,0.16)",  fg: "#3d7aa8" },
-  { bg: "rgba(238,95,143,0.16)",  fg: "#c4447a" },
-  { bg: "rgba(242,160,60,0.16)",  fg: "#a86a15" },
-  { bg: "rgba(62,142,90,0.16)",   fg: "#2d6e44" },
-  { bg: "rgba(124,92,184,0.16)",  fg: "#5a4380" },
+  { bg: "var(--yb-icon-bg-0)", fg: "var(--yb-icon-fg-0)" },
+  { bg: "var(--yb-icon-bg-1)", fg: "var(--yb-icon-fg-1)" },
+  { bg: "var(--yb-icon-bg-2)", fg: "var(--yb-icon-fg-2)" },
+  { bg: "var(--yb-icon-bg-3)", fg: "var(--yb-icon-fg-3)" },
+  { bg: "var(--yb-icon-bg-4)", fg: "var(--yb-icon-fg-4)" },
 ];
 function iconStyle(id: string) {
   let h = 0;

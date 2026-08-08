@@ -1467,6 +1467,7 @@ onUnmounted(() => {
   cursor: pointer;
   display: grid;
   place-items: center;
+  transition: background var(--yb-dur-fast) var(--yb-ease-out);
 }
 .ctx-x:hover {
   background: rgba(var(--yb-c-sky-rgb), 0.18);
@@ -1480,7 +1481,7 @@ onUnmounted(() => {
 }
 .pl-title {
   font-size: var(--yb-fs-lg);
-  font-weight: 600;
+  font-weight: var(--yb-fw-bold);
 }
 .pl-back {
   border: none;
@@ -1527,7 +1528,7 @@ onUnmounted(() => {
 }
 .pl-name {
   font-size: var(--yb-fs-lg);
-  font-weight: 500;
+  font-weight: var(--yb-fw-medium);
   color: var(--yb-text);
 }
 .pl-id {

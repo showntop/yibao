@@ -285,7 +285,7 @@ const fallbackJson = computed(() =>
   padding: 14px;
   background: var(--yb-surface-2);
   border-radius: inherit;
-  font: 13px/1.6 var(--yb-font);
+  font: var(--yb-fs-lg)/var(--yb-lh-base) var(--yb-font);
   color: var(--yb-text);
 }
 .body-scroll {
@@ -303,12 +303,12 @@ const fallbackJson = computed(() =>
   border: none;
   background: transparent;
   color: var(--yb-text-dim);
-  font-size: 12.5px;
+  font-size: var(--yb-fs-md);
   font-family: inherit;
   cursor: pointer;
   padding: 4px 10px;
-  border-radius: 10px;
-  transition: all 0.15s ease;
+  border-radius: var(--yb-radius-sm);
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
 .back:hover {
   color: var(--yb-accent-deep);
@@ -329,23 +329,23 @@ const fallbackJson = computed(() =>
 }
 .empty-title {
   color: var(--yb-text-dim);
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--yb-fs-lg);
+  font-weight: var(--yb-fw-bold);
 }
 .empty-hint {
   color: var(--yb-text-dim);
-  font-size: 12px;
+  font-size: var(--yb-fs-md);
 }
 /* ---- 按钮两级体系：主按钮实底 / 次按钮 ghost ---- */
 .btn {
   border: none;
   cursor: pointer;
   font-family: inherit;
-  border-radius: 10px;
+  border-radius: var(--yb-radius-sm);
   padding: 6px 16px;
-  font-size: 12.5px;
-  font-weight: 600;
-  transition: all 0.15s ease;
+  font-size: var(--yb-fs-md);
+  font-weight: var(--yb-fw-bold);
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
 .btn:active {
   transform: scale(0.97);
@@ -353,7 +353,7 @@ const fallbackJson = computed(() =>
 .btn.primary {
   background: var(--yb-accent);
   color: var(--yb-text-on-accent);
-  box-shadow: 0 2px 6px rgba(var(--yb-c-sky-rgb), 0.35);
+  box-shadow: var(--yb-shadow-soft);
 }
 .btn.primary:hover {
   background: var(--yb-accent-deep);
@@ -362,7 +362,7 @@ const fallbackJson = computed(() =>
   background: transparent;
   color: var(--yb-text-dim);
   border: 1px solid var(--yb-surface-border);
-  font-weight: 500;
+  font-weight: var(--yb-fw-medium);
 }
 .btn.ghost:hover {
   background: var(--yb-btn-neutral);
@@ -370,11 +370,11 @@ const fallbackJson = computed(() =>
 }
 .btn.sm {
   padding: 4px 12px;
-  font-size: 12px;
+  font-size: var(--yb-fs-md);
 }
 .btn.mini {
   padding: 2px 9px;
-  font-size: 11.5px;
+  font-size: var(--yb-fs-sm);
 }
 /* ---- 卡片（list 行 / board 条目共用基础） ---- */
 .card {
@@ -382,25 +382,25 @@ const fallbackJson = computed(() =>
   align-items: center;
   gap: 10px;
   padding: 11px 14px;
-  border-radius: 14px;
+  border-radius: var(--yb-radius-md);
   background: var(--yb-card-bg);
   border: 1px solid var(--yb-surface-border);
   box-shadow: var(--yb-shadow);
   margin-bottom: 8px;
-  transition: all 0.15s ease;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
 .card-main {
   flex: 1;
   min-width: 0;
 }
 .card-title {
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--yb-fs-lg);
+  font-weight: var(--yb-fw-medium);
   line-height: 1.5;
   word-break: break-word;
 }
 .card-sub {
-  font-size: 12px;
+  font-size: var(--yb-fs-md);
   color: var(--yb-text-dim);
   margin-top: 2px;
 }
@@ -426,11 +426,11 @@ const fallbackJson = computed(() =>
   flex-direction: column;
   min-height: 0;
   padding: 10px;
-  border-radius: 14px;
+  border-radius: var(--yb-radius-md);
   background: var(--yb-card-bg);
   border: 1px solid var(--yb-surface-border);
   box-shadow: var(--yb-shadow);
-  transition: all 0.15s ease;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
 .board-head {
   display: flex;
@@ -447,17 +447,17 @@ const fallbackJson = computed(() =>
   flex-shrink: 0;
 }
 .board-label {
-  font-size: 12.5px;
-  font-weight: 600;
+  font-size: var(--yb-fs-md);
+  font-weight: var(--yb-fw-bold);
   color: var(--yb-text);
 }
 .board-count {
   margin-left: auto;
-  font-size: 11.5px;
-  font-weight: 600;
+  font-size: var(--yb-fs-sm);
+  font-weight: var(--yb-fw-bold);
   color: var(--yb-text-dim);
   background: var(--yb-well);
-  border-radius: 999px;
+  border-radius: var(--yb-radius-pill);
   padding: 1px 8px;
 }
 .board-cards {
@@ -472,10 +472,10 @@ const fallbackJson = computed(() =>
 }
 .board-empty {
   border: 1.5px dashed var(--yb-surface-border);
-  border-radius: 10px;
+  border-radius: var(--yb-radius-sm);
   color: var(--yb-text-dim);
   text-align: center;
-  font-size: 12px;
+  font-size: var(--yb-fs-md);
   padding: 18px 8px;
 }
 /* 拖拽流转：可拖卡片 / 拖动中 / 目标列高亮 */
@@ -499,13 +499,13 @@ const fallbackJson = computed(() =>
   margin-top: 8px;
   padding: 7px 12px;
   border: 1px solid var(--yb-surface-border);
-  border-radius: 10px;
+  border-radius: var(--yb-radius-sm);
   background: var(--yb-surface-2);
   color: var(--yb-text);
-  font-size: 12.5px;
+  font-size: var(--yb-fs-md);
   font-family: inherit;
   outline: none;
-  transition: all 0.15s ease;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
 .quick-add::placeholder {
   color: var(--yb-text-dim);
@@ -572,7 +572,7 @@ const fallbackJson = computed(() =>
 .detail-card {
   background: var(--yb-card-bg);
   border: 1px solid var(--yb-surface-border);
-  border-radius: 14px;
+  border-radius: var(--yb-radius-md);
   box-shadow: var(--yb-shadow);
   padding: 4px 14px;
 }
@@ -598,26 +598,26 @@ const fallbackJson = computed(() =>
   flex-shrink: 0;
   width: 72px;
   color: var(--yb-text-dim);
-  font-size: 12.5px;
+  font-size: var(--yb-fs-md);
 }
 .v {
   word-break: break-word;
 }
 /* ---- doc：markdown 文档阅读 ---- */
 .doc-title {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: var(--yb-fs-lg);
+  font-weight: var(--yb-fw-bold);
   padding: 2px 4px 10px;
 }
 .doc-body {
   background: var(--yb-card-bg);
   border: 1px solid var(--yb-surface-border);
-  border-radius: 14px;
+  border-radius: var(--yb-radius-md);
   padding: 12px 16px;
   line-height: 1.7;
 }
 .doc-body :deep(.md-h) {
-  font-weight: 600;
+  font-weight: var(--yb-fw-bold);
   margin: 10px 0 2px;
 }
 .doc-body :deep(.md-li) {
@@ -636,9 +636,9 @@ const fallbackJson = computed(() =>
 .doc-body :deep(code) {
   font-family: var(--yb-mono);
   background: var(--yb-code-inline-bg);
-  border-radius: 4px;
+  border-radius: var(--yb-radius-xs);
   padding: 0 4px;
-  font-size: 12px;
+  font-size: var(--yb-fs-md);
 }
 .doc-body :deep(pre) {
   margin: 6px 0;
@@ -661,20 +661,20 @@ const fallbackJson = computed(() =>
 }
 .form .k {
   width: auto;
-  font-weight: 500;
+  font-weight: var(--yb-fw-medium);
 }
 .form input,
 .form textarea {
   border: 1px solid var(--yb-surface-border);
-  border-radius: 10px;
+  border-radius: var(--yb-radius-sm);
   padding: 8px 12px;
-  font-size: 13px;
+  font-size: var(--yb-fs-lg);
   font-family: inherit;
   background: var(--yb-card-bg);
   color: var(--yb-text);
   outline: none;
   resize: vertical;
-  transition: all 0.15s ease;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
 .form input:hover,
 .form textarea:hover {
@@ -693,15 +693,15 @@ const fallbackJson = computed(() =>
 .fallback summary {
   cursor: pointer;
   color: var(--yb-text-dim);
-  font-size: 12.5px;
+  font-size: var(--yb-fs-md);
 }
 .fallback pre {
   margin: 10px 0 0;
   padding: 12px 14px;
   background: var(--yb-card-bg);
   border: 1px solid var(--yb-surface-border);
-  border-radius: 14px;
-  font: 12.5px/1.6 var(--yb-mono);
+  border-radius: var(--yb-radius-md);
+  font: var(--yb-fs-md)/var(--yb-lh-base) var(--yb-mono);
   white-space: pre-wrap;
   word-break: break-all;
   color: var(--yb-text);

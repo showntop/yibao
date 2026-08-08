@@ -162,6 +162,19 @@
   --yb-focus-ring: 0 0 0 2px var(--yb-c-white), 0 0 0 4px rgba(var(--yb-c-sky-rgb), 0.55);
   --yb-border-focus: var(--yb-c-sky-500);
 
+  /* ---- 快捷插件图标调色板（QuickPanel 按 id 哈希取色）：JS 侧引用变量，
+   * 使深浅主题自动切换，避免深色模式下深色字母字可读性差 ---- */
+  --yb-icon-bg-0: rgba(77, 144, 196, 0.16);
+  --yb-icon-fg-0: #3d7aa8;
+  --yb-icon-bg-1: rgba(238, 95, 143, 0.16);
+  --yb-icon-fg-1: #c4447a;
+  --yb-icon-bg-2: rgba(242, 160, 60, 0.16);
+  --yb-icon-fg-2: #a86a15;
+  --yb-icon-bg-3: rgba(62, 142, 90, 0.16);
+  --yb-icon-fg-3: #2d6e44;
+  --yb-icon-bg-4: rgba(124, 92, 184, 0.16);
+  --yb-icon-fg-4: #5a4380;
+
   /* ---- 气泡 ---- */
   --yb-bubble-ai: rgba(255, 255, 255, 0.94);
   --yb-bubble-user: rgba(231, 240, 248, 0.9);
@@ -348,6 +361,18 @@ pre {
 
     /* ---- 焦点环 ---- */
     --yb-focus-ring: 0 0 0 2px #10161d, 0 0 0 4px rgba(77, 144, 196, 0.7);
+
+    /* ---- 快捷插件图标调色板：深色下字母字提亮、底色透明度略升 ---- */
+    --yb-icon-bg-0: rgba(117, 178, 230, 0.20);
+    --yb-icon-fg-0: #8ec1ea;
+    --yb-icon-bg-1: rgba(238, 129, 170, 0.20);
+    --yb-icon-fg-1: #f2a3c5;
+    --yb-icon-bg-2: rgba(242, 180, 110, 0.20);
+    --yb-icon-fg-2: #f0c386;
+    --yb-icon-bg-3: rgba(110, 190, 140, 0.20);
+    --yb-icon-fg-3: #93d4ac;
+    --yb-icon-bg-4: rgba(168, 138, 220, 0.20);
+    --yb-icon-fg-4: #c3a9e8;
 
     /* ---- 气泡 ---- */
     --yb-bubble-ai: rgba(31, 42, 54, 0.94);
