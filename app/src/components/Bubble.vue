@@ -47,6 +47,26 @@ const html = computed(() => (props.role === "ai" && !props.typing ? renderMarkdo
   line-height: var(--yb-lh-base);
   word-break: break-word;
   animation: pop var(--yb-dur-fast) var(--yb-ease-out);
+  /* 双击/选中触发 :focus 时浏览器会画 outline: auto（系统 accent 蓝 2-3px 实色），
+   * 在 user 气泡上呈现"深色蓝矩形"。显式去掉；box-shadow 一并强制清空防残留。 */
+  outline: none;
+  box-shadow: none;
+}
+/* 文字选中：选中底色只作用于**文字 span**，不延伸到气泡 padding——
+ * 否则双击全选时选区把气泡 padding 也包进去，在气泡底色上形成一截"淡蓝带"。
+ * .bubble 的 padding 区域选区透明，仅内层 span（v-html 渲染的 + 文本 span）着淡蓝。 */
+.bubble::selection {
+  background: transparent;
+}
+.bubble :deep(span)::selection,
+.bubble span::selection {
+  background: rgba(var(--yb-c-sky-rgb), 0.22);
+  color: var(--yb-text);
+}
+.bubble.user :deep(span)::selection,
+.bubble.user span::selection {
+  background: rgba(255, 255, 255, 0.4);
+  color: var(--yb-text-on-accent);
 }
 /* 行首语义图标（提醒=accent / 告警=danger）与行尾中止图标 */
 .b-lead {
@@ -79,15 +99,20 @@ const html = computed(() => (props.role === "ai" && !props.typing ? renderMarkdo
   border: 1px solid var(--yb-surface-border);
   color: var(--yb-text);
   align-self: flex-start;
-  box-shadow: var(--yb-shadow-soft);
+  /* 不加 box-shadow：0 2px 8px 模糊在白底上与 ::selection accent 蓝叠加会形成
+   * 视觉上的"深蓝条"（双击全选时尤甚）。靠 1px 边 + 实色底出"卡"感。 */
   /* 尾巴角：靠左下的角收窄，拟小尾巴 */
   border-radius: var(--yb-radius-md) var(--yb-radius-md) var(--yb-radius-md) var(--yb-radius-xs);
 }
 .user {
-  background: linear-gradient(135deg, var(--yb-accent), var(--yb-accent-deep));
+  /* 纯色：与 ai 气泡统一无渐变（此前 135deg accent→deep 对角渐变会让
+   * "用户发的第一条消息"看起来有渐变，浅色底上突兀） */
+  background: var(--yb-accent);
   color: var(--yb-text-on-accent);
   align-self: flex-end;
-  box-shadow: 0 2px 8px rgba(77, 144, 196, 0.3);
+  /* 不加 box-shadow：0.3 sky 蓝 8px blur 在白底上向四周扩散，气泡上方会
+   * 出现淡蓝晕，看起来像"上半部分叠了一层"。靠实色 + 1px 边出"卡"感。 */
+  border: 1px solid var(--yb-accent);
   /* 尾巴角：靠右下的角收窄 */
   border-radius: var(--yb-radius-md) var(--yb-radius-md) var(--yb-radius-xs) var(--yb-radius-md);
 }
@@ -145,6 +170,9 @@ const html = computed(() => (props.role === "ai" && !props.typing ? renderMarkdo
 }
 .ai :deep(.md-gap) {
   height: 6px;
+  /* 空行占位 div：双击/全选时选区覆盖它会让 ::selection 显示成 accent 蓝条。
+   * user-select: none 让它不可选中，选区直接跳过（CSS 层兜底，旧消息也生效）。 */
+  user-select: none;
 }
 .ai :deep(.md-hr) {
   border-top: 1px solid var(--yb-line);

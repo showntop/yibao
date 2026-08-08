@@ -129,7 +129,8 @@
   --yb-border-base: rgba(var(--yb-c-slate-rgb), 0.1);
   --yb-border-strong: rgba(var(--yb-c-slate-rgb), 0.18);
   --yb-line: rgba(var(--yb-c-slate-rgb), 0.08);
-  --yb-glass-border: rgba(255, 255, 255, 0.7);
+  /* 玻璃边：浅色下深细灰边（白底可见），深色下白透明 */
+  --yb-glass-border: rgba(54, 78, 102, 0.18);
 
   /* ---- 主色 ---- */
   --yb-accent: var(--yb-c-sky-500);
@@ -150,10 +151,14 @@
   --yb-intent-notify: #d13d72;
   --yb-intent-notify-soft: rgba(var(--yb-c-notify-rgb), 0.12);
 
-  /* ---- 阴影梯度：对应 L1/L2/L3 ---- */
+  /* ---- 阴影梯度：L3 多层立体（贴边细+浮起+远投），让小窗在白底浮起来 ---- */
   --yb-shadow-1: 0 1px 2px rgba(var(--yb-c-slate-rgb), 0.06);
   --yb-shadow-2: 0 2px 8px rgba(var(--yb-c-slate-rgb), 0.08);
-  --yb-shadow-3: 0 10px 32px rgba(var(--yb-c-slate-rgb), 0.16);
+  --yb-shadow-3:
+    0 1px 2px rgba(var(--yb-c-slate-rgb), 0.06),
+    0 4px 12px rgba(var(--yb-c-slate-rgb), 0.10),
+    0 16px 40px rgba(var(--yb-c-slate-rgb), 0.16),
+    0 32px 80px -16px rgba(var(--yb-c-slate-rgb), 0.12);
   --yb-shadow-sm: var(--yb-shadow-1); /* 原被 App.vue:814 引用但从未定义 */
   --yb-shadow-soft: var(--yb-shadow-2);
   --yb-shadow: var(--yb-shadow-3);
@@ -162,9 +167,22 @@
   --yb-focus-ring: 0 0 0 2px var(--yb-c-white), 0 0 0 4px rgba(var(--yb-c-sky-rgb), 0.55);
   --yb-border-focus: var(--yb-c-sky-500);
 
-  /* ---- 气泡 ---- */
-  --yb-bubble-ai: rgba(255, 255, 255, 0.94);
-  --yb-bubble-user: rgba(231, 240, 248, 0.9);
+  /* ---- 快捷插件图标调色板（QuickPanel 按 id 哈希取色）：JS 侧引用变量，
+   * 使深浅主题自动切换，避免深色模式下深色字母字可读性差 ---- */
+  --yb-icon-bg-0: rgba(77, 144, 196, 0.16);
+  --yb-icon-fg-0: #3d7aa8;
+  --yb-icon-bg-1: rgba(238, 95, 143, 0.16);
+  --yb-icon-fg-1: #c4447a;
+  --yb-icon-bg-2: rgba(242, 160, 60, 0.16);
+  --yb-icon-fg-2: #a86a15;
+  --yb-icon-bg-3: rgba(62, 142, 90, 0.16);
+  --yb-icon-fg-3: #2d6e44;
+  --yb-icon-bg-4: rgba(124, 92, 184, 0.16);
+  --yb-icon-fg-4: #5a4380;
+
+  /* ---- 气泡：实色与白壳区分（不再用半透明导致与壳融） ---- */
+  --yb-bubble-ai: #f4f7fb;
+  --yb-bubble-user: #e7f0f8;
 
   /* ---- 交互表面 ---- */
   --yb-btn-neutral: rgba(var(--yb-c-slate-rgb), 0.07);
@@ -255,7 +273,8 @@
   --yb-think: var(--yb-state-think);
   --yb-work: var(--yb-state-work);
   --yb-say: var(--yb-state-say);
-  --yb-shell-bg: var(--yb-glass);
+  /* 对话窗壳背景：极淡灰白（与桌面纯白差一阶，让小窗"切割"出来）+ shadow 浮起 */
+  --yb-shell-bg: #fafbfd;
   --yb-surface: rgba(255, 255, 255, 0.78);
   --yb-surface-solid: #fbfdff;
   --yb-surface-border: var(--yb-border-base);
@@ -350,9 +369,23 @@ pre {
     /* ---- 焦点环 ---- */
     --yb-focus-ring: 0 0 0 2px #10161d, 0 0 0 4px rgba(77, 144, 196, 0.7);
 
-    /* ---- 气泡 ---- */
-    --yb-bubble-ai: rgba(31, 42, 54, 0.94);
-    --yb-bubble-user: rgba(45, 62, 82, 0.9);
+    /* ---- 快捷插件图标调色板：深色下字母字提亮、底色透明度略升 ---- */
+    --yb-icon-bg-0: rgba(117, 178, 230, 0.20);
+    --yb-icon-fg-0: #8ec1ea;
+    --yb-icon-bg-1: rgba(238, 129, 170, 0.20);
+    --yb-icon-fg-1: #f2a3c5;
+    --yb-icon-bg-2: rgba(242, 180, 110, 0.20);
+    --yb-icon-fg-2: #f0c386;
+    --yb-icon-bg-3: rgba(110, 190, 140, 0.20);
+    --yb-icon-fg-3: #93d4ac;
+    --yb-icon-bg-4: rgba(168, 138, 220, 0.20);
+    --yb-icon-fg-4: #c3a9e8;
+
+    /* ---- 气泡（深色：实色深石板，与壳区分） ---- */
+    --yb-bubble-ai: var(--yb-surface-2);
+    --yb-bubble-user: rgba(77, 144, 196, 0.22);
+    /* ---- 壳背景（深色下深石板实色） ---- */
+    --yb-shell-bg: var(--yb-surface-1);
 
     /* ---- 交互表面 ---- */
     --yb-btn-neutral: rgba(255, 255, 255, 0.08);

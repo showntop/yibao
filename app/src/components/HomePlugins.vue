@@ -35,6 +35,36 @@ const plugins = ref<PluginInfo[]>([]);
 const pluginErr = ref("");
 const viewingList = ref(true); // true=插件列表；false=面板视图（panel 事件到来自动切入）
 
+// 搜索过滤（按名字或 id，与主屏/小窗的插件网格同一视觉语言）
+const query = ref("");
+const filtered = computed(() => {
+  const q = query.value.trim().toLowerCase();
+  if (!q) return plugins.value;
+  return plugins.value.filter((p) => p.name.toLowerCase().includes(q) || p.id.toLowerCase().includes(q));
+});
+
+// 图标配色：按 id 哈希到 5 色调色板（主题感知 CSS 变量，与小窗 QuickPanel 同源）
+const ICON_PALETTE = [
+  { bg: "var(--yb-icon-bg-0)", fg: "var(--yb-icon-fg-0)" },
+  { bg: "var(--yb-icon-bg-1)", fg: "var(--yb-icon-fg-1)" },
+  { bg: "var(--yb-icon-bg-2)", fg: "var(--yb-icon-fg-2)" },
+  { bg: "var(--yb-icon-bg-3)", fg: "var(--yb-icon-fg-3)" },
+  { bg: "var(--yb-icon-bg-4)", fg: "var(--yb-icon-fg-4)" },
+] as const;
+function djb2(s: string): number {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+function iconStyle(id: string) {
+  const c = ICON_PALETTE[djb2(id) % ICON_PALETTE.length];
+  return { background: c.bg, color: c.fg };
+}
+function initial(name: string): string {
+  const ch = name.trim().charAt(0);
+  return ch ? ch.toUpperCase() : "?";
+}
+
 async function loadPlugins() {
   pluginErr.value = "";
   try {
@@ -367,12 +397,15 @@ onUnmounted(() => {
       </template>
     </header>
 
-    <!-- 插件列表：macOS 图标网格（与主屏一瞥卡视觉同源），点击直达主面板 -->
+    <!-- 插件列表：Launchpad 式网格（图标按 id 哈希配色），顶部搜索过滤 -->
     <div v-if="viewingList" class="plist">
       <div v-if="pluginErr" class="pl-err"><YbIcon name="alert" :size="14" />{{ pluginErr }}</div>
-      <div v-if="plugins.length" class="pgrid">
-        <button v-for="p in plugins" :key="p.id" class="pcard" @click="launchPlugin(p)">
-          <span class="pcard-ic">{{ p.name.slice(0, 1) }}</span>
+      <label v-if="plugins.length" class="pl-search">
+        <input v-model="query" placeholder="搜插件名或 id…" />
+      </label>
+      <div v-if="filtered.length" class="pgrid">
+        <button v-for="p in filtered" :key="p.id" class="pcard" @click="launchPlugin(p)">
+          <span class="pcard-ic" :style="iconStyle(p.id)">{{ initial(p.name) }}</span>
           <span class="pcard-name">{{ p.name }}</span>
           <span class="pcard-id">{{ p.id }}</span>
           <!-- 面板级入口（manifest [[panel]] open 声明，如素材库/热点雷达）；stop 防触发卡片主入口 -->
@@ -380,6 +413,10 @@ onUnmounted(() => {
             <span v-for="panel in p.panels" :key="panel.name" class="pcard-sub" @click.stop="openPluginPanel(p, panel)">{{ panel.label }}</span>
           </span>
         </button>
+      </div>
+      <div v-else-if="plugins.length" class="pl-empty">
+        <YbIcon name="plug" :size="26" :stroke="1.4" />
+        <p>没找到「{{ query }}」<br /><span>换个关键词试试</span></p>
       </div>
       <div v-else-if="!pluginErr" class="pl-empty">
         <YbIcon name="plug" :size="26" :stroke="1.4" />
@@ -465,11 +502,11 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: var(--yb-space-2);
-  padding: var(--yb-titlebar-h) var(--yb-space-5) var(--yb-space-4);
+  padding: 0 var(--yb-space-5) var(--yb-space-4);
   user-select: none;
 }
 .page-head.in-panel {
-  padding: var(--yb-titlebar-h) var(--yb-space-4) var(--yb-space-2);
+  padding: 0 var(--yb-space-4) var(--yb-space-2);
   border-bottom: 1px solid var(--yb-border-base);
 }
 .head-text {
@@ -546,55 +583,96 @@ onUnmounted(() => {
   color: var(--yb-danger);
   font-size: var(--yb-fs-md);
 }
+/* 搜索框 */
+.pl-search {
+  display: block;
+  width: 100%;
+  max-width: 260px;
+  margin-bottom: var(--yb-space-4);
+}
+.pl-search input {
+  width: 100%;
+  padding: 7px 12px;
+  border: 1px solid var(--yb-card-border);
+  border-radius: var(--yb-radius-md);
+  background: var(--yb-card-bg);
+  box-shadow: var(--yb-shadow-1);
+  color: var(--yb-text);
+  font-size: var(--yb-fs-md);
+  font-family: inherit;
+  outline: none;
+  transition: border-color var(--yb-dur-fast) var(--yb-ease-out), box-shadow var(--yb-dur-fast) var(--yb-ease-out);
+}
+.pl-search input::placeholder {
+  color: var(--yb-text-faint);
+}
+.pl-search input:focus {
+  border-color: var(--yb-accent);
+  /* 用软外环代替全局 --yb-focus-ring（双环内白覆盖了 1px accent border） */
+  box-shadow: 0 0 0 3px rgba(var(--yb-c-sky-rgb), 0.22);
+}
+
 /* 自适应网格：窄窗自动减列，卡片不拉伸变形 */
 .pgrid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: var(--yb-space-3);
 }
-/* 插件卡：与主屏一瞥卡视觉同源（实白 + hairline + 小圆角），hover 抬起 */
+/* 插件卡：Launchpad 式（图标 + 名字 + id 垂直居中），hover 上浮 + 图标微放大 */
 .pcard {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
+  text-align: center;
   gap: var(--yb-space-1);
-  padding: var(--yb-space-4);
+  padding: var(--yb-space-4) var(--yb-space-2);
   border: 1px solid var(--yb-card-border);
   border-radius: var(--yb-card-radius);
   background: var(--yb-card-bg);
   font-family: inherit;
-  text-align: left;
   cursor: pointer;
   transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
 .pcard:hover {
   border-color: var(--yb-accent);
   box-shadow: var(--yb-shadow-2);
-  transform: translateY(-1px);
+  transform: translateY(-2px);
 }
-/* 图标：首字承担（插件无自带图标资源），渐变底与 Dock 同款 */
+.pcard:active {
+  transform: scale(0.97);
+}
+/* 图标：按 id 哈希到 5 色调色板（iconStyle 内联 background/color），首字承担 */
 .pcard-ic {
-  width: 40px;
-  height: 40px;
+  width: 46px;
+  height: 46px;
   margin-bottom: var(--yb-space-2);
   display: grid;
   place-items: center;
-  border-radius: var(--yb-radius-sm);
-  background: linear-gradient(160deg, var(--yb-accent-soft), var(--yb-surface-2));
-  border: 1px solid var(--yb-card-border);
-  color: var(--yb-accent-deep);
-  font-size: 17px;
+  border-radius: var(--yb-radius-md);
+  font-size: 19px;
   font-weight: var(--yb-fw-bold);
+  transition: transform var(--yb-dur-fast) var(--yb-ease-out);
+}
+.pcard:hover .pcard-ic {
+  transform: scale(1.07);
 }
 .pcard-name {
   font-size: var(--yb-fs-lg);
   font-weight: var(--yb-fw-medium);
   color: var(--yb-text);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .pcard-id {
   font-family: var(--yb-mono);
   font-size: var(--yb-fs-xs);
   color: var(--yb-text-faint);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .pcard-subs {
   display: flex;

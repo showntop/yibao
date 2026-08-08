@@ -10,6 +10,7 @@ import InputBar from "./InputBar.vue";
 import Bubble from "./Bubble.vue";
 import PermissionsBanner from "./PermissionsBanner.vue";
 import SetupWizard from "./SetupWizard.vue";
+import HomeContextBar from "./HomeContextBar.vue";
 import {
   onBrainEvent,
   onBrainStatus,
@@ -43,10 +44,27 @@ function pushWarn(text: string) {
   bubbles.value.push({ role: "ai", text, icon: "alert" });
 }
 
-// state：同步给父级侧边栏团子；openPanel：关联气泡点击 → 父级切插件页；reminder：父级切回本页
+// state：同步给父级顶栏状态；openPanel：关联气泡点击 → 父级切插件页；reminder：父级切回本页
 const emit = defineEmits<{ state: [AvatarState]; openPanel: []; reminder: [] }>();
-// draft：主屏 Feed 点击带过来的自包含草稿，直接转给 InputBar（它自己 watch 填入+聚焦）
-defineProps<{ draft?: string }>();
+// draft：主屏 Feed/信息面板点击带过来的自包含草稿，直接转给 InputBar（它自己 watch 填入+聚焦）
+const props = defineProps<{ draft?: string }>();
+
+// 本地草稿：父级 draft 单向同步；右侧信息面板点动态也经此填入（强制重置触发 InputBar watch）
+const draftRef = ref<string | undefined>(undefined);
+watch(
+  () => props.draft,
+  (d) => {
+    if (d) {
+      draftRef.value = "";
+      void nextTick(() => (draftRef.value = d));
+    }
+  },
+);
+/** 右侧信息面板点动态/回顾 → 带上下文进输入框（先清空、下一拍设回，强制触发）。 */
+function onInfoChat(d: string) {
+  draftRef.value = "";
+  void nextTick(() => (draftRef.value = d));
+}
 
 const state = ref<AvatarState>("idle");
 const bubbles = ref<BubbleMsg[]>([]);
@@ -71,12 +89,6 @@ function onSetupSaved() {
   bubbles.value.push({ role: "sys", text: "配置已保存，大脑启动中…" });
 }
 
-const statusText = computed(
-  () => ({
-    idle: "待命中", listen: "聆听中", think: "思考中…", work: "操作中…", say: "说话中…",
-    success: "完成", error: "出错了",
-  }[state.value]),
-);
 // success/error 是短暂 valence（不可打断），不算 busy
 const busy = computed(() =>
   state.value === "listen" || state.value === "think" ||
@@ -320,20 +332,20 @@ onUnmounted(() => {
 
 <template>
   <div class="chat-page">
-    <header class="page-head" data-tauri-drag-region>
-      <span class="pg-title" data-tauri-drag-region>对话</span>
-      <span class="status" :class="state"><i class="dot" />{{ statusText }}</span>
-    </header>
-
     <SetupWizard v-if="setupNeeded" :model="setupCfg.model" :base-url="setupCfg.baseUrl" :voice="setupCfg.voice" @saved="onSetupSaved" />
 
-    <template v-if="!setupNeeded">
+    <!-- 对话列：上下文带 + 气泡 + 输入条，限宽居中（聚焦感，像专业 AI 对话应用） -->
+    <div v-else class="chat-col">
+    <!-- 上下文带：AI 此刻 / 动态 / 插件快捷 / 回顾（对话头顶的一体化流，非独立面板） -->
+    <HomeContextBar @chat="onInfoChat" />
+
     <PermissionsBanner v-if="missingPerms && perms" :perms="perms" />
 
     <div class="bubbles" ref="bubblesRef">
       <div v-if="!bubbles.length && !showTyping" class="empty-hint">
-        <Avatar :state="state" :size="56" />
-        <p>叫我做什么都行～</p>
+        <div class="eh-glow"><Avatar :state="state" :size="64" /></div>
+        <p class="eh-title">叫我做什么都行～</p>
+        <p class="eh-sub">整理会议纪要 · 规划今日 · 记住你的偏好</p>
         <div class="chips">
           <button v-for="c in suggestions" :key="c" class="chip" @click="submit(c)">{{ c }}</button>
         </div>
@@ -368,9 +380,9 @@ onUnmounted(() => {
     </div>
 
     <div class="input-slot">
-      <InputBar :busy="busy" :listening="state === 'listen'" :draft="draft" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
+      <InputBar :busy="busy" :listening="state === 'listen'" :draft="draftRef" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
     </div>
-    </template>
+    </div>
   </div>
 </template>
 
@@ -381,63 +393,13 @@ onUnmounted(() => {
   flex-direction: column;
   background: var(--yb-content-bg);
 }
-/* 页头：留红绿灯安全区 + 页标题 + 状态胶囊；整条兼作拖动区 */
-.page-head {
-  flex-shrink: 0;
+/* 对话列：全宽展开（气泡自身限宽），两侧不留白 */
+.chat-col {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
   display: flex;
-  align-items: center;
-  gap: var(--yb-space-3);
-  padding: var(--yb-titlebar-h) var(--yb-space-5) var(--yb-space-3);
-  user-select: none;
-}
-.pg-title {
-  font-size: 26px;
-  font-weight: var(--yb-fw-bold);
-  letter-spacing: -0.01em;
-  line-height: var(--yb-lh-tight);
-  color: var(--yb-text-strong);
-}
-.status {
-  font-size: var(--yb-fs-xs);
-  color: var(--yb-text-dim);
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  line-height: var(--yb-lh-ui);
-  padding: 1px 8px;
-  border-radius: var(--yb-radius-pill);
-  background: var(--yb-well);
-}
-.status .dot {
-  width: 5px;
-  height: 5px;
-  flex-shrink: 0;
-  border-radius: 50%;
-  background: var(--dot, var(--yb-idle));
-}
-.status.idle { --dot: var(--yb-idle); }
-.status.listen {
-  --dot: var(--yb-listen);
-  background: var(--yb-danger-soft);
-  color: var(--yb-danger);
-}
-.status.think,
-.status.work {
-  --dot: var(--yb-think);
-  background: var(--yb-accent-soft);
-  color: var(--yb-accent-deep);
-}
-.status.work { --dot: var(--yb-work); }
-.status.say {
-  --dot: var(--yb-say);
-  background: var(--yb-accent-soft);
-  color: var(--yb-accent-deep);
-}
-.status.success { --dot: var(--yb-state-success); }
-.status.error {
-  --dot: var(--yb-state-error);
-  background: var(--yb-danger-soft);
-  color: var(--yb-danger);
+  flex-direction: column;
 }
 .bubbles {
   flex: 1;
@@ -446,18 +408,20 @@ onUnmounted(() => {
   flex-direction: column;
   gap: var(--yb-space-2);
   overflow-y: auto;
-  padding: 4px var(--yb-space-5) 0;
+  padding: var(--yb-space-3) var(--yb-space-5) 0;
   scrollbar-width: thin;
   /* 顶部渐隐：滚出视口的消息柔和淡出，不被硬边「切断」 */
   mask-image: linear-gradient(180deg, transparent, #000 14px);
   -webkit-mask-image: linear-gradient(180deg, transparent, #000 14px);
 }
-/* 底部输入区：hairline 分界（与主屏同款），不再靠父级 padding 浮着 */
+/* 底部输入区：无边框无背景——InputBar 自带胶囊浮起，悬在对话下方更轻盈 */
 .input-slot {
   flex-shrink: 0;
   padding: var(--yb-space-3) var(--yb-space-5) var(--yb-space-4);
-  border-top: 1px solid var(--yb-border-base);
-  background: var(--yb-content-bg);
+}
+/* 气泡内容限宽：AI 左 / 用户右自然交替，窄窗 70%、宽窗封顶 640px（可读又饱满） */
+.bubbles :deep(.bubble) {
+  max-width: min(70%, 640px);
 }
 .bubbles::-webkit-scrollbar {
   width: 6px;
@@ -562,19 +526,38 @@ onUnmounted(() => {
   from { opacity: 0; transform: scale(0.97); }
   to { opacity: 1; transform: none; }
 }
-/* 空状态：气泡区占位引导（小号团子 + 一句招呼 + 建议 chip） */
+/* 空状态：团子 + accent 光晕 + 主副句 + 建议卡（精致引导） */
 .empty-hint {
   flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: 8px;
   color: var(--yb-text-dim);
   font-size: var(--yb-fs-lg);
 }
-.empty-hint p {
-  margin: 0 0 2px;
+/* 团子背后的氛围光晕：radial accent 淡出，AI 感 */
+.eh-glow {
+  width: 132px;
+  height: 132px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: radial-gradient(75% 75% at 50% 35%, var(--yb-accent-soft), rgba(var(--yb-c-sky-rgb), 0) 72%);
+  margin-bottom: 8px;
+}
+.eh-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: var(--yb-fw-bold);
+  letter-spacing: -0.01em;
+  color: var(--yb-text-strong);
+}
+.eh-sub {
+  margin: 0 0 8px;
+  font-size: var(--yb-fs-md);
+  color: var(--yb-text-dim);
 }
 .chips {
   display: flex;
@@ -583,10 +566,11 @@ onUnmounted(() => {
   gap: var(--yb-space-2);
 }
 .chip {
-  padding: 5px 12px;
+  padding: 6px 14px;
   border: 1px solid var(--yb-surface-border);
   border-radius: var(--yb-radius-pill);
   background: var(--yb-surface-solid);
+  box-shadow: var(--yb-shadow-1);
   color: var(--yb-accent-deep);
   font-size: var(--yb-fs-lg);
   cursor: pointer;
@@ -596,5 +580,7 @@ onUnmounted(() => {
   background: var(--yb-accent-soft);
   border-color: var(--yb-accent);
   color: var(--yb-accent-deep);
+  transform: translateY(-1px);
+  box-shadow: var(--yb-shadow-2);
 }
 </style>

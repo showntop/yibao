@@ -85,5 +85,9 @@ export function renderMarkdownLite(src: string): string {
     }
     i++;
   }
-  return out.join("");
+  let html = out.join("");
+  // 去掉首尾空行占位：md-gap 仅作行间分隔，首/尾出现会让选区下探、气泡底部多出空位
+  html = html.replace(/^(<div class="md-gap"><\/div>)+/, "");
+  html = html.replace(/(<div class="md-gap"><\/div>)+$/, "");
+  return html;
 }

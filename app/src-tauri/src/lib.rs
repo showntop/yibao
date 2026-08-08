@@ -1771,7 +1771,9 @@ pub fn run() {
                 "home",
                 tauri::WebviewUrl::App("home.html".into()),
             )
-            .title("译宝")
+            // Overlay 模式下 macOS 仍会渲染窗口标题文字在标题栏中央；置空隐藏。
+            // Dock 切换时的窗口名仍由 tauri.conf.json productName="译宝" 兜底。
+            .title("")
             .title_bar_style(tauri::TitleBarStyle::Overlay)
             .decorations(true)
             .resizable(true)

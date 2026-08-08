@@ -362,6 +362,29 @@ function onQuickInterrupt() {
 // ---- 插件启动器（双击团子）----
 type PetView = "chat" | "plugins";
 interface PluginInfo { id: string; name: string }
+
+/* 插件启动器：按 id 哈希到 5 色调色板（与 QuickPanel 一致，主题感知 CSS 变量）。
+ * inline 复刻避免动 QuickPanel；后续若多处复用可抽 lib/icons.ts。 */
+const ICON_PALETTE = [
+  { bg: "var(--yb-icon-bg-0)", fg: "var(--yb-icon-fg-0)" },
+  { bg: "var(--yb-icon-bg-1)", fg: "var(--yb-icon-fg-1)" },
+  { bg: "var(--yb-icon-bg-2)", fg: "var(--yb-icon-fg-2)" },
+  { bg: "var(--yb-icon-bg-3)", fg: "var(--yb-icon-fg-3)" },
+  { bg: "var(--yb-icon-bg-4)", fg: "var(--yb-icon-fg-4)" },
+] as const;
+function djb2(s: string): number {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+function iconStyle(id: string) {
+  const c = ICON_PALETTE[djb2(id) % ICON_PALETTE.length];
+  return { background: c.bg, color: c.fg };
+}
+function initial(name: string): string {
+  const ch = name.trim().charAt(0);
+  return ch ? ch.toUpperCase() : "?";
+}
 const view = ref<PetView>("chat");
 const plugins = ref<PluginInfo[]>([]);
 const pluginErr = ref("");
@@ -413,9 +436,27 @@ async function launchPlugin(p: PluginInfo) {
   }
 }
 
-/** header「扩充」钮 → 打开大窗（完整 APP 主界面，与小窗互斥，宠物窗保持纯粹）。 */
+/** header「大窗」钮 → 打开大窗（完整 APP 主界面，与小窗互斥，宠物窗保持纯粹）。 */
 function openHome() {
   void openHomeWindow().catch(() => {});
+}
+
+let avatarClickTimer: ReturnType<typeof setTimeout> | null = null;
+/** 单击团子收起；双击打开大窗。
+ * 不能用原生 dblclick（Avatar 根元素 @pointerdown.prevent 阻止原生双击事件链），
+ * 靠 450ms 判定窗口（接近系统双击间隔）——第二击取消定时器并放大窗。
+ * 判定窗口太短（原 220ms）会让慢速双击的第一击先触发收起，窗口收起后第二击落空。 */
+function onAvatarClick() {
+  if (avatarClickTimer !== null) {
+    clearTimeout(avatarClickTimer);
+    avatarClickTimer = null;
+    void openHome();
+    return;
+  }
+  avatarClickTimer = setTimeout(() => {
+    avatarClickTimer = null;
+    void collapse();
+  }, 450);
 }
 
 /** morning_recap 气泡点击 → 确保 home 窗可见 + 通知 HomeFeed 切到回顾 mode 并跳到当天。 */
@@ -948,25 +989,35 @@ onUnmounted(() => {
 
     <!-- 对话：header（头像+名称+状态+收起，一体化贴边）/ 内容区（权限引导/气泡流/输入条） -->
     <template v-else>
-      <header class="chat-header flip" data-tauri-drag-region>
-        <Avatar :state="petState" :size="38" :observing="observing" @click="collapse" />
+      <header class="chat-header flip" data-tauri-drag-region @dblclick="openHome">
+        <div class="hbtns" data-tauri-drag-region @dblclick.stop>
+          <button class="hbtn" title="收起" @click="collapse">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+              <line x1="6" y1="12" x2="18" y2="12" />
+            </svg>
+          </button>
+          <button class="hbtn" title="打开大窗（完整界面）" @click="openHome">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M15 3h6v6" />
+              <path d="M9 21H3v-6" />
+              <path d="M21 3l-7 7" />
+              <path d="M3 21l7-7" />
+            </svg>
+          </button>
+          <button class="hbtn" title="插件" @click="expandTo('plugins')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="7" height="7" rx="1.5" />
+              <rect x="14" y="3" width="7" height="7" rx="1.5" />
+              <rect x="3" y="14" width="7" height="7" rx="1.5" />
+              <rect x="14" y="14" width="7" height="7" rx="1.5" />
+            </svg>
+          </button>
+        </div>
+        <Avatar :state="petState" :size="38" :observing="observing" @click="onAvatarClick" />
         <div class="meta" data-tauri-drag-region>
           <span class="name">译宝</span>
           <span class="status" :class="petState"><i class="dot" />{{ statusText }}</span>
         </div>
-        <button class="collapse-btn" title="收起" @click="collapse">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-            <line x1="6" y1="12" x2="18" y2="12" />
-          </svg>
-        </button>
-        <button class="collapse-btn expand-btn" title="打开大窗（完整界面）" @click="openHome">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M15 3h6v6" />
-            <path d="M9 21H3v-6" />
-            <path d="M21 3l-7 7" />
-            <path d="M3 21l7-7" />
-          </svg>
-        </button>
       </header>
 
       <div class="chat-body">
@@ -982,10 +1033,13 @@ onUnmounted(() => {
           <button class="pl-back" @click="view = 'chat'">‹ 对话</button>
         </div>
         <div v-if="pluginErr" class="pl-err"><YbIcon name="alert" :size="14" />{{ pluginErr }}</div>
-        <button v-for="p in plugins" :key="p.id" class="pl-row" @click="launchPlugin(p)">
-          <span class="pl-name">{{ p.name }}</span>
-          <span class="pl-id">{{ p.id }}</span>
-        </button>
+        <div class="pl-grid">
+          <button v-for="p in plugins" :key="p.id" class="pl-card" @click="launchPlugin(p)">
+            <span class="pl-card-ico" :style="iconStyle(p.id)">{{ initial(p.name) }}</span>
+            <span class="pl-card-name">{{ p.name }}</span>
+            <span class="pl-card-id">{{ p.id }}</span>
+          </button>
+        </div>
         <div v-if="!plugins.length && !pluginErr" class="pl-empty">没有发现插件</div>
       </div>
 
@@ -1072,9 +1126,7 @@ onUnmounted(() => {
 .shell.exp {
   display: flex;
   flex-direction: column;
-  background:
-    linear-gradient(180deg, rgba(var(--yb-c-sky-rgb), 0.09), rgba(var(--yb-c-sky-rgb), 0) 128px),
-    var(--yb-shell-bg);
+  background: var(--yb-shell-bg);
   -webkit-backdrop-filter: var(--yb-blur);
   backdrop-filter: var(--yb-blur);
   border: 1px solid var(--yb-glass-border);
@@ -1087,14 +1139,15 @@ onUnmounted(() => {
   from { opacity: 0; }
   to { opacity: 1; }
 }
-/* 内容区：header 贴边一体化，其余内容在这里呼吸 */
+/* 内容区：header 贴边一体化，其余内容在这里呼吸。
+ * 顶部 padding 0：header 灰边下无空档，气泡区直接顶格。 */
 .chat-body {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   gap: var(--yb-space-3);
-  padding: var(--yb-space-3);
+  padding: 0 var(--yb-space-3) var(--yb-space-3);
 }
 /* 收起/快捷态：恒窗 320×300 内，团子锚点 x:112、y 动态（正常 100，贴顶时由
  * onWindowMoved 下移，inline style 覆盖；3 圆在其头顶 y:0-70、输入条在其脚下
@@ -1277,7 +1330,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 10px;
   padding: 10px var(--yb-space-3) 9px;
-  background: linear-gradient(180deg, rgba(var(--yb-c-sky-rgb), 0.14), rgba(var(--yb-c-sky-rgb), 0.08));
+  background: var(--yb-c-sky-050);
   border-bottom: 1px solid var(--yb-surface-border);
 }
 /* 锚点在右侧时（dir=ne/se）镜像头部，团子+meta 成团靠右（row-reverse 默认即靠右） */
@@ -1359,38 +1412,41 @@ onUnmounted(() => {
 .status.drowsy {
   --dot: var(--yb-state-idle);
 }
-/* 收起：幽灵圆钮 + minus（macOS 最小化语义），hover 才显底；绝对定位钉在 header 最左 */
-.collapse-btn {
+/* header 按钮组：透明底融入 header（白底胶囊在浅天青 header 上突兀），
+ * 每个按钮 hover 才显底 + active 按压，简洁有质感 */
+.hbtns {
   position: absolute;
   left: 10px;
   top: 50%;
   transform: translateY(-50%);
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: transparent;
+  border: none;
+}
+.hbtn {
   width: 24px;
   height: 24px;
   display: grid;
   place-items: center;
   border: none;
-  border-radius: 50%;
+  border-radius: var(--yb-radius-sm);
   background: transparent;
   color: var(--yb-text-dim);
   cursor: pointer;
   transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
-.collapse-btn svg {
-  width: 14px;
-  height: 14px;
-}
-.collapse-btn:hover {
-  background: var(--yb-well);
+.hbtn:hover {
+  background: var(--yb-surface-solid);
   color: var(--yb-text);
 }
-/* 「扩充」钮：与收起钮同款幽灵风，挨着它站（收起钮 left:10，扩充紧随其后）——打开设置大窗 */
-.expand-btn {
-  left: 40px;
+.hbtn:active {
+  transform: scale(0.92);
 }
-.expand-btn svg {
-  width: 14px;
-  height: 14px;
+.hbtn svg {
+  width: 13px;
+  height: 13px;
 }
 .bubbles {
   flex: 1;
@@ -1400,9 +1456,10 @@ onUnmounted(() => {
   overflow-y: auto;
   padding: 4px 2px 0;
   scrollbar-width: thin;
-  /* 顶部渐隐：滚出视口的消息柔和淡出，不被硬边「切断」 */
-  mask-image: linear-gradient(180deg, transparent, #000 14px);
-  -webkit-mask-image: linear-gradient(180deg, transparent, #000 14px);
+  /* 顶部渐隐：滚出视口的消息柔和淡出。原先 mask 在 macOS WKWebView luminance 模式
+   * 下可能误渲染为深色伪影（与 ::selection 叠加形成"深蓝条"），先关掉。 */
+  /* mask-image: linear-gradient(180deg, transparent, #000 14px);
+  -webkit-mask-image: linear-gradient(180deg, transparent, #000 14px); */
 }
 .bubbles::-webkit-scrollbar {
   width: 6px;
@@ -1490,6 +1547,7 @@ onUnmounted(() => {
   cursor: pointer;
   display: grid;
   place-items: center;
+  transition: background var(--yb-dur-fast) var(--yb-ease-out);
 }
 .ctx-x:hover {
   background: rgba(var(--yb-c-sky-rgb), 0.18);
@@ -1503,7 +1561,7 @@ onUnmounted(() => {
 }
 .pl-title {
   font-size: var(--yb-fs-lg);
-  font-weight: 600;
+  font-weight: var(--yb-fw-bold);
 }
 .pl-back {
   border: none;
@@ -1529,33 +1587,64 @@ onUnmounted(() => {
   color: var(--yb-danger);
   font-size: var(--yb-fs-md);
 }
-.pl-row {
+/* 插件 grid（Launchpad 式）：2 列网格卡，上大 icon + 下名字/id，hover 上浮 */
+.pl-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  padding: 2px;
+}
+.pl-card {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--yb-space-2);
-  padding: var(--yb-space-3) var(--yb-space-4);
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 14px 8px 12px;
   border: 1px solid var(--yb-surface-border);
   border-radius: var(--yb-radius-md);
-  background: var(--yb-surface-solid);
-  box-shadow: var(--yb-shadow-soft);
+  background: var(--yb-card-bg);
+  box-shadow: var(--yb-shadow-1);
   cursor: pointer;
   font-family: inherit;
-  text-align: left;
   transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
-.pl-row:hover {
+.pl-card:hover {
   border-color: var(--yb-accent);
-  transform: translateY(-1px);
+  background: var(--yb-surface-solid);
+  transform: translateY(-2px);
+  box-shadow: var(--yb-shadow-2);
 }
-.pl-name {
+.pl-card:active {
+  transform: scale(0.97);
+}
+.pl-card-ico {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--yb-radius-md);
+  font-size: 18px;
+  font-weight: var(--yb-fw-bold);
+  font-family: var(--yb-font);
+}
+.pl-card-name {
   font-size: var(--yb-fs-lg);
-  font-weight: 500;
+  font-weight: var(--yb-fw-medium);
   color: var(--yb-text);
+  line-height: 1.3;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.pl-id {
-  font-size: var(--yb-fs-sm);
+.pl-card-id {
+  font-size: var(--yb-fs-xs);
   color: var(--yb-text-dim);
+  line-height: 1.2;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .pl-empty {
   flex: 1;

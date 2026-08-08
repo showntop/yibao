@@ -253,6 +253,8 @@ export function openHomeWindow(): Promise<void> {
   return invoke("open_home_window");
 }
 
+
+
 // ---- 主屏 Feed（OS 感 §4.2：「它在我不看的时候干了什么」）----
 
 export interface FeedItem {
