@@ -1117,6 +1117,15 @@ fn close_panel_window(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// 隐藏唤起条（主窗处理完 invoke-action 后兜底调用；条本身点击/Esc/blur 已自隐，幂等）。
+#[tauri::command]
+fn hide_invoke_bar(app: AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("invoke-bar") {
+        win.hide().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// 面板窗挂载后补拉最近一次的 panel 载荷（首开时 brain-event 先于窗口订阅发出）。
 #[tauri::command]
 fn get_current_panel(state: tauri::State<Brain>) -> Result<Option<Value>, String> {
@@ -1306,6 +1315,33 @@ fn grab_selected_text() -> Option<String> {
     new.filter(|t| !t.trim().is_empty())
 }
 
+/** 唤起条落位：光标右下偏移（14,18），越出所在屏右/下缘时翻转到左/上；纯函数便于单测。
+ *  mon = (屏原点x, 屏原点y, 屏宽, 屏高)，全部逻辑坐标。 */
+fn clamp_bar_pos(mx: f64, my: f64, bar_w: f64, bar_h: f64, mon: (f64, f64, f64, f64)) -> (f64, f64) {
+    let (mx0, my0, mw, mh) = mon;
+    let mut x = mx + 14.0;
+    let mut y = my + 18.0;
+    if x + bar_w > mx0 + mw {
+        x = mx - bar_w - 14.0;
+    }
+    if y + bar_h > my0 + mh {
+        y = my - bar_h - 18.0;
+    }
+    (x.max(mx0), y.max(my0))
+}
+
+/** 选区换算：overlay 窗口逻辑坐标 → 虚拟桌面物理像素（mss 坐标系）。
+ *  mon_px_origin = 屏物理原点（可为负：副屏在主屏左侧）；scale = 屏 scale_factor。纯函数便于单测。 */
+fn snip_abs_rect(r: (f64, f64, f64, f64), mon_px_origin: (i64, i64), scale: f64) -> (i64, i64, i64, i64) {
+    let (l, t, w, h) = r;
+    (
+        mon_px_origin.0 + (l * scale).round() as i64,
+        mon_px_origin.1 + (t * scale).round() as i64,
+        (w * scale).round().max(1.0) as i64,
+        (h * scale).round().max(1.0) as i64,
+    )
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let shortcuts = tauri_plugin_global_shortcut::Builder::new()
@@ -1324,7 +1360,26 @@ pub fn run() {
                     if let Some(win) = handle.get_webview_window("main") {
                         let _ = win.show().and_then(|_| win.set_focus());
                     }
+                    let has_text = text.is_some();
                     let _ = handle.emit("pet-invoke-selection", serde_json::json!({ "text": text }));
+                    // 动作条：有选中文字才弹（无选中退化为旧唤起，不弹空菜单）
+                    if has_text {
+                        if let Some(bar) = handle.get_webview_window("invoke-bar") {
+                            let (cmx, cmy) = device_query::DeviceState::new().get_mouse().coords;
+                            if let Ok(Some(mon)) = bar.current_monitor() {
+                                let s = mon.scale_factor();
+                                let mon_rect = (
+                                    mon.position().x as f64 / s,
+                                    mon.position().y as f64 / s,
+                                    mon.size().width as f64 / s,
+                                    mon.size().height as f64 / s,
+                                );
+                                let (bx, by) = clamp_bar_pos(cmx as f64, cmy as f64, 328.0, 56.0, mon_rect);
+                                let _ = bar.set_position(tauri::LogicalPosition::new(bx, by));
+                            }
+                            let _ = bar.show().and_then(|_| bar.set_focus());
+                        }
+                    }
                 });
                 return;
             }
@@ -1442,6 +1497,19 @@ pub fn run() {
                     my + (sh - 700.0) / 2.0,
                 ));
             }
+
+            // 唤起条（划词动作菜单）：预创建隐藏，⌘⇧U 抓到文字后光标旁落位展示
+            tauri::WebviewWindowBuilder::new(app, "invoke-bar", tauri::WebviewUrl::App("invoke.html".into()))
+                .title("")
+                .transparent(true)
+                .decorations(false)
+                .always_on_top(true)
+                .skip_taskbar(true)
+                .resizable(false)
+                .inner_size(328.0, 56.0)
+                .visible(false)
+                .build()
+                .map_err(|e| format!("创建唤起条失败：{e}"))?;
 
             // 注册全局热键：⌘⇧Y 反射键（唤起/收起）；⌘⇧U 划词唤起（带选中文字上下文）
             #[cfg(desktop)]
@@ -1588,6 +1656,7 @@ pub fn run() {
             perception_clear,
             open_panel_window,
             close_panel_window,
+            hide_invoke_bar,
             get_current_panel,
             voice_start,
             interrupt,
@@ -1607,4 +1676,40 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod invoke_tests {
+    use super::*;
+
+    #[test]
+    fn bar_pos_bottom_right_offset() {
+        // 屏幕中央：光标右下偏移
+        let (x, y) = clamp_bar_pos(500.0, 400.0, 328.0, 56.0, (0.0, 0.0, 1440.0, 900.0));
+        assert_eq!((x, y), (514.0, 418.0));
+    }
+
+    #[test]
+    fn bar_pos_flips_at_right_and_bottom_edges() {
+        // 右边缘：翻到光标左侧；下边缘：翻到光标上方
+        let (x, y) = clamp_bar_pos(1400.0, 880.0, 328.0, 56.0, (0.0, 0.0, 1440.0, 900.0));
+        assert_eq!((x, y), (1400.0 - 328.0 - 14.0, 880.0 - 56.0 - 18.0));
+    }
+
+    #[test]
+    fn bar_pos_respects_monitor_origin() {
+        // 副屏（原点在 1440,0）：越界判断相对该屏
+        let (x, y) = clamp_bar_pos(1500.0, 100.0, 328.0, 56.0, (1440.0, 0.0, 1440.0, 900.0));
+        assert_eq!((x, y), (1514.0, 118.0));
+    }
+
+    #[test]
+    fn snip_rect_scales_and_offsets() {
+        // scale=2  retina：逻辑 (100,50,200,120) + 屏原点 (0,0) → 物理 (200,100,400,240)
+        let r = snip_abs_rect((100.0, 50.0, 200.0, 120.0), (0, 0), 2.0);
+        assert_eq!(r, (200, 100, 400, 240));
+        // 副屏负原点（主屏左侧 1440 宽）：逻辑 (10,10,50,50) → 物理 (-1420+20, 20, 100, 100)
+        let r2 = snip_abs_rect((10.0, 10.0, 50.0, 50.0), (-2880, 0), 2.0);
+        assert_eq!(r2, (-2860, 20, 100, 100));
+    }
 }

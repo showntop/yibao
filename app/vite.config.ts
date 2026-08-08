@@ -17,6 +17,7 @@ export default defineConfig(async () => ({
         panel: fileURLToPath(new URL("./panel.html", import.meta.url)),
         home: fileURLToPath(new URL("./home.html", import.meta.url)),
         design: fileURLToPath(new URL("./design.html", import.meta.url)),
+        invoke: fileURLToPath(new URL("./invoke.html", import.meta.url)),
       },
     },
   },
