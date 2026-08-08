@@ -164,6 +164,9 @@ const html = computed(() => (props.role === "ai" && !props.typing ? renderMarkdo
 }
 .ai :deep(.md-gap) {
   height: 6px;
+  /* 空行占位 div：双击/全选时选区覆盖它会让 ::selection 显示成 accent 蓝条。
+   * user-select: none 让它不可选中，选区直接跳过（CSS 层兜底，旧消息也生效）。 */
+  user-select: none;
 }
 .ai :deep(.md-hr) {
   border-top: 1px solid var(--yb-line);

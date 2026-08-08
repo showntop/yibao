@@ -1062,14 +1062,15 @@ onUnmounted(() => {
   from { opacity: 0; }
   to { opacity: 1; }
 }
-/* 内容区：header 贴边一体化，其余内容在这里呼吸 */
+/* 内容区：header 贴边一体化，其余内容在这里呼吸。
+ * 顶部 padding 0：header 灰边下无空档，气泡区直接顶格。 */
 .chat-body {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   gap: var(--yb-space-3);
-  padding: var(--yb-space-3);
+  padding: 0 var(--yb-space-3) var(--yb-space-3);
 }
 /* 收起/快捷态：恒窗 320×300 内，团子锚点 x:112、y 动态（正常 100，贴顶时由
  * onWindowMoved 下移，inline style 覆盖；3 圆在其头顶 y:0-70、输入条在其脚下
