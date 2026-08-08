@@ -76,6 +76,20 @@ def _is_exit_phrase(text: str) -> bool:
 _LOOP_TICK = {"t": 0.0}
 _TICK_FRESH_S = 12.0
 
+snip_ctx: dict = {"b64": None, "ts": 0.0}  # 截图即问：区域截图 b64 暂存（可多次提问，过期丢弃）
+SNIP_TTL_S = 300.0
+
+
+def _peek_snip(stash: dict) -> str | None:
+    """暂存区域截图 b64：新鲜→返回（不清空，同一截图可追问）；过期→丢弃返 None。"""
+    b64 = stash.get("b64")
+    if b64 is None:
+        return None
+    if time.time() - float(stash.get("ts") or 0.0) >= SNIP_TTL_S:
+        stash["b64"] = None
+        return None
+    return b64
+
 
 def _permissions_status() -> dict:
     """检测辅助功能/屏幕录制权限；检测本身失败时乐观返回 True（不出误报 banner）。"""
@@ -412,6 +426,7 @@ async def serve_async(
     db_path: str = "audit.db",
     voice=None,
     provider=None,
+    vision_client=None,  # 测试注入：生产 None 时按 YIBAO_VISION_* 配置建 ComputerUseClient
     skills_factory=None,
     perception_store=None,
     perception_sensors=None,
@@ -717,7 +732,9 @@ async def serve_async(
     distiller_task = asyncio.ensure_future(_distiller_loop(settings, distiller))
 
     _wvision = None
-    if vision_api_key() and computer_use_enabled():
+    if vision_client is not None:
+        _wvision = vision_client  # 测试注入（provider= 注入先例）
+    elif vision_api_key() and computer_use_enabled():
         try:
             from .llm import ComputerUseClient
 
@@ -1161,6 +1178,50 @@ async def serve_async(
                         invoke_ctx.update({"text": desc, "ts": time.time()})
                 except Exception as e:
                     print(f"[yibao] 唤起抓屏失败（已跳过）：{e}", file=sys.stderr)
+        elif rtype == "snip_capture":
+            # 截图即问（E）：壳侧 overlay 选区（物理像素）→ 区域截图 → b64 暂存待 vision_query。
+            # 无截图能力/失败一律静默跳过。
+            if agent.host is not None:
+                try:
+                    shot = agent.host.screenshotter.capture_region(
+                        int(msg.get("left", 0)), int(msg.get("top", 0)),
+                        int(msg.get("width", 1)), int(msg.get("height", 1)),
+                    )
+                    import base64 as _b64snip
+
+                    with open(shot, "rb") as f:
+                        snip_ctx.update({
+                            "b64": "data:image/png;base64," + _b64snip.b64encode(f.read()).decode(),
+                            "ts": time.time(),
+                        })
+                except Exception as e:
+                    print(f"[yibao] 区域截图失败（已跳过）：{e}", file=sys.stderr)
+        elif rtype == "vision_query":
+            # 截图即问：暂存区域截图 + 问题 → vision 直答（不走 run，不占对话历史）。
+            # 复用 run 的事件/run_done 协议（id 与 run_input 同为 0），壳侧状态机零改动。
+            rid_vq = msg.get("id", 0)
+            question = str(msg.get("question") or "").strip()[:500]
+
+            def _vq_emit(ev: Event) -> None:
+                write_msg({"type": "event", "surface": "pet", "event": ev.model_dump(mode="json")})
+
+            if not question:
+                _vq_emit(Event(kind="error", text="空问题"))
+            elif _wvision is None:
+                _vq_emit(Event(kind="error", text="视觉端点未配置（YIBAO_VISION_*），无法截图问答"))
+            else:
+                b64 = _peek_snip(snip_ctx)
+                if b64 is None:
+                    _vq_emit(Event(kind="error", text="截图已过期或尚未框选，请 ⌘⇧I 重新框选"))
+                else:
+                    from .llm import answer_image_query
+
+                    ans = await _offload(answer_image_query, _wvision, b64, question)
+                    if ans:
+                        _vq_emit(Event(kind="final_reply", text=ans))
+                    else:
+                        _vq_emit(Event(kind="error", text="截图问答失败，请重试"))
+            write_msg({"type": "run_done", "id": rid_vq})
         elif rtype == "feed_mark_read":
             # 主屏点掉单条：feed.mark_read 容错（坏 id 返回 False，不抛）
             fid = int(msg.get("id", 0))
