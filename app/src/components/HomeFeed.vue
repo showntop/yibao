@@ -831,8 +831,11 @@ onUnmounted(() => {
   color: var(--yb-text-faint);
   letter-spacing: 0.03em;
 }
-/* 插件 widget 一瞥：内嵌于此刻，淡底区分，点标题打开全面板 */
+/* 插件 widget 一瞥：内嵌于此刻，淡底区分，点标题打开全面板
+ * 限高 240px + 内部自滚 + 底部渐隐：避免 widget 详情把"此刻"卡撑成详情卡
+ * （macOS 通知中心语言：内容超出有渐隐边缘暗示可滚） */
 .now-widget {
+  position: relative;
   border: 1px dashed var(--yb-card-border);
   border-radius: var(--yb-radius-sm);
   background: var(--yb-surface-2);
@@ -840,6 +843,33 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: var(--yb-space-2);
+  max-height: 240px;
+  overflow: hidden;
+}
+.now-widget > :deep(*) {
+  flex-shrink: 0;
+}
+.now-widget > :deep(div):not(.now-widget-head) {
+  /* 内部内容（SchemaPanel 渲染）自滚：保留 head 不动 */
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  margin: 0 -4px;
+  padding: 0 4px;
+}
+/* 底部渐隐：内容超 240px 时给"还有更多"暗示 */
+.now-widget::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 28px;
+  background: linear-gradient(180deg, transparent, var(--yb-surface-2));
+  pointer-events: none;
+  border-bottom-left-radius: var(--yb-radius-sm);
+  border-bottom-right-radius: var(--yb-radius-sm);
 }
 .now-widget-head {
   display: flex;
