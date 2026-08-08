@@ -344,7 +344,7 @@ async function handleInvokeAction(action: string) {
   void invoke("hide_invoke_bar").catch(() => {}); // 兜底（条本身已自隐）
   const sel = selectionCtx.value;
   if (action === "explain" || action === "translate") {
-    if (!expanded.value) await expand();
+    // 不展开：收起态气泡带会镜像流式（打字机），想细看点气泡即展开——看一眼就够的场景不打扰
     const q =
       action === "explain"
         ? "解释这段文字，讲清要点"
