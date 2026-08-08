@@ -192,6 +192,127 @@ class SounddeviceRecorder:
         return np.zeros(SR, dtype=np.float32)  # 超时/被打断：无语音
 
 
+class _PersistentPlayer:
+    """常驻输出流播放器：杜绝每次开/关流产生的设备级爆音。
+
+    背景：旧实现每句一个 OutputStream（开→播→关）。macOS 上每次开关 CoreAudio
+    输出流都伴随 IO 线程启停 + 采样率协商（TTS 24k vs 设备默认 44.1k/48k），
+    设备层直接"啪"——这是数字信号淡入淡出消不掉的（fade 只作用于样本值，
+    设备启停的 pop 发生在 DAC/驱动层）。speak_stream 按句切分、长回复每 2-3 秒
+    一句，每句一开一关就"总是"爆音。
+
+    本播放器首次播放懒建**单个** OutputStream 后常驻：
+    - 句间/会话间不关流，队列空时输出静音待机（无设备开关，无 pop）；
+    - 打断：清未播段 + 对当前残留 ~30ms 淡出到 0，随后静音待机**也不关流**
+      （下次播放直接复用，连重建流的 pop 都省掉）；
+    - 段播完：async 侧经 asyncio.Event 收到完成信号（逐段 await，保持
+      speak_stream 的句间节奏与 cancel 语义）。
+    """
+
+    def __init__(self, samplerate: int = 24000):
+        import queue
+
+        self._sr = samplerate
+        self._stream = None  # 常驻 sd.OutputStream（async 线程独占访问）
+        self._q: queue.Queue = queue.Queue()  # 段队列（音频回调线程消费）
+        self._cur = None  # 当前正在播的段（float32 1D）
+        self._cur_idx = 0
+        self._seg_done: asyncio.Event | None = None  # 当前段播完信号
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._cancel = None  # 当前段的 cancel（asyncio.Event.is_set 线程安全）
+
+    async def play(self, pcm, cancel) -> None:
+        """塞一段 float32 24k PCM，等它播完返回。句首尾淡入淡出防数字层 click。"""
+        import numpy as np
+        import sounddevice as sd
+
+        _silence_sd_warnings()
+        pcm = np.asarray(pcm, dtype=np.float32)
+        if pcm.size == 0:
+            return
+        pcm = _fade_edges(pcm, self._sr, fade_sec=0.015)
+
+        self._cancel = cancel
+        self._loop = asyncio.get_running_loop()
+        evt = asyncio.Event()
+        self._seg_done = evt
+        self._q.put(pcm)
+
+        if self._stream is None:
+            self._stream = sd.OutputStream(
+                samplerate=self._sr,
+                channels=1,
+                dtype="float32",
+                callback=self._callback,
+                blocksize=1024,  # ~43ms/帧：回调频率与延迟的平衡
+                latency="low",
+            )
+            self._stream.start()
+        try:
+            await asyncio.wait_for(evt.wait(), timeout=30.0)
+        except asyncio.TimeoutError:
+            # 兜底：回调长期不结束（设备异常/掉线），回收流防卡死；下次 play 重建
+            s, self._stream = self._stream, None
+            if s is not None:
+                try:
+                    s.close()
+                except Exception:
+                    pass
+            raise
+
+    def _callback(self, outdata, frames, _time_info, _status):
+        import queue
+
+        import numpy as np
+
+        flat = outdata.reshape(-1)  # channels=1：(frames,1) → (frames,)
+        cancel = self._cancel
+        if cancel is not None and cancel.is_set():
+            # 打断：清未播段 + 当前残留一帧内淡出到 0 → 通知结束 → 静音待机（不关流）
+            while True:
+                try:
+                    self._q.get_nowait()
+                except queue.Empty:
+                    break
+            cur, idx = self._cur, self._cur_idx
+            fade_len = 0
+            if cur is not None and idx < len(cur):
+                fade_len = min(len(cur) - idx, frames, int(self._sr * 0.03))
+                if fade_len > 0:
+                    seg = cur[idx : idx + fade_len]
+                    ramp = np.linspace(1.0, 0.0, fade_len, dtype=np.float32)
+                    flat[:fade_len] = seg * ramp
+            flat[fade_len:] = 0
+            self._cur = None
+            self._cur_idx = 0
+            self._finish_segment()
+            return
+
+        # 当前段播完 → 通知 async 侧 → 取下一段 / 待机静音
+        if self._cur is None or self._cur_idx >= len(self._cur):
+            if self._cur is not None:
+                self._finish_segment()
+            try:
+                self._cur = self._q.get_nowait()
+                self._cur_idx = 0
+            except queue.Empty:
+                flat[:] = 0  # 待机：流保持打开，输出静音
+                return
+        cur = self._cur
+        idx = self._cur_idx
+        n = min(frames, len(cur) - idx)
+        flat[:n] = cur[idx : idx + n]
+        if n < frames:
+            flat[n:] = 0
+        self._cur_idx = idx + n
+
+    def _finish_segment(self) -> None:
+        """当前段播完/被打断：唤醒 async 侧 play 的等待。回调线程调用，经 loop 投递。"""
+        evt, self._seg_done = self._seg_done, None
+        if evt is not None and self._loop is not None:
+            self._loop.call_soon_threadsafe(evt.set)
+
+
 class StreamingPcmSpeaker:
     """TTS provider 基类：共享流式管道（按句切分→预取下一句→播放→cancel）。
 
@@ -199,8 +320,14 @@ class StreamingPcmSpeaker:
     speak（同步，4a）：整段合成→阻塞播放。
     speak_stream（4b）：边收文本增量边按句播报；cancel.is_set() 立即停（清队列 + stop 播放）。
     生产者/消费者管道：合成下一句与播放当前句并行，句间不再有完整网络延迟。
+
+    播放走 _PersistentPlayer（常驻单流）：句子之间不关流，杜绝 macOS 设备层
+    开关流爆音；打断淡出后静音待机，下次直接复用。
     """
     name = "base"
+
+    def __init__(self):
+        self._player = _PersistentPlayer()
 
     def available(self) -> bool:
         return True
@@ -262,25 +389,12 @@ class StreamingPcmSpeaker:
         raise NotImplementedError
 
     async def _play_pcm(self, pcm, cancel) -> None:
-        """非阻塞播放一段 PCM + 30ms 轮询 cancel（命中即 stop）。"""
-        import sounddevice as sd
+        """播放一段 PCM：走常驻单流（_PersistentPlayer），句间不关流。
 
-        _silence_sd_warnings()
-        sd.play(pcm, samplerate=24000)
-        try:
-            while True:
-                stream = sd.get_stream()
-                if stream is None or not stream.active:
-                    break
-                if cancel.is_set():
-                    sd.stop()
-                    return
-                await asyncio.sleep(0.03)
-        finally:
-            try:
-                sd.stop()
-            except Exception:
-                pass
+        - 首尾淡入淡出：消除数字层开关流 click；
+        - 打断：对残留快速淡出后静音待机，流保持打开（无设备层 pop）。
+        """
+        await self._player.play(pcm, cancel)
 
     async def _speak_one(self, text: str, cancel) -> None:
         if cancel.is_set():
@@ -297,6 +411,7 @@ class EdgeTtsSpeaker(StreamingPcmSpeaker):
     name = "edge"
 
     def __init__(self, voice: str = "zh-CN-XiaoxiaoNeural"):
+        super().__init__()
         self._voice = voice
 
     async def _synth_pcm(self, text: str):
@@ -393,6 +508,24 @@ def _decode_mp3(mp3_bytes: bytes):
     return np.frombuffer(dec.samples, dtype=np.float32)
 
 
+def _fade_edges(pcm, sr: int, fade_sec: float = 0.015):
+    """首尾各 fade_sec 线性淡入淡出（零交叉），返回新数组：开关流不产生 click。
+
+    音频过短时 fade 长度按样本数折半，首尾区间不相交。
+    """
+    import numpy as np
+
+    n = pcm.size
+    if n == 0:
+        return pcm
+    half = max(1, n // 2)
+    fade = max(1, min(int(sr * fade_sec), half))
+    out = np.array(pcm, dtype=np.float32, copy=True)
+    out[:fade] *= np.linspace(0.0, 1.0, fade, dtype=np.float32)
+    out[-fade:] *= np.linspace(1.0, 0.0, fade, dtype=np.float32)
+    return out
+
+
 def _can_import(name: str) -> bool:
     """能否 import 某模块（惰性依赖探测）。"""
     try:
@@ -420,6 +553,7 @@ class CosyVoiceCloudSpeaker(StreamingPcmSpeaker):
     name = "cosyvoice_cloud"
 
     def __init__(self, client_factory=None, *, key=None, model=None, voice=None):
+        super().__init__()
         self._client_factory = client_factory
         self._key = key if key is not None else cosyvoice_cloud_key()
         self._model = model or cosyvoice_cloud_model()
@@ -509,6 +643,7 @@ class CosyVoiceSpeaker(StreamingPcmSpeaker):
 
     def __init__(self, client_factory=None, *, model_path=None, voice=None,
                  prompt_audio=None, prompt_text=None):
+        super().__init__()
         self._client_factory = client_factory
         self._model_path = model_path if model_path is not None else cosyvoice_model_path()
         self._voice = voice or cosyvoice_voice()

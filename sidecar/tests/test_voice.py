@@ -302,27 +302,31 @@ def test_vad_config_defaults_and_env(monkeypatch):
 
 
 def test_play_pcm_no_name_error(monkeypatch):
-    """回归：_play_pcm 内 asyncio.sleep 曾 NameError（import 漏在拆分中丢失）。
-    用假 sounddevice 打穿真实 _play_pcm。"""
+    """回归：_play_pcm 内曾因 import 丢失 NameError。用假 sounddevice 打穿真实 _play_pcm。
+
+    新实现走常驻 OutputStream：fake 在 start() 里逐帧喂 callback（每帧 1 样本），
+    播完 10 样本后回调通知 async 侧收尾（不关流，待机静音）。
+    """
     import sys
     import types
 
+    import numpy as np
+
     from yibao_brain.voice import EdgeTtsSpeaker
 
-    stream = types.SimpleNamespace(active=True)
-    polls = {"n": 0}
+    class _FakeStream:
+        def __init__(self, **kw):
+            self._cb = kw["callback"]
 
-    def _get_stream():
-        polls["n"] += 1
-        if polls["n"] > 1:
-            stream.active = False  # 第二次轮询视为播完
-        return stream
+        def start(self):
+            outdata = np.zeros((1, 1), dtype=np.float32)
+            for _ in range(16):  # 帧数 > 样本数，覆盖播完路径（之后待机静音）
+                self._cb(outdata, 1, None, None)
 
-    fake_sd = types.SimpleNamespace(
-        play=lambda pcm, samplerate: None,
-        get_stream=_get_stream,
-        stop=lambda: None,
-    )
+        def close(self):
+            pass
+
+    fake_sd = types.SimpleNamespace(OutputStream=_FakeStream)
     monkeypatch.setitem(sys.modules, "sounddevice", fake_sd)
 
     speaker = EdgeTtsSpeaker()
@@ -848,3 +852,129 @@ def test_cosyvoice_local_clones_when_prompt_audio(monkeypatch):
     asyncio.run(spk.speak_stream(_async_gen(["你好。"]), _NoCancel()))
     assert fake.clone and not fake.sft
     assert fake.clone[0][1] == "示例台词"
+
+
+# ---------- 爆音修复：首尾淡入淡出 ----------
+
+
+def test_fade_edges_ramps_ends_to_zero():
+    """首尾淡入淡出：两端样本归零、fade 中点半幅、中段原样（防开关流 click）。"""
+    import numpy as np
+
+    from yibao_brain.voice import _fade_edges
+
+    pcm = np.full(2400, 0.8, dtype=np.float32)  # 24k 下 100ms 恒 0.8 信号
+    out = _fade_edges(pcm, 24000, fade_sec=0.01)  # 首尾各 10ms = 240 样本
+    assert out[0] == 0.0 and out[-1] == 0.0
+    assert abs(out[239] - 0.8) < 1e-6  # 淡入完成处恢复到原电平（linspace 含端点）
+    assert abs(out[1200] - 0.8) < 1e-6  # 中段不动
+    assert out is not pcm  # 返回新数组，不就地改原 PCM
+
+
+def test_fade_edges_short_audio_no_overlap():
+    """极短音频：fade 长度按样本折半，首尾不重叠也不越界（不炸、仍归零）。"""
+    import numpy as np
+
+    from yibao_brain.voice import _fade_edges
+
+    pcm = np.ones(8, dtype=np.float32)
+    out = _fade_edges(pcm, 24000, fade_sec=0.015)
+    assert out[0] == 0.0 and out[-1] == 0.0
+    assert len(out) == 8
+
+
+def test_fade_edges_empty_pcm():
+    """空 PCM 原样返回（合成失败兜底路径不炸）。"""
+    import numpy as np
+
+    from yibao_brain.voice import _fade_edges
+
+    pcm = np.zeros(0, dtype=np.float32)
+    assert _fade_edges(pcm, 24000) is pcm
+
+
+# ---------- 爆音修复二：常驻单流（杜绝设备级开关流 pop）----------
+
+
+def _patch_fake_sounddevice(monkeypatch):
+    """注册一个由后台线程持续驱动回调的假 sounddevice，记录 start/close 次数。"""
+    import sys
+    import threading
+    import time
+    import types
+
+    import numpy as np
+
+    starts = {"n": 0}
+    closes = {"n": 0}
+
+    class _FakeStream:
+        def __init__(self, **kw):
+            self._cb = kw["callback"]
+            self._stop = False
+
+        def start(self):
+            starts["n"] += 1
+
+            def _drive():
+                outdata = np.zeros((32, 1), dtype=np.float32)
+                while not self._stop:
+                    self._cb(outdata, 32, None, None)
+                    time.sleep(0.002)
+
+            threading.Thread(target=_drive, daemon=True).start()
+
+        def close(self):
+            closes["n"] += 1
+            self._stop = True
+
+    fake_sd = types.SimpleNamespace(OutputStream=_FakeStream)
+    monkeypatch.setitem(sys.modules, "sounddevice", fake_sd)
+    return starts, closes
+
+
+def test_persistent_player_reuses_single_stream(monkeypatch):
+    """两次播放复用同一 OutputStream（start 只调一次）——常驻流核心保证，杜绝句间开关流 pop。"""
+    import numpy as np
+
+    from yibao_brain.voice import _PersistentPlayer
+
+    starts, closes = _patch_fake_sounddevice(monkeypatch)
+
+    async def _go():
+        player = _PersistentPlayer()
+        cancel = asyncio.Event()
+        pcm = np.full(320, 0.5, dtype=np.float32)
+        await player.play(pcm, cancel)  # 第一段：建流
+        await player.play(pcm, cancel)  # 第二段：复用同一流，不重建
+        assert starts["n"] == 1
+        assert closes["n"] == 0
+        player._stream.close()  # 收尾停驱动线程（测试环境清理，非业务路径）
+
+    asyncio.run(_go())
+
+
+def test_persistent_player_interrupt_keeps_stream_open(monkeypatch):
+    """打断后静音待机不关流：cancel 命中 play 及时返回，流不被 close（下次直接复用）。"""
+    import time
+
+    import numpy as np
+
+    from yibao_brain.voice import _PersistentPlayer
+
+    starts, closes = _patch_fake_sounddevice(monkeypatch)
+
+    async def _go():
+        player = _PersistentPlayer()
+        pcm = np.full(320, 0.5, dtype=np.float32)
+        await player.play(pcm, asyncio.Event())  # 先正常播一段，流已建
+        cancel = asyncio.Event()
+        cancel.set()
+        t0 = time.monotonic()
+        await player.play(pcm, cancel)  # cancel 已置位 → 应立即返回
+        assert time.monotonic() - t0 < 1.0  # 不阻塞、不超时
+        assert starts["n"] == 1  # 不重建流
+        assert closes["n"] == 0  # 不关流
+        player._stream.close()  # 收尾停驱动线程（测试环境清理，非业务路径）
+
+    asyncio.run(_go())
