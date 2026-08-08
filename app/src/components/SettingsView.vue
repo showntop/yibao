@@ -104,6 +104,23 @@ async function toggleAutostart() {
   }
 }
 
+// ---- 浏览器扩展（http 桥共享 token；sidecar 启动时生成，复制到扩展选项页）----
+const bridgeToken = ref(""); // 空 = 大脑未连接或尚未写入 http.token
+const showToken = ref(false);
+const tokenMsg = ref("");
+const maskedToken = computed(() => (bridgeToken.value ? "•".repeat(Math.min(bridgeToken.value.length, 12)) : "（大脑未连接）"));
+
+async function copyToken() {
+  try {
+    await navigator.clipboard.writeText(bridgeToken.value);
+    tokenMsg.value = "已复制";
+  } catch {
+    showToken.value = true; // clipboard 被拒（无手势/权限）→ 显示全文手选复制
+    tokenMsg.value = "复制失败，已为你显示全文";
+  }
+  setTimeout(() => (tokenMsg.value = ""), 2000);
+}
+
 // ---- 权限（复用引导横幅的检测/授权链路，视觉收敛为设置行）----
 // home 大窗独立挂载，收不到宠物窗的 perms prop：自行订阅 brain-permissions 广播 + 挂载时主动拉一次
 const perms = ref<BrainPermissions | null>(null);
@@ -631,6 +648,7 @@ onMounted(async () => {
       if (lv === "quiet" || lv === "bubble" || lv === "full") proactiveLevel.value = lv;
       const tp = s["tts.provider"];
       if (tp === "edge" || tp === "cosyvoice" || tp === "cosyvoice_cloud") ttsProvider.value = tp;
+      if (typeof s["http.token"] === "string") bridgeToken.value = s["http.token"];
       syncWatchSettings(s);
     }
   });
@@ -742,6 +760,24 @@ onUnmounted(() => {
             <span class="s-row-label"></span>
             <span class="s-row-value">⌘⇧I 截图即问（框选区域 → 提问）</span>
           </div>
+        </section>
+
+        <section class="s-group">
+          <div class="s-group-title">浏览器扩展</div>
+          <div class="s-row">
+            <span class="s-row-label">连接 token</span>
+            <span class="s-row-value">
+              <code class="bridge-token">{{ showToken ? bridgeToken : maskedToken }}</code>
+              <button class="s-mini-btn" @click="showToken = !showToken">{{ showToken ? "隐藏" : "显示" }}</button>
+              <button class="s-mini-btn" :disabled="!bridgeToken" @click="copyToken">复制</button>
+            </span>
+          </div>
+          <div v-if="tokenMsg" class="s-msg ok">{{ tokenMsg }}</div>
+          <div class="s-row">
+            <span class="s-row-label">端口</span>
+            <span class="s-row-value">19527（YIBAO_HTTP_PORT 可覆盖，重启大脑生效）</span>
+          </div>
+          <div class="s-note">安装：chrome://extensions → 开发者模式 → 加载已解压 → 选仓库 extension/ 目录；扩展选项页粘贴 token。右键或工具栏按钮即可「存素材 / 存为选题」。</div>
         </section>
       </template>
 
@@ -1301,6 +1337,18 @@ textarea:focus {
   display: inline-flex;
   gap: 6px;
 }
+.s-mini-btn {
+  margin-left: 6px;
+  border: 1px solid var(--yb-border-base);
+  border-radius: var(--yb-radius-pill);
+  background: transparent;
+  color: var(--yb-text);
+  font-size: var(--yb-fs-xs);
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.s-mini-btn:hover { background: var(--yb-surface-2); }
+.bridge-token { font-family: var(--yb-mono); font-size: var(--yb-fs-sm); }
 .s-note {
   font-size: var(--yb-fs-sm);
   color: var(--yb-text-dim);

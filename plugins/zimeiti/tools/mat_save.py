@@ -82,8 +82,8 @@ class MatSave(Skill):
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "url": {"type": "string", "description": "网页链接（与 text 二选一，优先 url）"},
-                    "text": {"type": "string", "description": "直接存的文本内容（无 url 时必填）"},
+                    "url": {"type": "string", "description": "网页链接（仅传它时抓正文；与 text 同给时仅作来源，不重抓）"},
+                    "text": {"type": "string", "description": "直接存的文本内容（无 url 时必填；与 url 同给时为正文）"},
                     "topic_id": {"type": "string", "description": "关联到某个选题时传选题 id"},
                 },
             },
@@ -95,7 +95,8 @@ class MatSave(Skill):
         if not url and not text:
             return ActionResult(success=False, error="url 和 text 至少给一个")
         kind = "link" if url else "note"
-        if url:
+        if url and not text:
+            # 仅链接：sidecar 抓正文（登录墙/SPA 由调用方改传 text 绕过）
             if not re.match(r"^https?://", url):
                 return ActionResult(success=False, error=f"不是合法 http(s) 链接：{url}")
             try:
@@ -104,6 +105,7 @@ class MatSave(Skill):
                 return ActionResult(success=False, error=f"抓取失败：{e}")
             if not text:
                 return ActionResult(success=False, error="抓到了页面但没提取出文字内容")
+        # url+text 同给：text 为正文、url 仅作来源元数据（浏览器扩展链路，不重抓）
         llm = getattr(ctx, "llm", None)
         if llm is None:
             return ActionResult(success=False, error="底座未提供 LLM 能力")

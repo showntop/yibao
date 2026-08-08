@@ -175,6 +175,7 @@ def test_settings_set_persists_and_ignores_unknown(tmp_path, monkeypatch):
         "watch.look_min_gap": 300,
         "watch.look_max_per_hour": 6,
         "watch.look_max_per_day": 50,
+        "http.token": "",
     }
 
 
@@ -247,4 +248,5 @@ def test_settings_bad_file_falls_back_to_defaults(tmp_path, monkeypatch):
         "watch.look_min_gap": 300,
         "watch.look_max_per_hour": 6,
         "watch.look_max_per_day": 50,
+        "http.token": "",
     }

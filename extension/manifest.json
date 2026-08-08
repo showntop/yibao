@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "译宝素材桥",
+  "version": "0.1.0",
+  "description": "把当前页/选中文字一键存进译宝：素材库（摘要打标）或选题看板",
+  "permissions": ["contextMenus", "notifications", "storage", "activeTab", "scripting"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_popup": "popup.html", "default_title": "存进译宝" },
+  "options_page": "options.html"
+}

@@ -112,6 +112,13 @@ handler = "zimeiti.mat_save"
 direct = true
 quiet = true
 
+# 浏览器扩展「存为选题」：标题上看板；quiet 不弹看板面板，回执由壳侧气泡给
+[[method]]
+name = "invoke_add_topic"
+handler = "zimeiti.add"
+direct = true
+quiet = true
+
 # 以下为 intent 方法（direct=false）：{title}/{id} 占位由面板 action 参数渲染，
 # 交给 agent 多步完成（加载方法论 → 生成/改写 → 落盘存版本），handler 仅作注册校验锚点
 [[method]]
