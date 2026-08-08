@@ -1,6 +1,8 @@
 import asyncio
 import json
+import time
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from yibao_brain.server import serve, serve_async, build_loop
 from yibao_brain.llm import FakeProvider, ToolCall
 from yibao_brain.ipc import RiskLevel
@@ -1252,6 +1254,54 @@ def test_panel_action_refresh_replaces_stale_panel_data(tmp_path, monkeypatch):
     assert out[-1] == {"type": "run_done", "id": 1}
 
 
+def test_panel_action_quiet_suppresses_panel_event(tmp_path, monkeypatch):
+    """quiet=true 的 api 方法：直调执行 + action_result 照发，但不发 panel 事件（不弹面板窗）。"""
+    executed = []
+    _patch_api(monkeypatch, quiet=True)
+    from yibao_brain import plugins
+
+    monkeypatch.setitem(plugins._PANELS, "tdel:list", {"type": "list"})
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([{"id": 1, "type": "panel_action", "method": "tdel.delete", "params": {"id": "r1"}}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+            skills_factory=_pa_factory(executed, ref="tdel:list"),  # tool 自带 panel 引用，应被 quiet 抑制
+        )
+    )
+    evs = [m["event"] for m in out if m["type"] == "event"]
+    kinds = [e["kind"] for e in evs]
+    assert executed == [{"id": "r1"}]           # tool 真的被执行
+    assert "action_result" in kinds             # 回执照发（壳侧气泡用）
+    assert "panel" not in kinds                 # panel 事件被抑制（不弹窗）
+    assert out[-1] == {"type": "run_done", "id": 1}
+
+
+def test_load_api_parses_quiet(tmp_path):
+    """api.toml quiet = true 解析进 ApiMethod.quiet（缺省 False）。"""
+    from yibao_brain import plugins
+    from yibao_brain.skills import SkillRegistry
+
+    reg = SkillRegistry()
+    reg.register(_RecSkill.make([]), plugin="tdel")
+    api = tmp_path / "api.toml"
+    api.write_text(
+        '[[method]]\nname = "save"\nhandler = "tdel.delete"\ndirect = true\nquiet = true\n'
+        '[[method]]\nname = "loud"\nhandler = "tdel.delete"\ndirect = true\n',
+        encoding="utf-8",
+    )
+    plugins._load_api("tdel", api, reg)
+    try:
+        assert plugins.get_api("tdel.save").quiet is True
+        assert plugins.get_api("tdel.loud").quiet is False
+    finally:
+        plugins._API.pop("tdel.save", None)
+        plugins._API.pop("tdel.loud", None)
+
+
 def test_serve_async_tts_cancelled_error_does_not_crash_brain(tmp_path):
     """TTS 抛 CancelledError（打断命中合成）：_pump_tts 视为正常取消，
     run 正常收尾 run_done，大脑不崩。"""
@@ -1938,3 +1988,95 @@ def test_config_perception_screen_keys_saveable(tmp_path, monkeypatch):
     assert s["perception.screen"] is True
     assert s["perception.blacklist"] == ["com.example.bank"]
     assert "perception.unknown" not in s
+
+
+# ---------- 截图即问（Task 3：snip_capture / vision_query 分支）----------
+
+
+def test_peek_snip_fresh_stale_empty():
+    """_peek_snip：新鲜→返回且不清空（可追问）；过期→None 并清空；空→None。"""
+    from yibao_brain.server import _peek_snip
+
+    stash = {"b64": "data:image/png;base64,AAA", "ts": time.time()}
+    assert _peek_snip(stash) == "data:image/png;base64,AAA"
+    assert _peek_snip(stash) == "data:image/png;base64,AAA"  # 不清空，可多次提问
+    stale = {"b64": "data:image/png;base64,BBB", "ts": time.time() - 9999}
+    assert _peek_snip(stale) is None
+    assert stale["b64"] is None
+    assert _peek_snip({"b64": None, "ts": 0.0}) is None
+
+
+class _FakeVisionCompletions:
+    def __init__(self, content):
+        self._content = content
+
+    def create(self, model, messages, **kw):
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=self._content))])
+
+
+class _FakeVisionClient:
+    def __init__(self, content):
+        self.model = "fake-v"
+        self.client = SimpleNamespace(chat=SimpleNamespace(completions=_FakeVisionCompletions(content)))
+
+
+def test_serve_async_vision_query_answers_with_stashed_snip(tmp_path):
+    """vision_query：暂存截图 + 问题 → final_reply 事件带答案 + run_done 复位。"""
+    import yibao_brain.server as srv
+
+    srv.snip_ctx.update({"b64": "data:image/png;base64,AAA", "ts": time.time()})
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([{"id": 7, "type": "vision_query", "question": "这是什么？"}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+            vision_client=_FakeVisionClient("图上是一个对话框"),
+        )
+    )
+    evs = [m["event"] for m in out if m["type"] == "event"]
+    fr = next(e for e in evs if e["kind"] == "final_reply")
+    assert "对话框" in fr["text"]
+    assert out[-1] == {"type": "run_done", "id": 7}
+
+
+def test_serve_async_vision_query_stale_snip_errors(tmp_path):
+    """vision_query：无暂存截图 → error 事件提示重新框选 + run_done。"""
+    import yibao_brain.server as srv
+
+    srv.snip_ctx.update({"b64": None, "ts": 0.0})
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([{"id": 8, "type": "vision_query", "question": "q"}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+            vision_client=_FakeVisionClient("不应被调用"),
+        )
+    )
+    evs = [m["event"] for m in out if m["type"] == "event"]
+    err = next(e for e in evs if e["kind"] == "error")
+    assert "重新框选" in err["text"]
+    assert out[-1] == {"type": "run_done", "id": 8}
+
+
+def test_serve_async_snip_capture_silent_without_host(tmp_path):
+    """use_real=False（无 host）：snip_capture 分支静默跳过，不炸。"""
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([
+                {"type": "snip_capture", "left": 0, "top": 0, "width": 10, "height": 10},
+                {"type": "ping"},
+            ]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+        )
+    )
+    assert any(m.get("type") == "pong" for m in out)

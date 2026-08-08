@@ -309,6 +309,32 @@ def describe_screen(client, b64: str) -> str | None:
         return None
 
 
+SNIP_QA_PROMPT = (
+    "你是屏幕问答助手。根据这张屏幕截图回答用户的问题：简洁直接（200 字以内），"
+    "只依据截图里可见的内容作答；截图里看不到答案就明说「截图中看不到」。"
+)
+
+
+def answer_image_query(client, b64: str, question: str) -> str | None:
+    """区域截图问答（截图即问）。client 为 ComputerUseClient；失败返 None。"""
+    try:
+        resp = _vision_create_with_retry(lambda: client.client.chat.completions.create(
+            model=client.model,
+            messages=[
+                {"role": "system", "content": SNIP_QA_PROMPT},
+                {"role": "user", "content": [
+                    {"type": "image_url", "image_url": {"url": b64}},
+                    {"type": "text", "text": question},
+                ]},
+            ],
+        ))
+        text = (resp.choices[0].message.content or "").strip() if resp.choices else ""
+        return text or None
+    except Exception as e:
+        print(f"[yibao] 截图问答失败（已跳过）：{e}", file=sys.stderr)
+        return None
+
+
 SCREEN_SUMMARY_PROMPT = (
     "用一句话（80 字以内）概括这张屏幕截图里前台应用正在显示的内容："
     "应用名 + 内容主题 + 可见的关键文字。只输出这句话。"

@@ -105,6 +105,13 @@ direct = true
 panel = "zimeiti:hot"
 refresh = "zimeiti.hot_topics"
 
+# 唤起条「存素材」：划词文本直存（LLM 摘要打标）；quiet 不弹素材库面板，回执由壳侧气泡给
+[[method]]
+name = "invoke_mat_save"
+handler = "zimeiti.mat_save"
+direct = true
+quiet = true
+
 # 以下为 intent 方法（direct=false）：{title}/{id} 占位由面板 action 参数渲染，
 # 交给 agent 多步完成（加载方法论 → 生成/改写 → 落盘存版本），handler 仅作注册校验锚点
 [[method]]

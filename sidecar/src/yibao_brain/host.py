@@ -14,6 +14,10 @@ class Screenshotter(Protocol):
         """截当前主屏，存 png，返回绝对路径。"""
         ...
 
+    def capture_region(self, left: int, top: int, width: int, height: int) -> str:
+        """任意矩形区域截图（物理像素，mss 坐标系=虚拟桌面）。返回 PNG 绝对路径。"""
+        ...
+
 
 class A11yReader(Protocol):
     def frontmost_tree(self, max_depth: int = 8) -> dict:

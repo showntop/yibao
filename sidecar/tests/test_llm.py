@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 
 from yibao_brain.llm import (
     GLMProvider,
@@ -508,3 +509,43 @@ def test_summarize_screen_failure_returns_none():
 
     c = ComputerUseClient(api_key="x", model="m", base_url="https://x", client_factory=BoomClient)
     assert summarize_screen(c, "data:image/png;base64,x") is None
+
+
+class _FakeVisionCompletions:
+    def __init__(self, content):
+        self._content = content
+        self.last_messages = None
+
+    def create(self, model, messages, **kw):
+        self.last_messages = messages
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=self._content))])
+
+
+class _FakeVisionClient:
+    """ComputerUseClient 形状假件：.model + .client.chat.completions.create。"""
+
+    def __init__(self, content):
+        self.model = "fake-v"
+        self.client = SimpleNamespace(chat=SimpleNamespace(completions=_FakeVisionCompletions(content)))
+
+
+def test_answer_image_query_ok():
+    from yibao_brain.llm import answer_image_query
+
+    c = _FakeVisionClient("图上是一个对话框")
+    ans = answer_image_query(c, "data:image/png;base64,AAA", "这是什么？")
+    assert ans == "图上是一个对话框"
+    msgs = c.client.chat.completions.last_messages
+    assert msgs[1]["content"][0] == {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAA"}}
+    assert msgs[1]["content"][1] == {"type": "text", "text": "这是什么？"}
+
+
+def test_answer_image_query_failure_returns_none():
+    from yibao_brain.llm import answer_image_query
+
+    class Boom:
+        def create(self, *a, **k):
+            raise RuntimeError("boom")
+
+    c = SimpleNamespace(model="m", client=SimpleNamespace(chat=SimpleNamespace(completions=Boom())))
+    assert answer_image_query(c, "data:image/png;base64,AAA", "q") is None

@@ -1193,6 +1193,63 @@ fn close_panel_window(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// 隐藏唤起条（主窗处理完 invoke-action 后兜底调用；条本身点击/Esc/blur 已自隐，幂等）。
+#[tauri::command]
+fn hide_invoke_bar(app: AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("invoke-bar") {
+        win.hide().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[derive(serde::Deserialize)]
+struct SnipRect {
+    left: f64,
+    top: f64,
+    width: f64,
+    height: f64,
+}
+
+/// 框选完成：隐藏 overlay → 逻辑选区换算物理像素 → 通知大脑区域截图 → 广播 snip-captured 让主窗展开。
+#[tauri::command]
+fn finish_snip(app: AppHandle, state: tauri::State<Brain>, rect: SnipRect) -> Result<(), String> {
+    if let Some(snip) = app.get_webview_window("snip") {
+        let _ = snip.hide();
+        if let Ok(Some(mon)) = snip.current_monitor() {
+            let scale = mon.scale_factor();
+            let origin = (mon.position().x as i64, mon.position().y as i64);
+            let (l, t, w, h) = snip_abs_rect((rect.left, rect.top, rect.width, rect.height), origin, scale);
+            write_to_brain(
+                &state,
+                serde_json::json!({
+                    "id": 0, "type": "snip_capture",
+                    "left": l, "top": t, "width": w, "height": h,
+                }),
+            )?;
+            let _ = app.emit("snip-captured", serde_json::json!({ "width": w, "height": h }));
+        }
+    }
+    Ok(())
+}
+
+/// 取消框选（Esc / 单击 / 过小选区）：只收 overlay，不打扰。
+#[tauri::command]
+fn cancel_snip(app: AppHandle) -> Result<(), String> {
+    if let Some(snip) = app.get_webview_window("snip") {
+        let _ = snip.hide();
+    }
+    Ok(())
+}
+
+/// 截图即问：问题转发大脑（暂存的区域截图 + 问题 → vision 直答）。
+#[tauri::command]
+fn vision_query(state: tauri::State<Brain>, question: String) -> Result<(), String> {
+    write_to_brain(
+        &state,
+        serde_json::json!({ "id": 0, "type": "vision_query", "question": question }),
+    )
+}
+
 /// 面板窗挂载后补拉最近一次的 panel 载荷（首开时 brain-event 先于窗口订阅发出）。
 #[tauri::command]
 fn get_current_panel(state: tauri::State<Brain>) -> Result<Option<Value>, String> {
@@ -1361,24 +1418,20 @@ fn pb_copy(text: &str) {
     }
 }
 
-// 读当前物理修饰键状态（CGEventSourceFlagsState 未被 core-graphics crate 包装，直接 FFI）
-#[link(name = "CoreGraphics", kind = "framework")]
-extern "C" {
-    fn CGEventSourceFlagsState(state_id: i32) -> u64;
-}
-
-/** 等用户松开热键的修饰键（⇧/⌘）：合成 ⌘C 会被系统与物理按住中的 ⇧ 合并成 ⇧⌘C
- * （调色板就是这么被打开的）。最多等 2s，超时照发（退化为旧行为）。 */
-fn wait_modifiers_released() {
-    const COMBINED_SESSION_STATE: i32 = 1;
-    const SHIFT_OR_CMD: u64 = 0x2_0000 | 0x10_0000; // kCGEventFlagMaskShift | kCGEventFlagMaskCommand
-    for _ in 0..50 {
-        let flags = unsafe { CGEventSourceFlagsState(COMBINED_SESSION_STATE) };
-        if flags & SHIFT_OR_CMD == 0 {
-            return;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(40));
+/** 合成 ⇧ keyup（kVK_Shift_L=56 / Shift_R=60）：物理按住 ⇧ 时直接发 ⌘C 会被 WindowServer 与物理 ⇧
+ *  状态合并成 ⇧⌘C（调色板就是这么被打开的）——曾用「等用户松手」规避，按下到松手多久就卡多久（实测烧满 2s）。
+ *  正解：先把事件流里的 ⇧ 抬成松开态，⌘C 就是纯 ⌘C；用户物理松手时硬件 keyup 自然到来（重复 keyup 无害）。 */
+fn post_shift_keyup() -> Result<(), String> {
+    use core_graphics::event::{CGEvent, CGEventTapLocation};
+    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+    let src = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
+        .map_err(|_| "创建 CGEventSource 失败".to_string())?;
+    for key in [56u16, 60u16] {
+        // keyup：flags 默认空（不带 Shift），事件流即视为 ⇧ 已松开
+        let up = CGEvent::new_keyboard_event(src.clone(), key, false).map_err(|_| "创建 ⇧keyup 失败")?;
+        up.post(CGEventTapLocation::HID);
     }
+    Ok(())
 }
 
 /** 直接经 CGEvent 发 ⌘C（kVK_ANSI_C=8）：与应用本体同一个辅助功能信任域（pyautogui 能注入靠的就是它），
@@ -1397,25 +1450,76 @@ fn post_cmd_c() -> Result<(), String> {
     Ok(())
 }
 
-/** 读前台应用选中文字：暂存剪贴板 → 等物理修饰键松开 → 模拟 ⌘C → 读回 → 还原。
+/** 等剪贴板从 old 变掉：⌘C 注入后系统写板通常 30-80ms——每 25ms 轮询，变了立即返回新值（感知延迟从固定 300ms 降到几十 ms）；
+ *  超时返回 None（= 无选中/前台不可拷贝，调用方退化）。read 注入便于单测。 */
+fn wait_clipboard_change<F: FnMut() -> Option<String>>(
+    old: &Option<String>,
+    mut read: F,
+    max_ms: u64,
+) -> Option<String> {
+    let step = std::time::Duration::from_millis(25);
+    let mut waited = 0;
+    loop {
+        let new = read();
+        if new != *old {
+            return new;
+        }
+        waited += 25;
+        if waited >= max_ms {
+            return None;
+        }
+        std::thread::sleep(step);
+    }
+}
+
+/** 读前台应用选中文字：暂存剪贴板 → 合成 ⇧ keyup（防 ⇧⌘C 合并）→ 模拟 ⌘C → 轮询读回（变了即返，超时 400ms）→ 还原。
  *  已知限制：pbpaste/pbcopy 只保真文本——剪贴板里是图片等富格式且被覆盖时还原不回原类型。
  *  无选中（剪贴板未变）或权限缺失（⌘C 静默失败）→ None，调用方退化为普通唤起。 */
 fn grab_selected_text() -> Option<String> {
     let old = pb_paste();
-    wait_modifiers_released();
+    if post_shift_keyup().is_err() {
+        return None;
+    }
     if post_cmd_c().is_err() {
         return None;
     }
-    std::thread::sleep(std::time::Duration::from_millis(300));
-    let new = pb_paste();
-    if new == old {
-        return None; // 剪贴板没变 = 没有选中（或前台不可拷贝）
-    }
+    let new = wait_clipboard_change(&old, pb_paste, 400)?;
     match &old {
         Some(o) => pb_copy(o),
         None => pb_copy(""),
     }
-    new.filter(|t| !t.trim().is_empty())
+    if new.trim().is_empty() {
+        None
+    } else {
+        Some(new)
+    }
+}
+
+/** 唤起条落位：光标右下偏移（14,18），越出所在屏右/下缘时翻转到左/上；纯函数便于单测。
+ *  mon = (屏原点x, 屏原点y, 屏宽, 屏高)，全部逻辑坐标。 */
+fn clamp_bar_pos(mx: f64, my: f64, bar_w: f64, bar_h: f64, mon: (f64, f64, f64, f64)) -> (f64, f64) {
+    let (mx0, my0, mw, mh) = mon;
+    let mut x = mx + 14.0;
+    let mut y = my + 18.0;
+    if x + bar_w > mx0 + mw {
+        x = mx - bar_w - 14.0;
+    }
+    if y + bar_h > my0 + mh {
+        y = my - bar_h - 18.0;
+    }
+    (x.max(mx0), y.max(my0))
+}
+
+/** 选区换算：overlay 窗口逻辑坐标 → 虚拟桌面物理像素（mss 坐标系）。
+ *  mon_px_origin = 屏物理原点（可为负：副屏在主屏左侧）；scale = 屏 scale_factor。纯函数便于单测。 */
+fn snip_abs_rect(r: (f64, f64, f64, f64), mon_px_origin: (i64, i64), scale: f64) -> (i64, i64, i64, i64) {
+    let (l, t, w, h) = r;
+    (
+        mon_px_origin.0 + (l * scale).round() as i64,
+        mon_px_origin.1 + (t * scale).round() as i64,
+        (w * scale).round().max(1.0) as i64,
+        (h * scale).round().max(1.0) as i64,
+    )
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1425,7 +1529,7 @@ pub fn run() {
             if event.state != ShortcutState::Pressed {
                 return;
             }
-            // 划词唤起：抓选中文字（剪贴板接力 + CGEvent ⌘C，挪线程别卡热键线程）→ 展开带上下文
+            // 划词唤起：抓选中文字（剪贴板接力 + CGEvent ⌘C，挪线程别卡热键线程）；有选中 → 动作条静默待选，无选中 → 展开
             if shortcut == &tauri_plugin_global_shortcut::Shortcut::new(
                 Some(tauri_plugin_global_shortcut::Modifiers::SUPER | tauri_plugin_global_shortcut::Modifiers::SHIFT),
                 tauri_plugin_global_shortcut::Code::KeyU,
@@ -1436,7 +1540,77 @@ pub fn run() {
                     if let Some(win) = handle.get_webview_window("main") {
                         let _ = win.show().and_then(|_| win.set_focus());
                     }
+                    let has_text = text.is_some();
                     let _ = handle.emit("pet-invoke-selection", serde_json::json!({ "text": text }));
+                    // 动作条：有选中文字才弹（无选中退化为旧唤起，不弹空菜单）
+                    if has_text {
+                        if let Some(bar) = handle.get_webview_window("invoke-bar") {
+                            let (cmx, cmy) = device_query::DeviceState::new().get_mouse().coords;
+                            // 落位光标所在屏：遍历显示器找逻辑矩形包含光标的屏，找不到退回窗口当前屏
+                            let mon = bar.available_monitors().ok().and_then(|mons| {
+                                mons.into_iter().find(|m| {
+                                    let s = m.scale_factor();
+                                    let x = m.position().x as f64 / s;
+                                    let y = m.position().y as f64 / s;
+                                    let w = m.size().width as f64 / s;
+                                    let h = m.size().height as f64 / s;
+                                    (cmx as f64) >= x && (cmx as f64) < x + w && (cmy as f64) >= y && (cmy as f64) < y + h
+                                })
+                            });
+                            let mon = match mon {
+                                Some(m) => Some(m),
+                                None => bar.current_monitor().ok().flatten(),
+                            };
+                            if let Some(mon) = mon {
+                                let s = mon.scale_factor();
+                                let mon_rect = (
+                                    mon.position().x as f64 / s,
+                                    mon.position().y as f64 / s,
+                                    mon.size().width as f64 / s,
+                                    mon.size().height as f64 / s,
+                                );
+                                let (bx, by) = clamp_bar_pos(cmx as f64, cmy as f64, 328.0, 56.0, mon_rect);
+                                let _ = bar.set_position(tauri::LogicalPosition::new(bx, by));
+                            }
+                            let _ = bar.show().and_then(|_| bar.set_focus());
+                        }
+                    }
+                });
+                return;
+            }
+            // 截图即问：overlay 铺满光标所在显示器，等前端拖拽选区（finish_snip/cancel_snip）
+            if shortcut == &tauri_plugin_global_shortcut::Shortcut::new(
+                Some(tauri_plugin_global_shortcut::Modifiers::SUPER | tauri_plugin_global_shortcut::Modifiers::SHIFT),
+                tauri_plugin_global_shortcut::Code::KeyI,
+            ) {
+                let handle = app.clone();
+                std::thread::spawn(move || {
+                    let (cmx, cmy) = device_query::DeviceState::new().get_mouse().coords;
+                    if let Some(snip) = handle.get_webview_window("snip") {
+                        if let Ok(mons) = snip.available_monitors() {
+                            let hit = mons.into_iter().find(|m| {
+                                let s = m.scale_factor();
+                                let x = m.position().x as f64 / s;
+                                let y = m.position().y as f64 / s;
+                                let w = m.size().width as f64 / s;
+                                let h = m.size().height as f64 / s;
+                                (cmx as f64) >= x && (cmx as f64) < x + w && (cmy as f64) >= y && (cmy as f64) < y + h
+                            });
+                            if let Some(mon) = hit {
+                                let s = mon.scale_factor();
+                                let _ = snip.set_position(tauri::LogicalPosition::new(
+                                    mon.position().x as f64 / s,
+                                    mon.position().y as f64 / s,
+                                ));
+                                let _ = snip.set_size(tauri::LogicalSize::new(
+                                    mon.size().width as f64 / s,
+                                    mon.size().height as f64 / s,
+                                ));
+                            }
+                        }
+                        let _ = snip.show().and_then(|_| snip.set_focus());
+                        let _ = handle.emit("snip-start", ());
+                    }
                 });
                 return;
             }
@@ -1555,13 +1729,42 @@ pub fn run() {
                 ));
             }
 
-            // 注册全局热键：⌘⇧Y 反射键（唤起/收起）；⌘⇧U 划词唤起（带选中文字上下文）
+            // 唤起条（划词动作菜单）：预创建隐藏，⌘⇧U 抓到文字后光标旁落位展示
+            tauri::WebviewWindowBuilder::new(app, "invoke-bar", tauri::WebviewUrl::App("invoke.html".into()))
+                .title("")
+                .transparent(true)
+                .decorations(false)
+                .always_on_top(true)
+                .skip_taskbar(true)
+                .resizable(false)
+                .inner_size(328.0, 56.0)
+                .visible(false)
+                .build()
+                .map_err(|e| format!("创建唤起条失败：{e}"))?;
+
+            // 截图框选层：预创建隐藏；⌘⇧I 时铺满光标所在显示器（drag 选区 → finish_snip）
+            tauri::WebviewWindowBuilder::new(app, "snip", tauri::WebviewUrl::App("snip.html".into()))
+                .title("")
+                .transparent(true)
+                .decorations(false)
+                .always_on_top(true)
+                .skip_taskbar(true)
+                .resizable(false)
+                .inner_size(800.0, 600.0) // 占位，唤起时按显示器重设
+                .visible(false)
+                .build()
+                .map_err(|e| format!("创建截图层失败：{e}"))?;
+
+            // 注册全局热键：⌘⇧Y 反射键（唤起/收起）；⌘⇧U 划词唤起（带选中文字上下文）；⌘⇧I 截图即问
             #[cfg(desktop)]
             {
                 if let Err(e) = app.global_shortcut().register("Super+Shift+Y") {
                     eprintln!("[yibao] 注册热键失败：{e}");
                 }
                 if let Err(e) = app.global_shortcut().register("Super+Shift+U") {
+                    eprintln!("[yibao] 注册热键失败：{e}");
+                }
+                if let Err(e) = app.global_shortcut().register("Super+Shift+I") {
                     eprintln!("[yibao] 注册热键失败：{e}");
                 }
             }
@@ -1700,6 +1903,10 @@ pub fn run() {
             perception_clear,
             open_panel_window,
             close_panel_window,
+            hide_invoke_bar,
+            finish_snip,
+            cancel_snip,
+            vision_query,
             get_current_panel,
             voice_start,
             interrupt,
@@ -1722,4 +1929,76 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod invoke_tests {
+    use super::*;
+
+    #[test]
+    fn bar_pos_bottom_right_offset() {
+        // 屏幕中央：光标右下偏移
+        let (x, y) = clamp_bar_pos(500.0, 400.0, 328.0, 56.0, (0.0, 0.0, 1440.0, 900.0));
+        assert_eq!((x, y), (514.0, 418.0));
+    }
+
+    #[test]
+    fn bar_pos_flips_at_right_and_bottom_edges() {
+        // 右边缘：翻到光标左侧；下边缘：翻到光标上方
+        let (x, y) = clamp_bar_pos(1400.0, 880.0, 328.0, 56.0, (0.0, 0.0, 1440.0, 900.0));
+        assert_eq!((x, y), (1400.0 - 328.0 - 14.0, 880.0 - 56.0 - 18.0));
+    }
+
+    #[test]
+    fn bar_pos_respects_monitor_origin() {
+        // 副屏（原点在 1440,0）：越界判断相对该屏
+        let (x, y) = clamp_bar_pos(1500.0, 100.0, 328.0, 56.0, (1440.0, 0.0, 1440.0, 900.0));
+        assert_eq!((x, y), (1514.0, 118.0));
+    }
+
+    #[test]
+    fn snip_rect_scales_and_offsets() {
+        // scale=2  retina：逻辑 (100,50,200,120) + 屏原点 (0,0) → 物理 (200,100,400,240)
+        let r = snip_abs_rect((100.0, 50.0, 200.0, 120.0), (0, 0), 2.0);
+        assert_eq!(r, (200, 100, 400, 240));
+        // 副屏负原点（主屏左侧 1440 宽）：逻辑 (10,10,50,50) → 物理 (-1420+20, 20, 100, 100)
+        let r2 = snip_abs_rect((10.0, 10.0, 50.0, 50.0), (-2880, 0), 2.0);
+        assert_eq!(r2, (-2860, 20, 100, 100));
+    }
+
+    #[test]
+    fn clipboard_change_returns_immediately_when_already_changed() {
+        let old = Some("a".to_string());
+        let new = wait_clipboard_change(&old, || Some("b".to_string()), 400);
+        assert_eq!(new, Some("b".to_string()));
+    }
+
+    #[test]
+    fn clipboard_change_polls_until_change() {
+        let old = Some("a".to_string());
+        let n = std::cell::Cell::new(0);
+        let new = wait_clipboard_change(
+            &old,
+            || {
+                n.set(n.get() + 1);
+                if n.get() >= 3 {
+                    Some("b".to_string())
+                } else {
+                    Some("a".to_string())
+                }
+            },
+            400,
+        );
+        assert_eq!(new, Some("b".to_string()));
+        assert!(n.get() >= 3); // 真的轮询了多次，不是一次蒙对
+    }
+
+    #[test]
+    fn clipboard_change_times_out_unchanged() {
+        let old = Some("a".to_string());
+        let start = std::time::Instant::now();
+        let new = wait_clipboard_change(&old, || Some("a".to_string()), 100);
+        assert_eq!(new, None);
+        assert!(start.elapsed().as_millis() >= 50); // 轮询了一段才超时，非立即放弃
+    }
 }

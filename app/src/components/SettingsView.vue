@@ -734,6 +734,14 @@ onUnmounted(() => {
             <span class="s-row-label">全局快捷键</span>
             <span class="s-row-value">⌘⇧Y 显示 / 隐藏译宝</span>
           </div>
+          <div class="s-row">
+            <span class="s-row-label"></span>
+            <span class="s-row-value">⌘⇧U 划词唤起（选中文字 → 动作条）</span>
+          </div>
+          <div class="s-row">
+            <span class="s-row-label"></span>
+            <span class="s-row-value">⌘⇧I 截图即问（框选区域 → 提问）</span>
+          </div>
         </section>
       </template>
 
