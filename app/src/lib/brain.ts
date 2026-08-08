@@ -127,6 +127,16 @@ export function onInvokeAction(cb: (action: string) => void): Promise<UnlistenFn
   return listen<{ action: string }>("invoke-action", (e) => cb(e.payload.action));
 }
 
+/** 框选完成广播（finish_snip 后 Rust emit）：主窗展开 + chip 提示提问。 */
+export function onSnipCaptured(cb: (r: { width: number; height: number }) => void): Promise<UnlistenFn> {
+  return listen<{ width: number; height: number }>("snip-captured", (e) => cb(e.payload));
+}
+
+/** 截图即问：问题 → 大脑（暂存的区域截图 + vision 直答，不走 run）。 */
+export function visionQuery(question: string): Promise<void> {
+  return invoke("vision_query", { question });
+}
+
 /** 面板焦点（v2 §5 focus）：面板内容/选中条目变化时上报，null = 面板关闭。
  *  大脑把它注入 LLM 上下文，「这个/它」等指代有解。 */
 export interface PanelFocus {

@@ -27,6 +27,8 @@ import {
   interrupt,
   panelAction,
   onInvokeAction,
+  onSnipCaptured,
+  visionQuery,
   type BrainEvent,
   type BrainStatusMsg,
   type BrainPermissions,
@@ -166,6 +168,7 @@ let unlistenSetupCfg: (() => void) | null = null;
 let unlistenInvoke: (() => void) | null = null;
 let unlistenInvokeSel: (() => void) | null = null;
 let unlistenInvokeAction: (() => void) | null = null;
+let unlistenSnip: (() => void) | null = null;
 let unlistenApprovals: (() => void) | null = null;
 let unlistenSettings: (() => void) | null = null;
 
@@ -306,6 +309,14 @@ const ctxPreview = computed(() => {
   const t = (selectionCtx.value ?? "").replace(/\s+/g, " ").trim();
   return t.length > 42 ? t.slice(0, 42) + "…" : t;
 });
+const snipCtx = ref<{ width: number; height: number } | null>(null); // 截图即问：框选完成待提问
+
+// 命名注意：brain.ts 的监听封装叫 onSnipCaptured，处理函数另名 onSnipReady 避免撞名
+async function onSnipReady(r: { width: number; height: number }) {
+  snipCtx.value = r;
+  if (!expanded.value) await expand();
+  void nextTick(() => inputBarRef.value?.focus());
+}
 
 async function onPetShow() {
   // Rust 侧已按 可见性×展开态 决策（显隐不经过前端）：pet-show 只需确保展开 + 输入就绪
@@ -537,6 +548,18 @@ function onPerms(p: BrainPermissions) {
 async function submit(text: string) {
   bubbles.value.push({ role: "user", text });
   state.value = "think";
+  // 截图即问：有框选待提问 → 走 vision 直答（不占 run/对话历史）
+  if (snipCtx.value) {
+    bubbles.value.push({ role: "sys", text: `已附带区域截图 ${snipCtx.value.width}×${snipCtx.value.height}`, icon: "doc" });
+    snipCtx.value = null;
+    try {
+      await visionQuery(text);
+    } catch (err) {
+      pushWarn("发送失败：" + String(err));
+      state.value = "idle";
+    }
+    return;
+  }
   // 划词上下文：气泡只显示用户打的字，给大脑的消息自包含拼好（大脑看不到前台选中）
   let msg = text;
   if (selectionCtx.value) {
@@ -670,6 +693,8 @@ onMounted(async () => {
   );
   // 唤起条动作（invoke-bar 广播）：解释/翻译/存素材
   unlistenInvokeAction = await onInvokeAction((action) => { void handleInvokeAction(action); });
+  // 截图即问（⌘⇧I 框选完成广播）：展开 + chip 提示提问
+  unlistenSnip = await onSnipCaptured((r) => { void onSnipReady(r); });
   // 主动拉一次配置：首启引导若秒过（venv/模型已在），setup-config-needed 可能先于挂载发出而丢——靠拉取兜底
   try {
     const cfg = await invoke<{ has_key: boolean }>("get_setup_config");
@@ -688,6 +713,7 @@ onUnmounted(() => {
   unlistenInvoke?.();
   unlistenInvokeSel?.();
   unlistenInvokeAction?.();
+  unlistenSnip?.();
   unlistenApprovals?.();
   unlistenSettings?.();
   window.removeEventListener("keydown", onKeydown);
@@ -788,6 +814,12 @@ onUnmounted(() => {
           <YbIcon class="ctx-ic" name="doc" :size="13" />
           <span class="ctx-text" :title="selectionCtx">{{ ctxPreview }}</span>
           <button class="ctx-x" title="去掉上下文" @click="selectionCtx = null">×</button>
+        </div>
+        <!-- 截图即问 chip：⌘⇧I 框选后等待提问，可 × 掉；发送后自消 -->
+        <div v-if="snipCtx" class="ctx-chip">
+          <YbIcon class="ctx-ic" name="doc" :size="13" />
+          <span class="ctx-text">区域截图 {{ snipCtx.width }}×{{ snipCtx.height }}，想问什么？</span>
+          <button class="ctx-x" title="去掉截图" @click="snipCtx = null">×</button>
         </div>
         <InputBar v-if="!pending" ref="inputBarRef" :busy="busy" :listening="state === 'listen'" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
         <div v-else-if="pendingConfirms.length > 1" class="batch-confirm-notice">
