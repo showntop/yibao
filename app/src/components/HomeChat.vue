@@ -10,7 +10,7 @@ import InputBar from "./InputBar.vue";
 import Bubble from "./Bubble.vue";
 import PermissionsBanner from "./PermissionsBanner.vue";
 import SetupWizard from "./SetupWizard.vue";
-import HomeInfoPanel from "./HomeInfoPanel.vue";
+import HomeContextBar from "./HomeContextBar.vue";
 import {
   onBrainEvent,
   onBrainStatus,
@@ -89,12 +89,6 @@ function onSetupSaved() {
   bubbles.value.push({ role: "sys", text: "配置已保存，大脑启动中…" });
 }
 
-const statusText = computed(
-  () => ({
-    idle: "待命中", listen: "聆听中", think: "思考中…", work: "操作中…", say: "说话中…",
-    success: "完成", error: "出错了",
-  }[state.value]),
-);
 // success/error 是短暂 valence（不可打断），不算 busy
 const busy = computed(() =>
   state.value === "listen" || state.value === "think" ||
@@ -338,63 +332,55 @@ onUnmounted(() => {
 
 <template>
   <div class="chat-page">
-    <!-- 左：对话主区（AI 交互主入口） -->
-    <div class="chat-main">
-      <header class="page-head" data-tauri-drag-region>
-        <span class="pg-title" data-tauri-drag-region>对话</span>
-        <span class="status" :class="state"><i class="dot" />{{ statusText }}</span>
-      </header>
+    <SetupWizard v-if="setupNeeded" :model="setupCfg.model" :base-url="setupCfg.baseUrl" :voice="setupCfg.voice" @saved="onSetupSaved" />
 
-      <SetupWizard v-if="setupNeeded" :model="setupCfg.model" :base-url="setupCfg.baseUrl" :voice="setupCfg.voice" @saved="onSetupSaved" />
+    <template v-if="!setupNeeded">
+    <!-- 上下文带：AI 此刻 / 动态 / 插件快捷 / 回顾（对话头顶的一体化流，非独立面板） -->
+    <HomeContextBar @chat="onInfoChat" />
 
-      <template v-if="!setupNeeded">
-      <PermissionsBanner v-if="missingPerms && perms" :perms="perms" />
+    <PermissionsBanner v-if="missingPerms && perms" :perms="perms" />
 
-      <div class="bubbles" ref="bubblesRef">
-        <div v-if="!bubbles.length && !showTyping" class="empty-hint">
-          <Avatar :state="state" :size="56" />
-          <p>叫我做什么都行～</p>
-          <div class="chips">
-            <button v-for="c in suggestions" :key="c" class="chip" @click="submit(c)">{{ c }}</button>
-          </div>
+    <div class="bubbles" ref="bubblesRef">
+      <div v-if="!bubbles.length && !showTyping" class="empty-hint">
+        <Avatar :state="state" :size="56" />
+        <p>叫我做什么都行～</p>
+        <div class="chips">
+          <button v-for="c in suggestions" :key="c" class="chip" @click="submit(c)">{{ c }}</button>
         </div>
-        <template v-for="(b, i) in bubbles" :key="i">
-          <!-- 「⇢ 协作」关联气泡：可点击，直达插件页（派生入口，§主/子 agent 关联） -->
-          <button v-if="b.panelLink" class="assoc" @click="emit('openPanel')">
-            {{ b.text }}<span class="assoc-arrow">前往 ›</span>
+      </div>
+      <template v-for="(b, i) in bubbles" :key="i">
+        <!-- 「⇢ 协作」关联气泡：可点击，直达插件页（派生入口，§主/子 agent 关联） -->
+        <button v-if="b.panelLink" class="assoc" @click="emit('openPanel')">
+          {{ b.text }}<span class="assoc-arrow">前往 ›</span>
+        </button>
+        <!-- 过程行：图标随状态（进行中转圈 / 成功 / 失败），点「详情」展开参数与结果 -->
+        <div v-else-if="b.proc" class="proc">
+          <button
+            class="proc-line"
+            :class="{ done: b.proc.done && procOk(b.proc), fail: b.proc.done && !procOk(b.proc) }"
+            :aria-expanded="b.proc.expanded"
+            @click="b.proc && (b.proc.expanded = !b.proc.expanded)"
+          >
+            <YbIcon
+              class="proc-ic"
+              :name="b.proc.done ? (procOk(b.proc) ? 'check' : 'x') : 'spinner'"
+              :spin="!b.proc.done"
+              :size="13"
+            />
+            <span class="proc-label">{{ b.proc.label }}{{ b.proc.done ? procErrSuffix(b.proc) : "" }}</span>
+            <span class="proc-toggle">{{ b.proc.expanded ? "收起" : "详情" }}</span>
           </button>
-          <!-- 过程行：图标随状态（进行中转圈 / 成功 / 失败），点「详情」展开参数与结果 -->
-          <div v-else-if="b.proc" class="proc">
-            <button
-              class="proc-line"
-              :class="{ done: b.proc.done && procOk(b.proc), fail: b.proc.done && !procOk(b.proc) }"
-              :aria-expanded="b.proc.expanded"
-              @click="b.proc && (b.proc.expanded = !b.proc.expanded)"
-            >
-              <YbIcon
-                class="proc-ic"
-                :name="b.proc.done ? (procOk(b.proc) ? 'check' : 'x') : 'spinner'"
-                :spin="!b.proc.done"
-                :size="13"
-              />
-              <span class="proc-label">{{ b.proc.label }}{{ b.proc.done ? procErrSuffix(b.proc) : "" }}</span>
-              <span class="proc-toggle">{{ b.proc.expanded ? "收起" : "详情" }}</span>
-            </button>
-            <pre v-if="b.proc.expanded" class="proc-detail">{{ procText(b.proc) }}</pre>
-          </div>
-          <Bubble v-else :role="b.role" :text="b.text" :streaming="i === streamingIdx" :halted="b.halted" :icon="b.icon" />
-        </template>
-        <Bubble v-if="showTyping" role="ai" text="" typing />
-      </div>
-
-      <div class="input-slot">
-        <InputBar :busy="busy" :listening="state === 'listen'" :draft="draftRef" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
-      </div>
+          <pre v-if="b.proc.expanded" class="proc-detail">{{ procText(b.proc) }}</pre>
+        </div>
+        <Bubble v-else :role="b.role" :text="b.text" :streaming="i === streamingIdx" :halted="b.halted" :icon="b.icon" />
       </template>
+      <Bubble v-if="showTyping" role="ai" text="" typing />
     </div>
 
-    <!-- 右：信息面板（AI 此刻 / 插件入口 / 动态 / 回顾） -->
-    <HomeInfoPanel @chat="onInfoChat" />
+    <div class="input-slot">
+      <InputBar :busy="busy" :listening="state === 'listen'" :draft="draftRef" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
+    </div>
+    </template>
   </div>
 </template>
 
@@ -402,74 +388,8 @@ onUnmounted(() => {
 .chat-page {
   height: 100%;
   display: flex;
-  flex-direction: row;
-  background: var(--yb-content-bg);
-}
-/* 左：对话主区 */
-.chat-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
   flex-direction: column;
   background: var(--yb-content-bg);
-}
-/* 页头：留红绿灯安全区 + 页标题 + 状态胶囊；整条兼作拖动区 */
-.page-head {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  gap: var(--yb-space-3);
-  padding: 0 var(--yb-space-5) var(--yb-space-3);
-  user-select: none;
-}
-.pg-title {
-  font-size: 26px;
-  font-weight: var(--yb-fw-bold);
-  letter-spacing: -0.01em;
-  line-height: var(--yb-lh-tight);
-  color: var(--yb-text-strong);
-}
-.status {
-  font-size: var(--yb-fs-xs);
-  color: var(--yb-text-dim);
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  line-height: var(--yb-lh-ui);
-  padding: 1px 8px;
-  border-radius: var(--yb-radius-pill);
-  background: var(--yb-well);
-}
-.status .dot {
-  width: 5px;
-  height: 5px;
-  flex-shrink: 0;
-  border-radius: 50%;
-  background: var(--dot, var(--yb-idle));
-}
-.status.idle { --dot: var(--yb-idle); }
-.status.listen {
-  --dot: var(--yb-listen);
-  background: var(--yb-danger-soft);
-  color: var(--yb-danger);
-}
-.status.think,
-.status.work {
-  --dot: var(--yb-think);
-  background: var(--yb-accent-soft);
-  color: var(--yb-accent-deep);
-}
-.status.work { --dot: var(--yb-work); }
-.status.say {
-  --dot: var(--yb-say);
-  background: var(--yb-accent-soft);
-  color: var(--yb-accent-deep);
-}
-.status.success { --dot: var(--yb-state-success); }
-.status.error {
-  --dot: var(--yb-state-error);
-  background: var(--yb-danger-soft);
-  color: var(--yb-danger);
 }
 .bubbles {
   flex: 1;
@@ -478,7 +398,7 @@ onUnmounted(() => {
   flex-direction: column;
   gap: var(--yb-space-2);
   overflow-y: auto;
-  padding: 4px var(--yb-space-5) 0;
+  padding: var(--yb-space-3) var(--yb-space-5) 0;
   scrollbar-width: thin;
   /* 顶部渐隐：滚出视口的消息柔和淡出，不被硬边「切断」 */
   mask-image: linear-gradient(180deg, transparent, #000 14px);
