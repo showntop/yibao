@@ -1196,6 +1196,8 @@ async def serve_async(
                             "ts": time.time(),
                         })
                 except Exception as e:
+                    # 失败清旧暂存：别让下次 vision_query 拿上一次的截图回答
+                    snip_ctx.update({"b64": None})
                     print(f"[yibao] 区域截图失败（已跳过）：{e}", file=sys.stderr)
         elif rtype == "vision_query":
             # 截图即问：暂存区域截图 + 问题 → vision 直答（不走 run，不占对话历史）。

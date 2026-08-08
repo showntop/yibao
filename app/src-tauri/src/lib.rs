@@ -1397,7 +1397,7 @@ pub fn run() {
             if event.state != ShortcutState::Pressed {
                 return;
             }
-            // 划词唤起：抓选中文字（剪贴板接力 + CGEvent ⌘C，挪线程别卡热键线程）→ 展开带上下文
+            // 划词唤起：抓选中文字（剪贴板接力 + CGEvent ⌘C，挪线程别卡热键线程）；有选中 → 动作条静默待选，无选中 → 展开
             if shortcut == &tauri_plugin_global_shortcut::Shortcut::new(
                 Some(tauri_plugin_global_shortcut::Modifiers::SUPER | tauri_plugin_global_shortcut::Modifiers::SHIFT),
                 tauri_plugin_global_shortcut::Code::KeyU,
@@ -1414,7 +1414,22 @@ pub fn run() {
                     if has_text {
                         if let Some(bar) = handle.get_webview_window("invoke-bar") {
                             let (cmx, cmy) = device_query::DeviceState::new().get_mouse().coords;
-                            if let Ok(Some(mon)) = bar.current_monitor() {
+                            // 落位光标所在屏：遍历显示器找逻辑矩形包含光标的屏，找不到退回窗口当前屏
+                            let mon = bar.available_monitors().ok().and_then(|mons| {
+                                mons.into_iter().find(|m| {
+                                    let s = m.scale_factor();
+                                    let x = m.position().x as f64 / s;
+                                    let y = m.position().y as f64 / s;
+                                    let w = m.size().width as f64 / s;
+                                    let h = m.size().height as f64 / s;
+                                    (cmx as f64) >= x && (cmx as f64) < x + w && (cmy as f64) >= y && (cmy as f64) < y + h
+                                })
+                            });
+                            let mon = match mon {
+                                Some(m) => Some(m),
+                                None => bar.current_monitor().ok().flatten(),
+                            };
+                            if let Some(mon) = mon {
                                 let s = mon.scale_factor();
                                 let mon_rect = (
                                     mon.position().x as f64 / s,

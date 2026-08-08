@@ -389,7 +389,7 @@ function onEvent(e: BrainEvent) {
         procIdx.delete(e.action!.id!);
       }
       // 唤起条存素材回执：LLM 摘要打标完成后到标题，补一条 sys 气泡（quiet 不弹面板，气泡即凭证）
-      if (e.action?.skill_id === "zimeiti.mat_save" && e.result?.success) {
+      if (e.action?.skill_id === "zimeiti.mat_save" && e.action?.id?.startsWith("pa_") && e.result?.success) {
         const title = (e.result as { data?: { title?: string } }).data?.title;
         bubbles.value.push({ role: "sys", text: title ? `已存素材：《${title}》` : "已存素材", icon: "doc" });
       }
@@ -686,7 +686,7 @@ onMounted(async () => {
     pushWarn(e.payload);
   });
   unlistenSetupCfg = await listen<string>("setup-config-needed", () => void onSetupNeeded());
-  // 全局唤起：⌘⇧Y 反射键（pet-show 确保展开）/ ⌘⇧U 划词唤起（展开 + 上下文 chip）
+  // 全局唤起：⌘⇧Y 反射键（pet-show 确保展开）/ ⌘⇧U 划词唤起（有选词静默待选动作，无选词展开 + 聚焦）
   unlistenInvoke = await listen("pet-show", () => void onPetShow());
   unlistenInvokeSel = await listen<{ text: string | null }>("pet-invoke-selection", (e) =>
     void onPetInvokeSelection(e.payload.text),
