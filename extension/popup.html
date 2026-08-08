@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    body { width: 220px; margin: 0; padding: 12px; font-family: -apple-system, "PingFang SC", sans-serif; }
+    h1 { font-size: 13px; margin: 0 0 10px; }
+    button { width: 100%; padding: 7px 0; margin-bottom: 8px; border: 1px solid #cbd5e1; border-radius: 8px;
+             background: #fff; font-size: 13px; cursor: pointer; }
+    button:hover { background: #f1f5f9; }
+    #status { font-size: 12px; color: #475569; min-height: 16px; }
+    #opt { font-size: 11px; color: #0284c7; cursor: pointer; display: block; margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <h1>存进译宝</h1>
+  <button id="save-material">存素材（摘要打标）</button>
+  <button id="save-topic">存为选题（上看板）</button>
+  <div id="status"></div>
+  <a id="opt">设置 token / 端口</a>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
