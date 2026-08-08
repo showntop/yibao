@@ -1342,7 +1342,29 @@ fn post_cmd_c() -> Result<(), String> {
     Ok(())
 }
 
-/** 读前台应用选中文字：暂存剪贴板 → 等物理修饰键松开 → 模拟 ⌘C → 读回 → 还原。
+/** 等剪贴板从 old 变掉：⌘C 注入后系统写板通常 30-80ms——每 25ms 轮询，变了立即返回新值（感知延迟从固定 300ms 降到几十 ms）；
+ *  超时返回 None（= 无选中/前台不可拷贝，调用方退化）。read 注入便于单测。 */
+fn wait_clipboard_change<F: FnMut() -> Option<String>>(
+    old: &Option<String>,
+    mut read: F,
+    max_ms: u64,
+) -> Option<String> {
+    let step = std::time::Duration::from_millis(25);
+    let mut waited = 0;
+    loop {
+        let new = read();
+        if new != *old {
+            return new;
+        }
+        waited += 25;
+        if waited >= max_ms {
+            return None;
+        }
+        std::thread::sleep(step);
+    }
+}
+
+/** 读前台应用选中文字：暂存剪贴板 → 等物理修饰键松开 → 模拟 ⌘C → 轮询读回（变了即返，超时 400ms）→ 还原。
  *  已知限制：pbpaste/pbcopy 只保真文本——剪贴板里是图片等富格式且被覆盖时还原不回原类型。
  *  无选中（剪贴板未变）或权限缺失（⌘C 静默失败）→ None，调用方退化为普通唤起。 */
 fn grab_selected_text() -> Option<String> {
@@ -1351,16 +1373,16 @@ fn grab_selected_text() -> Option<String> {
     if post_cmd_c().is_err() {
         return None;
     }
-    std::thread::sleep(std::time::Duration::from_millis(300));
-    let new = pb_paste();
-    if new == old {
-        return None; // 剪贴板没变 = 没有选中（或前台不可拷贝）
-    }
+    let new = wait_clipboard_change(&old, pb_paste, 400)?;
     match &old {
         Some(o) => pb_copy(o),
         None => pb_copy(""),
     }
-    new.filter(|t| !t.trim().is_empty())
+    if new.trim().is_empty() {
+        None
+    } else {
+        Some(new)
+    }
 }
 
 /** 唤起条落位：光标右下偏移（14,18），越出所在屏右/下缘时翻转到左/上；纯函数便于单测。
@@ -1829,5 +1851,41 @@ mod invoke_tests {
         // 副屏负原点（主屏左侧 1440 宽）：逻辑 (10,10,50,50) → 物理 (-1420+20, 20, 100, 100)
         let r2 = snip_abs_rect((10.0, 10.0, 50.0, 50.0), (-2880, 0), 2.0);
         assert_eq!(r2, (-2860, 20, 100, 100));
+    }
+
+    #[test]
+    fn clipboard_change_returns_immediately_when_already_changed() {
+        let old = Some("a".to_string());
+        let new = wait_clipboard_change(&old, || Some("b".to_string()), 400);
+        assert_eq!(new, Some("b".to_string()));
+    }
+
+    #[test]
+    fn clipboard_change_polls_until_change() {
+        let old = Some("a".to_string());
+        let n = std::cell::Cell::new(0);
+        let new = wait_clipboard_change(
+            &old,
+            || {
+                n.set(n.get() + 1);
+                if n.get() >= 3 {
+                    Some("b".to_string())
+                } else {
+                    Some("a".to_string())
+                }
+            },
+            400,
+        );
+        assert_eq!(new, Some("b".to_string()));
+        assert!(n.get() >= 3); // 真的轮询了多次，不是一次蒙对
+    }
+
+    #[test]
+    fn clipboard_change_times_out_unchanged() {
+        let old = Some("a".to_string());
+        let start = std::time::Instant::now();
+        let new = wait_clipboard_change(&old, || Some("a".to_string()), 100);
+        assert_eq!(new, None);
+        assert!(start.elapsed().as_millis() >= 50); // 轮询了一段才超时，非立即放弃
     }
 }
