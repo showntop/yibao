@@ -122,6 +122,11 @@ export function panelAction(
   return invoke("panel_action", { id: id ?? Date.now() % 2 ** 31, method, params, surface: surface ?? _surface });
 }
 
+/** 唤起条动作广播（invoke-bar 窗 emit）：解释/翻译/存素材。 */
+export function onInvokeAction(cb: (action: string) => void): Promise<UnlistenFn> {
+  return listen<{ action: string }>("invoke-action", (e) => cb(e.payload.action));
+}
+
 /** 面板焦点（v2 §5 focus）：面板内容/选中条目变化时上报，null = 面板关闭。
  *  大脑把它注入 LLM 上下文，「这个/它」等指代有解。 */
 export interface PanelFocus {

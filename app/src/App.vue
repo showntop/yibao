@@ -26,6 +26,7 @@ import {
   voiceStart,
   interrupt,
   panelAction,
+  onInvokeAction,
   type BrainEvent,
   type BrainStatusMsg,
   type BrainPermissions,
@@ -164,6 +165,7 @@ let unlistenSetupErr: (() => void) | null = null;
 let unlistenSetupCfg: (() => void) | null = null;
 let unlistenInvoke: (() => void) | null = null;
 let unlistenInvokeSel: (() => void) | null = null;
+let unlistenInvokeAction: (() => void) | null = null;
 let unlistenApprovals: (() => void) | null = null;
 let unlistenSettings: (() => void) | null = null;
 
@@ -318,11 +320,38 @@ watch(expanded, (v) => {
 });
 
 async function onPetInvokeSelection(text: string | null) {
-  await expand();
   const t = text?.trim();
   // 上下文截断 4000 字：够一整页文档，又不至于一条消息烧穿上下文
   if (t) selectionCtx.value = t.length > 4000 ? t.slice(0, 4000) : t;
+  if (t) return; // 有选中文字：动作条在光标旁待选，不展开宠物窗（静默优先；选动作才展开）
+  await expand(); // 无选中文字：退化为旧唤起（展开 + 聚焦输入）
   void nextTick(() => inputBarRef.value?.focus());
+}
+
+// 唤起条动作：解释/翻译走现有 run（selectionCtx 自动拼入）；存素材 quiet 直调（不弹面板）
+async function handleInvokeAction(action: string) {
+  void invoke("hide_invoke_bar").catch(() => {}); // 兜底（条本身已自隐）
+  const sel = selectionCtx.value;
+  if (action === "explain" || action === "translate") {
+    if (!expanded.value) await expand();
+    const q =
+      action === "explain"
+        ? "解释这段文字，讲清要点"
+        : "把这段文字翻译成中文（如果它已经是中文，就翻译成英文）";
+    if (sel) {
+      await submit(q);
+    } else {
+      pushWarn("没有取到选中文字，请选中后再试");
+    }
+  } else if (action === "save") {
+    if (!sel) {
+      pushWarn("没有可存的选中文字");
+      return;
+    }
+    await panelAction("zimeiti.invoke_mat_save", { text: sel });
+    selectionCtx.value = null;
+    flashValence("success"); // 400ms 成功闪现当回执（不展开、不弹面板，静默优先）
+  }
 }
 
 function onEvent(e: BrainEvent) {
@@ -347,6 +376,11 @@ function onEvent(e: BrainEvent) {
         bubbles.value[idx].pstate = ok ? "ok" : "fail";
         bubbles.value[idx].text = procLabel(e.action) + procResultSuffix(e.result);
         procIdx.delete(e.action!.id!);
+      }
+      // 唤起条存素材回执：LLM 摘要打标完成后到标题，补一条 sys 气泡（quiet 不弹面板，气泡即凭证）
+      if (e.action?.skill_id === "zimeiti.mat_save" && e.result?.success) {
+        const title = (e.result as { data?: { title?: string } }).data?.title;
+        bubbles.value.push({ role: "sys", text: title ? `已存素材：《${title}》` : "已存素材", icon: "doc" });
       }
       break;
     }
@@ -634,6 +668,8 @@ onMounted(async () => {
   unlistenInvokeSel = await listen<{ text: string | null }>("pet-invoke-selection", (e) =>
     void onPetInvokeSelection(e.payload.text),
   );
+  // 唤起条动作（invoke-bar 广播）：解释/翻译/存素材
+  unlistenInvokeAction = await onInvokeAction((action) => { void handleInvokeAction(action); });
   // 主动拉一次配置：首启引导若秒过（venv/模型已在），setup-config-needed 可能先于挂载发出而丢——靠拉取兜底
   try {
     const cfg = await invoke<{ has_key: boolean }>("get_setup_config");
@@ -651,6 +687,7 @@ onUnmounted(() => {
   unlistenSetupCfg?.();
   unlistenInvoke?.();
   unlistenInvokeSel?.();
+  unlistenInvokeAction?.();
   unlistenApprovals?.();
   unlistenSettings?.();
   window.removeEventListener("keydown", onKeydown);
