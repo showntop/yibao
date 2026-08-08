@@ -57,7 +57,7 @@ async def _read_request(reader: asyncio.StreamReader) -> tuple[str, str, dict, b
 async def _write_response(writer: asyncio.StreamWriter, status: int, obj: dict | None) -> None:
     body = b"" if obj is None else json.dumps(obj, ensure_ascii=False).encode()
     hs = {"Content-Type": "application/json; charset=utf-8", "Connection": "close", **_cors_headers()}
-    lines = ([f"HTTP/1.1 {status} {_REASON[status]}"] + [f"{k}: {v}" for k, v in hs.items()]
+    lines = ([f"HTTP/1.1 {status} {_REASON.get(status, '')}"] + [f"{k}: {v}" for k, v in hs.items()]
              + [f"Content-Length: {len(body)}", "", ""])
     writer.write("\r\n".join(lines).encode("latin-1") + body)
     await writer.drain()

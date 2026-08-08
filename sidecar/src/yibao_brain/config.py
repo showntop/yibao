@@ -244,6 +244,14 @@ def perception_db_path() -> str:
     return os.environ.get("YIBAO_PERCEPTION_DB", os.path.join(data_dir(), "observations.db"))
 
 
+def http_port() -> int:
+    """浏览器扩展桥监听端口（只绑 127.0.0.1）。"""
+    try:
+        return int(os.environ.get("YIBAO_HTTP_PORT", "19527"))
+    except ValueError:
+        return 19527
+
+
 # ---------- 用户设置（数据目录 settings.json：自主权旋钮等运行期可调项，区别于 .env 的部署配置） ----------
 
 _SETTINGS_DEFAULTS: dict = {
@@ -274,6 +282,7 @@ _SETTINGS_DEFAULTS: dict = {
     "watch.look_min_gap": 300,             # 主动搭话两次看之间最小间隔（秒）
     "watch.look_max_per_hour": 6,          # 主动搭话每小时上限
     "watch.look_max_per_day": 50,          # 主动搭话每日上限
+    "http.token": "",  # 浏览器扩展桥共享 token（空 = 启动时生成并持久化）
 }
 
 # 枚举型设置的合法取值；非法值拒收保持原值（防前端/手滑写坏）
