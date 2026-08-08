@@ -10,7 +10,8 @@ import InputBar from "./InputBar.vue";
 import Bubble from "./Bubble.vue";
 import PermissionsBanner from "./PermissionsBanner.vue";
 import SetupWizard from "./SetupWizard.vue";
-import HomeContextBar from "./HomeContextBar.vue";
+import AgentBrain from "./AgentBrain.vue";
+import HomeContextPanel from "./HomeContextPanel.vue";
 import {
   onBrainEvent,
   onBrainStatus,
@@ -334,11 +335,12 @@ onUnmounted(() => {
   <div class="chat-page">
     <SetupWizard v-if="setupNeeded" :model="setupCfg.model" :base-url="setupCfg.baseUrl" :voice="setupCfg.voice" @saved="onSetupSaved" />
 
-    <!-- 对话列：上下文带 + 气泡 + 输入条，限宽居中（聚焦感，像专业 AI 对话应用） -->
-    <div v-else class="chat-col">
-    <!-- 上下文带：AI 此刻 / 动态 / 插件快捷 / 回顾（对话头顶的一体化流，非独立面板） -->
-    <HomeContextBar @chat="onInfoChat" />
+    <!-- 三栏 AI 工作台：智能体（大脑+记忆词云）｜ 对话 ｜ AI 进程 -->
+    <div v-else class="chat-cols">
+    <!-- 左：智能体（人格化核心：角色 + 记忆词云） -->
+    <AgentBrain :state="state" @chat="onInfoChat" />
 
+    <div class="chat-main">
     <PermissionsBanner v-if="missingPerms && perms" :perms="perms" />
 
     <div class="bubbles" ref="bubblesRef">
@@ -383,6 +385,10 @@ onUnmounted(() => {
       <InputBar :busy="busy" :listening="state === 'listen'" :draft="draftRef" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
     </div>
     </div>
+
+    <!-- 右：AI 进程（此刻 / 待批 / 动态 / 回顾 / 插件入口） -->
+    <HomeContextPanel @chat="onInfoChat" />
+    </div>
   </div>
 </template>
 
@@ -393,13 +399,29 @@ onUnmounted(() => {
   flex-direction: column;
   background: var(--yb-content-bg);
 }
-/* 对话列：全宽展开（气泡自身限宽），两侧不留白 */
-.chat-col {
-  width: 100%;
-  height: 100%;
+/* 三栏工作台：智能体（左）｜对话（中）｜AI 进程（右） */
+.chat-cols {
+  flex: 1;
   min-height: 0;
   display: flex;
+  min-width: 0;
+}
+.chat-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
   flex-direction: column;
+}
+/* 窄窗收栏：<1200 收左（智能体）；<900 收右（进程），退回单列对话 */
+@media (max-width: 1200px) {
+  .chat-cols > :first-child {
+    display: none;
+  }
+}
+@media (max-width: 900px) {
+  .chat-cols > :last-child {
+    display: none;
+  }
 }
 .bubbles {
   flex: 1;
