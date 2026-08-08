@@ -335,7 +335,10 @@ function close() {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: var(--yb-content-bg);
+  /* 顶部一抹 accent 氛围光（radial 淡出），让大窗有「AI 空间」感而非纯平背景 */
+  background:
+    radial-gradient(120% 90% at 50% -20%, rgba(var(--yb-c-sky-rgb), 0.05), transparent 55%),
+    var(--yb-content-bg);
 }
 .content > * {
   flex: 1;

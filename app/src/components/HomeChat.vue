@@ -342,8 +342,9 @@ onUnmounted(() => {
 
     <div class="bubbles" ref="bubblesRef">
       <div v-if="!bubbles.length && !showTyping" class="empty-hint">
-        <Avatar :state="state" :size="56" />
-        <p>叫我做什么都行～</p>
+        <div class="eh-glow"><Avatar :state="state" :size="64" /></div>
+        <p class="eh-title">叫我做什么都行～</p>
+        <p class="eh-sub">整理会议纪要 · 规划今日 · 记住你的偏好</p>
         <div class="chips">
           <button v-for="c in suggestions" :key="c" class="chip" @click="submit(c)">{{ c }}</button>
         </div>
@@ -514,19 +515,38 @@ onUnmounted(() => {
   from { opacity: 0; transform: scale(0.97); }
   to { opacity: 1; transform: none; }
 }
-/* 空状态：气泡区占位引导（小号团子 + 一句招呼 + 建议 chip） */
+/* 空状态：团子 + accent 光晕 + 主副句 + 建议卡（精致引导） */
 .empty-hint {
   flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: 8px;
   color: var(--yb-text-dim);
   font-size: var(--yb-fs-lg);
 }
-.empty-hint p {
-  margin: 0 0 2px;
+/* 团子背后的氛围光晕：radial accent 淡出，AI 感 */
+.eh-glow {
+  width: 132px;
+  height: 132px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: radial-gradient(75% 75% at 50% 35%, var(--yb-accent-soft), rgba(var(--yb-c-sky-rgb), 0) 72%);
+  margin-bottom: 8px;
+}
+.eh-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: var(--yb-fw-bold);
+  letter-spacing: -0.01em;
+  color: var(--yb-text-strong);
+}
+.eh-sub {
+  margin: 0 0 8px;
+  font-size: var(--yb-fs-md);
+  color: var(--yb-text-dim);
 }
 .chips {
   display: flex;
@@ -535,10 +555,11 @@ onUnmounted(() => {
   gap: var(--yb-space-2);
 }
 .chip {
-  padding: 5px 12px;
+  padding: 6px 14px;
   border: 1px solid var(--yb-surface-border);
   border-radius: var(--yb-radius-pill);
   background: var(--yb-surface-solid);
+  box-shadow: var(--yb-shadow-1);
   color: var(--yb-accent-deep);
   font-size: var(--yb-fs-lg);
   cursor: pointer;
@@ -548,5 +569,7 @@ onUnmounted(() => {
   background: var(--yb-accent-soft);
   border-color: var(--yb-accent);
   color: var(--yb-accent-deep);
+  transform: translateY(-1px);
+  box-shadow: var(--yb-shadow-2);
 }
 </style>

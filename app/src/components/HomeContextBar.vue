@@ -31,10 +31,18 @@ const loaded = ref(false);
 
 const nowText = computed(() => {
   if (runningTasks.value.length) {
-    const names = runningTasks.value.map((t) => t.label).join("、");
-    return `正在做 ${names}`;
+    return runningTasks.value.map((t) => t.label).join("、");
   }
   return null;
+});
+/** 首个任务的运行时长副文本（如"已运行 12 分钟"）。 */
+const nowTime = computed(() => {
+  const first = runningTasks.value[0];
+  if (!first) return "";
+  const seconds = Math.max(0, Math.floor(Date.now() / 1000 - first.created_at));
+  if (seconds < 60) return "刚开始";
+  if (seconds < 3600) return `已运行 ${Math.floor(seconds / 60)} 分钟`;
+  return `已运行 ${Math.floor(seconds / 3600)} 小时`;
 });
 const nowChips = computed(() => {
   const o: { key: string; n: number; label: string }[] = [];
@@ -133,7 +141,7 @@ onUnmounted(() => {
     <div class="ctx-row">
       <span class="ctx-dot" />
       <span v-if="nowText" class="ctx-now" :title="runningTasks.map((t) => t.prompt).join('\n')">
-        {{ nowText }}
+        <b>{{ nowText }}</b><em v-if="nowTime"> · {{ nowTime }}</em>
       </span>
       <span v-else class="ctx-now muted">{{ loaded ? "此刻很清净" : "…" }}</span>
       <span v-for="o in nowChips" :key="o.key" class="ctx-chip">
@@ -146,7 +154,7 @@ onUnmounted(() => {
       <span class="ctx-spacer" />
 
       <button v-for="w in widgets" :key="w.panel" class="ctx-plug" :disabled="!w.open" @click="openWidget(w)">
-        {{ w.title }}
+        <YbIcon name="plug" :size="11" />{{ w.title }}
       </button>
     </div>
 
@@ -178,15 +186,18 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-/* 上下文带：无卡片、无独立背景——与对话同容器，hairline 与对话区分，视觉一体 */
+/* 上下文带：无卡片、无独立背景——与对话同容器，hairline 与对话区分，视觉一体。
+ * 顶部极淡 accent 微光（自上而下淡出），与 Home.vue 内容区氛围光衔接。 */
 .ctx-bar {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 8px var(--yb-space-5) 10px;
+  gap: 5px;
+  padding: 10px var(--yb-space-5) 12px;
   border-bottom: 1px solid var(--yb-border-base);
-  background: var(--yb-content-bg);
+  background:
+    linear-gradient(180deg, rgba(var(--yb-c-sky-rgb), 0.04), rgba(var(--yb-c-sky-rgb), 0) 100%),
+    var(--yb-content-bg);
   user-select: none;
 }
 .ctx-row {
@@ -199,23 +210,33 @@ onUnmounted(() => {
 .ctx-row.feed {
   gap: 4px;
 }
-/* 此刻脉动点 */
+/* 此刻脉动点：accent 光晕（呼吸感） */
 .ctx-dot {
   flex-shrink: 0;
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--yb-accent);
-  box-shadow: 0 0 0 3px var(--yb-accent-soft);
+  box-shadow: 0 0 0 3px var(--yb-accent-soft), 0 0 12px rgba(var(--yb-c-sky-rgb), 0.35);
 }
 .ctx-now {
-  font-size: var(--yb-fs-md);
-  font-weight: var(--yb-fw-medium);
-  color: var(--yb-text);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  min-width: 0;
+  font-size: var(--yb-fs-md);
+}
+/* 任务名强调（accent 深），时长弱化（淡灰）——视觉主次分明 */
+.ctx-now b {
+  font-weight: var(--yb-fw-bold);
+  color: var(--yb-accent-deep);
+}
+.ctx-now em {
+  font-style: normal;
+  color: var(--yb-text-faint);
 }
 .ctx-now.muted {
   color: var(--yb-text-faint);
@@ -225,7 +246,8 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  padding: 1px 8px;
+  padding: 2px 9px;
+  border: 1px solid var(--yb-border-base);
   border-radius: var(--yb-radius-pill);
   background: var(--yb-surface-2);
   font-size: var(--yb-fs-sm);
@@ -235,10 +257,12 @@ onUnmounted(() => {
 .ctx-chip strong {
   font-size: var(--yb-fs-md);
   font-weight: var(--yb-fw-bold);
+  line-height: 1;
   color: var(--yb-accent-deep);
 }
 .ctx-chip.warn {
   background: var(--yb-intent-pending-soft);
+  border-color: transparent;
   color: var(--yb-intent-pending-ink);
 }
 .ctx-chip.warn svg {
@@ -247,14 +271,16 @@ onUnmounted(() => {
 .ctx-spacer {
   flex: 1;
 }
-/* 插件快捷 chip：与此刻 chips 同语言 */
+/* 插件快捷 chip：图标 + 文字，hover 上浮 + accent 边 */
 .ctx-plug {
   display: inline-flex;
   align-items: center;
-  padding: 2px 10px;
+  gap: 4px;
+  padding: 3px 11px;
   border: 1px solid var(--yb-border-strong);
   border-radius: var(--yb-radius-pill);
-  background: transparent;
+  background: var(--yb-surface-solid);
+  box-shadow: var(--yb-shadow-1);
   color: var(--yb-accent-deep);
   font-size: var(--yb-fs-sm);
   font-family: inherit;
@@ -265,30 +291,35 @@ onUnmounted(() => {
 .ctx-plug:hover:not(:disabled) {
   border-color: var(--yb-accent);
   background: var(--yb-accent-soft);
+  transform: translateY(-1px);
+  box-shadow: var(--yb-shadow-2);
 }
 .ctx-plug:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
-/* 动态简讯行 */
+/* 动态简讯行：圆角胶囊式 hover（与行 1 chips 同语言，整条连续不碎） */
 .ctx-feed {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  max-width: 240px;
-  padding: 2px 7px;
-  border: none;
-  border-radius: var(--yb-radius-xs);
+  gap: 5px;
+  max-width: 250px;
+  padding: 3px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--yb-radius-sm);
   background: transparent;
   color: var(--yb-text-dim);
   font-family: inherit;
   text-align: left;
   cursor: pointer;
-  transition: background var(--yb-dur-fast) var(--yb-ease-out);
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
 .ctx-feed:hover {
-  background: var(--yb-row-hover);
+  background: var(--yb-surface-solid);
+  border-color: var(--yb-surface-border);
   color: var(--yb-text);
+  transform: translateY(-1px);
+  box-shadow: var(--yb-shadow-1);
 }
 .ctx-feed-ic {
   flex-shrink: 0;
@@ -324,18 +355,19 @@ onUnmounted(() => {
   font-size: var(--yb-fs-xs);
   color: var(--yb-accent-deep);
 }
-/* 回顾入口 */
+/* 回顾入口：accent 强调（与动态行区分层次） */
 .ctx-recap {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
-  padding: 2px 7px;
+  padding: 3px 9px;
   border: none;
-  border-radius: var(--yb-radius-xs);
-  background: transparent;
-  color: var(--yb-text-dim);
+  border-radius: var(--yb-radius-sm);
+  background: var(--yb-accent-soft);
+  color: var(--yb-accent-deep);
   font-size: var(--yb-fs-sm);
+  font-weight: var(--yb-fw-medium);
   font-family: inherit;
   cursor: pointer;
   transition: all var(--yb-dur-fast) var(--yb-ease-out);
@@ -345,7 +377,14 @@ onUnmounted(() => {
   height: 10px;
 }
 .ctx-recap:hover {
-  color: var(--yb-accent-deep);
-  background: var(--yb-accent-soft);
+  background: var(--yb-accent);
+  color: var(--yb-text-on-accent);
+  transform: translateX(1px);
+}
+.ctx-recap:hover svg {
+  transform: translateX(1px);
+}
+.ctx-recap svg {
+  transition: transform var(--yb-dur-fast) var(--yb-ease-out);
 }
 </style>
