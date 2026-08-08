@@ -416,12 +416,12 @@ async def _start_bridge(agent: AgentLoop, write_msg: WriteMsg, settings: dict) -
     """起浏览器扩展桥；端口占用/任何失败 → stderr + None（不拖垮大脑）。"""
     from .httpserver import serve
 
-    token = _ensure_bridge_token(settings)
     try:
+        token = _ensure_bridge_token(settings)
         srv = await serve("127.0.0.1", http_port(), _make_bridge_route(agent, write_msg, token))
         print(f"[yibao] 浏览器扩展桥已监听 127.0.0.1:{http_port()}", file=sys.stderr)
         return srv
-    except OSError as e:
+    except Exception as e:
         print(f"[yibao] 浏览器扩展桥启动失败（{e}，已禁用）", file=sys.stderr)
         return None
 
