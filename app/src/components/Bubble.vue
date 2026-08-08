@@ -48,15 +48,16 @@ const html = computed(() => (props.role === "ai" && !props.typing ? renderMarkdo
   word-break: break-word;
   animation: pop var(--yb-dur-fast) var(--yb-ease-out);
   /* 双击/选中触发 :focus 时浏览器会画 outline: auto（系统 accent 蓝 2-3px 实色），
-   * 在 user 气泡上呈现"深色蓝矩形"。显式去掉。 */
+   * 在 user 气泡上呈现"深色蓝矩形"。显式去掉；box-shadow 一并强制清空防残留。 */
   outline: none;
+  box-shadow: none;
 }
-/* 文字选中：浏览器默认蓝选区在两种气泡底色上对比度差且视觉杂
- * （ai 浅白 + 选区蓝 = 糊；user accent 蓝 + 选区蓝 = 无区分）。
- * ai 用 accent 实色 + 白字；user 蓝底用半透明白翻转（与气泡对比强）。 */
+/* 文字选中：实色 accent 背景会让双击选中的整段显示成"实色蓝条"（选区盒比文字高，
+ * 视觉突兀）。改半透明淡蓝高亮 + 保留文字原色（系统正常观感）；
+ * user 蓝底上继续用半透明白翻转（与气泡对比强）。 */
 .bubble::selection {
-  background: var(--yb-accent);
-  color: #fff;
+  background: rgba(var(--yb-c-sky-rgb), 0.22);
+  color: var(--yb-text);
 }
 .bubble.user::selection {
   background: rgba(255, 255, 255, 0.4);
