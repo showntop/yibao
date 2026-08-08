@@ -511,10 +511,20 @@ function onEvent(e: BrainEvent) {
         bubbles.value[idx].text = procLabel(e.action) + procResultSuffix(e.result);
         procIdx.delete(e.action!.id!);
       }
-      // 唤起条存素材回执：LLM 摘要打标完成后到标题，补一条 sys 气泡（quiet 不弹面板，气泡即凭证）
+      // 唤起条/扩展存素材回执：LLM 摘要打标完成后到标题（quiet 不弹面板，气泡即凭证）
       if (e.action?.skill_id === "zimeiti.mat_save" && e.action?.id?.startsWith("pa_") && e.result?.success) {
         const title = (e.result as { data?: { title?: string } }).data?.title;
-        bubbles.value.push({ role: "sys", text: title ? `已存素材：《${title}》` : "已存素材", icon: "doc" });
+        const receipt = title ? `已存素材：《${title}》` : "已存素材";
+        if (!expanded.value) {
+          // 收起态（存素材时窗多半收着）：说话气泡直接告知 + 定时收起，不依赖系统通知权限
+          speech.value = receipt;
+          speechStreaming.value = false;
+          showSpeechBubble();
+          if (speechTimer) clearTimeout(speechTimer);
+          speechTimer = setTimeout(hideSpeechBubble, 4000);
+        } else {
+          bubbles.value.push({ role: "sys", text: receipt, icon: "doc" });
+        }
       }
       break;
     }
