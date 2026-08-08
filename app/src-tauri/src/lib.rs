@@ -23,6 +23,29 @@ static PET_INTERACTIVE_FULL: AtomicBool = AtomicBool::new(true);
 /// 不像展开态那样整窗拦点击——气泡是瞬态的，透明区必须照常穿透到桌面。
 static PET_BUBBLE_ON: AtomicBool = AtomicBool::new(false);
 
+/// 单窗三态热区矩形组（窗口相对 CSS 像素，kind 区分用途）：
+///  - "pet"：团子元素盒——enter 信号只由它驱动（历史教训：面板/气泡热区触发 enter 会误弹）；
+///  - "ui"：快捷面板（3 圆 + 输入条）——quick 态附加热区，否则鼠标移到面板上被穿透点不到。
+/// idle 态只上报团子盒，quick 态上报团子盒 ∪ 面板；隐藏时上报 None 清除。
+/// 相对坐标 + Rust 每次判定叠加当前窗口位置，拖动窗口后热区自动跟随。
+static PET_RECTS: Mutex<Vec<(f64, f64, f64, f64, String)>> = Mutex::new(Vec::new());
+
+#[derive(serde::Deserialize)]
+struct HotRect {
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    kind: String,
+}
+
+#[tauri::command]
+fn set_hot_rects(rects: Option<Vec<HotRect>>) {
+    *PET_RECTS.lock().unwrap() = rects
+        .map(|rs| rs.iter().map(|r| (r.x, r.y, r.w, r.h, r.kind.clone())).collect())
+        .unwrap_or_default();
+}
+
 #[tauri::command]
 fn set_interactive_full(full: bool) {
     PET_INTERACTIVE_FULL.store(full, Ordering::Relaxed);
@@ -31,6 +54,59 @@ fn set_interactive_full(full: bool) {
 #[tauri::command]
 fn set_bubble_on(on: bool) {
     PET_BUBBLE_ON.store(on, Ordering::Relaxed);
+}
+
+/// 团子窗尺寸：收起/快捷 320×300（恒窗，内容层切换，零 resize 闪烁）/ 展开对话 360×520。
+/// 入参为 CSS 像素，内部按 scale 换算物理像素。以左上角为锚（团子原地不动，向右下展开）。
+#[tauri::command]
+fn set_main_size(app: AppHandle, width: f64, height: f64) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("main") {
+        let scale = win.scale_factor().unwrap_or(1.0);
+        win.set_size(tauri::PhysicalSize::new(
+            (width * scale).round() as u32,
+            (height * scale).round() as u32,
+        ))
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// 展开对话窗（360×520）：先定位再缩放。
+/// 团子盒在收起/快捷态窗口内固定 (112,100)，展开后 chat header 小头像 ≈ 窗口内 (12,8)——
+/// 窗口左上定位到「团子屏幕位置 - (12,8)」让团子视觉不动，再 clamp 进当前显示器内
+/// （团子贴边时 chat 窗不至于出屏）。团子锚点是前端布局常量，与此处保持一致。
+#[tauri::command]
+fn expand_chat(app: AppHandle) -> Result<(), String> {
+    let Some(win) = app.get_webview_window("main") else {
+        return Ok(());
+    };
+    let scale = win.scale_factor().unwrap_or(1.0);
+    let (wx, wy) = match win.outer_position() {
+        Ok(p) => (p.x as f64, p.y as f64),
+        Err(_) => (0.0, 0.0),
+    };
+    let pet_x = wx + 144.0 * scale;
+    let pet_y = wy + 100.0 * scale;
+    let mut x = pet_x - 12.0 * scale;
+    let mut y = pet_y - 8.0 * scale;
+    if let Ok(Some(mon)) = win.current_monitor() {
+        let s = mon.scale_factor();
+        let mx = mon.position().x as f64;
+        let my = mon.position().y as f64;
+        let sw = mon.size().width as f64;
+        let sh = mon.size().height as f64;
+        let pad = 8.0 * s;
+        x = x.clamp(mx + pad, (mx + sw - 360.0 * s - pad).max(mx + pad));
+        y = y.clamp(my + pad, (my + sh - 520.0 * s - pad).max(my + pad));
+    }
+    win.set_position(tauri::PhysicalPosition::new(x.round() as i32, y.round() as i32))
+        .map_err(|e| e.to_string())?;
+    win.set_size(tauri::PhysicalSize::new(
+        (360.0 * scale).round() as u32,
+        (520.0 * scale).round() as u32,
+    ))
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// sidecar 守护状态：子进程句柄 + 心跳/重启计数/退出标记。
@@ -1180,49 +1256,85 @@ fn prompt_permission(state: tauri::State<Brain>, which: String) -> Result<(), St
     )
 }
 
-/// 鼠标穿透轮询：Tauri v2 的 JS API 无 forward，无法在忽略事件后收到 mousemove 切回；
-/// 改由 Rust 侧每 40ms 读全局光标位置，落在团子区/展开窗内 = 可交互，否则 set_ignore_cursor_events(true) 穿透到桌面。
-/// ⚠️ device_query 与 Tauri 的坐标单位（macOS 点 vs 物理像素）已按 scale 换算；首次真机需核对团子热区。
+/// 鼠标穿透轮询（单窗三态架构）：每 40ms 读全局光标位置——
+///  * 收起/快捷态（idle/quick，窗口恒 320×300，纯内容层切换，不 resize）：
+///    - 仅前端上报的热区矩形可交互（kind=pet 团子盒 / kind=ui 快捷面板），其余穿透；
+///    - 光标进入团子盒 → emit pet-cursor-enter（前端显示快捷面板）；
+///    - 光标离开（团子 ∪ 面板）连续 ~480ms → emit pet-cursor-leave（前端收起面板）。
+///  * 对话态（chat，360×520，set_interactive_full(true)）：整窗可交互，无 hover 逻辑。
+/// 坐标单位（macOS 点 vs 物理像素）已按 scale 换算；热区为窗口相对坐标，拖动自动跟随。
 #[cfg(desktop)]
 fn spawn_click_through(handle: tauri::AppHandle) {
     std::thread::spawn(move || {
         let dev = DeviceState::new();
-        let mut last_inside: Option<bool> = None;
+        let mut last_pet = false;
+        let mut out_counter = 0u32; // 离开热区连续帧计数（延迟收起快捷面板）
         loop {
             let (mx, my) = dev.get_mouse().coords;
-            if let Some(win) = handle.get_webview_window("main") {
+            let full = PET_INTERACTIVE_FULL.load(Ordering::Relaxed);
+
+            // ---- main 窗：按模式放行热区 ----
+            let (in_pet, in_ui) = if let Some(win) = handle.get_webview_window("main") {
                 let scale = win.scale_factor().unwrap_or(1.0);
-                if let (Ok(pos), Ok(size)) = (win.outer_position(), win.outer_size()) {
+                if let (Ok(pos), _) = (win.outer_position(), win.outer_size()) {
                     let wx = pos.x as f64 / scale;
                     let wy = pos.y as f64 / scale;
-                    let ww = size.width as f64 / scale;
-                    let wh = size.height as f64 / scale;
                     let (cx, cy) = (mx as f64, my as f64);
-                    // PET_INTERACTIVE_FULL（展开）= true → 整窗可交互；
-                    // false → 团子可视热区（56×56，约贴身体、留小余量；团子中心≈winW-66,56）；
-                    //         + 说话气泡带（气泡显示中：贴团子左侧一条，点气泡=展开）；
-                    //         其余穿透。不用整个 88px 元素框——那圈透明边会拦住桌面点击。
-                    let full = PET_INTERACTIVE_FULL.load(Ordering::Relaxed);
-                    let inside = if full {
-                        cx >= wx && cx <= wx + ww && cy >= wy && cy <= wy + wh
+                    if full {
+                        // 对话态：整窗可交互
+                        let _ = win.set_ignore_cursor_events(false);
+                        (false, false)
                     } else if mx == 0 && my == 0 {
                         // 读不到光标（多半辅助功能未授权）→ 不穿透，避免团子点不到
-                        true
+                        let _ = win.set_ignore_cursor_events(false);
+                        (true, false)
                     } else {
-                        let pet = cx >= wx + ww - 94.0 && cx <= wx + ww - 38.0
-                            && cy >= wy + 28.0 && cy <= wy + 84.0;
-                        // 气泡带与前端 .speech-slot 一致：left:8 right:116 top:12 height:88
-                        let bubble = PET_BUBBLE_ON.load(Ordering::Relaxed)
-                            && cx >= wx + 8.0 && cx <= wx + ww - 116.0
-                            && cy >= wy + 12.0 && cy <= wy + 100.0;
-                        pet || bubble
-                    };
-                    if last_inside != Some(inside) {
-                        let _ = win.set_ignore_cursor_events(!inside);
-                        last_inside = Some(inside);
+                        let rects = PET_RECTS.lock().unwrap();
+                        if rects.is_empty() {
+                            // 前端尚未上报（挂载瞬间）→ 先整窗可交互，避免团子被锁死点不到
+                            let _ = win.set_ignore_cursor_events(false);
+                            (true, false)
+                        } else {
+                            let inside = |kind: &str| {
+                                rects.iter().any(|(rx, ry, rw, rh, k)| {
+                                    k == kind
+                                        && cx >= wx + rx
+                                        && cx <= wx + rx + rw
+                                        && cy >= wy + ry
+                                        && cy <= wy + ry + rh
+                                })
+                            };
+                            let p = inside("pet");
+                            let u = inside("ui");
+                            let _ = win.set_ignore_cursor_events(!(p || u));
+                            (p, u)
+                        }
+                    }
+                } else {
+                    (false, false)
+                }
+            } else {
+                (false, false)
+            };
+
+            // ---- hover 信号：进团子盒 → enter；离开（团子 ∪ 面板热区）→ 延迟 leave ----
+            if !(mx == 0 && my == 0) && !full {
+                if in_pet && !last_pet {
+                    let _ = handle.emit("pet-cursor-enter", ());
+                    out_counter = 0;
+                }
+                if in_pet || in_ui {
+                    out_counter = 0;
+                } else {
+                    out_counter += 1;
+                    // 40ms × 12 ≈ 480ms 不在热区 → 收快捷面板
+                    if out_counter >= 12 {
+                        let _ = handle.emit("pet-cursor-leave", ());
+                        out_counter = 0;
                     }
                 }
             }
+            last_pet = in_pet;
             std::thread::sleep(std::time::Duration::from_millis(40));
         }
     });
@@ -1403,7 +1515,7 @@ pub fn run() {
                     let mx = mon.position().x as f64 / s;
                     let my = mon.position().y as f64 / s;
                     let sw = mon.size().width as f64 / s;
-                    let _ = win.set_position(tauri::LogicalPosition::new(mx + sw - 360.0 - 24.0, my + 40.0));
+                    let _ = win.set_position(tauri::LogicalPosition::new(mx + sw - 320.0 - 24.0, my + 40.0));
                 }
                 // 启动即显示（conf 里 visible:false 只是避免定位前闪屏，别让用户按热键找宠物）
                 let _ = win.show();
@@ -1596,6 +1708,9 @@ pub fn run() {
             prompt_permission,
             set_interactive_full,
             set_bubble_on,
+            set_hot_rects,
+            set_main_size,
+            expand_chat,
             get_setup_config,
             save_setup_config,
             restart_brain,

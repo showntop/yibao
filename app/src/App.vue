@@ -2,12 +2,13 @@
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import Avatar from "./components/Avatar.vue";
-import SpeechBubble from "./components/SpeechBubble.vue";
 import InputBar from "./components/InputBar.vue";
+import QuickPanel from "./components/QuickPanel.vue";
 import Bubble from "./components/Bubble.vue";
+import SpeechBubble from "./components/SpeechBubble.vue";
 import PermissionsBanner from "./components/PermissionsBanner.vue";
 import SetupWizard from "./components/SetupWizard.vue";
 import {
@@ -33,7 +34,12 @@ import {
   type SettingsValues,
   canRememberSkill,
 } from "./lib/brain";
-import { resetWindowSize, openPanel, setInteractiveFull, setBubbleOn } from "./lib/window";
+import {
+  openPanel,
+  setInteractiveFull,
+  setMainSize,
+  setHotRects,
+} from "./lib/window";
 import { SUGGESTIONS } from "./lib/suggestions";
 import { procLabel, procSkip, procResultSuffix } from "./lib/proc";
 import YbIcon from "./components/YbIcon.vue";
@@ -78,6 +84,20 @@ function syncObserving(s: SettingsValues | null) {
   );
 }
 const expanded = ref(false);
+/** 快捷面板（单窗三态 quick 内容层）：hover 团子显示 3 圆 + 输入条，同窗渲染零 resize */
+const quick = ref(false);
+/** 收起态回复气泡：长按语音/快捷输入条的回复默认只走气泡，不展开对话窗；
+ *  点击气泡展开完整对话（气泡内容迁入气泡流）。气泡显示期间快捷面板不弹。 */
+const speech = ref<string | null>(null);
+const speechStreaming = ref(false);
+const speechVisible = ref(false);
+let speechTimer: ReturnType<typeof setTimeout> | null = null;
+/** 团子窗口内 top（CSS 像素）：正常 100（3 圆在头顶、输入条在脚下）；
+ *  窗口贴近屏幕顶时动态上移（macOS 不允许窗口出屏），让团子贴菜单栏下缘。
+ *  团子屏幕 y = 窗口y + petY，min(100, 窗口y+40) 保证接近顶部时连续上贴。 */
+const petY = ref(100);
+let scaleCached = 1; // Retina 缩放（窗口创建后不变，onMoved 计算用）
+let unlistenMoved: (() => void) | null = null;
 const panelOpen = ref(false); // 面板协作会话进行中（关联气泡只插一次，panel 刷新不重复插）
 // 过程展示：action.id → 过程行（sys 淡色小字）在 bubbles 里的下标，结果回来原地更新
 const procIdx = new Map<string, number>();
@@ -102,58 +122,11 @@ function onSetupSaved() {
   bubbles.value.push({ role: "sys", text: "配置已保存，大脑启动中…" });
 }
 
-// ---- 说话态气泡（B）：流式 chunk 拼到 bubbleText（天然打字机）；说话时窗口撑出，说完缩回 ----
-const bubbleOn = ref(false);
-const bubbleText = ref("");
-const bubbleBusy = ref(false); // 走马灯滚动中（自动收起暂停，滚完再收）
-const bubbleSticky = ref(false); // 常驻气泡（有事找你）：不自动收起，点团子展开才走
-let bubbleTimer: ReturnType<typeof setTimeout> | null = null;
-let pendingBubbleClose = false; // 滚动中收到收起请求：挂起，等 settled
-
-/** 打开气泡（仅收起态）：置位即显（窗口固定不缩放，气泡在团子左侧腾出的一条里）。 */
-function openBubble() {
-  if (expanded.value || bubbleOn.value) return;
-  bubbleOn.value = true;
-}
-/** 常驻轻提示气泡（reminder 等「有事找你」）：文本一步到位，不排任何自动收起。 */
+/** 常驻轻提示（reminder 等「有事找你」）：展开对话窗 + 落一条提醒气泡。 */
 function openBubbleSticky(text: string) {
   if (expanded.value) return;
-  bubbleSticky.value = true;
-  bubbleOn.value = true;
-  bubbleText.value = text;
-}
-/** 立刻收起气泡（清计时）。 */
-function closeBubbleNow() {
-  if (bubbleTimer) { clearTimeout(bubbleTimer); bubbleTimer = null; }
-  pendingBubbleClose = false;
-  bubbleBusy.value = false;
-  bubbleSticky.value = false;
-  if (!bubbleOn.value) return;
-  bubbleOn.value = false;
-  bubbleText.value = "";
-}
-/** 延迟收起（读完再看一会儿）；常驻气泡不收；走马灯滚动中先挂起，滚完（settled）再留 1.6s 收尾。 */
-function scheduleBubbleClose(ms: number) {
-  if (bubbleSticky.value) return;
-  if (bubbleTimer) clearTimeout(bubbleTimer);
-  if (bubbleBusy.value) {
-    pendingBubbleClose = true;
-    return;
-  }
-  bubbleTimer = setTimeout(() => { closeBubbleNow(); }, ms);
-}
-/** 走马灯起跑：滚完前别收（清掉已排的收起计时）。 */
-function onBubbleBusy() {
-  bubbleBusy.value = true;
-  if (bubbleTimer) { clearTimeout(bubbleTimer); bubbleTimer = null; }
-}
-/** 走马灯滚到底：若有挂起的收起请求，留 1.6s 读完尾巴再收。 */
-function onBubbleSettled() {
-  bubbleBusy.value = false;
-  if (pendingBubbleClose) {
-    pendingBubbleClose = false;
-    scheduleBubbleClose(1600);
-  }
+  bubbles.value.push({ role: "ai", text, icon: "alert" });
+  void expand();
 }
 let unlisten: (() => void) | null = null;
 let unlistenStatus: (() => void) | null = null;
@@ -166,6 +139,9 @@ let unlistenInvoke: (() => void) | null = null;
 let unlistenInvokeSel: (() => void) | null = null;
 let unlistenApprovals: (() => void) | null = null;
 let unlistenSettings: (() => void) | null = null;
+let unlistenCursorEnter: (() => void) | null = null;
+let unlistenCursorLeave: (() => void) | null = null;
+let rectTimer: ReturnType<typeof setInterval> | null = null;
 
 const statusText = computed(
   () => ({
@@ -198,14 +174,101 @@ watch(() => bubbles.value.length, () => scrollBubbles(true));
 watch(() => bubbles.value[bubbles.value.length - 1]?.text, () => scrollBubbles(false));
 watch(showTyping, () => scrollBubbles(true));
 
+/** 单窗热区上报：idle 只报团子盒（pet），quick 追加面板元素（ui，.wb-zone）。
+ *  Rust 据此放行鼠标穿透 + 驱动 enter/leave；窗口相对坐标，拖动自动跟随。 */
+function syncHotRects() {
+  void nextTick(() => {
+    const rects: { x: number; y: number; w: number; h: number; kind: string }[] = [];
+    document.querySelectorAll<HTMLElement>(".pet").forEach((n) => {
+      const r = n.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) {
+        rects.push({ x: r.left, y: r.top, w: r.width, h: r.height, kind: "pet" });
+      }
+    });
+    // v-show 隐藏的元素仍有 rect，只在 quick 显示时上报面板热区
+    if (quick.value) {
+      document.querySelectorAll<HTMLElement>(".wb-zone").forEach((n) => {
+        const r = n.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0) {
+          rects.push({ x: r.left, y: r.top, w: r.width, h: r.height, kind: "ui" });
+        }
+      });
+    }
+    // 收起态回复气泡热区（点击展开；ui 只放行点击不驱动 enter）
+    if (speechVisible.value) {
+      document.querySelectorAll<HTMLElement>(".speech-zone").forEach((n) => {
+        const r = n.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0) {
+          rects.push({ x: r.left, y: r.top, w: r.width, h: r.height, kind: "ui" });
+        }
+      });
+    }
+    void setHotRects(rects.length ? rects : null).catch(() => {});
+  });
+}
+
+/** 顶部边界自适应：macOS 不允许窗口顶部出屏（诊断确认负 y setPosition 被忽略，
+ *  窗口顶最低停在菜单栏下缘）。故窗口贴近顶部时「团子锚点在窗口内上移」：
+ *     f = clamp(窗口y - 24, 0, 100)   （窗口内正常位 = 100）
+ *     团子屏幕 y = max(窗口y + f, 24)  →  团子窗口内 y = 屏幕y - 窗口y
+ *  效果：窗口 y ∈ [0,24] 时团子恒贴菜单栏下缘（屏幕 y=24）；拖离顶部后线性过渡
+ *  回窗口内 100。3 圆在团子顶不足 76px 时重叠，由 QuickPanel showDock 隐藏。
+ *  热区随 petY 变化实时上报。 */
+function onWindowMoved(p: { x: number; y: number }) {
+  const winY = p.y / (scaleCached || 1);
+  const f = Math.max(0, Math.min(100, winY - 24));
+  const target = Math.max(winY + f, 24) - winY;
+  if (target !== petY.value) {
+    petY.value = target;
+    syncHotRects();
+  }
+}
+
+let idlePos = { x: 0, y: 0 }; // 收起态窗口位置（物理像素），展开时记录、收起时还原
 async function expand() {
-  // 固定窗口方案：不缩放。先收气泡（仅切内容），再切聊天视图
-  closeBubbleNow();
   attentionNeeded.value = false; // 用户来看了 = 事已知，notify 态消
   expanded.value = true;
+  // 收起态气泡内容迁入气泡流（点击气泡/点团子展开都带上）
+  if (speech.value) bubbles.value.push({ role: "ai", text: speech.value });
+  speechVisible.value = false;
+  speech.value = null;
+  speechStreaming.value = false;
+  if (speechTimer) { clearTimeout(speechTimer); speechTimer = null; }
+  // 先记录收起态位置（collapse 还原用），再交给 Rust 展开（定位 + clamp + 缩放一步完成）
+  try {
+    const p = await getCurrentWindow().outerPosition();
+    idlePos = { x: p.x, y: p.y };
+  } catch { /* 忽略 */ }
+  void invoke("expand_chat").catch(() => {});
+}
+
+/** 显示收起态回复气泡（回复类事件用；与快捷面板互斥，区域重叠） */
+function showSpeechBubble() {
+  speechVisible.value = true;
+  quick.value = false;
+  syncHotRects();
+}
+/** 隐藏并清空气泡；timer 到期调用 */
+function hideSpeechBubble() {
+  speechVisible.value = false;
+  speech.value = null;
+  speechStreaming.value = false;
+  syncHotRects();
+}
+
+/** 点击收起态气泡：展开完整对话窗（气泡内容由 expand() 迁入气泡流）。 */
+function onSpeechExpand() {
+  void expand();
 }
 async function collapse() {
   expanded.value = false;
+  quick.value = false;
+  void setMainSize(320, 300).catch(() => {});
+  syncHotRects(); // 切回团子盒热区（v-if 渲染后 nextTick 生效），避免穿透失效
+  // 还原收起态位置（团子回窗口内 (112,100) 锚点）
+  await getCurrentWindow()
+    .setPosition(new PhysicalPosition(idlePos.x, idlePos.y))
+    .catch(() => {});
 }
 
 // ---- 发呆（drowsy）：连续 5 分钟纯待命则入睡相；任何运行态变化/碰团子即醒并重计时 ----
@@ -226,9 +289,69 @@ watch(
   { immediate: true },
 );
 function onPetHover() {
+  // 只负责醒团子（发呆重置）。弹工作台交给 pet-cursor-enter（Rust 56×56 内缩热区），
+  // 否则 88×88 的 pet-wrap 透明边也会触发 pointerenter，鼠标没到身体就弹出。
   if (state.value !== "idle") return;
   drowsy.value = false;
   armDrowsy();
+}
+
+/** 拖动开始/结束（Avatar 通知）：收起态拖团子期间窗口必须整窗可交互——贴顶区
+ *  团子位置实时变化、热区同步有 IPC 窗口期，若不禁止穿透，Rust 会把光标判成
+ *  「不在热区」而切穿透 → 丢失 pointer 事件 → 拖动中断。chat 态不启用（header 走系统拖拽）。 */
+function onPetDragStart() {
+  if (expanded.value) return;
+  void setInteractiveFull(true).catch(() => {});
+}
+function onPetDragEnd() {
+  if (expanded.value) return;
+  void setInteractiveFull(false).catch(() => {});
+}
+
+/** 鼠标穿透→可交互切换 nudge：Rust 判定光标进入/离开团子热区时发信号，
+ *  给 .pet 补挂 yb-hover class —— 穿透切换瞬间 WebKit 不自动重算 CSS :hover，
+ *  不补这一下，首次移入团子必须点一下才触发上移动效（此后 mousemove 正常驱动）。 */
+function setPetHover(on: boolean) {
+  document.querySelectorAll<HTMLElement>(".pet").forEach((el) => {
+    if (on) {
+      el.classList.add("yb-hover");
+      el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    } else {
+      el.classList.remove("yb-hover");
+      el.dispatchEvent(new MouseEvent("mouseout", { bubbles: true }));
+    }
+  });
+}
+
+/** 快捷面板提交：收起面板 → 直接 submit，回复默认走气泡（不展开对话窗）。 */
+function onQuickSubmit(text: string) {
+  quick.value = false;
+  syncHotRects();
+  void submit(text);
+}
+
+/** 快捷面板点插件/更多：收起面板 → 展开到插件页并启动；id 空 = 展开对话（待批准/更多）。 */
+function onQuickLaunch(p: { id: string; name: string }) {
+  quick.value = false;
+  syncHotRects();
+  if (p.id) {
+    void expandTo("plugins");
+    void launchPlugin(p);
+  } else {
+    void expandTo("chat");
+  }
+}
+
+/** 快捷面板麦克风：收起面板 → 直接录音，回复默认走气泡。 */
+function onQuickMic() {
+  quick.value = false;
+  syncHotRects();
+  onMic();
+}
+
+/** 快捷面板打断：对话在生成中时直接打断，不展开。 */
+function onQuickInterrupt() {
+  onInterrupt();
 }
 
 // ---- 插件启动器（双击团子）----
@@ -351,23 +474,33 @@ function onEvent(e: BrainEvent) {
       break;
     }
     case "final_reply_chunk": {
-      // 流式增量：拼到当前 streaming bubble（首片时新建）
+      // 收起态：回复进气泡（默认不展开对话窗）
+      if (!expanded.value) {
+        speech.value = (speech.value ?? "") + (e.text ?? "");
+        speechStreaming.value = true;
+        showSpeechBubble();
+        break;
+      }
+      // 展开态：流式增量拼到当前 streaming bubble（首片时新建）
       if (streamingIdx.value === null) {
         bubbles.value.push({ role: "ai", text: e.text ?? "" });
         streamingIdx.value = bubbles.value.length - 1;
       } else {
         bubbles.value[streamingIdx.value].text += e.text ?? "";
       }
-      // 收起态：撑出气泡，镜像流式文本（打字机效果）；新回复接管气泡，常驻提示让位
-      if (!expanded.value) {
-        bubbleSticky.value = false;
-        openBubble();
-        bubbleText.value = bubbles.value[streamingIdx.value].text;
-      }
       break;
     }
     case "final_reply": {
-      // 以完整文本为准收尾（兜底 chunk 丢失）；语音中保持 say 等 speaking_done
+      // 收起态：完整文本收尾进气泡 + 定时自动收起
+      if (!expanded.value) {
+        speech.value = e.text ?? "";
+        speechStreaming.value = false;
+        showSpeechBubble();
+        if (speechTimer) clearTimeout(speechTimer);
+        speechTimer = setTimeout(hideSpeechBubble, 8000);
+        break;
+      }
+      // 展开态：以完整文本为准收尾（兜底 chunk 丢失）；语音中保持 say 等 speaking_done
       const full = e.text ?? "";
       if (streamingIdx.value !== null) {
         bubbles.value[streamingIdx.value].text = full;
@@ -376,13 +509,6 @@ function onEvent(e: BrainEvent) {
         bubbles.value.push({ role: "ai", text: full });
       }
       if (state.value !== "say") state.value = "idle";
-      // 收起态：兜底显示完整文本；若无语音（非 say），读完即收
-      if (!expanded.value) {
-        bubbleSticky.value = false;
-        openBubble();
-        bubbleText.value = full;
-        if (state.value !== "say") scheduleBubbleClose(2200);
-      }
       break;
     }
     case "interrupted":
@@ -393,11 +519,9 @@ function onEvent(e: BrainEvent) {
         bubbles.value.push({ role: "ai", text: "已打断", halted: true });
       }
       state.value = "idle";
-      closeBubbleNow();
       break;
     case "speaking_done":
       state.value = "idle";
-      if (bubbleOn.value && !expanded.value) scheduleBubbleClose(1600); // 说完，留 1.6s 读完再收
       break;
     case "notice":
       // 轻提示（插件展开等，§12-2 要知情）：居中淡色小字，不弹窗不打断；
@@ -439,7 +563,6 @@ function onEvent(e: BrainEvent) {
       streamingIdx.value = null;
       pushWarn(e.text ?? "出错了");
       flashValence("error");
-      closeBubbleNow();
       break;
     case "listening":
       state.value = "listen";
@@ -448,10 +571,18 @@ function onEvent(e: BrainEvent) {
       // 空识别（超时/没说话）：回 idle 并提示——不能进 think，run_done 不复位状态，会永远卡「思考中」
       if (e.text) {
         state.value = "think";
-        bubbles.value.push({ role: "user", text: e.text });
+        if (expanded.value) bubbles.value.push({ role: "user", text: e.text });
       } else {
         state.value = "idle";
-        bubbles.value.push({ role: "ai", text: "没听清，再试一次？" });
+        if (expanded.value) {
+          bubbles.value.push({ role: "ai", text: "没听清，再试一次？" });
+        } else {
+          speech.value = "没听清，再试一次？";
+          speechStreaming.value = false;
+          showSpeechBubble();
+          if (speechTimer) clearTimeout(speechTimer);
+          speechTimer = setTimeout(hideSpeechBubble, 8000);
+        }
       }
       break;
     case "speaking":
@@ -582,14 +713,20 @@ function onKeydown(e: KeyboardEvent) {
 watch(expanded, (v) => {
   void setInteractiveFull(v);
 });
-watch(bubbleOn, (v) => {
-  void setBubbleOn(v);
-});
 
 onMounted(async () => {
-  await resetWindowSize();
   void setInteractiveFull(false);
-  void setBubbleOn(false);
+  syncHotRects(); // 初始上报团子热区（Rust 据此放行穿透 + 驱动 hover）
+  // 顶部边界自适应：监听窗口移动（拖动 setPosition 触发），贴顶时调整团子锚点
+  try {
+    scaleCached = (await getCurrentWindow().scaleFactor()) || 1;
+  } catch { /* 默认 1 */ }
+  unlistenMoved = await getCurrentWindow().onMoved((e) => onWindowMoved(e.payload));
+  // 初始对齐团子锚点：窗口初始位置若贴近顶部，petY 应为压缩值（而非默认 100）
+  try {
+    const p0 = await getCurrentWindow().outerPosition();
+    onWindowMoved({ x: p0.x, y: p0.y });
+  } catch { /* 忽略 */ }
   unlisten = await onBrainEvent(onEvent);
   unlistenStatus = await onBrainStatus(onStatus);
   unlistenPerms = await onBrainPermissions(onPerms);
@@ -634,6 +771,21 @@ onMounted(async () => {
   unlistenInvokeSel = await listen<{ text: string | null }>("pet-invoke-selection", (e) =>
     void onPetInvokeSelection(e.payload.text),
   );
+  // 光标进团子热区：补 hover 态 + 显示快捷面板（单窗内容层切换，零 resize）；
+  // 离开清 hover + 收起面板。enter 仅由 Rust 团子热区（kind=pet）驱动，面板/输入条不会误触发。
+  unlistenCursorEnter = await listen("pet-cursor-enter", () => {
+    setPetHover(true);
+    if (speechVisible.value) return; // 回复气泡显示中不弹快捷面板（区域重叠）
+    quick.value = true;
+    syncHotRects();
+  });
+  unlistenCursorLeave = await listen("pet-cursor-leave", () => {
+    setPetHover(false);
+    quick.value = false;
+    syncHotRects();
+  });
+  // 热区兜底同步（布局/字号变化自动跟随；窗口拖动由 Rust 叠加位置自动跟随）
+  rectTimer = setInterval(syncHotRects, 2000);
   // 主动拉一次配置：首启引导若秒过（venv/模型已在），setup-config-needed 可能先于挂载发出而丢——靠拉取兜底
   try {
     const cfg = await invoke<{ has_key: boolean }>("get_setup_config");
@@ -653,30 +805,59 @@ onUnmounted(() => {
   unlistenInvokeSel?.();
   unlistenApprovals?.();
   unlistenSettings?.();
+  unlistenCursorEnter?.();
+  unlistenCursorLeave?.();
+  unlistenMoved?.();
+  if (rectTimer) clearInterval(rectTimer);
+  if (speechTimer) clearTimeout(speechTimer);
   window.removeEventListener("keydown", onKeydown);
   if (clickTimer !== null) clearTimeout(clickTimer);
-  if (bubbleTimer !== null) clearTimeout(bubbleTimer);
   if (valenceTimer !== null) clearTimeout(valenceTimer);
   if (drowsyTimer !== null) clearTimeout(drowsyTimer);
 });
 </script>
 
 <template>
-  <div class="shell" :class="{ exp: expanded }">
-    <!-- 常态：宠物球 + 状态文字 -->
+  <div class="shell" :class="{ quick: quick && !expanded, exp: expanded }">
+    <!-- 收起/快捷态：团子 + 快捷面板同窗（恒 320×300，内容层切换，零 resize）。
+         hover 由 Rust 团子热区驱动 pet-cursor-enter → v-show 面板；移开 480ms 自动收起。 -->
     <template v-if="!expanded">
-      <div class="speech-slot" v-if="bubbleOn">
-        <SpeechBubble
-          :text="bubbleText"
-          :streaming="streamingIdx !== null"
-          @expand="expand"
-          @busy="onBubbleBusy"
-          @settled="onBubbleSettled"
+      <div class="pet" :style="{ top: petY + 'px' }" @pointerenter="onPetHover">
+        <Avatar
+          class="pet-avatar"
+          :state="petState"
+          :size="96"
+          :observing="observing"
+          @click="onPetClick"
+          @longpress="onMicContinuous"
+          @drag-start="onPetDragStart"
+          @drag-end="onPetDragEnd"
         />
       </div>
-      <div class="pet-wrap" @pointerenter="onPetHover">
-        <Avatar class="pet" :state="petState" :size="88" :observing="observing" @click="onPetClick" @longpress="onMicContinuous" />
-      </div>
+      <Transition name="quick">
+        <QuickPanel
+          v-show="quick"
+          :busy="busy"
+          :listening="state === 'listen'"
+          :pet-y="petY"
+          :show-dock="petY >= 72"
+          @submit="onQuickSubmit"
+          @launch="onQuickLaunch"
+          @mic="onQuickMic"
+          @interrupt="onQuickInterrupt"
+        />
+      </Transition>
+      <!-- 收起态回复气泡：长按语音/快捷输入回复默认只走气泡；点击展开完整对话 -->
+      <Transition name="speech">
+        <div
+          v-if="speechVisible && speech"
+          class="speech-zone"
+          :style="{ top: petY + 'px' }"
+          @click="onSpeechExpand"
+        >
+          <SpeechBubble :text="speech" :streaming="speechStreaming" />
+        </div>
+      </Transition>
     </template>
 
     <!-- 对话：header（头像+名称+状态+收起，一体化贴边）/ 内容区（权限引导/气泡流/输入条） -->
@@ -807,6 +988,12 @@ onUnmounted(() => {
   border: 1px solid var(--yb-glass-border);
   border-radius: var(--yb-radius-xl);
   box-shadow: var(--yb-shadow);
+  /* 背景淡入：窗口 resize 瞬间不再是透明硬切 */
+  animation: shell-in 0.22s var(--yb-ease-out) both;
+}
+@keyframes shell-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 /* 内容区：header 贴边一体化，其余内容在这里呼吸 */
 .chat-body {
@@ -817,34 +1004,83 @@ onUnmounted(() => {
   gap: var(--yb-space-3);
   padding: var(--yb-space-3);
 }
-/* 常态：团子锚到右沿（right:34）——窗口向左撑开时团子原地不动；132 窗内 ≡ 居中 */
-.pet-wrap {
+/* 收起/快捷态：恒窗 320×300 内，团子锚点 x:112、y 动态（正常 100，贴顶时由
+ * onWindowMoved 下移，inline style 覆盖；3 圆在其头顶 y:0-70、输入条在其脚下
+ * y:230，与 QuickPanel 布局常量一致）。团子热区由 syncHotRects 上报 Rust
+ * （kind=pet）放行穿透 + 驱动 hover；窗口整体可拖，拖动=移动窗口。 */
+.pet {
   position: absolute;
-  right: 22px;
-  top: 12px;
-  z-index: 3;
+  left: 144px;
+  top: 100px;
+  width: 96px;
+  height: 96px;
+  pointer-events: auto;
+  user-select: none;
 }
-.pet-wrap .pet {
-  position: static;
+.pet .pet-avatar {
+  display: block;
 }
-/* 说话态气泡槽：贴着团子左沿（右锚定，tail 指着团子），向左占满腾出的空间；
-   与团子同一高度带（top/height 对齐 pet-wrap），气泡在带内垂直居中——tail 指着团子脸；
-   justify-end：气泡右沿永远钉在团子旁，短气泡也不漂走 */
-.speech-slot {
+.pet .pet-avatar :deep(.av) {
+  cursor: grab;
+}
+/* 收起态回复气泡：团子左侧，宽度自适应（max-width = 左侧空间极限 136px，
+ * 团子左缘 144 - 8 边距，整体布局右移 32 给气泡让出空间）；长回复走马灯不受宽度影响。跟随 petY。 */
+.speech-zone {
   position: absolute;
   left: 8px;
-  right: 116px;
-  top: 12px;
-  height: 88px;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  z-index: 3;
+  width: fit-content;
+  max-width: 136px;
+  cursor: pointer;
 }
-/* 展开内容渐入：配合窗口补间，不突兀 */
+
+/* ---- 状态切换过渡（弹出质感）----
+ * quick 面板：hover 弹出——从上方掉下 + spring 回弹（overshoot），收起时上收淡出 */
+.quick-enter-active {
+  transition: opacity 0.16s ease-out, transform 0.38s var(--yb-ease-spring);
+}
+.quick-enter-from {
+  opacity: 0;
+  transform: translateY(-14px);
+}
+.quick-leave-active {
+  transition: opacity 0.16s ease-in, transform 0.18s ease-in;
+}
+.quick-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+/* 3 圆逐个弹出：stagger + scale pop（backwards 填充——动画结束后恢复普通样式，不压 hover transform） */
+.quick-enter-active :deep(.wb-dock) {
+  animation: dock-pop 0.42s var(--yb-ease-spring) backwards;
+}
+.quick-enter-active :deep(.wb-dock:nth-child(1)) { animation-delay: 0.02s; }
+.quick-enter-active :deep(.wb-dock:nth-child(2)) { animation-delay: 0.08s; }
+.quick-enter-active :deep(.wb-dock:nth-child(3)) { animation-delay: 0.14s; }
+@keyframes dock-pop {
+  from { opacity: 0; transform: scale(0.55) translateY(10px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+/* 收起态气泡：淡入淡出（位移由 SpeechBubble 自带 rise 负责，避免叠影） */
+.speech-enter-active {
+  transition: opacity 0.25s var(--yb-ease-out);
+}
+.speech-leave-active {
+  transition: opacity 0.18s var(--yb-ease-in);
+}
+.speech-enter-from,
+.speech-leave-to {
+  opacity: 0;
+}
+/* chat 头部先弹出，body 紧随（同源 transform-origin，整体像从团子处"弹开"） */
+.shell.exp .chat-header {
+  animation: chat-in 0.3s var(--yb-ease) 0.02s both;
+  transform-origin: 18% 8%;
+}
+/* 展开内容弹出：body 从团子方位 scale 放大（spring 回弹，掩盖窗口 resize 硬切） */
 .shell.exp .bubbles,
 .shell.exp .input-slot {
-  animation: fade-in 0.22s var(--yb-ease) 0.06s both;
+  animation: chat-in 0.34s var(--yb-ease) 0.06s both;
+  transform-origin: 18% 8%;
 }
 /* 输入区：chip（划词上下文）贴左坐在输入条上方 */
 .input-slot {
@@ -932,12 +1168,12 @@ onUnmounted(() => {
   align-self: flex-start;
   max-width: 100%;
 }
-@keyframes fade-in {
-  from {
+@keyframes chat-in {
+  0% {
     opacity: 0;
-    transform: translateY(6px);
+    transform: scale(0.8) translateY(12px);
   }
-  to {
+  100% {
     opacity: 1;
     transform: none;
   }

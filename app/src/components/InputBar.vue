@@ -90,24 +90,33 @@ defineExpose({ focus: () => inputRef.value?.focus() });
 <style scoped>
 .bar {
   display: flex;
-  gap: var(--yb-space-2);
+  gap: 4px;
   align-items: center;
-  padding: 6px 6px 6px var(--yb-space-3);
-  border-radius: var(--yb-radius-lg);
-  background: var(--yb-surface-solid);
+  padding: 4px 4px 4px 12px;
+  border-radius: 22px;                        /* 更胶囊（视觉稿） */
+  background: var(--yb-glass);                /* 毛玻璃（统一浮层质感） */
+  -webkit-backdrop-filter: var(--yb-blur);
+  backdrop-filter: var(--yb-blur);
   border: 1px solid var(--yb-surface-border);
-  box-shadow: var(--yb-shadow-soft);
+  /* 双层阴影：下层弥散浮起，上层锐边描立体（视觉稿感） */
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 6px 18px rgba(var(--yb-c-slate-rgb), 0.10);
   transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
 .bar:focus-within {
   border-color: var(--yb-accent);
-  box-shadow: var(--yb-shadow-soft), 0 0 0 3px var(--yb-accent-soft);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 6px 18px rgba(var(--yb-c-slate-rgb), 0.10),
+    0 0 0 3px var(--yb-accent-soft);
 }
 input {
   flex: 1;
+  min-width: 0;
   border: none;
   background: transparent;
-  font-size: var(--yb-fs-lg);
+  font-size: 14px;                            /* 13.5 → 14 更清晰 */
   outline: none;
   color: var(--yb-text);
 }
@@ -116,7 +125,7 @@ input::placeholder {
 }
 .mic,
 .main {
-  width: 30px;
+  width: 30px;                                /* 收回 30（之前 34 在 260 宽容器里挤到边） */
   height: 30px;
   flex-shrink: 0;
   border-radius: 50%;
@@ -126,8 +135,8 @@ input::placeholder {
   transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
 .icon {
-  width: 15px;
-  height: 15px;
+  width: 14px;                                /* 与 30 按钮协调 */
+  height: 14px;
 }
 .mic {
   background: transparent;
@@ -184,12 +193,13 @@ input::placeholder {
     height: 13px;
   }
 }
-/* 主按钮：常态=发送（主色实底），打断态=失败色浅底；图标交叉淡入淡出切换 */
+/* 主按钮：常态=发送（主色实底），打断态=失败色浅底；图标交叉淡入淡出切换。
+ * 阴影收到最小（之前晕 6px/35% 让按钮视觉上"大且溢出"容器） */
 .main {
   border: none;
   background: var(--yb-accent);
   color: var(--yb-text-on-accent);
-  box-shadow: 0 2px 6px rgba(var(--yb-c-sky-rgb), 0.35);
+  box-shadow: 0 1px 2px rgba(var(--yb-c-sky-rgb), 0.25);
 }
 .main:hover:not(:disabled) {
   background: var(--yb-accent-deep);

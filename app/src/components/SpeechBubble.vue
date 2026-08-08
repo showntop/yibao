@@ -127,7 +127,7 @@ onUnmounted(stopRaf);
   line-height: 1.55;
   color: var(--yb-text);
   cursor: pointer;
-  animation: rise 0.2s var(--yb-ease) both;
+  animation: rise 0.32s var(--yb-ease) both;
 }
 .who {
   font-size: var(--yb-fs-sm);
@@ -164,7 +164,7 @@ onUnmounted(stopRaf);
   color: var(--yb-accent);
   animation: blink 0.9s steps(2, start) infinite;
 }
-/* tail 指向右侧团子：定在气泡垂直中点（槽内居中后 = 团子脸的高度） */
+/* tail 指向右侧团子（气泡放在团子左侧）：定在气泡垂直中点（槽内居中后 = 团子脸的高度） */
 .tail {
   position: absolute;
   right: -5px;
@@ -178,8 +178,9 @@ onUnmounted(stopRaf);
   transform: rotate(-45deg);
 }
 @keyframes rise {
-  from { opacity: 0; transform: translateY(5px); }
-  to { opacity: 1; transform: none; }
+  0% { opacity: 0; transform: translateY(10px) scale(0.94); }
+  60% { opacity: 1; transform: translateY(-2px) scale(1.02); }
+  100% { opacity: 1; transform: none; }
 }
 @keyframes blink {
   0%, 50% { opacity: 1; }

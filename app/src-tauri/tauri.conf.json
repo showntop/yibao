@@ -22,8 +22,9 @@
         "resizable": false,
         "shadow": false,
         "visible": false,
-        "width": 360,
-        "height": 520
+        "acceptFirstMouse": true,
+        "width": 320,
+        "height": 300
       }
     ],
     "security": {

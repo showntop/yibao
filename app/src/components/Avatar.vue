@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, computed, onUnmounted } from "vue";
-import { startDrag } from "../lib/window";
+import { getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
 
 /* 译宝 · 天青鹅蛋角色：立体光影 + 小手 + 天线（兼状态灯）。
  *
@@ -37,7 +37,15 @@ const props = withDefaults(
   }>(),
   { size: 64 },
 );
-const emit = defineEmits<{ (e: "click"): void; (e: "longpress"): void }>();
+const emit = defineEmits<{
+  (e: "click"): void;
+  (e: "longpress"): void;
+  /** 拖动开始/结束：拖动期间窗口必须整窗可交互（setInteractiveFull(true)），
+   *  否则贴顶区团子位置实时变化、热区同步有 IPC 窗口期，Rust 会判定光标
+   *  「不在热区」而切穿透 → WebKit 丢失 pointer 事件 → 拖动中断。 */
+  (e: "drag-start"): void;
+  (e: "drag-end"): void;
+}>();
 
 /* 小尺寸下满幅光晕会糊成一团蓝雾（侧边栏 36px 实测），且状态信息全压在
  * 3.4px 的灯点上不可辨。compact 同时解决两者。 */
@@ -60,14 +68,25 @@ const STATE_LABEL: Record<string, string> = {
 const label = computed(() => `译宝 · ${STATE_LABEL[props.state] ?? props.state}`);
 
 // 拖动 vs 点击 vs 长按：pointerdown 记坐标并起 450ms 计时；
-// 移动 >4px 触发 startDragging（取消计时）；到点未动未抬 = 长按（voice）；提前抬起且未拖 = click。
+// 移动 >4px 进入手动拖动（取消计时）；到点未动未抬 = 长按（voice）；提前抬起且未拖 = click。
+//
+// 手动拖动（不用系统 startDragging）：系统拖动会把窗口顶部 clamp 到 macOS 菜单栏下缘，
+// 团子窗口内 y:82 → 拖到最上时团子顶部 ≈ 107px，够不到屏幕顶。
+// 这里用 setPosition 逐帧跟随鼠标（屏幕绝对坐标，无漂移），窗口顶部可超出屏幕上方，
+// 团子即可贴到屏幕最上方；配合 RAF 节流保持流畅。
 const THRESHOLD = 4;
 const LONGPRESS_MS = 450;
 let down: { x: number; y: number } | null = null;
+let downScreen: { x: number; y: number } | null = null;
 let dragging = false;
 let longFired = false;
 let timer: ReturnType<typeof setTimeout> | null = null;
 const holding = ref(false);
+
+let winPos = { x: 0, y: 0 };                 // 拖动起点窗口位置（物理像素）
+let scale = 1;
+let rafId: ReturnType<typeof requestAnimationFrame> | null = null;
+let lastMove: PointerEvent | null = null;
 
 function cancelTimer() {
   if (timer !== null) {
@@ -76,13 +95,25 @@ function cancelTimer() {
   }
   holding.value = false;
 }
+async function recordDragStart() {
+  try {
+    const win = getCurrentWindow();
+    const [pos, sf] = await Promise.all([win.outerPosition(), win.scaleFactor()]);
+    winPos = { x: pos.x, y: pos.y };
+    scale = sf;
+  } catch {
+    // 非 Tauri 环境忽略
+  }
+}
 function onPointerDown(e: PointerEvent) {
   if (e.button !== 0) return;
   down = { x: e.clientX, y: e.clientY };
+  downScreen = { x: e.screenX, y: e.screenY };
   dragging = false;
   longFired = false;
   holding.value = true;
   (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+  void recordDragStart();
   timer = setTimeout(() => {
     if (down && !dragging) {
       longFired = true;
@@ -91,20 +122,45 @@ function onPointerDown(e: PointerEvent) {
     cancelTimer();
   }, LONGPRESS_MS);
 }
-async function onPointerMove(e: PointerEvent) {
-  if (!down || dragging) return;
-  if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > THRESHOLD) {
+function onPointerMove(e: PointerEvent) {
+  if (!down) return;
+  if (!dragging) {
+    if (Math.hypot(e.clientX - down.x, e.clientY - down.y) <= THRESHOLD) return;
     dragging = true;
     cancelTimer();
-    await startDrag(); // 必须在用户手势链内调用
+    emit("drag-start");
+  }
+  // 手动拖动：RAF 节流，取最新事件；screenX/Y 是屏幕绝对坐标，窗口移动不漂移
+  lastMove = e;
+  if (rafId === null) {
+    rafId = requestAnimationFrame(applyFreeDrag);
   }
 }
+function applyFreeDrag() {
+  rafId = null;
+  const e = lastMove;
+  lastMove = null;
+  if (!e || !down || !downScreen || !dragging) return;
+  const dx = (e.screenX - downScreen.x) * scale;
+  const dy = (e.screenY - downScreen.y) * scale;
+  void getCurrentWindow()
+    .setPosition(new PhysicalPosition(Math.round(winPos.x + dx), Math.round(winPos.y + dy)))
+    .catch(() => {});
+}
 function onPointerUp() {
+  const wasDragging = dragging;
   cancelTimer();
   if (down && !dragging && !longFired) emit("click");
   down = null;
+  downScreen = null;
   dragging = false;
   longFired = false;
+  if (rafId !== null) {
+    cancelAnimationFrame(rafId);
+    rafId = null;
+  }
+  lastMove = null;
+  if (wasDragging) emit("drag-end");
 }
 
 const INK = "var(--yb-body-ink)";
@@ -409,7 +465,10 @@ onUnmounted(() => { if (blinkTimer) clearTimeout(blinkTimer); });
 }
 
 /* 按住反馈：整体微放大，提示继续按住 = 语音 */
-.av:hover .yb {
+/* yb-hover：鼠标穿透→可交互切换时 WebKit 不自动重算 :hover，App.vue 收到
+ * Rust pet-cursor-enter 事件后补挂此 class（配合 :hover 双保险，视觉一致） */
+.av:hover .yb,
+.av.yb-hover .yb {
   transform: translateY(-3px);
 }
 .av.holding .yb {
