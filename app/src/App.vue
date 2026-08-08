@@ -1375,9 +1375,10 @@ onUnmounted(() => {
   overflow-y: auto;
   padding: 4px 2px 0;
   scrollbar-width: thin;
-  /* 顶部渐隐：滚出视口的消息柔和淡出，不被硬边「切断」 */
-  mask-image: linear-gradient(180deg, transparent, #000 14px);
-  -webkit-mask-image: linear-gradient(180deg, transparent, #000 14px);
+  /* 顶部渐隐：滚出视口的消息柔和淡出。原先 mask 在 macOS WKWebView luminance 模式
+   * 下可能误渲染为深色伪影（与 ::selection 叠加形成"深蓝条"），先关掉。 */
+  /* mask-image: linear-gradient(180deg, transparent, #000 14px);
+  -webkit-mask-image: linear-gradient(180deg, transparent, #000 14px); */
 }
 .bubbles::-webkit-scrollbar {
   width: 6px;

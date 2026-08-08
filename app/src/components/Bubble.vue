@@ -47,6 +47,9 @@ const html = computed(() => (props.role === "ai" && !props.typing ? renderMarkdo
   line-height: var(--yb-lh-base);
   word-break: break-word;
   animation: pop var(--yb-dur-fast) var(--yb-ease-out);
+  /* 双击/选中触发 :focus 时浏览器会画 outline: auto（系统 accent 蓝 2-3px 实色），
+   * 在 user 气泡上呈现"深色蓝矩形"。显式去掉。 */
+  outline: none;
 }
 /* 文字选中：浏览器默认蓝选区在两种气泡底色上对比度差且视觉杂
  * （ai 浅白 + 选区蓝 = 糊；user accent 蓝 + 选区蓝 = 无区分）。
