@@ -63,13 +63,12 @@ const dateLine = computed(() => {
   return `${d.getMonth() + 1} 月 ${d.getDate()} 日 星期${week}`;
 });
 
-// 时钟 widget（主屏小组件：实时时间大字 + 副行日期，秒级刷新）
+// 页头此刻时间（秒级刷新，等宽数字显示）
 const now = ref(new Date());
 let clockTimer: ReturnType<typeof setInterval> | null = null;
 const clockTime = computed(() =>
   `${String(now.value.getHours()).padStart(2, "0")}:${String(now.value.getMinutes()).padStart(2, "0")}`,
 );
-const clockWeekday = computed(() => "日一二三四五六"[now.value.getDay()]);
 
 // 概览数字条：把原问候里的叙事拆成可扫读的三个数（0 的项不显，全 0 显「暂时清净」）
 const overview = computed(() => {
@@ -516,73 +515,30 @@ onUnmounted(() => {
 
 <template>
   <div class="feed-page">
-    <!-- 页头：留出红绿灯安全区，问候为唯一主角 + 概览数字条 -->
+    <!-- 页头：问候 + 日期（左），此刻时间（右，秒级刷新） -->
     <header class="page-head" data-tauri-drag-region>
       <div class="head-line" data-tauri-drag-region>
-        <h1 class="greet" data-tauri-drag-region>{{ greeting }}</h1>
-        <span class="date yb-num" data-tauri-drag-region>{{ dateLine }}</span>
+        <div class="head-left" data-tauri-drag-region>
+          <h1 class="greet" data-tauri-drag-region>{{ greeting }}</h1>
+          <span class="date" data-tauri-drag-region>{{ dateLine }}</span>
+        </div>
+        <span class="head-time yb-num" data-tauri-drag-region>{{ clockTime }}</span>
       </div>
     </header>
 
-    <!-- widget 网格（2 列）：时钟 / 今日概览 / 待批准 / 进行中 / 插件一瞥 -->
-    <div class="w-grid">
-      <section class="w-card w-clock">
-        <div class="w-clock-time yb-num">{{ clockTime }}</div>
-        <div class="w-clock-sub">周{{ clockWeekday }} · {{ dateLine }}</div>
-      </section>
-
-      <section class="w-card">
-        <div class="w-card-title">今日</div>
-        <div v-if="overview.length" class="w-ov-list">
-          <span v-for="o in overview" :key="o.key" class="w-ov">
-            <strong class="yb-num">{{ o.n }}</strong>
-            <em>{{ o.label }}</em>
+    <!-- 此刻：AI 正在为你做什么（状态数字 + 进行中 + 插件 widget 一瞥） -->
+    <section class="now-card">
+      <div class="now-title"><span class="now-dot" />此刻</div>
+      <div class="now-body">
+        <!-- 状态数字：今日完成 / 正在跑 / 待提醒（0 的项不显） -->
+        <div v-if="overview.length" class="now-chips">
+          <span v-for="o in overview" :key="o.key" class="now-chip">
+            <strong class="yb-num">{{ o.n }}</strong>{{ o.label }}
           </span>
         </div>
-        <div v-else-if="loaded" class="w-quiet">暂时清净，随时叫我</div>
-      </section>
-
-      <section v-if="approvals.length" class="w-card w-pending">
-        <div class="w-card-title">待批准 <span class="count yb-num">{{ approvals.length }}</span></div>
-        <div class="w-card-body">
-          <div
-            v-for="p in approvals"
-            :key="p.id"
-            class="ap-card"
-            :class="{ selected: approvals.length > 1 && isSelected(p.id) }"
-          >
-            <div class="ap-top">
-              <label v-if="approvals.length > 1" class="ap-check" title="选中后可一键批量">
-                <input type="checkbox" :checked="isSelected(p.id)" @change="onToggleSelect(p.id, $event)" />
-              </label>
-              <div class="ap-info">
-                <strong class="ap-label">{{ p.label || p.skill }}</strong>
-                <span class="ap-desc">{{ p.desc || p.skill }}</span>
-              </div>
-            </div>
-            <label v-if="canRememberSkill(p.skill)" class="ap-remember" title="勾选后该技能在本会话内不再询问">
-              <input type="checkbox" :checked="rememberOf(p.id)" @change="onToggleRemember(p.id, $event)" />
-              <span>本会话不再询问</span>
-            </label>
-            <div class="ap-btns">
-              <button class="btn-ghost" @click="decideApproval(p, false)">拒绝</button>
-              <button class="btn-primary" @click="decideApproval(p, true)">批准</button>
-            </div>
-          </div>
-          <div v-if="approvals.length > 1" class="ap-batch">
-            <button class="btn-ghost" :disabled="selectedCount === 0" @click="batchDecide(false)">
-              拒绝选中{{ selectedCount ? ` (${selectedCount})` : "" }}
-            </button>
-            <button class="btn-primary" :disabled="selectedCount === 0" @click="batchDecide(true)">
-              批准选中{{ selectedCount ? ` (${selectedCount})` : "" }}
-            </button>
-          </div>
-        </div>
-      </section>
-
-      <section v-if="runningTasks.length" class="w-card">
-        <div class="w-card-title">进行中 <span class="count yb-num">{{ runningTasks.length }}</span></div>
-        <div class="w-card-body">
+        <!-- 进行中任务 -->
+        <div v-if="runningTasks.length" class="now-block">
+          <div class="now-block-label">正在做</div>
           <button v-for="t in runningTasks" :key="t.id" class="run-row" @click="openTasks">
             <span class="run-dot" />
             <span class="run-main">
@@ -592,18 +548,61 @@ onUnmounted(() => {
             <span class="run-time">{{ elapsedSince(t.created_at) }}</span>
           </button>
         </div>
-      </section>
-
-      <section v-for="w in widgets" :key="w.panel" class="w-card w-wide">
-        <div class="w-card-title">
-          {{ w.title }}
-          <button v-if="w.open" class="link-btn" @click="openWidget(w)">打开</button>
-        </div>
-        <div class="w-card-body">
+        <!-- 插件 widget 一瞥：做进「此刻」，点标题打开全面板 -->
+        <div v-for="w in widgets" :key="w.panel" class="now-widget">
+          <div class="now-widget-head">
+            <span class="now-widget-title">{{ w.title }}</span>
+            <button v-if="w.open" class="link-btn" @click="openWidget(w)">打开</button>
+          </div>
           <SchemaPanel :panel="w.panel" :schema="widgetSchema(w)" :data="widgetData(w)" />
         </div>
-      </section>
-    </div>
+        <div v-if="loaded && !overview.length && !runningTasks.length && !widgets.length" class="now-quiet">
+          此刻很清净，随时叫我
+        </div>
+      </div>
+    </section>
+
+    <!-- 需要你决定：唯一必须你动手的事（琥珀强调，有才显） -->
+    <section v-if="approvals.length" class="decide-card">
+      <div class="decide-title">
+        <YbIcon name="lock" :size="12" />需要你决定
+        <span class="count yb-num">{{ approvals.length }}</span>
+      </div>
+      <div class="decide-body">
+        <div
+          v-for="p in approvals"
+          :key="p.id"
+          class="ap-card"
+          :class="{ selected: approvals.length > 1 && isSelected(p.id) }"
+        >
+          <div class="ap-top">
+            <label v-if="approvals.length > 1" class="ap-check" title="选中后可一键批量">
+              <input type="checkbox" :checked="isSelected(p.id)" @change="onToggleSelect(p.id, $event)" />
+            </label>
+            <div class="ap-info">
+              <strong class="ap-label">{{ p.label || p.skill }}</strong>
+              <span class="ap-desc">{{ p.desc || p.skill }}</span>
+            </div>
+          </div>
+          <label v-if="canRememberSkill(p.skill)" class="ap-remember" title="勾选后该技能在本会话内不再询问">
+            <input type="checkbox" :checked="rememberOf(p.id)" @change="onToggleRemember(p.id, $event)" />
+            <span>本会话不再询问</span>
+          </label>
+          <div class="ap-btns">
+            <button class="btn-ghost" @click="decideApproval(p, false)">拒绝</button>
+            <button class="btn-primary" @click="decideApproval(p, true)">批准</button>
+          </div>
+        </div>
+        <div v-if="approvals.length > 1" class="ap-batch">
+          <button class="btn-ghost" :disabled="selectedCount === 0" @click="batchDecide(false)">
+            拒绝选中{{ selectedCount ? ` (${selectedCount})` : "" }}
+          </button>
+          <button class="btn-primary" :disabled="selectedCount === 0" @click="batchDecide(true)">
+            批准选中{{ selectedCount ? ` (${selectedCount})` : "" }}
+          </button>
+        </div>
+      </div>
+    </section>
 
     <!-- 主体：时间线（动态/回顾） -->
     <div class="body">
@@ -761,118 +760,150 @@ onUnmounted(() => {
   background: var(--yb-content-bg);
 }
 
-/* ---- 主屏 widget 网格：2 列卡片（macOS 通知中心语言） ---- */
-.w-grid {
+/* ---- 「此刻」卡：AI 正在为你做什么（状态 + 进行中 + 插件 widget 一瞥） ---- */
+.now-card {
   flex-shrink: 0;
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
-  padding: 0 var(--yb-space-5) var(--yb-space-4);
-}
-.w-card {
-  box-sizing: border-box;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 14px 16px;
+  margin: 0 var(--yb-space-5) var(--yb-space-3);
   border: 1px solid var(--yb-card-border);
   border-radius: var(--yb-card-radius);
   background: var(--yb-card-bg);
   box-shadow: var(--yb-shadow-1);
+  overflow: hidden;
 }
-.w-card.w-wide {
-  grid-column: 1 / -1;
-}
-.w-card-title {
+.now-title {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: var(--yb-fs-sm);
+  gap: 6px;
+  padding: var(--yb-space-2) var(--yb-space-4);
+  border-bottom: 1px solid var(--yb-card-row-line);
+  background: var(--yb-card-page-bg);
+  font-size: var(--yb-fs-md);
   font-weight: var(--yb-fw-bold);
   color: var(--yb-text-dim);
   letter-spacing: 0.02em;
 }
-.w-card-title .link-btn {
-  margin-left: auto;
-  font-size: var(--yb-fs-sm);
+/* 此刻脉动点：accent 圆点 + 光晕 */
+.now-dot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--yb-accent);
+  box-shadow: 0 0 0 3px var(--yb-accent-soft);
 }
-.w-card-body {
-  min-height: 0;
+.now-body {
+  padding: var(--yb-space-3) var(--yb-space-4);
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  max-height: 220px;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  margin: 0 -4px;
-  padding: 0 4px;
+  gap: var(--yb-space-3);
 }
-/* 时钟卡：大字时间 + 副行日期（右上角一抹天青） */
-.w-clock {
-  justify-content: center;
-  background:
-    radial-gradient(120% 140% at 90% -20%, rgba(var(--yb-c-sky-rgb), 0.12), transparent 55%),
-    var(--yb-card-bg);
+/* 状态数字 chips：今日完成 / 正在跑 / 待提醒（0 不显） */
+.now-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--yb-space-2);
 }
-.w-clock-time {
-  font-size: 38px;
-  font-weight: var(--yb-fw-bold);
-  line-height: 1.05;
-  letter-spacing: 0.01em;
-  color: var(--yb-text);
-}
-.w-clock-sub {
-  font-size: var(--yb-fs-sm);
+.now-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 3px 10px;
+  border: 1px solid var(--yb-border-base);
+  border-radius: var(--yb-radius-pill);
+  background: var(--yb-surface-2);
+  font-size: var(--yb-fs-md);
   color: var(--yb-text-dim);
 }
-/* 今日概览卡 */
-.w-ov-list {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
-.w-ov {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-.w-ov strong {
-  min-width: 30px;
-  font-size: 24px;
+.now-chip strong {
+  font-size: var(--yb-fs-lg);
   font-weight: var(--yb-fw-bold);
   line-height: 1;
   color: var(--yb-accent-deep);
 }
-.w-ov em {
-  font-style: normal;
-  font-size: var(--yb-fs-md);
-  color: var(--yb-text-dim);
+.now-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
-.w-quiet {
+.now-block-label {
+  font-size: var(--yb-fs-sm);
+  font-weight: var(--yb-fw-bold);
+  color: var(--yb-text-faint);
+  letter-spacing: 0.03em;
+}
+/* 插件 widget 一瞥：内嵌于此刻，淡底区分，点标题打开全面板 */
+.now-widget {
+  border: 1px dashed var(--yb-card-border);
+  border-radius: var(--yb-radius-sm);
+  background: var(--yb-surface-2);
+  padding: var(--yb-space-2) var(--yb-space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--yb-space-2);
+}
+.now-widget-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--yb-space-2);
+}
+.now-widget-title {
   font-size: var(--yb-fs-md);
-  color: var(--yb-text-dim);
+  font-weight: var(--yb-fw-bold);
+  color: var(--yb-text);
+}
+.now-widget .link-btn {
+  font-size: var(--yb-fs-sm);
+}
+.now-quiet {
+  font-size: var(--yb-fs-md);
+  color: var(--yb-text-faint);
   line-height: 1.4;
 }
-/* 待批准：琥珀强调语义保留（全页唯一允许处） */
-.w-pending .w-card-title {
-  color: var(--yb-amber);
+
+/* ---- 「需要你决定」卡：待批准（琥珀强调，全页唯一） ---- */
+.decide-card {
+  flex-shrink: 0;
+  margin: 0 var(--yb-space-5) var(--yb-space-3);
+  border: 1px solid var(--yb-intent-pending);
+  border-radius: var(--yb-card-radius);
+  background: var(--yb-card-bg);
+  box-shadow: var(--yb-shadow-1);
+  overflow: hidden;
 }
-.w-card .count {
-  margin-left: 2px;
-  padding: 0 7px;
-  border-radius: var(--yb-radius-pill);
-  background: var(--yb-well);
-  font-size: var(--yb-fs-sm);
+.decide-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: var(--yb-space-2) var(--yb-space-4);
+  border-bottom: 1px solid var(--yb-card-row-line);
+  background: var(--yb-intent-pending-soft);
+  font-size: var(--yb-fs-md);
+  font-weight: var(--yb-fw-bold);
+  color: var(--yb-intent-pending-ink);
+}
+.decide-title .count {
+  background: rgba(255, 255, 255, 0.6);
+  color: var(--yb-intent-pending-ink);
+}
+.decide-body {
+  padding: var(--yb-space-2);
 }
 
 /* ---- 页头 ---- */
 .page-head {
   flex-shrink: 0;
-  padding: var(--yb-titlebar-h) var(--yb-space-5) var(--yb-space-4);
+  padding: var(--yb-titlebar-h) var(--yb-space-5) var(--yb-space-3);
   user-select: none;
 }
 .head-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--yb-space-3);
+  flex-wrap: wrap;
+}
+.head-left {
   display: flex;
   align-items: baseline;
   gap: var(--yb-space-3);
@@ -891,24 +922,14 @@ onUnmounted(() => {
   font-size: var(--yb-fs-md);
   color: var(--yb-text-dim);
 }
-/* 概览数字条：可扫读的三个数，替代原先拼长句的叙事问候 */
-.overview {
-  display: flex;
-  gap: var(--yb-space-4);
-  margin-top: var(--yb-space-2);
-  font-size: var(--yb-fs-md);
-  color: var(--yb-text-dim);
-}
-.ov-item strong {
-  margin-right: 4px;
-  font-size: var(--yb-fs-xl);
+/* 页头右侧此刻时间（秒级刷新，等宽数字） */
+.head-time {
+  font-size: 22px;
   font-weight: var(--yb-fw-bold);
-  color: var(--yb-text);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  color: var(--yb-text-strong);
 }
-.overview.quiet {
-  color: var(--yb-text-faint);
-}
-
 /* ---- 主体双列 ---- */
 .body {
   flex: 1;
@@ -925,23 +946,6 @@ onUnmounted(() => {
   /* 无右列时限宽：宽窗下单行拉到 1000px 会难扫读（macOS 列表同样限宽） */
   max-width: 760px;
 }
-.side-col {
-  width: 320px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-}
-/* 有右列时时间线不限宽（右列已占位） */
-.body:has(.side-col) .timeline-col {
-  max-width: none;
-}
-/* 窄窗（< 940）：右列收起，时间线独占——避免双列各自过窄 */
-@media (max-width: 940px) {
-  .side-col {
-    display: none;
-  }
-}
-
 /* ---- 时间线头：分段控件 + 全部已读 ---- */
 .tl-head {
   flex-shrink: 0;
@@ -1216,70 +1220,12 @@ onUnmounted(() => {
   background: var(--yb-accent-soft);
 }
 
-/* ---- 右副列：分组卡片（系统设置 Ventura+ 语言）---- */
-.side-scroll {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  display: flex;
-  flex-direction: column;
-  gap: var(--yb-space-3);
-  padding-bottom: var(--yb-space-3);
-}
-.side-scroll::-webkit-scrollbar {
-  width: 7px;
-}
-.side-scroll::-webkit-scrollbar-thumb {
-  background: var(--yb-border-strong);
-  border-radius: var(--yb-radius-pill);
-}
-.panel {
-  border: 1px solid var(--yb-card-border);
-  border-radius: var(--yb-card-radius);
-  background: var(--yb-card-bg);
-  overflow: hidden;
-}
-.panel-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--yb-space-2);
-  padding: var(--yb-space-2) var(--yb-space-3);
-  border-bottom: 1px solid var(--yb-card-row-line);
-  background: var(--yb-card-page-bg);
-}
-.panel-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: var(--yb-fs-md);
-  font-weight: var(--yb-fw-bold);
-  color: var(--yb-text-dim);
-}
+/* 待批准卡片徽标（decide-title 内复用） */
 .count {
   padding: 0 5px;
   border-radius: var(--yb-radius-pill);
   background: var(--yb-btn-neutral);
   font-size: var(--yb-fs-xs);
-}
-.panel-body {
-  padding: var(--yb-space-2);
-}
-/* 待批准面板：顶部一条琥珀提示边（全页唯一强调） */
-.panel-pending {
-  border-color: var(--yb-intent-pending);
-  box-shadow: var(--yb-shadow-1);
-}
-.panel-pending .panel-head {
-  background: var(--yb-intent-pending-soft);
-}
-.panel-pending .panel-title {
-  color: var(--yb-intent-pending-ink);
-}
-.panel-pending .count {
-  background: rgba(255, 255, 255, 0.6);
-  color: var(--yb-intent-pending-ink);
 }
 
 /* 待批准卡片 */
@@ -1437,15 +1383,6 @@ onUnmounted(() => {
   flex-shrink: 0;
   font-size: var(--yb-fs-sm);
   color: var(--yb-text-faint);
-}
-
-/* widget 一瞥卡：固定高度，内部自滚 */
-.w-body {
-  height: 150px;
-  padding: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
 }
 
 /* ---- 底部输入条 ---- */

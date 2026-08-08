@@ -593,7 +593,8 @@ onUnmounted(() => {
 }
 .pl-search input:focus {
   border-color: var(--yb-accent);
-  box-shadow: var(--yb-focus-ring);
+  /* 用软外环代替全局 --yb-focus-ring（双环内白覆盖了 1px accent border） */
+  box-shadow: 0 0 0 3px rgba(var(--yb-c-sky-rgb), 0.22);
 }
 
 /* 自适应网格：窄窗自动减列，卡片不拉伸变形 */
