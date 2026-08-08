@@ -48,6 +48,17 @@ const html = computed(() => (props.role === "ai" && !props.typing ? renderMarkdo
   word-break: break-word;
   animation: pop var(--yb-dur-fast) var(--yb-ease-out);
 }
+/* 文字选中：浏览器默认蓝选区在两种气泡底色上对比度差且视觉杂
+ * （ai 浅白 + 选区蓝 = 糊；user accent 蓝 + 选区蓝 = 无区分）。
+ * ai 用 accent 实色 + 白字；user 蓝底用半透明白翻转（与气泡对比强）。 */
+.bubble::selection {
+  background: var(--yb-accent);
+  color: #fff;
+}
+.bubble.user::selection {
+  background: rgba(255, 255, 255, 0.4);
+  color: var(--yb-text-on-accent);
+}
 /* 行首语义图标（提醒=accent / 告警=danger）与行尾中止图标 */
 .b-lead {
   margin-right: var(--yb-space-1);

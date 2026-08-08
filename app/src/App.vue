@@ -1049,9 +1049,7 @@ onUnmounted(() => {
 .shell.exp {
   display: flex;
   flex-direction: column;
-  background:
-    linear-gradient(180deg, rgba(var(--yb-c-sky-rgb), 0.09), rgba(var(--yb-c-sky-rgb), 0) 128px),
-    var(--yb-shell-bg);
+  background: var(--yb-shell-bg);
   -webkit-backdrop-filter: var(--yb-blur);
   backdrop-filter: var(--yb-blur);
   border: 1px solid var(--yb-glass-border);
@@ -1254,7 +1252,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 10px;
   padding: 10px var(--yb-space-3) 9px;
-  background: linear-gradient(180deg, rgba(var(--yb-c-sky-rgb), 0.14), rgba(var(--yb-c-sky-rgb), 0.08));
+  background: var(--yb-c-sky-050);
   border-bottom: 1px solid var(--yb-surface-border);
 }
 /* 锚点在右侧时（dir=ne/se）镜像头部，团子+meta 成团靠右（row-reverse 默认即靠右） */

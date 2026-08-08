@@ -129,7 +129,8 @@
   --yb-border-base: rgba(var(--yb-c-slate-rgb), 0.1);
   --yb-border-strong: rgba(var(--yb-c-slate-rgb), 0.18);
   --yb-line: rgba(var(--yb-c-slate-rgb), 0.08);
-  --yb-glass-border: rgba(255, 255, 255, 0.7);
+  /* 玻璃边：浅色下深细灰边（白底可见，避免小窗融在白底里），深色下白透明 */
+  --yb-glass-border: rgba(54, 78, 102, 0.10);
 
   /* ---- 主色 ---- */
   --yb-accent: var(--yb-c-sky-500);
@@ -150,10 +151,13 @@
   --yb-intent-notify: #d13d72;
   --yb-intent-notify-soft: rgba(var(--yb-c-notify-rgb), 0.12);
 
-  /* ---- 阴影梯度：对应 L1/L2/L3 ---- */
+  /* ---- 阴影梯度：L3 多层立体（贴边细+浮起+远投），让小窗在白底浮起来 ---- */
   --yb-shadow-1: 0 1px 2px rgba(var(--yb-c-slate-rgb), 0.06);
   --yb-shadow-2: 0 2px 8px rgba(var(--yb-c-slate-rgb), 0.08);
-  --yb-shadow-3: 0 10px 32px rgba(var(--yb-c-slate-rgb), 0.16);
+  --yb-shadow-3:
+    0 1px 2px rgba(var(--yb-c-slate-rgb), 0.05),
+    0 10px 32px rgba(var(--yb-c-slate-rgb), 0.18),
+    0 24px 60px -12px rgba(var(--yb-c-slate-rgb), 0.14);
   --yb-shadow-sm: var(--yb-shadow-1); /* 原被 App.vue:814 引用但从未定义 */
   --yb-shadow-soft: var(--yb-shadow-2);
   --yb-shadow: var(--yb-shadow-3);
@@ -175,9 +179,9 @@
   --yb-icon-bg-4: rgba(124, 92, 184, 0.16);
   --yb-icon-fg-4: #5a4380;
 
-  /* ---- 气泡 ---- */
-  --yb-bubble-ai: rgba(255, 255, 255, 0.94);
-  --yb-bubble-user: rgba(231, 240, 248, 0.9);
+  /* ---- 气泡：实色与白壳区分（不再用半透明导致与壳融） ---- */
+  --yb-bubble-ai: #f4f7fb;
+  --yb-bubble-user: #e7f0f8;
 
   /* ---- 交互表面 ---- */
   --yb-btn-neutral: rgba(var(--yb-c-slate-rgb), 0.07);
@@ -267,7 +271,8 @@
   --yb-think: var(--yb-state-think);
   --yb-work: var(--yb-state-work);
   --yb-say: var(--yb-state-say);
-  --yb-shell-bg: var(--yb-glass);
+  /* 对话窗壳背景：浅色实色白 + border + shadow 浮起；告别白底融在一起 */
+  --yb-shell-bg: #ffffff;
   --yb-surface: rgba(255, 255, 255, 0.78);
   --yb-surface-solid: #fbfdff;
   --yb-surface-border: var(--yb-border-base);
@@ -374,9 +379,11 @@ pre {
     --yb-icon-bg-4: rgba(168, 138, 220, 0.20);
     --yb-icon-fg-4: #c3a9e8;
 
-    /* ---- 气泡 ---- */
-    --yb-bubble-ai: rgba(31, 42, 54, 0.94);
-    --yb-bubble-user: rgba(45, 62, 82, 0.9);
+    /* ---- 气泡（深色：实色深石板，与壳区分） ---- */
+    --yb-bubble-ai: var(--yb-surface-2);
+    --yb-bubble-user: rgba(77, 144, 196, 0.22);
+    /* ---- 壳背景（深色下深石板实色） ---- */
+    --yb-shell-bg: var(--yb-surface-1);
 
     /* ---- 交互表面 ---- */
     --yb-btn-neutral: rgba(255, 255, 255, 0.08);
