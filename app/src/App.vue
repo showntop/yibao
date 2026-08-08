@@ -20,7 +20,6 @@ import {
   onSettings,
   getSettingsOnce,
   openHomeWindow,
-  openHomePlugins,
   emitRecapOpen,
   runInput,
   invokeContext,
@@ -419,30 +418,21 @@ function openHome() {
   void openHomeWindow().catch(() => {});
 }
 
-/** header「插件」钮 → 打开大窗并切到插件页。 */
-function openPlugins() {
-  void openHomePlugins().catch(() => {});
-}
-
 let avatarClickTimer: ReturnType<typeof setTimeout> | null = null;
-/** 单击团子收起；双击打开大窗（220ms 判定窗口区分单/双击，双击不触发收起）。 */
+/** 单击团子收起；双击打开大窗。
+ * 注意不能用原生 dblclick：Avatar 根元素 @pointerdown.prevent 阻止了原生
+ * 双击事件链，只能靠 220ms 判定窗口——第二击取消定时器并放大窗。 */
 function onAvatarClick() {
-  if (avatarClickTimer) {
+  if (avatarClickTimer !== null) {
     clearTimeout(avatarClickTimer);
     avatarClickTimer = null;
+    void openHome();
     return;
   }
   avatarClickTimer = setTimeout(() => {
     avatarClickTimer = null;
-    collapse();
+    void collapse();
   }, 220);
-}
-function onAvatarDblclick() {
-  if (avatarClickTimer) {
-    clearTimeout(avatarClickTimer);
-    avatarClickTimer = null;
-  }
-  openHome();
 }
 
 /** morning_recap 气泡点击 → 确保 home 窗可见 + 通知 HomeFeed 切到回顾 mode 并跳到当天。 */
@@ -967,7 +957,7 @@ onUnmounted(() => {
               <path d="M3 21l7-7" />
             </svg>
           </button>
-          <button class="hbtn" title="插件" @click="openPlugins">
+          <button class="hbtn" title="插件" @click="expandTo('plugins')">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect x="3" y="3" width="7" height="7" rx="1.5" />
               <rect x="14" y="3" width="7" height="7" rx="1.5" />
@@ -976,7 +966,7 @@ onUnmounted(() => {
             </svg>
           </button>
         </div>
-        <Avatar :state="petState" :size="38" :observing="observing" @click="onAvatarClick" @dblclick="onAvatarDblclick" />
+        <Avatar :state="petState" :size="38" :observing="observing" @click="onAvatarClick" />
         <div class="meta" data-tauri-drag-region>
           <span class="name">译宝</span>
           <span class="status" :class="petState"><i class="dot" />{{ statusText }}</span>
@@ -1372,20 +1362,18 @@ onUnmounted(() => {
 .status.drowsy {
   --dot: var(--yb-state-idle);
 }
-/* header 按钮组：分组胶囊（macOS 工具栏分段按钮语言），浅底 + 细边 + 微阴影，
- * 每个按钮有 hover 底 + active 按压，比幽灵圆钮更有质感 */
+/* header 按钮组：透明底融入 header（白底胶囊在浅天青 header 上突兀），
+ * 每个按钮 hover 才显底 + active 按压，简洁有质感 */
 .hbtns {
   position: absolute;
   left: 10px;
   top: 50%;
   transform: translateY(-50%);
   display: flex;
-  gap: 1px;
+  gap: 2px;
   padding: 2px;
-  background: var(--yb-surface-1);
-  border: 1px solid var(--yb-surface-border);
-  border-radius: var(--yb-radius-sm);
-  box-shadow: var(--yb-shadow-1);
+  background: transparent;
+  border: none;
 }
 .hbtn {
   width: 24px;
@@ -1393,14 +1381,14 @@ onUnmounted(() => {
   display: grid;
   place-items: center;
   border: none;
-  border-radius: calc(var(--yb-radius-sm) - 2px);
+  border-radius: var(--yb-radius-sm);
   background: transparent;
   color: var(--yb-text-dim);
   cursor: pointer;
   transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
 .hbtn:hover {
-  background: var(--yb-surface-2);
+  background: var(--yb-surface-solid);
   color: var(--yb-text);
 }
 .hbtn:active {

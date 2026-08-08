@@ -248,15 +248,7 @@ export function openHomeWindow(): Promise<void> {
   return invoke("open_home_window");
 }
 
-/** 打开大窗并切到插件页（宠物窗 header「插件」钮）。 */
-export function openHomePlugins(): Promise<void> {
-  return invoke("open_home_window").then(() => emit("home-tab", { tab: "plugins" }));
-}
 
-/** 监听 home 窗的 tab 切换指令（宠物窗 header 等发出）。 */
-export function onHomeTab(cb: (tab: string) => void): Promise<UnlistenFn> {
-  return listen<{ tab: string }>("home-tab", (e) => cb(e.payload.tab));
-}
 
 // ---- 主屏 Feed（OS 感 §4.2：「它在我不看的时候干了什么」）----
 

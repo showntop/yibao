@@ -11,7 +11,7 @@ import HomeFeed from "./components/HomeFeed.vue";
 import HomeChat from "./components/HomeChat.vue";
 import HomePlugins from "./components/HomePlugins.vue";
 import SettingsView from "./components/SettingsView.vue";
-import { onPendingConfirms, onSettings, onHomeTab, getSettingsOnce, type SettingsValues } from "./lib/brain";
+import { onPendingConfirms, onSettings, getSettingsOnce, type SettingsValues } from "./lib/brain";
 
 type Tab = "home" | "chat" | "plugins" | "settings";
 type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
@@ -45,19 +45,14 @@ function syncObserving(s: SettingsValues | null) {
 }
 let unApprovals: (() => void) | null = null;
 let unSettings: (() => void) | null = null;
-let unHomeTab: (() => void) | null = null;
 onMounted(async () => {
   unApprovals = onPendingConfirms((l) => (approvalCount.value = l.length));
   void getSettingsOnce().then(syncObserving);
   unSettings = await onSettings(syncObserving);
-  unHomeTab = await onHomeTab((t) => {
-    if (t === "home" || t === "chat" || t === "plugins") tab.value = t;
-  });
 });
 onUnmounted(() => {
   unApprovals?.();
   unSettings?.();
-  unHomeTab?.();
 });
 
 function onFeedChat(draft?: string) {
