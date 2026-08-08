@@ -1057,8 +1057,81 @@ fn plugins_dir() -> std::path::PathBuf {
         .join("plugins")
 }
 
-/// 插件启动器（双击团子）：扫各插件 manifest.toml 拿 id/name。
-/// 行级解析、只取首个 section 之前的顶层键（[[tool]] 里也有 id，不能误抓），不引 toml 依赖。
+/// 解析插件 manifest.toml：顶层 id/name + 带 open 的 [[panel]] 条目（面板级入口，如素材库）。
+/// 行级解析、不引 toml 依赖：顶层键只在任何 section 之前读（[[tool]] 里也有 id，不能误抓）；
+/// [[panel]] 段内只取 name/label/open，无 open 的 panel 收成不了入口（detail/editor 需参数，本就不能直接开）。
+fn parse_manifest(text: &str) -> Option<(String, String, Vec<Value>)> {
+    let val = |l: &str, key: &str| -> Option<String> {
+        l.trim()
+            .strip_prefix(key)
+            .and_then(|rest| rest.trim_start().strip_prefix('='))
+            .map(|v| v.trim().trim_matches('"').to_string())
+    };
+    let mut id: Option<String> = None;
+    let mut name: Option<String> = None;
+    let mut panels: Vec<Value> = Vec::new();
+    let mut seen_section = false;
+    let mut in_panel = false;
+    let mut pname = String::new();
+    let mut plabel: Option<String> = None;
+    let mut popen: Option<String> = None;
+    macro_rules! flush_panel {
+        () => {
+            if in_panel && !pname.is_empty() {
+                if let Some(open) = popen.take() {
+                    panels.push(serde_json::json!({
+                        "name": pname, "label": plabel.take().unwrap_or_else(|| pname.clone()), "open": open,
+                    }));
+                }
+            }
+            in_panel = false;
+            pname = String::new();
+            plabel = None;
+            popen = None;
+        };
+    }
+    for line in text.lines() {
+        let l = line.trim();
+        if l.starts_with('[') {
+            flush_panel!();
+            seen_section = true;
+            in_panel = l == "[[panel]]";
+            continue;
+        }
+        if !seen_section {
+            if id.is_none() {
+                id = val(l, "id");
+            }
+            if name.is_none() {
+                name = val(l, "name");
+            }
+            continue;
+        }
+        if in_panel {
+            if pname.is_empty() {
+                if let Some(v) = val(l, "name") {
+                    pname = v;
+                    continue;
+                }
+            }
+            if plabel.is_none() {
+                if let Some(v) = val(l, "label") {
+                    plabel = Some(v);
+                    continue;
+                }
+            }
+            if popen.is_none() {
+                if let Some(v) = val(l, "open") {
+                    popen = Some(v);
+                }
+            }
+        }
+    }
+    flush_panel!();
+    Some((id?, name?, panels))
+}
+
+/// 插件启动器（双击团子）：扫各插件 manifest.toml 拿 id/name + 面板级入口（带 open 的 [[panel]]）。
 #[tauri::command]
 fn list_plugins() -> Result<Vec<Value>, String> {
     let rd = std::fs::read_dir(plugins_dir()).map_err(|e| format!("读插件目录失败：{e}"))?;
@@ -1066,22 +1139,8 @@ fn list_plugins() -> Result<Vec<Value>, String> {
     for entry in rd.flatten() {
         let path = entry.path().join("manifest.toml");
         let Ok(text) = std::fs::read_to_string(&path) else { continue };
-        let pick = |key: &str| {
-            for line in text.lines() {
-                let l = line.trim();
-                if l.starts_with('[') {
-                    break; // 进了 section 就停（顶层键只在文件头）
-                }
-                if let Some(rest) = l.strip_prefix(key) {
-                    if let Some(v) = rest.trim_start().strip_prefix('=') {
-                        return Some(v.trim().trim_matches('"').to_string());
-                    }
-                }
-            }
-            None
-        };
-        if let (Some(id), Some(name)) = (pick("id"), pick("name")) {
-            out.push(serde_json::json!({ "id": id, "name": name }));
+        if let Some((id, name, panels)) = parse_manifest(&text) {
+            out.push(serde_json::json!({ "id": id, "name": name, "panels": panels }));
         }
     }
     out.sort_by(|a, b| {
@@ -2004,5 +2063,49 @@ mod invoke_tests {
         let new = wait_clipboard_change(&old, || Some("a".to_string()), 100);
         assert_eq!(new, None);
         assert!(start.elapsed().as_millis() >= 50); // 轮询了一段才超时，非立即放弃
+    }
+
+    #[test]
+    fn parse_manifest_picks_panels_with_open() {
+        // 面板级入口：只有带 open 的 [[panel]] 才被收成子入口；顶层 id/name 照常
+        let text = r#"
+id = "zimeiti"
+name = "自媒体"
+capabilities = ["db", "llm"]
+
+[[panel]]
+type = "schema"
+name = "board"
+label = "选题看板"
+src = "panel/board.schema.json"
+
+[[panel]]
+type = "schema"
+name = "materials"
+label = "素材库"
+src = "panel/materials.schema.json"
+open = "mat_list"
+
+[[tool]]
+id = "add"
+"#;
+        let (id, name, panels) = parse_manifest(text).expect("应解析出插件");
+        assert_eq!(id, "zimeiti");
+        assert_eq!(name, "自媒体");
+        assert_eq!(panels.len(), 1);
+        assert_eq!(panels[0]["name"], "materials");
+        assert_eq!(panels[0]["label"], "素材库");
+        assert_eq!(panels[0]["open"], "mat_list");
+    }
+
+    #[test]
+    fn parse_manifest_without_panels_or_open() {
+        // 无 [[panel]] / panel 无 open → panels 为空；缺 id/name → None
+        let (id, name, panels) = parse_manifest("id = \"notes\"\nname = \"笔记\"\n").unwrap();
+        assert_eq!((id.as_str(), name.as_str()), ("notes", "笔记"));
+        assert!(panels.is_empty());
+        let no_open = "id = \"z\"\nname = \"Z\"\n\n[[panel]]\nname = \"board\"\nlabel = \"看板\"\n";
+        assert!(parse_manifest(no_open).unwrap().2.is_empty());
+        assert!(parse_manifest("name = \"孤儿\"\n").is_none()); // 缺 id
     }
 }

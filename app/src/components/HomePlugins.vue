@@ -29,7 +29,8 @@ type AvatarState = "idle" | "listen" | "think" | "work" | "say";
 const emit = defineEmits<{ state: [AvatarState]; panel: [] }>();
 
 // ---- 插件列表 ----
-interface PluginInfo { id: string; name: string }
+interface PluginPanelEntry { name: string; label: string; open: string }
+interface PluginInfo { id: string; name: string; panels?: PluginPanelEntry[] }
 const plugins = ref<PluginInfo[]>([]);
 const pluginErr = ref("");
 const viewingList = ref(true); // true=插件列表；false=面板视图（panel 事件到来自动切入）
@@ -51,6 +52,16 @@ async function launchPlugin(p: PluginInfo) {
     await panelAction(`${p.id}.list`, {}, undefined, `panel:${p.id}`);
   } catch (err) {
     pluginErr.value = "启动失败：" + String(err);
+  }
+}
+
+/** 点面板子入口（素材库/热点雷达等）→ 调 manifest [[panel]] open 声明的 api 方法；panel 事件回来切视图。 */
+async function openPluginPanel(p: PluginInfo, panel: PluginPanelEntry) {
+  pluginErr.value = "";
+  try {
+    await panelAction(`${p.id}.${panel.open}`, {}, undefined, `panel:${p.id}`);
+  } catch (err) {
+    pluginErr.value = "打开失败：" + String(err);
   }
 }
 
@@ -364,6 +375,10 @@ onUnmounted(() => {
           <span class="pcard-ic">{{ p.name.slice(0, 1) }}</span>
           <span class="pcard-name">{{ p.name }}</span>
           <span class="pcard-id">{{ p.id }}</span>
+          <!-- 面板级入口（manifest [[panel]] open 声明，如素材库/热点雷达）；stop 防触发卡片主入口 -->
+          <span v-if="p.panels?.length" class="pcard-subs">
+            <span v-for="panel in p.panels" :key="panel.name" class="pcard-sub" @click.stop="openPluginPanel(p, panel)">{{ panel.label }}</span>
+          </span>
         </button>
       </div>
       <div v-else-if="!pluginErr" class="pl-empty">
@@ -580,6 +595,20 @@ onUnmounted(() => {
   font-family: var(--yb-mono);
   font-size: var(--yb-fs-xs);
   color: var(--yb-text-faint);
+}
+.pcard-subs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--yb-space-2);
+  margin-top: var(--yb-space-1);
+}
+.pcard-sub {
+  font-size: var(--yb-fs-xs);
+  color: var(--yb-accent);
+  cursor: pointer;
+}
+.pcard-sub:hover {
+  text-decoration: underline;
 }
 .pl-empty {
   height: 100%;

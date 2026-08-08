@@ -240,9 +240,11 @@ type = "schema"
 name = "materials"
 label = "素材库"
 src = "panel/materials.schema.json"
+open = "mat_list"   # 面板级入口：插件页子入口直调此 api 方法打开
 
 [[panel]]
 type = "schema"
 name = "hot"
 label = "热点雷达"
 src = "panel/hot.schema.json"
+open = "hot_topics"   # 面板级入口：插件页子入口直调此 api 方法打开

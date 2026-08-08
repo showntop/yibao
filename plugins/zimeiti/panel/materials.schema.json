@@ -1,6 +1,7 @@
 {
   "version": 1,
   "type": "list",
+  "back": {"label": "返回看板", "method": "zimeiti.list"},
   "bind": {"items": "$data.rows"},
   "item": {
     "title": "$item.title",
