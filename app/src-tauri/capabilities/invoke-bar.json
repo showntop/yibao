@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "invoke-bar",
+  "description": "唤起条窗最小权限：广播 invoke-action（emit）+ 失焦自隐（listen/hide/set_focus）",
+  "windows": [
+    "invoke-bar"
+  ],
+  "permissions": [
+    "core:event:default",
+    "core:window:allow-hide",
+    "core:window:allow-set-focus"
+  ]
+}
