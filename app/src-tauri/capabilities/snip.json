@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "snip",
+  "description": "截图窗最小权限：监听 snip-start 复位状态（listen/unlisten；不 emit，隐藏由 Rust 处理）",
+  "windows": [
+    "snip"
+  ],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
+}
