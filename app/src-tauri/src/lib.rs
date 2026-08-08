@@ -1075,19 +1075,17 @@ fn parse_manifest(text: &str) -> Option<(String, String, Vec<Value>)> {
     let mut pname = String::new();
     let mut plabel: Option<String> = None;
     let mut popen: Option<String> = None;
+    // 只负责「收」：take 走字段（留下空态），不做重置赋值——重置由 section 分支显式做，EOF 后无人再读
     macro_rules! flush_panel {
         () => {
             if in_panel && !pname.is_empty() {
                 if let Some(open) = popen.take() {
+                    let label = plabel.take().filter(|s| !s.is_empty()).unwrap_or_else(|| pname.clone());
                     panels.push(serde_json::json!({
-                        "name": pname, "label": plabel.take().unwrap_or_else(|| pname.clone()), "open": open,
+                        "name": std::mem::take(&mut pname), "label": label, "open": open,
                     }));
                 }
             }
-            in_panel = false;
-            pname = String::new();
-            plabel = None;
-            popen = None;
         };
     }
     for line in text.lines() {
@@ -1096,6 +1094,9 @@ fn parse_manifest(text: &str) -> Option<(String, String, Vec<Value>)> {
             flush_panel!();
             seen_section = true;
             in_panel = l == "[[panel]]";
+            pname.clear();
+            plabel = None;
+            popen = None;
             continue;
         }
         if !seen_section {
