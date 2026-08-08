@@ -724,10 +724,11 @@
   $("mats").addEventListener("click", function () {
     $("mat-overlay").hidden = false;
     $("mat-body").innerHTML = "<div class=\"mempty\">加载中…</div>";
-    var allP = window.yibao.invoke("zimeiti.mat_list", {});
+    // mat_peek = quiet 版 mat_list：只取数不发 panel 事件（否则关联查询的空结果会把素材库面板冲掉）
+    var allP = window.yibao.invoke("zimeiti.mat_peek", {});
     // 有选题时先拉关联素材（置顶分组）；关联查询失败/为空静默回退全量
     var linkedP = topicId
-      ? window.yibao.invoke("zimeiti.mat_list", { where: { topic_id: topicId } }).catch(function () { return null; })
+      ? window.yibao.invoke("zimeiti.mat_peek", { where: { topic_id: topicId } }).catch(function () { return null; })
       : Promise.resolve(null);
     Promise.all([linkedP, allP]).then(function (rs) {
       var linked = (rs[0] && rs[0].rows) || [];

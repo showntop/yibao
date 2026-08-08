@@ -33,6 +33,14 @@ name = "mat_list"
 handler = "zimeiti.mat_list"
 direct = true
 
+# 编辑器素材抽屉取数：只回数据、不发 panel 事件（quiet）——
+# 抽屉并发查全量+关联两条，非 quiet 时 0 行的关联查询会发空面板事件把 12 行的全量面板冲掉（last-write-wins）
+[[method]]
+name = "mat_peek"
+handler = "zimeiti.mat_list"
+direct = true
+quiet = true
+
 [[method]]
 name = "mat_delete"
 handler = "zimeiti.mat_delete"

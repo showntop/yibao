@@ -138,7 +138,7 @@ def test_route_empty_text_400_and_bad_mode_400_and_confirm_403():
 
 
 def test_zimeiti_api_toml_has_quiet_bridge_entries():
-    """真 api.toml：invoke_mat_save / invoke_add_topic 都是 direct+quiet（桥回执不发 panel 事件）。"""
+    """真 api.toml：invoke_mat_save / invoke_add_topic / mat_peek 都是 direct+quiet（桥回执/抽屉取数不发 panel 事件）。"""
     from pathlib import Path
 
     from yibao_brain import plugins
@@ -151,23 +151,25 @@ def test_zimeiti_api_toml_has_quiet_bridge_entries():
             raise NotImplementedError
 
     reg = SkillRegistry()
-    for sid in ("zimeiti.mat_save", "zimeiti.add"):
+    for sid in ("zimeiti.mat_save", "zimeiti.add", "zimeiti.mat_list"):
         d = _Dummy()
         d.id = sid
         reg.register(d, plugin="zimeiti")
     # fixture 已种入桥条目（Task 3 路由测试用）；先摘掉，确保断言命中真 api.toml 加载结果
     plugins._API.pop("zimeiti.invoke_mat_save", None)
     plugins._API.pop("zimeiti.invoke_add_topic", None)
+    plugins._API.pop("zimeiti.mat_peek", None)
     api_path = Path(__file__).resolve().parents[2] / "plugins" / "zimeiti" / "api.toml"
     plugins._load_api("zimeiti", api_path, reg)
     try:
-        for name in ("zimeiti.invoke_mat_save", "zimeiti.invoke_add_topic"):
+        for name in ("zimeiti.invoke_mat_save", "zimeiti.invoke_add_topic", "zimeiti.mat_peek"):
             m = plugins.get_api(name)
             assert m is not None, name
             assert m.direct is True and m.quiet is True, name
     finally:
         plugins._API.pop("zimeiti.invoke_mat_save", None)
         plugins._API.pop("zimeiti.invoke_add_topic", None)
+        plugins._API.pop("zimeiti.mat_peek", None)
 
 
 def test_route_material_defers_and_schedules_enrich():
