@@ -4,8 +4,9 @@ import { getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
 
 /* 译宝 · 天青鹅蛋角色：立体光影 + 小手 + 天线（兼状态灯）。
  *
- * 九态：idle/listen/think/work/say + 短暂 valence（success/error）；
- * 环境态：notify（有事找你：招手+「!」徽标）/ drowsy（发呆：垂眼+Zz）。
+ * 十态：idle/listen/think/work/say + 短暂 valence（success/error）；
+ * 环境态：notify（有事找你：招手+「!」徽标）/ drowsy（发呆：垂眼+Zz）
+ * / stretch（久坐做操：弯眼笑+双臂上举，一次性 squash-stretch，由 flashState 触发）。
  * size：常态球 64 / 聊天头部 44 / 列表与侧边栏 24–36。
  * 保留 click/longpress/drag 手势状态机。
  *
@@ -23,12 +24,12 @@ import { getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
  * 修掉天线被压扁的地方。
  *
  * 脸部：matrix 与 0.78 复合后净变换为 y → y + 0.018，即恒等。所以移除
- * matrix 后九套表情坐标**一个都不用改**。
+ * matrix 后十套表情坐标**一个都不用改**。
  * ──────────────────────────────────────────────────────────── */
 
 const props = withDefaults(
   defineProps<{
-    state: "idle" | "listen" | "think" | "work" | "say" | "success" | "error" | "notify" | "drowsy";
+    state: "idle" | "listen" | "think" | "work" | "say" | "success" | "error" | "notify" | "drowsy" | "stretch";
     size?: number;
     /** 小尺寸模式：去光晕、放大状态灯并加白描边。默认由 size < 40 自动判定 */
     compact?: boolean;
@@ -64,6 +65,7 @@ const STATE_LABEL: Record<string, string> = {
   error: "出错了",
   notify: "有事找你",
   drowsy: "发呆中",
+  stretch: "伸展中",
 };
 const label = computed(() => `译宝 · ${STATE_LABEL[props.state] ?? props.state}`);
 
@@ -317,6 +319,14 @@ onUnmounted(() => { if (blinkTimer) clearTimeout(blinkTimer); });
           <path d="M65 60.5 Q69 57.5 73 60.5" fill="none" :stroke="INK" stroke-width="2.4" stroke-linecap="round" />
           <path d="M52 67 Q60 75 68 67" fill="none" :stroke="INK" stroke-width="2.6" stroke-linecap="round" />
         </g>
+        <!-- stretch（做操：弯眼笑 + 张嘴 + 双臂上举） -->
+        <g v-else-if="state === 'stretch'">
+          <path d="M47 60.5 Q51 57.5 55 60.5" fill="none" :stroke="INK" stroke-width="2.4" stroke-linecap="round" />
+          <path d="M65 60.5 Q69 57.5 73 60.5" fill="none" :stroke="INK" stroke-width="2.4" stroke-linecap="round" />
+          <ellipse cx="60" cy="70.5" rx="3.4" ry="4" :fill="INK" />
+          <path class="arm-l" d="M40 54 Q33 44 30 35" fill="none" :stroke="INK" stroke-width="2.4" stroke-linecap="round" />
+          <path class="arm-r" d="M80 54 Q87 44 90 35" fill="none" :stroke="INK" stroke-width="2.4" stroke-linecap="round" />
+        </g>
         <!-- notify（有事找你：期待脸——睁大眼+眉毛上扬+笑开一点） -->
         <g v-else-if="state === 'notify'">
           <path d="M45 53 l6.4 -2.6" fill="none" :stroke="INK" stroke-width="1.8" stroke-linecap="round" />
@@ -448,6 +458,7 @@ onUnmounted(() => { if (blinkTimer) clearTimeout(blinkTimer); });
 .av.error { --dot: var(--yb-state-error); }
 .av.notify { --dot: var(--yb-state-notify); }
 .av.drowsy { --dot: var(--yb-state-drowsy); }
+.av.stretch { --dot: var(--yb-state-stretch); }
 
 /* ---- 动画基础 ---- */
 .body-grp {
@@ -495,6 +506,17 @@ onUnmounted(() => { if (blinkTimer) clearTimeout(blinkTimer); });
 .av.say .dot-grp { animation: glow 1s infinite alternate ease-in-out; }
 .av.success .spark { animation: pop 1.2s ease-out infinite; }
 .av.error .dot-grp { animation: shake 0.5s infinite ease-in-out; }
+
+/* stretch：一次性做操（下蹲蓄力 → 向上伸展 → 回弹），由 flashState 触发，不循环 */
+.av.stretch .body-grp { animation: yb-stretch 1.15s var(--yb-ease-spring) 1; }
+.av.stretch .dot-grp { animation: pulse 0.9s ease-in-out 1; }
+@keyframes yb-stretch {
+  0%   { transform: scale(1, 1); }
+  30%  { transform: scale(1.06, 0.86); }
+  62%  { transform: scale(0.94, 1.12); }
+  82%  { transform: scale(1.02, 0.97); }
+  100% { transform: scale(1, 1); }
+}
 
 /* notify：灯快脉冲 + 左手招手 + 徽标入场 pop 一次 */
 .av.notify .dot-grp { animation: pulse 1s infinite ease-in-out; }
@@ -583,5 +605,6 @@ onUnmounted(() => { if (blinkTimer) clearTimeout(blinkTimer); });
   .body-grp, .dot-grp, .ring, .spark, .wave, .hand-l, .attn-badge, .zzz text, .aura, .eyes-look {
     animation: none !important;
   }
+  .av.stretch .body-grp { animation: none; }  /* 一次性动画同样让位：只留静态脸 */
 }
 </style>

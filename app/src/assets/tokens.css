@@ -190,7 +190,7 @@
   --yb-body-sweat: #6a9cc4; /* error 汗滴 */
   --yb-shadow-ink: var(--yb-c-slate-600); /* 落地投影（原为暖棕 #3f372e） */
 
-  /* ---- 天线状态灯（九态）----
+  /* ---- 天线状态灯（十态）----
    * 这是形象的状态信号通道，不可挪作装饰用途。 */
   --yb-state-idle: #aab8c8;
   --yb-state-listen: #2fb0b5;
@@ -201,6 +201,7 @@
   --yb-state-error: var(--yb-c-red-500);
   --yb-state-notify: #ee5f8f;
   --yb-state-drowsy: #9aa8bb;
+  --yb-state-stretch: var(--yb-c-sky-500); /* 久坐做操：活力青 */
 }
 
 /* ============ [D] 大窗：macOS 原生窗口语言 ============

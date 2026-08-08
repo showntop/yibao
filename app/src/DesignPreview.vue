@@ -7,10 +7,10 @@ import InputBar from "./components/InputBar.vue";
 import SchemaPanel from "./components/SchemaPanel.vue";
 import YbIcon from "./components/YbIcon.vue";
 
-const states = ["idle", "listen", "think", "work", "say", "success", "error", "notify", "drowsy"] as const;
+const states = ["idle", "listen", "think", "work", "say", "success", "error", "notify", "drowsy", "stretch"] as const;
 const stateLabel: Record<string, string> = {
   idle: "待机", listen: "聆听", think: "思考", work: "干活", say: "说话",
-  success: "成功", error: "出错", notify: "有事找你", drowsy: "发呆",
+  success: "成功", error: "出错", notify: "有事找你", drowsy: "发呆", stretch: "伸展",
 };
 const avatarSizes = [64, 36, 24];
 
@@ -71,6 +71,7 @@ const paletteGroups: Array<{ title: string; items: Array<{ name: string; token: 
       { name: "error", token: "--yb-state-error" },
       { name: "notify", token: "--yb-state-notify" },
       { name: "drowsy", token: "--yb-state-drowsy" },
+      { name: "stretch", token: "--yb-state-stretch" },
     ],
   },
 ];
@@ -145,9 +146,9 @@ const boardData = {
   <div class="design-root">
     <h1 class="page-title">译宝设计走查 · 天青</h1>
 
-    <!-- 1. 形象九态 × 三尺寸：验证「小尺寸可辨」与光晕收紧 -->
+    <!-- 1. 形象十态 × 三尺寸：验证「小尺寸可辨」与光晕收紧 -->
     <section class="block">
-      <h2>形象 · 九态 × 三尺寸（64 / 36 / 24）</h2>
+      <h2>形象 · 十态 × 三尺寸（64 / 36 / 24）</h2>
       <div class="avatar-grid">
         <div v-for="s in states" :key="s" class="avatar-col">
           <div v-for="sz in avatarSizes" :key="sz" class="avatar-cell">
