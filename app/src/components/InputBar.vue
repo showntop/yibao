@@ -108,14 +108,24 @@ defineExpose({ focus: () => inputRef.value?.focus() });
   border-color: var(--yb-accent);
   box-shadow:
     0 1px 2px rgba(0, 0, 0, 0.04),
-    0 6px 18px rgba(var(--yb-c-slate-rgb), 0.10),
-    0 0 0 3px var(--yb-accent-soft);
+    0 6px 18px rgba(var(--yb-c-slate-rgb), 0.10);
+  /* focus ring：原用 box-shadow 0 0 0 3px spread，但 spread 在某些 WebView
+   * 上从 padding-box 渲染，画在 border 内侧与 1px border 叠出"内圈"。
+   * outline 明确从 border-box 外侧绘制且跟随 border-radius，无 inset 风险。 */
+  outline: 2px solid var(--yb-accent-soft);
+  outline-offset: 1px;
 }
 input {
   flex: 1;
   min-width: 0;
   border: none;
   background: transparent;
+  /* 去 native control 描边：macOS WKWebView 即便 border:none 仍会留 -webkit-appearance
+   * 默认的「凹槽」内边框，与外层 .bar 描边叠出双圈。appearance:none 一并清掉。
+   * 显式 box-shadow:none 再防一层 UA inset 残留。 */
+  -webkit-appearance: none;
+  appearance: none;
+  box-shadow: none;
   font-size: 14px;                            /* 13.5 → 14 更清晰 */
   outline: none;
   color: var(--yb-text);
