@@ -90,9 +90,8 @@ const html = computed(() => (props.role === "ai" && !props.typing ? renderMarkdo
   border: 1px solid var(--yb-surface-border);
   color: var(--yb-text);
   align-self: flex-start;
-  box-shadow:
-    0 1px 2px rgba(var(--yb-c-slate-rgb), 0.05),
-    0 2px 8px rgba(var(--yb-c-slate-rgb), 0.08);
+  /* 不加 box-shadow：0 2px 8px 模糊在白底上与 ::selection accent 蓝叠加会形成
+   * 视觉上的"深蓝条"（双击全选时尤甚）。靠 1px 边 + 实色底出"卡"感。 */
   /* 尾巴角：靠左下的角收窄，拟小尾巴 */
   border-radius: var(--yb-radius-md) var(--yb-radius-md) var(--yb-radius-md) var(--yb-radius-xs);
 }
@@ -102,7 +101,9 @@ const html = computed(() => (props.role === "ai" && !props.typing ? renderMarkdo
   background: var(--yb-accent);
   color: var(--yb-text-on-accent);
   align-self: flex-end;
-  box-shadow: 0 2px 8px rgba(77, 144, 196, 0.3);
+  /* 不加 box-shadow：0.3 sky 蓝 8px blur 在白底上向四周扩散，气泡上方会
+   * 出现淡蓝晕，看起来像"上半部分叠了一层"。靠实色 + 1px 边出"卡"感。 */
+  border: 1px solid var(--yb-accent);
   /* 尾巴角：靠右下的角收窄 */
   border-radius: var(--yb-radius-md) var(--yb-radius-md) var(--yb-radius-xs) var(--yb-radius-md);
 }
