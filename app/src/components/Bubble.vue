@@ -97,7 +97,9 @@ const html = computed(() => (props.role === "ai" && !props.typing ? renderMarkdo
   border-radius: var(--yb-radius-md) var(--yb-radius-md) var(--yb-radius-md) var(--yb-radius-xs);
 }
 .user {
-  background: linear-gradient(135deg, var(--yb-accent), var(--yb-accent-deep));
+  /* 纯色：与 ai 气泡统一无渐变（此前 135deg accent→deep 对角渐变会让
+   * "用户发的第一条消息"看起来有渐变，浅色底上突兀） */
+  background: var(--yb-accent);
   color: var(--yb-text-on-accent);
   align-self: flex-end;
   box-shadow: 0 2px 8px rgba(77, 144, 196, 0.3);
