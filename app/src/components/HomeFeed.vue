@@ -916,7 +916,7 @@ onUnmounted(() => {
 /* ---- 页头 ---- */
 .page-head {
   flex-shrink: 0;
-  padding: var(--yb-titlebar-h) var(--yb-space-5) var(--yb-space-3);
+  padding: 0 var(--yb-space-5) var(--yb-space-3);
   user-select: none;
 }
 .head-line {

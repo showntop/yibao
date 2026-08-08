@@ -471,7 +471,6 @@ onUnmounted(() => {
   <div class="settings">
     <!-- 分类目录：与 Home 侧栏区分（这是二级导航，用文字列表不用图标底） -->
     <nav class="cat-nav">
-      <div class="cat-safe" data-tauri-drag-region></div>
       <h1 class="cat-title" data-tauri-drag-region>设置</h1>
       <button
         v-for="c in CATS"
@@ -809,11 +808,6 @@ onUnmounted(() => {
   border-right: 1px solid var(--yb-border-base);
   background: var(--yb-sidebar-bg);
 }
-/* 大窗侧栏只覆盖左边 200px，这里仍在标题栏下方，需自己留安全区 */
-.cat-safe {
-  height: var(--yb-titlebar-h);
-  flex-shrink: 0;
-}
 .cat-title {
   margin: 0 0 var(--yb-space-3);
   padding: 0 var(--yb-space-2);
@@ -869,7 +863,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: var(--yb-space-4);
-  padding: var(--yb-titlebar-h) var(--yb-space-5) var(--yb-space-5);
+  padding: 0 var(--yb-space-5) var(--yb-space-5);
   scrollbar-width: thin;
   animation: fade-in 0.2s var(--yb-ease-out) both;
 }

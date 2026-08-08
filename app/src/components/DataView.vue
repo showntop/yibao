@@ -374,7 +374,7 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: var(--yb-space-4);
-  padding: var(--yb-titlebar-h) var(--yb-space-5) var(--yb-space-5);
+  padding: 0 var(--yb-space-5) var(--yb-space-5);
   scrollbar-width: thin;
 }
 .d-scroll::-webkit-scrollbar {

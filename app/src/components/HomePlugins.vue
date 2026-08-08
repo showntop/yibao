@@ -487,11 +487,11 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: var(--yb-space-2);
-  padding: var(--yb-titlebar-h) var(--yb-space-5) var(--yb-space-4);
+  padding: 0 var(--yb-space-5) var(--yb-space-4);
   user-select: none;
 }
 .page-head.in-panel {
-  padding: var(--yb-titlebar-h) var(--yb-space-4) var(--yb-space-2);
+  padding: 0 var(--yb-space-4) var(--yb-space-2);
   border-bottom: 1px solid var(--yb-border-base);
 }
 .head-text {

@@ -387,7 +387,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: var(--yb-space-3);
-  padding: var(--yb-titlebar-h) var(--yb-space-5) var(--yb-space-3);
+  padding: 0 var(--yb-space-5) var(--yb-space-3);
   user-select: none;
 }
 .pg-title {

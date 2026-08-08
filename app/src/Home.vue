@@ -1,12 +1,13 @@
 <script setup lang="ts">
-// 大窗根组件（完整 APP 主界面）：macOS 原生窗口语言——左侧 sidebar + 右侧内容区。
-// 壳由系统负责（TitleBarStyle::Overlay，见 lib.rs）：原生红绿灯、系统阴影、缩放边框，
-// 前端不再自绘圆角玻璃卡。侧栏顶部留 --yb-titlebar-h 安全区给浮在内容上的红绿灯。
-// 四页常驻挂载（v-show 切显隐）：事件订阅不断、气泡/面板状态切页不丢。
+// 大窗根组件（完整 APP 主界面）：AI 原生 OS 语言——极简顶栏 + 内容区 + ⌘K 全局命令面板。
+// 壳由系统负责（TitleBarStyle::Overlay，见 lib.rs）：原生红绿灯、系统阴影、缩放边框。
+// 顶栏留 --yb-titlebar-h 安全区给浮在内容上的红绿灯；导航从「侧栏强 tab」改为「顶栏 tabs +
+// ⌘K 命令面板」（Raycast/Linear 风格：找页面用搜/说，不是点）。
+// 各页常驻挂载（v-show 切显隐）：事件订阅不断、气泡/面板状态切页不丢。
 import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import Avatar from "./components/Avatar.vue";
 import YbIcon from "./components/YbIcon.vue";
+import CommandPalette from "./components/CommandPalette.vue";
 import HomeFeed from "./components/HomeFeed.vue";
 import HomeChat from "./components/HomeChat.vue";
 import HomePlugins from "./components/HomePlugins.vue";
@@ -18,7 +19,7 @@ type Tab = "home" | "chat" | "plugins" | "data" | "settings";
 type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
 
 const tab = ref<Tab>("home");
-// 两页各自的会话状态：侧边栏团子跟随「当前页」的状态（主屏/设置沿用对话页）
+// 两页各自的会话状态：顶栏状态点跟随「当前页」的状态（主屏/设置沿用对话页）
 const chatState = ref<AvatarState>("idle");
 const panelState = ref<AvatarState>("idle");
 const railState = computed<AvatarState>(() =>
@@ -32,11 +33,11 @@ const stateText = computed(
 );
 // 主屏 → 对话页的草稿传递（Feed 点击带上下文追问）
 const chatDraft = ref("");
-// 待批准数：sidebar 徽标（收件箱有待处理的事，一眼可见）
+// 待批准数：顶栏徽标（收件箱有待处理的事，一眼可见）
 const approvalCount = ref(0);
-// 未读动态数：sidebar 徽标（HomeFeed 经 emit 同步，stats.unread）
+// 未读动态数：顶栏徽标（HomeFeed 经 emit 同步，stats.unread）
 const feedUnread = ref(0);
-// 感知观察中叠加点（Avatar observing prop）：总开关 + 任一采集源开启即视为观察中
+// 感知观察中叠加点（顶栏状态点）
 const observing = ref(false);
 function syncObserving(s: SettingsValues | null) {
   observing.value = !!(
@@ -44,16 +45,62 @@ function syncObserving(s: SettingsValues | null) {
     (s?.["perception.app"] || s?.["perception.activity"] || s?.["perception.screen"])
   );
 }
+
+// ---- ⌘K 全局命令面板 ----
+const paletteOpen = ref(false);
+function togglePalette() {
+  paletteOpen.value = !paletteOpen.value;
+}
+function onPaletteNavigate(t: Tab) {
+  tab.value = t;
+  paletteOpen.value = false;
+}
+
+// 全局快捷键：⌘K 命令面板；⌘1-4 / ⌘, 直接切页（macOS 标准）
+const NAV: { id: Tab; label: string; icon: "inbox" | "chat" | "plug" | "doc"; shortcut: string }[] = [
+  { id: "home", label: "主屏", icon: "inbox", shortcut: "1" },
+  { id: "chat", label: "对话", icon: "chat", shortcut: "2" },
+  { id: "plugins", label: "插件", icon: "plug", shortcut: "3" },
+  { id: "data", label: "数据", icon: "doc", shortcut: "4" },
+];
+const TAB_SHORTCUTS: Record<string, Tab> = {
+  "1": "home", "2": "chat", "3": "plugins", "4": "data",
+};
+function onGlobalKeydown(e: KeyboardEvent) {
+  if (!e.metaKey && !e.ctrlKey) return;
+  const k = e.key.toLowerCase();
+  if (k === "k") {
+    e.preventDefault();
+    togglePalette();
+    return;
+  }
+  if (k === ",") {
+    e.preventDefault();
+    tab.value = "settings";
+    return;
+  }
+  const t = TAB_SHORTCUTS[k];
+  if (t) {
+    e.preventDefault();
+    tab.value = t;
+  }
+}
+
+// 徽标：主屏显未读动态数，其次待批准数（都为 0 则不显）
+const homeBadge = computed(() => (feedUnread.value > 0 ? feedUnread.value : approvalCount.value));
+
 let unApprovals: (() => void) | null = null;
 let unSettings: (() => void) | null = null;
 onMounted(async () => {
   unApprovals = onPendingConfirms((l) => (approvalCount.value = l.length));
   void getSettingsOnce().then(syncObserving);
   unSettings = await onSettings(syncObserving);
+  window.addEventListener("keydown", onGlobalKeydown);
 });
 onUnmounted(() => {
   unApprovals?.();
   unSettings?.();
+  window.removeEventListener("keydown", onGlobalKeydown);
 });
 
 function onFeedChat(draft?: string) {
@@ -67,16 +114,6 @@ function onFeedChat(draft?: string) {
   void nextTick(() => (chatDraft.value = draft));
 }
 
-// sidebar 分区（macOS 惯例：用小标题把导航项按语义分组，而非一列平铺）
-const NAV: { id: Tab; label: string; icon: "inbox" | "chat" | "plug" | "doc" | "gear" }[] = [
-  { id: "home", label: "主屏", icon: "inbox" },
-  { id: "chat", label: "对话", icon: "chat" },
-  { id: "plugins", label: "插件", icon: "plug" },
-  { id: "data", label: "数据", icon: "doc" },
-];
-// 徽标：主屏显未读动态数，其次待批准数（都为 0 则不显）
-const homeBadge = computed(() => (feedUnread.value > 0 ? feedUnread.value : approvalCount.value));
-
 function close() {
   // 收起大窗 = 隐藏 + 回小窗模式（Rust 侧还原宠物窗/面板浮窗）
   void invoke("close_home_window").catch(() => {});
@@ -85,46 +122,47 @@ function close() {
 
 <template>
   <div class="home-shell">
-    <!-- 侧栏：macOS sidebar——顶部让位红绿灯，身份区 + 分区导航 + 底部设置 -->
-    <aside class="sidebar">
+    <!-- 顶栏：红绿灯安全区 + 品牌 + 居中 tabs + 右侧命令/设置/收起 -->
+    <header class="topbar">
       <div class="titlebar-safe" data-tauri-drag-region></div>
-
-      <div class="identity" data-tauri-drag-region>
-        <Avatar :state="railState" :size="30" :observing="observing" />
-        <div class="id-meta" data-tauri-drag-region>
-          <span class="id-name" data-tauri-drag-region>译宝</span>
-          <span class="id-state" :class="railState" data-tauri-drag-region>
-            <i class="id-dot" />{{ stateText }}
+      <div class="topbar-row">
+        <div class="topbar-brand" data-tauri-drag-region>
+          <YbIcon class="tb-brand-ic" name="dumpling" :size="18" />
+          <span class="tb-name" data-tauri-drag-region>译宝</span>
+          <span class="tb-state" :class="railState" data-tauri-drag-region>
+            <i class="tb-dot" />{{ stateText }}
           </span>
         </div>
-      </div>
 
-      <nav class="nav">
-        <div class="nav-head">工作区</div>
-        <button
-          v-for="n in NAV"
-          :key="n.id"
-          class="nav-item"
-          :class="{ on: tab === n.id }"
-          @click="tab = n.id"
-        >
-          <YbIcon class="nav-ic" :name="n.icon" :size="15" />
-          <span class="nav-label">{{ n.label }}</span>
-          <span v-if="n.id === 'home' && homeBadge > 0" class="nav-badge yb-num">{{ homeBadge }}</span>
-        </button>
-      </nav>
+        <nav class="tb-nav" data-tauri-drag-region>
+          <button
+            v-for="n in NAV"
+            :key="n.id"
+            class="tb-nav-item"
+            :class="{ on: tab === n.id }"
+            :title="`⌘${n.shortcut}`"
+            @click="tab = n.id"
+          >
+            <YbIcon class="tb-nav-ic" :name="n.icon" :size="15" />
+            <span class="tb-nav-label">{{ n.label }}</span>
+            <span v-if="n.id === 'home' && homeBadge > 0" class="tb-badge yb-num">{{ homeBadge }}</span>
+          </button>
+        </nav>
 
-      <div class="sidebar-foot">
-        <button class="nav-item" :class="{ on: tab === 'settings' }" @click="tab = 'settings'">
-          <YbIcon class="nav-ic" name="gear" :size="15" />
-          <span class="nav-label">设置</span>
-        </button>
-        <button class="nav-item collapse" title="收起大窗（回到译宝小窗）" @click="close">
-          <YbIcon class="nav-ic" name="dumpling" :size="15" />
-          <span class="nav-label">收起为小窗</span>
-        </button>
+        <div class="tb-right">
+          <button class="tb-btn" title="命令面板 (⌘K)" @click="togglePalette">
+            <YbIcon name="search" :size="15" />
+            <kbd class="tb-kbd">⌘K</kbd>
+          </button>
+          <button class="tb-btn" :class="{ on: tab === 'settings' }" title="设置 (⌘,)" @click="tab = 'settings'">
+            <YbIcon name="gear" :size="15" />
+          </button>
+          <button class="tb-btn" title="收起为小窗" @click="close">
+            <YbIcon name="dumpling" :size="15" />
+          </button>
+        </div>
       </div>
-    </aside>
+    </header>
 
     <!-- 内容区：各页常驻挂载，切页只切显隐。
          reminder / 新面板打开 → 自动切到对应页；主屏提交/点动态 → 切对话页 -->
@@ -135,14 +173,18 @@ function close() {
       <DataView v-show="tab === 'data'" />
       <SettingsView v-show="tab === 'settings'" />
     </main>
+
+    <!-- ⌘K 命令面板：覆盖在主屏上（AI 原生：找页面用搜/说） -->
+    <CommandPalette :open="paletteOpen" @close="paletteOpen = false" @navigate="onPaletteNavigate" @collapse="close" />
   </div>
 </template>
 
 <style scoped>
-/* 壳：原生窗口——不自绘圆角/阴影/玻璃，系统负责。只管内部两栏布局。 */
+/* 壳：原生窗口——不自绘圆角/阴影/玻璃，系统负责。只管 顶栏 + 内容区 布局。 */
 .home-shell {
   height: 100vh;
   display: flex;
+  flex-direction: column;
   overflow: hidden;
   font-family: var(--yb-font);
   font-size: var(--yb-fs-lg);
@@ -151,126 +193,105 @@ function close() {
   background: var(--yb-content-bg);
 }
 
-/* ---- 侧栏 ---- */
-.sidebar {
-  width: var(--yb-sidebar-w);
+/* ---- 顶栏 ---- */
+.topbar {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  padding: 0 var(--yb-space-2) var(--yb-space-2);
-  background: var(--yb-sidebar-bg);
-  border-right: 1px solid var(--yb-border-base);
+  border-bottom: 1px solid var(--yb-border-base);
+  background: var(--yb-content-bg);
 }
 /* 红绿灯安全区：Overlay 标题栏下按钮浮在内容上，这块只作留白 + 拖窗把手 */
 .titlebar-safe {
   height: var(--yb-titlebar-h);
   flex-shrink: 0;
 }
-/* 身份区：白底小卡衬托团子（浅灰侧栏上直接放团子会发飘） */
-.identity {
+.topbar-row {
   display: flex;
   align-items: center;
-  gap: var(--yb-space-2);
-  margin-bottom: var(--yb-space-4);
-  padding: var(--yb-space-2);
-  border-radius: var(--yb-radius-xs);
-  background: var(--yb-card-bg);
-  border: 1px solid var(--yb-card-border);
+  gap: var(--yb-space-3);
+  height: 44px;
+  padding: 0 var(--yb-space-4);
   user-select: none;
 }
-.id-meta {
-  min-width: 0;
+/* 品牌：团子 + 译宝 + 状态点（观感从"app 导航"变成"OS 顶栏"） */
+.topbar-brand {
   display: flex;
-  flex-direction: column;
-  gap: 1px;
-  cursor: default;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
-.id-name {
+.tb-brand-ic {
+  color: var(--yb-accent);
+}
+.tb-name {
   font-size: var(--yb-fs-lg);
   font-weight: var(--yb-fw-bold);
-  line-height: var(--yb-lh-tight);
+  letter-spacing: -0.01em;
 }
-/* 状态：sidebar 里用裸文字 + 色点（比胶囊更克制，符合 macOS 侧栏调性） */
-.id-state {
+.tb-state {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   font-size: var(--yb-fs-xs);
   color: var(--yb-text-dim);
-  line-height: var(--yb-lh-tight);
+  line-height: 1;
 }
-.id-dot {
-  width: 5px;
-  height: 5px;
+.tb-dot {
+  width: 6px;
+  height: 6px;
   flex-shrink: 0;
   border-radius: 50%;
   background: var(--dot, var(--yb-state-idle));
 }
-.id-state.idle { --dot: var(--yb-state-idle); }
-.id-state.listen { --dot: var(--yb-state-listen); }
-.id-state.think { --dot: var(--yb-state-think); }
-.id-state.work { --dot: var(--yb-state-work); }
-.id-state.say { --dot: var(--yb-state-say); }
-.id-state.success { --dot: var(--yb-state-success); }
-.id-state.error { --dot: var(--yb-state-error); }
+.tb-state.idle { --dot: var(--yb-state-idle); }
+.tb-state.listen { --dot: var(--yb-state-listen); }
+.tb-state.think { --dot: var(--yb-state-think); }
+.tb-state.work { --dot: var(--yb-state-work); }
+.tb-state.say { --dot: var(--yb-state-say); }
+.tb-state.success { --dot: var(--yb-state-success); }
+.tb-state.error { --dot: var(--yb-state-error); }
 
-.nav {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-/* 分区小标题：macOS sidebar 惯例（小号、灰、字距略开） */
-.nav-head {
-  padding: 0 var(--yb-space-2) var(--yb-space-1);
-  font-size: var(--yb-fs-xs);
-  font-weight: var(--yb-fw-bold);
-  color: var(--yb-sidebar-head);
-  letter-spacing: 0.04em;
-  user-select: none;
-}
-.nav-item {
-  display: flex;
-  align-items: center;
-  gap: var(--yb-space-2);
-  width: 100%;
-  padding: 6px var(--yb-space-2);
-  border: none;
-  border-radius: var(--yb-radius-xs);
-  background: transparent;
-  color: var(--yb-text);
-  font-size: var(--yb-fs-lg);
-  font-family: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: background var(--yb-dur-fast) var(--yb-ease-out);
-}
-.nav-ic {
-  flex-shrink: 0;
-  color: var(--yb-text-dim);
-}
-.nav-label {
+/* 导航：居中 tabs（macOS 分段控件语言），hover/选中有底 */
+.tb-nav {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
 }
-.nav-item:hover {
-  background: var(--yb-sidebar-sel);
+.tb-nav-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: none;
+  border-radius: var(--yb-radius-sm);
+  background: transparent;
+  color: var(--yb-text-dim);
+  font-size: var(--yb-fs-md);
+  font-family: inherit;
+  cursor: pointer;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
-/* 选中态：macOS 用 accent 实底 + 白字白图标（不是描边） */
-.nav-item.on {
-  background: var(--yb-sidebar-sel-active);
-  color: var(--yb-text-on-accent);
+.tb-nav-item:hover {
+  background: var(--yb-row-hover);
+  color: var(--yb-text);
 }
-.nav-item.on .nav-ic {
-  color: var(--yb-text-on-accent);
+.tb-nav-item.on {
+  background: var(--yb-segment-thumb);
+  color: var(--yb-text);
+  font-weight: var(--yb-fw-medium);
+  box-shadow: var(--yb-shadow-1);
 }
-/* 徽标：选中态下反白 */
-.nav-badge {
+.tb-nav-item.on .tb-nav-ic {
+  color: var(--yb-accent);
+}
+.tb-badge {
   flex-shrink: 0;
-  min-width: 18px;
-  height: 17px;
+  min-width: 16px;
+  height: 15px;
   padding: 0 5px;
   display: grid;
   place-items: center;
@@ -281,28 +302,54 @@ function close() {
   font-weight: var(--yb-fw-bold);
   line-height: 1;
 }
-.nav-item.on .nav-badge {
-  background: rgba(255, 255, 255, 0.28);
+.tb-nav-item.on .tb-badge {
+  background: var(--yb-accent);
 }
-.sidebar-foot {
-  margin-top: auto;
+
+/* 右侧：⌘K 命令 / 设置 / 收起 */
+.tb-right {
   display: flex;
-  flex-direction: column;
-  gap: 1px;
+  align-items: center;
+  gap: 2px;
 }
-.collapse .nav-label,
-.collapse .nav-ic {
+.tb-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 9px;
+  border: none;
+  border-radius: var(--yb-radius-sm);
+  background: transparent;
   color: var(--yb-text-dim);
+  font-size: var(--yb-fs-md);
+  font-family: inherit;
+  cursor: pointer;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
-.collapse:hover .nav-label,
-.collapse:hover .nav-ic {
+.tb-btn:hover {
+  background: var(--yb-row-hover);
   color: var(--yb-text);
+}
+.tb-btn.on {
+  background: var(--yb-segment-thumb);
+  color: var(--yb-accent);
+}
+.tb-kbd {
+  padding: 1px 5px;
+  border: 1px solid var(--yb-border-strong);
+  border-radius: var(--yb-radius-xs);
+  background: var(--yb-surface-2);
+  color: var(--yb-text-faint);
+  font-size: 10px;
+  font-family: var(--yb-font);
+  line-height: 1.3;
 }
 
 /* ---- 内容区 ---- */
 .content {
   flex: 1;
-  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   background: var(--yb-content-bg);
