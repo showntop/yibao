@@ -1061,11 +1061,13 @@ fn plugins_dir() -> std::path::PathBuf {
 /// 行级解析、不引 toml 依赖：顶层键只在任何 section 之前读（[[tool]] 里也有 id，不能误抓）；
 /// [[panel]] 段内只取 name/label/open，无 open 的 panel 收成不了入口（detail/editor 需参数，本就不能直接开）。
 fn parse_manifest(text: &str) -> Option<(String, String, Vec<Value>)> {
+    // 取 `key = "值"` 的引号内内容：第一个引号到闭引号，之后的东西（如行尾注释）一律不混进值
     let val = |l: &str, key: &str| -> Option<String> {
-        l.trim()
-            .strip_prefix(key)
-            .and_then(|rest| rest.trim_start().strip_prefix('='))
-            .map(|v| v.trim().trim_matches('"').to_string())
+        let rest = l.trim().strip_prefix(key)?;
+        let rest = rest.trim_start().strip_prefix('=')?.trim_start();
+        let rest = rest.strip_prefix('"')?;
+        let end = rest.find('"')?;
+        Some(rest[..end].to_string())
     };
     let mut id: Option<String> = None;
     let mut name: Option<String> = None;
@@ -2108,5 +2110,14 @@ id = "add"
         let no_open = "id = \"z\"\nname = \"Z\"\n\n[[panel]]\nname = \"board\"\nlabel = \"看板\"\n";
         assert!(parse_manifest(no_open).unwrap().2.is_empty());
         assert!(parse_manifest("name = \"孤儿\"\n").is_none()); // 缺 id
+    }
+
+    #[test]
+    fn parse_manifest_strips_trailing_comment_after_value() {
+        // 行尾注释：open = "mat_list"   # 说明 —— 值只能取到第一个闭引号，注释不许混进方法名
+        let text = "id = \"zimeiti\"\nname = \"自媒体\"\n\n[[panel]]\nname = \"materials\"\nlabel = \"素材库\"\nopen = \"mat_list\"   # 面板级入口\n";
+        let (_, _, panels) = parse_manifest(text).expect("应解析出插件");
+        assert_eq!(panels[0]["open"], "mat_list");
+        assert_eq!(panels[0]["label"], "素材库");
     }
 }
