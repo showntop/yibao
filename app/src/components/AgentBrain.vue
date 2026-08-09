@@ -64,8 +64,8 @@ const words = computed<MemWord[]>(() =>
     return {
       text, full: m.text,
       size: 10 + (h % 6),
-      x: Math.round((((h >> 3) % 97) / 97) * 140 - 70),
-      y: Math.round((((h >> 7) % 93) / 93) * 110 - 55),
+      x: Math.round((((h >> 3) % 97) / 97) * 150 - 75),
+      y: Math.round((((h >> 7) % 75) / 75) * 66 - 48), // 穹顶内（上 2/3，角色下方不落词）
       delay: (h % 70) / 10,
       dur: 5 + (h % 50) / 10,
       tone: h % 4,
@@ -212,10 +212,10 @@ function onWordLeave() {
 
 // ---- 粒子技能球：按插件分布在大脑周围 4 个位置（绕轨道）----
 const ORBIT_POS: { top: number; left: number }[] = [
-  { top: 50, left: 6 },    // 左
-  { top: 6, left: 50 },    // 上
-  { top: 50, left: 94 },   // 右
-  { top: 94, left: 50 },   // 下
+  { top: 40, left: 7 },    // 左
+  { top: 3, left: 50 },    // 上
+  { top: 40, left: 93 },   // 右
+  { top: 74, left: 84 },   // 右下（避开角色）
 ];
 function orbitStyle(i: number) {
   const p = ORBIT_POS[i % 4];
@@ -373,27 +373,34 @@ const SEEDS = Array.from({ length: 6 }, () => ({
   flex-shrink: 0;
   margin: 4px 0 2px;
 }
-/* 大脑光晕底（柔光） */
+/* 大脑光晕底（柔光，跟随穹顶椭圆） */
 .brain-glow {
   position: absolute;
-  inset: 8px;
-  border-radius: 50%;
+  left: 0;
+  top: 0;
+  width: 200px;
+  height: 152px;
+  border-radius: 100px 100px 64px 64px;
   background:
-    radial-gradient(60% 60% at 50% 42%, rgba(var(--yb-c-sky-rgb), 0.16), rgba(var(--yb-c-sky-rgb), 0) 70%);
+    radial-gradient(58% 52% at 50% 38%, rgba(var(--yb-c-sky-rgb), 0.16), rgba(var(--yb-c-sky-rgb), 0) 70%);
   filter: blur(2px);
   animation: glow-breathe 5s ease-in-out infinite;
   transition: background var(--yb-dur-fast) var(--yb-ease-out);
 }
 .agent.think .brain-glow {
-  background: radial-gradient(60% 60% at 50% 42%, rgba(142, 124, 240, 0.22), rgba(142, 124, 240, 0) 70%);
+  background: radial-gradient(58% 52% at 50% 38%, rgba(142, 124, 240, 0.22), rgba(142, 124, 240, 0) 70%);
   animation-duration: 2.4s;
 }
 
-/* ---- 玻璃大脑穹顶：词云内嵌于这（毛玻璃 + 白色透明，参考图核心） ---- */
+/* ---- 玻璃大脑穹顶：椭圆（上圆下收，像蛋壳倒扣）+ 顶部弧线高光。
+ * 词云内嵌于上 2/3（参考图核心），角色从穹顶底部"长出来"，不再正圆正中心。 ---- */
 .brain-dome {
   position: absolute;
-  inset: 8px;
-  border-radius: 50%;
+  left: 0;
+  top: 0;
+  width: 200px;
+  height: 152px;
+  border-radius: 100px 100px 64px 64px;
   background: rgba(255, 255, 255, 0.42);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
@@ -403,6 +410,18 @@ const SEEDS = Array.from({ length: 6 }, () => ({
     0 2px 12px rgba(var(--yb-c-sky-rgb), 0.10);
   overflow: hidden;
 }
+/* 玻璃高光：顶部一道弧线白光（参考图的玻璃感） */
+.brain-dome::before {
+  content: "";
+  position: absolute;
+  left: 16%;
+  top: 3%;
+  width: 68%;
+  height: 42%;
+  border-radius: 50%;
+  background: radial-gradient(58% 46% at 50% 32%, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0) 72%);
+  pointer-events: none;
+}
 .agent.think .brain-dome {
   background: rgba(255, 255, 255, 0.5);
   box-shadow:
@@ -410,14 +429,15 @@ const SEEDS = Array.from({ length: 6 }, () => ({
     0 2px 14px rgba(142, 124, 240, 0.18);
 }
 
-/* ---- 角色（在大脑球内中央偏下，z 最高以遮词云中心） ---- */
+/* ---- 角色：从穹顶底部"长出来"——上半被穹顶遮（融合），脸在下半露出 ---- */
 .brain-core {
   position: absolute;
   left: 50%;
-  top: 54%;
-  transform: translate(-50%, -50%);
+  top: 116px;
+  transform: translateX(-50%);
   z-index: 2;
   cursor: pointer;
+  filter: drop-shadow(0 2px 6px rgba(var(--yb-c-slate-rgb), 0.14));
 }
 .say-line {
   position: absolute;
