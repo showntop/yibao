@@ -641,3 +641,40 @@ def test_history_prefers_db_transcript_over_cc_reader(monkeypatch):
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("不该读 jsonl")))
     r = HistorySkill().run({"id": "sid-1"}, ctx)
     assert r.success and r.data["messages"] == [{"role": "user", "text": "旧任务", "uuid": ""}]
+
+
+# ---------- T2 评审修复：history 取最近 40 条 / seq 跨轮续号 ----------
+def test_history_returns_latest_40_in_ascending_order():
+    """45 条消息（seq 1..45）→ history 返回 seq 6..45 正序，而不是头部 seq 1..40。"""
+    ctx = _make_ctx_with_session(
+        status="done",
+        with_messages=[("assistant", f"m{i}") for i in range(1, 46)])
+    r = HistorySkill().run({"id": "sid-1"}, ctx)
+    assert r.success
+    texts = [m["text"] for m in r.data["messages"]]
+    assert len(texts) == 40
+    assert texts[0] == "m6" and texts[-1] == "m45"     # 尾部 40 条
+    assert "m5" not in texts and "m1" not in texts     # 不是头部 40 条
+    assert texts == sorted(texts, key=lambda t: int(t[1:]))  # 时间正序
+
+
+def test_stream_seq_continues_across_rounds():
+    """同一 sid 两轮 _stream：第二轮首条消息 seq = 第一轮 max + 1（不交错）。"""
+    ctx = _make_ctx_with_session(status="running")
+    _run_fake_stream(ctx, events=[
+        {"kind": "user_msg", "uuid": "u-1", "text": "第一轮"},
+        {"kind": "text_delta", "text": "好"},
+        {"kind": "done", "usage": {}},
+    ])
+    r1_max = max(r["seq"] for r in ctx.db.query("messages", where={"session_id": "sid-1"}))
+    ctx.db.rows["sid-1"]["status"] = "running"          # 第一轮落 done 后 send 重置回 running
+    _run_fake_stream(ctx, events=[
+        {"kind": "user_msg", "uuid": "u-2", "text": "第二轮"},
+        {"kind": "done", "usage": {}},
+    ])
+    rows = sorted(ctx.db.query("messages", where={"session_id": "sid-1"}),
+                  key=lambda r: r["seq"])
+    seqs = [r["seq"] for r in rows]
+    assert seqs == list(range(1, len(rows) + 1))        # 全局单调不重复
+    r2_first = next(r for r in rows if r["text"] == "第二轮")
+    assert r2_first["seq"] == r1_max + 1                # 续号，不是从 1 重计

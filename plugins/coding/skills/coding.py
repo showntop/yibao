@@ -131,7 +131,8 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
     """跑 runner；每条事件转 panel_data 推面板 + 落 messages 表；结束按 cancel/error/done 落最终状态。
 
     transcript 落库：user_msg（带 CC uuid，rewind 锚点）/ text_delta / done·stopped 终态 marker，
-    seq 每轮流式局部自增（多轮各自重计；HistorySkill 按 seq ASC 取最近 40 条）。
+    seq 跨轮续号（每轮流式开始时从库里查本 sid 当前 max seq 续起，多轮不交错；
+    HistorySkill 按 seq 取最近 40 条）。
     落库 try/except 隔离——transcript 丢失绝不许炸断流式。
     落最终状态前先查当前 status——用户主动 stop 时 _stop_session 已先写 stopped，
     这里保留 stopped 不被 done/failed 覆盖（race-safe，仿 agents._common._wait:66-73）。
@@ -139,7 +140,12 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
     """
     state = {"error": False}
     cc_sid: str | None = None   # runner.run 返回值（ResultMessage.session_id）；None=取消/失败
-    seq = {"n": 0}              # 本轮 transcript 序号（per-stream 重计，多轮各自局部编号）
+    # seq 跨轮续号：从库里本 sid 当前 max seq 续起（每轮重计会让多轮消息在 ORDER BY seq 下交错）
+    try:
+        prev = db.query("messages", where={"session_id": sid}, order="seq DESC", limit=1)
+        seq = {"n": int(prev[0]["seq"]) if prev else 0}
+    except Exception:
+        seq = {"n": 0}
 
     def _persist(role: str, text: str, uuid: str = "") -> None:
         if not text:
@@ -530,8 +536,8 @@ class HandoffBriefSkill(Skill):
 class HistorySkill(Skill):
     """读某个 coding 会话的信息与最近消息（历史抽屉恢复旧会话用）。
 
-    消息优先读本插件 messages 表（_stream 流式落库的 transcript，按 seq 正序取最近 40 条，
-    含 user 消息的 CC uuid 供 rewind 用）；库里空才 fallback `_sibling("_cc_reader")`
+    消息优先读本插件 messages 表（_stream 流式落库的 transcript，取最近 40 条——
+    seq DESC LIMIT 40 再反转回正序，含 user 消息的 CC uuid 供 rewind 用）；库里空才 fallback `_sibling("_cc_reader")`
     读 Claude Code 本地 transcript（老会话没有落库数据）。都读不到 messages 静默为空——
     恢复不了就当新会话，不报错。L0 只读。
     """
@@ -561,8 +567,10 @@ class HistorySkill(Skill):
             return ActionResult(success=False, error=f"会话不存在：{sid}")
         row = rows[0]
         cc = row.get("cc_session_id") or ""
-        rows = ctx.db.query("messages", where={"session_id": sid}, order="seq", limit=40)
+        # 取最近 40 条：seq DESC LIMIT 40 拿尾部，再反转回时间正序（ASC LIMIT 会拿到会话头部）
+        rows = ctx.db.query("messages", where={"session_id": sid}, order="seq DESC", limit=40)
         if rows:
+            rows.reverse()
             messages = [{"role": r["role"], "text": r["text"], "uuid": r.get("uuid") or ""}
                         for r in rows]
         else:
