@@ -133,16 +133,25 @@ const todayNewMems = computed(() => {
 let memTimer: ReturnType<typeof setInterval> | null = null;
 let unBrain: (() => void) | null = null;
 onMounted(async () => {
-  await refreshMem();
-  plugins.value = await invoke<PluginInfo[]>("list_plugins").catch(() => []);
-  await refreshFeedStats();
-  memTimer = setInterval(() => { void refreshMem(); void refreshFeedStats(); }, 45000);
-  unBrain = await onBrainEvent((e) => {
-    if (e.kind === "final_reply" || e.kind === "action_result") {
-      void refreshMem();
-      void refreshFeedStats();
-    }
-  });
+  // 整段 try/catch：大脑不在线/无 invoke 能力时不应崩组件（崩了父 flex 不显示它）
+  try {
+    await refreshMem();
+  } catch { /* 记忆拉取失败忽略 */ }
+  try {
+    plugins.value = await invoke<PluginInfo[]>("list_plugins").catch(() => []);
+  } catch { /* 插件列表拉取失败忽略 */ }
+  try {
+    await refreshFeedStats();
+  } catch { /* 今日统计拉取失败忽略 */ }
+  try {
+    memTimer = setInterval(() => { void refreshMem(); void refreshFeedStats(); }, 45000);
+    unBrain = await onBrainEvent((e) => {
+      if (e.kind === "final_reply" || e.kind === "action_result") {
+        void refreshMem();
+        void refreshFeedStats();
+      }
+    });
+  } catch { /* 事件订阅失败忽略 */ }
 });
 onUnmounted(() => {
   if (memTimer !== null) clearInterval(memTimer);

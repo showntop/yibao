@@ -153,27 +153,42 @@ let unApprovals: (() => void) | null = null;
 let unRecapOpen: (() => void) | null = null;
 
 onMounted(async () => {
-  const r = await getFeedOnce();
-  items.value = r.items;
-  stats.value = r.stats;
-  runningTasks.value = r.running_tasks ?? [];
-  loaded.value = true;
-  const w = await getWidgetsOnce();
-  widgets.value = w.widgets;
-  unApprovals = onPendingConfirms((l) => (approvals.value = l));
-  unFeed = await onFeed((r2) => {
-    items.value = r2.items;
-    stats.value = r2.stats;
-    runningTasks.value = r2.running_tasks ?? [];
-  });
-  unWidgets = await onWidgets((w2) => {
-    widgets.value = w2.widgets;
-  });
-  unRecapOpen = await onRecapOpen(() => {
+  // 整段 try/catch 防止 invoke 抛错冒泡导致组件崩（崩了父 flex 不显示）
+  try {
+    const r = await getFeedOnce().catch(() => ({ items: [], stats: { pending_reminders: 0, running_tasks: 0, done_24h: 0, unread: 0, ignored: 0 }, running_tasks: [] }));
+    items.value = r.items ?? [];
+    if (r.stats && typeof r.stats === "object") stats.value = r.stats;
+    runningTasks.value = r.running_tasks ?? [];
+    loaded.value = true;
+  } catch { /* 兜底 */ }
+  try {
+    const w = await getWidgetsOnce().catch(() => ({ widgets: [] }));
+    widgets.value = w.widgets ?? [];
+  } catch { /* 兜底 */ }
+  try {
+    unApprovals = onPendingConfirms((l) => (approvals.value = l));
+  } catch { /* 兜底 */ }
+  try {
+    unFeed = await onFeed((r2) => {
+      items.value = r2?.items ?? [];
+      if (r2?.stats) stats.value = r2.stats;
+      runningTasks.value = r2?.running_tasks ?? [];
+    });
+  } catch { /* 兜底 */ }
+  try {
+    unWidgets = await onWidgets((w2) => {
+      widgets.value = w2?.widgets ?? [];
+    });
+  } catch { /* 兜底 */ }
+  try {
+    unRecapOpen = await onRecapOpen(() => {
+      void loadRecap();
+    });
+  } catch { /* 兜底 */ }
+  try {
+    void recapCheck().catch(() => {});
     void loadRecap();
-  });
-  void recapCheck().catch(() => {});
-  void loadRecap();
+  } catch { /* 兜底 */ }
 });
 onUnmounted(() => {
   unFeed?.();
