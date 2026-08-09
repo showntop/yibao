@@ -428,6 +428,7 @@
   var discardedSessions = {};  // 被「新对话」抛弃的 session_id → true 集合；防陈旧流块污染新对话
   var curMode = "acceptEdits"; // acceptEdits=自动改文件；plan=只读规划
   var pendingUserEcho = null;  // send() 后等 user_msg 回流画用户气泡的 1.5s 兜底 timer（事件到达则清，防双份）
+  var fallbackUserBubble = null; // 兜底 timer 画出的无锚用户气泡 {el, text}；迟到的 user_msg 文本匹配时原地升级挂 ⏪（防双份）
 
   // ============================================================
   //   工具函数
@@ -475,32 +476,36 @@
   // ============================================================
   //   气泡构造
   // ============================================================
+  // ⏪ 回滚按钮：挂到用户气泡上；appendUser 与迟到的 user_msg 升级兜底气泡共用同一路径
+  function attachRewindBtn(b, uuid) {
+    var rw = document.createElement("button");
+    rw.className = "rewind-btn";
+    rw.title = "回滚到这条消息时的文件状态";
+    rw.textContent = "⏪";
+    rw.addEventListener("click", function (e) {
+      e.stopPropagation();
+      if (!currentSession) return;
+      rw.disabled = true;
+      window.yibao.invoke("coding.rewind", { id: currentSession, user_msg_id: uuid }).then(function (r) {
+        setStatus(r && r.ok === false ? ("回滚失败：" + (r.error || "")) : "已提交回滚…", !!(r && r.ok === false));
+      }).catch(function (err) {
+        setStatus("回滚失败：" + emsg(err), true);
+      }).finally(function () { rw.disabled = false; });
+    });
+    b.appendChild(rw);
+  }
+
   function appendUser(text, uuid) {
     var row = document.createElement("div");
     row.className = "row user";
     var b = document.createElement("div");
     b.className = "bubble";
     b.textContent = text;
-    if (uuid) {
-      var rw = document.createElement("button");
-      rw.className = "rewind-btn";
-      rw.title = "回滚到这条消息时的文件状态";
-      rw.textContent = "⏪";
-      rw.addEventListener("click", function (e) {
-        e.stopPropagation();
-        if (!currentSession) return;
-        rw.disabled = true;
-        window.yibao.invoke("coding.rewind", { id: currentSession, user_msg_id: uuid }).then(function (r) {
-          setStatus(r && r.ok === false ? ("回滚失败：" + (r.error || "")) : "已提交回滚…", !!(r && r.ok === false));
-        }).catch(function (err) {
-          setStatus("回滚失败：" + emsg(err), true);
-        }).finally(function () { rw.disabled = false; });
-      });
-      b.appendChild(rw);
-    }
+    if (uuid) attachRewindBtn(b, uuid);
     row.appendChild(b);
     $("log").appendChild(row);
     scrollIfAtBottom();
+    return b;
   }
 
   // 返回文本容器节点（之后往里 appendChild 文本节点）
@@ -824,6 +829,16 @@
         // send() 不再直接画气泡，由本事件画；事件到达清掉 1.5s 兜底 timer（防双份）。
         if (pendingUserEcho) { clearTimeout(pendingUserEcho); pendingUserEcho = null; }
         currentBubble = null;  // 用户气泡切断 assistant 流
+        // 兜底气泡已画出（冷启动 > 1.5s 事件迟到）且文本一致 → 原地升级挂 ⏪，不再画第二份；
+        // 不匹配（或气泡已随 #log 清空 detach）→ 清掉记忆，走正常路径画新气泡。
+        if (fallbackUserBubble) {
+          var fb = fallbackUserBubble;
+          fallbackUserBubble = null;
+          if (fb.text === (ev.text || "") && fb.el.isConnected) {
+            if (ev.uuid) attachRewindBtn(fb.el, ev.uuid);
+            break;
+          }
+        }
         appendUser(ev.text || "", ev.uuid || "");
         break;
       case "text_delta":
@@ -925,11 +940,13 @@
     setStatus("提交中…");
 
     // 用户气泡不直接画：等 runner 的 user_msg 事件（带 CC uuid，⏪ 回滚锚点）来画；
-    // 事件长时间不到（老 SDK / 启动失败）则 1.5s 后兜底画无 ⏪ 气泡。事件到达会清掉本 timer（防双份）。
+    // 事件长时间不到（老 SDK / 启动失败）则 1.5s 后兜底画无 ⏪ 气泡。事件到达会清掉本 timer；
+    // 若兜底已先画出（冷启动 > 1.5s），记住气泡——迟到的 user_msg 文本匹配时原地升级挂锚（防双份）。
     if (pendingUserEcho) { clearTimeout(pendingUserEcho); pendingUserEcho = null; }
+    fallbackUserBubble = null;   // 清掉上一轮可能残留的兜底引用，防跨轮误升级
     pendingUserEcho = setTimeout(function () {
       pendingUserEcho = null;
-      appendUser(prompt);
+      fallbackUserBubble = { el: appendUser(prompt), text: prompt };
     }, 1500);
     currentBubble = null;  // 用户气泡不属于 assistant 流
 
@@ -985,6 +1002,7 @@
     currentSession = null;
     currentBubble = null;
     lastToolCard = null;   // #log 清空后旧卡已 detach，防 tool_result 落进不可见节点
+    fallbackUserBubble = null;  // 兜底气泡随 #log 清空 detach，清引用防迟到 user_msg 升级陈旧节点
     streaming = false;
     sending = false;
     $("log").innerHTML = "";
@@ -1288,6 +1306,7 @@
       delete discardedSessions[sid]; // 恢复的目标会话必须出黑名单——否则它自己的流全被「陈旧会话」过滤器吞掉，面板锁死
       currentBubble = null;
       lastToolCard = null;   // #log 清空后旧卡已 detach，防 tool_result 落进不可见节点（同 newChat）
+      fallbackUserBubble = null;  // 同 newChat：清兜底气泡引用，防迟到 user_msg 升级陈旧节点
       streaming = false;
       $("log").innerHTML = "";
       (r.messages || []).forEach(function (m) {

@@ -642,7 +642,11 @@ def _rewind_fresh_client(cc_sid: str, cwd: str, uuid: str) -> None:
         finally:
             await client.disconnect()
 
-    asyncio.new_event_loop().run_until_complete(_do())
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(_do())
+    finally:
+        loop.close()
 
 
 class RewindSkill(Skill):
