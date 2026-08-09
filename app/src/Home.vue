@@ -353,10 +353,11 @@ function close() {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  /* 顶部 + 左右两侧 accent 氛围光（radial 淡出）：对话列全宽展开后，
-   * 两侧空白由微光承接，不显死白 */
+  /* 顶部 + 左右 + 底部 accent 氛围光（radial 淡出）：四栏工作台在宽屏下
+   * 各处空白由微光承接，整体有"AI 空间"层次而非死白 */
   background:
     radial-gradient(120% 90% at 50% -20%, rgba(var(--yb-c-sky-rgb), 0.05), transparent 55%),
+    radial-gradient(90% 50% at 50% 110%, rgba(var(--yb-c-sky-rgb), 0.04), transparent 65%),
     radial-gradient(60% 40% at 0% 50%, rgba(var(--yb-c-sky-rgb), 0.03), transparent 70%),
     radial-gradient(60% 40% at 100% 50%, rgba(var(--yb-c-sky-rgb), 0.03), transparent 70%),
     var(--yb-content-bg);

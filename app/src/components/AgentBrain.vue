@@ -750,6 +750,12 @@ const SEEDS = Array.from({ length: 6 }, () => ({
   background: var(--yb-surface-2);
   color: var(--yb-text-dim);
   font-size: var(--yb-fs-xs);
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
+}
+.ag-item:hover {
+  border-color: var(--yb-accent);
+  box-shadow: 0 0 0 3px var(--yb-accent-soft);
+  color: var(--yb-text);
 }
 .ag-item svg { color: var(--yb-accent); }
 .ag-item b { font-size: var(--yb-fs-sm); color: var(--yb-accent-deep); }
@@ -761,8 +767,19 @@ const SEEDS = Array.from({ length: 6 }, () => ({
   padding: 8px 10px;
   border: 1px solid var(--yb-card-border);
   border-radius: var(--yb-radius-md);
-  background: var(--yb-card-bg);
-  box-shadow: var(--yb-shadow-1);
+  /* 微玻璃：白色→极淡天青渐变 + 顶部内高光（立体感） */
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(236, 244, 252, 0.55)),
+    var(--yb-card-bg);
+  box-shadow:
+    var(--yb-shadow-1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  transition: box-shadow var(--yb-dur-fast) var(--yb-ease-out);
+}
+.agent-today:hover {
+  box-shadow:
+    var(--yb-shadow-2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85);
 }
 .at-title {
   font-size: var(--yb-fs-xs);
