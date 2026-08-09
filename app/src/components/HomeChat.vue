@@ -68,20 +68,28 @@ function onInfoChat(d: string) {
   void nextTick(() => (draftRef.value = d));
 }
 
-// ---- 会话列表（左一栏）：标题/预览随对话更新；新建/切换清空气泡（历史加载属 Phase 4）----
+// ---- 会话列表（左一栏）：标题/预览随对话更新；切换会话保存/恢复气泡（内存 map）----
 const sessionRef = ref<InstanceType<typeof SessionList> | null>(null);
+const sessionBubbles = new Map<string, typeof bubbles.value>(); // 会话 id → 气泡快照（内存）
+let currentSessionId = "";
 let sessionStarted = false; // 当前会话是否已有首条用户消息（决定是否生成标题）
+function onSessionActive(id: string) {
+  currentSessionId = id;
+}
 function onSessionNew() {
+  if (currentSessionId) sessionBubbles.set(currentSessionId, bubbles.value.slice());
   bubbles.value = [];
   streamingIdx.value = null;
   state.value = "idle"; // showTyping 由 state 推导，自动收起
   sessionStarted = false;
 }
-function onSessionSelect() {
-  // Phase 1：历史会话暂不加载气泡（后端 load_session 属 Phase 4）——切换=空气泡新起
-  bubbles.value = [];
+function onSessionSelect(id: string) {
+  // 保存当前会话气泡 → 恢复目标会话气泡（内存快照；持久化 load_session 留后端扩展）
+  if (currentSessionId) sessionBubbles.set(currentSessionId, bubbles.value.slice());
+  currentSessionId = id;
+  bubbles.value = sessionBubbles.get(id) ?? [];
   streamingIdx.value = null;
-  state.value = "idle"; // showTyping 由 state 推导，自动收起
+  state.value = "idle";
   sessionStarted = true; // 该会话已有历史，后续消息不再生成标题
 }
 
@@ -370,7 +378,7 @@ onUnmounted(() => {
     <!-- 四栏 AI 工作台：会话｜智能体（内心）｜对话｜AI 进程 -->
     <div v-else class="chat-cols">
     <!-- 左一：会话列表（历史侧栏） -->
-    <SessionList ref="sessionRef" class="col-session" @new-chat="onSessionNew" @select="onSessionSelect" />
+    <SessionList ref="sessionRef" class="col-session" @new-chat="onSessionNew" @select="onSessionSelect" @active="onSessionActive" />
     <!-- 左二：智能体（人格化核心） -->
     <AgentBrain class="col-agent" :state="state" @chat="onInfoChat" />
 
