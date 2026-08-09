@@ -74,6 +74,18 @@ export interface BrainEvent {
   name?: string;
 }
 
+/** sidecar 已落盘的近期会话消息。仅用于恢复壳层时间线；不会触发任何动作重放。 */
+export interface ConversationHistoryMessage {
+  role: "user" | "assistant" | "tool";
+  content: string;
+  surface?: string;
+  tool_call_id?: string;
+  tool_calls?: Array<{
+    id?: string;
+    function?: { name?: string; arguments?: string };
+  }>;
+}
+
 // ---- 会话分流（v2 §5）：run/语音/面板调用带 surface 标签，大脑透传回事件流与历史 ----
 // 模块级当前 surface：宠物窗恒 pet；面板窗随焦点插件变化（PanelApp setSurface）。
 let _surface = "pet";
@@ -153,6 +165,11 @@ export interface PanelFocus {
 }
 export function reportPanelContext(focus: PanelFocus | null): Promise<void> {
   return invoke("report_panel_context", { focus });
+}
+
+/** 读取近期持久化会话，用于主屏/能力工作面恢复 UI；只读，不会重放工具。 */
+export function getConversationHistory(limit = 80): Promise<ConversationHistoryMessage[]> {
+  return invoke("get_conversation_history", { limit });
 }
 
 /** 订阅大脑事件流，返回取消监听函数。 */
@@ -599,7 +616,8 @@ export function onPendingConfirms(cb: (l: PendingConfirm[]) => void): () => void
   };
 }
 
-void listen<BrainEvent>("brain-event", (ev) => {
+// 普通浏览器只用于本地 UI QA，没有 Tauri event bridge；避免模块加载时产生无意义的未处理错误。
+if ("__TAURI_INTERNALS__" in window) void listen<BrainEvent>("brain-event", (ev) => {
   const e = ev.payload;
   if (e.kind === "confirmation_needed") {
     // Task 2 攒批：一轮可能多 CONFIRM，actions 带全部待批 action；
@@ -632,7 +650,7 @@ void listen<BrainEvent>("brain-event", (ev) => {
   }
 });
 
-void listen<BrainStatusMsg>("brain-status", (ev) => {
+if ("__TAURI_INTERNALS__" in window) void listen<BrainStatusMsg>("brain-status", (ev) => {
   if (ev.payload.status === "up") return;
   if (_pc.length) {
     _pc = [];

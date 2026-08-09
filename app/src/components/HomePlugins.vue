@@ -24,9 +24,30 @@ import {
 import { procLabel, procSkip, procResultSuffix } from "../lib/proc";
 
 type AvatarState = "idle" | "listen" | "think" | "work" | "say";
+type CapabilityPresentation = "stage" | "focus";
+interface CapabilitySurfaceEvent {
+  panel: string;
+  title: string;
+  plugin: string;
+  objectTitle?: string;
+  attention: "available" | "stage" | "restore";
+}
+const props = withDefaults(defineProps<{
+  scene?: boolean;
+  presentation?: CapabilityPresentation;
+}>(), {
+  scene: false,
+  presentation: "stage",
+});
 // state：同步给父级侧边栏团子（插件页活跃时团子跟着面板会话走）
 // panel：新面板打开时外发（父级自动切到本页；同面板刷新/挂载补拉不发，不抢用户所在页）
-const emit = defineEmits<{ state: [AvatarState]; panel: [] }>();
+const emit = defineEmits<{
+  state: [AvatarState];
+  panel: [surface: CapabilitySurfaceEvent];
+  surface: [surface: Omit<CapabilitySurfaceEvent, "attention">];
+  close: [];
+  focus: [];
+}>();
 
 // ---- 插件列表 ----
 interface PluginPanelEntry { name: string; label: string; open: string }
@@ -34,6 +55,84 @@ interface PluginInfo { id: string; name: string; panels?: PluginPanelEntry[] }
 const plugins = ref<PluginInfo[]>([]);
 const pluginErr = ref("");
 const viewingList = ref(true); // true=插件列表；false=面板视图（panel 事件到来自动切入）
+let requestedPlugin = "";
+let requestedUntil = 0;
+
+// ---- 面板"从来源长出"动效：记录触发插件卡的位置，面板用 clip-path 从卡片矩形生长/缩回（同源缩回） ----
+const originRect = ref<DOMRect | null>(null);
+/** 收起时实际使用的目标锚点（用户卡片 / fallbackOrigin），供恢复时对称长回。 */
+const collapseAnchor = ref<DOMRect | null>(null);
+const panelViewEl = ref<HTMLElement | null>(null);
+let animLock = false;
+function captureOrigin(event?: Event): void {
+  const card = (event?.currentTarget as HTMLElement | null)?.closest?.(".pcard");
+  originRect.value = card?.getBoundingClientRect() ?? null;
+}
+function rectToInset(from: DOMRect, to: DOMRect): string {
+  return `inset(${Math.max(0, from.top - to.top)}px ${Math.max(0, to.right - from.right)}px ${Math.max(0, to.bottom - from.bottom)}px ${Math.max(0, from.left - to.left)}px)`;
+}
+function prefersReducedMotion(): boolean {
+  return window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
+}
+/** 无来源（模型自动展开/挂载补拉）时的默认生长起点：面板区域右中偏上的小块，不抢中心。 */
+function fallbackOrigin(to: DOMRect): DOMRect {
+  const w = Math.min(200, to.width * 0.45);
+  const h = Math.min(120, to.height * 0.3);
+  return new DOMRect(to.left + to.width * 0.72 - w / 2, to.top + to.height * 0.4 - h / 2, w, h);
+}
+/** 面板就位后：从来源矩形"长"满自身区域（matched-geometry，240ms 弹性）。
+ *  锚点优先级：用户点击的插件卡 > 上次收起用的锚点 > 右中偏上 fallback（模型自动展开/QA 模式）
+ *  fill:forwards 关键：collapseOut 用了 fill:forwards 保持缩回末态，若 growIn 不带 fill，
+ *  跑完会"弹回"到旧 fill-forwards 的缩回态——这里 forwards 让全屏末态持续压过。 */
+function growIn() {
+  if (animLock) return;
+  const el = panelViewEl.value;
+  if (!el || prefersReducedMotion()) return;
+  const to = el.getBoundingClientRect();
+  if (to.width < 2 || to.height < 2) return; // 宿主还不可见（主屏挂载收到 panel）时跳过，进入场景由 scene-panel 承接
+  const from = originRect.value ?? collapseAnchor.value ?? fallbackOrigin(to);
+  el.animate(
+    [
+      { clipPath: rectToInset(from, to), opacity: 0.55, transform: "scale(0.985)" },
+      { clipPath: "inset(0px)", opacity: 1, transform: "scale(1)" },
+    ],
+    { duration: 240, easing: "cubic-bezier(0.22, 0.61, 0.36, 1)", fill: "forwards" },
+  );
+  collapseAnchor.value = null; // 临时锚点用完即弃，避免下次误用
+}
+/** 收起时反向：缩回来源锚点（同源缩回，卡片或默认锚点）。
+ *  keepOrigin=true 时保留来源矩形（用户意图），但无论 keepOrigin 都记录实际目标锚点供恢复对称。 */
+async function collapseOut(keepOrigin = false): Promise<void> {
+  if (animLock) return;
+  if (prefersReducedMotion()) return; // 减少动效时直接收起
+  animLock = true;
+  try {
+    const el = panelViewEl.value;
+    if (el) {
+      const from = el.getBoundingClientRect();
+      if (from.width < 2 || from.height < 2) return;
+      const to = originRect.value ?? fallbackOrigin(from);
+      collapseAnchor.value = to; // 记住收起到的锚点，恢复时从同处长回
+      const inset = rectToInset(to, from);
+      const anim = el.animate(
+        [
+          { clipPath: "inset(0px)", opacity: 1, transform: "scale(1)" },
+          { clipPath: inset, opacity: 0.45, transform: "scale(0.985)" },
+        ],
+        { duration: 200, easing: "cubic-bezier(0.4, 0, 0.2, 1)", fill: "forwards" },
+      );
+      await anim.finished.catch(() => {});
+    }
+  } finally {
+    if (!keepOrigin) originRect.value = null;
+    animLock = false;
+  }
+}
+/** 场景收起：让面板先"缩回"（布局保持场景，避免瞬切），保留锚点供恢复时对称长回。 */
+function collapseScene(): Promise<void> {
+  if (!current.value) return Promise.resolve();
+  return collapseOut(true);
+}
 
 // 搜索过滤（按名字或 id，与主屏/小窗的插件网格同一视觉语言）
 const query = ref("");
@@ -76,21 +175,29 @@ async function loadPlugins() {
 }
 
 /** 点插件 → 调它的 list 直调（约定的主面板入口）；panel 事件回来 setCurrent 自动切到面板视图。 */
-async function launchPlugin(p: PluginInfo) {
+async function launchPlugin(p: PluginInfo, event?: MouseEvent) {
+  captureOrigin(event);
   pluginErr.value = "";
+  requestedPlugin = p.id;
+  requestedUntil = Date.now() + 8000;
   try {
     await panelAction(`${p.id}.list`, {}, undefined, `panel:${p.id}`);
   } catch (err) {
+    requestedUntil = 0;
     pluginErr.value = "启动失败：" + String(err);
   }
 }
 
 /** 点面板子入口（素材库/热点雷达等）→ 调 manifest [[panel]] open 声明的 api 方法；panel 事件回来切视图。 */
-async function openPluginPanel(p: PluginInfo, panel: PluginPanelEntry) {
+async function openPluginPanel(p: PluginInfo, panel: PluginPanelEntry, event?: MouseEvent) {
+  captureOrigin(event);
   pluginErr.value = "";
+  requestedPlugin = p.id;
+  requestedUntil = Date.now() + 8000;
   try {
     await panelAction(`${p.id}.${panel.open}`, {}, undefined, `panel:${p.id}`);
   } catch (err) {
+    requestedUntil = 0;
     pluginErr.value = "打开失败：" + String(err);
   }
 }
@@ -182,21 +289,71 @@ function computeFocus(cur: typeof current.value): PanelFocus | null {
  *  silent=true（挂载补拉缓存）不外发 panel 信号——旧缓存不该把用户从别的页拽过来。 */
 function setCurrent(v: NonNullable<typeof current.value>, silent = false) {
   const isNewPanel = current.value?.panel !== v.panel;
+  const wasList = viewingList.value;
   current.value = v;
   viewingList.value = false;
   focus.value = computeFocus(v);
-  void reportPanelContext(focus.value).catch(() => {});
-  if (isNewPanel && !silent) emit("panel");
+  // panel 事件可以先于用户展开工作面到达；隐藏能力不得抢占“当前对象”。
+  void reportPanelContext(props.scene ? focus.value : null).catch(() => {});
+  const plugin = v.panel.split(":", 1)[0] || v.panel;
+  const meta = {
+    panel: v.panel,
+    title: v.title,
+    plugin,
+    objectTitle: typeof focus.value?.item?.title === "string" ? focus.value.item.title : undefined,
+  };
+  emit("surface", meta);
+  if (isNewPanel && !silent) {
+    const explicitlyRequested = requestedPlugin === plugin && Date.now() <= requestedUntil;
+    emit("panel", { ...meta, attention: explicitlyRequested ? "stage" : "available" });
+  }
+  requestedUntil = 0;
+  if (wasList) void nextTick(() => growIn());
 }
 
 /** 返回插件列表 ≈ 浮窗的关闭：清焦点上下文（大脑不再注入旧面板），面板内容留着（再进秒开）。
  *  广播 panel-closed：对话页的「⇢ 协作」关联气泡收到收尾信号（浮窗模式由 Rust 窗隐发，大窗在这里发）。 */
-function backToList() {
+async function backToList() {
+  await collapseOut();
   viewingList.value = true;
   focus.value = null;
   void reportPanelContext(null).catch(() => {});
   void emitTauri("panel-closed").catch(() => {});
+  emit("close");
 }
+
+/** 工作面收起时只暂停对象注入，保留面板数据与滚动状态，活动胶囊可原样恢复。 */
+function suspendSurface() {
+  focus.value = null;
+  void reportPanelContext(null).catch(() => {});
+}
+
+function restoreSurface() {
+  if (!current.value) return false;
+  viewingList.value = false;
+  focus.value = computeFocus(current.value);
+  void reportPanelContext(focus.value).catch(() => {});
+  // 恢复时若有任何锚点（用户卡片 originRect 或上次收起锚点 collapseAnchor），从同处长回
+  if (originRect.value || collapseAnchor.value) void nextTick(() => growIn());
+  return true;
+}
+
+/** Esc 第一层只清对象作用域，不退出工作面。 */
+function clearObjectScope(): boolean {
+  if (!focus.value?.item) return false;
+  focus.value = { ...focus.value, item: null };
+  void reportPanelContext(focus.value).catch(() => {});
+  if (current.value) {
+    emit("surface", {
+      panel: current.value.panel,
+      title: current.value.title,
+      plugin: current.value.panel.split(":", 1)[0] || current.value.panel,
+    });
+  }
+  return true;
+}
+
+defineExpose({ backToList, suspendSurface, restoreSurface, clearObjectScope, collapseScene });
 
 function onEvent(e: BrainEvent) {
   // 会话分流：宠物场景（对话页）的对话事件不归这里；panel 事件例外（新面板内容必须接）
@@ -366,6 +523,41 @@ const webviewHtml = computed(() => current.value?.webview?.html ?? "");
 watch(state, (s) => emit("state", s));
 
 onMounted(async () => {
+  const qaMode = import.meta.env.DEV && new URLSearchParams(window.location.search).get("qa") === "capability";
+  if (qaMode) {
+    plugins.value = [{ id: "zimeiti", name: "自媒体" }];
+    requestedPlugin = "zimeiti";
+    requestedUntil = Date.now() + 8000;
+    setCurrent({
+      panel: "zimeiti:board",
+      title: "自媒体 · 选题看板",
+      schema: {
+        version: 1,
+        type: "board",
+        bind: { items: "$data.rows", column: "$item.status" },
+        columns: [
+          { key: "候选", label: "候选", color: "#9c8b7a" },
+          { key: "写作中", label: "写作中", color: "#ff8a5c" },
+          { key: "待发布", label: "待发布", color: "#5b8def" },
+          { key: "已发布", label: "已发布", color: "#58b368" },
+        ],
+        card: { title: "$item.title", subtitle: "$item.angle", actions: [] },
+        quick_add: { method: "zimeiti.add", params: { title: "$text" }, column: "候选", placeholder: "快速记一条选题…" },
+      },
+      webview: null,
+      data: {
+        rows: [
+          { id: 1, title: "应用消失之后，任务如何拥有屏幕", angle: "从页面导航转向能力表面", status: "候选" },
+          { id: 2, title: "AI OS 的关键不是万能输入框", angle: "状态、权限与可逆性才是底座", status: "候选" },
+          { id: 3, title: "插件不是目的地，而是临时长出的手", angle: "用译宝的真实交互做开场", status: "写作中" },
+          { id: 4, title: "为什么 Agent 不该自动抢焦点", angle: "从桌面心流讨论主动权", status: "待发布" },
+          { id: 5, title: "从应用接力到对象接力", angle: "邮件、日历和提醒的协作模型", status: "已发布" },
+        ],
+      },
+    });
+    emit("state", state.value);
+    return;
+  }
   unlisten = await onBrainEvent(onEvent);
   void loadPlugins();
   await pullCache();
@@ -378,7 +570,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="plugins-page">
+  <div class="plugins-page" :class="{ 'in-scene': props.scene, 'is-focus': props.presentation === 'focus' }">
     <!-- 页头：列表态是页标题（留红绿灯安全区），面板态是返回 + 面板名的层级导航 -->
     <header class="page-head" :class="{ 'in-panel': !viewingList }" data-tauri-drag-region>
       <template v-if="viewingList">
@@ -388,12 +580,18 @@ onUnmounted(() => {
         </div>
       </template>
       <template v-else>
-        <button class="back" title="返回插件列表" @click="backToList">
+        <button class="back" :title="props.scene ? '收起工作面' : '返回插件列表'" @click="props.scene ? emit('close') : backToList()">
           <YbIcon name="x" :size="13" />
         </button>
-        <span class="crumb">插件</span>
+        <span class="crumb">{{ props.scene ? "当前任务" : "插件" }}</span>
         <span class="crumb-sep">›</span>
         <span class="pg-title panel-name">{{ current?.title ?? "面板" }}</span>
+        <span v-if="props.scene" class="scene-spacer" />
+        <span v-if="props.scene" class="scene-source"><i :class="{ live: busy }" />{{ busy ? "译宝正在协作" : "已连接" }}</span>
+        <button v-if="props.scene" class="scene-action" :title="props.presentation === 'focus' ? '退出专注' : '进入专注'" @click="emit('focus')">
+          <YbIcon name="expand" :size="13" />
+          <span>{{ props.presentation === "focus" ? "退出专注" : "专注" }}</span>
+        </button>
       </template>
     </header>
 
@@ -404,13 +602,13 @@ onUnmounted(() => {
         <input v-model="query" placeholder="搜插件名或 id…" />
       </label>
       <div v-if="filtered.length" class="pgrid">
-        <button v-for="p in filtered" :key="p.id" class="pcard" @click="launchPlugin(p)">
+        <button v-for="p in filtered" :key="p.id" class="pcard" @click="launchPlugin(p, $event)">
           <span class="pcard-ic" :style="iconStyle(p.id)">{{ initial(p.name) }}</span>
           <span class="pcard-name">{{ p.name }}</span>
           <span class="pcard-id">{{ p.id }}</span>
           <!-- 面板级入口（manifest [[panel]] open 声明，如素材库/热点雷达）；stop 防触发卡片主入口 -->
           <span v-if="p.panels?.length" class="pcard-subs">
-            <span v-for="panel in p.panels" :key="panel.name" class="pcard-sub" @click.stop="openPluginPanel(p, panel)">{{ panel.label }}</span>
+            <span v-for="panel in p.panels" :key="panel.name" class="pcard-sub" @click.stop="openPluginPanel(p, panel, $event)">{{ panel.label }}</span>
           </span>
         </button>
       </div>
@@ -424,65 +622,68 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- 面板视图：确认统一进主屏收件箱；这里只保留错误细条 / 面板内容 / 工作台条 -->
+    <!-- 面板视图：确认统一进主屏收件箱；这里只保留错误细条 / 面板内容 / 工作台条。
+         外层宿主承载"从来源长出"动效：clip-path 从插件卡矩形展开到全面板，收起时同源缩回 -->
     <template v-else>
-      <div v-if="errorText" class="error-bar"><YbIcon name="alert" :size="14" />{{ errorText }}</div>
+      <div ref="panelViewEl" class="panel-grow">
+        <div v-if="errorText" class="error-bar"><YbIcon name="alert" :size="14" />{{ errorText }}</div>
 
-      <div class="content">
-        <WebviewPanel
-          v-if="current && webviewHtml"
-          :key="current.panel"
-          :panel="current.panel"
-          :html="webviewHtml"
-          :data="current.data"
-        />
-        <SchemaPanel
-          v-else-if="current"
-          :panel="current.panel"
-          :schema="current.schema"
-          :data="current.data"
-          @action="onAction"
-        />
-      </div>
+        <div class="content">
+          <WebviewPanel
+            v-if="current && webviewHtml"
+            :key="current.panel"
+            :panel="current.panel"
+            :html="webviewHtml"
+            :data="current.data"
+          />
+          <SchemaPanel
+            v-else-if="current"
+            :panel="current.panel"
+            :schema="current.schema"
+            :data="current.data"
+            @action="onAction"
+          />
+        </div>
 
-      <!-- 工作台条：对话浮层（输入/回复时间线）+ 团子 + 上下文 chip + 输入条 -->
-      <div ref="barRef" class="bench">
-        <transition name="pop">
-          <div v-if="layerVisible && (msgs.length || listeningHint)" ref="layerRef" class="thread">
-            <button class="thread-x" title="收起" @click="layerVisible = false">×</button>
-            <div
-              v-for="(m, i) in msgs"
-              :key="i"
-              class="t-row"
-              :class="[m.role, m.pstate && `is-${m.pstate}`]"
-              :title="m.role === 'user' ? m.text : undefined"
-            >
-              <YbIcon
-                v-if="m.pstate"
-                class="t-ic"
-                :name="m.pstate === 'run' ? 'spinner' : m.pstate === 'ok' ? 'check' : 'x'"
-                :spin="m.pstate === 'run'"
-                :size="12"
-              />
-              <span>{{ m.text }}</span>
-              <YbIcon v-if="m.halted" class="t-ic" name="stop" :size="12" title="已中止" />
+        <!-- 工作台条：对话浮层（输入/回复时间线）+ 团子 + 上下文 chip + 输入条 -->
+        <div ref="barRef" class="bench">
+          <transition name="pop">
+            <div v-if="layerVisible && (msgs.length || listeningHint)" ref="layerRef" class="thread">
+              <button class="thread-x" title="收起" @click="layerVisible = false">×</button>
+              <div
+                v-for="(m, i) in msgs"
+                :key="i"
+                class="t-row"
+                :class="[m.role, m.pstate && `is-${m.pstate}`]"
+                :title="m.role === 'user' ? m.text : undefined"
+              >
+                <YbIcon
+                  v-if="m.pstate"
+                  class="t-ic"
+                  :name="m.pstate === 'run' ? 'spinner' : m.pstate === 'ok' ? 'check' : 'x'"
+                  :spin="m.pstate === 'run'"
+                  :size="12"
+                />
+                <span>{{ m.text }}</span>
+                <YbIcon v-if="m.halted" class="t-ic" name="stop" :size="12" title="已中止" />
+              </div>
+              <div v-if="listeningHint" class="t-row hint">
+                <YbIcon class="t-ic" name="mic" :size="12" />
+                <span>聆听中…（点团子取消）</span>
+              </div>
             </div>
-            <div v-if="listeningHint" class="t-row hint">
-              <YbIcon class="t-ic" name="mic" :size="12" />
-              <span>聆听中…（点团子取消）</span>
-            </div>
+          </transition>
+          <div class="bench-bar">
+            <Avatar class="pet" :state="state" :size="30" @click="onPetTap" @longpress="onMic" />
+            <button v-if="!layerVisible && msgs.length" class="thread-open" title="查看对话" @click="openLayer">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              </svg>
+            </button>
+            <span v-if="chipText" class="chip" :title="chipText">{{ chipText }}</span>
+            <InputBar class="bench-input" :busy="busy" :listening="state === 'listen'" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
           </div>
-        </transition>
-        <div class="bench-bar">
-          <Avatar class="pet" :state="state" :size="30" @click="onPetTap" @longpress="onMic" />
-          <button v-if="!layerVisible && msgs.length" class="thread-open" title="查看对话" @click="openLayer">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-            </svg>
-          </button>
-          <span v-if="chipText" class="chip" :title="chipText">{{ chipText }}</span>
-          <InputBar class="bench-input" :busy="busy" :listening="state === 'listen'" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
         </div>
       </div>
     </template>
@@ -508,6 +709,12 @@ onUnmounted(() => {
 .page-head.in-panel {
   padding: 0 var(--yb-space-4) var(--yb-space-2);
   border-bottom: 1px solid var(--yb-border-base);
+}
+.in-scene .page-head.in-panel {
+  height: 62px;
+  box-sizing: border-box;
+  padding: 0 14px;
+  background: rgba(255, 255, 255, 0.58);
 }
 .head-text {
   display: flex;
@@ -538,6 +745,40 @@ onUnmounted(() => {
 .crumb-sep {
   color: var(--yb-text-faint);
 }
+.scene-spacer { flex: 1; min-width: 8px; }
+.scene-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--yb-text-faint);
+  font-size: var(--yb-fs-xs);
+  white-space: nowrap;
+}
+.scene-source i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--yb-success);
+}
+.scene-source i.live {
+  background: var(--yb-accent);
+  box-shadow: 0 0 0 4px rgba(var(--yb-c-sky-rgb), 0.1);
+}
+.scene-action {
+  height: 27px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  border: 1px solid var(--yb-card-border);
+  border-radius: var(--yb-radius-sm);
+  background: var(--yb-card-bg);
+  color: var(--yb-text-dim);
+  font: inherit;
+  font-size: var(--yb-fs-xs);
+  cursor: pointer;
+}
+.scene-action:hover { border-color: rgba(var(--yb-c-sky-rgb), 0.28); color: var(--yb-accent); }
 /* 返回：macOS 用左上角圆形关闭按钮语义（这里是「离开面板回列表」） */
 .back {
   flex-shrink: 0;
@@ -720,11 +961,24 @@ onUnmounted(() => {
   color: var(--yb-danger);
   font-size: var(--yb-fs-md);
 }
+/* 面板视图宿主：承载 clip-path 生长动效；内容三块纵向排布 */
+.panel-grow {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  will-change: clip-path, opacity, transform;
+}
 .content {
   flex: 1;
   min-height: 0;
   margin: 0;
   background: var(--yb-content-bg);
+}
+.in-scene .content {
+  background:
+    radial-gradient(90% 50% at 50% 0%, rgba(var(--yb-c-sky-rgb), 0.035), transparent 68%),
+    var(--yb-content-bg);
 }
 
 /* ---- 工作台条 ---- */
@@ -734,6 +988,18 @@ onUnmounted(() => {
   padding: var(--yb-space-3) var(--yb-space-4);
   border-top: 1px solid var(--yb-border-base);
   background: var(--yb-content-bg);
+}
+.in-scene .bench {
+  padding: 10px 14px 12px;
+  background: rgba(255, 255, 255, 0.76);
+  backdrop-filter: blur(18px);
+}
+.is-focus .bench { padding-left: 24px; padding-right: 24px; }
+
+@media (max-width: 720px) {
+  .scene-source { display: none; }
+  .scene-action span { display: none; }
+  .panel-name { max-width: 48vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 .thread {
   position: absolute;

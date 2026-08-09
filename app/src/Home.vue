@@ -4,12 +4,13 @@
 // 顶栏留 --yb-titlebar-h 安全区给浮在内容上的红绿灯；导航从「侧栏强 tab」改为「顶栏 tabs +
 // ⌘K 命令面板」（Raycast/Linear 风格：找页面用搜/说，不是点）。
 // 各页常驻挂载（v-show 切显隐）：事件订阅不断、气泡/面板状态切页不丢。
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import YbIcon from "./components/YbIcon.vue";
 import CommandPalette, { type PaletteTab } from "./components/CommandPalette.vue";
 import HomeChat from "./components/HomeChat.vue";
 import HomePlugins from "./components/HomePlugins.vue";
+import CapabilityConversationRail, { type CapabilityRailSurface } from "./components/CapabilityConversationRail.vue";
 import DataView from "./components/DataView.vue";
 import SettingsView from "./components/SettingsView.vue";
 import appLogo from "./assets/logo.png";
@@ -20,6 +21,7 @@ type Tab = "home" | "plugins" | "data" | "settings";
 type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
 
 const tab = ref<Tab>("home");
+const qaMode = import.meta.env.DEV && new URLSearchParams(window.location.search).get("qa") === "capability";
 const chatState = ref<AvatarState>("idle");
 const panelState = ref<AvatarState>("idle");
 const leftRailOpen = ref(true);
@@ -35,6 +37,106 @@ const clockText = computed(() => new Intl.DateTimeFormat("zh-CN", {
   hour12: false,
 }).format(clockNow.value));
 
+type SurfaceAttention = "available" | "stage" | "restore";
+type CapabilityPresentation = "stage" | "focus";
+type CapabilitySurfaceEvent = CapabilityRailSurface & { attention: SurfaceAttention };
+type HomePluginsRef = {
+  backToList: () => void;
+  suspendSurface: () => void;
+  restoreSurface: () => boolean;
+  clearObjectScope: () => boolean;
+  collapseScene: () => Promise<void>;
+};
+const pluginHost = ref<HomePluginsRef | null>(null);
+const capability = ref<CapabilityRailSurface | null>(null);
+const surfaceVisible = ref(false);
+const presentation = ref<CapabilityPresentation>("stage");
+const sceneActive = computed(() => tab.value === "home" && surfaceVisible.value && capability.value !== null);
+const activityBusy = computed(() => panelState.value !== "idle");
+const SCENE_KEY = "yb-capability-scene-v1";
+
+function loadScenePreference(): { panel: string; visible: boolean; presentation: CapabilityPresentation } | null {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(SCENE_KEY) || "null") as {
+      panel?: string;
+      visible?: boolean;
+      presentation?: CapabilityPresentation;
+    } | null;
+    if (!parsed?.panel) return null;
+    return {
+      panel: parsed.panel,
+      visible: Boolean(parsed.visible),
+      presentation: parsed.presentation === "focus" ? "focus" : "stage",
+    };
+  } catch {
+    return null;
+  }
+}
+const savedScene = loadScenePreference();
+let restorePending = Boolean(savedScene?.visible);
+
+watch([capability, surfaceVisible, presentation], () => {
+  try {
+    if (!capability.value) localStorage.removeItem(SCENE_KEY);
+    else localStorage.setItem(SCENE_KEY, JSON.stringify({
+      panel: capability.value.panel,
+      visible: surfaceVisible.value,
+      presentation: presentation.value,
+    }));
+  } catch { /* UI 布局偏好写入失败只降级为本次窗口状态。 */ }
+}, { deep: true });
+
+function onSurface(surface: CapabilityRailSurface) {
+  capability.value = surface;
+  const shouldRestore = restorePending && savedScene?.visible && savedScene.panel === surface.panel;
+  restorePending = false;
+  if (shouldRestore) {
+    presentation.value = savedScene.presentation;
+    surfaceVisible.value = true;
+    tab.value = "home";
+    void nextTick(() => pluginHost.value?.restoreSurface());
+  }
+}
+
+function onPanelAvailable(surface: CapabilitySurfaceEvent) {
+  capability.value = surface;
+  // 插件库里的明确点击直接展开；模型自行产出的 panel 只进入活动胶囊，避免抢焦点。
+  if (surface.attention === "stage" || surfaceVisible.value) showSurface();
+}
+
+function showSurface() {
+  if (!capability.value || sceneClosing.value) return;
+  surfaceVisible.value = true;
+  tab.value = "home";
+  void nextTick(() => pluginHost.value?.restoreSurface());
+}
+
+/** 收起工作面：先让面板"缩回"锚点（布局保持场景，避免瞬切突兀），动画播完再收拢场景回主屏。 */
+const sceneClosing = ref(false);
+async function hideSurface() {
+  if (sceneClosing.value || !sceneActive.value) return;
+  sceneClosing.value = true;
+  try {
+    await pluginHost.value?.collapseScene();
+  } finally {
+    pluginHost.value?.suspendSurface();
+    surfaceVisible.value = false;
+    presentation.value = "stage";
+    sceneClosing.value = false;
+  }
+}
+
+function closeCapability() {
+  surfaceVisible.value = false;
+  presentation.value = "stage";
+  capability.value = null;
+}
+
+function toggleFocus() {
+  if (!surfaceVisible.value) showSurface();
+  presentation.value = presentation.value === "focus" ? "stage" : "focus";
+}
+
 // 待批准数：顶栏「主屏」徽标（收件箱有待处理的事，一眼可见）
 const approvalCount = ref(0);
 
@@ -44,8 +146,21 @@ function togglePalette() {
   paletteOpen.value = !paletteOpen.value;
 }
 function onPaletteNavigate(t: PaletteTab) {
-  tab.value = t as Tab;
+  navigate(t as Tab);
   paletteOpen.value = false;
+}
+
+function navigate(target: Tab) {
+  if (target === "plugins") {
+    surfaceVisible.value = false;
+    presentation.value = "stage";
+    void nextTick(() => pluginHost.value?.backToList());
+  } else if (target !== "home" && surfaceVisible.value) {
+    pluginHost.value?.suspendSurface();
+  } else if (target === "home" && surfaceVisible.value) {
+    void nextTick(() => pluginHost.value?.restoreSurface());
+  }
+  tab.value = target;
 }
 
 // 全局快捷键：⌘K 命令面板；⌘1-3 / ⌘, 直接切页（macOS 标准）
@@ -58,6 +173,13 @@ const TAB_SHORTCUTS: Record<string, Tab> = {
   "1": "home", "2": "plugins", "3": "data",
 };
 function onGlobalKeydown(e: KeyboardEvent) {
+  if (e.key === "Escape" && sceneActive.value) {
+    e.preventDefault();
+    if (pluginHost.value?.clearObjectScope()) return;
+    if (presentation.value === "focus") presentation.value = "stage";
+    else hideSurface();
+    return;
+  }
   if (!e.metaKey && !e.ctrlKey) return;
   const k = e.key.toLowerCase();
   if (k === "k") {
@@ -67,13 +189,13 @@ function onGlobalKeydown(e: KeyboardEvent) {
   }
   if (k === ",") {
     e.preventDefault();
-    tab.value = "settings";
+    navigate("settings");
     return;
   }
   const t = TAB_SHORTCUTS[k];
   if (t) {
     e.preventDefault();
-    tab.value = t;
+    navigate(t);
   }
 }
 
@@ -82,7 +204,7 @@ const homeBadge = computed(() => approvalCount.value);
 
 let unApprovals: (() => void) | null = null;
 onMounted(async () => {
-  unApprovals = onPendingConfirms((l) => (approvalCount.value = l.length));
+  if (!qaMode) unApprovals = onPendingConfirms((l) => (approvalCount.value = l.length));
   window.addEventListener("keydown", onGlobalKeydown);
   clockTimer = window.setInterval(() => (clockNow.value = new Date()), 30_000);
 });
@@ -129,9 +251,9 @@ function close() {
             v-for="n in NAV"
             :key="n.id"
             class="tb-nav-item"
-            :class="{ on: tab === n.id }"
+            :class="{ on: tab === n.id && !(sceneActive && n.id === 'plugins') }"
             :title="`⌘${n.shortcut}`"
-            @click="tab = n.id"
+            @click="navigate(n.id)"
           >
             <YbIcon class="tb-nav-ic" :name="n.icon" :size="15" />
             <span class="tb-nav-label">{{ n.label }}</span>
@@ -140,11 +262,22 @@ function close() {
         </nav>
 
         <div class="tb-right">
+          <button
+            v-if="capability"
+            class="activity-pill"
+            :class="{ active: sceneActive, busy: activityBusy }"
+            :title="sceneActive ? '收起工作面' : '恢复工作面'"
+            @click="sceneActive ? hideSurface() : showSurface()"
+          >
+            <span class="activity-icon"><YbIcon name="plug" :size="12" /></span>
+            <span class="activity-label">{{ capability.title }}</span>
+            <i />
+          </button>
           <button class="tb-btn" title="命令面板 (⌘K)" @click="togglePalette">
             <YbIcon name="search" :size="15" />
             <kbd class="tb-kbd">⌘K</kbd>
           </button>
-          <button class="tb-btn" :class="{ on: tab === 'settings' }" title="设置 (⌘,)" @click="tab = 'settings'">
+          <button class="tb-btn" :class="{ on: tab === 'settings' }" title="设置 (⌘,)" @click="navigate('settings')">
             <YbIcon name="gear" :size="15" />
           </button>
           <button class="tb-btn" title="收起为小窗" @click="close">
@@ -156,11 +289,33 @@ function close() {
 
     <!-- 内容区：各页常驻挂载，切页只切显隐。
          主屏 = 对话 + 信息面板融合体（AI 交互主入口）；插件面板打开 → 自动切插件页 -->
-    <main class="content">
-      <HomeChat v-show="tab === 'home'" :left-rail-open="leftRailOpen" :right-rail-open="rightRailOpen" @toggle-left="toggleLeftRail" @toggle-right="toggleRightRail" @state="chatState = $event" @open-panel="tab = 'plugins'" @reminder="tab = 'home'" />
-      <HomePlugins v-show="tab === 'plugins'" @state="panelState = $event" @panel="tab = 'plugins'" />
-      <DataView v-show="tab === 'data'" />
-      <SettingsView v-show="tab === 'settings'" />
+    <main class="content" :class="{ 'capability-scene': sceneActive, 'capability-focus': sceneActive && presentation === 'focus' }">
+      <Transition name="chat-fade">
+        <div v-show="tab === 'home' && !sceneActive" class="view-host chat-host">
+          <HomeChat v-if="!qaMode" :left-rail-open="leftRailOpen" :right-rail-open="rightRailOpen" @toggle-left="toggleLeftRail" @toggle-right="toggleRightRail" @state="chatState = $event" @open-panel="showSurface" @reminder="navigate('home')" />
+        </div>
+      </Transition>
+      <Transition name="scene-rail">
+        <div v-show="sceneActive && presentation === 'stage'" class="capability-rail-host">
+          <CapabilityConversationRail :surface="capability" :active="sceneActive" @close="hideSurface" @focus="toggleFocus" />
+        </div>
+      </Transition>
+      <Transition name="scene-panel">
+        <div v-show="tab === 'plugins' || sceneActive" class="view-host plugin-host">
+        <HomePlugins
+          ref="pluginHost"
+          :scene="sceneActive"
+          :presentation="presentation"
+          @state="panelState = $event"
+          @panel="onPanelAvailable"
+          @surface="onSurface"
+          @close="sceneActive ? hideSurface() : closeCapability()"
+          @focus="toggleFocus"
+        />
+        </div>
+      </Transition>
+      <div v-show="tab === 'data'" class="view-host"><DataView v-if="!qaMode" /></div>
+      <div v-show="tab === 'settings'" class="view-host"><SettingsView v-if="!qaMode" /></div>
     </main>
 
     <!-- ⌘K 命令面板：覆盖在主屏上（AI 原生：找页面用搜/说） -->
@@ -323,6 +478,30 @@ function close() {
 .tb-rail-btn.on {
   color: var(--yb-accent);
 }
+.activity-pill {
+  max-width: 230px;
+  height: 28px;
+  margin-right: 4px;
+  padding: 0 8px 0 5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--yb-card-border);
+  border-radius: var(--yb-radius-pill);
+  background: var(--yb-card-bg);
+  color: var(--yb-text-dim);
+  font: inherit;
+  font-size: var(--yb-fs-xs);
+  cursor: pointer;
+  box-shadow: var(--yb-shadow-1);
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
+}
+.activity-pill:hover,
+.activity-pill.active { border-color: rgba(var(--yb-c-sky-rgb), 0.3); color: var(--yb-text); box-shadow: var(--yb-shadow-2); }
+.activity-pill .activity-icon { width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%; background: var(--yb-accent-soft); color: var(--yb-accent); }
+.activity-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.activity-pill > i { width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; background: var(--yb-success); }
+.activity-pill.busy > i { background: var(--yb-accent); box-shadow: 0 0 0 4px rgba(var(--yb-c-sky-rgb), 0.1); }
 .tb-btn {
   display: inline-flex;
   align-items: center;
@@ -381,5 +560,64 @@ function close() {
 .content > * {
   flex: 1;
   min-height: 0;
+}
+.view-host {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.view-host > * { flex: 1; min-height: 0; }
+.content.capability-scene {
+  display: grid;
+  grid-template-columns: minmax(286px, 310px) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+/* 场景进入动效：协作轨从左侧滑入；插件宿主像从译宝内部"长出来"（spring 弹性，上浮展开）。
+ * leave 不做宿主级动画——收起工作面即回到原对话位置，面板自身的同源缩回由 HomePlugins 负责 */
+.capability-rail-host {
+  grid-column: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.scene-rail-enter-active {
+  transition: opacity 0.22s var(--yb-ease-out), transform 0.22s var(--yb-ease-out);
+}
+.scene-rail-enter-from {
+  opacity: 0;
+  transform: translateX(-14px);
+}
+.scene-panel-enter-active {
+  transition: opacity 0.3s var(--yb-ease-spring), transform 0.3s var(--yb-ease-spring);
+}
+.scene-panel-enter-from {
+  opacity: 0;
+  transform: translateY(12px) scale(0.97);
+  transform-origin: 50% 0%;
+}
+/* 收起工作面后主屏对话淡入承接（面板缩回 → 对话出现，避免场景整体瞬切） */
+.chat-fade-enter-active {
+  transition: opacity 0.18s var(--yb-ease-out);
+}
+.chat-fade-enter-from {
+  opacity: 0;
+}
+.capability-scene .plugin-host {
+  grid-column: 2;
+  min-width: 0;
+  min-height: 0;
+}
+.content.capability-focus { grid-template-columns: minmax(0, 1fr); }
+.capability-focus .plugin-host { grid-column: 1; }
+
+@media (max-width: 980px) {
+  .content.capability-scene { grid-template-columns: minmax(0, 1fr); }
+  .capability-scene .capability-rail-host { display: none !important; }
+  .capability-scene .plugin-host { grid-column: 1; }
+}
+@media (max-width: 760px) {
+  .activity-pill { max-width: 40px; padding-right: 5px; }
+  .activity-pill .activity-label { display: none; }
+  .tb-kbd { display: none; }
 }
 </style>

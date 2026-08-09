@@ -12,7 +12,7 @@ type IconName =
   | "clock" | "chat" | "gear" | "spinner" | "check" | "x" | "stop"
   | "lock" | "pin" | "doc" | "alert" | "inbox" | "sparkle" | "plug"
   | "dumpling" | "mic" | "wave" | "thumb-up" | "thumb-down" | "search"
-  | "panel-left" | "panel-right" | "plus";
+  | "panel-left" | "panel-right" | "plus" | "expand";
 
 withDefaults(
   defineProps<{
@@ -82,6 +82,8 @@ const paths: Record<IconName, string> = {
     '<rect x="3.5" y="4" width="17" height="16" rx="2.5"/><path d="M15 4v16"/>',
   plus:
     '<path d="M12 5v14M5 12h14"/>',
+  expand:
+    '<path d="M8.5 4.5h-4v4M15.5 4.5h4v4M8.5 19.5h-4v-4M19.5 15.5v4h-4"/><path d="M4.8 8.2 9 4M15 4l4.2 4.2M4.8 15.8 9 20M15 20l4.2-4.2"/>',
 };
 </script>
 

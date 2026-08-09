@@ -1336,6 +1336,49 @@ fn get_current_panel(state: tauri::State<Brain>) -> Result<Option<Value>, String
     Ok(g.last_panel.clone())
 }
 
+/// 读取 sidecar 已持久化的近期会话，供主屏恢复协作时间线。
+/// 这是只读 UI 投影：不把历史重新送回大脑，也不会重放任何插件动作。
+#[tauri::command]
+fn get_conversation_history(limit: Option<usize>) -> Result<Vec<Value>, String> {
+    let path = runtime_root().join("history.json");
+    let raw = match std::fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(format!("读取会话历史失败：{e}")),
+    };
+    let parsed: Value = serde_json::from_str(&raw).map_err(|e| format!("会话历史格式损坏：{e}"))?;
+    let messages = parsed
+        .as_array()
+        .ok_or_else(|| "会话历史格式不是数组".to_string())?;
+    let cap = limit.unwrap_or(80).clamp(1, 200);
+    let start = messages.len().saturating_sub(cap);
+    Ok(messages[start..]
+        .iter()
+        .filter_map(|message| {
+            let role = message.get("role")?.as_str()?;
+            if !matches!(role, "user" | "assistant" | "tool") {
+                return None;
+            }
+            let content = message.get("content")?.as_str()?;
+            let mut projected = serde_json::json!({ "role": role, "content": content });
+            if let Some(surface) = message.get("surface").and_then(Value::as_str) {
+                projected["surface"] = Value::String(surface.to_string());
+            }
+            if let Some(tool_call_id) = message.get("tool_call_id").and_then(Value::as_str) {
+                projected["tool_call_id"] = Value::String(tool_call_id.to_string());
+            }
+            if let Some(calls) = message.get("tool_calls").and_then(Value::as_array) {
+                projected["tool_calls"] = Value::Array(calls.iter().filter_map(|call| {
+                    let id = call.get("id").and_then(Value::as_str);
+                    let name = call.get("function")?.get("name")?.as_str()?;
+                    Some(serde_json::json!({ "id": id, "function": { "name": name } }))
+                }).collect());
+            }
+            Some(projected)
+        })
+        .collect())
+}
+
 #[tauri::command]
 fn voice_start(
     state: tauri::State<Brain>,
@@ -1994,6 +2037,7 @@ pub fn run() {
             cancel_snip,
             vision_query,
             get_current_panel,
+            get_conversation_history,
             voice_start,
             interrupt,
             report_panel_context,

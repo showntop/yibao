@@ -124,7 +124,7 @@ function pushWarn(text: string) {
   bubbles.value.push({ role: "ai", text, icon: "alert" });
 }
 
-// state：同步给父级顶栏状态；openPanel：关联气泡点击 → 父级切插件页；reminder：父级切回本页
+// state：同步给父级顶栏状态；openPanel：关联气泡点击 → 在当前任务展开能力工作面；reminder：父级切回本页
 const emit = defineEmits<{
   state: [AvatarState];
   openPanel: [];
@@ -522,7 +522,7 @@ function onEvent(e: BrainEvent) {
       state.value = "say";
       break;
     case "panel": {
-      // 面板 = 插件页的嵌入视图：本页只留一条「派生」关联气泡（可点击直达），协作过程不镜像
+      // 面板先成为当前任务的可恢复能力；不主动抢页面，用户从关联卡/活动胶囊展开。
       const title = e.payload?.title || e.payload?.panel || "插件面板";
       if (!panelOpen.value) {
         panelOpen.value = true;
@@ -711,9 +711,9 @@ onUnmounted(() => {
         <!-- 跨日日期分隔（今天/昨天/更早） -->
         <div v-if="showDateDivider(i)" class="date-divider"><span>{{ fmtDay(b.ts) }}</span></div>
 
-        <!-- 「⇢ 协作」关联气泡：可点击，直达插件页（派生入口，§主/子 agent 关联） -->
+        <!-- 「⇢ 协作」关联气泡：可点击，在当前任务内展开能力工作面。 -->
         <button v-if="b.panelLink" class="assoc" @click="emit('openPanel')">
-          {{ b.text }}<span class="assoc-arrow">前往 ›</span>
+          {{ b.text }}<span class="assoc-arrow">展开 ›</span>
         </button>
 
         <!-- 过程工作卡：图标 + 描述 + 进度条（进行中）/ ✅❌（完成），点「详情」展开参数与结果 -->
