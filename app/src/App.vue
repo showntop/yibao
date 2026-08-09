@@ -36,6 +36,7 @@ import {
   type PendingConfirm,
   type SettingsValues,
   canRememberSkill,
+  rememberLabelForSkill,
 } from "./lib/brain";
 import {
   openPanel,
@@ -76,6 +77,8 @@ const pendingConfirms = ref<PendingConfirm[]>([]);
 const pending = computed(() => pendingConfirms.value[0] ?? null);
 const pendingCanRemember = computed(() => canRememberSkill(pending.value?.skill ?? ""));
 const rememberPending = ref(false);
+const approvalGuard = ref<null | "allowed" | "denied">(null);
+let approvalGuardTimer: ReturnType<typeof setTimeout> | null = null;
 const brainDown = ref(false); // 大脑掉线/重启中（守护在恢复）
 const perms = ref<BrainPermissions | null>(null); // macOS 权限状态（null=未收到）
 // 感知观察中叠加点（Avatar observing prop）：总开关 + 任一采集源开启即视为观察中
@@ -779,11 +782,15 @@ async function decide(approved: boolean, remember = false) {
   if (!pending.value) return;
   const { id } = pending.value;
   state.value = "think";
+  beginApprovalGuard(approved);
   try {
     await sendConfirmBatch([{ id, approved, remember: pendingCanRemember.value && remember }]);
     rememberPending.value = false;
+    releaseApprovalGuard();
   } catch (err) {
+    clearApprovalGuard();
     pushWarn("确认失败：" + String(err));
+    state.value = "idle";
   }
 }
 
@@ -791,12 +798,36 @@ async function decideAllPending(approved: boolean) {
   if (pendingConfirms.value.length < 2) return;
   const items = pendingConfirms.value.map(({ id }) => ({ id, approved, remember: false }));
   state.value = "think";
+  beginApprovalGuard(approved);
   try {
     await sendConfirmBatch(items);
+    releaseApprovalGuard();
   } catch (err) {
+    clearApprovalGuard();
     pushWarn("批量确认失败：" + String(err));
     state.value = "idle";
   }
+}
+
+/** 审批卡会乐观出队；保留短暂回执占位，吸收连点，避免同一位置瞬间变成「停止」。 */
+function beginApprovalGuard(approved: boolean) {
+  if (approvalGuardTimer) clearTimeout(approvalGuardTimer);
+  approvalGuardTimer = null;
+  approvalGuard.value = approved ? "allowed" : "denied";
+}
+
+function releaseApprovalGuard(delay = 850) {
+  if (approvalGuardTimer) clearTimeout(approvalGuardTimer);
+  approvalGuardTimer = setTimeout(() => {
+    approvalGuard.value = null;
+    approvalGuardTimer = null;
+  }, delay);
+}
+
+function clearApprovalGuard() {
+  if (approvalGuardTimer) clearTimeout(approvalGuardTimer);
+  approvalGuardTimer = null;
+  approvalGuard.value = null;
 }
 
 function onMic() {
@@ -949,6 +980,7 @@ onUnmounted(() => {
   if (clickTimer !== null) clearTimeout(clickTimer);
   if (flashTimer !== null) clearTimeout(flashTimer);
   if (drowsyTimer !== null) clearTimeout(drowsyTimer);
+  if (approvalGuardTimer !== null) clearTimeout(approvalGuardTimer);
 });
 </script>
 
@@ -1012,16 +1044,17 @@ onUnmounted(() => {
               <path d="M3 21l7-7" />
             </svg>
           </button>
-          <button class="hbtn" title="插件" @click="expandTo('plugins')">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="3" width="7" height="7" rx="1.5" />
-              <rect x="14" y="3" width="7" height="7" rx="1.5" />
-              <rect x="3" y="14" width="7" height="7" rx="1.5" />
-              <rect x="14" y="14" width="7" height="7" rx="1.5" />
-            </svg>
+          <button
+            class="hbtn view-toggle"
+            :class="{ active: view === 'plugins' }"
+            :title="view === 'chat' ? '插件' : '返回对话'"
+            :aria-label="view === 'chat' ? '打开插件' : '返回对话'"
+            @click="expandTo(view === 'chat' ? 'plugins' : 'chat')"
+          >
+            <YbIcon :name="view === 'chat' ? 'plug' : 'chat'" :size="14" />
           </button>
         </div>
-        <Avatar :state="petState" :size="38" :observing="observing" @click="onAvatarClick" />
+        <Avatar :state="petState" :size="34" :observing="observing" @click="onAvatarClick" />
         <div class="meta" data-tauri-drag-region>
           <span class="name">译宝</span>
           <span class="status" :class="petState"><i class="dot" />{{ statusText }}</span>
@@ -1038,7 +1071,7 @@ onUnmounted(() => {
       <div v-if="view === 'plugins'" class="bubbles">
         <div class="pl-head">
           <span class="pl-title">插件</span>
-          <button class="pl-back" @click="view = 'chat'">‹ 对话</button>
+          <span class="pl-subtitle">选择一个能力继续</span>
         </div>
         <div v-if="pluginErr" class="pl-err"><YbIcon name="alert" :size="14" />{{ pluginErr }}</div>
         <div class="pl-grid">
@@ -1087,7 +1120,11 @@ onUnmounted(() => {
           <span class="ctx-text">区域截图 {{ snipCtx.width }}×{{ snipCtx.height }}，想问什么？</span>
           <button class="ctx-x" title="去掉截图" @click="snipCtx = null">×</button>
         </div>
-        <InputBar v-if="!pending" ref="inputBarRef" :busy="busy" :listening="state === 'listen'" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
+        <div v-if="approvalGuard" class="approval-guard" role="status" aria-live="polite">
+          <YbIcon :name="approvalGuard === 'allowed' ? 'check' : 'x'" :size="15" :stroke="2" />
+          <span>{{ approvalGuard === "allowed" ? "已允许，正在继续" : "已拒绝" }}</span>
+        </div>
+        <InputBar v-else-if="!pending" ref="inputBarRef" :busy="busy" :listening="state === 'listen'" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
         <div v-else-if="pendingConfirms.length > 1" class="batch-confirm-notice">
           <div class="batch-copy">
             <strong>{{ pendingConfirms.length }} 项待批准</strong>
@@ -1106,7 +1143,7 @@ onUnmounted(() => {
           </div>
           <label v-if="pendingCanRemember" class="quick-remember">
             <input v-model="rememberPending" type="checkbox" />
-            本会话不再询问
+            {{ rememberLabelForSkill(pending.skill) }}
           </label>
           <div class="quick-actions">
             <button class="quick-deny" @click="decide(false)">拒绝</button>
@@ -1135,11 +1172,11 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   background: var(--yb-shell-bg);
-  -webkit-backdrop-filter: var(--yb-blur);
-  backdrop-filter: var(--yb-blur);
-  border: 1px solid var(--yb-glass-border);
-  border-radius: var(--yb-radius-xl);
-  box-shadow: var(--yb-shadow);
+  border: 1px solid var(--yb-border-strong);
+  border-radius: 20px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.96),
+    inset 0 -1px 0 rgba(var(--yb-c-slate-rgb), 0.035);
   /* 背景淡入：窗口 resize 瞬间不再是透明硬切 */
   animation: shell-in 0.22s var(--yb-ease-out) both;
 }
@@ -1242,15 +1279,30 @@ onUnmounted(() => {
   gap: 6px;
 }
 .quick-confirm,
-.batch-confirm-notice {
+.batch-confirm-notice,
+.approval-guard {
   display: flex;
   align-items: center;
   gap: var(--yb-space-2);
   padding: 9px 10px;
-  border: 1px solid var(--yb-danger-soft);
+  margin: 0 2px 10px;
+  border: 1px solid rgba(var(--yb-c-amber-rgb), 0.32);
   border-radius: var(--yb-radius-md);
+  background: var(--yb-intent-pending-soft);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+.approval-guard {
+  min-height: 34px;
+  box-sizing: border-box;
+  justify-content: center;
+  color: var(--yb-text-dim);
   background: var(--yb-surface-solid);
-  box-shadow: var(--yb-shadow-sm);
+  border-color: var(--yb-border-base);
+  pointer-events: auto;
+  user-select: none;
+}
+.approval-guard .yb-icon {
+  color: var(--yb-intent-ok);
 }
 .quick-copy,
 .batch-copy {
@@ -1301,6 +1353,7 @@ onUnmounted(() => {
 .quick-actions button,
 .batch-actions button,
 .confirm-open {
+  min-height: 32px;
   padding: 6px 10px;
   border: 0;
   border-radius: var(--yb-radius-sm);
@@ -1317,6 +1370,12 @@ onUnmounted(() => {
   color: var(--yb-text-on-accent);
   background: var(--yb-accent);
 }
+.quick-actions button:focus-visible,
+.batch-actions button:focus-visible,
+.confirm-open:focus-visible {
+  outline: none;
+  box-shadow: var(--yb-focus-ring);
+}
 .ctx-chip {
   align-self: flex-start;
   max-width: 100%;
@@ -1331,15 +1390,19 @@ onUnmounted(() => {
     transform: none;
   }
 }
-/* header：贴边一体化（非浮卡），浅天青底与对话区分开，底部一根 hairline */
+/* header：与大窗同源的近白微光顶栏，保持品牌连续，不再使用独立的蓝灰色块。 */
 .chat-header {
   position: relative; /* 收起钮绝对定位的锚 */
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px var(--yb-space-3) 9px;
-  background: var(--yb-c-sky-050);
-  border-bottom: 1px solid var(--yb-surface-border);
+  gap: 8px;
+  min-height: 66px;
+  box-sizing: border-box;
+  padding: 8px var(--yb-space-3);
+  background:
+    linear-gradient(180deg, rgba(var(--yb-c-sky-rgb), 0.045), rgba(var(--yb-c-sky-rgb), 0) 100%),
+    var(--yb-shell-bg);
+  border-bottom: 1px solid var(--yb-border-base);
 }
 /* 锚点在右侧时（dir=ne/se）镜像头部，团子+meta 成团靠右（row-reverse 默认即靠右） */
 .chat-header.flip {
@@ -1351,14 +1414,14 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 3px;
+  gap: 2px;
   line-height: var(--yb-lh-tight);
   /* 拖动把手区（名称/状态文字上按住可拖窗） */
   cursor: default;
   user-select: none;
 }
 .name {
-  font-size: var(--yb-fs-xl);
+  font-size: var(--yb-fs-lg);
   font-weight: var(--yb-fw-bold);
   letter-spacing: 0.01em;
 }
@@ -1428,14 +1491,14 @@ onUnmounted(() => {
   top: 50%;
   transform: translateY(-50%);
   display: flex;
-  gap: 2px;
+  gap: 3px;
   padding: 2px;
   background: transparent;
   border: none;
 }
 .hbtn {
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   display: grid;
   place-items: center;
   border: none;
@@ -1449,12 +1512,26 @@ onUnmounted(() => {
   background: var(--yb-surface-solid);
   color: var(--yb-text);
 }
+.hbtn.active {
+  color: var(--yb-accent-deep);
+  background: var(--yb-accent-soft);
+  box-shadow: inset 0 0 0 1px rgba(var(--yb-c-sky-rgb), 0.16);
+}
+.hbtn:focus-visible {
+  outline: none;
+  box-shadow: var(--yb-focus-ring);
+}
 .hbtn:active {
   transform: scale(0.92);
 }
 .hbtn svg {
-  width: 13px;
-  height: 13px;
+  width: 14px;
+  height: 14px;
+}
+.bubbles :deep(.bubble.ai) {
+  background: var(--yb-bubble-ai);
+  border-color: rgba(var(--yb-c-slate-rgb), 0.15);
+  box-shadow: none;
 }
 .bubbles {
   flex: 1;
@@ -1571,19 +1648,9 @@ onUnmounted(() => {
   font-size: var(--yb-fs-lg);
   font-weight: var(--yb-fw-bold);
 }
-.pl-back {
-  border: none;
-  background: transparent;
+.pl-subtitle {
   color: var(--yb-text-dim);
-  font-size: var(--yb-fs-lg);
-  cursor: pointer;
-  padding: 3px 8px;
-  border-radius: var(--yb-radius-sm);
-  transition: all var(--yb-dur-fast) var(--yb-ease-out);
-}
-.pl-back:hover {
-  color: var(--yb-accent-deep);
-  background: var(--yb-surface-solid);
+  font-size: var(--yb-fs-sm);
 }
 .pl-err {
   display: flex;

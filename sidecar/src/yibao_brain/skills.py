@@ -52,6 +52,14 @@ class Skill(ABC):
     # Arbitrary or context-sensitive actions can require confirmation every time.
     allow_session_remember: bool = True
 
+    def session_remember_key(self, params: dict) -> dict | None:
+        """Return a canonical parameter subset for exact-action session approval.
+
+        Skills that disable broad skill-level remembering may override this to
+        allow a narrowly scoped, in-memory approval for equivalent parameters.
+        """
+        return None
+
     @abstractmethod
     def run(self, params: dict, ctx: SkillContext) -> ActionResult: ...
 

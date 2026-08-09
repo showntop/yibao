@@ -289,7 +289,7 @@ class AgentLoop:
                     approved, remember = verdicts.get(action.id, (False, False))
                     self.invoker.apply_verdict(action, approved, remember)
                     if not approved:
-                        yield Event(kind="error", text=f"用户拒绝执行 {tc.skill_id}")
+                        yield Event(kind="error", action=action, text=f"用户拒绝执行 {tc.skill_id}")
                         messages.append({"role": "tool", "tool_call_id": tc.id,
                                          "content": "用户拒绝执行该操作"})
                         continue
@@ -440,7 +440,7 @@ class AgentLoop:
                     approved, remember = verdicts.get(action.id, (False, False))
                     self.invoker.apply_verdict(action, approved, remember)
                     if not approved:
-                        yield Event(kind="error", text=f"用户拒绝执行 {tc.skill_id}")
+                        yield Event(kind="error", action=action, text=f"用户拒绝执行 {tc.skill_id}")
                         messages.append(
                             {"role": "tool", "tool_call_id": tc.id, "content": "用户拒绝执行该操作"}
                         )

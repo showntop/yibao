@@ -1,12 +1,21 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from "vue";
+import YbIcon from "./YbIcon.vue";
 
 // busy = 生成/播报中（可打断）；listening = 录音中（麦克风切声波态，点击=取消录音）
 // draft = 外部预填草稿（主屏 Feed 点击带上下文来）；变化即填入并聚焦
 const props = defineProps<{ busy?: boolean; listening?: boolean; draft?: string }>();
-const emit = defineEmits<{ (e: "submit", text: string): void; (e: "mic"): void; (e: "interrupt"): void }>();
+type InputContext = { kind: "attachment" | "reference"; label: string };
+const emit = defineEmits<{
+  (e: "submit", text: string, contexts: InputContext[]): void;
+  (e: "mic"): void;
+  (e: "interrupt"): void;
+}>();
 const text = ref("");
 const inputRef = ref<HTMLInputElement | null>(null);
+const fileRef = ref<HTMLInputElement | null>(null);
+const addOpen = ref(false);
+const pendingContexts = ref<InputContext[]>([]);
 const canSend = computed(() => text.value.trim().length > 0);
 
 // 草稿暂存：输入内容 localStorage 持久化，误关/刷新后恢复（发送或外部草稿填入时清除）
@@ -41,10 +50,33 @@ function send() {
   if (t) {
     // AI 正在生成/播报（stopping）时发送 = 先打断再发新消息（不必手动"停止"）
     if (stopping.value) emit("interrupt");
-    emit("submit", t);
+    emit("submit", t, pendingContexts.value.slice());
     text.value = "";
+    pendingContexts.value = [];
     persistDraft("");
   }
+}
+
+function openAdd(kind: InputContext["kind"]) {
+  addOpen.value = false;
+  if (kind === "attachment") {
+    fileRef.value?.click();
+    return;
+  }
+  if (!pendingContexts.value.some((item) => item.kind === "reference")) {
+    pendingContexts.value.push({ kind: "reference", label: "当前会话" });
+  }
+}
+
+function onFileChange(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0];
+  if (!file) return;
+  pendingContexts.value.push({ kind: "attachment", label: file.name });
+  (event.target as HTMLInputElement).value = "";
+}
+
+function removeContext(index: number) {
+  pendingContexts.value.splice(index, 1);
 }
 
 function onMic() {
@@ -72,6 +104,34 @@ defineExpose({ focus: () => inputRef.value?.focus() });
 
 <template>
   <form class="bar" @submit.prevent="send">
+    <div class="add-wrap">
+      <button
+        type="button"
+        class="add"
+        :class="{ open: addOpen, active: pendingContexts.length }"
+        aria-label="添加附件或引用"
+        :aria-expanded="addOpen"
+        title="添加附件或引用"
+        @click="addOpen = !addOpen"
+      >
+        <YbIcon name="plus" :size="16" />
+      </button>
+      <div v-if="addOpen" class="add-menu" role="menu" aria-label="添加内容">
+        <button type="button" role="menuitem" @click="openAdd('attachment')">
+          <strong>附件</strong><small>文件或图片</small>
+        </button>
+        <button type="button" role="menuitem" @click="openAdd('reference')">
+          <strong>引用</strong><small>当前会话上下文</small>
+        </button>
+      </div>
+      <input ref="fileRef" class="file-input" type="file" @change="onFileChange" />
+    </div>
+    <div v-if="pendingContexts.length" class="context-list" aria-label="待发送的附件和引用">
+      <span v-for="(context, index) in pendingContexts" :key="`${context.kind}-${context.label}-${index}`" class="context-chip">
+        {{ context.kind === "attachment" ? "附件" : "引用" }} · {{ context.label }}
+        <button type="button" aria-label="移除内容" @click="removeContext(index)">×</button>
+      </span>
+    </div>
     <input
       ref="inputRef"
       v-model="text"
@@ -119,11 +179,13 @@ defineExpose({ focus: () => inputRef.value?.focus() });
 
 <style scoped>
 .bar {
+  position: relative;
   display: flex;
-  gap: 4px;
+  gap: 5px;
   align-items: center;
-  padding: 4px 4px 4px 12px;
-  border-radius: 22px;                        /* 更胶囊（视觉稿） */
+  min-height: 46px;
+  padding: 5px 5px 5px 7px;
+  border-radius: 24px;                        /* 更高的对话胶囊 */
   background: var(--yb-glass);                /* 毛玻璃（统一浮层质感） */
   -webkit-backdrop-filter: var(--yb-blur);
   backdrop-filter: var(--yb-blur);
@@ -163,16 +225,110 @@ input {
 input::placeholder {
   color: var(--yb-text-dim);
 }
+.add-wrap {
+  position: relative;
+  flex: none;
+}
+.add,
 .mic,
 .main {
-  width: 30px;                                /* 收回 30（之前 34 在 260 宽容器里挤到边） */
-  height: 30px;
+  width: 34px;
+  height: 34px;
   flex-shrink: 0;
   border-radius: 50%;
   cursor: pointer;
   display: grid;
   place-items: center;
   transition: all var(--yb-dur-fast) var(--yb-ease-out);
+}
+.add {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--yb-accent);
+}
+.add:hover,
+.add.open,
+.add.active {
+  background: var(--yb-surface-2);
+  color: var(--yb-accent);
+}
+.add.active {
+  box-shadow: inset 0 0 0 1px var(--yb-accent-soft);
+}
+.add-menu {
+  position: absolute;
+  left: -2px;
+  bottom: calc(100% + 9px);
+  width: 170px;
+  padding: 5px;
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--yb-surface-border);
+  border-radius: var(--yb-radius-md);
+  background: var(--yb-glass);
+  -webkit-backdrop-filter: var(--yb-blur);
+  backdrop-filter: var(--yb-blur);
+  box-shadow: var(--yb-shadow-soft);
+  z-index: 20;
+}
+.add-menu button {
+  display: grid;
+  gap: 1px;
+  padding: 7px 9px;
+  border: none;
+  border-radius: var(--yb-radius-sm);
+  background: transparent;
+  color: var(--yb-text);
+  text-align: left;
+  cursor: pointer;
+}
+.add-menu button:hover {
+  background: var(--yb-row-hover);
+}
+.add-menu strong {
+  font-size: 12px;
+  font-weight: var(--yb-fw-medium);
+}
+.add-menu small {
+  color: var(--yb-text-faint);
+  font-size: 10px;
+}
+.file-input {
+  display: none;
+}
+.context-list {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 42%;
+  overflow: hidden;
+}
+.context-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 170px;
+  padding: 4px 7px;
+  border-radius: var(--yb-radius-pill);
+  background: var(--yb-accent-soft);
+  color: var(--yb-accent-deep);
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.context-chip button {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  line-height: 1;
+}
+.mic,
+.main {
+  border: none;
 }
 .icon {
   width: 14px;                                /* 与 30 按钮协调 */

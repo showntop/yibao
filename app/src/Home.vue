@@ -22,6 +22,18 @@ type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "e
 const tab = ref<Tab>("home");
 const chatState = ref<AvatarState>("idle");
 const panelState = ref<AvatarState>("idle");
+const leftRailOpen = ref(true);
+const rightRailOpen = ref(true);
+const clockNow = ref(new Date());
+const productNote = "让信息自然归位。";
+const weatherNote = "晴 · 26°";
+let clockTimer: number | null = null;
+
+const clockText = computed(() => new Intl.DateTimeFormat("zh-CN", {
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+}).format(clockNow.value));
 
 // 待批准数：顶栏「主屏」徽标（收件箱有待处理的事，一眼可见）
 const approvalCount = ref(0);
@@ -72,11 +84,21 @@ let unApprovals: (() => void) | null = null;
 onMounted(async () => {
   unApprovals = onPendingConfirms((l) => (approvalCount.value = l.length));
   window.addEventListener("keydown", onGlobalKeydown);
+  clockTimer = window.setInterval(() => (clockNow.value = new Date()), 30_000);
 });
 onUnmounted(() => {
   unApprovals?.();
   window.removeEventListener("keydown", onGlobalKeydown);
+  if (clockTimer !== null) window.clearInterval(clockTimer);
 });
+
+function toggleLeftRail() {
+  leftRailOpen.value = !leftRailOpen.value;
+}
+
+function toggleRightRail() {
+  rightRailOpen.value = !rightRailOpen.value;
+}
 
 function close() {
   // 收起大窗 = 隐藏 + 回小窗模式（Rust 侧还原宠物窗/面板浮窗）
@@ -89,11 +111,17 @@ function close() {
     <!-- 顶栏：红绿灯安全区 + 品牌 + 居中 tabs + 右侧命令/设置/收起 -->
     <header class="topbar">
       <div class="titlebar-safe" data-tauri-drag-region></div>
-      <div class="topbar-row">
+      <div class="topbar-row" data-tauri-drag-region>
         <div class="topbar-brand">
           <!-- 顶栏品牌 = 项目 logo（阴阳鱼，与 src-tauri/icons/icon.png 一致）；
                宠物形象 Avatar 不放顶栏，归左栏身份头部（角色与产品品牌分离） -->
           <img class="tb-logo" :src="appLogo" alt="译宝" data-tauri-drag-region />
+          <span class="tb-product-note" data-tauri-drag-region>{{ productNote }}</span>
+          <span class="tb-status" data-tauri-drag-region>
+            <time>{{ clockText }}</time>
+            <i aria-hidden="true">·</i>
+            <span>{{ weatherNote }}</span>
+          </span>
         </div>
 
         <nav class="tb-nav" data-tauri-drag-region>
@@ -129,7 +157,7 @@ function close() {
     <!-- 内容区：各页常驻挂载，切页只切显隐。
          主屏 = 对话 + 信息面板融合体（AI 交互主入口）；插件面板打开 → 自动切插件页 -->
     <main class="content">
-      <HomeChat v-show="tab === 'home'" @state="chatState = $event" @open-panel="tab = 'plugins'" @reminder="tab = 'home'" />
+      <HomeChat v-show="tab === 'home'" :left-rail-open="leftRailOpen" :right-rail-open="rightRailOpen" @toggle-left="toggleLeftRail" @toggle-right="toggleRightRail" @state="chatState = $event" @open-panel="tab = 'plugins'" @reminder="tab = 'home'" />
       <HomePlugins v-show="tab === 'plugins'" @state="panelState = $event" @panel="tab = 'plugins'" />
       <DataView v-show="tab === 'data'" />
       <SettingsView v-show="tab === 'settings'" />
@@ -157,6 +185,8 @@ function close() {
 /* ---- 顶栏 ---- */
 .topbar {
   flex-shrink: 0;
+  position: relative;
+  height: calc(var(--yb-titlebar-h) + 3px);
   display: flex;
   flex-direction: column;
   border-bottom: 1px solid var(--yb-border-base);
@@ -167,30 +197,63 @@ function close() {
 }
 /* 红绿灯安全区：Overlay 标题栏下按钮浮在内容上，这块只作留白 + 拖窗把手 */
 .titlebar-safe {
-  height: var(--yb-titlebar-h);
+  position: absolute;
+  inset: 0;
+  height: auto;
   flex-shrink: 0;
+  z-index: 0;
 }
 .topbar-row {
+  position: relative;
+  z-index: 1;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: var(--yb-space-3);
-  height: 44px;
-  padding: 0 var(--yb-space-4);
+  height: calc(var(--yb-titlebar-h) + 3px);
+  padding: 0 var(--yb-space-3) 0 74px;
   user-select: none;
 }
 /* 品牌：项目 logo（与 src-tauri 应用图标同源——阴阳鱼；宠物形象 Avatar 归左栏） */
 .topbar-brand {
   display: flex;
   align-items: center;
+  gap: 8px;
   min-width: 0;
 }
 .tb-logo {
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
   display: block;
   user-select: none;
   cursor: default;
   -webkit-user-drag: none;
+}
+.tb-product-note {
+  color: var(--yb-text-dim);
+  font-size: var(--yb-fs-xs);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.tb-status {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 2px;
+  color: var(--yb-text-faint);
+  font-size: var(--yb-fs-xs);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+.tb-status time {
+  color: var(--yb-text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.tb-status i {
+  color: var(--yb-border-strong);
+  font-style: normal;
 }
 
 /* 导航：居中 tabs（macOS 分段控件语言），hover/选中有底 */
@@ -206,7 +269,8 @@ function close() {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 12px;
+  height: 24px;
+  padding: 2px 10px;
   border: none;
   border-radius: var(--yb-radius-sm);
   background: transparent;
@@ -253,12 +317,18 @@ function close() {
   align-items: center;
   gap: 2px;
 }
+.tb-rail-btn {
+  color: var(--yb-text-faint);
+}
+.tb-rail-btn.on {
+  color: var(--yb-accent);
+}
 .tb-btn {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 28px;
-  padding: 0 9px;
+  height: 24px;
+  padding: 0 7px;
   border: none;
   border-radius: var(--yb-radius-sm);
   background: transparent;
@@ -285,6 +355,12 @@ function close() {
   font-size: 10px;
   font-family: var(--yb-font);
   line-height: 1.3;
+}
+
+@media (max-width: 1180px) {
+  .tb-status {
+    display: none;
+  }
 }
 
 /* ---- 内容区 ---- */

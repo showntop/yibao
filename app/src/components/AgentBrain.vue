@@ -20,7 +20,7 @@ interface MemoryPoint {
 }
 
 const props = defineProps<{ state: AgentState; compact?: boolean }>();
-const emit = defineEmits<{ chat: [draft: string] }>();
+const emit = defineEmits<{ chat: [draft: string]; toggle: [] }>();
 
 const memories = ref<MemItem[]>([]);
 const plugins = ref<PluginInfo[]>([]);
@@ -199,7 +199,7 @@ onUnmounted(() => {
       <button class="identity" type="button" title="和译宝聊聊它的记忆与能力" @click="greet">
         <!-- 本尊 Avatar：与顶栏同一角色（小=全局品牌 / 大=本尊特写），
              同一身份两次亮相不冲突；pointer-events 禁用其拖动手势，避免移动窗口 -->
-        <span class="identity-avatar" aria-hidden="true"><Avatar :state="state" :size="48" compact /></span>
+        <span class="identity-avatar" title="折叠左栏" @click.stop="emit('toggle')"><Avatar :state="state" :size="48" compact /></span>
         <span class="identity-copy">
           <span class="identity-line"><strong>译宝</strong><i class="state-dot" />{{ stateText }}</span>
           <span>{{ stateDetail }}</span>
@@ -288,10 +288,10 @@ button {
 /* 本尊 Avatar：纯展示（状态灯/眨眼仍动），禁用手势——避免左栏内拖动误移窗口 */
 .identity-avatar {
   flex: none;
-  pointer-events: none;
+  cursor: pointer;
 }
 .identity-avatar :deep(.av) {
-  cursor: default;
+  cursor: pointer;
 }
 
 .identity-copy {

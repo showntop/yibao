@@ -25,6 +25,7 @@ import {
   type PendingConfirm,
   type PanelFocus,
   canRememberSkill,
+  rememberLabelForSkill,
 } from "../lib/brain";
 import { procLabel, procSkip, procResultSuffix } from "../lib/proc";
 
@@ -366,7 +367,7 @@ onUnmounted(() => {
       <span class="c-text"><YbIcon class="c-ic" name="alert" :size="14" />{{ pending.label || pending.skill }}{{ pending.desc ? " · " + pending.desc : "" }}</span>
       <label v-if="pendingCanRemember" class="c-remember">
         <input v-model="rememberPending" type="checkbox" />
-        本会话不再询问
+        {{ rememberLabelForSkill(pending.skill) }}
       </label>
       <span class="c-btns">
         <button class="deny" @click="decide(false)">拒绝</button>

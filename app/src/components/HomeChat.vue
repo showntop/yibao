@@ -46,8 +46,78 @@ type BubbleMsg = {
   /** 溯源折叠展开态（仅 AI 消息） */
   refsOpen?: boolean;
 };
+type StoredBubble = {
+  role: BubbleMsg["role"];
+  text: string;
+  panelLink?: boolean;
+  proc?: { label: string; done: boolean; ok?: boolean };
+  halted?: boolean;
+  icon?: BubbleMsg["icon"];
+  ts?: number;
+  refs?: RunRef[];
+};
+const SESSION_MESSAGES_KEY = "yb-session-messages-v1";
+
+function loadSessionMessageStore(): Record<string, StoredBubble[]> {
+  try {
+    const raw = localStorage.getItem(SESSION_MESSAGES_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+const sessionMessageStore = loadSessionMessageStore();
+
+function serializeBubbles(list: BubbleMsg[]): StoredBubble[] {
+  return list.slice(-240).map((bubble) => ({
+    role: bubble.role,
+    text: bubble.text,
+    panelLink: bubble.panelLink,
+    halted: bubble.halted,
+    icon: bubble.icon,
+    ts: bubble.ts,
+    refs: bubble.refs,
+    proc: bubble.proc ? {
+      label: bubble.proc.label,
+      done: bubble.proc.done,
+      ok: bubble.proc.done ? bubble.proc.result?.success !== false : undefined,
+    } : undefined,
+  }));
+}
+
+function hydrateBubbles(list: StoredBubble[] | undefined): BubbleMsg[] {
+  if (!Array.isArray(list)) return [];
+  return list.filter((bubble) => bubble && typeof bubble.text === "string").map((bubble) => ({
+    role: bubble.role,
+    text: bubble.text,
+    panelLink: bubble.panelLink,
+    halted: bubble.halted,
+    icon: bubble.icon,
+    ts: bubble.ts,
+    refs: bubble.refs,
+    proc: bubble.proc ? {
+      label: bubble.proc.label,
+      done: bubble.proc.done,
+      expanded: false,
+      result: bubble.proc.ok === undefined ? undefined : { success: bubble.proc.ok },
+    } : undefined,
+  }));
+}
+
+function readSessionBubbles(id: string): BubbleMsg[] {
+  return hydrateBubbles(sessionMessageStore[id]);
+}
+
+function persistSessionBubbles(id: string, list: BubbleMsg[]) {
+  if (!id) return;
+  sessionMessageStore[id] = serializeBubbles(list);
+  try { localStorage.setItem(SESSION_MESSAGES_KEY, JSON.stringify(sessionMessageStore)); } catch { /* 存储不可用时仍保留内存会话 */ }
+}
 /** 技能/场景快速呼出 chip（动态：预设场景 + list_plugins） */
 type SkillChip = { key: string; label: string; icon: "clock" | "doc" | "sparkle" | "chat" | "plug"; draft: string };
+type InputContext = { kind: "attachment" | "reference"; label: string };
 
 /** 告警气泡：⚠️ 前缀改行首 alert 图标渲染（文案纯净，图标走 YbIcon） */
 function pushWarn(text: string) {
@@ -55,9 +125,22 @@ function pushWarn(text: string) {
 }
 
 // state：同步给父级顶栏状态；openPanel：关联气泡点击 → 父级切插件页；reminder：父级切回本页
-const emit = defineEmits<{ state: [AvatarState]; openPanel: []; reminder: [] }>();
+const emit = defineEmits<{
+  state: [AvatarState];
+  openPanel: [];
+  reminder: [];
+  toggleLeft: [];
+  toggleRight: [];
+}>();
 // draft：主屏 Feed/信息面板点击带过来的自包含草稿，直接转给 InputBar（它自己 watch 填入+聚焦）
-const props = defineProps<{ draft?: string }>();
+const props = withDefaults(defineProps<{
+  draft?: string;
+  leftRailOpen?: boolean;
+  rightRailOpen?: boolean;
+}>(), {
+  leftRailOpen: true,
+  rightRailOpen: true,
+});
 
 // 本地草稿：父级 draft 单向同步；右侧信息面板点动态也经此填入（强制重置触发 InputBar watch）
 const draftRef = ref<string | undefined>(undefined);
@@ -78,9 +161,21 @@ function onInfoChat(d: string) {
 
 // ---- 会话（左复合栏）：标题/预览随对话更新；切换会话保存/恢复气泡（内存 map）----
 const sessionRef = ref<InstanceType<typeof BrainSession> | null>(null);
-const sessionBubbles = new Map<string, typeof bubbles.value>(); // 会话 id → 气泡快照（内存）
-let currentSessionId = "";
+const sessionBubbles = new Map<string, typeof bubbles.value>(); // 会话 id → 当前窗口快照（持久化由 sessionMessageStore 同步）
+const currentSessionId = ref(readActiveSessionId());
 let sessionStarted = false; // 当前会话是否已有首条用户消息（决定是否生成标题）
+
+function readActiveSessionId(): string {
+  try {
+    const active = localStorage.getItem("yb-active-session");
+    if (active) return active;
+    const raw = localStorage.getItem("yb-sessions");
+    const sessions = raw ? JSON.parse(raw) as Array<{ id?: string }> : [];
+    return sessions.find((item) => item.id)?.id || "";
+  } catch {
+    return "";
+  }
+}
 
 function readSessionTitle(id?: string): string {
   try {
@@ -95,11 +190,19 @@ function readSessionTitle(id?: string): string {
 
 const currentSessionTitle = ref(readSessionTitle());
 function onSessionActive(id: string) {
-  currentSessionId = id;
+  if (currentSessionId.value) persistSessionBubbles(currentSessionId.value, bubbles.value);
+  currentSessionId.value = id;
+  const restored = readSessionBubbles(id);
+  sessionBubbles.set(id, restored);
+  bubbles.value = restored;
+  sessionStarted = restored.some((bubble) => bubble.role === "user");
   currentSessionTitle.value = readSessionTitle(id);
 }
 function onSessionNew() {
-  if (currentSessionId) sessionBubbles.set(currentSessionId, bubbles.value.slice());
+  if (currentSessionId.value) {
+    sessionBubbles.set(currentSessionId.value, bubbles.value.slice());
+    persistSessionBubbles(currentSessionId.value, bubbles.value);
+  }
   bubbles.value = [];
   streamingIdx.value = null;
   state.value = "idle"; // showTyping 由 state 推导，自动收起
@@ -107,10 +210,15 @@ function onSessionNew() {
   currentSessionTitle.value = "新对话";
 }
 function onSessionSelect(id: string) {
-  // 保存当前会话气泡 → 恢复目标会话气泡（内存快照；持久化 load_session 留后端扩展）
-  if (currentSessionId) sessionBubbles.set(currentSessionId, bubbles.value.slice());
-  currentSessionId = id;
-  bubbles.value = sessionBubbles.get(id) ?? [];
+  // 保存当前会话气泡 → 恢复目标会话气泡（内存快照 + localStorage 持久化）
+  if (currentSessionId.value) {
+    sessionBubbles.set(currentSessionId.value, bubbles.value.slice());
+    persistSessionBubbles(currentSessionId.value, bubbles.value);
+  }
+  currentSessionId.value = id;
+  const restored = sessionBubbles.get(id) ?? readSessionBubbles(id);
+  sessionBubbles.set(id, restored);
+  bubbles.value = restored;
   streamingIdx.value = null;
   state.value = "idle";
   sessionStarted = true; // 该会话已有历史，后续消息不再生成标题
@@ -287,6 +395,9 @@ watch(() => bubbles.value.length, () => scrollBubbles(true));
 watch(() => bubbles.value[bubbles.value.length - 1]?.text, () => scrollBubbles(false));
 watch(showTyping, () => scrollBubbles(true));
 watch(state, (s) => emit("state", s));
+watch(bubbles, (list) => {
+  if (currentSessionId.value) persistSessionBubbles(currentSessionId.value, list);
+}, { deep: true });
 
 let unlisten: (() => void) | null = null;
 let unlistenStatus: (() => void) | null = null;
@@ -451,7 +562,11 @@ function onStatus(m: BrainStatusMsg) {
   }
 }
 
-async function submit(text: string) {
+async function submit(text: string, contexts: InputContext[] = []) {
+  const contextPrefix = contexts.length
+    ? `${contexts.map((context) => `【${context.kind === "attachment" ? "附件" : "引用"}：${context.label}】`).join("\n")}\n\n`
+    : "";
+  const messageText = `${contextPrefix}${text}`;
   // 编辑重发：从被编辑的用户消息起截断，用新文本替换（其后对话作废）
   if (editTarget.value !== null) {
     bubbles.value = bubbles.value.slice(0, editTarget.value);
@@ -467,12 +582,12 @@ async function submit(text: string) {
   }
   // 若 AI 正在生成/播报，InputBar 已在发送前 emit interrupt（先打断再发）；
   // 这里兜底：state 异常卡 busy（无响应）时也允许发送（runInput 会覆盖 state）
-  bubbles.value.push({ role: "user", text, ts: Date.now() });
+  bubbles.value.push({ role: "user", text: messageText, ts: Date.now() });
   state.value = "think";
   try {
     // 15s 超时兜底：runInput invoke 挂起会让 state 一直卡 think（主按钮变"打断"，发不出新消息）
     await Promise.race([
-      runInput(text, "pet"),
+      runInput(messageText, "pet"),
       new Promise<never>((_, rej) => setTimeout(() => rej(new Error("大脑响应超时")), 15000)),
     ]);
   } catch (err) {
@@ -507,6 +622,14 @@ function flashValence(v: "success" | "error") {
 }
 
 onMounted(async () => {
+  const activeId = readActiveSessionId();
+  if (activeId) {
+    currentSessionId.value = activeId;
+    const restored = readSessionBubbles(activeId);
+    sessionBubbles.set(activeId, restored);
+    bubbles.value = restored;
+    sessionStarted = restored.some((bubble) => bubble.role === "user");
+  }
   // 技能 chip 动态数据：与左栏技能同源（list_plugins），不另起炉灶
   try { plugins.value = await invoke<{ id: string; name: string }[]>("list_plugins").catch(() => []); } catch { plugins.value = []; }
   unlisten = await onBrainEvent(onEvent);
@@ -552,9 +675,23 @@ onUnmounted(() => {
 
     <!-- 三栏 AI 工作台：内心+会话（复合栏）｜对话｜AI 进程 -->
     <!-- 用 wrapper div 包左/右栏：scoped CSS 才能命中（直接 class 加在子组件根会因 scope 不匹配而失效） -->
-    <div v-else class="chat-cols">
+    <div v-else class="chat-cols" :class="{ 'left-collapsed': !props.leftRailOpen, 'right-collapsed': !props.rightRailOpen }">
+    <button v-if="!props.leftRailOpen" class="rail-avatar-reopen" type="button" title="展开左栏" aria-label="展开左栏" @click="emit('toggleLeft')">
+      <Avatar :state="state" :size="28" compact />
+    </button>
+    <button
+      class="rail-toggle rail-toggle-right"
+      :class="{ collapsed: !props.rightRailOpen }"
+      type="button"
+      :aria-pressed="props.rightRailOpen"
+      :title="props.rightRailOpen ? '隐藏右栏' : '显示右栏'"
+      :aria-label="props.rightRailOpen ? '隐藏右栏' : '显示右栏'"
+      @click="emit('toggleRight')"
+    >
+      <YbIcon name="panel-right" :size="14" />
+    </button>
     <!-- 左：内心 + 会话 复合栏（tab 切换：AgentBrain 人格展示 / SessionList 历史导航） -->
-    <div class="col-left"><BrainSession ref="sessionRef" :state="state" @chat="onInfoChat" @select="onSessionSelect" @active="onSessionActive" @new-chat="onSessionNew" /></div>
+    <div class="col-left"><BrainSession ref="sessionRef" :state="state" @chat="onInfoChat" @toggle="emit('toggleLeft')" @select="onSessionSelect" @active="onSessionActive" @new-chat="onSessionNew" /></div>
 
     <div class="chat-main">
     <PermissionsBanner v-if="missingPerms && perms" :perms="perms" />
@@ -669,6 +806,7 @@ onUnmounted(() => {
     <!-- 右：只描述当前会话的目标、阻塞、上下文、关联能力与产出 -->
     <div class="col-context">
       <HomeContextPanel
+        :session-id="currentSessionId"
         :session-title="currentSessionTitle"
         :session-state="state"
         :has-conversation="Boolean(bubbles.length)"
@@ -693,6 +831,61 @@ onUnmounted(() => {
   min-height: 0;
   display: flex;
   min-width: 0;
+  position: relative;
+}
+.rail-toggle {
+  position: absolute;
+  top: 8px;
+  z-index: 10;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--yb-radius-sm);
+  background: color-mix(in srgb, var(--yb-content-bg) 86%, transparent);
+  color: var(--yb-text-faint);
+  cursor: pointer;
+  opacity: 0.74;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
+}
+.rail-toggle:hover,
+.rail-toggle:focus-visible {
+  border-color: var(--yb-surface-border);
+  background: var(--yb-surface-2);
+  color: var(--yb-accent);
+  opacity: 1;
+}
+.rail-toggle-right { right: 8px; }
+.rail-toggle.collapsed {
+  color: var(--yb-accent);
+  opacity: 0.9;
+}
+.rail-avatar-reopen {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  z-index: 10;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--yb-surface-border);
+  border-radius: 50%;
+  background: var(--yb-surface-2);
+  box-shadow: var(--yb-shadow-soft);
+  cursor: pointer;
+}
+.rail-avatar-reopen:hover,
+.rail-avatar-reopen:focus-visible {
+  border-color: var(--yb-accent);
+  background: var(--yb-accent-soft);
+}
+.chat-cols.left-collapsed > .col-left,
+.chat-cols.right-collapsed > .col-context {
+  display: none;
 }
 .chat-main {
   flex: 1;
@@ -710,6 +903,9 @@ onUnmounted(() => {
 }
 @media (max-width: 900px) {
   .chat-cols > .col-context {
+    display: none;
+  }
+  .rail-toggle-right {
     display: none;
   }
 }

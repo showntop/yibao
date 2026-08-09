@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { canRememberSkill } from "../lib/brain";
+import { canRememberSkill, rememberLabelForSkill } from "../lib/brain";
 import YbIcon from "./YbIcon.vue";
 
 const props = defineProps<{ skill: string; desc: string }>();
@@ -15,7 +15,7 @@ const canRemember = computed(() => canRememberSkill(props.skill));
     <p><span class="skill">{{ skill }}</span>{{ desc ? " · " + desc : "" }}</p>
     <label v-if="canRemember" class="remember">
       <input type="checkbox" v-model="remember" />
-      本会话不再询问这个操作
+      {{ rememberLabelForSkill(skill) }}
     </label>
     <div class="btns">
       <button class="deny" @click="emit('deny')">拒绝</button>

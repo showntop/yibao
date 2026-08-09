@@ -544,6 +544,24 @@ def test_computer_use_zoom_action_grounds_and_clicks(tmp_path, monkeypatch):
 
 
 # ---------- watch_command：后台盯命令 ----------
+def test_watch_command_session_remember_key_is_exact_and_normalized(tmp_path):
+    from yibao_brain.background_jobs import BackgroundJobManager
+    from yibao_brain.skills_real import WatchCommandSkill
+
+    skill = WatchCommandSkill(BackgroundJobManager())
+    same_cwd = tmp_path / "child" / ".."
+
+    assert skill.session_remember_key({"command": " npm test ", "cwd": str(same_cwd)}) == {
+        "command": "npm test",
+        "cwd": str(tmp_path),
+    }
+    assert skill.session_remember_key({"command": "npm build", "cwd": str(tmp_path)}) != skill.session_remember_key({
+        "command": "npm test",
+        "cwd": str(tmp_path),
+    })
+    assert skill.session_remember_key({"command": "npm test"}) is None
+
+
 def _wait_emit(events, timeout_s=2.0):
     import time
 

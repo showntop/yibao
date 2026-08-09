@@ -117,6 +117,10 @@ def test_loop_confirms_high_risk(tmp_path):
     events = list(loop.run("做危险的事"))
     kinds = [e.kind for e in events]
     assert "confirmation_needed" in kinds
+    confirmation = next(e for e in events if e.kind == "confirmation_needed")
+    rejected = next(e for e in events if e.kind == "error" and "用户拒绝" in (e.text or ""))
+    assert rejected.action is not None and confirmation.action is not None
+    assert rejected.action.id == confirmation.action.id
     # 拒绝后不执行 danger
     assert not any(e.kind == "action_result" and e.result and e.result.data.get("did") for e in events)
 
@@ -391,6 +395,10 @@ def test_loop_arun_async_confirmer_rejected(tmp_path):
     kinds = [e.kind for e in events]
     assert "confirmation_needed" in kinds
     assert "error" in kinds
+    confirmation = next(e for e in events if e.kind == "confirmation_needed")
+    rejected = next(e for e in events if e.kind == "error" and "用户拒绝" in (e.text or ""))
+    assert rejected.action is not None and confirmation.action is not None
+    assert rejected.action.id == confirmation.action.id
     assert not any(e.kind == "action_result" and e.result and e.result.data.get("did") for e in events)
 
 

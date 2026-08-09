@@ -5,7 +5,9 @@
 """
 from __future__ import annotations
 
+import hashlib
 import inspect
+import json
 from dataclasses import replace
 
 from .audit import AuditLog
@@ -51,7 +53,19 @@ class ToolInvoker:
         )
 
     def decide(self, action: Action) -> Decision:
+        action_key = self._session_action_key(action)
+        if action_key is not None and action_key in self.gate.session_allowed_actions:
+            return Decision.AUTO
         return self.gate.decide(action)
+
+    def _session_action_key(self, action: Action) -> str | None:
+        skill = self.skills.get(action.skill_id)
+        scoped = skill.session_remember_key(action.params)
+        if scoped is None:
+            return None
+        canonical = json.dumps(scoped, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        return f"{action.skill_id}:{digest}"
 
     def precheck(self, action: Action) -> str | None:
         """技能的本地启发式拦截：返回人话原因 = 不执行（loop 拿去让 LLM 换工具重试）。"""
@@ -79,18 +93,27 @@ class ToolInvoker:
         return res
 
     def apply_verdict(self, action: Action, approved: bool, remember: bool) -> None:
-        """应用批量确认裁决：approved + remember 时把 skill 写进 gate.session_allowed，
-        后续同技能直接 AUTO（连 confirmation_needed 都不发）。会话级，不落盘。
+        """应用批量确认裁决：approved + remember 时写入会话内授权。
+
+        普通技能按 skill 放行；参数敏感技能只记精确动作指纹。两者都只活在内存，
+        后续命中时直接 AUTO（连 confirmation_needed 都不发）。
 
         loop（run/arun）拿到 batch_confirm 的 verdict 后统一调用，消除三处重复写入，
         并补回「本会话不再询问」stderr 日志（原逐个分支里漏打）。
         """
         skill = self.skills.get(action.skill_id)
-        if approved and remember and skill.allow_session_remember:
-            self.gate.session_allowed.add(action.skill_id)
-            import sys
+        if not approved or not remember:
+            return
+        import sys
 
+        if skill.allow_session_remember:
+            self.gate.session_allowed.add(action.skill_id)
             print(f"[yibao] 本会话不再询问：{action.skill_id}", file=sys.stderr)
+            return
+        action_key = self._session_action_key(action)
+        if action_key is not None:
+            self.gate.session_allowed_actions.add(action_key)
+            print(f"[yibao] 本会话允许相同参数：{action.skill_id}", file=sys.stderr)
 
     def execute(self, action: Action, params: dict, meta: dict | None = None) -> ActionResult:
         """执行 + 审计。技能异常转为失败结果，不抛出（不杀 run）。"""

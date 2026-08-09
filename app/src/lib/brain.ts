@@ -70,6 +70,8 @@ export interface BrainEvent {
   /** watch_command 完成事件携带（completed/failed/timed_out/cancelled） */
   status?: string;
   exit_code?: number;
+  task_id?: string;
+  name?: string;
 }
 
 // ---- 会话分流（v2 §5）：run/语音/面板调用带 surface 标签，大脑透传回事件流与历史 ----
@@ -537,13 +539,15 @@ export async function getDockListOnce(timeoutMs = 3000): Promise<DockListRespons
 
 // ---- 待批准队列（OS 感 §4.5 收件箱 Question 面：连环弹窗的替代）----
 // confirmation_needed 进队；任一窗口 sendConfirmBatch / action_result / error 出队；
-// 大脑掉线清空（未答确认随进程死）。大窗只在 HomeFeed 呈现，小窗/面板按 surface 快批。
+// 大脑掉线清空（未答确认随进程死）。大窗由会话检查器呈现，小窗/面板按 surface 快批。
 
 export interface PendingConfirm {
   id: string; // confirmation_id（= action.id）
   skill: string;
   label: string; // 技能短标签（回退 skill_id）
   desc: string;
+  /** 确认卡只读取与决策有关的公开参数（如 command/cwd），不在 UI 展示未知字段。 */
+  params?: Record<string, unknown>;
   risk?: number;
   /** 产生确认的会话面：小窗/面板只消费自己的确认，大窗收件箱展示全部。 */
   surface?: string;
@@ -551,9 +555,13 @@ export interface PendingConfirm {
   tier?: "Notify" | "Question" | "Review";
 }
 
-/** Arbitrary commands differ per call, so remembering approval by skill id is unsafe. */
+/** 当前确认链支持：普通技能按 skill；后台命令按 command + cwd 精确记忆。 */
 export function canRememberSkill(skill: string): boolean {
-  return skill !== "watch_command";
+  return Boolean(skill);
+}
+
+export function rememberLabelForSkill(skill: string): string {
+  return skill === "watch_command" ? "本会话允许相同命令" : "本会话不再询问";
 }
 
 let _pc: PendingConfirm[] = [];
@@ -604,6 +612,7 @@ void listen<BrainEvent>("brain-event", (ev) => {
         skill: a.skill_id ?? "",
         label: a.label ?? a.skill_id ?? "",
         desc: a.description ?? "",
+        params: a.params,
         risk: a.risk,
         surface: e.surface,
       }));

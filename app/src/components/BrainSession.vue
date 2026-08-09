@@ -12,6 +12,7 @@ type AgentState = "idle" | "listen" | "think" | "work" | "say" | "success" | "er
 defineProps<{ state: AgentState }>();
 const emit = defineEmits<{
   chat: [draft: string];
+  toggle: [];
   select: [id: string];
   newChat: [];
   active: [id: string];
@@ -30,7 +31,7 @@ defineExpose({ updateCurrent });
   <aside class="brain-session">
     <!-- 上部：抽象心智，不重复完整 Avatar -->
     <div class="bs-core">
-      <AgentBrain :state="state" compact @chat="(d) => emit('chat', d)" />
+      <AgentBrain :state="state" compact @chat="(d) => emit('chat', d)" @toggle="emit('toggle')" />
     </div>
 
     <div class="bs-bridge" aria-hidden="true"><i /></div>

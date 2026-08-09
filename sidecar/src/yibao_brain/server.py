@@ -652,24 +652,23 @@ async def serve_async(
     agent.invoker.gate.session_allowed = remembered_confirm
 
     def _running_tasks(limit: int = 20) -> list[dict]:
-        """读取 agents 权威任务表，只返回 Home 需要的 running 摘要。"""
+        """读取 agents 与后台命令，只返回 Home 需要的 running 摘要。"""
         adb_file = os.path.join(plugin_data_dir("agents"), "data.db")
-        if not os.path.exists(adb_file):
-            return []
-        try:
-            from .plugindb import PluginDb
-
-            adb = PluginDb("agents")
+        rows = []
+        if os.path.exists(adb_file):
             try:
-                rows = adb.query(
-                    "tasks", where={"status": "running"},
-                    order="created_at DESC", limit=limit,
-                )
-            finally:
-                adb.close()
-        except Exception as e:
-            print(f"[yibao] 进行中任务查询失败（已降级为空）：{e}", file=sys.stderr)
-            return []
+                from .plugindb import PluginDb
+
+                adb = PluginDb("agents")
+                try:
+                    rows = adb.query(
+                        "tasks", where={"status": "running"},
+                        order="created_at DESC", limit=limit,
+                    )
+                finally:
+                    adb.close()
+            except Exception as e:
+                print(f"[yibao] 进行中任务查询失败（已降级）：{e}", file=sys.stderr)
 
         out = []
         for row in rows:
@@ -686,7 +685,23 @@ async def serve_async(
                 "status": "running",
                 "created_at": int(row.get("created_at") or 0),
             })
-        return out
+        jobs = getattr(agent.skills, "background_jobs", None)
+        if jobs is not None:
+            try:
+                for job in jobs.list():
+                    if job.get("status") != "running":
+                        continue
+                    out.append({
+                        "id": str(job.get("task_id") or ""),
+                        "kind": "script",
+                        "label": str(job.get("name") or job.get("command") or "后台命令"),
+                        "prompt": str(job.get("command") or ""),
+                        "status": "running",
+                        "created_at": int(job.get("started_at") or 0),
+                    })
+            except Exception as e:
+                print(f"[yibao] 后台命令查询失败（已降级）：{e}", file=sys.stderr)
+        return sorted(out, key=lambda item: item.get("created_at", 0), reverse=True)[:limit]
 
     def _feed_stats(running_tasks: list[dict] | None = None) -> dict:
         """主屏问候统计：待办提醒 / 进行中任务 / 近 24h 完成任务。"""

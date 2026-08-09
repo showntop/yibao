@@ -40,6 +40,7 @@ import {
   type WidgetPayload,
   type DistillDay,
   canRememberSkill,
+  rememberLabelForSkill,
 } from "../lib/brain";
 
 // chat：提交/点动态 → 切对话页；draft 非空时带给对话页预填
@@ -579,9 +580,9 @@ onUnmounted(() => {
               <span class="ap-desc">{{ p.desc || p.skill }}</span>
             </div>
           </div>
-          <label v-if="canRememberSkill(p.skill)" class="ap-remember" title="勾选后该技能在本会话内不再询问">
+          <label v-if="canRememberSkill(p.skill)" class="ap-remember" :title="rememberLabelForSkill(p.skill)">
             <input type="checkbox" :checked="rememberOf(p.id)" @change="onToggleRemember(p.id, $event)" />
-            <span>本会话不再询问</span>
+            <span>{{ rememberLabelForSkill(p.skill) }}</span>
           </label>
           <div class="ap-btns">
             <button class="btn-ghost" @click="decideApproval(p, false)">拒绝</button>

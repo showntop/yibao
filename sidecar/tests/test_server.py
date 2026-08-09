@@ -1533,6 +1533,36 @@ def test_serve_async_feed_stats_roundtrip(tmp_path):
     assert stats["by_kind"]["task"] == 1 and stats["by_kind"]["event"] == 1
 
 
+def test_serve_async_feed_includes_running_watch_command(tmp_path):
+    from yibao_brain.background_jobs import BackgroundJobManager
+    from yibao_brain.skills import SkillRegistry
+
+    jobs = BackgroundJobManager()
+    started = jobs.start("sleep 5", cwd=str(tmp_path), name="后台构建")
+
+    def skills_factory():
+        registry = SkillRegistry()
+        registry.background_jobs = jobs
+        return registry
+
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([{"type": "feed"}]),
+            lambda message: out.append(message),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+            skills_factory=skills_factory,
+        )
+    )
+    feed = [message for message in out if message["type"] == "feed"][0]
+    task = next(item for item in feed["running_tasks"] if item["id"] == started["task_id"])
+    assert task["label"] == "后台构建"
+    assert task["prompt"] == "sleep 5"
+    assert feed["stats"]["running_tasks"] == 1
+
+
 def test_serve_async_feed_mark_status_roundtrip(tmp_path):
     # C 子项目：feed_mark_status IPC 往返 + stats.ignored + recent status
     _seed_feed(tmp_path / "a.db", [

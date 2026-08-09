@@ -236,6 +236,33 @@ def test_apply_verdict_does_not_remember_skill_that_disallows_it(tmp_path):
     inv.apply_verdict(action, approved=True, remember=True)
 
     assert "always_confirm" not in inv.gate.session_allowed
+    assert not inv.gate.session_allowed_actions
+
+
+def test_apply_verdict_remembers_only_same_parameters_when_skill_scopes_it(tmp_path):
+    class ExactConfirmSkill(Skill):
+        id = "exact_confirm"
+        description = "相同参数可在会话内记住"
+        default_risk = RiskLevel.L3_HIGH
+        allow_session_remember = False
+
+        def session_remember_key(self, params):
+            return {"command": params.get("command"), "cwd": params.get("cwd")}
+
+        def run(self, params, ctx):
+            return ActionResult(success=True)
+
+    inv = make_invoker(tmp_path, [ExactConfirmSkill()])
+    first = inv.propose(ToolCall(id="t1", skill_id="exact_confirm", params={"command": "build", "cwd": "/tmp/a"}))
+    same = inv.propose(ToolCall(id="t2", skill_id="exact_confirm", params={"cwd": "/tmp/a", "command": "build"}))
+    different = inv.propose(ToolCall(id="t3", skill_id="exact_confirm", params={"command": "test", "cwd": "/tmp/a"}))
+
+    inv.apply_verdict(first, approved=True, remember=True)
+
+    assert "exact_confirm" not in inv.gate.session_allowed
+    assert len(inv.gate.session_allowed_actions) == 1
+    assert inv.decide(same) == Decision.AUTO
+    assert inv.decide(different) == Decision.CONFIRM
 
 
 def test_batch_confirm_sync_rejects_when_confirmer_returns_empty(tmp_path):

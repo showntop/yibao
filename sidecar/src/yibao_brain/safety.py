@@ -48,6 +48,8 @@ class Gate:
         # 会话内免确认集合：用户勾选「本会话不再询问」并批准后由确认链路写入；
         # 只活在内存（重启即失效）。命中即 AUTO，连 confirmation_needed 事件都不发。
         self.session_allowed: set[str] = set()
+        # 参数敏感技能的精确动作指纹；同样只在内存中存在，不保存原始参数。
+        self.session_allowed_actions: set[str] = set()
 
     def decide(self, action: Action) -> Decision:
         if action.skill_id in self.session_allowed:

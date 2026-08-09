@@ -6,6 +6,7 @@ click_control 仅走 AX 动作；a11y 找不到/不支持时返回失败并指�
 from __future__ import annotations
 
 import json
+import os
 from .background_jobs import BackgroundJobManager
 from .grounding import SoMGrounding, _physical_scale, zoom_ground
 from .ipc import ActionResult, RiskLevel
@@ -431,6 +432,16 @@ class WatchCommandSkill(Skill):
     )
     default_risk = RiskLevel.L3_HIGH  # 跑任意 shell → 走确认闸门
     allow_session_remember = False
+
+    def session_remember_key(self, params: dict) -> dict | None:
+        command = str(params.get("command", "")).strip()
+        cwd = str(params.get("cwd", "")).strip()
+        if not command or not cwd:
+            return None
+        return {
+            "command": command,
+            "cwd": os.path.abspath(os.path.expanduser(cwd)),
+        }
 
     def __init__(self, jobs: BackgroundJobManager | None = None) -> None:
         self.jobs = jobs or BackgroundJobManager()
