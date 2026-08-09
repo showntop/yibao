@@ -260,12 +260,8 @@ function onStatus(m: BrainStatusMsg) {
 }
 
 async function submit(text: string) {
-  // AI 正在生成/播报时主按钮是"打断"（stopping），不会走到这里；
-  // 兜底：若 state 异常卡 busy（无响应/卡 think），提示用户可打断而非静默失效
-  if (busy.value) {
-    pushWarn("AI 正在回复中——想发新消息请先点「停止」打断");
-    return;
-  }
+  // 若 AI 正在生成/播报，InputBar 已在发送前 emit interrupt（先打断再发）；
+  // 这里兜底：state 异常卡 busy（无响应）时也允许发送（runInput 会覆盖 state）
   bubbles.value.push({ role: "user", text });
   state.value = "think";
   try {

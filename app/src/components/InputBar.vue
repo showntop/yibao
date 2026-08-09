@@ -22,6 +22,8 @@ watch(
 function send() {
   const t = text.value.trim();
   if (t) {
+    // AI 正在生成/播报（stopping）时发送 = 先打断再发新消息（不必手动"停止"）
+    if (stopping.value) emit("interrupt");
     emit("submit", t);
     text.value = "";
   }
@@ -37,8 +39,13 @@ function onMic() {
 const stopping = computed(() => props.busy && !props.listening);
 
 function onMain() {
-  if (stopping.value) emit("interrupt");
-  else send();
+  // 生成/播报中：有输入文字 → 打断并发送新消息；无文字 → 仅打断
+  if (stopping.value) {
+    if (text.value.trim()) send();
+    else emit("interrupt");
+  } else {
+    send();
+  }
 }
 
 // 全局唤起等外部焦点请求（反射键唤起后输入就绪）
@@ -47,7 +54,12 @@ defineExpose({ focus: () => inputRef.value?.focus() });
 
 <template>
   <form class="bar" @submit.prevent="send">
-    <input ref="inputRef" v-model="text" placeholder="对译宝说点什么…" />
+    <input
+      ref="inputRef"
+      v-model="text"
+      placeholder="对译宝说点什么…"
+      @keydown.enter.prevent="send"
+    />
     <button
       type="button"
       class="mic"
