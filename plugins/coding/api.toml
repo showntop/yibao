@@ -30,3 +30,10 @@ direct = true
 name = "coding.handoff_brief"
 handler = "coding.handoff_brief"
 direct = true
+
+# 历史抽屉：读会话最近消息（只读；quiet 不发 panel 事件——抽屉已在面板内）
+[[method]]
+name = "history"
+handler = "coding.history"
+direct = true
+quiet = true

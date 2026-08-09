@@ -491,7 +491,48 @@ class HandoffBriefSkill(Skill):
         })
 
 
+class HistorySkill(Skill):
+    """读某个 coding 会话的信息与最近消息（历史抽屉恢复旧会话用）。
+
+    sessions 行取 cwd/cc_session_id/prompt，消息经 `_sibling("_cc_reader")`
+    读 Claude Code 本地 transcript；读不到（无 cc_session_id / transcript 丢失）
+    messages 静默为空——恢复不了就当新会话，不报错。L0 只读。
+    """
+    id = "coding.history"
+    label = "读取会话历史"
+    description = "读取某个 coding 会话的信息与最近消息（恢复旧会话用）：读 Claude Code 本地 transcript，失败静默为空。"
+    default_risk = RiskLevel.L0_READONLY
+
+    def openai_schema(self) -> dict:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.id,
+                "description": self.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": {"id": {"type": "string", "description": "会话 id"}},
+                    "required": ["id"],
+                },
+            },
+        }
+
+    def run(self, params: dict, ctx: Any) -> ActionResult:
+        sid = str(params.get("id") or "").strip()
+        rows = ctx.db.query("sessions", where={"id": sid})
+        if not rows:
+            return ActionResult(success=False, error=f"会话不存在：{sid}")
+        row = rows[0]
+        cc = row.get("cc_session_id") or ""
+        reader = _sibling("_cc_reader")
+        messages = reader.read_transcript(cc, limit=40) if cc else []
+        return ActionResult(success=True, data={
+            "session_id": sid, "cwd": row.get("cwd") or "", "cc_session_id": cc,
+            "prompt": row.get("prompt") or "", "messages": messages,
+        })
+
+
 def make_tools(ctx: Any) -> list[Skill]:
     """插件加载器入口（_load_code_tools 遍历 skills/*.py 调本函数）。"""
     return [StartSkill(), SendSkill(), StopSkill(), ListSkill(),
-            HandoffListSkill(), HandoffBriefSkill()]
+            HandoffListSkill(), HandoffBriefSkill(), HistorySkill()]

@@ -242,29 +242,41 @@
   button.ghost:hover { background: var(--surface-2); color: var(--text); border-color: var(--border-strong); }
   button.ghost:disabled { opacity: .5; cursor: default; }
 
-  /* ---- Codex session 选择器（fixed 浮层；iframe srcdoc 里 absolute 含块不可靠） ---- */
-  #handoff-backdrop { position: fixed; inset: 0; z-index: 40; }
-  #handoff-picker {
+  /* ---- Codex session 选择器 + 历史抽屉（fixed 浮层；iframe srcdoc 里 absolute 含块不可靠） ---- */
+  #handoff-backdrop, #history-overlay { position: fixed; inset: 0; z-index: 40; }
+  #handoff-picker, #history-picker {
     position: fixed; z-index: 50; width: min(420px, 92vw); max-height: 320px; overflow-y: auto;
     background: var(--card); border: 1px solid var(--border); border-radius: var(--r-md);
     box-shadow: var(--shadow-pop); padding: 6px;
   }
-  #handoff-picker .pick-item {
+  /* 历史抽屉静态定位：header 下方靠右（handoff picker 由 JS 贴按钮定位） */
+  #history-picker { top: 52px; right: 12px; }
+  #handoff-picker .pick-item, #history-picker .hrow {
     padding: 8px 10px; border-radius: 8px; cursor: pointer; transition: background .12s ease;
     display: flex; flex-direction: column; gap: 2px;
   }
-  #handoff-picker .pick-item:hover { background: var(--accent-soft); }
-  #handoff-picker .pick-item .ts { font-size: 11px; color: var(--muted); font-family: var(--mono); }
-  #handoff-picker .pick-item .fl {
+  #handoff-picker .pick-item:hover, #history-picker .hrow:hover { background: var(--accent-soft); }
+  #handoff-picker .pick-item .ts, #history-picker .hrow .ht { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+  #handoff-picker .pick-item .fl, #history-picker .hrow .hp {
     font-size: 12.5px; color: var(--text);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  #handoff-picker .pick-close {
+  #handoff-picker .pick-close, #history-picker .pick-close {
     display: block; margin: 6px auto 2px; padding: 4px 14px; font-size: 11.5px;
     border: 1px solid var(--border); background: transparent; color: var(--muted);
     cursor: pointer; border-radius: 6px; transition: all .15s ease;
   }
-  #handoff-picker .pick-close:hover { background: var(--surface-2); color: var(--text); border-color: var(--border-strong); }
+  #handoff-picker .pick-close:hover, #history-picker .pick-close:hover { background: var(--surface-2); color: var(--text); border-color: var(--border-strong); }
+
+  /* 历史抽屉专有：hrow 是 <button>（需重置默认样式）；.hc 目录名 / .hs 状态 / .mempty 空态 */
+  #history-picker .hrow { border: 0; background: none; width: 100%; text-align: left; font: inherit; color: inherit; }
+  #history-picker .hrow .hc { font-size: 11px; color: var(--muted); }
+  #history-picker .hrow .hs { font-size: 10.5px; color: var(--muted); font-family: var(--mono); }
+  #history-picker .hrow .hs.done { color: var(--green); }
+  #history-picker .hrow .hs.running { color: var(--accent-deep); }
+  #history-picker .hrow .hs.failed { color: var(--red); }
+  #history-picker .hrow .hs.stopped { color: #9a7b28; }
+  #history-picker .mempty { padding: 18px 12px; text-align: center; color: var(--muted); font-size: 12px; }
 
   /* ---- 交接卡：session 起点（区别于普通文件改动/工具卡片，整宽 + sky 强调色左边条） ---- */
   .card.handoff {
@@ -338,6 +350,7 @@
   <span id="agent">agent: Claude Code</span>
   <span class="spacer"></span>
   <button id="handoff" type="button" title="从 Codex 会话接续：读取该项目下的 Codex 会话，生成交接 brief 后用 Claude Code 接续">↩ 从 Codex 接续</button>
+  <button id="history" type="button" title="历史会话：列出本会话记录，点击恢复后继续在同一上下文聊">历史</button>
   <button id="new-chat" type="button" title="清空当前对话，开新会话（下次发送走 coding.start）" disabled>新对话</button>
 </header>
 
@@ -352,6 +365,14 @@
     <button id="send" class="act">发送</button>
   </div>
 </footer>
+
+<!-- 历史抽屉：列会话（coding.list）→ 点击恢复（coding.history 读回 + 接着聊）。结构同款 handoff picker -->
+<div id="history-overlay" hidden>
+  <div id="history-picker">
+    <div id="history-body"></div>
+    <button id="history-close" type="button" class="pick-close">关闭</button>
+  </div>
+</div>
 
 <script>
 (function () {
@@ -1143,10 +1164,80 @@
     });
   }
 
+  // ============================================================
+  //   历史抽屉：列会话（coding.list）→ 点击恢复（coding.history 读回 + 接着聊）
+  //   恢复 = 清 log 渲染历史消息 + 分隔线；下一条发送走 coding.send
+  //   （currentSession 已指回旧 sid）→ 同一 CC 上下文续聊。
+  // ============================================================
+  function openHistory() {
+    if (!hasBridge) return;
+    if (streaming) { setStatus("当前会话运行中，请先中断再恢复历史会话", true); return; }
+    closeHandoffPicker();  // 两个浮层不共存
+    var ov = $("history-overlay");
+    ov.hidden = false;
+    var body = $("history-body");
+    body.innerHTML = "<div class=\"mempty\">加载中…</div>";
+    window.yibao.invoke("coding.list", {}).then(function (r) {
+      var rows = (r && r.sessions) || [];
+      if (!rows.length) { body.innerHTML = "<div class=\"mempty\">还没有会话</div>"; return; }
+      body.innerHTML = "";
+      rows.forEach(function (row) {
+        var b = document.createElement("button");
+        b.className = "hrow";
+        var when = row.created_at ? new Date(row.created_at * 1000) : null;
+        var time = when ? (when.getMonth() + 1) + "/" + when.getDate() + " " + String(when.getHours()).padStart(2, "0") + ":" + String(when.getMinutes()).padStart(2, "0") : "";
+        var cwdShort = (row.cwd || "").split("/").filter(Boolean).pop() || row.cwd || "";
+        var first = String(row.prompt || "").split("\n")[0].slice(0, 42);
+        b.innerHTML = "<span class=\"ht\">" + esc(time) + "</span>" +
+          "<span class=\"hc\">" + esc(cwdShort) + "</span>" +
+          "<span class=\"hp\">" + esc(first) + "</span>" +
+          "<span class=\"hs " + esc(row.status || "") + "\">" + esc(row.status || "") + "</span>";
+        b.addEventListener("click", function () { resumeSession(row.id); });
+        body.appendChild(b);
+      });
+    }).catch(function (e) {
+      body.innerHTML = "<div class=\"mempty\">加载失败：" + esc(emsg(e)) + "</div>";
+    });
+  }
+
+  function closeHistory() {
+    $("history-overlay").hidden = true;
+  }
+
+  function resumeSession(sid) {
+    window.yibao.invoke("coding.history", { id: sid }).then(function (r) {
+      if (currentSession) discardedSessions[currentSession] = true;
+      currentSession = sid;
+      currentBubble = null;
+      lastToolCard = null;   // #log 清空后旧卡已 detach，防 tool_result 落进不可见节点（同 newChat）
+      streaming = false;
+      $("log").innerHTML = "";
+      (r.messages || []).forEach(function (m) {
+        if (m.role === "user") appendUser(m.text);
+        else { var b = appendAssistantBubble(); appendTextToBubble(b, m.text); b.classList.add("done"); }
+      });
+      if ((r.messages || []).length) appendMarker("—— 以上为历史，继续聊 ↓ ——", false);
+      if (r.cwd) $("cwd").value = r.cwd;
+      $("history-overlay").hidden = true;
+      $("new-chat").disabled = false;
+      $("send").disabled = false;
+      setStatus("已恢复会话 " + sid + "，发消息将在同一上下文继续");
+      $("prompt").focus();
+    }).catch(function (e) {
+      setStatus("恢复失败：" + emsg(e), true);
+      $("history-overlay").hidden = true;
+    });
+  }
+
   $("send").addEventListener("click", send);
   $("stop").addEventListener("click", stop);
   $("new-chat").addEventListener("click", newChat);
   $("handoff").addEventListener("click", handoff);
+  $("history").addEventListener("click", openHistory);
+  $("history-close").addEventListener("click", closeHistory);
+  $("history-overlay").addEventListener("click", function (e) {
+    if (e.target === this) closeHistory();  // 点空白处收起（picker 内点击不冒泡到 overlay 的 target 判定）
+  });
   $("prompt").addEventListener("keydown", function (e) {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();

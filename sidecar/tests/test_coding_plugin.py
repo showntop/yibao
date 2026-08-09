@@ -379,12 +379,12 @@ def test_send_skill_openai_schema_shape():
 
 
 def test_make_tools_includes_send():
-    """make_tools 返回 Start/Send/Stop/List + HandoffList/HandoffBrief 六件。"""
+    """make_tools 返回 Start/Send/Stop/List + HandoffList/HandoffBrief/History 七件。"""
     tools = codingmod.make_tools(type("C", (), {"db": None, "emit_event": None})())
     ids = [t.id for t in tools]
     assert "coding.send" in ids
     assert ids == ["coding.start", "coding.send", "coding.stop", "coding.list",
-                   "coding.handoff_list", "coding.handoff_brief"]
+                   "coding.handoff_list", "coding.handoff_brief", "coding.history"]
 
 
 def test_start_skill_does_not_pass_resume(monkeypatch):

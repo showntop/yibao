@@ -160,3 +160,64 @@ def test_handoff_brief_skill_no_llm(tmp_path, monkeypatch):
     # _Ctx 默认 llm=None
     r = HandoffBriefSkill().run({"session_id": "sid-a", "cwd": proj}, _Ctx())
     assert not r.success and "llm" in r.error
+
+
+# ---------- Task 6: _cc_reader + HistorySkill（会话历史抽屉）----------
+# _cc_reader 与 _codex_reader 同为 skills 自包含兄弟模块：sys.path 已含 skills 目录（:5），直import
+from _cc_reader import read_transcript  # noqa: E402
+from coding import HistorySkill  # noqa: E402
+
+
+def _write_cc_transcript(home, proj_name, cc_sid, lines):
+    """在 home/.claude/projects/<proj_name>/<cc_sid>.jsonl 造一个 CC transcript。"""
+    proj = os.path.join(home, ".claude", "projects", proj_name)
+    os.makedirs(proj, exist_ok=True)
+    with open(os.path.join(proj, cc_sid + ".jsonl"), "w") as f:
+        f.write("\n".join(json.dumps(x) for x in lines) + "\n")
+
+
+def test_cc_reader_reads_last_messages(tmp_path, monkeypatch):
+    """read_transcript：按 session id 定位 jsonl，提取 user/assistant 文本，倒序截 limit。"""
+    _write_cc_transcript(str(tmp_path), "some-proj", "cc-abc-123", [
+        {"type": "user", "message": {"content": "第一句话"}},
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "回答一"}]}},
+        {"type": "system", "message": {"content": "忽略我"}},
+        {"type": "user", "message": {"content": [{"type": "text", "text": "第二句话"}]}},
+    ])
+    monkeypatch.setenv("HOME", str(tmp_path))
+    msgs = read_transcript("cc-abc-123", limit=40)
+    assert [m["role"] for m in msgs] == ["user", "assistant", "user"]
+    assert msgs[0]["text"] == "第一句话" and msgs[2]["text"] == "第二句话"
+
+
+def test_cc_reader_missing_returns_empty(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert read_transcript("ghost", limit=40) == []
+
+
+class _FakeDBWhere(_FakeDB):
+    """query 真按 where={'id': ...} 过滤（_FakeDB 全量回，history 按 id 查需要真过滤）。"""
+    def query(self, table, where=None, order=None):
+        rows = list(self.rows.values())
+        if where and "id" in where:
+            rows = [r for r in rows if r.get("id") == where["id"]]
+        return rows
+
+
+def test_history_skill_returns_messages(tmp_path, monkeypatch):
+    """coding.history：会话存在 → 带 messages；不存在 → 失败。"""
+    _write_cc_transcript(str(tmp_path), "some-proj", "cc-abc-123", [
+        {"type": "user", "message": {"content": "第一句话"}},
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "回答一"}]}},
+    ])
+    monkeypatch.setenv("HOME", str(tmp_path))
+    db = _FakeDBWhere()
+    db.insert("sessions", {"id": "s1", "cc_session_id": "cc-abc-123", "cwd": "/tmp/p",
+                           "prompt": "hi", "status": "done"})
+    ctx = _Ctx(); ctx.db = db
+    r = HistorySkill().run({"id": "s1"}, ctx)
+    assert r.success
+    assert r.data["session_id"] == "s1" and r.data["cc_session_id"] == "cc-abc-123"
+    assert [m["text"] for m in r.data["messages"]] == ["第一句话", "回答一"]
+    r2 = HistorySkill().run({"id": "nope"}, ctx)
+    assert not r2.success and "nope" in r2.error
