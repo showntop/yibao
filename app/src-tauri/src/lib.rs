@@ -1336,6 +1336,16 @@ fn get_current_panel(state: tauri::State<Brain>) -> Result<Option<Value>, String
     Ok(g.last_panel.clone())
 }
 
+/// 面板载荷回填：大窗从 localStorage 快照恢复工作面后，把同一份面板数据写回
+/// last_panel（内存缓存）。last_panel 是内存态，重启即失——前端快照是持久层，
+/// 恢复时回填保证面板窗/宠物窗在竞态下也能补拉到同一份数据（多窗一致）。
+#[tauri::command]
+fn remember_panel(state: tauri::State<Brain>, payload: Value) -> Result<(), String> {
+    let mut g = state.0.lock().map_err(|e| e.to_string())?;
+    g.last_panel = Some(payload);
+    Ok(())
+}
+
 /// 读取 sidecar 已持久化的近期会话，供主屏恢复协作时间线。
 /// 这是只读 UI 投影：不把历史重新送回大脑，也不会重放任何插件动作。
 #[tauri::command]
@@ -2037,6 +2047,7 @@ pub fn run() {
             cancel_snip,
             vision_query,
             get_current_panel,
+            remember_panel,
             get_conversation_history,
             voice_start,
             interrupt,

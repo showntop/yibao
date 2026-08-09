@@ -11,6 +11,7 @@ import CommandPalette, { type PaletteTab } from "./components/CommandPalette.vue
 import HomeChat from "./components/HomeChat.vue";
 import HomePlugins from "./components/HomePlugins.vue";
 import CapabilityConversationRail, { type CapabilityRailSurface } from "./components/CapabilityConversationRail.vue";
+import { clearCapabilitySnapshot } from "./lib/capability-snapshot";
 import DataView from "./components/DataView.vue";
 import SettingsView from "./components/SettingsView.vue";
 import appLogo from "./assets/logo.png";
@@ -107,6 +108,10 @@ function loadScenePreference(): { panel: string; visible: boolean; presentation:
 }
 const savedScene = loadScenePreference();
 let restorePending = Boolean(savedScene?.visible);
+// 恢复只允许在启动后的短暂窗口内发生：pullCache 会从 localStorage 快照回退并发出首个 surface；
+// 超时未匹配就放弃 pending，防止后续用户手动操作被旧布局"拽回去"。
+let restoreTimer: number | null = null;
+if (restorePending) restoreTimer = window.setTimeout(() => { restorePending = false; }, 8000);
 
 watch([capability, surfaceVisible, presentation], () => {
   try {
@@ -121,9 +126,12 @@ watch([capability, surfaceVisible, presentation], () => {
 
 function onSurface(surface: CapabilityRailSurface) {
   capability.value = surface;
+  // 只有「启动恢复待定 && 布局偏好指向的面板」才恢复；不匹配则保留 pending，
+  // 等 pullCache 快照回退发出的后续 surface（多段恢复容错）。
   const shouldRestore = restorePending && savedScene?.visible && savedScene.panel === surface.panel;
-  restorePending = false;
   if (shouldRestore) {
+    if (restoreTimer !== null) { clearTimeout(restoreTimer); restoreTimer = null; }
+    restorePending = false;
     presentation.value = savedScene.presentation;
     surfaceVisible.value = true;
     tab.value = "home";
@@ -160,6 +168,7 @@ async function hideSurface() {
 }
 
 function closeCapability() {
+  clearCapabilitySnapshot();
   surfaceVisible.value = false;
   presentation.value = "stage";
   capability.value = null;

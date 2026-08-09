@@ -22,6 +22,12 @@ import {
   type PanelFocus,
 } from "../lib/brain";
 import { procLabel, procSkip, procResultSuffix } from "../lib/proc";
+import {
+  saveCapabilitySnapshot,
+  loadCapabilitySnapshot,
+  clearCapabilitySnapshot,
+  restoreRustPanelCache,
+} from "../lib/capability-snapshot";
 
 type AvatarState = "idle" | "listen" | "think" | "work" | "say";
 type CapabilityPresentation = "stage" | "focus";
@@ -293,6 +299,8 @@ function setCurrent(v: NonNullable<typeof current.value>, silent = false) {
   current.value = v;
   viewingList.value = false;
   focus.value = computeFocus(v);
+  // 面板载荷快照：重启后恢复工作面的数据来源（Tauri last_panel 是内存态，重启即失）
+  saveCapabilitySnapshot(v);
   // panel 事件可以先于用户展开工作面到达；隐藏能力不得抢占“当前对象”。
   void reportPanelContext(props.scene ? focus.value : null).catch(() => {});
   const plugin = v.panel.split(":", 1)[0] || v.panel;
@@ -317,6 +325,7 @@ async function backToList() {
   await collapseOut();
   viewingList.value = true;
   focus.value = null;
+  clearCapabilitySnapshot();
   void reportPanelContext(null).catch(() => {});
   void emitTauri("panel-closed").catch(() => {});
   emit("close");
@@ -501,7 +510,9 @@ function focusInput() {
   barRef.value?.querySelector("input")?.focus();
 }
 
-/** 挂载补拉最近一次 panel 载荷：大窗可能在协作中途才打开（panel 事件先于本页订阅发出）。 */
+/** 挂载补拉最近一次 panel 载荷：大窗可能在协作中途才打开（panel 事件先于本页订阅发出）。
+ *  Tauri 侧 last_panel 是内存态（重启即失）：缓存缺失时回退 localStorage 面板快照，
+ *  重启后据此恢复「正在和 xxx 协作中」的工作面（快照回填给 Rust，多窗一致）。 */
 async function pullCache() {
   try {
     const cached = await invoke<{
@@ -513,8 +524,21 @@ async function pullCache() {
     } | null>("get_current_panel");
     if (cached && current.value === null) {
       setCurrent({ ...cached, title: cached.title ?? cached.panel }, true);
+      return;
     }
-  } catch { /* 缓存缺失就停在列表页，无妨 */ }
+  } catch { /* Tauri 缓存缺失/不可用（含重启后内存态已清）→ 走快照回退 */ }
+
+  if (current.value === null) {
+    const snap = loadCapabilitySnapshot();
+    if (snap) {
+      setCurrent(
+        { panel: snap.panel, title: snap.title, schema: snap.schema, webview: snap.webview, data: snap.data },
+        true,
+      );
+      // 快照回填 Rust last_panel：让面板窗/宠物窗拿到同一份面板数据
+      void restoreRustPanelCache(snap).catch(() => {});
+    }
+  }
 }
 
 // webview 面板 html（空串 → 走 schema 面板）
@@ -558,7 +582,10 @@ onMounted(async () => {
     emit("state", state.value);
     return;
   }
-  unlisten = await onBrainEvent(onEvent);
+  // 事件订阅失败（非 Tauri / 竞态）不阻塞缓存恢复——pullCache 是重启后恢复工作面的关键路径
+  try {
+    unlisten = await onBrainEvent(onEvent);
+  } catch { /* 静默：仍尝试拉取面板缓存/快照 */ }
   void loadPlugins();
   await pullCache();
   emit("state", state.value); // 父级侧边栏团子拿初始态
