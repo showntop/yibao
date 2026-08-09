@@ -379,10 +379,20 @@ onUnmounted(() => {
           </button>
           <pre v-if="b.proc.expanded" class="proc-detail">{{ procText(b.proc) }}</pre>
         </div>
-        <Bubble v-else :role="b.role" :text="b.text" :streaming="i === streamingIdx" :halted="b.halted" :icon="b.icon" />
-      </template>
-      <Bubble v-if="showTyping" role="ai" text="" typing />
-    </div>
+          <!-- AI 消息：左侧带角色头像（人格化：说话的是"团子"本尊） -->
+          <div v-else-if="b.role === 'ai'" class="ai-line">
+            <Avatar class="ai-ava" :state="state" :size="22" compact />
+            <Bubble :role="b.role" :text="b.text" :streaming="i === streamingIdx" :halted="b.halted" :icon="b.icon" />
+          </div>
+          <Bubble v-else :role="b.role" :text="b.text" :streaming="i === streamingIdx" :halted="b.halted" :icon="b.icon" />
+        </template>
+        <template v-if="showTyping">
+          <div class="ai-line">
+            <Avatar class="ai-ava" :state="state" :size="22" compact />
+            <Bubble role="ai" text="" typing />
+          </div>
+        </template>
+      </div>
 
     <div class="input-slot">
       <InputBar :busy="busy" :listening="state === 'listen'" :draft="draftRef" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
@@ -447,6 +457,19 @@ onUnmounted(() => {
 /* 气泡内容限宽：AI 左 / 用户右自然交替，窄窗 70%、宽窗封顶 640px（可读又饱满） */
 .bubbles :deep(.bubble) {
   max-width: min(70%, 640px);
+}
+/* AI 消息行：角色头像 + 气泡（人格化：团子本尊在说话） */
+.ai-line {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  align-self: flex-start;
+  max-width: 100%;
+}
+.ai-ava {
+  flex-shrink: 0;
+  margin-bottom: 2px;
+  opacity: 0.92;
 }
 .bubbles::-webkit-scrollbar {
   width: 6px;

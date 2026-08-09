@@ -31,6 +31,15 @@ interface MemWord {
   delay: number;       // 动画延迟
   dur: number;         // 动画时长
   tone: number;        // 色阶 0-3（深→浅）
+  fresh: boolean;      // 新浮现的记忆（入场动画）
+}
+interface BurstParticle {
+  id: number;
+  x: number;   // 爆散起点（brain 内绝对坐标）
+  y: number;
+  dx: number;  // 飞散位移
+  dy: number;
+  delay: number;
 }
 
 const memories = ref<MemItem[]>([]);
@@ -51,39 +60,64 @@ const visibleMemories = computed(() =>
   memFilter.value === null ? memories.value : memories.value.filter((m) => m.ns === memFilter.value),
 );
 
-/** 记忆 → 词云词。 */
-const words = computed<MemWord[]>(() => {
-  const out: MemWord[] = [];
-  for (const m of visibleMemories.value.slice(0, 22)) {
-    const parts = m.text
-      .replace(/[，。！？、；：""''（）【】\n]/g, " ")
-      .split(/\s+/)
-      .filter((p) => p.length > 0);
-    const pick = (parts.slice(0, 2).join("·") || m.text.slice(0, 8)).trim();
-    const text = pick.length > 12 ? pick.slice(0, 12) + "…" : pick;
-    if (!text) continue;
-    out.push({
-      text,
-      full: m.text,
-      size: 11 + Math.round(Math.random() * 6),
-      x: Math.round((Math.random() - 0.5) * 150),
-      y: Math.round((Math.random() - 0.5) * 120),
-      delay: Math.random() * 7,
-      dur: 5 + Math.random() * 5,
-      tone: Math.floor(Math.random() * 4),
-    });
-  }
-  return out;
-});
+/** 稳定伪随机：以记忆 id 为种子 → 词的位置/字号/色阶恒定，刷新不跳动。 */
+function hashStr(s: string): number {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+function wordText(m: MemItem): string {
+  const parts = m.text
+    .replace(/[，。！？、；：""''（）【】\n]/g, " ")
+    .split(/\s+/)
+    .filter((p) => p.length > 0);
+  const pick = (parts.slice(0, 2).join("·") || m.text.slice(0, 8)).trim();
+  return pick.length > 12 ? pick.slice(0, 12) + "…" : pick;
+}
+/** 记忆 → 词云词（id 种子稳定生成，仅 fresh 标记随增量变化）。 */
+const words = computed<MemWord[]>(() =>
+  visibleMemories.value
+    .slice(0, 22)
+    .map((m) => {
+      const h = hashStr(m.id);
+      const text = wordText(m);
+      if (!text) return null;
+      return {
+        text,
+        full: m.text,
+        size: 11 + (h % 7),
+        x: Math.round((((h >> 3) % 97) / 97) * 150 - 75),
+        y: Math.round((((h >> 7) % 93) / 93) * 120 - 60),
+        delay: (h % 70) / 10,
+        dur: 5 + (h % 50) / 10,
+        tone: h % 4,
+        fresh: freshIds.value.has(m.id),
+      };
+    })
+    .filter((w): w is MemWord => w !== null),
+);
 
 const memoryCount = computed(() => visibleMemories.value.length);
 const skillCount = computed(() => plugins.value.length);
 
-// ---- 实时增词：轮询（记忆不频繁变化，45s 一次）+ 对话事件后刷新 ----
+// ---- 实时增词：轮询（记忆不频繁变化，45s 一次）+ 对话事件后刷新。
+// 对比新旧 id：新增记忆标 fresh（入场浮现动画），已有词位置稳定不动。----
 let memTimer: ReturnType<typeof setInterval> | null = null;
 let unBrain: (() => void) | null = null;
+const freshIds = ref<Set<string>>(new Set());
+let lastMemIds = new Set<string>();
 async function refreshMem() {
   const m = await getMemListOnce();
+  const newIds = new Set(m.items.map((x) => x.id));
+  // 首刷不标 fresh（避免全部闪一下）；后续只有真正新增的记忆浮现
+  if (lastMemIds.size > 0) {
+    const added = new Set([...newIds].filter((id) => !lastMemIds.has(id)));
+    if (added.size) {
+      freshIds.value = added;
+      setTimeout(() => { freshIds.value = new Set(); }, 1800);
+    }
+  }
+  lastMemIds = newIds;
   memories.value = m.items;
   memFailed.value = m.failed;
   loaded.value = true;
@@ -138,8 +172,34 @@ function onAgentClick() {
 }
 onUnmounted(() => { if (lineTimer !== null) clearTimeout(lineTimer); });
 
-/** 点记忆词 → 带完整记忆进对话。 */
-function ask(w: MemWord) {
+// ---- 词云点击：粒子爆散（词炸成星尘）+ 带记忆进对话 ----
+const bursts = ref<BurstParticle[]>([]);
+let burstSeq = 0;
+function burstAt(x: number, y: number) {
+  const start = burstSeq;
+  for (let i = 0; i < 8; i++) {
+    const ang = (Math.PI * 2 * i) / 8 + Math.random() * 0.6;
+    const dist = 22 + Math.random() * 20;
+    bursts.value.push({
+      id: burstSeq++,
+      x,
+      y,
+      dx: Math.cos(ang) * dist,
+      dy: Math.sin(ang) * dist,
+      delay: Math.random() * 0.06,
+    });
+  }
+  setTimeout(() => {
+    bursts.value = bursts.value.filter((p) => p.id >= start);
+  }, 700);
+}
+
+/** 点记忆词 → 词位置粒子爆散 + 带完整记忆进对话。 */
+function ask(w: MemWord, e: MouseEvent) {
+  // brain 200px 容器中心 = (100, 100)；词偏移相对中心
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  const brainRect = (e.currentTarget as HTMLElement).closest(".brain")!.getBoundingClientRect();
+  burstAt(rect.left - brainRect.left + rect.width / 2, rect.top - brainRect.top + rect.height / 2);
   emit("chat", `关于「${w.full.length > 40 ? w.full.slice(0, 40) + "…" : w.full}」：`);
 }
 
@@ -164,14 +224,27 @@ const SEEDS = Array.from({ length: 6 }, () => ({
       <div class="brain-glow" />
       <!-- 空态星云种子：几颗闪烁的星，暗示大脑正在形成 -->
       <span v-if="loaded && !memoryCount && !memFailed" v-for="s in SEEDS" :key="s.x + s.y" class="seed" :style="{ left: s.x + 'px', top: s.y + 'px', animationDelay: s.delay + 's', animationDuration: s.dur + 's' }" />
-      <!-- 记忆词：星云式漂浮 -->
-      <span v-for="(w, i) in words" :key="i" class="mem-wrap" :style="{ '--wx': w.x + 'px', '--wy': w.y + 'px', '--wd': w.delay + 's', '--wt': w.dur + 's' }">
+      <!-- 点击粒子爆散 -->
+      <span
+        v-for="p in bursts"
+        :key="p.id"
+        class="burst"
+        :style="{ left: p.x + 'px', top: p.y + 'px', '--dx': p.dx + 'px', '--dy': p.dy + 'px', animationDelay: p.delay + 's' }"
+      />
+      <!-- 记忆词：星云式漂浮（新浮现的记忆 fresh 入场） -->
+      <span
+        v-for="(w, i) in words"
+        :key="i"
+        class="mem-wrap"
+        :class="{ fresh: w.fresh }"
+        :style="{ '--wx': w.x + 'px', '--wy': w.y + 'px', '--wd': w.delay + 's', '--wt': w.dur + 's' }"
+      >
         <button
           class="mem-word"
           :class="`t${w.tone}`"
           :style="{ fontSize: w.size + 'px' }"
           :title="w.full"
-          @click="ask(w)"
+          @click="ask(w, $event)"
         >{{ w.text }}</button>
       </span>
       <!-- 角色本体（呼吸核心），点击说台词 -->
@@ -335,6 +408,38 @@ const SEEDS = Array.from({ length: 6 }, () => ({
 .mem-word:hover {
   opacity: 1;
   transform: scale(1.18);
+}
+/* 新浮现记忆：先入场（从中心弹出 + 淡入），再无缝接漂浮 */
+.mem-wrap.fresh {
+  animation:
+    word-in 0.55s var(--yb-ease-spring) both,
+    word-float var(--wt) ease-in-out var(--wd) infinite;
+  animation-delay: 0s, var(--wd);
+}
+@keyframes word-in {
+  from {
+    transform: translate(calc(-50% + var(--wx)), calc(-50% + var(--wy))) scale(0);
+    opacity: 0;
+  }
+  to {
+    transform: translate(calc(-50% + var(--wx)), calc(-50% + var(--wy))) scale(1);
+    opacity: 0.55;
+  }
+}
+
+/* ---- 点击粒子爆散：词炸成星尘向外飞 + 淡出 ---- */
+.burst {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--yb-accent);
+  pointer-events: none;
+  animation: burst-fly 0.62s ease-out forwards;
+}
+@keyframes burst-fly {
+  from { opacity: 1; transform: translate(0, 0) scale(1); }
+  to { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(0.25); }
 }
 /* 色阶：深→浅（天青系） */
 .mem-word.t0 { color: var(--yb-c-sky-600); }

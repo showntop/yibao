@@ -62,10 +62,32 @@ function openWidget(w: WidgetPayload) {
 // ---- 待批准 ----
 const approvals = ref<PendingConfirm[]>([]);
 
-// ---- 动态 ----
+// ---- 动态：按天分组折叠（今天/昨天/更早，macOS 通知中心语言）----
 const items = ref<FeedItem[]>([]);
-const feedPreview = computed(() => [...items.value].sort((a, b) => b.ts - a.ts).slice(0, 8));
-const unreadCount = computed(() => feedPreview.value.filter((it) => it.read === 0).length);
+const collapsed = ref<Set<string>>(new Set(["yesterday", "earlier"])); // 默认折叠非今天
+function toggleGroup(key: string) {
+  const s = new Set(collapsed.value);
+  if (s.has(key)) s.delete(key);
+  else s.add(key);
+  collapsed.value = s;
+}
+const feedGroups = computed(() => {
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 1000;
+  const startOfYesterday = startOfToday - 86400;
+  const buckets: { key: string; label: string; items: FeedItem[] }[] = [
+    { key: "today", label: "今天", items: [] },
+    { key: "yesterday", label: "昨天", items: [] },
+    { key: "earlier", label: "更早", items: [] },
+  ];
+  for (const it of [...items.value].sort((a, b) => b.ts - a.ts).slice(0, 14)) {
+    if (it.ts >= startOfToday) buckets[0].items.push(it);
+    else if (it.ts >= startOfYesterday) buckets[1].items.push(it);
+    else buckets[2].items.push(it);
+  }
+  return buckets.filter((b) => b.items.length > 0);
+});
+const unreadCount = computed(() => items.value.filter((it) => it.read === 0).length);
 
 function itemTime(ts: number): string {
   const d = new Date(ts * 1000);
@@ -193,15 +215,24 @@ onUnmounted(() => {
       </button>
     </section>
 
-    <!-- 动态 -->
+    <!-- 动态：按天分组，组头可折叠 -->
     <section class="cp-block cp-feed">
       <div class="cp-title"><YbIcon name="inbox" :size="12" />动态 <span v-if="unreadCount" class="cp-count">{{ unreadCount }}</span></div>
-      <div v-if="feedPreview.length" class="cp-feed-list">
-        <button v-for="it in feedPreview" :key="it.id" class="cp-feed-row" @click="openInChat(it)">
-          <YbIcon class="cp-feed-ic" :class="`ic-${kindIcon(it)}`" :name="kindIcon(it)" :size="12" />
-          <span class="cp-feed-text" :class="{ unread: it.read === 0 }">{{ it.text }}</span>
-          <span class="cp-feed-time">{{ itemTime(it.ts) }}</span>
-        </button>
+      <div v-if="feedGroups.length" class="cp-feed-list">
+        <div v-for="g in feedGroups" :key="g.key" class="cp-feed-group">
+          <button class="cp-feed-head" @click="toggleGroup(g.key)">
+            <svg class="cp-chev" :class="{ on: !collapsed.has(g.key) }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6" /></svg>
+            {{ g.label }}
+            <span class="cp-gcount yb-num">{{ g.items.length }}</span>
+          </button>
+          <template v-if="!collapsed.has(g.key)">
+            <button v-for="it in g.items" :key="it.id" class="cp-feed-row" @click="openInChat(it)">
+              <YbIcon class="cp-feed-ic" :class="`ic-${kindIcon(it)}`" :name="kindIcon(it)" :size="12" />
+              <span class="cp-feed-text" :class="{ unread: it.read === 0 }">{{ it.text }}</span>
+              <span class="cp-feed-time">{{ itemTime(it.ts) }}</span>
+            </button>
+          </template>
+        </div>
       </div>
       <div v-else-if="loaded" class="cp-quiet">还没有动态</div>
     </section>
@@ -422,6 +453,46 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 1px;
+}
+/* 动态分组 */
+.cp-feed-group {
+  display: flex;
+  flex-direction: column;
+}
+.cp-feed-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 3px 7px;
+  border: none;
+  border-radius: var(--yb-radius-xs);
+  background: transparent;
+  color: var(--yb-text-faint);
+  font-size: var(--yb-fs-xs);
+  font-weight: var(--yb-fw-bold);
+  letter-spacing: 0.03em;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: color var(--yb-dur-fast) var(--yb-ease-out);
+}
+.cp-feed-head:hover {
+  color: var(--yb-text);
+}
+.cp-chev {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  transition: transform var(--yb-dur-fast) var(--yb-ease-out);
+}
+.cp-chev.on {
+  transform: rotate(180deg);
+}
+.cp-gcount {
+  margin-left: auto;
+  font-size: var(--yb-fs-xs);
+  color: var(--yb-text-faint);
 }
 .cp-feed-row {
   display: flex;
