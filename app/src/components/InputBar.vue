@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from "vue";
+import { ref, computed, watch, onMounted } from "vue";
 
 // busy = 生成/播报中（可打断）；listening = 录音中（麦克风切声波态，点击=取消录音）
 // draft = 外部预填草稿（主屏 Feed 点击带上下文来）；变化即填入并聚焦
@@ -9,11 +9,28 @@ const text = ref("");
 const inputRef = ref<HTMLInputElement | null>(null);
 const canSend = computed(() => text.value.trim().length > 0);
 
+// 草稿暂存：输入内容 localStorage 持久化，误关/刷新后恢复（发送或外部草稿填入时清除）
+const DRAFT_KEY = "yb-input-draft";
+function persistDraft(v: string) {
+  try {
+    if (v.trim()) localStorage.setItem(DRAFT_KEY, v);
+    else localStorage.removeItem(DRAFT_KEY);
+  } catch { /* 存储不可用忽略 */ }
+}
+onMounted(() => {
+  try {
+    const saved = localStorage.getItem(DRAFT_KEY);
+    if (saved) text.value = saved;
+  } catch { /* 忽略 */ }
+});
+watch(text, (v) => persistDraft(v));
+
 watch(
   () => props.draft,
   (v) => {
     if (v) {
       text.value = v;
+      persistDraft(v);
       inputRef.value?.focus();
     }
   },
@@ -22,8 +39,11 @@ watch(
 function send() {
   const t = text.value.trim();
   if (t) {
+    // AI 正在生成/播报（stopping）时发送 = 先打断再发新消息（不必手动"停止"）
+    if (stopping.value) emit("interrupt");
     emit("submit", t);
     text.value = "";
+    persistDraft("");
   }
 }
 
@@ -37,8 +57,13 @@ function onMic() {
 const stopping = computed(() => props.busy && !props.listening);
 
 function onMain() {
-  if (stopping.value) emit("interrupt");
-  else send();
+  // 生成/播报中：有输入文字 → 打断并发送新消息；无文字 → 仅打断
+  if (stopping.value) {
+    if (text.value.trim()) send();
+    else emit("interrupt");
+  } else {
+    send();
+  }
 }
 
 // 全局唤起等外部焦点请求（反射键唤起后输入就绪）
@@ -47,7 +72,12 @@ defineExpose({ focus: () => inputRef.value?.focus() });
 
 <template>
   <form class="bar" @submit.prevent="send">
-    <input ref="inputRef" v-model="text" placeholder="对译宝说点什么…" />
+    <input
+      ref="inputRef"
+      v-model="text"
+      placeholder="对译宝说点什么…"
+      @keydown.enter.prevent="send"
+    />
     <button
       type="button"
       class="mic"

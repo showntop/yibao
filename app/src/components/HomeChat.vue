@@ -10,7 +10,8 @@ import InputBar from "./InputBar.vue";
 import Bubble from "./Bubble.vue";
 import PermissionsBanner from "./PermissionsBanner.vue";
 import SetupWizard from "./SetupWizard.vue";
-import HomeContextBar from "./HomeContextBar.vue";
+import BrainSession from "./BrainSession.vue";
+import HomeContextPanel from "./HomeContextPanel.vue";
 import {
   onBrainEvent,
   onBrainStatus,
@@ -23,13 +24,14 @@ import {
   type BrainPermissions,
   type BrainStatusMsg,
 } from "../lib/brain";
-import { SUGGESTIONS } from "../lib/suggestions";
 import { procLabel, procSkip, procResultSuffix, procDetail } from "../lib/proc";
 import YbIcon from "./YbIcon.vue";
 
 type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
 // proc：过程展示（工具调用行，可点开展开参数/结果）；panelLink：「⇢ 协作」关联气泡
 type ProcInfo = { label: string; action?: BrainEvent["action"]; result?: BrainEvent["result"]; done: boolean; expanded: boolean };
+/** 溯源引用：本条 AI 回复调用过什么工具/记忆（"参考了 ▾"展开） */
+type RunRef = { label: string; detail: string; ok: boolean };
 type BubbleMsg = {
   role: "user" | "ai" | "sys";
   text: string;
@@ -37,7 +39,15 @@ type BubbleMsg = {
   proc?: ProcInfo;
   halted?: boolean;
   icon?: "clock" | "alert";
+  /** 时间戳：跨日会话的日期分隔 */
+  ts?: number;
+  /** 溯源引用（仅 AI 消息） */
+  refs?: RunRef[];
+  /** 溯源折叠展开态（仅 AI 消息） */
+  refsOpen?: boolean;
 };
+/** 技能/场景快速呼出 chip（动态：预设场景 + list_plugins） */
+type SkillChip = { key: string; label: string; icon: "clock" | "doc" | "sparkle" | "chat" | "plug"; draft: string };
 
 /** 告警气泡：⚠️ 前缀改行首 alert 图标渲染（文案纯净，图标走 YbIcon） */
 function pushWarn(text: string) {
@@ -66,6 +76,47 @@ function onInfoChat(d: string) {
   void nextTick(() => (draftRef.value = d));
 }
 
+// ---- 会话（左复合栏）：标题/预览随对话更新；切换会话保存/恢复气泡（内存 map）----
+const sessionRef = ref<InstanceType<typeof BrainSession> | null>(null);
+const sessionBubbles = new Map<string, typeof bubbles.value>(); // 会话 id → 气泡快照（内存）
+let currentSessionId = "";
+let sessionStarted = false; // 当前会话是否已有首条用户消息（决定是否生成标题）
+
+function readSessionTitle(id?: string): string {
+  try {
+    const targetId = id || localStorage.getItem("yb-active-session") || "";
+    const raw = localStorage.getItem("yb-sessions");
+    const sessions = raw ? JSON.parse(raw) as Array<{ id?: string; title?: string }> : [];
+    return sessions.find((item) => item.id === targetId)?.title?.trim() || "新对话";
+  } catch {
+    return "新对话";
+  }
+}
+
+const currentSessionTitle = ref(readSessionTitle());
+function onSessionActive(id: string) {
+  currentSessionId = id;
+  currentSessionTitle.value = readSessionTitle(id);
+}
+function onSessionNew() {
+  if (currentSessionId) sessionBubbles.set(currentSessionId, bubbles.value.slice());
+  bubbles.value = [];
+  streamingIdx.value = null;
+  state.value = "idle"; // showTyping 由 state 推导，自动收起
+  sessionStarted = false;
+  currentSessionTitle.value = "新对话";
+}
+function onSessionSelect(id: string) {
+  // 保存当前会话气泡 → 恢复目标会话气泡（内存快照；持久化 load_session 留后端扩展）
+  if (currentSessionId) sessionBubbles.set(currentSessionId, bubbles.value.slice());
+  currentSessionId = id;
+  bubbles.value = sessionBubbles.get(id) ?? [];
+  streamingIdx.value = null;
+  state.value = "idle";
+  sessionStarted = true; // 该会话已有历史，后续消息不再生成标题
+  currentSessionTitle.value = readSessionTitle(id);
+}
+
 const state = ref<AvatarState>("idle");
 const bubbles = ref<BubbleMsg[]>([]);
 const streamingIdx = ref<number | null>(null); // 正在接收 chunk 的 bubble 下标
@@ -74,6 +125,8 @@ const panelOpen = ref(false); // 面板协作会话进行中（关联气泡只�
 const perms = ref<BrainPermissions | null>(null); // macOS 权限状态（null=未收到）
 // 过程展示：action.id → 过程行下标，结果回来原地更新 ✅/❌
 const procIdx = new Map<string, number>();
+// 溯源：本次 run 调用的工具引用，挂到下一条 AI 消息（"参考了 ▾"）
+const runRefs: RunRef[] = [];
 
 // ---- 首启设置向导（缺 LLM key 时 Rust 发 setup-config-needed，大脑未启动；逻辑同源宠物窗）----
 const setupNeeded = ref(false);
@@ -94,10 +147,131 @@ const busy = computed(() =>
   state.value === "listen" || state.value === "think" ||
   state.value === "work" || state.value === "say",
 );
-const suggestions = SUGGESTIONS;
+// ---- 空态：时间招呼 + 建议 chip（带线性图标，视觉更 OS）----
+const greeting = computed(() => {
+  const h = new Date().getHours();
+  if (h < 6) return "夜深了";
+  if (h < 12) return "早上好";
+  if (h < 14) return "中午好";
+  if (h < 18) return "下午好";
+  return "晚上好";
+});
+const SUGGEST_CHIPS: { text: string; icon: "sparkle" | "doc" | "chat" }[] = [
+  { text: "记一条闪念", icon: "sparkle" },
+  { text: "看看选题看板", icon: "doc" },
+  { text: "帮我写点什么", icon: "chat" },
+];
+
+// ---- 技能/场景快速呼出 chip：动态 = 预设场景 + list_plugins（与左栏技能同源）----
+const PRESET_SKILLS: SkillChip[] = [
+  { key: "schedule", label: "日程", icon: "clock", draft: "帮我整理最近的日程安排…" },
+  { key: "write", label: "写作", icon: "doc", draft: "帮我起草…" },
+  { key: "life", label: "生活", icon: "sparkle", draft: "给我点生活上的建议…" },
+];
+const plugins = ref<{ id: string; name: string }[]>([]);
+const skillChips = computed<SkillChip[]>(() => [
+  ...PRESET_SKILLS,
+  ...plugins.value.slice(0, 2).map((p) => ({ key: p.id, label: p.name, icon: "plug" as const, draft: `打开${p.name}面板` })),
+]);
+function onSkillChip(c: SkillChip) {
+  onInfoChat(c.draft); // 点击 = 填入输入框（可补全再发送）
+}
+
 const missingPerms = computed(() => perms.value !== null && (!perms.value.ax || !perms.value.screen || !perms.value.input));
 // 「正在输入」占位：run 受理（think）到首个 chunk 之间气泡流还是空的，用三点呼吸占位
 const showTyping = computed(() => state.value === "think" && streamingIdx.value === null);
+const sessionProcesses = computed(() => bubbles.value
+  .filter((bubble): bubble is BubbleMsg & { proc: ProcInfo } => Boolean(bubble.proc))
+  .slice(-5)
+  .map((bubble) => ({
+    label: bubble.proc.label,
+    done: bubble.proc.done,
+    ok: bubble.proc.done ? procOk(bubble.proc) : undefined,
+  })));
+
+// ---- 思考状态文案：typing 时轮换"在干嘛"（需在 showTyping 定义后，避免 TDZ）----
+const THINK_NOTES = ["正在整理思路…", "正在翻阅记忆…", "正在连接工具…", "马上就好…"];
+const thinkNote = ref(THINK_NOTES[0]);
+let thinkNoteTimer: ReturnType<typeof setInterval> | null = null;
+watch(showTyping, (v) => {
+  if (thinkNoteTimer !== null) { clearInterval(thinkNoteTimer); thinkNoteTimer = null; }
+  if (v) {
+    thinkNote.value = THINK_NOTES[0];
+    thinkNoteTimer = setInterval(() => {
+      thinkNote.value = THINK_NOTES[Math.floor(Math.random() * THINK_NOTES.length)];
+    }, 2400);
+  }
+});
+
+// ---- 日期分隔（跨日会话）+ 跳到最新 ----
+function sameDay(a?: number, b?: number): boolean {
+  if (!a || !b) return false;
+  const da = new Date(a);
+  const db = new Date(b);
+  return da.getFullYear() === db.getFullYear() && da.getMonth() === db.getMonth() && da.getDate() === db.getDate();
+}
+function showDateDivider(i: number): boolean {
+  const b = bubbles.value[i];
+  if (!b.ts) return false;
+  const prev = i > 0 ? bubbles.value[i - 1].ts : undefined;
+  return prev === undefined || !sameDay(prev, b.ts);
+}
+function fmtDay(ts?: number): string {
+  if (!ts) return "";
+  const d = new Date(ts);
+  const now = new Date();
+  const yd = new Date();
+  yd.setDate(now.getDate() - 1);
+  if (sameDay(ts, now.getTime())) return "今天";
+  if (sameDay(ts, yd.getTime())) return "昨天";
+  return `${d.getMonth() + 1}月${d.getDate()}日`;
+}
+const showJump = ref(false);
+function onBubblesScroll() {
+  const el = bubblesRef.value;
+  if (!el) return;
+  const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 140;
+  showJump.value = !nearBottom && el.scrollHeight > el.clientHeight + 60;
+}
+
+// ---- 消息操作：复制 / 重新生成 / 编辑重发 / 反馈 ----
+const editTarget = ref<number | null>(null); // 编辑重发：用户消息下标，发送时从该条起截断替换
+function copyText(t: string) {
+  void navigator.clipboard?.writeText(t).catch(() => {});
+}
+function onEditMessage(i: number) {
+  const b = bubbles.value[i];
+  if (!b || b.role !== "user") return;
+  draftRef.value = "";
+  void nextTick(() => {
+    draftRef.value = b.text;
+    editTarget.value = i;
+  });
+}
+function onFeedback(ok: boolean) {
+  bubbles.value.push({ role: "sys", text: ok ? "已收到正面反馈，会继续保持" : "已收到反馈，会调整回答方式" });
+}
+/** 重新生成/重试：找到该 AI 消息前最近一条用户消息，截断到它（含）重新 runInput */
+async function regenerate(i: number) {
+  const target = bubbles.value[i];
+  if (!target || target.role !== "ai") return;
+  let j = i - 1;
+  while (j >= 0 && bubbles.value[j].role !== "user") j -= 1;
+  if (j < 0) return;
+  const text = bubbles.value[j].text;
+  bubbles.value = bubbles.value.slice(0, j + 1);
+  streamingIdx.value = null;
+  state.value = "think";
+  try {
+    await Promise.race([
+      runInput(text, "pet"),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error("大脑响应超时")), 15000)),
+    ]);
+  } catch (err) {
+    pushWarn("重新生成失败：" + String(err));
+    state.value = "idle";
+  }
+}
 
 // ---- 气泡流滚动：新气泡平滑到底、流式 chunk 即时跟手 ----
 const bubblesRef = ref<HTMLElement | null>(null);
@@ -136,6 +310,7 @@ function onEvent(e: BrainEvent) {
           text: "",
           proc: { label: procLabel(e.action), action: e.action, done: false, expanded: false },
         });
+        runRefs.push({ label: procLabel(e.action), detail: "调用工具中…", ok: false });
       }
       break;
     case "action_result": {
@@ -151,12 +326,26 @@ function onEvent(e: BrainEvent) {
         }
         procIdx.delete(e.action!.id!);
       }
+      // 溯源收尾：把该工具的结果摘要写回最近一条未完成引用
+      const ref = runRefs.find((r) => !r.ok && r.label === (e.action ? procLabel(e.action) : ""));
+      if (ref) {
+        ref.ok = e.result?.success !== false;
+        ref.detail = e.result?.success
+          ? String(e.result?.data?.human ?? "")?.slice(0, 60) || "已完成"
+          : `失败：${String(e.result?.error ?? "").slice(0, 60)}`;
+      }
       break;
     }
     case "final_reply_chunk":
-      // 流式增量：拼到当前 streaming bubble（首片时新建）
+      // 流式增量：拼到当前 streaming bubble（首片时新建；同时挂上本次 run 的溯源引用）
       if (streamingIdx.value === null) {
-        bubbles.value.push({ role: "ai", text: e.text ?? "" });
+        bubbles.value.push({
+          role: "ai",
+          text: e.text ?? "",
+          ts: Date.now(),
+          refs: runRefs.length ? [...runRefs] : undefined,
+        });
+        runRefs.length = 0;
         streamingIdx.value = bubbles.value.length - 1;
       } else {
         bubbles.value[streamingIdx.value].text += e.text ?? "";
@@ -169,17 +358,20 @@ function onEvent(e: BrainEvent) {
         bubbles.value[streamingIdx.value].text = full;
         streamingIdx.value = null;
       } else {
-        bubbles.value.push({ role: "ai", text: full });
+        bubbles.value.push({ role: "ai", text: full, ts: Date.now(), refs: runRefs.length ? [...runRefs] : undefined });
+        runRefs.length = 0;
       }
+      sessionRef.value?.updateCurrent({ preview: full.replace(/\s+/g, " ").trim().slice(0, 44) });
       if (state.value !== "say") state.value = "idle";
       break;
     }
     case "interrupted":
+      runRefs.length = 0; // 打断：本次 run 的引用作废
       if (streamingIdx.value !== null) {
         bubbles.value[streamingIdx.value].halted = true;
         streamingIdx.value = null;
       } else {
-        bubbles.value.push({ role: "ai", text: "已打断", halted: true });
+        bubbles.value.push({ role: "ai", text: "已打断", halted: true, ts: Date.now() });
       }
       state.value = "idle";
       break;
@@ -198,6 +390,7 @@ function onEvent(e: BrainEvent) {
     case "error":
       state.value = "idle";
       streamingIdx.value = null;
+      runRefs.length = 0;
       pushWarn(e.text ?? "出错了");
       flashValence("error");
       break;
@@ -208,10 +401,10 @@ function onEvent(e: BrainEvent) {
       // 空识别（超时/没说话）：回 idle 并提示——不能进 think，run_done 不复位状态，会永远卡「思考中」
       if (e.text) {
         state.value = "think";
-        bubbles.value.push({ role: "user", text: e.text });
+        bubbles.value.push({ role: "user", text: e.text, ts: Date.now() });
       } else {
         state.value = "idle";
-        bubbles.value.push({ role: "ai", text: "没听清，再试一次？" });
+        bubbles.value.push({ role: "ai", text: "没听清，再试一次？", ts: Date.now() });
       }
       break;
     case "speaking":
@@ -259,10 +452,29 @@ function onStatus(m: BrainStatusMsg) {
 }
 
 async function submit(text: string) {
-  bubbles.value.push({ role: "user", text });
+  // 编辑重发：从被编辑的用户消息起截断，用新文本替换（其后对话作废）
+  if (editTarget.value !== null) {
+    bubbles.value = bubbles.value.slice(0, editTarget.value);
+    editTarget.value = null;
+    runRefs.length = 0;
+  }
+  // 首条用户消息 → 自动生成会话标题
+  if (!sessionStarted) {
+    const title = text.replace(/\s+/g, " ").trim().slice(0, 16);
+    sessionRef.value?.updateCurrent({ title: title || "新对话" });
+    currentSessionTitle.value = title || "新对话";
+    sessionStarted = true;
+  }
+  // 若 AI 正在生成/播报，InputBar 已在发送前 emit interrupt（先打断再发）；
+  // 这里兜底：state 异常卡 busy（无响应）时也允许发送（runInput 会覆盖 state）
+  bubbles.value.push({ role: "user", text, ts: Date.now() });
   state.value = "think";
   try {
-    await runInput(text, "pet");
+    // 15s 超时兜底：runInput invoke 挂起会让 state 一直卡 think（主按钮变"打断"，发不出新消息）
+    await Promise.race([
+      runInput(text, "pet"),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error("大脑响应超时")), 15000)),
+    ]);
   } catch (err) {
     pushWarn("发送失败：" + String(err));
     state.value = "idle";
@@ -295,6 +507,8 @@ function flashValence(v: "success" | "error") {
 }
 
 onMounted(async () => {
+  // 技能 chip 动态数据：与左栏技能同源（list_plugins），不另起炉灶
+  try { plugins.value = await invoke<{ id: string; name: string }[]>("list_plugins").catch(() => []); } catch { plugins.value = []; }
   unlisten = await onBrainEvent(onEvent);
   unlistenStatus = await onBrainStatus(onStatus);
   unlistenPerms = await onBrainPermissions((p) => { perms.value = p; });
@@ -327,38 +541,48 @@ onUnmounted(() => {
   unlistenSetupErr?.();
   unlistenSetupCfg?.();
   if (valenceTimer !== null) clearTimeout(valenceTimer);
+  if (thinkNoteTimer !== null) clearInterval(thinkNoteTimer);
 });
 </script>
 
 <template>
-  <div class="chat-page">
+  <!-- thinking：AI 思考时对话区泛紫微光（与左栏大脑转紫呼应） -->
+  <div class="chat-page" :class="{ thinking: state === 'think' }">
     <SetupWizard v-if="setupNeeded" :model="setupCfg.model" :base-url="setupCfg.baseUrl" :voice="setupCfg.voice" @saved="onSetupSaved" />
 
-    <!-- 对话列：上下文带 + 气泡 + 输入条，限宽居中（聚焦感，像专业 AI 对话应用） -->
-    <div v-else class="chat-col">
-    <!-- 上下文带：AI 此刻 / 动态 / 插件快捷 / 回顾（对话头顶的一体化流，非独立面板） -->
-    <HomeContextBar @chat="onInfoChat" />
+    <!-- 三栏 AI 工作台：内心+会话（复合栏）｜对话｜AI 进程 -->
+    <!-- 用 wrapper div 包左/右栏：scoped CSS 才能命中（直接 class 加在子组件根会因 scope 不匹配而失效） -->
+    <div v-else class="chat-cols">
+    <!-- 左：内心 + 会话 复合栏（tab 切换：AgentBrain 人格展示 / SessionList 历史导航） -->
+    <div class="col-left"><BrainSession ref="sessionRef" :state="state" @chat="onInfoChat" @select="onSessionSelect" @active="onSessionActive" @new-chat="onSessionNew" /></div>
 
+    <div class="chat-main">
     <PermissionsBanner v-if="missingPerms && perms" :perms="perms" />
 
-    <div class="bubbles" ref="bubblesRef">
+    <div class="bubbles" ref="bubblesRef" @scroll="onBubblesScroll">
       <div v-if="!bubbles.length && !showTyping" class="empty-hint">
         <div class="eh-glow"><Avatar :state="state" :size="64" /></div>
-        <p class="eh-title">叫我做什么都行～</p>
+        <p class="eh-title">{{ greeting }}，叫我做什么都行～</p>
         <p class="eh-sub">整理会议纪要 · 规划今日 · 记住你的偏好</p>
         <div class="chips">
-          <button v-for="c in suggestions" :key="c" class="chip" @click="submit(c)">{{ c }}</button>
+          <button v-for="c in SUGGEST_CHIPS" :key="c.text" class="chip" @click="submit(c.text)">
+            <YbIcon :name="c.icon" :size="12" />{{ c.text }}
+          </button>
         </div>
       </div>
       <template v-for="(b, i) in bubbles" :key="i">
+        <!-- 跨日日期分隔（今天/昨天/更早） -->
+        <div v-if="showDateDivider(i)" class="date-divider"><span>{{ fmtDay(b.ts) }}</span></div>
+
         <!-- 「⇢ 协作」关联气泡：可点击，直达插件页（派生入口，§主/子 agent 关联） -->
         <button v-if="b.panelLink" class="assoc" @click="emit('openPanel')">
           {{ b.text }}<span class="assoc-arrow">前往 ›</span>
         </button>
-        <!-- 过程行：图标随状态（进行中转圈 / 成功 / 失败），点「详情」展开参数与结果 -->
+
+        <!-- 过程工作卡：图标 + 描述 + 进度条（进行中）/ ✅❌（完成），点「详情」展开参数与结果 -->
         <div v-else-if="b.proc" class="proc">
-          <button
-            class="proc-line"
+          <div
+            class="proc-card"
             :class="{ done: b.proc.done && procOk(b.proc), fail: b.proc.done && !procOk(b.proc) }"
             :aria-expanded="b.proc.expanded"
             @click="b.proc && (b.proc.expanded = !b.proc.expanded)"
@@ -369,18 +593,88 @@ onUnmounted(() => {
               :spin="!b.proc.done"
               :size="13"
             />
-            <span class="proc-label">{{ b.proc.label }}{{ b.proc.done ? procErrSuffix(b.proc) : "" }}</span>
+            <div class="proc-main">
+              <span class="proc-label">{{ b.proc.label }}{{ b.proc.done ? procErrSuffix(b.proc) : "" }}</span>
+              <span v-if="!b.proc.done" class="proc-track"><i /></span>
+            </div>
             <span class="proc-toggle">{{ b.proc.expanded ? "收起" : "详情" }}</span>
-          </button>
+          </div>
           <pre v-if="b.proc.expanded" class="proc-detail">{{ procText(b.proc) }}</pre>
         </div>
+
+        <!-- AI 消息：无气泡主文 + 头像 + hover 操作 + 溯源（"参考了 ▾"） -->
+        <div v-else-if="b.role === 'ai'" class="msg-row">
+          <div class="ai-line">
+            <Avatar class="ai-ava" :state="state" :size="22" compact />
+            <Bubble :role="b.role" :text="b.text" plain :streaming="i === streamingIdx" :halted="b.halted" :icon="b.icon" />
+          </div>
+          <div v-if="b.refs?.length" class="refs">
+            <button class="refs-toggle" @click="b.refsOpen = !b.refsOpen">
+              <span>参考了 {{ b.refs.length }} 项</span>
+              <i :class="{ open: b.refsOpen }" />
+            </button>
+            <Transition name="refs-fade">
+              <ul v-if="b.refsOpen" class="refs-list">
+                <li v-for="(r, ri) in b.refs" :key="ri" :class="{ fail: !r.ok }">
+                  <YbIcon :name="r.ok ? 'check' : 'x'" :size="10" />
+                  <span class="refs-label">{{ r.label }}</span>
+                  <span class="refs-detail">{{ r.detail }}</span>
+                </li>
+              </ul>
+            </Transition>
+          </div>
+          <div class="msg-actions">
+            <button @click="copyText(b.text)">复制</button>
+            <button :title="'有帮助'" @click="onFeedback(true)"><YbIcon name="thumb-up" :size="12" /></button>
+            <button :title="'没帮助'" @click="onFeedback(false)"><YbIcon name="thumb-down" :size="12" /></button>
+            <button @click="regenerate(i)">{{ b.halted ? "重试" : "重写" }}</button>
+          </div>
+        </div>
+
+        <!-- 用户消息：气泡 + hover 复制/编辑（改完从该条起替换） -->
+        <div v-else-if="b.role === 'user'" class="msg-row user-msg">
+          <Bubble :role="b.role" :text="b.text" :streaming="i === streamingIdx" :halted="b.halted" :icon="b.icon" />
+          <div class="msg-actions">
+            <button @click="copyText(b.text)">复制</button>
+            <button @click="onEditMessage(i)">编辑</button>
+          </div>
+        </div>
+
         <Bubble v-else :role="b.role" :text="b.text" :streaming="i === streamingIdx" :halted="b.halted" :icon="b.icon" />
       </template>
-      <Bubble v-if="showTyping" role="ai" text="" typing />
+
+      <template v-if="showTyping">
+        <div class="ai-line">
+          <Avatar class="ai-ava" :state="state" :size="22" compact />
+          <Bubble role="ai" text="" typing />
+          <span class="think-note">{{ thinkNote }}</span>
+        </div>
+      </template>
     </div>
 
+    <!-- 向上滚离底部时：跳到最新浮钮 -->
+    <button v-show="showJump" class="jump-new" @click="scrollBubbles(true)">↓ 最新</button>
+
     <div class="input-slot">
+      <div class="skill-row">
+        <span class="skill-hint">呼出技能</span>
+        <button v-for="c in skillChips" :key="c.key" class="skill-chip" :title="c.draft" @click="onSkillChip(c)">
+          <YbIcon :name="c.icon" :size="11" />{{ c.label }}
+        </button>
+      </div>
       <InputBar :busy="busy" :listening="state === 'listen'" :draft="draftRef" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
+    </div>
+    </div>
+
+    <!-- 右：只描述当前会话的目标、阻塞、上下文、关联能力与产出 -->
+    <div class="col-context">
+      <HomeContextPanel
+        :session-title="currentSessionTitle"
+        :session-state="state"
+        :has-conversation="Boolean(bubbles.length)"
+        :processes="sessionProcesses"
+        @chat="onInfoChat"
+      />
     </div>
     </div>
   </div>
@@ -393,13 +687,50 @@ onUnmounted(() => {
   flex-direction: column;
   background: var(--yb-content-bg);
 }
-/* 对话列：全宽展开（气泡自身限宽），两侧不留白 */
-.chat-col {
-  width: 100%;
-  height: 100%;
+/* 三栏工作台：内心+会话（左）｜对话（中）｜AI 进程（右） */
+.chat-cols {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  min-width: 0;
+}
+.chat-main {
+  flex: 1;
+  min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  position: relative; /* 锚定"跳到最新"浮钮 */
+}
+/* 宽屏全展开；逐档收栏（左复合栏 < 右进程 < 对话）保证对话区始终可用 */
+@media (max-width: 1180px) {
+  .chat-cols > .col-left {
+    display: none;
+  }
+}
+@media (max-width: 900px) {
+  .chat-cols > .col-context {
+    display: none;
+  }
+}
+/* AI 思考：对话区泛紫微光（与 AgentBrain think 光晕呼应） */
+.chat-page.thinking {
+  background:
+    radial-gradient(90% 60% at 50% 30%, rgba(142, 124, 240, 0.05), transparent 65%),
+    var(--yb-content-bg);
+}
+/* AI 消息行：角色头像 + 气泡（人格化：团子本尊在说话） */
+.ai-line {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  align-self: flex-start;
+  max-width: 100%;
+}
+.ai-ava {
+  flex-shrink: 0;
+  margin-bottom: 2px;
+  opacity: 0.92;
 }
 .bubbles {
   flex: 1;
@@ -422,6 +753,10 @@ onUnmounted(() => {
 /* 气泡内容限宽：AI 左 / 用户右自然交替，窄窗 70%、宽窗封顶 640px（可读又饱满） */
 .bubbles :deep(.bubble) {
   max-width: min(70%, 640px);
+}
+/* 无气泡 AI 主文：放宽到 760px（主回复更舒展，结构化卡在 plain 层内） */
+.bubbles :deep(.bubble.plain) {
+  max-width: min(100%, 760px);
 }
 .bubbles::-webkit-scrollbar {
   width: 6px;
@@ -459,7 +794,7 @@ onUnmounted(() => {
   font-size: var(--yb-fs-md);
   white-space: nowrap;
 }
-/* 过程展示：工具调用行（居中淡色小字，同 sys 调性）+ 可展开详情 */
+/* 过程工作卡：白底圆角卡居中，工具图标 + 描述 + 进度条（进行中）/ ✅❌（完成） */
 .proc {
   align-self: center;
   max-width: 92%;
@@ -468,37 +803,72 @@ onUnmounted(() => {
   align-items: center;
   animation: pop var(--yb-dur-fast) var(--yb-ease-out);
 }
-.proc-line {
-  display: inline-flex;
+.proc-card {
+  display: flex;
   align-items: center;
-  gap: var(--yb-space-1);
-  background: transparent;
-  border: none;
-  border-radius: var(--yb-radius-sm);
+  gap: 9px;
+  min-width: 220px;
+  max-width: 100%;
+  padding: 8px 10px 8px 12px;
+  border: 1px solid rgba(var(--yb-c-sky-rgb), 0.12);
+  border-radius: var(--yb-radius-md);
+  background: rgba(255, 255, 255, 0.7);
+  box-shadow: var(--yb-shadow-1), inset 0 1px 0 rgba(255, 255, 255, 0.9);
   color: var(--yb-text-dim);
   font-family: inherit;
   font-size: var(--yb-fs-xs);
   line-height: var(--yb-lh-base);
   cursor: pointer;
-  padding: 2px var(--yb-space-2);
-  transition: color var(--yb-dur-fast) var(--yb-ease-out);
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
-.proc-line:hover {
-  color: var(--yb-text);
+.proc-card:hover {
+  border-color: rgba(var(--yb-c-sky-rgb), 0.3);
+  box-shadow: var(--yb-shadow-2), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+.proc-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+/* 进行中进度条：accent 渐变流光 */
+.proc-track {
+  position: relative;
+  height: 2px;
+  border-radius: var(--yb-radius-pill);
+  background: rgba(var(--yb-c-sky-rgb), 0.12);
+  overflow: hidden;
+}
+.proc-track i {
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  border-radius: var(--yb-radius-pill);
+  background: linear-gradient(90deg, transparent, var(--yb-accent), transparent);
+  animation: proc-slide 1.1s ease-in-out infinite;
+}
+@keyframes proc-slide {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(350%); }
 }
 /* 进行中的转圈图标用 accent，成功转 success：颜色本身就是状态信号 */
 .proc-ic {
   flex-shrink: 0;
   color: var(--yb-accent);
 }
-.proc-line.done .proc-ic {
+.proc-card.done .proc-ic {
   color: var(--yb-intent-ok);
 }
 .proc-label {
+  min-width: 0;
   text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.proc-line.fail,
-.proc-line.fail .proc-ic {
+.proc-card.fail,
+.proc-card.fail .proc-ic {
   color: var(--yb-danger);
 }
 .proc-toggle {
@@ -566,6 +936,9 @@ onUnmounted(() => {
   gap: var(--yb-space-2);
 }
 .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 6px 14px;
   border: 1px solid var(--yb-surface-border);
   border-radius: var(--yb-radius-pill);
@@ -573,8 +946,12 @@ onUnmounted(() => {
   box-shadow: var(--yb-shadow-1);
   color: var(--yb-accent-deep);
   font-size: var(--yb-fs-lg);
+  font-family: inherit;
   cursor: pointer;
   transition: all var(--yb-dur-fast) var(--yb-ease-out);
+}
+.chip svg {
+  color: var(--yb-accent);
 }
 .chip:hover {
   background: var(--yb-accent-soft);
@@ -582,5 +959,236 @@ onUnmounted(() => {
   color: var(--yb-accent-deep);
   transform: translateY(-1px);
   box-shadow: var(--yb-shadow-2);
+}
+
+/* ---- 消息行：hover 显示操作（复制/重写/反馈/编辑） ---- */
+.msg-row {
+  position: relative;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.user-msg {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+.msg-actions {
+  position: absolute;
+  top: -18px;
+  right: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--yb-radius-sm);
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--yb-surface-border);
+  box-shadow: var(--yb-shadow-1);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(2px);
+  transition: opacity var(--yb-dur-fast) var(--yb-ease-out), transform var(--yb-dur-fast) var(--yb-ease-out);
+  z-index: 6;
+}
+.msg-row:hover .msg-actions,
+.msg-row:focus-within .msg-actions {
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+.msg-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 7px;
+  border: none;
+  border-radius: var(--yb-radius-xs);
+  background: transparent;
+  color: var(--yb-text-dim);
+  font-family: inherit;
+  font-size: var(--yb-fs-xs);
+  cursor: pointer;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
+}
+.msg-actions button:hover {
+  background: var(--yb-accent-soft);
+  color: var(--yb-accent-deep);
+}
+
+/* ---- 溯源：AI 回复"参考了 ▾" ---- */
+.refs {
+  margin-top: 4px;
+  margin-left: 30px;
+  max-width: min(70%, 640px);
+}
+.refs-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border: none;
+  border-radius: var(--yb-radius-pill);
+  background: transparent;
+  color: var(--yb-text-faint);
+  font-family: inherit;
+  font-size: var(--yb-fs-xs);
+  cursor: pointer;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
+}
+.refs-toggle:hover {
+  color: var(--yb-accent-deep);
+  background: var(--yb-accent-soft);
+}
+.refs-toggle i {
+  width: 5px;
+  height: 5px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg);
+  transition: transform var(--yb-dur-fast) var(--yb-ease-out);
+}
+.refs-toggle i.open {
+  transform: rotate(225deg);
+}
+.refs-list {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  list-style: none;
+  border: 1px solid var(--yb-surface-border);
+  border-radius: var(--yb-radius-sm);
+  background: rgba(255, 255, 255, 0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.refs-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: var(--yb-fs-xs);
+  color: var(--yb-text-dim);
+  min-width: 0;
+}
+.refs-list li > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--yb-intent-ok);
+}
+.refs-list li.fail > svg {
+  color: var(--yb-danger);
+}
+.refs-label {
+  flex-shrink: 0;
+  color: var(--yb-text);
+  font-weight: var(--yb-fw-medium);
+}
+.refs-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--yb-text-faint);
+}
+.refs-fade-enter-active,
+.refs-fade-leave-active {
+  transition: opacity var(--yb-dur-fast) var(--yb-ease-out);
+}
+.refs-fade-enter-from,
+.refs-fade-leave-to {
+  opacity: 0;
+}
+
+/* ---- 思考中状态文案 ---- */
+.think-note {
+  align-self: center;
+  margin-left: 4px;
+  padding: 3px 8px;
+  border-radius: var(--yb-radius-pill);
+  color: var(--yb-text-faint);
+  font-size: var(--yb-fs-xs);
+  white-space: nowrap;
+}
+
+/* ---- 跨日日期分隔 ---- */
+.date-divider {
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0 2px;
+  color: var(--yb-text-faint);
+  font-size: var(--yb-fs-xs);
+}
+.date-divider::before,
+.date-divider::after {
+  content: "";
+  width: 36px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--yb-line));
+}
+.date-divider::after {
+  background: linear-gradient(90deg, var(--yb-line), transparent);
+}
+
+/* ---- 跳到最新浮钮 ---- */
+.jump-new {
+  position: absolute;
+  right: 26px;
+  bottom: 96px;
+  z-index: 5;
+  padding: 4px 12px;
+  border: 1px solid var(--yb-surface-border);
+  border-radius: var(--yb-radius-pill);
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: var(--yb-shadow-2);
+  color: var(--yb-accent-deep);
+  font-family: inherit;
+  font-size: var(--yb-fs-xs);
+  cursor: pointer;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
+}
+.jump-new:hover {
+  transform: translateY(-1px);
+  border-color: var(--yb-accent);
+  box-shadow: var(--yb-shadow-2);
+}
+
+/* ---- 技能/场景快速呼出（输入区上方） ---- */
+.skill-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.skill-hint {
+  font-size: var(--yb-fs-xs);
+  color: var(--yb-text-faint);
+  margin-right: 2px;
+}
+.skill-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid var(--yb-border-base);
+  border-radius: var(--yb-radius-pill);
+  background: var(--yb-surface-2);
+  color: var(--yb-text-dim);
+  font-family: inherit;
+  font-size: var(--yb-fs-sm);
+  cursor: pointer;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
+}
+.skill-chip svg {
+  color: var(--yb-accent);
+}
+.skill-chip:hover {
+  background: var(--yb-accent-soft);
+  border-color: var(--yb-accent);
+  color: var(--yb-accent-deep);
+  transform: translateY(-1px);
 }
 </style>
