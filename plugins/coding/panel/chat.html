@@ -804,6 +804,7 @@
           currentBubble = null;
         }
         appendMarker(ev.text || "已中断", true);
+        setStatus(ev.text || "已中断"); // 纯文本覆盖秒表行——spinner 一并清掉（绕过按钮的 stopped 也不留残影）
         onSessionEnded();
         break;
       case "done":
