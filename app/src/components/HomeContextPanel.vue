@@ -282,10 +282,27 @@ onUnmounted(() => {
   padding: 14px 12px;
   overflow-y: auto;
   scrollbar-width: thin;
-  border-left: 1px solid var(--yb-border-base);
+  border-left: none;
   background:
     radial-gradient(80% 40% at 100% 0%, rgba(var(--yb-c-sky-rgb), 0.05), transparent 70%),
     var(--yb-content-bg);
+  position: relative;
+}
+/* 左边界渐变 hairline（与智能体栏同语言） */
+.ctx-panel::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 12%;
+  bottom: 12%;
+  width: 1px;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    rgba(var(--yb-c-sky-rgb), 0.14) 50%,
+    transparent
+  );
+  pointer-events: none;
 }
 
 /* 块：与对话一体——无卡片，仅分组标题 + 内容 */

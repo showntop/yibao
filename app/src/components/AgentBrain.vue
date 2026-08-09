@@ -149,6 +149,35 @@ onUnmounted(() => {
   unBrain?.();
 });
 
+// ---- 数字滚动动画（今日面板：0 → 目标值，ease-out）----
+function useCountUp(target: () => number) {
+  const display = ref(0);
+  watch(
+    target,
+    (v) => {
+      const from = display.value;
+      const to = Number(v) || 0;
+      if (from === to) {
+        display.value = to;
+        return;
+      }
+      const dur = 650;
+      const start = performance.now();
+      const tick = (t: number) => {
+        const p = Math.min(1, (t - start) / dur);
+        display.value = Math.round(from + (to - from) * (1 - Math.pow(1 - p, 3)));
+        if (p < 1) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    },
+    { immediate: true },
+  );
+  return display;
+}
+const doneDisplay = useCountUp(() => stats.value.done_24h);
+const chatsDisplay = useCountUp(() => todayChats.value);
+const memsDisplay = useCountUp(() => todayNewMems.value);
+
 // ---- 状态人格化台词 ----
 const stateIdx = ref(0);
 const STATE_LINES: Record<string, string[]> = {
@@ -329,15 +358,15 @@ const SEEDS = Array.from({ length: 6 }, () => ({
       <div class="at-title">今天和你的对话</div>
       <div class="at-grid">
         <div class="at-cell" title="今日完成的任务">
-          <b class="yb-num">{{ stats?.done_24h ?? 0 }}</b>
+          <b class="yb-num">{{ doneDisplay }}</b>
           <span>完成</span>
         </div>
         <div class="at-cell" title="今日对话条数">
-          <b class="yb-num">{{ todayChats }}</b>
+          <b class="yb-num">{{ chatsDisplay }}</b>
           <span>对话</span>
         </div>
         <div class="at-cell" title="今日新增记忆">
-          <b class="yb-num">{{ todayNewMems }}</b>
+          <b class="yb-num">{{ memsDisplay }}</b>
           <span>新记忆</span>
         </div>
       </div>
@@ -361,13 +390,29 @@ const SEEDS = Array.from({ length: 6 }, () => ({
   align-items: center;
   gap: 6px;
   padding: 14px 12px 12px;
-  border-right: 1px solid var(--yb-border-base);
+  /* 右边界渐变 hairline（中间淡两端实，高级感）+ 顶部氛围光 */
+  border-right: none;
   background:
     radial-gradient(80% 60% at 50% 0%, rgba(var(--yb-c-sky-rgb), 0.05), transparent 70%),
     var(--yb-content-bg);
   overflow: hidden;
   user-select: none;
   position: relative;  /* 锚定 z-index 防止子元素错位跑出 */
+}
+.agent::before {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 12%;
+  bottom: 12%;
+  width: 1px;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    rgba(var(--yb-c-sky-rgb), 0.14) 50%,
+    transparent
+  );
+  pointer-events: none;
 }
 
 /* ---- 大脑容器 ---- */
@@ -427,6 +472,22 @@ const SEEDS = Array.from({ length: 6 }, () => ({
   background: radial-gradient(58% 46% at 50% 32%, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0) 72%);
   pointer-events: none;
 }
+/* 穹顶呼吸光斑：内部一抹缓慢漂移的白光（让大脑"活"起来） */
+.brain-dome::after {
+  content: "";
+  position: absolute;
+  left: -25%;
+  top: -15%;
+  width: 150%;
+  height: 130%;
+  background: radial-gradient(38% 30% at 32% 30%, rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0) 70%);
+  animation: dome-glow 9s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes dome-glow {
+  0%, 100% { transform: translate(0, 0); opacity: 0.45; }
+  50% { transform: translate(14%, 10%); opacity: 0.9; }
+}
 .agent.think .brain-dome {
   background: rgba(255, 255, 255, 0.5);
   box-shadow:
@@ -443,6 +504,24 @@ const SEEDS = Array.from({ length: 6 }, () => ({
   z-index: 2;
   cursor: pointer;
   filter: drop-shadow(0 2px 6px rgba(var(--yb-c-slate-rgb), 0.14));
+}
+/* 思考光晕扩散：think 时一圈光从角色向外脉冲（"大脑在运转"） */
+.brain-core::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  opacity: 0;
+  pointer-events: none;
+}
+.agent.think .brain-core::after {
+  border-color: rgba(142, 124, 240, 0.55);
+  animation: ring-pulse 1.6s ease-out infinite;
+}
+@keyframes ring-pulse {
+  0% { transform: scale(0.85); opacity: 0.7; }
+  100% { transform: scale(1.7); opacity: 0; }
 }
 .say-line {
   position: absolute;
@@ -497,21 +576,35 @@ const SEEDS = Array.from({ length: 6 }, () => ({
   opacity: 0.6;
   transition: opacity var(--yb-dur-fast) var(--yb-ease-out), transform var(--yb-dur-fast) var(--yb-ease-out);
 }
-.mem-word:hover { opacity: 1; transform: scale(1.2); }
+.mem-word:hover {
+  opacity: 1;
+  transform: scale(1.22);
+  text-shadow: 0 0 8px rgba(var(--yb-c-sky-rgb), 0.55);
+}
 .mem-word.t0 { color: var(--yb-c-sky-600); }
 .mem-word.t1 { color: #5b96c4; }
 .mem-word.t2 { color: #7fb0d6; }
 .mem-word.t3 { color: #a5c8e2; }
 .agent.think .mem-wrap { animation-duration: calc(var(--wt) * 0.55); }
+/* 新浮现记忆：流星入场——从远处放大飞入落位（带光晕），再无缝接漂浮 */
 .mem-wrap.fresh {
   animation:
-    word-in 0.55s var(--yb-ease-spring) both,
+    word-meteor 0.9s var(--yb-ease-out) both,
     word-float var(--wt) ease-in-out var(--wd) infinite;
   animation-delay: 0s, var(--wd);
+  z-index: 2;
 }
-@keyframes word-in {
-  from { transform: translate(calc(-50% + var(--wx)), calc(-50% + var(--wy))) scale(0); opacity: 0; }
-  to { transform: translate(calc(-50% + var(--wx)), calc(-50% + var(--wy))) scale(1); opacity: 0.6; }
+@keyframes word-meteor {
+  0% {
+    transform: translate(calc(-50% + var(--wx) * 2.4), calc(-50% + var(--wy) * 2.4 + 70px)) scale(1.5);
+    opacity: 0;
+    filter: blur(2px);
+  }
+  55% { opacity: 1; filter: blur(0); }
+  100% {
+    transform: translate(calc(-50% + var(--wx)), calc(-50% + var(--wy))) scale(1);
+    opacity: 0.6;
+  }
 }
 .burst {
   position: absolute;

@@ -143,9 +143,28 @@ defineExpose({ updateCurrent, newChat });
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--yb-border-base);
-  background: var(--yb-content-bg);
+  border-right: none;
+  background:
+    radial-gradient(80% 40% at 0% 0%, rgba(var(--yb-c-sky-rgb), 0.04), transparent 70%),
+    var(--yb-content-bg);
   min-height: 0;
+  position: relative;
+}
+/* 右边界渐变 hairline（与智能体栏同语言） */
+.session::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 12%;
+  bottom: 12%;
+  width: 1px;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    rgba(var(--yb-c-sky-rgb), 0.14) 50%,
+    transparent
+  );
+  pointer-events: none;
 }
 
 /* 头部：标题 + 新对话 */
