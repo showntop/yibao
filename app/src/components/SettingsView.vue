@@ -134,6 +134,71 @@ const proactiveLevel = ref<"quiet" | "bubble" | "full">("full");
 // TTS 引擎（settings.json；切换下次启动生效）
 const ttsProvider = ref<"edge" | "cosyvoice" | "cosyvoice_cloud">("edge");
 const ttsErr = ref("");
+// 联网搜索通道（settings.json；即时生效）
+type SearchProvider = "browser" | "ddg" | "searxng" | "brave" | "tavily" | "serper";
+const SEARCH_PROVIDERS: { id: SearchProvider; label: string }[] = [
+  { id: "browser", label: "浏览器打开（免配置）" },
+  { id: "ddg", label: "DuckDuckGo（免费免 key）" },
+  { id: "searxng", label: "SearXNG（自建实例）" },
+  { id: "brave", label: "Brave Search（API key）" },
+  { id: "tavily", label: "Tavily（API key）" },
+  { id: "serper", label: "Serper（API key）" },
+];
+const KEY_PROVIDERS: SearchProvider[] = ["brave", "tavily", "serper"];
+const searchProvider = ref<SearchProvider>("browser");
+const searchSearxngUrl = ref("");
+const searchKeys = ref<{ brave: string; tavily: string; serper: string }>({ brave: "", tavily: "", serper: "" });
+const searchErr = ref("");
+
+async function setSearchProvider(p: SearchProvider) {
+  if (p === searchProvider.value) return;
+  searchErr.value = "";
+  const prev = searchProvider.value;
+  searchProvider.value = p; // 乐观更新，失败回滚
+  const r = await setSettings({ "search.provider": p });
+  if (r === null) {
+    searchProvider.value = prev;
+    searchErr.value = "设置未生效（大脑不在线？）";
+  }
+}
+
+async function setSearchSearxngUrl(v: string) {
+  const normalized = v.trim();
+  searchErr.value = "";
+  const prev = searchSearxngUrl.value;
+  searchSearxngUrl.value = normalized; // 乐观更新，失败回滚
+  const r = await setSettings({ "search.searxng_url": normalized });
+  if (r === null) {
+    searchSearxngUrl.value = prev;
+    searchErr.value = "设置未生效（大脑不在线？）";
+  }
+}
+
+async function setSearchKey(p: "brave" | "tavily" | "serper", v: string) {
+  searchErr.value = "";
+  const prev = { ...searchKeys.value };
+  searchKeys.value = { ...searchKeys.value, [p]: v }; // 乐观更新，失败回滚
+  const r = await setSettings({ "search.keys": searchKeys.value });
+  if (r === null) {
+    searchKeys.value = prev;
+    searchErr.value = "设置未生效（大脑不在线？）";
+  }
+}
+
+function syncSearchSettings(s: SettingsValues) {
+  const p = s["search.provider"];
+  if (p === "browser" || p === "ddg" || p === "searxng" || p === "brave" || p === "tavily" || p === "serper") {
+    searchProvider.value = p;
+  }
+  if (typeof s["search.searxng_url"] === "string") searchSearxngUrl.value = s["search.searxng_url"];
+  const keys = s["search.keys"];
+  if (keys && typeof keys === "object") {
+    for (const kp of ["brave", "tavily", "serper"] as const) {
+      const kv = (keys as Record<string, unknown>)[kp];
+      if (typeof kv === "string") searchKeys.value = { ...searchKeys.value, [kp]: kv };
+    }
+  }
+}
 // 主动协助（settings.json；即时生效）
 const watchEnabled = ref(false);
 const watchScreenEnabled = ref(false);
@@ -446,6 +511,7 @@ onMounted(async () => {
       const tp = s["tts.provider"];
       if (tp === "edge" || tp === "cosyvoice" || tp === "cosyvoice_cloud") ttsProvider.value = tp;
       if (typeof s["http.token"] === "string") bridgeToken.value = s["http.token"];
+      syncSearchSettings(s);
       syncWatchSettings(s);
     }
   });
@@ -555,6 +621,42 @@ onUnmounted(() => {
             <span class="s-row-label"></span>
             <span class="s-row-value">⌘⇧I 截图即问（框选区域 → 提问）</span>
           </div>
+        </section>
+
+        <section class="s-group">
+          <div class="s-group-title">搜索</div>
+          <div class="s-note">联网搜索通道，设置即时生效。除「浏览器打开」外，搜索都会返回结构化结果（标题/链接/摘要）供译宝阅读；点开结果想读正文时用 extract_url。</div>
+          <label class="s-field">
+            <span class="s-label">搜索服务</span>
+            <select
+              :value="searchProvider"
+              @change="setSearchProvider(($event.target as HTMLSelectElement).value as SearchProvider)"
+            >
+              <option v-for="sp in SEARCH_PROVIDERS" :key="sp.id" :value="sp.id">{{ sp.label }}</option>
+            </select>
+          </label>
+          <label v-if="searchProvider === 'searxng'" class="s-field">
+            <span class="s-label">SearXNG 实例地址<span class="s-row-why">例如 http://127.0.0.1:8888</span></span>
+            <input
+              type="text"
+              :value="searchSearxngUrl"
+              placeholder="http://127.0.0.1:8888"
+              @change="setSearchSearxngUrl(($event.target as HTMLInputElement).value)"
+            />
+          </label>
+          <template v-if="KEY_PROVIDERS.includes(searchProvider)">
+            <div class="s-note">API key 此处填写优先于 .env（YIBAO_SEARCH_{{ searchProvider.toUpperCase() }}_KEY）；留空 = 用 .env 配置。</div>
+            <label class="s-field">
+              <span class="s-label">{{ searchProvider === "brave" ? "Brave" : searchProvider === "tavily" ? "Tavily" : "Serper" }} API Key</span>
+              <input
+                type="password"
+                :value="searchKeys[searchProvider]"
+                :placeholder="searchKeys[searchProvider] ? '已配置（输入以更换）' : '未配置'"
+                @change="setSearchKey(searchProvider, ($event.target as HTMLInputElement).value)"
+              />
+            </label>
+          </template>
+          <div v-if="searchErr" class="s-msg err"><YbIcon name="alert" :size="13" />{{ searchErr }}</div>
         </section>
 
         <section class="s-group">
@@ -934,6 +1036,25 @@ select:focus,
 textarea:focus {
   border-color: var(--yb-accent);
   box-shadow: var(--yb-focus-ring);
+}
+/* 下拉框：去掉系统原生箭头，换成与主题一致的描边箭头（currentColor 跟随文字色，深浅主题都协调） */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 30px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5' fill='none' stroke='currentColor' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  cursor: pointer;
+  transition: border-color var(--yb-dur-fast) var(--yb-ease-out), box-shadow var(--yb-dur-fast) var(--yb-ease-out), background-color var(--yb-dur-fast) var(--yb-ease-out);
+}
+select:hover {
+  border-color: var(--yb-border-strong);
+  background-color: var(--yb-surface-2);
+}
+select option {
+  background: var(--yb-card-bg);
+  color: var(--yb-text);
 }
 .sub-title {
   margin-top: var(--yb-space-2);

@@ -91,8 +91,45 @@ def a11y_enabled() -> bool:
     return os.environ.get("YIBAO_A11Y", "1") != "0"
 
 
+_SEARCH_PROVIDERS = ("browser", "ddg", "searxng", "brave", "tavily", "serper")
+
+
+def search_provider() -> str:
+    """web_search 的搜索通道（settings 可改，即时生效）：
+    browser=打开浏览器给人看（默认，免配置）；ddg=DuckDuckGo 免费免 key；
+    searxng=自建元搜索；brave/tavily/serper=商用 API（key 走 .env）。
+    兼容旧 YIBAO_SEARCH_ENGINE=baidu/bing/google → browser。
+    """
+    p = (os.environ.get("YIBAO_SEARCH_PROVIDER") or "").strip().lower()
+    if not p:
+        legacy = (os.environ.get("YIBAO_SEARCH_ENGINE") or "").strip().lower()
+        p = "browser" if legacy in ("baidu", "bing", "google") else legacy
+    if not p:
+        p = str(load_settings().get("search.provider") or "browser").strip().lower()
+    return p if p in _SEARCH_PROVIDERS else "browser"
+
+
+def search_searxng_url() -> str:
+    """自建 SearXNG 实例地址（settings 可改）；env YIBAO_SEARCH_SEARXNG_URL 优先。"""
+    return (
+        os.environ.get("YIBAO_SEARCH_SEARXNG_URL")
+        or str(load_settings().get("search.searxng_url") or "").strip()
+    )
+
+
+def search_api_key(provider: str) -> str:
+    """商用搜索 API key：设置页配的 search.keys 优先（覆盖 .env）；
+    env 兜底：brave→YIBAO_SEARCH_BRAVE_KEY / tavily→YIBAO_SEARCH_TAVILY_KEY / serper→YIBAO_SEARCH_SERPER_KEY。
+    """
+    keys = load_settings().get("search.keys") or {}
+    val = str(keys.get(provider) or "").strip()
+    if val:
+        return val
+    return os.environ.get(f"YIBAO_SEARCH_{provider.upper()}_KEY", "")
+
+
 def search_engine() -> str:
-    """web_search 技能的搜索引擎（baidu/bing/google，默认 baidu）。"""
+    """browser 模式用的搜索引擎（baidu/bing/google，默认 baidu）。"""
     return os.environ.get("YIBAO_SEARCH_ENGINE", "baidu")
 
 
@@ -270,6 +307,11 @@ _SETTINGS_DEFAULTS: dict = {
     "perception.blacklist": [],
     # 用户手动固定到 Dock 的插件 id（上限 5，Task 8 Dock 排序用；空 = 不固定）
     "dock_pinned": [],
+    # 联网搜索通道（即时生效）：browser=打开浏览器 / ddg=免 key / searxng=自建实例 / brave/tavily/serper=API
+    "search.provider": "browser",
+    "search.searxng_url": "",
+    # 商用搜索 API key（设置页配置，覆盖 .env 的 YIBAO_SEARCH_*_KEY；空 = 用 .env）
+    "search.keys": {},
     # TTS 引擎选择（UI 下拉；env YIBAO_TTS_PROVIDER 优先；切换下次启动生效）
     "tts.provider": "edge",
     # watch mode（主动观察；slice1=健康节律+在场陪伴，默认关）
@@ -289,6 +331,7 @@ _SETTINGS_DEFAULTS: dict = {
 _SETTINGS_ENUMS: dict[str, tuple] = {
     "proactive.level": ("quiet", "bubble", "full"),
     "tts.provider": ("edge", "cosyvoice", "cosyvoice_cloud"),
+    "search.provider": ("browser", "ddg", "searxng", "brave", "tavily", "serper"),
 }
 
 
@@ -329,6 +372,15 @@ def save_settings(values: dict) -> None:
                 ):
                     continue
                 values[k] = list(dict.fromkeys(item.strip() for item in values[k]))
+            if k == "search.keys":
+                # 只收已知 provider 的字符串值（trim 后落盘；空串 = 清空该 provider key）
+                if not isinstance(values[k], dict):
+                    continue
+                clean = {}
+                for p, v in values[k].items():
+                    if p in ("brave", "tavily", "serper") and isinstance(v, str):
+                        clean[p] = v.strip()
+                values[k] = clean
             if k in {
                 "watch.cadence", "watch.idle_warn_minutes", "watch.look_min_gap",
                 "watch.look_max_per_hour", "watch.look_max_per_day",

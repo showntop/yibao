@@ -776,6 +776,9 @@ export interface SettingsValues {
   "perception.screen"?: boolean;
   "perception.distill"?: boolean;
   "http.token": string; // 浏览器扩展桥共享 token（设置页「浏览器扩展」展示供复制）
+  "search.provider": "browser" | "ddg" | "searxng" | "brave" | "tavily" | "serper"; // 联网搜索通道（即时生效）
+  "search.searxng_url": string; // 自建 SearXNG 实例地址
+  "search.keys"?: { brave?: string; tavily?: string; serper?: string }; // 商用搜索 API key（覆盖 .env）
   [k: string]: unknown;
 }
 

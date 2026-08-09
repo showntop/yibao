@@ -4,7 +4,7 @@ import json
 import os
 
 from yibao_brain import plugins
-from yibao_brain.config import load_settings, save_settings, settings_path
+from yibao_brain.config import load_settings, save_settings, search_api_key, settings_path
 from yibao_brain.llm import FakeProvider
 from yibao_brain.memory import FakeMemory
 from yibao_brain.server import serve_async
@@ -176,6 +176,9 @@ def test_settings_set_persists_and_ignores_unknown(tmp_path, monkeypatch):
         "watch.look_max_per_hour": 6,
         "watch.look_max_per_day": 50,
         "http.token": "",
+        "search.provider": "browser",
+        "search.searxng_url": "",
+        "search.keys": {},
     }
 
 
@@ -249,4 +252,26 @@ def test_settings_bad_file_falls_back_to_defaults(tmp_path, monkeypatch):
         "watch.look_max_per_hour": 6,
         "watch.look_max_per_day": 50,
         "http.token": "",
+        "search.provider": "browser",
+        "search.searxng_url": "",
+        "search.keys": {},
     }
+
+
+def test_settings_search_keys_whitelist(tmp_path, monkeypatch):
+    monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path))
+    os.makedirs(tmp_path, exist_ok=True)
+    save_settings({"search.keys": {"brave": "bk", "evil": "x", "tavily": 123}})
+    assert load_settings()["search.keys"] == {"brave": "bk"}
+
+
+def test_search_api_key_settings_overrides_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path))
+    os.makedirs(tmp_path, exist_ok=True)
+    monkeypatch.setenv("YIBAO_SEARCH_BRAVE_KEY", "env-key")
+    monkeypatch.setenv("YIBAO_SEARCH_TAVILY_KEY", "t-env")
+    assert search_api_key("brave") == "env-key"   # 设置无 → env 兜底
+    save_settings({"search.keys": {"brave": "ui-key"}})
+    assert search_api_key("brave") == "ui-key"    # 设置优先于 env
+    assert search_api_key("tavily") == "t-env"    # 未设置的服务仍走 env
+    assert search_api_key("serper") == ""         # 都无 → 空

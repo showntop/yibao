@@ -31,4 +31,13 @@ uv run yibao-brain --fake       # 假模型，无需 key/联网
 
 ## 技能
 - 原子技能（`skills_real.py`）：screenshot / read_tree / open_app / click_control / type_text + computer_use 视觉兜底。
-- 复合技能（`skills_composite.py`）：find_file（Spotlight）/ web_search（默认百度，`YIBAO_SEARCH_ENGINE` 可切 bing/google）/ open_path（访达定位）/ write_note（TextEdit 起草）。
+- 复合技能（`skills_composite.py`）：find_file（Spotlight）/ web_search / extract_url / open_path（访达定位）/ write_note（TextEdit 起草）。
+
+### 联网搜索（web_search）
+可配置搜索通道（设置「搜索」即时生效；env `YIBAO_SEARCH_PROVIDER` 优先，兼容旧 `YIBAO_SEARCH_ENGINE`=baidu/bing/google → browser）：
+- `browser`（默认）：打开浏览器结果页给人看（旧行为）。
+- `ddg`：DuckDuckGo HTML 端点，免费免 key，返回结构化结果。
+- `searxng`：自建元搜索实例，地址走设置 `search.searxng_url` 或 env `YIBAO_SEARCH_SEARXNG_URL`。
+- `brave` / `tavily` / `serper`：商用 Search API，key 在设置页「搜索」填写（`search.keys`，优先），未填时兜底 env `YIBAO_SEARCH_{BRAVE|TAVILY|SERPER}_KEY`。
+
+搜索拿到链接后读正文用 `extract_url`（抓网页粗提取正文文本）。
