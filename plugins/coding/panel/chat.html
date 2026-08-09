@@ -153,6 +153,36 @@
   .card-body .dl.a { background: var(--green-bg); box-shadow: inset 3px 0 var(--green-bar); color: var(--green); }
   .card-body .monaco-host { height: 320px; border-top: 1px solid var(--line); }
 
+  /* 思考块（thinking 事件）：淡色斜体小块，挂 assistant 气泡内 */
+  .think-block {
+    margin-top: 6px; padding: 6px 10px; border-radius: 8px;
+    background: var(--surface-2); color: var(--muted);
+    font-size: 12px; font-style: italic; white-space: pre-wrap; word-break: break-word;
+  }
+  .think-block .think-tag {
+    font-style: normal; font-weight: 600; font-size: 11px;
+    color: var(--faint); margin-right: 6px;
+  }
+
+  /* 工具输出（tool_result 事件）：折叠 details，挂最近一张工具卡下；无卡则独立暗块 */
+  .tool-result {
+    max-width: 86%; margin-top: 6px; padding: 6px 11px 8px;
+    border-top: 1px dashed var(--border); font-size: 12px;
+  }
+  #log > .tool-result {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--r-md); box-shadow: var(--shadow-card);
+  }
+  .tool-result > summary { cursor: pointer; color: var(--muted); font-size: 11.5px; }
+  .tool-result > pre {
+    margin-top: 6px; padding: 8px 10px; border-radius: 8px;
+    font: var(--mono); white-space: pre-wrap; word-break: break-word;
+    color: var(--muted); background: var(--surface-2);
+    max-height: 240px; overflow-y: auto;
+  }
+  .tool-result.err > summary, .tool-result.err > pre { color: var(--red); }
+  .tool-result.err > pre { background: var(--red-bg); }
+
   /* 终止标 / 错误 */
   .marker {
     align-self: center; font-size: 11.5px; color: var(--faint);
@@ -177,6 +207,14 @@
   .actions .spacer { flex: 1; }
   #status { font-size: 11.5px; color: var(--muted); min-height: 18px; flex: 1; }
   #status.err { color: var(--red); }
+  /* 运行状态条 spinner：10px 边框圆 + 旋转（setStatus 第三个参控制显隐） */
+  #status .spin {
+    display: inline-block; width: 10px; height: 10px; margin-right: 6px;
+    border: 2px solid var(--border-strong); border-top-color: var(--accent);
+    border-radius: 50%; vertical-align: -1px;
+    animation: status-spin .8s linear infinite;
+  }
+  @keyframes status-spin { to { transform: rotate(360deg); } }
   button.act {
     border: none; border-radius: var(--r-pill); padding: 7px 20px; cursor: pointer;
     background: var(--accent); color: #fff; font-size: 12.5px; font-weight: 600;
@@ -323,6 +361,7 @@
   var $ = function (id) { return document.getElementById(id); };
   var currentSession = null;   // 当前活动 session_id（coding.start 返回值；过滤陈旧流用）
   var currentBubble = null;    // 当前 assistant 文本气泡 DOM 引用；非文本事件会置空（下次 text 重建）
+  var lastToolCard = null;     // 最近一张工具卡 DOM 引用；tool_result 挂到它下面（无卡则落 #log）
   var atBottom = true;         // 用户是否贴底（true 才自动跟随滚动）
   var sending = false;         // send 按钮 re-entry 保护（仅覆盖 invoke 同步窗）
   var streaming = false;       // 流式进行中（invoke 返回 → done/error）；为 true 时锁定「新对话」
@@ -342,11 +381,29 @@
   }
   function emsg(e) { return e && e.message ? e.message : String(e || ""); }
 
-  function setStatus(text, isErr) {
+  function setStatus(text, isErr, spinner) {
     var s = $("status");
-    s.textContent = text || "";
+    s.textContent = "";
+    if (spinner) {
+      var sp = document.createElement("span");
+      sp.className = "spin";
+      s.appendChild(sp);
+    }
+    s.appendChild(document.createTextNode(text || ""));
     s.className = isErr ? "err" : "";
   }
+
+  // 运行状态条秒表：spinner + 每秒刷新已耗时；终态（done/stopped/error）由 onSessionEnded 停
+  var ticker = null, tickStart = 0;
+  function startTicker(prefix) {
+    stopTicker();
+    tickStart = Date.now();
+    setStatus(prefix + " · 0s", false, true);  // 第三个参 = spinner 开
+    ticker = setInterval(function () {
+      setStatus(prefix + " · " + Math.floor((Date.now() - tickStart) / 1000) + "s", false, true);
+    }, 1000);
+  }
+  function stopTicker() { if (ticker) { clearInterval(ticker); ticker = null; } }
 
   function scrollIfAtBottom() {
     var log = $("log");
@@ -601,6 +658,7 @@
     });
     card.appendChild(head);
     card.appendChild(body);
+    lastToolCard = card;  // tool_result 事件挂到这张卡下
     var row = document.createElement("div");
     row.className = "row ai";
     row.appendChild(card);
@@ -627,6 +685,38 @@
       note.textContent = "工具 " + tool + " 未上报参数（runner normalize 仅传 tool 名）。";
       body.appendChild(note);
     }
+  }
+
+  // 思考：淡色斜体小块（「思考」标签，不用 emoji）
+  function appendThinking(bubble, text) {
+    if (!text) return;
+    var d = document.createElement("div");
+    d.className = "think-block";
+    d.innerHTML = "<span class=\"think-tag\">思考</span>" + esc(text);
+    bubble.appendChild(d);
+    scrollIfAtBottom();
+  }
+
+  // 工具输出：挂到最近一张工具卡下（无卡则独立暗块），截断显示
+  function appendToolResult(ev) {
+    var d = document.createElement("details");
+    d.className = "tool-result" + (ev.is_error ? " err" : "");
+    d.innerHTML = "<summary>结果" + (ev.is_error ? "（错误）" : "") + "</summary><pre>" + esc(ev.text || "") + "</pre>";
+    if (lastToolCard) lastToolCard.appendChild(d);
+    else $("log").appendChild(d);
+    scrollIfAtBottom();
+  }
+
+  // 完成状态行：耗时 + token + 成本（有 usage 才显示对应段）
+  function setStatusDone(u) {
+    var parts = ["✓ 完成"];
+    if (u) {
+      if (u.duration_ms != null) parts.push(Math.round(u.duration_ms / 1000) + "s");
+      var tok = ((u.input_tokens || 0) + (u.output_tokens || 0));
+      if (tok) parts.push(tok >= 1000 ? (tok / 1000).toFixed(1) + "k tok" : tok + " tok");
+      if (u.cost_usd != null) parts.push("$" + u.cost_usd.toFixed(3));
+    }
+    setStatus(parts.join(" · "));
   }
 
   // ============================================================
@@ -692,6 +782,10 @@
         if (!currentBubble) currentBubble = appendAssistantBubble();
         appendTextToBubble(currentBubble, ev.text || "");
         break;
+      case "thinking":
+        if (!currentBubble) currentBubble = appendAssistantBubble();
+        appendThinking(currentBubble, ev.text || "");
+        break;
       case "file_edit":
         // 非文本事件切断当前文本气泡：下次 text_delta 起新气泡
         currentBubble = null;
@@ -700,6 +794,9 @@
       case "tool_use":
         currentBubble = null;
         appendToolUse(ev);
+        break;
+      case "tool_result":
+        appendToolResult(ev);
         break;
       case "stopped":
         if (currentBubble) {
@@ -716,11 +813,13 @@
           appendMarker("完成", false);
         }
         currentBubble = null;
+        setStatusDone(ev.usage);
         onSessionEnded();
         break;
       case "error":
         currentBubble = null;
         appendError(ev.text || "未知错误");
+        setStatus("✗ " + (ev.text || "未知错误"), true);  // 清掉秒表 spinner，状态行落到错误终态
         onSessionEnded();
         break;
       default:
@@ -730,6 +829,7 @@
   }
 
   function onSessionEnded() {
+    stopTicker();
     // 多轮保持：不清 currentSession —— 下次 send 走 coding.send 接续同一 CC 会话；
     // 仅靠「新对话」按钮显式重置。
     streaming = false;
@@ -779,7 +879,7 @@
       streaming = true;
       $("prompt").value = "";
       $("stop").disabled = false;
-      setStatus("会话 " + sid + (isStart ? " 启动" : " 接续") + "，运行中…");
+      startTicker("会话 " + sid + (isStart ? " 启动" : " 接续"));
     }).catch(function (e) {
       appendError(verb + "失败：" + emsg(e));
       setStatus(verb + "失败：" + emsg(e), true);
@@ -815,6 +915,7 @@
     if (currentSession) discardedSessions[currentSession] = true;
     currentSession = null;
     currentBubble = null;
+    lastToolCard = null;   // #log 清空后旧卡已 detach，防 tool_result 落进不可见节点
     streaming = false;
     sending = false;
     $("log").innerHTML = "";

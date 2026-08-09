@@ -11,12 +11,15 @@ def normalize(msg: Any) -> list[dict]:
 
     优先匹配真 claude-agent-sdk（0.2.x）消息形态：
       - AssistantMessage（.content: list[ContentBlock]）→ 逐块归一：
+          · ThinkingBlock（.thinking）→ {"kind":"thinking","text":...}（截 500 字）
           · TextBlock（.text）→ {"kind":"text_delta","text":...}
           · ToolUseBlock（.name+.input）→
               name ∈ {Write,Edit,MultiEdit} → {"kind":"file_edit","tool","path","old","new"}
               其余（Read/Bash/Glob/Grep…）        → {"kind":"tool_use","tool","input"}
-      - ResultMessage（type 名含 "Result"，或 duck-typed .subtype+.is_error）→ [{"kind":"done"}]
-      - SystemMessage / UserMessage / 未知 → []（v1 忽略）
+      - ResultMessage（type 名含 "Result"，或 duck-typed .subtype+.is_error）→
+          [{"kind":"done","usage":{...}}]（duration_ms/total_cost_usd/usage 鸭子类型，拿不到就空 dict 降级）
+      - UserMessage（类名含 "User"）→ ToolResultBlock 逐块提取 → {"kind":"tool_result","text","is_error"}
+      - SystemMessage / 未知 → []（忽略）
     None → []。
     末尾保留 duck-typed 扁平 fallback（.text / .tool+.path / .type∈{result,done}），
     仅为兼容历史 trivial fake；真 SDK 走上面的分支。
@@ -24,8 +27,11 @@ def normalize(msg: Any) -> list[dict]:
     if msg is None:
         return []
     mtype = type(msg).__name__
-    # v1 显式忽略：用户/系统消息（SystemMessage 也有 .subtype，须先排除）
-    if "User" in mtype or "System" in mtype:
+    # UserMessage：提取 tool_result（工具输出可见是透明底线）；SystemMessage 仍忽略
+    # （SystemMessage 也有 .subtype，须在 ResultMessage 判定前排除）
+    if "User" in mtype:
+        return _tool_result_events(msg)
+    if "System" in mtype:
         return []
 
     events: list[dict] = []
@@ -38,9 +44,19 @@ def normalize(msg: Any) -> list[dict]:
                 events.append(ev)
         return events
 
-    # 2) ResultMessage-like：终态
+    # 2) ResultMessage-like：终态（usage 鸭子类型，拿不到就空 dict 降级）
     if "Result" in mtype or (hasattr(msg, "subtype") and hasattr(msg, "is_error")):
-        return [{"kind": "done"}]
+        usage: dict = {}
+        for src, dst in (("duration_ms", "duration_ms"), ("total_cost_usd", "cost_usd")):
+            v = getattr(msg, src, None)
+            if v is not None:
+                usage[dst] = v
+        raw = getattr(msg, "usage", None)
+        if isinstance(raw, dict):
+            for k in ("input_tokens", "output_tokens"):
+                if raw.get(k) is not None:
+                    usage[k] = raw[k]
+        return [{"kind": "done", "usage": usage}]
 
     # 3) duck-typed fallback（trivial fakes）
     ev = _normalize_flat(msg)
@@ -48,9 +64,14 @@ def normalize(msg: Any) -> list[dict]:
 
 
 def _normalize_block(block: Any) -> dict | None:
-    """归一单个 ContentBlock（TextBlock / ToolUseBlock；其余返回 None）。"""
+    """归一单个 ContentBlock（ThinkingBlock / TextBlock / ToolUseBlock；其余返回 None）。"""
     if block is None:
         return None
+    btype = type(block).__name__
+    # ThinkingBlock 先于 name/input 判断（它既没有 name/input，鸭子类型也要兜住 type=="thinking"）
+    if "Thinking" in btype or getattr(block, "type", None) == "thinking":
+        thinking = getattr(block, "thinking", None) or getattr(block, "text", "")
+        return {"kind": "thinking", "text": str(thinking)[:500]}
     name = getattr(block, "name", None)
     inp = getattr(block, "input", None)
     if name is not None and inp is not None:
@@ -61,6 +82,25 @@ def _normalize_block(block: Any) -> dict | None:
     if text is not None:
         return {"kind": "text_delta", "text": str(text)}
     return None
+
+
+def _tool_result_events(msg: Any) -> list[dict]:
+    """UserMessage 的 ToolResultBlock → tool_result 事件（截 800 字；content 为 str 或块列表，鸭子类型）。"""
+    content = getattr(msg, "content", None)
+    if not isinstance(content, list):
+        return []
+    out: list[dict] = []
+    for block in content:
+        is_err = bool(getattr(block, "is_error", False))
+        bc = getattr(block, "content", None)
+        if bc is None:
+            continue
+        if isinstance(bc, list):  # 块列表：拼 text 段
+            text = "".join(str(getattr(b, "text", "")) for b in bc)
+        else:
+            text = str(bc)
+        out.append({"kind": "tool_result", "text": text[:800], "is_error": is_err})
+    return out
 
 
 def _file_edit_event(tool: str, inp: Any) -> dict:

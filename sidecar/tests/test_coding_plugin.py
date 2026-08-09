@@ -1,6 +1,7 @@
 """coding 插件：runner 流式/取消/容错（FakeSDK 注入，不跑真 SDK）。"""
 from __future__ import annotations
 import asyncio, os, sys
+from types import SimpleNamespace
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 # 插件 skills 不在 src 下，单独加路径
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "plugins", "coding", "skills"))
@@ -193,7 +194,7 @@ def test_normalize_bash_tool_use():
 
 
 def test_normalize_result_done():
-    assert normalize(_FakeResultMessage("success")) == [{"kind": "done"}]
+    assert normalize(_FakeResultMessage("success")) == [{"kind": "done", "usage": {}}]
 
 
 def test_normalize_ignores_system_and_user():
@@ -219,9 +220,10 @@ def test_normalize_real_sdk_dataclasses():
     out = normalize(msg)
     assert [e["kind"] for e in out] == ["text_delta", "tool_use"]
     assert out[1]["tool"] == "Bash" and out[1]["input"] == {"command": "pwd"}
-    assert normalize(ResultMessage(
+    done = normalize(ResultMessage(
         subtype="success", duration_ms=0, duration_api_ms=0,
-        is_error=False, num_turns=1, session_id="s")) == [{"kind": "done"}]
+        is_error=False, num_turns=1, session_id="s"))
+    assert done == [{"kind": "done", "usage": {"duration_ms": 0}}]
 
 
 # ---------- Task 5: coding skills（start/stop 纯函数 + race-safe 取消顺序）----------
@@ -428,3 +430,33 @@ def test_start_send_are_l1_no_confirm():
     高频对话循环不该每次弹风险确认。"""
     assert StartSkill.default_risk == RiskLevel.L1_LOW
     assert SendSkill.default_risk == RiskLevel.L1_LOW
+
+
+# ---------- Task 4: 透明渲染（thinking / tool_result / done.usage）----------
+def test_normalize_thinking_block():
+    block = SimpleNamespace(type="thinking", thinking="先看一下结构再改" * 1)
+    msg = SimpleNamespace(content=[block])
+    evs = normalize(msg)
+    assert evs == [{"kind": "thinking", "text": "先看一下结构再改"}]
+
+
+def test_normalize_tool_result_from_user_message():
+    # UserMessage-like：类名含 User（SimpleNamespace 为 immutable 内建类型，
+    # 不能改 __name__，用同名本地类控制类名）
+    class UserMessage:
+        def __init__(self, blocks): self.content = list(blocks)
+    block = SimpleNamespace(content="file contents here", is_error=False)
+    msg = UserMessage([block])
+    evs = normalize(msg)
+    assert evs == [{"kind": "tool_result", "text": "file contents here", "is_error": False}]
+
+
+def test_normalize_done_carries_usage():
+    msg = SimpleNamespace(subtype="success", is_error=False,
+                          duration_ms=12345, total_cost_usd=0.012,
+                          usage={"input_tokens": 3000, "output_tokens": 200})
+    evs = normalize(msg)
+    assert evs[0]["kind"] == "done"
+    u = evs[0]["usage"]
+    assert u["duration_ms"] == 12345 and u["cost_usd"] == 0.012
+    assert u["input_tokens"] == 3000 and u["output_tokens"] == 200
