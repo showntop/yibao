@@ -57,15 +57,15 @@ function wordText(m: MemItem): string {
   return pick.length > 12 ? pick.slice(0, 12) + "…" : pick;
 }
 const words = computed<MemWord[]>(() =>
-  visibleMemories.value.slice(0, 24).map((m) => {
+  visibleMemories.value.slice(0, 18).map((m) => {
     const h = hashStr(m.id);
     const text = wordText(m);
     if (!text) return null;
     return {
       text, full: m.text,
-      size: 10 + (h % 6),
-      x: Math.round((((h >> 3) % 97) / 97) * 150 - 75),
-      y: Math.round((((h >> 7) % 75) / 75) * 66 - 48), // 穹顶内（上 2/3，角色下方不落词）
+      size: 9 + (h % 5),                          // 9-13px 更精细层次
+      x: Math.round((((h >> 3) % 97) / 97) * 170 - 85),  // 扩到 ±85（dome 宽 200 内，更分散）
+      y: Math.round((((h >> 7) % 95) / 95) * 92 - 60),    // 扩到 -60~32（dome 高 152 内更分散）
       delay: (h % 70) / 10,
       dur: 5 + (h % 50) / 10,
       tone: h % 4,
@@ -296,12 +296,12 @@ const SEEDS = Array.from({ length: 6 }, () => ({
       </div>
     </div>
 
-    <!-- 技能（AI 的"手"）：入口 chips 展示在下方，不放脑部 -->
+    <!-- 技能（AI 的"手"）：grid 2 列紧凑布局，避免一行排满横向溢出错位 -->
     <div v-if="plugins.length" class="agent-skills">
-      <button v-for="p in plugins.slice(0, 5)" :key="p.id" class="ag-skill" @click="launchSkill(p)">
+      <button v-for="p in plugins.slice(0, 6)" :key="p.id" class="ag-skill" :title="p.name" @click="launchSkill(p)">
         {{ p.name }}
       </button>
-      <span v-if="plugins.length > 5" class="ag-more">+{{ plugins.length - 5 }}</span>
+      <span v-if="plugins.length > 6" class="ag-more">+{{ plugins.length - 6 }}</span>
     </div>
 
     <!-- 今日和你的对话：人格化数字面板 -->
@@ -520,18 +520,23 @@ const SEEDS = Array.from({ length: 6 }, () => ({
   50% { opacity: 0.7; transform: scale(1.2); }
 }
 
-/* ---- 技能入口（AI 的"手"）：chips 展示在下方 ---- */
+/* ---- 技能入口（AI 的"手"）：grid 2 列紧凑，纵向排版避免横向挤一行错位 ---- */
 .agent-skills {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
   gap: 4px;
-  margin-top: 4px;
+  margin-top: 6px;
+  padding: 0 2px;
+  position: relative;
+  z-index: 5;
 }
 .ag-skill {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  padding: 2px 9px;
+  justify-content: center;
+  width: 100%;
+  padding: 4px 6px;
   border: 1px dashed var(--yb-card-border);
   border-radius: var(--yb-radius-sm);
   background: var(--yb-surface-2);
@@ -540,6 +545,10 @@ const SEEDS = Array.from({ length: 6 }, () => ({
   font-family: inherit;
   cursor: pointer;
   transition: all var(--yb-dur-fast) var(--yb-ease-out);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 .ag-skill:hover {
   border-color: var(--yb-accent);
@@ -547,8 +556,8 @@ const SEEDS = Array.from({ length: 6 }, () => ({
   background: var(--yb-accent-soft);
 }
 .ag-more {
-  display: inline-flex;
-  align-items: center;
+  grid-column: span 2;
+  text-align: center;
   font-size: var(--yb-fs-xs);
   color: var(--yb-text-faint);
 }
