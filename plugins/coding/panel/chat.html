@@ -785,8 +785,9 @@
       setStatus(verb + "失败：" + emsg(e), true);
     }).finally(function () {
       sending = false;
-      $("send").disabled = false;
-      // 「新对话」仅在非流式且有活动会话时可点
+      // 发送键解锁挪到 onSessionEnded（done/stopped/error）——
+      // invoke 返回只代表「已受理」，流式期间禁止再发（防同会话双 runner）
+      if (!streaming) $("send").disabled = false;
       $("new-chat").disabled = !currentSession || streaming;
     });
   }

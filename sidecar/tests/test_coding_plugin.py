@@ -394,3 +394,26 @@ def test_start_skill_does_not_pass_resume(monkeypatch):
     monkeypatch.setattr(codingmod, "ClaudeCodeRunner", lambda: object())
     StartSkill().run({"cwd": "/tmp", "prompt": "p"}, _Ctx(db))
     assert captured["kwargs"].get("resume_session_id") is None
+
+
+# ---------- 流式防重入：send 拒 running 会话 ----------
+
+
+def _make_ctx_with_session(status):
+    """仿 _Ctx/_FakeDB 既有约定：造一个带指定 status 会话（sid-1）的 ctx。"""
+    db = _FakeDB()
+    db.rows["sid-1"] = {"id": "sid-1", "cwd": "/tmp/p",
+                        "cc_session_id": "cc-old-1", "status": status}
+    return _Ctx(db)
+
+
+def test_send_rejects_when_session_running(monkeypatch):
+    """会话 running 时 send 必须拒绝（防同 sid 双 runner 竞态）；终态会话放行。"""
+    # 不真起线程：把 _spawn_stream 占位成空
+    monkeypatch.setattr(codingmod, "_spawn_stream", lambda *a, **k: None)
+    ctx = _make_ctx_with_session(status="running")
+    r = SendSkill().run({"id": "sid-1", "prompt": "再来一条"}, ctx)
+    assert not r.success and "正在运行" in (r.error or "")
+    ctx2 = _make_ctx_with_session(status="done")
+    r2 = SendSkill().run({"id": "sid-1", "prompt": "再来一条"}, ctx2)
+    assert r2.success, r2.error

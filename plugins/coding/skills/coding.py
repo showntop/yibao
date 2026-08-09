@@ -303,6 +303,8 @@ class SendSkill(Skill):
         if not rows:
             return ActionResult(success=False, error=f"会话不存在：{sid}")
         row = rows[0]
+        if row.get("status") == "running":
+            return ActionResult(success=False, error="会话正在运行中，请先中断或等待完成")
         cc = row.get("cc_session_id") or ""
         if not cc:
             return ActionResult(
