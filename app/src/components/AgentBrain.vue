@@ -57,15 +57,23 @@ function wordText(m: MemItem): string {
   return pick.length > 12 ? pick.slice(0, 12) + "…" : pick;
 }
 const words = computed<MemWord[]>(() =>
-  visibleMemories.value.slice(0, 18).map((m) => {
+  visibleMemories.value.slice(0, 16).map((m, i) => {
     const h = hashStr(m.id);
     const text = wordText(m);
     if (!text) return null;
+    // 角度均匀分布：词按角度铺开在 dome 椭圆内，r 中心稀疏外密，hash 微扰打破均匀感
+    // 词位置以 dome 中心(0,0) 为原点：dome 220x160，椭圆 a=100 b=66
+    const N = visibleMemories.value.length;
+    const baseAngle = ((i ?? 0) / Math.max(N, 1)) * 2 * Math.PI;
+    const jitter = ((h % 360) / 360) * 0.6 - 0.3;  // ±0.3 弧度微扰
+    const angle = baseAngle + jitter;
+    const rNorm = 0.25 + ((h >> 11) % 70) / 100;  // 0.25-0.95 半径（中心疏外密）
+    const x = Math.round(Math.cos(angle) * rNorm * 96);
+    const y = Math.round(Math.sin(angle) * rNorm * 60);
     return {
       text, full: m.text,
-      size: 9 + (h % 5),                          // 9-13px 更精细层次
-      x: Math.round((((h >> 3) % 97) / 97) * 170 - 85),  // 扩到 ±85（dome 宽 200 内，更分散）
-      y: Math.round((((h >> 7) % 95) / 95) * 92 - 60),    // 扩到 -60~32（dome 高 152 内更分散）
+      size: 9 + (h % 5),                    // 9-13px 层次
+      x, y,
       delay: (h % 70) / 10,
       dur: 5 + (h % 50) / 10,
       tone: h % 4,
@@ -296,8 +304,8 @@ const SEEDS = Array.from({ length: 6 }, () => ({
       </div>
     </div>
 
-    <!-- 技能（AI 的"手"）：grid 2 列紧凑布局，避免一行排满横向溢出错位 -->
-    <div v-if="plugins.length" class="agent-skills">
+    <!-- 技能（AI 的"手"）：grid 2 列 + order 999 强制最末（防 layout 错位跑顶部） -->
+    <div v-if="plugins.length" class="agent-skills" style="order: 999;">
       <button v-for="p in plugins.slice(0, 6)" :key="p.id" class="ag-skill" :title="p.name" @click="launchSkill(p)">
         {{ p.name }}
       </button>
@@ -334,7 +342,7 @@ const SEEDS = Array.from({ length: 6 }, () => ({
 
 <style scoped>
 .agent {
-  width: 240px;
+  width: 280px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -347,12 +355,13 @@ const SEEDS = Array.from({ length: 6 }, () => ({
     var(--yb-content-bg);
   overflow: hidden;
   user-select: none;
+  position: relative;  /* 锚定 z-index 防止子元素错位跑出 */
 }
 
 /* ---- 大脑容器 ---- */
 .brain {
   position: relative;
-  width: 200px;
+  width: 220px;
   height: 200px;
   flex-shrink: 0;
   margin: 4px 0 2px;
@@ -362,9 +371,9 @@ const SEEDS = Array.from({ length: 6 }, () => ({
   position: absolute;
   left: 0;
   top: 0;
-  width: 200px;
-  height: 152px;
-  border-radius: 100px 100px 64px 64px;
+  width: 220px;
+  height: 160px;
+  border-radius: 110px 110px 70px 70px;
   background:
     radial-gradient(58% 52% at 50% 38%, rgba(var(--yb-c-sky-rgb), 0.16), rgba(var(--yb-c-sky-rgb), 0) 70%);
   filter: blur(2px);
@@ -382,9 +391,9 @@ const SEEDS = Array.from({ length: 6 }, () => ({
   position: absolute;
   left: 0;
   top: 0;
-  width: 200px;
-  height: 152px;
-  border-radius: 100px 100px 64px 64px;
+  width: 220px;
+  height: 160px;
+  border-radius: 110px 110px 70px 70px;
   background: rgba(255, 255, 255, 0.42);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
@@ -520,22 +529,25 @@ const SEEDS = Array.from({ length: 6 }, () => ({
   50% { opacity: 0.7; transform: scale(1.2); }
 }
 
-/* ---- 技能入口（AI 的"手"）：grid 2 列紧凑，纵向排版避免横向挤一行错位 ---- */
+/* ---- 技能入口（AI 的"手"）：flex 2 列（!important 强制 2 列防被覆盖）+ order 999 强制最末 ---- */
 .agent-skills {
   width: 100%;
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  display: flex !important;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 4px;
   margin-top: 6px;
   padding: 0 2px;
   position: relative;
   z-index: 5;
+  order: 999;
 }
 .ag-skill {
+  flex: 0 0 calc(50% - 2px) !important;  /* 强制 2 列（每行 2 个 chip） */
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 100%;
+  width: calc(50% - 2px);
   padding: 4px 6px;
   border: 1px dashed var(--yb-card-border);
   border-radius: var(--yb-radius-sm);
@@ -556,7 +568,7 @@ const SEEDS = Array.from({ length: 6 }, () => ({
   background: var(--yb-accent-soft);
 }
 .ag-more {
-  grid-column: span 2;
+  flex: 0 0 100%;
   text-align: center;
   font-size: var(--yb-fs-xs);
   color: var(--yb-text-faint);
