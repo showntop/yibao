@@ -10,6 +10,7 @@ import InputBar from "./InputBar.vue";
 import Bubble from "./Bubble.vue";
 import PermissionsBanner from "./PermissionsBanner.vue";
 import SetupWizard from "./SetupWizard.vue";
+import SessionList from "./SessionList.vue";
 import AgentBrain from "./AgentBrain.vue";
 import HomeContextPanel from "./HomeContextPanel.vue";
 import {
@@ -65,6 +66,23 @@ watch(
 function onInfoChat(d: string) {
   draftRef.value = "";
   void nextTick(() => (draftRef.value = d));
+}
+
+// ---- 会话列表（左一栏）：标题/预览随对话更新；新建/切换清空气泡（历史加载属 Phase 4）----
+const sessionRef = ref<InstanceType<typeof SessionList> | null>(null);
+let sessionStarted = false; // 当前会话是否已有首条用户消息（决定是否生成标题）
+function onSessionNew() {
+  bubbles.value = [];
+  streamingIdx.value = null;
+  state.value = "idle"; // showTyping 由 state 推导，自动收起
+  sessionStarted = false;
+}
+function onSessionSelect() {
+  // Phase 1：历史会话暂不加载气泡（后端 load_session 属 Phase 4）——切换=空气泡新起
+  bubbles.value = [];
+  streamingIdx.value = null;
+  state.value = "idle"; // showTyping 由 state 推导，自动收起
+  sessionStarted = true; // 该会话已有历史，后续消息不再生成标题
 }
 
 const state = ref<AvatarState>("idle");
@@ -172,6 +190,7 @@ function onEvent(e: BrainEvent) {
       } else {
         bubbles.value.push({ role: "ai", text: full });
       }
+      sessionRef.value?.updateCurrent({ preview: full.replace(/\s+/g, " ").trim().slice(0, 44) });
       if (state.value !== "say") state.value = "idle";
       break;
     }
@@ -260,6 +279,12 @@ function onStatus(m: BrainStatusMsg) {
 }
 
 async function submit(text: string) {
+  // 首条用户消息 → 自动生成会话标题
+  if (!sessionStarted) {
+    const title = text.replace(/\s+/g, " ").trim().slice(0, 16);
+    sessionRef.value?.updateCurrent({ title: title || "新对话" });
+    sessionStarted = true;
+  }
   // 若 AI 正在生成/播报，InputBar 已在发送前 emit interrupt（先打断再发）；
   // 这里兜底：state 异常卡 busy（无响应）时也允许发送（runInput 会覆盖 state）
   bubbles.value.push({ role: "user", text });
@@ -342,10 +367,12 @@ onUnmounted(() => {
   <div class="chat-page" :class="{ thinking: state === 'think' }">
     <SetupWizard v-if="setupNeeded" :model="setupCfg.model" :base-url="setupCfg.baseUrl" :voice="setupCfg.voice" @saved="onSetupSaved" />
 
-    <!-- 三栏 AI 工作台：智能体（玻璃大脑+词云）｜对话｜AI 进程 -->
+    <!-- 四栏 AI 工作台：会话｜智能体（内心）｜对话｜AI 进程 -->
     <div v-else class="chat-cols">
-    <!-- 左：智能体（人格化核心） -->
-    <AgentBrain :state="state" @chat="onInfoChat" />
+    <!-- 左一：会话列表（历史侧栏） -->
+    <SessionList ref="sessionRef" class="col-session" @new-chat="onSessionNew" @select="onSessionSelect" />
+    <!-- 左二：智能体（人格化核心） -->
+    <AgentBrain class="col-agent" :state="state" @chat="onInfoChat" />
 
     <div class="chat-main">
     <PermissionsBanner v-if="missingPerms && perms" :perms="perms" />
@@ -416,7 +443,7 @@ onUnmounted(() => {
   flex-direction: column;
   background: var(--yb-content-bg);
 }
-/* 三栏工作台：智能体（左）｜对话（中）｜AI 进程（右） */
+/* 四栏工作台：会话（左一）｜智能体（左二）｜对话（中）｜AI 进程（右） */
 .chat-cols {
   flex: 1;
   min-height: 0;
@@ -426,17 +453,23 @@ onUnmounted(() => {
 .chat-main {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
-/* 窄窗收栏：<1200 收左（智能体）；<900 收右（进程），退回单列对话 */
-@media (max-width: 1200px) {
-  .chat-cols > :first-child {
+/* 宽屏全展开；逐档收栏（会话 < 智能体 < 进程 < 对话）保证对话区始终可用 */
+@media (max-width: 1560px) {
+  .chat-cols > .col-agent {
+    display: none;
+  }
+}
+@media (max-width: 1180px) {
+  .chat-cols > .col-session {
     display: none;
   }
 }
 @media (max-width: 900px) {
-  .chat-cols > :last-child {
+  .chat-cols > .col-context {
     display: none;
   }
 }
