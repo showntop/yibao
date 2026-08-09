@@ -45,6 +45,9 @@ SYSTEM_PROMPT = (
     "不要用 # 标题，emoji 一条回复最多 2 个，列表不超过 5 条。\n"
     "很多能力按插件组织且默认隐藏；需要的能力不在工具列表里时，先调 use_plugin 展开对应插件"
     "（可用插件清单见该工具描述），再继续。"
+    "\n\n【coding 分工】用户要做的若是交互式 coding（写功能/修 bug/重构——需要来回对话、看文件改动），"
+    "引导用户去「编码面板」（插件页 → 编码，选项目后跟 Claude Code 多轮）。"
+    "`agents.dispatch_task` 仅用于后台 fire-and-forget 长任务（跑完报告，不交互）。"
 )
 
 _TOOL_BUDGET_FINAL_PROMPT = (

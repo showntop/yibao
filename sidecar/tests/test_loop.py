@@ -180,6 +180,12 @@ def test_system_prompt_avoids_redundant_screenshot_around_computer_use():
     assert "不要在 computer_use 前后重复调用 screenshot" in SYSTEM_PROMPT
 
 
+def test_system_prompt_steers_interactive_coding_to_panel():
+    # coding 分工 steer：交互式 coding 引导去「编码面板」，dispatch_task 仅后台（DIV1）
+    assert "编码面板" in SYSTEM_PROMPT
+    assert "dispatch_task" in SYSTEM_PROMPT
+
+
 def test_loop_sync_reserves_final_reply_after_tool_budget(tmp_path):
     provider = _SequenceProvider([
         FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="echo", params={"text": "1"})]),
