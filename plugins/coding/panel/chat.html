@@ -248,6 +248,14 @@
   }
   button.ghost:hover { background: var(--surface-2); color: var(--text); border-color: var(--border-strong); }
   button.ghost:disabled { opacity: .5; cursor: default; }
+  /* 权限模式 pill：两态切换（自动改文件 ⇄ 只读规划），plan 态用强调色描边 */
+  .pill {
+    flex: none; font-size: 11px; padding: 2px 10px; border-radius: 999px;
+    border: 1px solid var(--border-strong); background: var(--surface-2);
+    color: var(--muted); cursor: pointer; transition: all .15s ease;
+  }
+  .pill:hover { border-color: var(--accent); color: var(--accent-deep); }
+  .pill.plan { border-color: var(--accent); color: var(--accent-deep); background: var(--accent-soft); }
 
   /* ---- Codex session 选择器 + 历史抽屉（fixed 浮层；iframe srcdoc 里 absolute 含块不可靠） ---- */
   #handoff-backdrop, #history-overlay { position: fixed; inset: 0; z-index: 40; }
@@ -367,6 +375,7 @@
 <footer>
   <textarea id="prompt" placeholder="描述要做的事（⌘/Ctrl + Enter 发送）；Claude Code 会在上面的项目目录里执行" rows="2"></textarea>
   <div class="actions">
+    <button id="mode-pill" type="button" class="pill" title="点击切换权限模式">自动改文件</button>
     <span id="status"></span>
     <span class="spacer"></span>
     <button id="stop" class="act ghost" disabled>中断</button>
@@ -407,6 +416,7 @@
   var sending = false;         // send 按钮 re-entry 保护（仅覆盖 invoke 同步窗）
   var streaming = false;       // 流式进行中（invoke 返回 → done/error）；为 true 时锁定「新对话」
   var discardedSessions = {};  // 被「新对话」抛弃的 session_id → true 集合；防陈旧流块污染新对话
+  var curMode = "acceptEdits"; // acceptEdits=自动改文件；plan=只读规划
 
   // ============================================================
   //   工具函数
@@ -848,6 +858,18 @@
   // ============================================================
   //   发送 / 中断
   // ============================================================
+  // 权限模式 pill：两态切换；有活动会话时同步通知后端（落库 + 运行中 runner 下条消息生效）
+  function renderModePill() {
+    $("mode-pill").textContent = curMode === "plan" ? "只读规划" : "自动改文件";
+    $("mode-pill").classList.toggle("plan", curMode === "plan");
+  }
+  $("mode-pill").addEventListener("click", function () {
+    curMode = curMode === "plan" ? "acceptEdits" : "plan";
+    renderModePill();
+    if (currentSession) window.yibao.invoke("coding.mode", { id: currentSession, mode: curMode }).catch(function () {});
+  });
+  renderModePill();
+
   function send() {
     if (sending) return;
     if (!hasBridge) {
@@ -872,8 +894,8 @@
     // 这是本次多轮修复的核心：第二条起走 send(resume)，被驱动的 CC 才能拿到历史上下文。
     var isStart = !currentSession;
     var method = isStart ? "coding.start" : "coding.send";
-    var params = isStart ? { cwd: cwd, prompt: prompt }
-                         : { id: currentSession, prompt: prompt };
+    var params = isStart ? { cwd: cwd, prompt: prompt, mode: curMode }
+                         : { id: currentSession, prompt: prompt, mode: curMode };
     var verb = isStart ? "启动" : "接续";
 
     window.yibao.invoke(method, params).then(function (r) {

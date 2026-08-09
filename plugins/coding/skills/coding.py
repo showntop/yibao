@@ -68,17 +68,20 @@ def _codex_sessions_root() -> str:
 _SESSIONS: dict[str, dict] = {}
 
 
-def start_session(db, *, agent: str, cwd: str, prompt: str, source: str = "") -> str:
+def start_session(db, *, agent: str, cwd: str, prompt: str, source: str = "",
+                  mode: str = "acceptEdits") -> str:
     """纯函数：往 sessions 表插一行 running，返回 sid。不碰线程/runner（测试可直打）。
 
     source：会话来源标记——""=用户直起；"codex:<sid>"=从 codex 交接切过来（HandoffSkill 起）。
     透传落库，便于后续面板/审计按来源过滤；不参与 runner 行为。
+    mode：权限模式（acceptEdits=自动改文件 / plan=只读规划）落 mode 列，
+    后续 send 不带 mode 时沿用库值。
     """
     sid = uuid.uuid4().hex[:12]
     db.insert("sessions", {
         "id": sid, "agent": agent, "cwd": cwd, "prompt": prompt,
         "status": "running", "created_at": int(time.time()), "finished_at": 0,
-        "source": source,
+        "source": source, "mode": mode,
     })
     return sid
 
@@ -94,13 +97,17 @@ class _AsyncShield:
 
 
 def _spawn_stream(db, sid: str, cwd: str, prompt: str, runner, emit_event,
-                  resume_session_id: str | None = None) -> None:
+                  resume_session_id: str | None = None,
+                  permission_mode: str = "acceptEdits") -> None:
     """起 daemon 线程跑 runner（线程内自带 asyncio loop）。
 
     emit_event 已线程安全（proactive_dispatcher.emit → call_soon_threadsafe），
     daemon 线程直调即可。db 经参数链一路传到 _stream（落最终状态用）。
     resume_session_id：非 None 时透传 runner.run，续上同一 CC 会话历史（多轮）；
         None（StartSkill 路径）→ 全新会话。
+    permission_mode：透传 runner.run（acceptEdits/plan），进 SDK options。
+    _SESSIONS[sid] entry 同时是运行中切模式的通道（coding.mode 写 mode_pending，
+    runner 每条消息前消费 → client.set_permission_mode）。
     """
     cancel = threading.Event()
     _SESSIONS[sid] = {"cancel": cancel}
@@ -111,7 +118,8 @@ def _spawn_stream(db, sid: str, cwd: str, prompt: str, runner, emit_event,
             asyncio.set_event_loop(loop)
             loop.run_until_complete(
                 _stream(db, sid, cwd, prompt, runner, emit_event, cancel,
-                        resume_session_id=resume_session_id))
+                        resume_session_id=resume_session_id,
+                        permission_mode=permission_mode))
         except Exception as e:  # 兜底：流式线程任何意外都不许炸出来
             print(f"[yibao/coding] session {sid} stream 线程崩：{type(e).__name__}: {e}",
                   file=sys.stderr)
@@ -127,7 +135,8 @@ def _spawn_stream(db, sid: str, cwd: str, prompt: str, runner, emit_event,
 
 
 async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cancel,
-                  resume_session_id: str | None = None) -> None:
+                  resume_session_id: str | None = None,
+                  permission_mode: str = "acceptEdits") -> None:
     """跑 runner；每条事件转 panel_data 推面板 + 落 messages 表；结束按 cancel/error/done 落最终状态。
 
     transcript 落库：user_msg（带 CC uuid，rewind 锚点）/ text_delta / done·stopped 终态 marker，
@@ -137,6 +146,9 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
     落最终状态前先查当前 status——用户主动 stop 时 _stop_session 已先写 stopped，
     这里保留 stopped 不被 done/failed 覆盖（race-safe，仿 agents._common._wait:66-73）。
     resume_session_id：非 None 时透传 runner.run，续上同一 CC 会话历史（多轮）。
+    permission_mode：透传 runner.run（acceptEdits/plan）。
+    session_entry：_SESSIONS[sid] live entry 透传 runner.run——coding.mode 写入
+    mode_pending 后，runner 每条消息前消费并 client.set_permission_mode（运行中切模式）。
     """
     state = {"error": False}
     cc_sid: str | None = None   # runner.run 返回值（ResultMessage.session_id）；None=取消/失败
@@ -180,7 +192,9 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
 
     try:
         cc_sid = await runner.run(prompt, cwd, on_event=on_event, cancel_event=_AsyncShield(cancel),
-                                  resume_session_id=resume_session_id)
+                                  resume_session_id=resume_session_id,
+                                  permission_mode=permission_mode,
+                                  session_entry=_SESSIONS.get(sid))
     except Exception as e:  # runner 内部应已吞异常→error 事件；框架级异常兜底
         print(f"[yibao/coding] session {sid} runner 框架异常：{type(e).__name__}: {e}",
               file=sys.stderr)
@@ -284,10 +298,12 @@ class StartSkill(Skill):
             return ActionResult(success=False, error="缺少任务描述 prompt")
         agent = str(params.get("agent") or "claude-code").strip() or "claude-code"
         source = str(params.get("source") or "").strip()
-        sid = start_session(ctx.db, agent=agent, cwd=cwd, prompt=prompt, source=source)
+        mode = str(params.get("mode") or "acceptEdits").strip() or "acceptEdits"
+        sid = start_session(ctx.db, agent=agent, cwd=cwd, prompt=prompt, source=source, mode=mode)
         # 生产默认 runner；测试经 monkeypatch _spawn_stream 不真起线程
         # resume_session_id 不传 → None → 全新 CC 会话（首条消息）
-        _spawn_stream(ctx.db, sid, cwd, prompt, ClaudeCodeRunner(), ctx.emit_event)
+        _spawn_stream(ctx.db, sid, cwd, prompt, ClaudeCodeRunner(), ctx.emit_event,
+                      permission_mode=mode)
         return ActionResult(success=True, data={
             "session_id": sid,
             "panel": "coding:chat",
@@ -345,10 +361,12 @@ class SendSkill(Skill):
                 error="该会话尚未建立上下文（cc_session_id 为空），请先用首条消息开始",
             )
         cwd = row.get("cwd") or ""
-        # 重置 running 状态：resume 是新一轮流式，finished_at 归零
-        ctx.db.update("sessions", sid, {"status": "running", "finished_at": 0})
+        # mode 跨轮沿用：send 不带 mode → 用库值（start/coding.mode 落的）；带 → 覆盖回写
+        mode = str(params.get("mode") or row.get("mode") or "acceptEdits")
+        # 重置 running 状态：resume 是新一轮流式，finished_at 归零；mode 一并回写
+        ctx.db.update("sessions", sid, {"status": "running", "finished_at": 0, "mode": mode})
         _spawn_stream(ctx.db, sid, cwd, prompt, ClaudeCodeRunner(), ctx.emit_event,
-                      resume_session_id=cc)
+                      resume_session_id=cc, permission_mode=mode)
         return ActionResult(success=True, data={
             "session_id": sid,
             "panel": "coding:chat",
@@ -582,7 +600,34 @@ class HistorySkill(Skill):
         })
 
 
+class ModeSkill(Skill):
+    id = "coding.mode"
+    label = "切换权限模式"
+    description = "切换某个 coding 会话的权限模式（acceptEdits=自动改文件 / plan=只读规划）：落库下轮生效；会话在跑则通知 runner 运行中切换。"
+    default_risk = RiskLevel.L1_LOW
+
+    def openai_schema(self) -> dict:
+        return {"type": "function", "function": {"name": self.id, "description": self.description,
+                "parameters": {"type": "object",
+                    "properties": {"id": {"type": "string"}, "mode": {"type": "string"}},
+                    "required": ["id", "mode"]}}}
+
+    def run(self, params: dict, ctx: Any) -> ActionResult:
+        sid = str(params.get("id") or "").strip()
+        mode = str(params.get("mode") or "").strip()
+        if mode not in ("acceptEdits", "plan"):
+            return ActionResult(success=False, error=f"不支持的模式：{mode}（仅 acceptEdits/plan）")
+        rows = ctx.db.query("sessions", where={"id": sid})
+        if not rows:
+            return ActionResult(success=False, error=f"会话不存在：{sid}")
+        ctx.db.update("sessions", sid, {"mode": mode})
+        live = sid in _SESSIONS
+        if live:
+            _SESSIONS[sid]["mode_pending"] = mode
+        return ActionResult(success=True, data={"ok": True, "mode": mode, "live": live})
+
+
 def make_tools(ctx: Any) -> list[Skill]:
     """插件加载器入口（_load_code_tools 遍历 skills/*.py 调本函数）。"""
     return [StartSkill(), SendSkill(), StopSkill(), ListSkill(),
-            HandoffListSkill(), HandoffBriefSkill(), HistorySkill()]
+            HandoffListSkill(), HandoffBriefSkill(), HistorySkill(), ModeSkill()]

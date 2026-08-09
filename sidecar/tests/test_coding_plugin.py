@@ -288,8 +288,10 @@ from coding import _stream  # noqa: E402
 class _FakeRunner:
     """鸭式 runner：run() 返回预设 cc_sid；记录传入参数。"""
     def __init__(self, cc_sid): self._cc_sid = cc_sid; self.called_with = None
-    async def run(self, prompt, cwd, *, on_event, cancel_event, resume_session_id=None):
-        self.called_with = {"prompt": prompt, "cwd": cwd, "resume": resume_session_id}
+    async def run(self, prompt, cwd, *, on_event, cancel_event, resume_session_id=None,
+                  permission_mode="acceptEdits", session_entry=None):
+        self.called_with = {"prompt": prompt, "cwd": cwd, "resume": resume_session_id,
+                            "permission_mode": permission_mode, "session_entry": session_entry}
         if self._cc_sid is not None:
             on_event({"kind": "done"})
         return self._cc_sid
@@ -398,12 +400,13 @@ def test_send_skill_openai_schema_shape():
 
 
 def test_make_tools_includes_send():
-    """make_tools 返回 Start/Send/Stop/List + HandoffList/HandoffBrief/History 七件。"""
+    """make_tools 返回 Start/Send/Stop/List + HandoffList/HandoffBrief/History/Mode 八件。"""
     tools = codingmod.make_tools(type("C", (), {"db": None, "emit_event": None})())
     ids = [t.id for t in tools]
     assert "coding.send" in ids
     assert ids == ["coding.start", "coding.send", "coding.stop", "coding.list",
-                   "coding.handoff_list", "coding.handoff_brief", "coding.history"]
+                   "coding.handoff_list", "coding.handoff_brief", "coding.history",
+                   "coding.mode"]
 
 
 def test_start_skill_does_not_pass_resume(monkeypatch):
@@ -605,7 +608,7 @@ from coding import HistorySkill  # noqa: E402
 class _EventsRunner:
     """鸭式 runner：依次回放预置事件后返回 cc-sess-x（transcript 落库测试用）。"""
     def __init__(self, events): self._events = events
-    async def run(self, prompt, cwd, *, on_event, cancel_event, resume_session_id=None):
+    async def run(self, prompt, cwd, *, on_event, cancel_event, resume_session_id=None, **_):
         for ev in self._events:
             on_event(ev)
         return "cc-sess-x"
@@ -678,3 +681,142 @@ def test_stream_seq_continues_across_rounds():
     assert seqs == list(range(1, len(rows) + 1))        # 全局单调不重复
     r2_first = next(r for r in rows if r["text"] == "第二轮")
     assert r2_first["seq"] == r1_max + 1                # 续号，不是从 1 重计
+
+
+# ---------- R2 Task 3: plan mode 切换（db mode + 透传 + 运行中 set_permission_mode）----------
+from coding import ModeSkill  # noqa: E402
+
+
+def test_start_and_send_persist_mode(monkeypatch):
+    """start 落 mode 列并透传 permission_mode；send 不带 mode 沿用库值，带则覆盖回写。"""
+    db = _FakeDB()
+    captured = []
+    # 不真起线程：_spawn_stream 占位，只记录 kwargs
+    monkeypatch.setattr(codingmod, "_spawn_stream", lambda *a, **k: captured.append(k))
+    monkeypatch.setattr(codingmod, "ClaudeCodeRunner", lambda: object())
+    r = StartSkill().run({"cwd": "/tmp", "prompt": "x", "mode": "plan"}, _Ctx(db))
+    assert r.success, r.error
+    sid = r.data["session_id"]
+    assert db.rows[sid]["mode"] == "plan"                     # mode 落列
+    assert captured[-1].get("permission_mode") == "plan"      # 透传到流式
+    # send 不带 mode → 沿用库里的 plan
+    db.rows[sid]["status"] = "done"
+    db.rows[sid]["cc_session_id"] = "cc-1"
+    r2 = SendSkill().run({"id": sid, "prompt": "再来"}, _Ctx(db))
+    assert r2.success, r2.error
+    assert captured[-1].get("permission_mode") == "plan"
+    assert db.rows[sid]["mode"] == "plan"                     # 库值不被重置
+    # send 带 mode → 覆盖并回写库
+    db.rows[sid]["status"] = "done"
+    r3 = SendSkill().run({"id": sid, "prompt": "再来", "mode": "acceptEdits"}, _Ctx(db))
+    assert r3.success, r3.error
+    assert captured[-1].get("permission_mode") == "acceptEdits"
+    assert db.rows[sid]["mode"] == "acceptEdits"
+
+
+def test_send_mode_defaults_accept_edits_when_db_missing(monkeypatch):
+    """老会话（无 mode 列值）send 不带 mode → 默认 acceptEdits。"""
+    captured = []
+    monkeypatch.setattr(codingmod, "_spawn_stream", lambda *a, **k: captured.append(k))
+    ctx = _make_ctx_with_session(status="done")   # sid-1 行无 mode 键
+    r = SendSkill().run({"id": "sid-1", "prompt": "再来"}, ctx)
+    assert r.success, r.error
+    assert captured[-1].get("permission_mode") == "acceptEdits"
+    assert ctx.db.rows["sid-1"]["mode"] == "acceptEdits"
+
+
+def test_stream_passes_permission_mode_to_runner():
+    """_stream 把 permission_mode 透传 runner.run（send/start 的 mode 最终到 SDK options）。"""
+    db = _FakeDB(); db.rows["s9"] = {"id": "s9", "status": "running"}
+    runner = _FakeRunner(cc_sid=None)
+    _run(_stream(db, "s9", "/tmp/p", "hi", runner, emit_event=None,
+                 cancel=_threading.Event(), permission_mode="plan"))
+    assert runner.called_with["permission_mode"] == "plan"
+
+
+def test_stream_passes_live_session_entry_to_runner(monkeypatch):
+    """_stream 把 _SESSIONS[sid]（live entry）透传 runner.run 的 session_entry（运行中切模式的通道）。"""
+    db = _FakeDB(); db.rows["s10"] = {"id": "s10", "status": "running"}
+    entry = {"cancel": _threading.Event()}
+    monkeypatch.setattr(codingmod, "_SESSIONS", {"s10": entry})
+    runner = _FakeRunner(cc_sid=None)
+    _run(_stream(db, "s10", "/tmp/p", "hi", runner, emit_event=None,
+                 cancel=_threading.Event()))
+    assert runner.called_with["session_entry"] is entry
+
+
+def test_mode_skill_updates_db_and_live_pending(monkeypatch):
+    """coding.mode：落库 + live 会话置 mode_pending（runner 下条消息生效）；返回 live 标记。"""
+    ctx = _make_ctx_with_session(status="running")
+    entry = {"cancel": _threading.Event()}
+    monkeypatch.setattr(codingmod, "_SESSIONS", {"sid-1": entry})
+    r = ModeSkill().run({"id": "sid-1", "mode": "plan"}, ctx)
+    assert r.success and r.data["live"] is True            # 有 live entry → mode_pending 已置
+    assert entry["mode_pending"] == "plan"
+    assert ctx.db.query("sessions", where={"id": "sid-1"})[0]["mode"] == "plan"
+    assert r.data["ok"] is True and r.data["mode"] == "plan"
+    # 非 live（会话已结束/无 runner）：只落库，不置 pending
+    monkeypatch.setattr(codingmod, "_SESSIONS", {})
+    r2 = ModeSkill().run({"id": "sid-1", "mode": "acceptEdits"}, ctx)
+    assert r2.success and r2.data["live"] is False
+    assert ctx.db.rows["sid-1"]["mode"] == "acceptEdits"
+
+
+def test_mode_skill_rejects_bad_mode_and_unknown_session():
+    """非法 mode / 不存在会话 → 友好错误，不碰库。"""
+    ctx = _make_ctx_with_session(status="running")
+    r = ModeSkill().run({"id": "sid-1", "mode": "yolo"}, ctx)
+    assert not r.success and "不支持" in (r.error or "")
+    r2 = ModeSkill().run({"id": "ghost", "mode": "plan"}, ctx)
+    assert not r2.success and "不存在" in (r2.error or "")
+    assert "mode" not in ctx.db.rows["sid-1"]              # 均未落库
+
+
+def test_runner_applies_pending_mode_between_messages():
+    """runner 每条消息前检查 session_entry.mode_pending → client.set_permission_mode（消费即弹出）。"""
+    calls = []
+
+    class ModeClient:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def query(self, p): pass
+        async def set_permission_mode(self, mode): calls.append(mode)
+        async def receive_response(self):
+            yield _FakeAssistant([_FakeText("a")])
+            yield _FakeAssistant([_FakeText("b")])
+            yield _FakeResultMessage("success")
+
+    runner = ClaudeCodeRunner(client_factory=lambda cwd, tools, resume=None, **k: ModeClient())
+    entry = {"mode_pending": "plan"}
+    events = []
+    _run(runner.run("p", "/tmp", on_event=events.append, cancel_event=asyncio.Event(),
+                    session_entry=entry))
+    assert calls == ["plan"]                               # 只消费一次
+    assert "mode_pending" not in entry                     # 消费后弹出
+    assert [e["kind"] for e in events] == ["text_delta", "text_delta", "done"]
+
+
+def test_runner_pending_mode_without_setter_is_skipped():
+    """鸭子类型：client 无 set_permission_mode → 静默跳过，流不受影响（pending 仍弹出防重复消费）。"""
+    msgs = [_FakeAssistant([_FakeText("x")]), _FakeResultMessage("success")]
+    runner = ClaudeCodeRunner(client_factory=lambda cwd, tools, resume=None, **k: _FakeClient(msgs))
+    entry = {"mode_pending": "plan"}
+    events = []
+    _run(runner.run("p", "/tmp", on_event=events.append, cancel_event=asyncio.Event(),
+                    session_entry=entry))
+    assert [e["kind"] for e in events] == ["text_delta", "done"]
+    assert "mode_pending" not in entry
+
+
+def test_runner_pending_mode_set_failure_is_silent():
+    """set_permission_mode 抛错 → 打印并跳过，流不断、不发 error 事件。"""
+
+    class BadModeClient(_FakeClient):
+        async def set_permission_mode(self, mode): raise RuntimeError("nope")
+
+    msgs = [_FakeAssistant([_FakeText("x")]), _FakeResultMessage("success")]
+    runner = ClaudeCodeRunner(client_factory=lambda cwd, tools, resume=None, **k: BadModeClient(msgs))
+    events = []
+    _run(runner.run("p", "/tmp", on_event=events.append, cancel_event=asyncio.Event(),
+                    session_entry={"mode_pending": "plan"}))
+    assert [e["kind"] for e in events] == ["text_delta", "done"]

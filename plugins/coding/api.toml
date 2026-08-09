@@ -37,3 +37,10 @@ name = "history"
 handler = "coding.history"
 direct = true
 quiet = true
+
+# 面板 mode pill：切换权限模式（落库 + 运行中切换；quiet 不发 panel 事件）
+[[method]]
+name = "mode"
+handler = "coding.mode"
+direct = true
+quiet = true

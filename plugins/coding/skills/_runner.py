@@ -161,7 +161,8 @@ class AgentRunner(Protocol):
     async def run(self, prompt: str, cwd: str, *,
                   on_event: Callable[[dict], None], cancel_event,
                   resume_session_id: str | None = None,
-                  permission_mode: str = "acceptEdits", can_use_tool=None) -> str | None: ...
+                  permission_mode: str = "acceptEdits", can_use_tool=None,
+                  session_entry: dict | None = None) -> str | None: ...
 
 
 class ClaudeCodeRunner:
@@ -185,12 +186,16 @@ class ClaudeCodeRunner:
 
     async def run(self, prompt: str, cwd: str, *, on_event, cancel_event,
                   resume_session_id: str | None = None,
-                  permission_mode: str = "acceptEdits", can_use_tool=None) -> str | None:
+                  permission_mode: str = "acceptEdits", can_use_tool=None,
+                  session_entry: dict | None = None) -> str | None:
         """流式跑 prompt；每条 SDK 消息 normalize 后 on_event；取消则发 stopped 终态后早退；异常隔离成 error 事件。
 
         - resume_session_id：非 None 时透传 ClaudeAgentOptions.resume，续上同一 CC 会话历史。
         - permission_mode：透传 ClaudeAgentOptions.permission_mode（如 acceptEdits/plan）。
         - can_use_tool：透传 ClaudeAgentOptions.can_use_tool 权限回调（None = SDK 默认）。
+        - session_entry：live 会话 entry（coding.py `_SESSIONS[sid]`）；每条消息前检查并
+          弹出 `mode_pending`（coding.mode 写入）→ client.set_permission_mode 运行中切换
+          （鸭子类型，client 无此方法或调用失败均静默跳过，延迟 ≤1 条消息）。
         - cc_session_id 捕获：流中遇到 ResultMessage（duck-typed 带 .session_id）时缓存其值，
           run 结束返回（str | None）。失败时返回 None；取消时返回已捕获的 cc_sid。
         - 取消语义：在每条 SDK 消息前查 cancel_event.is_set() → True 则先 client.interrupt()
@@ -217,6 +222,16 @@ class ClaudeCodeRunner:
                                 pass
                         on_event({"kind": "stopped", "text": "已中断"})
                         return cc_sid
+                    # 运行中模式切换（coding.mode 写入 _SESSIONS mode_pending；下条消息生效，延迟 ≤1 条）
+                    if session_entry is not None:
+                        pending = session_entry.pop("mode_pending", None)
+                        if pending is not None:
+                            set_mode = getattr(c, "set_permission_mode", None)
+                            if set_mode is not None:
+                                try:
+                                    await set_mode(pending)
+                                except Exception as e:
+                                    print(f"[yibao/coding] 运行中切换模式失败（已跳过）：{e}", file=sys.stderr)
                     # ResultMessage 携 session_id：先从原 msg 读，再 normalize
                     sid = getattr(msg, "session_id", None)
                     if sid:
