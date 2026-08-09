@@ -12,7 +12,8 @@ type IconName =
   | "clock" | "chat" | "gear" | "spinner" | "check" | "x" | "stop"
   | "lock" | "pin" | "doc" | "alert" | "inbox" | "sparkle" | "plug"
   | "dumpling" | "mic" | "wave" | "thumb-up" | "thumb-down" | "search"
-  | "panel-left" | "panel-right" | "plus" | "expand";
+  | "panel-left" | "panel-right" | "plus" | "expand"
+  | "sliders" | "sun" | "moon";
 
 withDefaults(
   defineProps<{
@@ -84,6 +85,15 @@ const paths: Record<IconName, string> = {
     '<path d="M12 5v14M5 12h14"/>',
   expand:
     '<path d="M8.5 4.5h-4v4M15.5 4.5h4v4M8.5 19.5h-4v-4M19.5 15.5v4h-4"/><path d="M4.8 8.2 9 4M15 4l4.2 4.2M4.8 15.8 9 20M15 20l4.2-4.2"/>',
+  sliders:
+    // 三档滑块（Lucide sliders-horizontal 同构）：3 条带滑块圆点的横线，比齿轮更明确表示"可调节"
+    '<line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><circle cx="12" cy="4" r="2" fill="currentColor" stroke="none"/><circle cx="9" cy="12" r="2" fill="currentColor" stroke="none"/><circle cx="14" cy="20" r="2" fill="currentColor" stroke="none"/>',
+  sun:
+    // 主题切换：浅色模式（亮）
+    '<circle cx="12" cy="12" r="4"/><path d="M12 2v2.5M12 19.5V22M4.22 4.22l1.77 1.77M17.99 17.99l1.77 1.77M2 12h2.5M19.5 12H22M4.22 19.78l1.77-1.77M17.99 6.01l1.77-1.77"/>',
+  moon:
+    // 主题切换：深色模式（暗）
+    '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"/>',
 };
 </script>
 

@@ -6,13 +6,13 @@ from typing import Any
 from yibao_brain.ipc import ActionResult, RiskLevel
 from yibao_brain.skills import Skill
 
-_TOOLS = ("json", "diff")
+_TOOLS = ("json", "diff", "timestamp")
 
 
 class OpenToolboxSkill(Skill):
     id = "toolbox.open"
     label = "打开工具箱"
-    description = "打开工具箱面板（JSON 格式化 / 文本对比 等常用小工具）。"
+    description = "打开工具箱面板（JSON 格式化 / 文本对比 / Unix 时间戳转换 等常用小工具）。"
     default_risk = RiskLevel.L0_READONLY
 
     def openai_schema(self) -> dict:

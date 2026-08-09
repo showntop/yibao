@@ -946,9 +946,10 @@ onUnmounted(() => {
   flex-shrink: 0;
   padding: var(--yb-space-3) var(--yb-space-5) var(--yb-space-4);
 }
-/* 气泡内容限宽：AI 左 / 用户右自然交替，窄窗 70%、宽窗封顶 640px（可读又饱满） */
+/* 气泡内容限宽：AI 左 / 用户右自然交替；fit-content 由 Bubble 自身管，这里只封顶长内容。
+ * 旧 min(70%, 640px) 在窄对话栏下压太狠，让短文本（"打开工具箱"）也被挤两行。 */
 .bubbles :deep(.bubble) {
-  max-width: min(70%, 640px);
+  max-width: min(88%, 720px);
 }
 /* 无气泡 AI 主文：放宽到 760px（主回复更舒展，结构化卡在 plain 层内） */
 .bubbles :deep(.bubble.plain) {
@@ -961,10 +962,12 @@ onUnmounted(() => {
   background: var(--yb-surface-border);
   border-radius: var(--yb-radius-pill);
 }
-/* 「⇢ 协作」关联气泡：拟 AI 气泡但可点击，accent 细边 + hover 上浮（派生入口） */
+/* 「⇢ 协作」关联气泡：拟 AI 气泡但可点击，accent 细边 + hover 上浮（派生入口）
+ * fit-content：短标题"⇢ 正在和「xxx」协作 展开 ›"按内容收缩，不被窄栏撑两行。 */
 .assoc {
   align-self: flex-start;
-  max-width: 88%;
+  width: fit-content;
+  max-width: 92%;
   display: inline-flex;
   align-items: center;
   gap: var(--yb-space-2);

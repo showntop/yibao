@@ -44,6 +44,9 @@ const html = computed(() => (props.role === "ai" && !props.typing ? renderMarkdo
 .bubble {
   padding: var(--yb-space-2) var(--yb-space-3);
   border-radius: var(--yb-radius-md);
+  /* fit-content：短文本按内容收缩不撑满容器（避免窄栏下"打开工具箱"被截成两行）；
+     max-width 仍是长内容的上限。 */
+  width: fit-content;
   max-width: 88%;
   font-size: var(--yb-fs-lg);
   line-height: var(--yb-lh-base);

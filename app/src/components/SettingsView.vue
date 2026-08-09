@@ -867,6 +867,15 @@ onUnmounted(() => {
   scrollbar-width: thin;
   animation: fade-in 0.2s var(--yb-ease-out) both;
 }
+/* 大屏：分组卡 2 列网格，避免右侧大面积空白；窄屏单列左对齐 */
+@media (min-width: 1100px) {
+  .s-scroll {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-content: start;
+    column-gap: var(--yb-space-4);
+  }
+}
 .s-scroll::-webkit-scrollbar {
   width: 7px;
 }
@@ -874,12 +883,11 @@ onUnmounted(() => {
   background: var(--yb-border-strong);
   border-radius: var(--yb-radius-pill);
 }
-/* 分组卡：系统设置语言——实白 + hairline + 小圆角。
-   左对齐而非居中：内容区已被分类目录挤窄，再居中会整体偏右。 */
+/* 分组卡：实白 + hairline + 小圆角。大屏 grid 双列自动填充，无右侧孤立空白。 */
 .s-group {
   box-sizing: border-box;
   width: 100%;
-  max-width: 620px;
+  max-width: 760px;
   display: flex;
   flex-direction: column;
   gap: var(--yb-space-3);
@@ -1247,7 +1255,7 @@ textarea:focus {
 .s-actions {
   box-sizing: border-box;
   width: 100%;
-  max-width: 620px;
+  max-width: 760px;
   display: flex;
   align-items: center;
   justify-content: flex-end;

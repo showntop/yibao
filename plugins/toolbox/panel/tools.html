@@ -7,13 +7,32 @@
 <meta charset="utf-8">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  /* 配色对齐译宝主题（tokens.css 语义色，slate + sky 蓝 accent）：
+     浅色为默认，深色走 prefers-color-scheme 跟随系统 */
   :root {
-    --bg: #f6f1ea; --card: #ffffff; --border: #eee4d6; --border-soft: #f3ecdf;
-    --text: #3f372e; --muted: #a89a86; --faint: #c9bcab;
-    --accent: #ff8a5c; --accent-deep: #f2703f; --accent-soft: #fff0e8;
-    --green-bg: #dcf0e2; --green: #3e8e5a; --green-bar: #8fd0a6;
-    --red-bg: #fce7e3; --red: #c0574b; --red-bar: #f0aaa1;
+    --bg: #f0f4f8; --card: #ffffff;
+    --border: rgba(148, 170, 195, 0.22); --border-soft: #edf1f6; --border-strong: #d3dce7;
+    --text: #3d4a5c; --muted: #6b7c8f; --faint: #a5b2c2;
+    --accent: #4a88c0; --accent-deep: #3a74ab; --accent-soft: rgba(74, 136, 192, 0.12);
+    --segment-track: #e3eaf2;
+    --green-bg: #e6f4ea; --green: #3e8e5a; --green-bar: #8fd0a6;
+    --red-bg: #fdecea; --red: #c0574b; --red-bar: #f0aaa1;
+    --warn-bg: #fdf3e0; --warn: #b98a2f;
+    --toast-bg: rgba(61, 74, 92, 0.94);
     --mono: 12.5px/1.6 "SF Mono", ui-monospace, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #10161d; --card: #18212b;
+      --border: rgba(255, 255, 255, 0.09); --border-soft: rgba(255, 255, 255, 0.06); --border-strong: rgba(255, 255, 255, 0.18);
+      --text: #dbe4ee; --muted: #93a3b6; --faint: #6d7f93;
+      --accent: #5ea0d2; --accent-deep: #4d90c4; --accent-soft: rgba(77, 144, 196, 0.22);
+      --segment-track: rgba(255, 255, 255, 0.1);
+      --green-bg: rgba(62, 142, 90, 0.2); --green: #8fd0a6; --green-bar: #6fbf8e;
+      --red-bg: rgba(192, 87, 75, 0.2); --red: #f0aaa1; --red-bar: #e38a80;
+      --warn-bg: rgba(185, 138, 47, 0.18); --warn: #f0b25c;
+      --toast-bg: rgba(219, 228, 238, 0.92);
+    }
   }
   html, body { height: 100%; }
   body {
@@ -24,26 +43,26 @@
   .hidden { display: none !important; }
   #page-json, #page-diff { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 
-  /* ---- 分段控制器 ---- */
+  /* ---- 分段控制器（主题 segment 同款：track 石板 + 选中白卡/深卡） ---- */
   .seg {
     display: inline-flex; gap: 2px; padding: 3px; margin-bottom: 14px;
-    background: #eae1d3; border-radius: 11px;
+    background: var(--segment-track); border-radius: 11px;
   }
   .seg button {
-    border: none; background: transparent; color: #8a7a66; cursor: pointer;
+    border: none; background: transparent; color: var(--muted); cursor: pointer;
     border-radius: 8px; padding: 5px 18px; font-size: 12.5px; font-weight: 500;
     transition: all .15s ease;
   }
   .seg button:hover { color: var(--text); }
   .seg button.on {
-    background: #fff; color: var(--accent-deep); font-weight: 600;
-    box-shadow: 0 1px 3px rgba(90, 70, 50, .15);
+    background: var(--card); color: var(--accent-deep); font-weight: 600;
+    box-shadow: 0 1px 3px rgba(45, 60, 80, .15);
   }
 
   /* ---- 卡片 ---- */
   .card {
     background: var(--card); border: 1px solid var(--border); border-radius: 14px;
-    box-shadow: 0 1px 2px rgba(90, 70, 50, .04), 0 6px 16px rgba(90, 70, 50, .05);
+    box-shadow: 0 1px 2px rgba(45, 60, 80, .04), 0 6px 16px rgba(45, 60, 80, .05);
     overflow: hidden; margin-bottom: 10px;
   }
   .card-head {
@@ -90,13 +109,13 @@
   button.act:hover { background: var(--accent-deep); }
   button.act:active { transform: scale(.97); }
   button.ghost {
-    background: transparent; color: #8a7a66; border: 1px solid #e3d7c4;
+    background: transparent; color: var(--muted); border: 1px solid var(--border);
     box-shadow: none; font-weight: 500;
   }
-  button.ghost:hover { background: #faf3ea; color: var(--text); border-color: #d8c9b2; }
+  button.ghost:hover { background: var(--accent-soft); color: var(--accent-deep); border-color: var(--border-strong); }
   .opt { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
   .opt select {
-    border: 1px solid #e3d7c4; border-radius: 8px; background: #fff; color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--text);
     font-size: 12px; padding: 3px 6px; outline: none;
   }
   .opt input[type="checkbox"] { accent-color: var(--accent); }
@@ -108,7 +127,7 @@
     border-radius: 11px; padding: 8px 12px; margin-bottom: 10px;
     font-size: 12.5px; line-height: 1.5;
   }
-  .banner.err { background: #fdecea; color: var(--red); border: 1px solid #f5d5d0; }
+  .banner.err { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-bar); }
   .banner.err::before { content: "⚠"; flex: none; }
 
   /* ---- 统计徽章 ---- */
@@ -116,8 +135,8 @@
   .chip { border-radius: 999px; padding: 2px 11px; font-size: 12px; font-weight: 600; }
   .chip.add { background: var(--green-bg); color: var(--green); }
   .chip.del { background: var(--red-bg); color: var(--red); }
-  .chip.eq { background: #e9f3ec; color: var(--green); }
-  .chip.warn { background: #fdf3e0; color: #b98a2f; }
+  .chip.eq { background: var(--green-bg); color: var(--green); }
+  .chip.warn { background: var(--warn-bg); color: var(--warn); }
 
   .cols { display: flex; gap: 10px; flex: 1; min-height: 0; }
   .cols > .card { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -128,10 +147,24 @@
   /* ---- toast ---- */
   #toast {
     position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%) translateY(8px);
-    background: rgba(63, 55, 46, .92); color: #fff; font-size: 12px;
+    background: var(--toast-bg); color: var(--card); font-size: 12px;
     padding: 6px 16px; border-radius: 999px; opacity: 0; pointer-events: none;
     transition: all .2s ease;
   }
+
+  /* ---- Unix 时间戳 ---- */
+  #page-ts { flex: 1; display: flex; flex-direction: column; min-height: 0; gap: 10px; }
+  .ts-now { display: flex; align-items: baseline; gap: 6px; padding: 10px 12px; flex-wrap: wrap; }
+  .ts-num { font: var(--mono); font-size: 13px; font-weight: 600; color: var(--accent-deep); }
+  .ts-local { color: var(--text); font-size: 12.5px; }
+  .ts-dot { color: var(--faint); margin: 0 3px; }
+  .ts-out { padding: 4px 12px 10px; display: flex; flex-direction: column; }
+  .ts-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--border-soft); }
+  .ts-row:last-child { border-bottom: 0; }
+  .ts-k { flex: none; width: 78px; font-size: 11.5px; color: var(--muted); }
+  .ts-v { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12px; }
+  .ts-v + button.mini { flex: none; }
+  #ts-in { font-family: var(--mono); font-size: 12.5px; }
   #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 </style>
 </head>
@@ -139,6 +172,7 @@
 <div class="seg">
   <button id="tab-json" class="on">JSON 格式化</button>
   <button id="tab-diff">文本对比</button>
+  <button id="tab-ts">时间戳</button>
 </div>
 
 <!-- JSON -->
@@ -200,6 +234,47 @@
   <div class="chips" id="diff-stat"></div>
 </div>
 
+<!-- Unix 时间戳 -->
+<div id="page-ts" class="hidden">
+  <div class="card">
+    <div class="card-head">当前时间 <span class="muted">实时</span>
+      <span class="spacer"></span>
+      <button class="mini" id="ts-copy-now-s">复制秒</button>
+      <button class="mini" id="ts-copy-now-ms">复制毫秒</button>
+    </div>
+    <div class="ts-now">
+      <span id="ts-now-s" class="ts-num"></span><span class="hint">秒</span>
+      <span class="ts-dot">·</span>
+      <span id="ts-now-ms" class="ts-num"></span><span class="hint">毫秒</span>
+      <span class="ts-dot">·</span>
+      <span id="ts-now-local" class="ts-local"></span>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head">转换 <span class="muted">秒/毫秒/ISO/可读 自动识别</span></div>
+    <div class="editor" style="flex: none; height: auto; min-height: 0;">
+      <textarea id="ts-in" rows="2" spellcheck="false"
+        placeholder="1736342400 或 2025-01-08T16:00:00Z"></textarea>
+    </div>
+    <div class="toolbar">
+      <button class="act" id="ts-run">转换</button>
+      <button class="act ghost" id="ts-fill-now">填入当前时间</button>
+      <span class="spacer"></span>
+      <span class="hint">输入即转</span>
+    </div>
+  </div>
+  <div class="banner err hidden" id="ts-err"></div>
+  <div class="card hidden" id="ts-out-card">
+    <div class="card-head">结果</div>
+    <div class="ts-out">
+      <div class="ts-row"><span class="ts-k">秒</span><span class="ts-v" id="ts-o-s"></span><button class="mini" data-copy="ts-o-s">复制</button></div>
+      <div class="ts-row"><span class="ts-k">毫秒</span><span class="ts-v" id="ts-o-ms"></span><button class="mini" data-copy="ts-o-ms">复制</button></div>
+      <div class="ts-row"><span class="ts-k">ISO (UTC)</span><span class="ts-v" id="ts-o-iso"></span><button class="mini" data-copy="ts-o-iso">复制</button></div>
+      <div class="ts-row"><span class="ts-k">本地可读</span><span class="ts-v" id="ts-o-local"></span><button class="mini" data-copy="ts-o-local">复制</button></div>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -237,11 +312,73 @@
     tool = t;
     $("tab-json").className = t === "json" ? "on" : "";
     $("tab-diff").className = t === "diff" ? "on" : "";
-    t === "json" ? show($("page-json")) : hide($("page-json"));
-    t === "diff" ? show($("page-diff")) : hide($("page-diff"));
+    $("tab-ts").className = t === "timestamp" ? "on" : "";
+    $("page-json").className = t === "json" ? "" : "hidden";
+    $("page-diff").className = t === "diff" ? "" : "hidden";
+    $("page-ts").className = t === "timestamp" ? "" : "hidden";
   }
   $("tab-json").addEventListener("click", function () { showTab("json"); });
   $("tab-diff").addEventListener("click", function () { showTab("diff"); });
+  $("tab-ts").addEventListener("click", function () { showTab("timestamp"); });
+
+  // ---- Unix 时间戳：当前时间实时刷新 + 输入即转（纯前端，无需后端） ----
+  var tsTimer = null;
+  function tickTs() {
+    var t = Date.now();
+    $("ts-now-s").textContent = String(Math.floor(t / 1000));
+    $("ts-now-ms").textContent = String(t);
+    $("ts-now-local").textContent = new Date(t).toLocaleString("zh-CN", { hour12: false });
+  }
+  tickTs();
+  tsTimer = setInterval(tickTs, 1000);
+
+  // 解析输入：10 位=秒 / 13 位=毫秒 / 其他数字按秒；否则按 ISO/可读日期
+  function tsParse(v) {
+    v = v.trim();
+    if (/^\d+$/.test(v)) {
+      var n = parseInt(v, 10);
+      var d = v.length === 13 ? new Date(n) : new Date(n * 1000);
+      return isNaN(d.getTime()) ? null : d;
+    }
+    var d = new Date(v);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  function renderTs(d) {
+    $("ts-o-s").textContent = String(Math.floor(d.getTime() / 1000));
+    $("ts-o-ms").textContent = String(d.getTime());
+    $("ts-o-iso").textContent = d.toISOString();
+    $("ts-o-local").textContent = d.toLocaleString("zh-CN", { hour12: false });
+    show($("ts-out-card"));
+  }
+  function runTs() {
+    hide($("ts-err"));
+    var v = $("ts-in").value;
+    var d = tsParse(v);
+    if (!d) {
+      $("ts-err").textContent = "无法解析：应为 10 位秒 / 13 位毫秒 / ISO 8601 / 可读日期";
+      show($("ts-err"));
+      hide($("ts-out-card"));
+      return;
+    }
+    renderTs(d);
+  }
+  $("ts-run").addEventListener("click", runTs);
+  $("ts-in").addEventListener("input", runTs);
+  $("ts-in").addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); runTs(); }
+  });
+  $("ts-fill-now").addEventListener("click", function () {
+    $("ts-in").value = String(Math.floor(Date.now() / 1000));
+    runTs(); toast("已填入当前时间（秒）");
+  });
+  $("ts-copy-now-s").addEventListener("click", function () { copyText(String(Math.floor(Date.now() / 1000))); });
+  $("ts-copy-now-ms").addEventListener("click", function () { copyText(String(Date.now())); });
+  document.querySelectorAll("[data-copy]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var el = $(btn.getAttribute("data-copy"));
+      if (el && el.textContent) copyText(el.textContent);
+    });
+  });
 
   // ---- 编辑框内替换文本（尽量走 insertText 保留撤销栈）----
   function replaceText(ta, text) {
@@ -397,7 +534,9 @@
   document.addEventListener("keydown", function (e) {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
-      tool === "json" ? runJson("pretty") : runDiff();
+      if (tool === "json") runJson("pretty");
+      else if (tool === "diff") runDiff();
+      else runTs();
     }
   });
 
@@ -420,7 +559,7 @@
   // 避免覆盖用户后续编辑。
   window.yibao.onInit(function (data) {
     if (!data || !data.tool) return;
-    showTab(data.tool === "diff" ? "diff" : "json");
+    showTab(data.tool === "diff" ? "diff" : data.tool === "timestamp" ? "timestamp" : "json");
     if (data.tool === "json") {
       var cur = $("json-in").value;
       if (typeof data.output === "string" && data.output &&
@@ -438,6 +577,19 @@
       if (typeof data.new === "string" && taNew.value === "") { taNew.value = data.new; updNew(); }
       if (data.lines && taOld.value === (data.old || "") && taNew.value === (data.new || "")) {
         renderDiff(data); // 内容未偏离才画高亮，否则丢掉过时结果
+      }
+    } else if (data.tool === "timestamp") {
+      // 对话流带结果回显：输入未偏离才填入，避免覆盖用户后续编辑
+      if (typeof data.input === "string" &&
+          ($("ts-in").value === "" || $("ts-in").value === data.input)) {
+        $("ts-in").value = data.input;
+      }
+      if (data.seconds) {
+        $("ts-o-s").textContent = data.seconds;
+        $("ts-o-ms").textContent = data.millis;
+        $("ts-o-iso").textContent = data.iso;
+        $("ts-o-local").textContent = data.local;
+        show($("ts-out-card"));
       }
     }
   });

@@ -227,8 +227,8 @@ onMounted(() => {
 <template>
   <div class="data-page">
     <div class="d-scroll">
-      <!-- 感知日志：让用户看到、逐条删、全部清空 -->
-      <section class="s-group">
+      <!-- 感知日志：让用户看到、逐条删、全部清空（长列表——大屏下横跨 2 列宽度） -->
+      <section class="s-group is-wide">
         <div class="s-group-title">感知日志<template v-if="perceptionItems.length"> · {{ perceptionItems.length }}</template></div>
         <div v-if="perceptionLoaded && !perceptionAvailable" class="s-note">感知存储不可用；总开关会保持关闭。</div>
         <div v-else-if="perceptionLoaded && !perceptionItems.length" class="s-note">
@@ -264,7 +264,7 @@ onMounted(() => {
       </section>
 
       <!-- 记忆管理（「它记得我什么」：按命名空间列出，可单条删除/编辑；彻底清空走下方清空区） -->
-      <section class="s-group">
+      <section class="s-group is-wide">
         <div class="s-group-title">记忆管理<template v-if="memLoaded && memItems.length"> · {{ memItems.length }}</template></div>
         <div v-if="memFailed" class="s-note">长期记忆不可用（本次运行记不住事）——检查模型配置或重启译宝。</div>
         <div v-else-if="!memReady" class="s-note">
@@ -384,12 +384,23 @@ onMounted(() => {
   background: var(--yb-border-strong);
   border-radius: var(--yb-radius-pill);
 }
+/* 大屏：双列网格（清空与文件放第 2 列），长列表 .is-wide 横跨 2 列——
+ * 既填充大屏空间，又不让感知日志/记忆管理在窄列里被压成竖条 */
+@media (min-width: 1100px) {
+  .d-scroll {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-content: start;
+    column-gap: var(--yb-space-4);
+  }
+  .d-scroll > .s-group.is-wide { grid-column: 1 / -1; }
+}
 
 /* ---- 以下与 SettingsView 共用同一套 s-*（复制副本，保证视觉一致）---- */
 .s-group {
   box-sizing: border-box;
   width: 100%;
-  max-width: 620px;
+  max-width: 760px;
   display: flex;
   flex-direction: column;
   gap: var(--yb-space-3);

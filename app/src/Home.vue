@@ -28,6 +28,39 @@ const leftRailOpen = ref(true);
 const rightRailOpen = ref(true);
 const clockNow = ref(new Date());
 const productNote = "让信息自然归位。";
+
+// ---- 主题（顶栏切换按钮；三态：light / dark / system，与系统偏好对齐） ----
+type ThemeMode = "light" | "dark" | "system";
+const theme = ref<ThemeMode>(((localStorage.getItem("yibao-theme") as ThemeMode) || "system"));
+function applyTheme(v: ThemeMode) {
+  if (v === "system") {
+    delete document.documentElement.dataset.theme;
+    localStorage.removeItem("yibao-theme");
+  } else {
+    document.documentElement.dataset.theme = v;
+    localStorage.setItem("yibao-theme", v);
+  }
+}
+watch(theme, applyTheme);
+// 实际生效：system 跟随系统，light/dark 显式
+const themeEffective = computed<"light" | "dark">(() => {
+  if (theme.value === "system") return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  return theme.value;
+});
+// 图标 = 点击后要去到的主题（macOS 约定）：深色显示太阳（点击变亮）、浅色显示月亮（点击变暗）。
+// 不随状态显示 sliders——那会和设置按钮图标混淆。
+const themeIcon = computed(() => themeEffective.value === "dark" ? "sun" : "moon");
+const themeTitle = computed(() => {
+  const eff = themeEffective.value === "dark" ? "深色" : "浅色";
+  if (theme.value === "system") return `主题：跟随系统（当前${eff}）· 点击切换`;
+  return `主题：${theme.value === "dark" ? "深色" : "浅色"} · 点击切换`;
+});
+function cycleTheme() {
+  // light → dark → system → light；system 固定到当前反色，不产生无效点击
+  if (theme.value === "light") theme.value = "dark";
+  else if (theme.value === "dark") theme.value = "light";
+  else theme.value = themeEffective.value === "dark" ? "light" : "dark";
+}
 const weatherNote = "晴 · 26°";
 let clockTimer: number | null = null;
 
@@ -277,8 +310,12 @@ function close() {
             <YbIcon name="search" :size="15" />
             <kbd class="tb-kbd">⌘K</kbd>
           </button>
+          <button class="tb-btn" :class="{ 'tb-theme-auto': theme === 'system' }" :title="themeTitle" :aria-label="themeTitle" @click="cycleTheme">
+            <YbIcon :name="themeIcon" :size="15" />
+            <i v-if="theme === 'system'" class="tb-theme-dot" aria-hidden="true"></i>
+          </button>
           <button class="tb-btn" :class="{ on: tab === 'settings' }" title="设置 (⌘,)" @click="navigate('settings')">
-            <YbIcon name="gear" :size="15" />
+            <YbIcon name="sliders" :size="15" />
           </button>
           <button class="tb-btn" title="收起为小窗" @click="close">
             <YbIcon name="dumpling" :size="15" />
@@ -503,6 +540,7 @@ function close() {
 .activity-pill > i { width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; background: var(--yb-success); }
 .activity-pill.busy > i { background: var(--yb-accent); box-shadow: 0 0 0 4px rgba(var(--yb-c-sky-rgb), 0.1); }
 .tb-btn {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -516,6 +554,17 @@ function close() {
   font-family: inherit;
   cursor: pointer;
   transition: all var(--yb-dur-fast) var(--yb-ease-out);
+}
+/* 主题「跟随系统」角标：右上小圆点提示 auto，避免与固定浅/深混淆 */
+.tb-theme-dot {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--yb-accent);
+  box-shadow: 0 0 0 1.5px var(--yb-bg);
 }
 .tb-btn:hover {
   background: var(--yb-row-hover);
