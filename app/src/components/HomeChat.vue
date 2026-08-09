@@ -260,10 +260,20 @@ function onStatus(m: BrainStatusMsg) {
 }
 
 async function submit(text: string) {
+  // AI 正在生成/播报时主按钮是"打断"（stopping），不会走到这里；
+  // 兜底：若 state 异常卡 busy（无响应/卡 think），提示用户可打断而非静默失效
+  if (busy.value) {
+    pushWarn("AI 正在回复中——想发新消息请先点「停止」打断");
+    return;
+  }
   bubbles.value.push({ role: "user", text });
   state.value = "think";
   try {
-    await runInput(text, "pet");
+    // 15s 超时兜底：runInput invoke 挂起会让 state 一直卡 think（主按钮变"打断"，发不出新消息）
+    await Promise.race([
+      runInput(text, "pet"),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error("大脑响应超时")), 15000)),
+    ]);
   } catch (err) {
     pushWarn("发送失败：" + String(err));
     state.value = "idle";
