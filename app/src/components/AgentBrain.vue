@@ -210,21 +210,7 @@ function onWordLeave() {
   tipTimer = setTimeout(() => { hoverTip.value = null; }, 130);
 }
 
-// ---- 粒子技能球：按插件分布在大脑周围 4 个位置（绕轨道）----
-const ORBIT_POS: { top: number; left: number }[] = [
-  { top: 40, left: 7 },    // 左
-  { top: 3, left: 50 },    // 上
-  { top: 40, left: 93 },   // 右
-  { top: 74, left: 84 },   // 右下（避开角色）
-];
-function orbitStyle(i: number) {
-  const p = ORBIT_POS[i % 4];
-  return { top: p.top + "%", left: p.left + "%" };
-}
-function skillInitial(name: string): string {
-  const ch = name.trim().charAt(0);
-  return ch ? ch.toUpperCase() : "·";
-}
+/** 技能点击 → 让 AI 打开它（技能 = AI 的"手"，展示在下方，不放脑部）。 */
 function launchSkill(p: PluginInfo) {
   emit("chat", `打开${p.name}面板`);
 }
@@ -278,23 +264,13 @@ const SEEDS = Array.from({ length: 6 }, () => ({
           :style="{ left: s.x + 'px', top: s.y + 'px', animationDelay: s.delay + 's', animationDuration: s.dur + 's' }"
         />
       </div>
-      <!-- 角色本体（在大脑球中央偏下，z 最高，台词气泡在下方） -->
+      <!-- 角色本体（从穹顶底部长出，z 最高，台词气泡在下方） -->
       <div class="brain-core" @click="onAgentClick">
         <Avatar :state="state" :size="68" />
         <transition name="say-line">
           <span v-if="line" class="say-line">{{ line }}</span>
         </transition>
       </div>
-      <!-- 轨道（虚线圆环）+ 粒子技能球（绕轨道） -->
-      <div class="brain-orbit" />
-      <button
-        v-for="(p, i) in plugins"
-        :key="p.id"
-        class="orbit-ball"
-        :style="orbitStyle(i)"
-        :title="p.name"
-        @click="launchSkill(p)"
-      >{{ skillInitial(p.name) }}</button>
     </div>
 
     <div class="agent-name">译宝</div>
@@ -318,6 +294,14 @@ const SEEDS = Array.from({ length: 6 }, () => ({
         <span>技能</span>
         <b class="yb-num">{{ loaded ? plugins.length : "…" }}</b>
       </div>
+    </div>
+
+    <!-- 技能（AI 的"手"）：入口 chips 展示在下方，不放脑部 -->
+    <div v-if="plugins.length" class="agent-skills">
+      <button v-for="p in plugins.slice(0, 5)" :key="p.id" class="ag-skill" @click="launchSkill(p)">
+        {{ p.name }}
+      </button>
+      <span v-if="plugins.length > 5" class="ag-more">+{{ plugins.length - 5 }}</span>
     </div>
 
     <!-- 今日和你的对话：人格化数字面板 -->
@@ -536,44 +520,37 @@ const SEEDS = Array.from({ length: 6 }, () => ({
   50% { opacity: 0.7; transform: scale(1.2); }
 }
 
-/* ---- 轨道（虚线圆环）+ 粒子技能球 ---- */
-.brain-orbit {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 192px;
-  height: 192px;
-  transform: translate(-50%, -50%);
-  border: 1px dashed rgba(var(--yb-c-sky-rgb), 0.22);
-  border-radius: 50%;
-  pointer-events: none;
-  animation: orbit-spin 80s linear infinite;
+/* ---- 技能入口（AI 的"手"）：chips 展示在下方 ---- */
+.agent-skills {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
+  margin-top: 4px;
 }
-@keyframes orbit-spin { to { transform: translate(-50%, -50%) rotate(360deg); } }
-.orbit-ball {
-  position: absolute;
-  width: 22px;
-  height: 22px;
-  display: grid;
-  place-items: center;
-  border: none;
-  border-radius: 50%;
-  background: var(--yb-accent);
-  color: #fff;
-  font-size: 10px;
-  font-weight: var(--yb-fw-bold);
-  font-family: var(--yb-font);
-  box-shadow:
-    0 0 0 3px var(--yb-content-bg),
-    0 0 0 4px rgba(var(--yb-c-sky-rgb), 0.25),
-    0 0 10px rgba(var(--yb-c-sky-rgb), 0.45);
+.ag-skill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border: 1px dashed var(--yb-card-border);
+  border-radius: var(--yb-radius-sm);
+  background: var(--yb-surface-2);
+  color: var(--yb-accent-deep);
+  font-size: var(--yb-fs-xs);
+  font-family: inherit;
   cursor: pointer;
-  transform: translate(-50%, -50%);
-  transition: transform var(--yb-dur-fast) var(--yb-ease-out);
-  z-index: 3;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
-.orbit-ball:hover {
-  transform: translate(-50%, -50%) scale(1.12);
+.ag-skill:hover {
+  border-color: var(--yb-accent);
+  border-style: solid;
+  background: var(--yb-accent-soft);
+}
+.ag-more {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--yb-fs-xs);
+  color: var(--yb-text-faint);
 }
 
 /* ---- 名字与状态 ---- */
