@@ -7,6 +7,7 @@
 //   父 → iframe：{src:"yibao-host", type:"init", data}       面板事件 data（iframe 加载完成 & data 变更时推）
 // 父侧只做命名空间粗筛（method 须以当前面板插件 id 开头）+ event.source 校验；L2 确认条由 PanelApp 闭环。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { invoke } from "@tauri-apps/api/core";
 import { onBrainEvent, panelAction, type BrainEvent } from "../lib/brain";
 
 const props = defineProps<{
@@ -102,6 +103,16 @@ function onMessage(ev: MessageEvent) {
   if (!d || d.src !== "yibao-webview" || typeof d.id !== "number") return;
   const bid = d.id;
   const method = typeof d.method === "string" ? d.method : "";
+  // native: 旁路：iframe 无 Tauri IPC，白名单内的原生能力（目前仅 pick_folder 文件夹选择器）
+  // 不经 sidecar 直调 Tauri 命令。白名单严格限定——不放开任意原生命令透传。
+  const NATIVE = new Set(["native:pick_folder"]);
+  if (NATIVE.has(method)) {
+    const cmd = method.slice("native:".length); // "pick_folder"
+    invoke(cmd, (d.params as Record<string, unknown>) ?? {})
+      .then((r) => replyToIframe({ id: bid, ok: true, result: r }))
+      .catch((err) => replyToIframe({ id: bid, ok: false, error: String(err) }));
+    return;
+  }
   const prefix = props.panel.split(":")[0] + ".";
   if (!method.startsWith(prefix)) {
     replyToIframe({ id: bid, ok: false, error: `方法须以 ${prefix} 开头：${method || "(空)"}` });
