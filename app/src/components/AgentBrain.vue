@@ -104,13 +104,25 @@ async function refreshMem() {
 // ---- 今日数字（统计对话/记忆/完成）----
 async function refreshFeedStats() {
   try {
-    const s = await invoke<FeedStats>("get_feed_stats", { days: 1 });
-    stats.value = s;
+    // 空值保护：invoke 可能返回 null/缺字段——一旦置空 stats，AgentBrain 渲染
+    // 会抛 TypeError（$setup.stats.done_24h），进而拖崩整个 HomeChat 组件树（输入框失效）
+    const s = await invoke<FeedStats | null>("get_feed_stats", { days: 1 });
+    if (s && typeof s === "object") {
+      stats.value = {
+        pending_reminders: Number(s.pending_reminders) || 0,
+        running_tasks: Number(s.running_tasks) || 0,
+        done_24h: Number(s.done_24h) || 0,
+        unread: Number(s.unread) || 0,
+        ignored: Number(s.ignored) || 0,
+      };
+    }
   } catch { /* 大脑不在线/超时忽略 */ }
   try {
-    const r = await invoke<{ items: { kind: string; ts: number }[]; stats: FeedStats }>("get_feed", { limit: 200 });
-    const startOfToday = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
-    todayChats.value = r.items.filter((it) => it.ts >= startOfToday).length;
+    const r = await invoke<{ items?: { kind: string; ts: number }[] } | null>("get_feed", { limit: 200 });
+    if (r && Array.isArray(r.items)) {
+      const startOfToday = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
+      todayChats.value = r.items.filter((it) => it.ts >= startOfToday).length;
+    }
   } catch { /* 忽略 */ }
 }
 const todayNewMems = computed(() => {
@@ -317,7 +329,7 @@ const SEEDS = Array.from({ length: 6 }, () => ({
       <div class="at-title">今天和你的对话</div>
       <div class="at-grid">
         <div class="at-cell" title="今日完成的任务">
-          <b class="yb-num">{{ stats.done_24h }}</b>
+          <b class="yb-num">{{ stats?.done_24h ?? 0 }}</b>
           <span>完成</span>
         </div>
         <div class="at-cell" title="今日对话条数">
