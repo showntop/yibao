@@ -6,12 +6,12 @@
      按事件 kind ACCUMULATE 到 #log，不能用 data 整体替换）。
      桥 JS 由父侧注入（提供 window.yibao.invoke/onInit），本文件不自带。
 
-     v1 离线约束：共享 webview（WebviewPanel.vue）注入 CSP
-     （default-src 'none'; script-src 'unsafe-inline'），完全屏蔽 CDN 脚本——
-     Monaco 在线懒加载实际永不可达，无论联网与否。因此 v1 文件改动卡片恒走降级路径：
-     Edit 推 old/new 时显示纯文本 diff（行级 LCS）；Write/MultiEdit 仅推 new 时显示纯文本内容；
-     runner 未推内容时显示"修改：path"说明。完整 Monaco diff 须后续将 Monaco 打包进 panel 资源
-     （绕开 CSP）。工具调用卡片折叠展示 input 的 JSON（Read/Bash/Grep 等的参数）。 -->
+     文件改动 diff：内建行级 LCS 着色，卡片默认展开（共享 webview 注入的 CSP
+     default-src 'none' 屏蔽一切外部脚本，故不依赖任何 CDN 资源）。
+     Edit 推 old/new → 着色 diff + 头行 +x/-y 统计；Write 仅推 new → 全文按新增着色；
+     MultiEdit 的 new 为 edits JSON → 逐段 old_string→new_string diff（解析失败退回原文本）；
+     runner 未推内容 → 仅显示"修改：path"说明。工具调用卡片折叠展示 input 的 JSON
+     （Read/Bash/Grep 等的参数）。 -->
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
@@ -110,7 +110,7 @@
     content: " ✓"; color: var(--green); font-weight: 600; font-size: 11px;
   }
 
-  /* 文件改动 / 工具调用卡片（v1 单列；Monaco 加载后内嵌） */
+  /* 文件改动 / 工具调用卡片（v1 单列） */
   .card {
     max-width: 86%; background: var(--card); border: 1px solid var(--border);
     border-radius: var(--r-md); overflow: hidden; box-shadow: var(--shadow-card);
@@ -149,9 +149,21 @@
     min-height: 1.6em;
   }
   .card-body .dl.s { color: var(--muted); }
-  .card-body .dl.d { background: var(--red-bg); box-shadow: inset 3px 0 var(--red-bar); color: var(--red); }
-  .card-body .dl.a { background: var(--green-bg); box-shadow: inset 3px 0 var(--green-bar); color: var(--green); }
-  .card-body .monaco-host { height: 320px; border-top: 1px solid var(--line); }
+  /* diff 行着色（配色对齐现有 --green/--red/--muted 变量）：新增绿底 / 删除红底+删除线 / 上下文灰 */
+  .card-body .dl.diff-add { background: var(--green-bg); box-shadow: inset 3px 0 var(--green-bar); color: var(--green); }
+  .card-body .dl.diff-del { background: var(--red-bg); box-shadow: inset 3px 0 var(--red-bar); color: var(--red); text-decoration: line-through; }
+  .card-body .dl.diff-ctx { color: var(--muted); }
+  /* MultiEdit 段头（第 N 处） */
+  .card-body .seg-head { font: var(--mono); color: var(--muted); padding: 6px 12px 0 18px; }
+  /* 文件改动卡头行：✎ path +x -y tool（默认展开无折叠钮；chrome 对齐 card-head） */
+  .edit-head {
+    padding: 7px 11px; background: var(--surface-2); border-bottom: 1px solid var(--line);
+    font: var(--mono); font-size: 12px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .edit-head .add { color: var(--green); }
+  .edit-head .del { color: var(--red); }
+  .edit-head .tool-tag { opacity: .55; font-size: 11px; }
 
   /* 思考块（thinking 事件）：淡色斜体小块，挂 assistant 气泡内 */
   .think-block {
@@ -367,11 +379,6 @@
   var streaming = false;       // 流式进行中（invoke 返回 → done/error）；为 true 时锁定「新对话」
   var discardedSessions = {};  // 被「新对话」抛弃的 session_id → true 集合；防陈旧流块污染新对话
 
-  // Monaco 状态：pending → ready/failed（singleton Promise 保证只加载一次）
-  var monacoStatus = "pending";
-  var monacoPromise = null;
-  var monacoNS = null;
-
   // ============================================================
   //   工具函数
   // ============================================================
@@ -468,38 +475,18 @@
     scrollIfAtBottom();
   }
 
-  // ---- 文件改动卡片（折叠/展开） ----
+  // ---- 文件改动卡片（默认展开：头行 ✎ path +x -y tool + 着色 LCS diff 体） ----
   function appendFileEdit(ev) {
     var path = ev.path || "(未知路径)";
     var tool = ev.tool || "";
-    var card = document.createElement("div");
-    card.className = "card fileedit";
-
-    var head = document.createElement("div");
-    head.className = "card-head";
-    head.innerHTML =
-      '<span class="ic">✎</span>' +
-      '<span class="lbl">修改</span>' +
-      '<span class="path" title="' + esc(path) + '">' + esc(path) + '</span>' +
-      (tool ? '<span class="tool">' + esc(tool) + '</span>' : '') +
-      '<span class="spacer"></span>' +
-      '<button type="button" class="mini toggle">展开</button>';
 
     var body = document.createElement("div");
-    body.className = "card-body collapsed";
+    body.className = "card-body open";
+    var stats = populateFileEditBody(body, ev);  // 渲染体并返回 +a/-d 统计（无可统计内容时 null）
 
-    head.querySelector(".toggle").addEventListener("click", function () {
-      var willOpen = body.classList.contains("collapsed");
-      body.classList.toggle("collapsed");
-      body.classList.toggle("open", willOpen);
-      head.querySelector(".toggle").textContent = willOpen ? "收起" : "展开";
-      if (willOpen && !body.dataset.populated) {
-        body.dataset.populated = "1";
-        populateFileEditBody(body, ev);
-      }
-    });
-
-    card.appendChild(head);
+    var card = document.createElement("div");
+    card.className = "card fileedit";
+    card.appendChild(editHeader(path, tool, stats));
     card.appendChild(body);
 
     var row = document.createElement("div");
@@ -509,29 +496,85 @@
     scrollIfAtBottom();
   }
 
-  function populateFileEditBody(body, ev) {
-    if (ev.old != null && ev.new != null) {
-      // Edit：有前后内容 → 上 Monaco diff（CDN 不可达降级为纯文本 LCS diff）
-      setStatus("加载 Monaco…");
-      ensureMonaco().then(function (ok) {
-        if (ok) renderMonacoDiff(body, ev);
-        else renderTextDiff(body, ev.old, ev.new);
-      });
-    } else if (ev.new != null) {
-      // Write / MultiEdit：只有新内容（无 old 可 diff）→ 纯文本展示
-      renderPlainContent(body, ev.new);
-    } else {
-      // runner 未推送内容 → 仅显示路径说明
-      var note = document.createElement("div");
-      note.className = "note";
-      note.textContent =
-        "仅记录改动路径（runner 未推送 old/new）；" + toolHint(ev.tool) +
-        "后续 runner 推送内容后此处自动展示。";
-      body.appendChild(note);
-    }
+  // 头行：✎ path +a -d tool（stats 为 null 时不显示统计段；path 省略时 title 兜底全路径）
+  function editHeader(path, tool, stats) {
+    var h = document.createElement("div");
+    h.className = "edit-head";
+    h.title = path || "";
+    h.innerHTML = "✎ " + esc(path || "(未知文件)") +
+      (stats ? " <span class=\"add\">+" + stats.a + "</span> <span class=\"del\">-" + stats.d + "</span>" : "") +
+      " <span class=\"tool-tag\">" + esc(tool || "") + "</span>";
+    return h;
   }
 
-  // 纯文本内容展示（Write 全量新文件 / MultiEdit 的 edits JSON）
+  // 渲染 diff 体并返回统计：Edit（有 old+new）→ LCS 着色 diff；Write（仅 new）→ 全文新增；
+  // MultiEdit（仅 new，为 edits JSON）→ 逐段 old_string→new_string LCS，解析失败退回原文本；
+  // runner 未推内容 → 仅路径说明。无统计意义时返回 null。
+  function populateFileEditBody(body, ev) {
+    if (ev.old != null && ev.new != null) {
+      var ops = lcsLines(ev.old, ev.new);
+      renderDiffOps(body, ops);
+      return diffStats(ops);
+    }
+    if (ev.new != null) {
+      if (ev.tool === "MultiEdit") {
+        var edits = tryParseEdits(ev.new);
+        if (edits) return renderMultiEdit(body, edits);
+        renderPlainContent(body, ev.new);  // JSON 解析失败 → 原文本兜底
+        return null;
+      }
+      return renderWriteNew(body, ev.new);
+    }
+    // runner 未推送内容 → 仅显示路径说明
+    var note = document.createElement("div");
+    note.className = "note";
+    note.textContent =
+      "仅记录改动路径（runner 未推送 old/new）；" + toolHint(ev.tool) +
+      "后续 runner 推送内容后此处自动展示。";
+    body.appendChild(note);
+    return null;
+  }
+
+  // Write 全文新增：所有行 diff-add；统计 +行数/-0
+  function renderWriteNew(body, text) {
+    var lines = String(text == null ? "" : text).split("\n");
+    if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();  // 末尾换行不产生幻影空行
+    var frag = document.createDocumentFragment();
+    lines.forEach(function (ln) {
+      var div = document.createElement("div");
+      div.className = "dl diff-add";
+      div.textContent = ln || " ";
+      frag.appendChild(div);
+    });
+    body.appendChild(frag);
+    return { a: lines.length, d: 0 };
+  }
+
+  // MultiEdit：逐段渲染 old_string→new_string 的 LCS diff（每段带头行「第 N 处」）；返回合计统计
+  function renderMultiEdit(body, edits) {
+    var total = { a: 0, d: 0 };
+    edits.forEach(function (e, idx) {
+      var sh = document.createElement("div");
+      sh.className = "seg-head";
+      sh.textContent = "第 " + (idx + 1) + " 处";
+      body.appendChild(sh);
+      var ops = lcsLines(e && e.old_string, e && e.new_string);
+      renderDiffOps(body, ops);
+      var st = diffStats(ops);
+      total.a += st.a; total.d += st.d;
+    });
+    return total;
+  }
+
+  // MultiEdit 的 new 是 edits 数组的 JSON 字符串；防御性解析，非数组/解析失败返回 null
+  function tryParseEdits(text) {
+    try {
+      var arr = JSON.parse(text);
+      return Array.isArray(arr) ? arr : null;
+    } catch (e) { return null; }
+  }
+
+  // 纯文本内容展示（MultiEdit JSON 解析失败的兜底）
   function renderPlainContent(body, text) {
     var lines = String(text == null ? "" : text).split("\n");
     var frag = document.createDocumentFragment();
@@ -549,55 +592,10 @@
     return "工具：" + tool + "。";
   }
 
-  function renderMonacoDiff(body, ev) {
-    var host = document.createElement("div");
-    host.className = "monaco-host";
-    body.appendChild(host);
-    try {
-      var lang = guessLangFromPath(ev.path);
-      var orig = monacoNS.editor.createModel(String(ev.old), lang);
-      var modi = monacoNS.editor.createModel(String(ev.new), lang);
-      var diff = monacoNS.editor.createDiffEditor(host, {
-        readOnly: true,
-        renderSideBySide: true,
-        automaticLayout: true,
-        minimap: { enabled: false },
-        scrollBeyondLastLine: false,
-      });
-      diff.setModel({ original: orig, modified: modi });
-      setStatus("");
-    } catch (e) {
-      // Monaco 报错也算降级路径，绝不崩
-      host.remove();
-      renderTextDiff(body, ev.old, ev.new);
-      setStatus("Monaco 渲染失败，已降级文本 diff", true);
-    }
-  }
-
-  // 路径扩展名 → Monaco 语言 id（粗映射，缺省纯文本）
-  function guessLangFromPath(p) {
-    var ext = (String(p || "").match(/\.([a-z0-9]+)$/i) || [])[1];
-    if (!ext) return "text/plain";
-    ext = ext.toLowerCase();
-    var map = {
-      js: "javascript", jsx: "javascript", mjs: "javascript",
-      ts: "typescript", tsx: "typescript",
-      py: "python", rb: "ruby", go: "go", rs: "rust", java: "java",
-      kt: "kotlin", swift: "swift", php: "php", c: "c", h: "c",
-      cpp: "cpp", cc: "cpp", hpp: "cpp", cs: "csharp",
-      html: "html", htm: "html", css: "css", scss: "scss", less: "less",
-      json: "json", xml: "xml", yaml: "yaml", yml: "yaml",
-      toml: "ini", ini: "ini", md: "markdown", markdown: "markdown",
-      sh: "shell", bash: "shell", zsh: "shell",
-      sql: "sql", vue: "html", svelte: "html",
-    };
-    return map[ext] || "text/plain";
-  }
-
-  // 行级 LCS diff → 渲染为带背景色的纯文本（Monaco 不可用时的兜底）
-  function renderTextDiff(body, oldText, newText) {
-    var A = String(oldText).split("\n");
-    var B = String(newText).split("\n");
+  // 行级 LCS diff → 操作序列 [{t:"s"|"d"|"a", s:行文本}]（s=上下文 d=删除 a=新增）
+  function lcsLines(oldText, newText) {
+    var A = String(oldText == null ? "" : oldText).split("\n");
+    var B = String(newText == null ? "" : newText).split("\n");
     var n = A.length, m = B.length;
     // dp[i][j] = A[i:] 与 B[j:] 的 LCS 长度
     var dp = new Array(n + 1);
@@ -619,11 +617,26 @@
     }
     for (; i < n; i++) out.push({ t: "d", s: A[i] });
     for (; j < m; j++) out.push({ t: "a", s: B[j] });
+    return out;
+  }
 
+  // 操作序列 → {a,d} 行数统计
+  function diffStats(ops) {
+    var a = 0, d = 0;
+    ops.forEach(function (r) {
+      if (r.t === "a") a++;
+      else if (r.t === "d") d++;
+    });
+    return { a: a, d: d };
+  }
+
+  // 操作序列 → 着色行（diff-add 绿底 / diff-del 红底删除线 / diff-ctx 灰）
+  function renderDiffOps(body, ops) {
+    var cls = { s: "diff-ctx", d: "diff-del", a: "diff-add" };
     var frag = document.createDocumentFragment();
-    out.forEach(function (r) {
+    ops.forEach(function (r) {
       var div = document.createElement("div");
-      div.className = "dl " + r.t;
+      div.className = "dl " + cls[r.t];
       div.textContent = r.s || " ";
       frag.appendChild(div);
     });
@@ -717,49 +730,6 @@
       if (u.cost_usd != null) parts.push("$" + u.cost_usd.toFixed(3));
     }
     setStatus(parts.join(" · "));
-  }
-
-  // ============================================================
-  //   Monaco 懒加载（singleton；失败永久降级，不重复打 CDN）
-  // ============================================================
-  function ensureMonaco() {
-    if (monacoPromise) return monacoPromise;
-    monacoPromise = new Promise(function (resolve) {
-      if (monacoStatus === "ready") return resolve(true);
-      if (monacoStatus === "failed") return resolve(false);
-
-      var loaderSrc = "https://cdn.jsdelivr.net/npm/monaco-editor/min/vs/loader.js";
-      var s = document.createElement("script");
-      s.src = loaderSrc;
-      s.async = true;
-
-      // 10s 超时：CDN 慢/挂直接降级，不让用户干等
-      var to = setTimeout(function () {
-        if (monacoStatus === "pending") { monacoStatus = "failed"; resolve(false); }
-      }, 10000);
-
-      s.onerror = function () {
-        clearTimeout(to);
-        if (monacoStatus === "pending") { monacoStatus = "failed"; resolve(false); }
-      };
-      s.onload = function () {
-        clearTimeout(to);
-        var req = window.require;
-        if (!req || !req.config) { monacoStatus = "failed"; resolve(false); return; }
-        req.config({ paths: { vs: "https://cdn.jsdelivr.net/npm/monaco-editor/min/vs" } });
-        req(["vs/editor/editor.main"], function () {
-          monacoNS = window.monaco;
-          if (!monacoNS) { monacoStatus = "failed"; resolve(false); return; }
-          monacoStatus = "ready";
-          resolve(true);
-        }, function (err) {
-          monacoStatus = "failed";
-          resolve(false);
-        });
-      };
-      document.head.appendChild(s);
-    });
-    return monacoPromise;
   }
 
   // ============================================================
