@@ -11,7 +11,7 @@
 type IconName =
   | "clock" | "chat" | "gear" | "spinner" | "check" | "x" | "stop"
   | "lock" | "pin" | "doc" | "alert" | "inbox" | "sparkle" | "plug"
-  | "dumpling" | "mic" | "wave" | "thumb-up" | "thumb-down" | "search";
+  | "dumpling" | "mic" | "wave" | "thumb-up" | "thumb-down" | "search" | "expand";
 
 withDefaults(
   defineProps<{
@@ -75,6 +75,8 @@ const paths: Record<IconName, string> = {
   // 放大镜（命令面板搜索等）
   search:
     '<circle cx="11" cy="11" r="6.5"/><path d="M15.8 15.8 20.5 20.5"/>',
+  expand:
+    '<path d="M8.5 4.5h-4v4M15.5 4.5h4v4M8.5 19.5h-4v-4M19.5 15.5v4h-4"/><path d="M4.8 8.2 9 4M15 4l4.2 4.2M4.8 15.8 9 20M15 20l4.2-4.2"/>',
 };
 </script>
 
