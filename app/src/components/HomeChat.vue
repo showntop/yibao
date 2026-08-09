@@ -335,7 +335,8 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="chat-page">
+  <!-- thinking：AI 思考时对话区泛紫微光（与左栏大脑转紫呼应） -->
+  <div class="chat-page" :class="{ thinking: state === 'think' }">
     <SetupWizard v-if="setupNeeded" :model="setupCfg.model" :base-url="setupCfg.baseUrl" :voice="setupCfg.voice" @saved="onSetupSaved" />
 
     <!-- 三栏 AI 工作台：智能体（大脑+记忆词云）｜ 对话 ｜ AI 进程 -->
@@ -411,6 +412,15 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   background: var(--yb-content-bg);
+}
+/* AI 思考：对话区泛紫微光（与 AgentBrain think 光晕呼应，有"在思考"氛围） */
+.chat-page.thinking {
+  background:
+    radial-gradient(90% 60% at 50% 30%, rgba(142, 124, 240, 0.05), transparent 65%),
+    var(--yb-content-bg);
+}
+.chat-page.thinking .chat-main {
+  transition: background var(--yb-dur-slow) var(--yb-ease-out);
 }
 /* 三栏工作台：智能体（左）｜对话（中）｜AI 进程（右） */
 .chat-cols {

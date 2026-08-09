@@ -196,11 +196,30 @@ function burstAt(x: number, y: number) {
 
 /** 点记忆词 → 词位置粒子爆散 + 带完整记忆进对话。 */
 function ask(w: MemWord, e: MouseEvent) {
-  // brain 200px 容器中心 = (100, 100)；词偏移相对中心
   const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
   const brainRect = (e.currentTarget as HTMLElement).closest(".brain")!.getBoundingClientRect();
   burstAt(rect.left - brainRect.left + rect.width / 2, rect.top - brainRect.top + rect.height / 2);
   emit("chat", `关于「${w.full.length > 40 ? w.full.slice(0, 40) + "…" : w.full}」：`);
+}
+
+// ---- hover 浮层：显示完整记忆（比 title 精致，位置智能防溢出）----
+const hoverTip = ref<{ text: string; x: number; y: number; below: boolean } | null>(null);
+let tipTimer: ReturnType<typeof setTimeout> | null = null;
+function onWordEnter(w: MemWord, e: MouseEvent) {
+  if (tipTimer !== null) clearTimeout(tipTimer);
+  const el = e.currentTarget as HTMLElement;
+  const rect = el.getBoundingClientRect();
+  const brainRect = el.closest(".brain")!.getBoundingClientRect();
+  hoverTip.value = {
+    text: w.full,
+    x: Math.min(150, Math.max(50, rect.left - brainRect.left + rect.width / 2)),
+    y: Math.min(150, Math.max(50, rect.top - brainRect.top + rect.height / 2)),
+    below: rect.top - brainRect.top + rect.height / 2 < 88,
+  };
+}
+function onWordLeave() {
+  if (tipTimer !== null) clearTimeout(tipTimer);
+  tipTimer = setTimeout(() => { hoverTip.value = null; }, 130);
 }
 
 /** 技能点击 → 让 AI 打开它。 */
@@ -243,10 +262,18 @@ const SEEDS = Array.from({ length: 6 }, () => ({
           class="mem-word"
           :class="`t${w.tone}`"
           :style="{ fontSize: w.size + 'px' }"
-          :title="w.full"
+          @mouseenter="onWordEnter(w, $event)"
+          @mouseleave="onWordLeave"
           @click="ask(w, $event)"
         >{{ w.text }}</button>
       </span>
+      <!-- hover 浮层：完整记忆卡 -->
+      <div
+        v-if="hoverTip"
+        class="mem-tip"
+        :class="{ below: hoverTip.below }"
+        :style="{ left: hoverTip.x + 'px', top: hoverTip.y + 'px' }"
+      >{{ hoverTip.text }}</div>
       <!-- 角色本体（呼吸核心），点击说台词 -->
       <div class="brain-core" @click="onAgentClick">
         <Avatar :state="state" :size="76" />
@@ -425,6 +452,30 @@ const SEEDS = Array.from({ length: 6 }, () => ({
     transform: translate(calc(-50% + var(--wx)), calc(-50% + var(--wy))) scale(1);
     opacity: 0.55;
   }
+}
+
+/* ---- hover 浮层：完整记忆卡 ---- */
+.mem-tip {
+  position: absolute;
+  z-index: 3;
+  max-width: 176px;
+  padding: 6px 10px;
+  border-radius: var(--yb-radius-sm);
+  background: var(--yb-card-bg);
+  border: 1px solid var(--yb-surface-border);
+  box-shadow: var(--yb-shadow-2);
+  color: var(--yb-text);
+  font-size: var(--yb-fs-sm);
+  line-height: 1.45;
+  pointer-events: none;
+  transform: translate(-50%, calc(-100% - 10px));
+  animation: tip-in 0.14s var(--yb-ease-out);
+}
+.mem-tip.below {
+  transform: translate(-50%, 12px);
+}
+@keyframes tip-in {
+  from { opacity: 0; }
 }
 
 /* ---- 点击粒子爆散：词炸成星尘向外飞 + 淡出 ---- */

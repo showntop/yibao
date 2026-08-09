@@ -71,6 +71,13 @@ function toggleGroup(key: string) {
   else s.add(key);
   collapsed.value = s;
 }
+const allCollapsed = ref(false);
+function toggleAll() {
+  allCollapsed.value = !allCollapsed.value;
+  collapsed.value = allCollapsed.value
+    ? new Set(feedGroups.value.map((g) => g.key))
+    : new Set();
+}
 const feedGroups = computed(() => {
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 1000;
@@ -217,7 +224,11 @@ onUnmounted(() => {
 
     <!-- 动态：按天分组，组头可折叠 -->
     <section class="cp-block cp-feed">
-      <div class="cp-title"><YbIcon name="inbox" :size="12" />动态 <span v-if="unreadCount" class="cp-count">{{ unreadCount }}</span></div>
+      <div class="cp-title">
+        <YbIcon name="inbox" :size="12" />动态
+        <span v-if="unreadCount" class="cp-count">{{ unreadCount }}</span>
+        <button v-if="feedGroups.length" class="cp-all" @click="toggleAll">{{ allCollapsed ? "全部展开" : "全部收起" }}</button>
+      </div>
       <div v-if="feedGroups.length" class="cp-feed-list">
         <div v-for="g in feedGroups" :key="g.key" class="cp-feed-group">
           <button class="cp-feed-head" @click="toggleGroup(g.key)">
@@ -493,6 +504,23 @@ onUnmounted(() => {
   margin-left: auto;
   font-size: var(--yb-fs-xs);
   color: var(--yb-text-faint);
+}
+/* 全部展开/收起 */
+.cp-all {
+  margin-left: auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--yb-accent-deep);
+  font-size: var(--yb-fs-xs);
+  font-family: inherit;
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: 0;
+  transition: color var(--yb-dur-fast) var(--yb-ease-out);
+}
+.cp-all:hover {
+  color: var(--yb-accent);
 }
 .cp-feed-row {
   display: flex;
