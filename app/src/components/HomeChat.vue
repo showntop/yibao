@@ -96,9 +96,6 @@ const busy = computed(() =>
   state.value === "work" || state.value === "say",
 );
 const suggestions = SUGGESTIONS;
-// 人格化欢迎语：每次打开换一句（AI 有"性格"而非固定文案）
-const WELCOMES = ["叫我做什么都行～", "今天想从哪件开始？", "我在呢，说说你要啥"];
-const welcome = computed(() => WELCOMES[Math.floor(Math.random() * WELCOMES.length)]);
 const missingPerms = computed(() => perms.value !== null && (!perms.value.ax || !perms.value.screen || !perms.value.input));
 // 「正在输入」占位：run 受理（think）到首个 chunk 之间气泡流还是空的，用三点呼吸占位
 const showTyping = computed(() => state.value === "think" && streamingIdx.value === null);
@@ -339,9 +336,9 @@ onUnmounted(() => {
   <div class="chat-page" :class="{ thinking: state === 'think' }">
     <SetupWizard v-if="setupNeeded" :model="setupCfg.model" :base-url="setupCfg.baseUrl" :voice="setupCfg.voice" @saved="onSetupSaved" />
 
-    <!-- 三栏 AI 工作台：智能体（大脑+记忆词云）｜ 对话 ｜ AI 进程 -->
+    <!-- 三栏 AI 工作台：智能体（玻璃大脑+词云）｜对话｜AI 进程 -->
     <div v-else class="chat-cols">
-    <!-- 左：智能体（人格化核心：角色 + 记忆词云） -->
+    <!-- 左：智能体（人格化核心） -->
     <AgentBrain :state="state" @chat="onInfoChat" />
 
     <div class="chat-main">
@@ -350,7 +347,7 @@ onUnmounted(() => {
     <div class="bubbles" ref="bubblesRef">
       <div v-if="!bubbles.length && !showTyping" class="empty-hint">
         <div class="eh-glow"><Avatar :state="state" :size="64" /></div>
-        <p class="eh-title">{{ welcome }}</p>
+        <p class="eh-title">叫我做什么都行～</p>
         <p class="eh-sub">整理会议纪要 · 规划今日 · 记住你的偏好</p>
         <div class="chips">
           <button v-for="c in suggestions" :key="c" class="chip" @click="submit(c)">{{ c }}</button>
@@ -393,7 +390,7 @@ onUnmounted(() => {
             <Bubble role="ai" text="" typing />
           </div>
         </template>
-      </div>
+    </div>
 
     <div class="input-slot">
       <InputBar :busy="busy" :listening="state === 'listen'" :draft="draftRef" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
@@ -412,15 +409,6 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   background: var(--yb-content-bg);
-}
-/* AI 思考：对话区泛紫微光（与 AgentBrain think 光晕呼应，有"在思考"氛围） */
-.chat-page.thinking {
-  background:
-    radial-gradient(90% 60% at 50% 30%, rgba(142, 124, 240, 0.05), transparent 65%),
-    var(--yb-content-bg);
-}
-.chat-page.thinking .chat-main {
-  transition: background var(--yb-dur-slow) var(--yb-ease-out);
 }
 /* 三栏工作台：智能体（左）｜对话（中）｜AI 进程（右） */
 .chat-cols {
@@ -446,6 +434,25 @@ onUnmounted(() => {
     display: none;
   }
 }
+/* AI 思考：对话区泛紫微光（与 AgentBrain think 光晕呼应） */
+.chat-page.thinking {
+  background:
+    radial-gradient(90% 60% at 50% 30%, rgba(142, 124, 240, 0.05), transparent 65%),
+    var(--yb-content-bg);
+}
+/* AI 消息行：角色头像 + 气泡（人格化：团子本尊在说话） */
+.ai-line {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  align-self: flex-start;
+  max-width: 100%;
+}
+.ai-ava {
+  flex-shrink: 0;
+  margin-bottom: 2px;
+  opacity: 0.92;
+}
 .bubbles {
   flex: 1;
   min-height: 0;
@@ -467,19 +474,6 @@ onUnmounted(() => {
 /* 气泡内容限宽：AI 左 / 用户右自然交替，窄窗 70%、宽窗封顶 640px（可读又饱满） */
 .bubbles :deep(.bubble) {
   max-width: min(70%, 640px);
-}
-/* AI 消息行：角色头像 + 气泡（人格化：团子本尊在说话） */
-.ai-line {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  align-self: flex-start;
-  max-width: 100%;
-}
-.ai-ava {
-  flex-shrink: 0;
-  margin-bottom: 2px;
-  opacity: 0.92;
 }
 .bubbles::-webkit-scrollbar {
   width: 6px;
