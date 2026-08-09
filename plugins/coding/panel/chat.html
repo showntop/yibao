@@ -1208,6 +1208,7 @@
     window.yibao.invoke("coding.history", { id: sid }).then(function (r) {
       if (currentSession) discardedSessions[currentSession] = true;
       currentSession = sid;
+      delete discardedSessions[sid]; // 恢复的目标会话必须出黑名单——否则它自己的流全被「陈旧会话」过滤器吞掉，面板锁死
       currentBubble = null;
       lastToolCard = null;   // #log 清空后旧卡已 detach，防 tool_result 落进不可见节点（同 newChat）
       streaming = false;
