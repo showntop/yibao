@@ -334,18 +334,26 @@ onUnmounted(() => unlisten?.());
 .rail-tabs button { flex: 1; padding: 4px 2px; border: 0; border-radius: 7px; background: transparent; color: var(--yb-text-dim); font: inherit; font-size: var(--yb-fs-xs); cursor: pointer; }
 .rail-tabs button.active { background: var(--yb-segment-thumb); color: var(--yb-text); box-shadow: var(--yb-shadow-1); }
 .rail-tabs span { color: var(--yb-text-faint); font-size: 10px; }
-.rail-timeline { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 4px 12px 18px; scrollbar-width: thin; }
+/* 时间线：流式条目（hairline 分隔），无 box 卡片感。AI 段裸文字、User 轻量气泡、Activity 紧凑行 */
+.rail-timeline { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; padding: 2px 14px 18px; scrollbar-width: thin; }
+.rail-timeline > * { padding: 8px 0; border-top: 1px solid var(--yb-card-row-line); }
+.rail-timeline > *:first-child { border-top: 0; padding-top: 4px; }
 .rail-empty { margin: auto; padding: 20px; display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--yb-text-faint); font-size: var(--yb-fs-xs); text-align: center; }
-.rail-message { max-width: 92%; padding: 7px 9px; border-radius: var(--yb-radius-md); font-size: var(--yb-fs-md); line-height: var(--yb-lh-base); white-space: pre-wrap; }
-.rail-message.user { align-self: flex-end; background: var(--yb-user-bg); color: var(--yb-text); border-bottom-right-radius: 5px; }
-.rail-message.assistant { align-self: flex-start; padding-left: 2px; color: var(--yb-text); }
-.rail-activity { width: 100%; flex-shrink: 0; display: flex; align-items: flex-start; gap: 8px; padding: 8px; border: 1px solid var(--yb-card-border); border-radius: var(--yb-radius-sm); background: var(--yb-card-bg); color: var(--yb-text); font: inherit; text-align: left; cursor: pointer; }
-.rail-activity:hover { border-color: rgba(var(--yb-c-sky-rgb), 0.28); background: var(--yb-row-hover); }
-.activity-icon { width: 21px; height: 21px; flex-shrink: 0; display: grid; place-items: center; border-radius: 50%; background: var(--yb-success-soft); color: var(--yb-success); }
+/* 消息：base 裸文字行；user 追加小气泡，assistant 加大行高像在"读"的内容 */
+.rail-message { max-width: 100%; padding: 0; font-size: 13.5px; line-height: 1.7; white-space: pre-wrap; color: var(--yb-text); }
+.rail-message.user { align-self: flex-end; max-width: 88%; padding: 7px 12px; border-radius: 14px; background: var(--yb-user-bg); border-bottom-right-radius: 5px; }
+.rail-message.assistant { align-self: flex-start; }
+/* Activity：去 box 卡片化；左侧 2px 状态竖条 + 图标 + 文字，像 activity 流的 item */
+.rail-activity { width: 100%; flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 4px 4px 4px 12px; border: 0; border-left: 2px solid var(--yb-border-base); border-radius: 0; background: transparent; color: var(--yb-text-dim); font: inherit; text-align: left; font-size: 12.5px; cursor: pointer; transition: background var(--yb-dur-fast) var(--yb-ease-out); }
+.rail-activity:hover { background: var(--yb-row-hover); }
+.rail-activity.running { border-left-color: var(--yb-accent); }
+.rail-activity.success { border-left-color: var(--yb-success); }
+.rail-activity.failed { border-left-color: var(--yb-danger); }
+.activity-icon { width: 18px; height: 18px; flex-shrink: 0; display: grid; place-items: center; border-radius: 50%; background: var(--yb-success-soft); color: var(--yb-success); }
 .rail-activity.running .activity-icon { background: var(--yb-accent-soft); color: var(--yb-accent); }
 .rail-activity.failed .activity-icon { background: var(--yb-danger-soft); color: var(--yb-danger); }
-.activity-copy { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.activity-copy small { color: var(--yb-text-faint); font-size: 10px; }
+.activity-copy { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.activity-copy small { color: var(--yb-text-faint); font-size: 10.5px; }
 .activity-copy strong { font-size: var(--yb-fs-xs); font-weight: var(--yb-fw-medium); line-height: var(--yb-lh-base); }
 .activity-copy > span { margin-top: 4px; color: var(--yb-text-dim); font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
 </style>
