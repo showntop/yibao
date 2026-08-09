@@ -4,10 +4,19 @@ import { getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
 
 /* 译宝 · 天青鹅蛋角色：立体光影 + 小手 + 天线（兼状态灯）。
  *
+ * 【组件定位：宠物形象】
+ * 这是译宝的「宠物/角色」本体（用于宠物窗 + 左栏身份头部），与「顶栏产品
+ * logo（阴阳鱼 src-tauri/icons/icon.png）」明确分离：品牌=产品，角色=宠物。
+ *
+ * 扩展性：
+ * - `character` prop 预留多角色（默认 "tuanzi" = 天青鹅蛋）。后续要支持猫狗等
+ *   宠物形象时，只需在内部按 character 切换 body/face 渲染即可，不必改 API。
+ * - 当前实现只渲染天青鹅蛋；character 字段接入但不消费。
+ *
  * 十态：idle/listen/think/work/say + 短暂 valence（success/error）；
  * 环境态：notify（有事找你：招手+「!」徽标）/ drowsy（发呆：垂眼+Zz）
  * / stretch（久坐做操：弯眼笑+双臂上举，一次性 squash-stretch，由 flashState 触发）。
- * size：常态球 64 / 聊天头部 44 / 列表与侧边栏 24–36。
+ * size：常态球 64 / 聊天头部 44 / 列表与侧边栏 24–36 / 身份头像 48。
  * 保留 click/longpress/drag 手势状态机。
  *
  * ── 几何：为什么坐标看起来「不是整数」 ─────────────────────────
@@ -35,8 +44,14 @@ const props = withDefaults(
     compact?: boolean;
     /** 感知观察中叠加点：右上角青白小点，独立于 state 编码通道 */
     observing?: boolean;
+    /**
+     * 宠物形象：默认 "tuanzi"（天青鹅蛋）。后续支持多角色时（如 cat/dog），
+     * 在此字段上加分支切换 body/face 渲染即可，调用方 API 不变。
+     * 当前为预留字段，未消费（无视觉差异）。
+     */
+    character?: string;
   }>(),
-  { size: 64 },
+  { size: 64, character: "tuanzi" },
 );
 const emit = defineEmits<{
   (e: "click"): void;

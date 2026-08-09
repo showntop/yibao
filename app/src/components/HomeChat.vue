@@ -10,8 +10,7 @@ import InputBar from "./InputBar.vue";
 import Bubble from "./Bubble.vue";
 import PermissionsBanner from "./PermissionsBanner.vue";
 import SetupWizard from "./SetupWizard.vue";
-import SessionList from "./SessionList.vue";
-import AgentBrain from "./AgentBrain.vue";
+import BrainSession from "./BrainSession.vue";
 import HomeContextPanel from "./HomeContextPanel.vue";
 import {
   onBrainEvent,
@@ -68,8 +67,8 @@ function onInfoChat(d: string) {
   void nextTick(() => (draftRef.value = d));
 }
 
-// ---- 会话列表（左一栏）：标题/预览随对话更新；切换会话保存/恢复气泡（内存 map）----
-const sessionRef = ref<InstanceType<typeof SessionList> | null>(null);
+// ---- 会话（左复合栏）：标题/预览随对话更新；切换会话保存/恢复气泡（内存 map）----
+const sessionRef = ref<InstanceType<typeof BrainSession> | null>(null);
 const sessionBubbles = new Map<string, typeof bubbles.value>(); // 会话 id → 气泡快照（内存）
 let currentSessionId = "";
 let sessionStarted = false; // 当前会话是否已有首条用户消息（决定是否生成标题）
@@ -375,12 +374,11 @@ onUnmounted(() => {
   <div class="chat-page" :class="{ thinking: state === 'think' }">
     <SetupWizard v-if="setupNeeded" :model="setupCfg.model" :base-url="setupCfg.baseUrl" :voice="setupCfg.voice" @saved="onSetupSaved" />
 
-    <!-- 四栏 AI 工作台：会话｜智能体（内心）｜对话｜AI 进程 -->
+    <!-- 三栏 AI 工作台：内心+会话（复合栏）｜对话｜AI 进程 -->
+    <!-- 用 wrapper div 包左/右栏：scoped CSS 才能命中（直接 class 加在子组件根会因 scope 不匹配而失效） -->
     <div v-else class="chat-cols">
-    <!-- 左一：会话列表（历史侧栏） -->
-    <SessionList ref="sessionRef" class="col-session" @new-chat="onSessionNew" @select="onSessionSelect" @active="onSessionActive" />
-    <!-- 左二：智能体（人格化核心） -->
-    <AgentBrain class="col-agent" :state="state" @chat="onInfoChat" />
+    <!-- 左：内心 + 会话 复合栏（tab 切换：AgentBrain 人格展示 / SessionList 历史导航） -->
+    <div class="col-left"><BrainSession ref="sessionRef" :state="state" @chat="onInfoChat" @select="onSessionSelect" @active="onSessionActive" @new-chat="onSessionNew" /></div>
 
     <div class="chat-main">
     <PermissionsBanner v-if="missingPerms && perms" :perms="perms" />
@@ -439,7 +437,7 @@ onUnmounted(() => {
     </div>
 
     <!-- 右：AI 进程（此刻 / 待批 / 动态 / 回顾 / 插件入口） -->
-    <HomeContextPanel @chat="onInfoChat" />
+    <div class="col-context"><HomeContextPanel @chat="onInfoChat" /></div>
     </div>
   </div>
 </template>
@@ -451,7 +449,7 @@ onUnmounted(() => {
   flex-direction: column;
   background: var(--yb-content-bg);
 }
-/* 四栏工作台：会话（左一）｜智能体（左二）｜对话（中）｜AI 进程（右） */
+/* 三栏工作台：内心+会话（左）｜对话（中）｜AI 进程（右） */
 .chat-cols {
   flex: 1;
   min-height: 0;
@@ -465,14 +463,9 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
 }
-/* 宽屏全展开；逐档收栏（会话 < 智能体 < 进程 < 对话）保证对话区始终可用 */
-@media (max-width: 1560px) {
-  .chat-cols > .col-agent {
-    display: none;
-  }
-}
+/* 宽屏全展开；逐档收栏（左复合栏 < 右进程 < 对话）保证对话区始终可用 */
 @media (max-width: 1180px) {
-  .chat-cols > .col-session {
+  .chat-cols > .col-left {
     display: none;
   }
 }

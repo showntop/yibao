@@ -1,10 +1,4 @@
 <script setup lang="ts">
-/* SessionList — 会话列表（左一栏）：AI 原生工作台的"历史侧栏"。
- *
- * 会话 = 前端元数据（id/title/preview/updatedAt），localStorage 持久化。
- * 新建 / 切换 / 删除，当前会话高亮；标题由首条用户消息自动生成。
- * 气泡内容持久化（load_session）属 Phase 4（需后端扩展），本栏只管元数据流。
- */
 import { ref } from "vue";
 import YbIcon from "./YbIcon.vue";
 
@@ -22,43 +16,39 @@ const sessions = ref<SessionMeta[]>(load());
 const activeId = ref(localStorage.getItem(ACTIVE_KEY) ?? sessions.value[0]?.id ?? "");
 
 const emit = defineEmits<{
-  select: [id: string];   // 选中会话
-  newChat: [];            // 新建
-  active: [id: string];   // 当前会话 id 变化
+  select: [id: string];
+  newChat: [];
+  active: [id: string];
 }>();
 
 function load(): SessionMeta[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     const list = raw ? JSON.parse(raw) : [];
-    return Array.isArray(list) ? list.filter((s) => s && typeof s.id === "string") : [];
+    return Array.isArray(list) ? list.filter((item) => item && typeof item.id === "string") : [];
   } catch {
     return [];
   }
 }
+
 function persist() {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions.value.slice(0, 60)));
-  } catch { /* 存储满/隐私模式忽略 */ }
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions.value.slice(0, 60))); } catch { /* storage unavailable */ }
 }
 
-/** 供父组件调用：更新当前会话的标题/预览（首条消息生成标题，回复更新预览）。 */
 function updateCurrent(partial: { title?: string; preview?: string }) {
-  const s = sessions.value.find((x) => x.id === activeId.value);
-  if (!s) return;
-  if (partial.title !== undefined) s.title = partial.title;
-  if (partial.preview !== undefined) s.preview = partial.preview;
-  s.updatedAt = Date.now();
-  persist();
-  // 移到列表顶部（最近会话置顶）
-  const idx = sessions.value.indexOf(s);
-  if (idx > 0) {
-    sessions.value.splice(idx, 1);
-    sessions.value.unshift(s);
+  const session = sessions.value.find((item) => item.id === activeId.value);
+  if (!session) return;
+  if (partial.title !== undefined) session.title = partial.title;
+  if (partial.preview !== undefined) session.preview = partial.preview;
+  session.updatedAt = Date.now();
+  const index = sessions.value.indexOf(session);
+  if (index > 0) {
+    sessions.value.splice(index, 1);
+    sessions.value.unshift(session);
   }
+  persist();
 }
 
-/** 新对话：创建会话 + 置当前 + 清空气泡（父组件处理）。 */
 function newChat() {
   const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   sessions.value.unshift({ id, title: "新对话", preview: "", updatedAt: Date.now() });
@@ -69,15 +59,16 @@ function newChat() {
   emit("active", id);
 }
 
-function select(s: SessionMeta) {
-  if (s.id === activeId.value) return;
-  activeId.value = s.id;
-  localStorage.setItem(ACTIVE_KEY, s.id);
-  emit("select", s.id);
+function select(session: SessionMeta) {
+  if (session.id === activeId.value) return;
+  activeId.value = session.id;
+  localStorage.setItem(ACTIVE_KEY, session.id);
+  emit("select", session.id);
+  emit("active", session.id);
 }
 
 function remove(id: string) {
-  sessions.value = sessions.value.filter((x) => x.id !== id);
+  sessions.value = sessions.value.filter((item) => item.id !== id);
   persist();
   if (activeId.value === id) {
     activeId.value = sessions.value[0]?.id ?? "";
@@ -87,238 +78,306 @@ function remove(id: string) {
 }
 
 function fmtTime(ts: number): string {
-  const d = new Date(ts);
+  const date = new Date(ts);
   const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  if (d.toDateString() === now.toDateString()) return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1}/${d.getDate()}`;
-  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
+  const pad = (value: number) => String(value).padStart(2, "0");
+  if (date.toDateString() === now.toDateString()) return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (date.toDateString() === yesterday.toDateString()) return "昨天";
+  if (date.getFullYear() === now.getFullYear()) return `${date.getMonth() + 1}/${date.getDate()}`;
+  return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
 }
 
-defineExpose({ updateCurrent, newChat });
+defineExpose({ updateCurrent, newChat, sessions });
 </script>
 
 <template>
   <aside class="session">
-    <div class="s-head">
-      <span class="s-head-title">会话</span>
-      <button class="s-new" title="新对话" @click="newChat">
-        <YbIcon name="chat" :size="13" />
+    <header class="echo-head">
+      <div>
+        <span class="echo-kicker">会话</span>
+        <span class="echo-count">{{ sessions.length ? `${sessions.length} 条` : "暂无" }}</span>
+      </div>
+      <button class="echo-new" type="button" title="开始一段新对话" aria-label="开始一段新对话" @click="newChat">
         <span>新对话</span>
       </button>
-    </div>
+    </header>
 
-    <div class="s-list">
-      <button
-        v-for="s in sessions"
-        :key="s.id"
-        class="s-item"
-        :class="{ on: s.id === activeId }"
-        :title="s.title"
-        @click="select(s)"
-      >
-        <span class="s-ico"><YbIcon name="chat" :size="12" /></span>
-        <span class="s-main">
-          <span class="s-title">{{ s.title }}</span>
-          <span v-if="s.preview" class="s-preview">{{ s.preview }}</span>
-        </span>
-        <span class="s-time">{{ fmtTime(s.updatedAt) }}</span>
-        <span class="s-del" title="删除会话" @click.stop="remove(s.id)">
+    <div class="echo-list" role="list" aria-label="最近会话">
+      <div v-for="(session, index) in sessions" :key="session.id" class="echo-row" :class="{ active: session.id === activeId }" role="listitem">
+        <span class="echo-node" aria-hidden="true"><i /></span>
+        <button class="echo-main" type="button" :title="session.title" @click="select(session)">
+          <span class="echo-meta">
+            <span>{{ session.id === activeId ? "当前" : index === 0 ? "最近" : "会话" }}</span>
+            <time>{{ fmtTime(session.updatedAt) }}</time>
+          </span>
+          <strong>{{ session.title }}</strong>
+          <span v-if="session.preview" class="echo-preview">{{ session.preview }}</span>
+          <span v-else class="echo-preview quiet">这段对话还没有留下内容</span>
+        </button>
+        <button class="echo-delete" type="button" title="删除这段会话" aria-label="删除这段会话" @click="remove(session.id)">
           <YbIcon name="x" :size="10" />
-        </span>
-      </button>
-
-      <div v-if="!sessions.length" class="s-empty">
-        <YbIcon name="chat" :size="18" :stroke="1.4" />
-        <p>还没有会话</p>
-        <span>点「新对话」开始和译宝聊</span>
+        </button>
       </div>
+
+      <button v-if="!sessions.length" class="echo-empty" type="button" @click="newChat">
+        <span class="empty-ripple"><i /></span>
+        <strong>暂无会话</strong>
+        <span>开始一段新的对话</span>
+      </button>
     </div>
   </aside>
 </template>
 
 <style scoped>
 .session {
-  width: 200px;
-  flex-shrink: 0;
+  width: 100%;
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  border-right: none;
-  background:
-    radial-gradient(80% 40% at 0% 0%, rgba(var(--yb-c-sky-rgb), 0.04), transparent 70%),
-    var(--yb-content-bg);
-  min-height: 0;
   position: relative;
 }
-/* 右边界渐变 hairline（与智能体栏同语言） */
-.session::after {
-  content: "";
-  position: absolute;
-  right: 0;
-  top: 12%;
-  bottom: 12%;
-  width: 1px;
-  background: linear-gradient(
-    180deg,
-    transparent,
-    rgba(var(--yb-c-sky-rgb), 0.14) 50%,
-    transparent
-  );
-  pointer-events: none;
-}
 
-/* 头部：标题 + 新对话 */
-.s-head {
-  flex-shrink: 0;
+button { font: inherit; }
+
+.echo-head {
+  flex: none;
+  padding: 10px 14px 9px 18px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
-  padding: 10px 12px 8px;
-}
-.s-head-title {
-  font-size: var(--yb-fs-sm);
-  font-weight: var(--yb-fw-bold);
-  color: var(--yb-text-faint);
-  letter-spacing: 0.04em;
-}
-.s-new {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 9px;
-  border: 1px solid var(--yb-border-strong);
-  border-radius: var(--yb-radius-sm);
-  background: var(--yb-surface-solid);
-  color: var(--yb-accent-deep);
-  font-size: var(--yb-fs-sm);
-  font-family: inherit;
-  cursor: pointer;
-  transition: all var(--yb-dur-fast) var(--yb-ease-out);
-}
-.s-new:hover {
-  border-color: var(--yb-accent);
-  background: var(--yb-accent-soft);
-  transform: translateY(-1px);
-  box-shadow: var(--yb-shadow-1);
+  gap: 10px;
 }
 
-/* 列表 */
-.s-list {
+.echo-head > div {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.echo-kicker {
+  font-size: 12px;
+  font-weight: var(--yb-fw-bold);
+  color: var(--yb-text-strong);
+  letter-spacing: 0.03em;
+}
+
+.echo-count {
+  font-size: 10px;
+  color: var(--yb-text-faint);
+}
+
+.echo-new {
+  flex: none;
+  height: 28px;
+  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid rgba(var(--yb-c-sky-rgb), 0.15);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.62);
+  color: var(--yb-accent-deep);
+  font-size: 10px;
+  cursor: pointer;
+  transition: transform 160ms var(--yb-ease-out), background 160ms var(--yb-ease-out), border-color 160ms var(--yb-ease-out);
+}
+
+.echo-new:hover {
+  transform: translateY(-1px);
+  border-color: rgba(var(--yb-c-sky-rgb), 0.34);
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.echo-list {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   scrollbar-width: thin;
-  padding: 0 8px 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.s-item {
+  padding: 2px 10px 16px 14px;
   position: relative;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  width: 100%;
-  padding: 6px 8px;
-  border: none;
-  border-radius: var(--yb-radius-sm);
-  background: transparent;
-  color: var(--yb-text);
-  font-family: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: background var(--yb-dur-fast) var(--yb-ease-out);
 }
-.s-item:hover {
-  background: var(--yb-row-hover);
-}
-.s-item.on {
-  background: var(--yb-accent-soft);
-}
-.s-item.on::before {
+
+.echo-list::before {
   content: "";
   position: absolute;
-  left: 0;
-  top: 20%;
-  bottom: 20%;
-  width: 3px;
-  border-radius: var(--yb-radius-pill);
-  background: var(--yb-accent);
+  left: 24px;
+  top: 10px;
+  bottom: 24px;
+  width: 1px;
+  background: linear-gradient(180deg, rgba(var(--yb-c-sky-rgb), 0.28), rgba(var(--yb-c-sky-rgb), 0.04));
 }
-.s-ico {
-  flex-shrink: 0;
-  width: 22px;
-  height: 22px;
-  display: grid;
-  place-items: center;
-  border-radius: 6px;
-  background: var(--yb-surface-2);
-  color: var(--yb-accent);
-}
-.s-main {
-  flex: 1;
-  min-width: 0;
+
+.echo-row {
+  min-height: 56px;
+  position: relative;
+  padding-left: 22px;
   display: flex;
-  flex-direction: column;
-  gap: 1px;
+  align-items: stretch;
 }
-.s-title {
-  font-size: var(--yb-fs-md);
-  font-weight: var(--yb-fw-medium);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.s-preview {
-  font-size: var(--yb-fs-xs);
-  color: var(--yb-text-faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.s-time {
-  flex-shrink: 0;
-  font-size: var(--yb-fs-xs);
-  color: var(--yb-text-faint);
-}
-.s-del {
-  flex-shrink: 0;
-  width: 18px;
-  height: 18px;
+
+.echo-node {
+  position: absolute;
+  left: 6px;
+  top: 18px;
+  width: 9px;
+  height: 9px;
+  z-index: 2;
   display: grid;
   place-items: center;
   border-radius: 50%;
-  color: var(--yb-text-faint);
-  opacity: 0;
-  transition: all var(--yb-dur-fast) var(--yb-ease-out);
-}
-.s-item:hover .s-del {
-  opacity: 1;
-}
-.s-del:hover {
-  background: var(--yb-danger-soft);
-  color: var(--yb-danger);
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(var(--yb-c-sky-rgb), 0.28);
 }
 
-/* 空态 */
-.s-empty {
-  margin-top: 20px;
+.echo-node i {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: rgba(var(--yb-c-sky-rgb), 0.45);
+}
+
+.echo-main {
+  min-width: 0;
+  flex: 1;
+  margin: 2px 0;
+  padding: 8px 31px 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--yb-text);
+  text-align: left;
+  cursor: pointer;
+  transition: background 170ms var(--yb-ease-out), border-color 170ms var(--yb-ease-out), transform 170ms var(--yb-ease-out), box-shadow 170ms var(--yb-ease-out);
+}
+
+.echo-row:hover .echo-main {
+  background: rgba(255, 255, 255, 0.52);
+  border-color: rgba(var(--yb-c-sky-rgb), 0.08);
+}
+
+.echo-row.active .echo-main {
+  padding-top: 9px;
+  padding-bottom: 9px;
+  background: rgba(255, 255, 255, 0.76);
+  border-color: rgba(var(--yb-c-sky-rgb), 0.16);
+  box-shadow: 0 10px 26px rgba(var(--yb-c-sky-rgb), 0.09), inset 0 1px 0 rgba(255, 255, 255, 0.92);
+}
+
+.echo-row.active .echo-node {
+  top: 17px;
+  width: 11px;
+  height: 11px;
+  left: 5px;
+  border-color: rgba(var(--yb-c-sky-rgb), 0.55);
+  box-shadow: 0 0 0 5px rgba(var(--yb-c-sky-rgb), 0.08), 0 0 12px rgba(var(--yb-c-sky-rgb), 0.28);
+}
+
+.echo-row.active .echo-node i {
+  width: 5px;
+  height: 5px;
+  background: var(--yb-accent);
+}
+
+.echo-meta {
+  margin-bottom: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 9px;
+  color: var(--yb-text-faint);
+  letter-spacing: 0.03em;
+}
+
+.echo-main strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: var(--yb-fw-medium);
+  color: var(--yb-text-strong);
+}
+
+.echo-preview {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: var(--yb-text-faint);
+}
+
+.echo-preview.quiet { opacity: 0.72; }
+
+.echo-delete {
+  position: absolute;
+  right: 7px;
+  top: 19px;
+  z-index: 4;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--yb-text-faint);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 140ms var(--yb-ease-out), color 140ms var(--yb-ease-out), background 140ms var(--yb-ease-out);
+}
+
+.echo-row:hover .echo-delete,
+.echo-delete:focus-visible { opacity: 1; }
+.echo-delete:hover { color: var(--yb-danger); background: var(--yb-danger-soft); }
+
+.echo-empty {
+  width: calc(100% - 22px);
+  margin: 22px 0 0 22px;
+  padding: 18px 12px;
+  border: 0;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.34);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   color: var(--yb-text-faint);
-  text-align: center;
-  font-size: var(--yb-fs-sm);
-  line-height: 1.4;
+  cursor: pointer;
 }
-.s-empty p {
-  margin: 2px 0 0;
-  font-weight: var(--yb-fw-medium);
-  color: var(--yb-text-dim);
+
+.empty-ripple {
+  width: 34px;
+  height: 34px;
+  margin-bottom: 3px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid rgba(var(--yb-c-sky-rgb), 0.18);
+  background: rgba(255, 255, 255, 0.62);
 }
-.s-empty span {
-  font-size: var(--yb-fs-xs);
+
+.empty-ripple i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--yb-accent);
+}
+
+.echo-empty strong { font-size: 12px; color: var(--yb-text-dim); }
+.echo-empty > span:last-child { font-size: 10px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .echo-new,
+  .echo-main,
+  .echo-delete { transition: none; }
 }
 </style>
