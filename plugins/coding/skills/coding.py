@@ -48,6 +48,7 @@ def _sibling(stem: str):
 
 _runner = _sibling("_runner")
 ClaudeCodeRunner = _runner.ClaudeCodeRunner   # 生产默认 runner factory
+_PERM = _runner._PERM                         # can_use_tool 裁决注册表（rid → {event, allow}；DecideSkill 消费）
 
 # codex_reader / _brief 也是同目录兄弟模块（非包内），经 _sibling 加载（同 _runner）。
 # _build_brief / _codex_sessions_root 做模块级间接：测试 monkeypatch 这两个属性即可
@@ -149,6 +150,8 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
     permission_mode：透传 runner.run（acceptEdits/plan）。
     session_entry：_SESSIONS[sid] live entry 透传 runner.run——coding.mode 写入
     mode_pending 后，runner 每条消息前消费并 client.set_permission_mode（运行中切模式）。
+    can_use_tool：每轮新建权限回调桥（make_permission_callback(sid, on_event)）——SDK 触发
+    权限询问时发 permission_request 进面板流并阻塞等 coding.decide 裁决（超时默认 deny）。
     """
     state = {"error": False}
     cc_sid: str | None = None   # runner.run 返回值（ResultMessage.session_id）；None=取消/失败
@@ -194,6 +197,7 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
         cc_sid = await runner.run(prompt, cwd, on_event=on_event, cancel_event=_AsyncShield(cancel),
                                   resume_session_id=resume_session_id,
                                   permission_mode=permission_mode,
+                                  can_use_tool=_runner.make_permission_callback(sid, on_event),
                                   session_entry=_SESSIONS.get(sid))
     except Exception as e:  # runner 内部应已吞异常→error 事件；框架级异常兜底
         print(f"[yibao/coding] session {sid} runner 框架异常：{type(e).__name__}: {e}",
@@ -696,8 +700,31 @@ class RewindSkill(Skill):
         return ActionResult(success=True, data={"ok": True, "live": False})
 
 
+class DecideSkill(Skill):
+    id = "coding.decide"
+    label = "裁决工具权限"
+    description = "对 can_use_tool 弹出的权限请求做允许/拒绝裁决（rid 来自 permission_request 事件）。"
+    default_risk = RiskLevel.L1_LOW
+
+    def openai_schema(self) -> dict:
+        return {"type": "function", "function": {"name": self.id, "description": self.description,
+                "parameters": {"type": "object",
+                    "properties": {"rid": {"type": "string"}, "allow": {"type": "boolean"}},
+                    "required": ["rid", "allow"]}}}
+
+    def run(self, params: dict, ctx: Any) -> ActionResult:
+        rid = str(params.get("rid") or "").strip()
+        allow = bool(params.get("allow"))
+        entry = _PERM.get(rid)
+        if entry is None:
+            return ActionResult(success=False, error="权限请求不存在或已超时")
+        entry["allow"] = allow
+        entry["event"].set()
+        return ActionResult(success=True, data={"ok": True})
+
+
 def make_tools(ctx: Any) -> list[Skill]:
     """插件加载器入口（_load_code_tools 遍历 skills/*.py 调本函数）。"""
     return [StartSkill(), SendSkill(), StopSkill(), ListSkill(),
             HandoffListSkill(), HandoffBriefSkill(), HistorySkill(), ModeSkill(),
-            RewindSkill()]
+            RewindSkill(), DecideSkill()]

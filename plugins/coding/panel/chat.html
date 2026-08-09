@@ -212,6 +212,26 @@
   .tool-result.err > summary, .tool-result.err > pre { color: var(--red); }
   .tool-result.err > pre { background: var(--red-bg); }
 
+  /* 权限审批卡（permission_request 事件）：警示色描边 + 拒绝/允许按钮 + 超时提示；裁决后 ok/no 着色锁定 */
+  .perm-card { border-color: var(--warn, #b45309); padding: 10px 13px; }
+  .perm-head { font-weight: 600; }
+  .perm-input {
+    max-height: 120px; overflow: auto; font-size: 11px; margin-top: 6px;
+    padding: 6px 9px; border-radius: 8px; background: var(--surface-2);
+    font-family: ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-word;
+  }
+  .perm-actions { display: flex; gap: 8px; margin: 6px 0; }
+  .perm-actions button {
+    border: none; border-radius: 8px; padding: 5px 18px; cursor: pointer;
+    font-size: 12px; font-weight: 600; color: #fff; transition: opacity .15s ease;
+  }
+  .perm-actions button:disabled { opacity: .45; cursor: default; }
+  .perm-ok { background: #16a34a; }
+  .perm-no { background: #dc2626; }
+  .perm-card.ok { border-color: #16a34a; }
+  .perm-card.no { border-color: #dc2626; }
+  .perm-state { font-size: 11px; opacity: .7; }
+
   /* 终止标 / 错误 */
   .marker {
     align-self: center; font-size: 11.5px; color: var(--faint);
@@ -792,6 +812,30 @@
     scrollIfAtBottom();
   }
 
+  // 权限审批卡：工具名 + 参数摘要 + 拒绝/允许按钮（60s 无裁决后端默认拒绝）
+  function appendPermission(ev) {
+    var card = document.createElement("div");
+    card.className = "card perm-card";
+    card.id = "perm-" + ev.rid;
+    var inputStr = "";
+    try { inputStr = JSON.stringify(ev.input || {}); } catch (e) { inputStr = String(ev.input); }
+    if (inputStr.length > 300) inputStr = inputStr.slice(0, 300) + "…";
+    card.innerHTML = "<div class=\"perm-head\">🔐 工具「" + esc(ev.tool) + "」请求权限</div>" +
+      "<pre class=\"perm-input\">" + esc(inputStr) + "</pre>" +
+      "<div class=\"perm-actions\"><button class=\"perm-no\">拒绝</button><button class=\"perm-ok\">允许</button></div>" +
+      "<div class=\"perm-state\">等待批准（60s 后默认拒绝）</div>";
+    card.querySelector(".perm-ok").addEventListener("click", function () { decidePerm(ev.rid, true); });
+    card.querySelector(".perm-no").addEventListener("click", function () { decidePerm(ev.rid, false); });
+    $("log").appendChild(card);
+    scrollIfAtBottom();
+  }
+
+  function decidePerm(rid, allow) {
+    window.yibao.invoke("coding.decide", { rid: rid, allow: allow }).catch(function (e) {
+      setStatus("裁决失败：" + emsg(e), true);
+    });
+  }
+
   // 完成状态行：耗时 + token + 成本（有 usage 才显示对应段）
   function setStatusDone(u) {
     var parts = ["✓ 完成"];
@@ -861,6 +905,20 @@
       case "tool_result":
         appendToolResult(ev);
         break;
+      case "permission_request":
+        currentBubble = null;
+        appendPermission(ev);
+        break;
+      case "permission_done": {
+        var card = document.getElementById("perm-" + ev.rid);
+        if (card) {
+          card.classList.add(ev.allow ? "ok" : "no");
+          var btns = card.querySelectorAll("button");
+          for (var i = 0; i < btns.length; i++) btns[i].disabled = true;
+          card.querySelector(".perm-state").textContent = ev.allow ? "已允许" : "已拒绝";
+        }
+        break;
+      }
       case "rewind_ok":
         appendMarker(ev.text || "已回滚", false);
         break;

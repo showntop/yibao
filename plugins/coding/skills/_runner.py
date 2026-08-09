@@ -1,9 +1,50 @@
 """AgentRunner：程序化驱动 coding agent 流式跑。v1 实装 ClaudeCodeRunner（claude-agent-sdk）。"""
 from __future__ import annotations
-import json, sys
+import asyncio, itertools, json, sys, threading
 from typing import Protocol, Callable, Any
 
 _FILE_EDIT_TOOLS = {"Write", "Edit", "MultiEdit"}
+
+# can_use_tool 权限桥：rid → {"event": threading.Event, "allow": bool|None}。
+# 回调（runner 线程的 asyncio loop）发 permission_request 后在 asyncio.to_thread 里等
+# event.wait（不堵 loop）；面板审批卡按钮 → coding.decide（DecideSkill）写 allow + set。
+_PERM: dict = {}
+_perm_seq = itertools.count(1)
+
+
+def make_permission_callback(sid: str, on_event, *, timeout_s: float = 60.0):
+    """can_use_tool 回调桥：向面板发 permission_request，等 coding.decide 裁决（超时默认 deny）。
+    回调本体与事件任何异常 → deny（安全默认）+ stderr。返回 SDK 期望的 async callable。"""
+    async def _cb(tool_name, input, context=None):
+        rid = f"perm_{sid}_{next(_perm_seq)}"
+        entry = {"event": threading.Event(), "allow": None}
+        _PERM[rid] = entry
+        try:
+            on_event({"kind": "permission_request", "rid": rid,
+                      "tool": str(tool_name), "input": input if isinstance(input, dict) else {}})
+        except Exception as e:
+            print(f"[yibao/coding] 权限请求事件发送失败（deny）：{e}", file=sys.stderr)
+            _PERM.pop(rid, None)
+            return _deny(f"请求发送失败：{e}")
+        got = await asyncio.to_thread(entry["event"].wait, timeout_s)
+        allow = entry["allow"] if got else None
+        _PERM.pop(rid, None)
+        if allow is True:
+            on_event({"kind": "permission_done", "rid": rid, "allow": True})
+            return _allow()
+        on_event({"kind": "permission_done", "rid": rid, "allow": False})
+        return _deny("用户拒绝" if allow is False else "超时未批准")
+    return _cb
+
+
+def _allow():
+    from claude_agent_sdk import PermissionResultAllow  # lazy：与 _default_factory 同款，测试不依赖真 SDK 顶层
+    return PermissionResultAllow()
+
+
+def _deny(message: str):
+    from claude_agent_sdk import PermissionResultDeny   # lazy：同上
+    return PermissionResultDeny(message=message)
 
 
 def normalize(msg: Any) -> list[dict]:

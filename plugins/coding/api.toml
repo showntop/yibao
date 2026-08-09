@@ -51,3 +51,10 @@ name = "rewind"
 handler = "coding.rewind"
 direct = true
 quiet = true
+
+# 权限审批卡按钮：允许/拒绝（quiet 不发 panel 事件）
+[[method]]
+name = "decide"
+handler = "coding.decide"
+direct = true
+quiet = true

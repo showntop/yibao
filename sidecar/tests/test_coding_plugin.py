@@ -289,9 +289,10 @@ class _FakeRunner:
     """鸭式 runner：run() 返回预设 cc_sid；记录传入参数。"""
     def __init__(self, cc_sid): self._cc_sid = cc_sid; self.called_with = None
     async def run(self, prompt, cwd, *, on_event, cancel_event, resume_session_id=None,
-                  permission_mode="acceptEdits", session_entry=None):
+                  permission_mode="acceptEdits", can_use_tool=None, session_entry=None):
         self.called_with = {"prompt": prompt, "cwd": cwd, "resume": resume_session_id,
-                            "permission_mode": permission_mode, "session_entry": session_entry}
+                            "permission_mode": permission_mode, "can_use_tool": can_use_tool,
+                            "session_entry": session_entry}
         if self._cc_sid is not None:
             on_event({"kind": "done"})
         return self._cc_sid
@@ -400,13 +401,13 @@ def test_send_skill_openai_schema_shape():
 
 
 def test_make_tools_includes_send():
-    """make_tools 返回 Start/Send/Stop/List + HandoffList/HandoffBrief/History/Mode/Rewind 九件。"""
+    """make_tools 返回 Start/Send/Stop/List + HandoffList/HandoffBrief/History/Mode/Rewind/Decide 十件。"""
     tools = codingmod.make_tools(type("C", (), {"db": None, "emit_event": None})())
     ids = [t.id for t in tools]
     assert "coding.send" in ids
     assert ids == ["coding.start", "coding.send", "coding.stop", "coding.list",
                    "coding.handoff_list", "coding.handoff_brief", "coding.history",
-                   "coding.mode", "coding.rewind"]
+                   "coding.mode", "coding.rewind", "coding.decide"]
 
 
 def test_start_skill_does_not_pass_resume(monkeypatch):
@@ -972,3 +973,86 @@ def test_runner_pending_rewind_failure_emits_error_event():
     errs = [e for e in events if e["kind"] == "error"]
     assert errs and "回滚失败" in errs[0]["text"]
     assert events[-1]["kind"] == "done"                    # 流继续跑完
+
+
+
+# ---------- R2 Task 5: can_use_tool 权限交互（回调桥 + coding.decide）----------
+from coding import DecideSkill  # noqa: E402
+
+# coding.py 的 `_runner` 是 _sibling 加载的模块单例（DecideSkill 查的 _PERM 就在它上面）；
+# 本文件顶部 `from _runner import ...` 是另一个模块实例（sys.modules["_runner"]），
+# Task 5 测试一律走 codingmod._runner，保证回调桥与 DecideSkill 共享同一注册表。
+_runner_mod = codingmod._runner
+
+
+def test_can_use_tool_roundtrip_approve_and_deny():
+    """回调发 permission_request 并等待；decide(allow=True) → PermissionResultAllow；decide(False) → Deny。"""
+    from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
+
+    async def _roundtrip(allow):
+        events = []
+        cb = _runner_mod.make_permission_callback("s1", events.append, timeout_s=5.0)
+
+        async def _decide():
+            # 等 permission_request 发出（回调先同步发事件再 await 等裁决）
+            while not events:
+                await asyncio.sleep(0.005)
+            rid = events[0]["rid"]
+            r = DecideSkill().run({"rid": rid, "allow": allow}, _Ctx(_FakeDB()))
+            assert r.success, r.error
+
+        decider = asyncio.create_task(_decide())
+        res = await cb("Bash", {"command": "ls -la"})
+        await decider
+        return res, events
+
+    res, events = _run(_roundtrip(True))
+    assert isinstance(res, PermissionResultAllow)
+    assert [e["kind"] for e in events] == ["permission_request", "permission_done"]
+    assert events[0]["tool"] == "Bash" and events[0]["input"] == {"command": "ls -la"}
+    assert events[0]["rid"].startswith("perm_s1_")
+    assert events[1] == {"kind": "permission_done", "rid": events[0]["rid"], "allow": True}
+    assert events[0]["rid"] not in _runner_mod._PERM        # 裁决后注册表清理
+
+    res2, events2 = _run(_roundtrip(False))
+    assert isinstance(res2, PermissionResultDeny)
+    assert res2.message == "用户拒绝"
+    assert events2[-1] == {"kind": "permission_done", "rid": events2[0]["rid"], "allow": False}
+    assert events2[0]["rid"] not in _runner_mod._PERM
+
+
+def test_can_use_tool_timeout_defaults_deny():
+    """60s（测试注入短超时）无裁决 → Deny('超时未批准')。"""
+    from claude_agent_sdk import PermissionResultDeny
+
+    events = []
+    cb = _runner_mod.make_permission_callback("s2", events.append, timeout_s=0.05)
+    res = _run(cb("Bash", {"command": "rm -rf /tmp/x"}))
+    assert isinstance(res, PermissionResultDeny)
+    assert res.message == "超时未批准"
+    assert [e["kind"] for e in events] == ["permission_request", "permission_done"]
+    assert events[1]["allow"] is False                      # 超时按拒绝收场（面板卡复位）
+    assert events[0]["rid"] not in _runner_mod._PERM
+
+
+def test_decide_skill_resolves_pending():
+    ev = _threading.Event()
+    _runner_mod._PERM["perm_1"] = {"event": ev, "allow": None}
+    try:
+        r = DecideSkill().run({"rid": "perm_1", "allow": True}, _Ctx(_FakeDB()))
+        assert r.success
+        assert _runner_mod._PERM["perm_1"]["allow"] is True and _runner_mod._PERM["perm_1"]["event"].is_set()
+        # 未知 rid → 友好错误（权限请求不存在或已超时），不炸
+        r2 = DecideSkill().run({"rid": "perm_ghost", "allow": True}, _Ctx(_FakeDB()))
+        assert not r2.success and "不存在" in (r2.error or "")
+    finally:
+        _runner_mod._PERM.pop("perm_1", None)
+
+
+def test_stream_passes_can_use_tool_to_runner():
+    """_stream 调 runner.run 时挂 can_use_tool 回调（权限审批桥进流式；Task 1 已扩 run 参数）。"""
+    db = _FakeDB(); db.rows["s11"] = {"id": "s11", "status": "running"}
+    runner = _FakeRunner(cc_sid=None)
+    _run(_stream(db, "s11", "/tmp/p", "hi", runner, emit_event=None,
+                 cancel=_threading.Event()))
+    assert callable(runner.called_with["can_use_tool"])
