@@ -111,7 +111,17 @@
     max-width: 86%; padding: 9px 13px; border-radius: var(--r-md);
     font-size: 13px; line-height: 1.7; word-break: break-word; white-space: pre-wrap;
   }
-  .row.user .bubble { background: var(--user-bg); color: #fff; border-bottom-right-radius: 4px; }
+  .row.user .bubble { background: var(--user-bg); color: #fff; border-bottom-right-radius: 4px; position: relative; }
+  /* 用户气泡 ⏪ 回滚钮（有 CC uuid 才渲染）：右上内嵌；:has 加右 padding 防压字（不支持的旧 webview 降级为轻叠） */
+  .rewind-btn {
+    position: absolute; top: 3px; right: 4px; line-height: 1;
+    border: none; background: transparent; color: #fff; opacity: .6;
+    font-size: 12px; cursor: pointer; padding: 3px 4px; border-radius: 6px;
+    transition: opacity .15s ease, background-color .15s ease;
+  }
+  .rewind-btn:hover { opacity: 1; background: rgba(255, 255, 255, .18); }
+  .rewind-btn:disabled { opacity: .3; cursor: default; }
+  .row.user .bubble:has(.rewind-btn) { padding-right: 30px; }
   .row.ai .bubble { background: var(--ai-bg); color: var(--text); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
   .row.ai .bubble.done::after {
     content: " ✓"; color: var(--green); font-weight: 600; font-size: 11px;
@@ -417,6 +427,7 @@
   var streaming = false;       // 流式进行中（invoke 返回 → done/error）；为 true 时锁定「新对话」
   var discardedSessions = {};  // 被「新对话」抛弃的 session_id → true 集合；防陈旧流块污染新对话
   var curMode = "acceptEdits"; // acceptEdits=自动改文件；plan=只读规划
+  var pendingUserEcho = null;  // send() 后等 user_msg 回流画用户气泡的 1.5s 兜底 timer（事件到达则清，防双份）
 
   // ============================================================
   //   工具函数
@@ -464,12 +475,29 @@
   // ============================================================
   //   气泡构造
   // ============================================================
-  function appendUser(text) {
+  function appendUser(text, uuid) {
     var row = document.createElement("div");
     row.className = "row user";
     var b = document.createElement("div");
     b.className = "bubble";
     b.textContent = text;
+    if (uuid) {
+      var rw = document.createElement("button");
+      rw.className = "rewind-btn";
+      rw.title = "回滚到这条消息时的文件状态";
+      rw.textContent = "⏪";
+      rw.addEventListener("click", function (e) {
+        e.stopPropagation();
+        if (!currentSession) return;
+        rw.disabled = true;
+        window.yibao.invoke("coding.rewind", { id: currentSession, user_msg_id: uuid }).then(function (r) {
+          setStatus(r && r.ok === false ? ("回滚失败：" + (r.error || "")) : "已提交回滚…", !!(r && r.ok === false));
+        }).catch(function (err) {
+          setStatus("回滚失败：" + emsg(err), true);
+        }).finally(function () { rw.disabled = false; });
+      });
+      b.appendChild(rw);
+    }
     row.appendChild(b);
     $("log").appendChild(row);
     scrollIfAtBottom();
@@ -791,6 +819,13 @@
 
     var ev = data.event;
     switch (ev.kind) {
+      case "user_msg":
+        // runner 回流的用户消息（replay-user-messages）：画带 uuid 的用户气泡（⏪ 回滚锚点）。
+        // send() 不再直接画气泡，由本事件画；事件到达清掉 1.5s 兜底 timer（防双份）。
+        if (pendingUserEcho) { clearTimeout(pendingUserEcho); pendingUserEcho = null; }
+        currentBubble = null;  // 用户气泡切断 assistant 流
+        appendUser(ev.text || "", ev.uuid || "");
+        break;
       case "text_delta":
         if (!currentBubble) currentBubble = appendAssistantBubble();
         appendTextToBubble(currentBubble, ev.text || "");
@@ -810,6 +845,9 @@
         break;
       case "tool_result":
         appendToolResult(ev);
+        break;
+      case "rewind_ok":
+        appendMarker(ev.text || "已回滚", false);
         break;
       case "stopped":
         if (currentBubble) {
@@ -886,8 +924,13 @@
     $("new-chat").disabled = true;
     setStatus("提交中…");
 
-    // 用户气泡先入列，再起会话
-    appendUser(prompt);
+    // 用户气泡不直接画：等 runner 的 user_msg 事件（带 CC uuid，⏪ 回滚锚点）来画；
+    // 事件长时间不到（老 SDK / 启动失败）则 1.5s 后兜底画无 ⏪ 气泡。事件到达会清掉本 timer（防双份）。
+    if (pendingUserEcho) { clearTimeout(pendingUserEcho); pendingUserEcho = null; }
+    pendingUserEcho = setTimeout(function () {
+      pendingUserEcho = null;
+      appendUser(prompt);
+    }, 1500);
     currentBubble = null;  // 用户气泡不属于 assistant 流
 
     // 多轮路由：currentSession 为空 → coding.start 新建；否则 → coding.send 接续同一会话。
@@ -1248,7 +1291,7 @@
       streaming = false;
       $("log").innerHTML = "";
       (r.messages || []).forEach(function (m) {
-        if (m.role === "user") appendUser(m.text);
+        if (m.role === "user") appendUser(m.text, m.uuid || "");
         else { var b = appendAssistantBubble(); appendTextToBubble(b, m.text); b.classList.add("done"); }
       });
       if ((r.messages || []).length) appendMarker("—— 以上为历史，继续聊 ↓ ——", false);

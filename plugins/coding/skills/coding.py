@@ -621,13 +621,79 @@ class ModeSkill(Skill):
         if not rows:
             return ActionResult(success=False, error=f"会话不存在：{sid}")
         ctx.db.update("sessions", sid, {"mode": mode})
-        live = sid in _SESSIONS
+        entry = _SESSIONS.get(sid)   # .get 防御 KeyError 缝：stop/收尾线程 pop entry 与 check-then-act 竞态（T3 评审）
+        live = entry is not None
         if live:
-            _SESSIONS[sid]["mode_pending"] = mode
+            entry["mode_pending"] = mode
         return ActionResult(success=True, data={"ok": True, "mode": mode, "live": live})
+
+
+def _rewind_fresh_client(cc_sid: str, cwd: str, uuid: str) -> None:
+    """非 live 路径：新开 client（resume + checkpointing on）执行 rewind_files。CLI 侧 checkpoint 持久，跨实例应可；
+    失败抛给调用方（RewindSkill 降级成 error 事件）。"""
+    runner = ClaudeCodeRunner()
+    factory = runner._default_factory  # 复用 options（checkpointing/replay 已开）
+
+    async def _do() -> None:
+        client = factory(cwd, ["Read", "Write", "Edit", "MultiEdit", "Bash", "Glob", "Grep"], resume=cc_sid)
+        await client.connect()
+        try:
+            await client.rewind_files(uuid)
+        finally:
+            await client.disconnect()
+
+    asyncio.new_event_loop().run_until_complete(_do())
+
+
+class RewindSkill(Skill):
+    id = "coding.rewind"
+    label = "回滚文件检查点"
+    description = "把会话改过的文件回滚到某条用户消息时的状态（Claude Code 文件检查点）。会话在跑则下条消息前执行；已结束则新开 client 执行。"
+    default_risk = RiskLevel.L1_LOW
+
+    def openai_schema(self) -> dict:
+        return {"type": "function", "function": {"name": self.id, "description": self.description,
+                "parameters": {"type": "object",
+                    "properties": {"id": {"type": "string"}, "user_msg_id": {"type": "string"}},
+                    "required": ["id", "user_msg_id"]}}}
+
+    def run(self, params: dict, ctx: Any) -> ActionResult:
+        sid = str(params.get("id") or "").strip()
+        uuid = str(params.get("user_msg_id") or "").strip()
+        if not uuid:
+            return ActionResult(success=False, error="缺少回滚锚点 user_msg_id")
+        rows = ctx.db.query("sessions", where={"id": sid})
+        if not rows:
+            return ActionResult(success=False, error=f"会话不存在：{sid}")
+        row = rows[0]
+        emit = getattr(ctx, "emit_event", None)
+
+        def _emit(ev: dict) -> None:
+            if emit is not None:
+                emit({"kind": "panel_data", "payload": {"panel": "coding:chat",
+                      "data": {"session_id": sid, "event": ev}}})
+
+        # 在跑：下条消息前由 runner 执行（消费 rewind_pending）。
+        # .get 防御 KeyError 缝：stop/收尾线程 pop entry 与 check-then-act 竞态（T3 评审 mode_pending 同款）
+        entry = _SESSIONS.get(sid)
+        live = entry is not None
+        if live:
+            entry["rewind_pending"] = uuid
+            return ActionResult(success=True, data={"ok": True, "live": True})
+        cc = row.get("cc_session_id") or ""
+        if not cc:
+            return ActionResult(success=False, error="该会话无检查点可回滚（cc_session_id 为空）")
+        try:
+            _rewind_fresh_client(cc, row.get("cwd") or "", uuid)
+        except Exception as e:
+            _emit({"kind": "error", "text": f"回滚失败：{e}"})
+            return ActionResult(success=False, error=f"回滚失败：{e}")
+        _emit({"kind": "rewind_ok", "text": "已回滚到此前的文件状态"})
+        return ActionResult(success=True, data={"ok": True, "live": False})
 
 
 def make_tools(ctx: Any) -> list[Skill]:
     """插件加载器入口（_load_code_tools 遍历 skills/*.py 调本函数）。"""
     return [StartSkill(), SendSkill(), StopSkill(), ListSkill(),
-            HandoffListSkill(), HandoffBriefSkill(), HistorySkill(), ModeSkill()]
+            HandoffListSkill(), HandoffBriefSkill(), HistorySkill(), ModeSkill(),
+            RewindSkill()]

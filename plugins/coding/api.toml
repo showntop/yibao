@@ -44,3 +44,10 @@ name = "mode"
 handler = "coding.mode"
 direct = true
 quiet = true
+
+# 用户气泡 ⏪：文件检查点回滚（quiet 不发 panel 事件）
+[[method]]
+name = "rewind"
+handler = "coding.rewind"
+direct = true
+quiet = true

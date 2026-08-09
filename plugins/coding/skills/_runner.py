@@ -194,8 +194,9 @@ class ClaudeCodeRunner:
         - permission_mode：透传 ClaudeAgentOptions.permission_mode（如 acceptEdits/plan）。
         - can_use_tool：透传 ClaudeAgentOptions.can_use_tool 权限回调（None = SDK 默认）。
         - session_entry：live 会话 entry（coding.py `_SESSIONS[sid]`）；每条消息前检查并
-          弹出 `mode_pending`（coding.mode 写入）→ client.set_permission_mode 运行中切换
-          （鸭子类型，client 无此方法或调用失败均静默跳过，延迟 ≤1 条消息）。
+          弹出 `mode_pending`（coding.mode 写入）→ client.set_permission_mode 运行中切换；
+          同样弹出 `rewind_pending`（coding.rewind 写入）→ client.rewind_files 回滚文件检查点，
+          成功发 rewind_ok、失败发 error 事件（鸭子类型，client 无此方法或调用失败均跳过，延迟 ≤1 条消息）。
         - cc_session_id 捕获：流中遇到 ResultMessage（duck-typed 带 .session_id）时缓存其值，
           run 结束返回（str | None）。失败时返回 None；取消时返回已捕获的 cc_sid。
         - 取消语义：在每条 SDK 消息前查 cancel_event.is_set() → True 则先 client.interrupt()
@@ -232,6 +233,17 @@ class ClaudeCodeRunner:
                                     await set_mode(pending)
                                 except Exception as e:
                                     print(f"[yibao/coding] 运行中切换模式失败（已跳过）：{e}", file=sys.stderr)
+                    # 运行中回滚（coding.rewind 写入 _SESSIONS rewind_pending；下条消息前执行 rewind_files）
+                    if session_entry is not None:
+                        rew = session_entry.pop("rewind_pending", None)
+                        if rew is not None:
+                            rewind_files = getattr(c, "rewind_files", None)
+                            if rewind_files is not None:
+                                try:
+                                    await rewind_files(rew)
+                                    on_event({"kind": "rewind_ok", "text": "已回滚到此前的文件状态"})
+                                except Exception as e:
+                                    on_event({"kind": "error", "text": f"回滚失败：{e}"})
                     # ResultMessage 携 session_id：先从原 msg 读，再 normalize
                     sid = getattr(msg, "session_id", None)
                     if sid:

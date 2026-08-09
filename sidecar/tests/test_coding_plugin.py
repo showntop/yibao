@@ -400,13 +400,13 @@ def test_send_skill_openai_schema_shape():
 
 
 def test_make_tools_includes_send():
-    """make_tools 返回 Start/Send/Stop/List + HandoffList/HandoffBrief/History/Mode 八件。"""
+    """make_tools 返回 Start/Send/Stop/List + HandoffList/HandoffBrief/History/Mode/Rewind 九件。"""
     tools = codingmod.make_tools(type("C", (), {"db": None, "emit_event": None})())
     ids = [t.id for t in tools]
     assert "coding.send" in ids
     assert ids == ["coding.start", "coding.send", "coding.stop", "coding.list",
                    "coding.handoff_list", "coding.handoff_brief", "coding.history",
-                   "coding.mode"]
+                   "coding.mode", "coding.rewind"]
 
 
 def test_start_skill_does_not_pass_resume(monkeypatch):
@@ -820,3 +820,155 @@ def test_runner_pending_mode_set_failure_is_silent():
     _run(runner.run("p", "/tmp", on_event=events.append, cancel_event=asyncio.Event(),
                     session_entry={"mode_pending": "plan"}))
     assert [e["kind"] for e in events] == ["text_delta", "done"]
+
+
+# ---------- R2 Task 4: rewind 检查点回滚（RewindSkill + runner rewind_pending）----------
+from coding import RewindSkill  # noqa: E402
+
+
+class _NeverSet:
+    """is_set() 恒 False 的 cancel 替身（rewind 只写 rewind_pending，不得触碰 cancel）。"""
+    def __init__(self): self.set_calls = 0
+    def is_set(self): return False
+    def set(self): self.set_calls += 1
+
+
+def test_rewind_live_session_defers_to_runner(monkeypatch):
+    """会话在跑：rewind 只写 rewind_pending，runner 下条消息前执行 rewind_files。"""
+    ctx = _make_ctx_with_session(status="running")
+    # sessions_registry 挂到 ctx 上（仿 mode 测试的 _SESSIONS monkeypatch 约定）
+    ctx.sessions_registry = {"sid-1": {"cancel": _NeverSet()}}
+    monkeypatch.setattr(codingmod, "_SESSIONS", ctx.sessions_registry)
+    r = RewindSkill().run({"id": "sid-1", "user_msg_id": "u-1"}, ctx)
+    assert r.success and r.data["live"] is True
+    assert ctx.sessions_registry["sid-1"]["rewind_pending"] == "u-1"
+    assert ctx.sessions_registry["sid-1"]["cancel"].set_calls == 0   # rewind 不触碰 cancel
+
+
+class _FreshRewindClient:
+    """记录 connect/rewind_files/disconnect 调用序的 fake client（idle rewind 路径用）。"""
+    def __init__(self): self.calls = []
+    async def connect(self): self.calls.append("connect")
+    async def rewind_files(self, uuid): self.calls.append(("rewind_files", uuid))
+    async def disconnect(self): self.calls.append("disconnect")
+
+
+def test_rewind_idle_session_uses_fresh_client(monkeypatch):
+    """会话已结束：新开 client（resume=cc_session_id）connect → rewind_files → disconnect。"""
+    ctx = _make_ctx_with_session(status="done")   # sid-1：cc_session_id="cc-old-1", cwd="/tmp/p"
+    monkeypatch.setattr(codingmod, "_SESSIONS", {})          # 非 live
+    events = []
+    ctx.emit_event = events.append
+    client = _FreshRewindClient()
+    seen = {}
+
+    class _FakeRunner:
+        def _default_factory(self, cwd, tools, resume=None):
+            seen["cwd"] = cwd
+            seen["resume"] = resume
+            return client
+
+    monkeypatch.setattr(codingmod, "ClaudeCodeRunner", lambda: _FakeRunner())
+    r = RewindSkill().run({"id": "sid-1", "user_msg_id": "u-1"}, ctx)
+    assert r.success and r.data["live"] is False
+    assert client.calls == ["connect", ("rewind_files", "u-1"), "disconnect"]
+    assert seen["resume"] == "cc-old-1" and seen["cwd"] == "/tmp/p"
+    # rewind_ok 事件经 panel_data 推到 coding:chat 面板
+    ok = [e for e in events if e.get("kind") == "panel_data"
+          and e["payload"]["data"]["event"].get("kind") == "rewind_ok"]
+    assert ok and ok[0]["payload"]["data"]["session_id"] == "sid-1"
+    assert "已回滚" in ok[0]["payload"]["data"]["event"]["text"]
+
+
+def test_rewind_fresh_client_failure_emits_error(monkeypatch):
+    """新 client rewind 抛错 → error 事件（回滚失败：…）+ success=False，不炸。"""
+    ctx = _make_ctx_with_session(status="done")
+    monkeypatch.setattr(codingmod, "_SESSIONS", {})
+    events = []
+    ctx.emit_event = events.append
+
+    class _BadClient:
+        async def connect(self): pass
+        async def rewind_files(self, uuid): raise RuntimeError("boom")
+        async def disconnect(self): pass
+
+    class _FakeRunner:
+        def _default_factory(self, cwd, tools, resume=None): return _BadClient()
+
+    monkeypatch.setattr(codingmod, "ClaudeCodeRunner", lambda: _FakeRunner())
+    r = RewindSkill().run({"id": "sid-1", "user_msg_id": "u-1"}, ctx)
+    assert not r.success and "回滚失败" in (r.error or "")
+    errs = [e for e in events if e.get("kind") == "panel_data"
+            and e["payload"]["data"]["event"].get("kind") == "error"]
+    assert errs and "回滚失败" in errs[0]["payload"]["data"]["event"]["text"]
+
+
+def test_rewind_failure_degrades(monkeypatch):
+    """无 cc_session_id 且不在跑 → 失败文案，不炸。"""
+    db = _FakeDB()
+    db.rows["sid-1"] = {"id": "sid-1", "cwd": "/tmp/p", "cc_session_id": "", "status": "done"}
+    monkeypatch.setattr(codingmod, "_SESSIONS", {})
+    r = RewindSkill().run({"id": "sid-1", "user_msg_id": "u-1"}, _Ctx(db))
+    assert not r.success and "无检查点" in (r.error or "")
+    # 缺锚点 / 不存在会话 → 友好错误，不碰库不碰 runner
+    r2 = RewindSkill().run({"id": "sid-1"}, _Ctx(db))       # 无 user_msg_id
+    assert not r2.success and "user_msg_id" in (r2.error or "")
+    r3 = RewindSkill().run({"id": "ghost", "user_msg_id": "u-1"}, _Ctx(db))
+    assert not r3.success and "不存在" in (r3.error or "")
+
+
+def test_rewind_is_l1_no_confirm():
+    """⏪ 回滚 = L1（direct+quiet 面板直调不弹确认）：回滚目标由用户显式点击的消息锚定。"""
+    assert RewindSkill.default_risk == RiskLevel.L1_LOW
+
+
+def test_runner_applies_pending_rewind_before_next_message():
+    """runner 每条消息前检查 session_entry.rewind_pending → client.rewind_files（消费即弹出 + rewind_ok）。"""
+    calls = []
+
+    class RewClient:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def query(self, p): pass
+        async def rewind_files(self, uuid): calls.append(uuid)
+        async def receive_response(self):
+            yield _FakeAssistant([_FakeText("a")])
+            yield _FakeResultMessage("success")
+
+    runner = ClaudeCodeRunner(client_factory=lambda cwd, tools, resume=None, **k: RewClient())
+    entry = {"rewind_pending": "u-9"}
+    events = []
+    _run(runner.run("p", "/tmp", on_event=events.append, cancel_event=asyncio.Event(),
+                    session_entry=entry))
+    assert calls == ["u-9"]                                # 只消费一次
+    assert "rewind_pending" not in entry                   # 消费后弹出
+    kinds = [e["kind"] for e in events]
+    assert kinds == ["rewind_ok", "text_delta", "done"]
+    assert "已回滚" in events[0]["text"]
+
+
+def test_runner_pending_rewind_without_method_is_skipped():
+    """鸭子类型：client 无 rewind_files → 静默跳过（pending 仍弹出防重复消费），无 rewind_ok。"""
+    msgs = [_FakeAssistant([_FakeText("x")]), _FakeResultMessage("success")]
+    runner = ClaudeCodeRunner(client_factory=lambda cwd, tools, resume=None, **k: _FakeClient(msgs))
+    entry = {"rewind_pending": "u-1"}
+    events = []
+    _run(runner.run("p", "/tmp", on_event=events.append, cancel_event=asyncio.Event(),
+                    session_entry=entry))
+    assert [e["kind"] for e in events] == ["text_delta", "done"]
+    assert "rewind_pending" not in entry
+
+
+def test_runner_pending_rewind_failure_emits_error_event():
+    """rewind_files 抛错 → error 事件（回滚失败：…），流不断、跑完仍有 done。"""
+    class BadRewClient(_FakeClient):
+        async def rewind_files(self, uuid): raise RuntimeError("nope")
+
+    msgs = [_FakeAssistant([_FakeText("x")]), _FakeResultMessage("success")]
+    runner = ClaudeCodeRunner(client_factory=lambda cwd, tools, resume=None, **k: BadRewClient(msgs))
+    events = []
+    _run(runner.run("p", "/tmp", on_event=events.append, cancel_event=asyncio.Event(),
+                    session_entry={"rewind_pending": "u-1"}))
+    errs = [e for e in events if e["kind"] == "error"]
+    assert errs and "回滚失败" in errs[0]["text"]
+    assert events[-1]["kind"] == "done"                    # 流继续跑完
