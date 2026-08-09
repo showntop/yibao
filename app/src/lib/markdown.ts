@@ -73,7 +73,16 @@ export function renderMarkdownLite(src: string): string {
     const h = line.match(/^\s{0,3}(#{1,4})\s+(.*)$/);
     if (h) {
       out.push(`<div class="md-h">${inline(h[2])}</div>`);
-    } else if (/^\s*[-*]\s+/.test(line)) {
+    } else {
+      // 可勾选清单：`- [ ] 任务` / `- [x] 完成` → checkbox（AI 给可操作项时的清单卡）
+      const task = line.match(/^\s*[-*]\s+\[([ xX])\]\s+(.*)$/);
+      if (task) {
+        const checked = task[1].toLowerCase() === "x";
+        out.push(
+          `<label class="md-task"><input type="checkbox"${checked ? " checked" : ""} />` +
+          `<span>${inline(task[2])}</span></label>`,
+        );
+      } else if (/^\s*[-*]\s+/.test(line)) {
       // 列表保留原标记（多是「- emoji 文字」，再叠项目符号会显脏），仅收窄缩进
       out.push(`<div class="md-li">${inline(line.trim())}</div>`);
     } else if (/^\s*\|?\s*-{3,}/.test(line) || /^\s*-{3,}\s*$/.test(line)) {
@@ -82,6 +91,7 @@ export function renderMarkdownLite(src: string): string {
       out.push('<div class="md-gap"></div>');
     } else {
       out.push(`<div>${inline(line)}</div>`);
+    }
     }
     i++;
   }

@@ -10,6 +10,9 @@
 - Neural-brain implementation screenshot: `/private/tmp/yibao-neural-brain-final2.png`
 - Neural-brain focused implementation: `/private/tmp/yibao-neural-brain-focus2.png`
 - Neural-brain combined comparison: `/private/tmp/yibao-neural-brain-comparison.png`
+- Session-inspector selected visual truth: `/Users/denny/.codex/generated_images/019fe4ed-8594-7f81-8eef-2b692c1328b3/exec-e07f0abd-20d1-4300-95e5-ca017fb94b9b.png`
+- Session-inspector implementation: `/private/tmp/yibao-session-inspector-final.png`
+- Session-inspector focused comparison: `/private/tmp/yibao-session-inspector-compare.png`
 - Viewport: 1440 x 898 CSS px
 - Source pixels: 2880 x 1796 at 2x, normalized to 1440 x 898
 - Implementation pixels: 1440 x 898 at 1x
@@ -99,5 +102,28 @@ The brain region was then normalized to the same 584 x 462 comparison canvas as 
 
 - P3: Verify the exact density with real memory and plugin counts inside the Tauri window; the browser preview cannot hydrate those APIs.
 - P3: Inspect 1180 px and 900 px responsive collapse behavior during the next full-screen desktop run.
+
+## Session-inspector fidelity and QA
+
+- Information architecture: The old global feed, history, and plugin dashboard has been replaced by a current-session inspector. Priority is fixed as `需要你 → 正在进行 → 上下文 → 关联能力 → 本次产出 → 过程记录`, and empty groups are not rendered.
+- Relationship to the left rail: The left remains the agent's persistent cognition and session memory; the right now contains only transient evidence, blockers, operations, and artifacts for the selected conversation.
+- Visual hierarchy: A single quiet vertical thread connects section markers. Only the approval state uses warm emphasis; other surfaces reuse the existing Yibao sky/slate tokens and grouped rows, avoiding generic AI-card decoration.
+- Data behavior: The selected session title, agent state, and actual process rows flow from `HomeChat`. Browser-only meeting data provides a complete design preview; packaged Tauri behavior keeps reading real feed, approval, widget, and task APIs.
+- Interaction: `过程记录` expands to three visible process rows and collapses back without changing the conversation. Approval/context/output rows prepare an explicit conversation draft; capability and task rows delegate to their existing panel actions in Tauri.
+- Responsive behavior: The inspector remains a fixed 280 px companion on wide layouts and follows the existing 900 px collapse rule, preserving the center conversation as the primary surface.
+
+### Iteration 5
+
+- P1: The original right rail mixed day-level totals, historical review, activity, and global plugin shortcuts, so its relationship to the selected conversation was ambiguous.
+- Fix: Rebuilt it as a scoped session inspector headed by the current conversation title, goal, and live state. Removed day-level summaries and unrelated history.
+- Post-fix evidence: `/private/tmp/yibao-session-inspector-compare.png` shows the selected target and implementation at the same 290 x 830 focused crop; both share the same priority order and density.
+
+- P2: An idle preview label contradicted the visible running task and made the visual example internally inconsistent.
+- Fix: Browser preview state now reads `进行中 · 02:14`; production state still derives directly from the real agent state.
+- Post-fix evidence: The final DOM snapshot includes the current title, goal, `进行中 · 02:14`, all six scoped sections, and no global `今日回顾` block.
+
+- P2: Calling Tauri data APIs in a plain browser preview produced avoidable component-level bridge errors.
+- Fix: Browser preview returns before subscriptions and one-shot API reads; task and capability preview rows are intentionally inert. Real Tauri execution retains all API wiring.
+- Post-fix evidence: Production build passes; remaining plain-browser console errors originate from existing app-wide Tauri listeners outside the session inspector.
 
 final result: passed

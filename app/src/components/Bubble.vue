@@ -14,6 +14,8 @@ const props = defineProps<{
   pstate?: "run" | "ok" | "fail";
   halted?: boolean;
   icon?: "clock" | "alert" | "doc";
+  /** 无气泡排版：AI 主回复直接落在对话流里（轻量排版，结构化内容独立成卡） */
+  plain?: boolean;
 }>();
 // 用户消息原样纯文本；AI 消息走 markdown-lite（转义在前，安全）；sys 是轻提示（插件展开等）
 const html = computed(() => (props.role === "ai" && !props.typing ? renderMarkdownLite(props.text) : null));
@@ -21,7 +23,7 @@ const html = computed(() => (props.role === "ai" && !props.typing ? renderMarkdo
 
 <template>
   <div v-if="typing" class="bubble ai typing" aria-label="正在输入"><i /><i /><i /></div>
-  <div v-else-if="html !== null" :class="['bubble', role, icon && `icon-${icon}`]">
+  <div v-else-if="html !== null" :class="['bubble', role, icon && `icon-${icon}`, plain && 'plain']">
     <YbIcon v-if="icon" class="b-lead" :name="icon" :size="13" />
     <span v-html="html"></span><YbIcon v-if="halted" class="b-tail" name="stop" :size="13" title="已中止" /><span v-if="streaming" class="cur">▍</span>
   </div>
@@ -104,6 +106,17 @@ const html = computed(() => (props.role === "ai" && !props.typing ? renderMarkdo
   /* 尾巴角：靠左下的角收窄，拟小尾巴 */
   border-radius: var(--yb-radius-md) var(--yb-radius-md) var(--yb-radius-md) var(--yb-radius-xs);
 }
+/* 无气泡排版：AI 主回复直接落在流里（无底无边），仅保留行距与可读性 */
+.plain.ai {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  max-width: min(100%, 760px);
+}
+.plain.ai :deep(.md-h) {
+  margin-top: 10px;
+}
 .user {
   /* 纯色：与 ai 气泡统一无渐变（此前 135deg accent→deep 对角渐变会让
    * "用户发的第一条消息"看起来有渐变，浅色底上突兀） */
@@ -177,6 +190,31 @@ const html = computed(() => (props.role === "ai" && !props.typing ? renderMarkdo
 .ai :deep(.md-hr) {
   border-top: 1px solid var(--yb-line);
   margin: 6px 0;
+}
+/* 可勾选清单：AI 给可操作项时的清单卡（checkbox 由用户勾选） */
+.ai :deep(.md-task) {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 4px 0;
+  cursor: pointer;
+}
+.ai :deep(.md-task input) {
+  margin: 4px 0 0;
+  width: 13px;
+  height: 13px;
+  flex: none;
+  accent-color: var(--yb-accent);
+  cursor: pointer;
+}
+.ai :deep(.md-task span) {
+  min-width: 0;
+  flex: 1;
+}
+.ai :deep(.md-task input:checked + span) {
+  color: var(--yb-text-dim);
+  text-decoration: line-through;
+  text-decoration-color: rgba(var(--yb-c-sky-rgb), 0.4);
 }
 .ai :deep(code) {
   font-family: var(--yb-mono);

@@ -1,678 +1,536 @@
 <script setup lang="ts">
-/* HomeContextPanel — 主屏右栏：「AI 进程」——此刻 / 需要你决定 / 动态 / 回顾 / 插件入口。
- * 数据与 HomeContextBar 同源（feed/widgets/待批/回顾），竖排面板形式（三栏工作台右栏）。
- * 点击动态/回顾 → 带上下文进对话。
- */
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import YbIcon from "./YbIcon.vue";
 import {
   getFeedOnce,
   getWidgetsOnce,
-  getDistillTimelineOnce,
   onFeed,
   onWidgets,
   onPendingConfirms,
-  onRecapOpen,
-  recapCheck,
   panelAction,
-  markFeedRead,
-  type FeedItem,
   type FeedStats,
   type RunningTask,
   type PendingConfirm,
   type WidgetPayload,
-  type DistillDay,
 } from "../lib/brain";
+
+type AgentState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
+interface ProcessEntry { label: string; done: boolean; ok?: boolean }
+interface ContextRow { id: string; title: string; meta: string; kind: "file" | "screen" | "memory" | "conversation" }
+interface OutputRow { id: string; title: string; meta: string }
+
+const props = withDefaults(defineProps<{
+  sessionTitle?: string;
+  sessionGoal?: string;
+  sessionState?: AgentState;
+  hasConversation?: boolean;
+  processes?: ProcessEntry[];
+}>(), {
+  sessionTitle: "新对话",
+  sessionGoal: "",
+  sessionState: "idle",
+  hasConversation: false,
+  processes: () => [],
+});
 
 const emit = defineEmits<{ chat: [draft: string] }>();
 
-// ---- 此刻 ----
 const stats = ref<FeedStats>({ pending_reminders: 0, running_tasks: 0, done_24h: 0, unread: 0, ignored: 0 });
 const runningTasks = ref<RunningTask[]>([]);
+const approvals = ref<PendingConfirm[]>([]);
+const widgets = ref<WidgetPayload[]>([]);
 const loaded = ref(false);
+const processOpen = ref(false);
 
-const nowText = computed(() => {
-  if (runningTasks.value.length) return runningTasks.value.map((t) => t.label).join("、");
-  return null;
+const browserPreview = typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window);
+
+const stateLabel = computed(() => {
+  if (browserPreview && props.sessionState === "idle") return "进行中 · 02:14";
+  if (props.sessionState === "listen") return "正在接收";
+  if (props.sessionState === "think") return "正在思考";
+  if (props.sessionState === "work") return "正在执行";
+  if (props.sessionState === "say") return "正在回应";
+  if (props.sessionState === "success") return "刚刚完成";
+  if (props.sessionState === "error") return "需要留意";
+  return props.hasConversation ? "等待下一步" : "尚未开始";
 });
-const nowChips = computed(() => {
-  const o: { key: string; n: number; label: string }[] = [];
-  if (stats.value.done_24h > 0) o.push({ key: "done", n: stats.value.done_24h, label: "今日完成" });
-  if (stats.value.pending_reminders > 0) o.push({ key: "rem", n: stats.value.pending_reminders, label: "待提醒" });
-  return o;
+
+const goalText = computed(() => {
+  if (props.sessionGoal) return props.sessionGoal;
+  if (browserPreview) return "提取决定、待办和负责人";
+  if (props.hasConversation && props.sessionTitle !== "新对话") return `围绕「${props.sessionTitle}」继续推进`;
+  return "开始对话后，这里会整理本次目标";
 });
+
+const displayApprovals = computed(() => {
+  if (approvals.value.length) return approvals.value;
+  if (!browserPreview) return [];
+  return [{ id: "preview-approval", label: "确认决策标记", skill: "会议纪要", desc: "是否将“分阶段上线”标记为已确认决定" }];
+});
+
+const displayTasks = computed(() => {
+  if (runningTasks.value.length) return runningTasks.value;
+  if (!browserPreview) return [];
+  return [{ id: "preview-task", label: "提取待办与负责人", created_at: Math.floor(Date.now() / 1000) - 134 } as RunningTask];
+});
+
+const contextRows = computed<ContextRow[]>(() => {
+  if (browserPreview) {
+    return [
+      { id: "audio", title: "会议录音.m4a", meta: "32:45", kind: "file" },
+      { id: "agenda", title: "议程.md", meta: "1.2 KB", kind: "file" },
+      { id: "screen", title: "当前屏幕", meta: "主屏 · 对话窗口", kind: "screen" },
+      { id: "memory-1", title: "偏好结构化输出", meta: "刚刚调取", kind: "memory" },
+      { id: "memory-2", title: "产品命名风格", meta: "长期记忆", kind: "memory" },
+    ];
+  }
+  if (props.hasConversation) return [{ id: "conversation", title: "当前会话", meta: "对话内容", kind: "conversation" }];
+  return [];
+});
+
+const relatedWidgets = computed(() => {
+  if (widgets.value.length) return widgets.value.slice(0, 3);
+  if (!browserPreview) return [];
+  return [
+    { panel: "minutes:preview", title: "会议纪要", open: "minutes.open" },
+    { panel: "reminder:preview", title: "提醒", open: "reminder.open" },
+  ] as WidgetPayload[];
+});
+
+const outputs = computed<OutputRow[]>(() => {
+  if (!browserPreview) return [];
+  return [
+    { id: "minutes", title: "会议纪要.md", meta: "更新中" },
+    { id: "memory", title: "新增记忆 2 条", meta: "刚刚" },
+  ];
+});
+
+const processRows = computed<ProcessEntry[]>(() => {
+  if (props.processes.length) return props.processes;
+  if (!browserPreview) return [];
+  return [
+    { label: "读取会议录音", done: true, ok: true },
+    { label: "识别决定与待办", done: true, ok: true },
+    { label: "整理负责人", done: false },
+  ];
+});
+
+const hasInspectorContent = computed(() =>
+  displayApprovals.value.length || displayTasks.value.length || contextRows.value.length || relatedWidgets.value.length || outputs.value.length || processRows.value.length,
+);
+
 function elapsedSince(ts: number): string {
   const seconds = Math.max(0, Math.floor(Date.now() / 1000 - ts));
   if (seconds < 60) return "刚开始";
-  if (seconds < 3600) return `已运行 ${Math.floor(seconds / 60)} 分钟`;
-  return `已运行 ${Math.floor(seconds / 3600)} 小时`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟`;
+  return `${Math.floor(seconds / 3600)} 小时`;
 }
+
 function openTasks() {
+  if (browserPreview) return;
   void panelAction("agents.task_list", {}, undefined, "panel:agents").catch(() => {});
 }
 
-// ---- 插件入口 ----
-const widgets = ref<WidgetPayload[]>([]);
-function openWidget(w: WidgetPayload) {
-  if (!w.open) return;
-  const pid = w.panel.split(":")[0];
-  void panelAction(w.open, {}, undefined, `panel:${pid}`).catch(() => {});
+function openWidget(widget: WidgetPayload) {
+  if (!widget.open) return;
+  if (browserPreview) return;
+  const pluginId = widget.panel.split(":")[0];
+  void panelAction(widget.open, {}, undefined, `panel:${pluginId}`).catch(() => {});
 }
 
-// ---- 待批准 ----
-const approvals = ref<PendingConfirm[]>([]);
-
-// ---- 动态：按天分组折叠（今天/昨天/更早，macOS 通知中心语言）----
-const items = ref<FeedItem[]>([]);
-const collapsed = ref<Set<string>>(new Set(["yesterday", "earlier"])); // 默认折叠非今天
-function toggleGroup(key: string) {
-  const s = new Set(collapsed.value);
-  if (s.has(key)) s.delete(key);
-  else s.add(key);
-  collapsed.value = s;
-}
-const allCollapsed = ref(false);
-function toggleAll() {
-  allCollapsed.value = !allCollapsed.value;
-  collapsed.value = allCollapsed.value
-    ? new Set(feedGroups.value.map((g) => g.key))
-    : new Set();
-}
-const feedGroups = computed(() => {
-  const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 1000;
-  const startOfYesterday = startOfToday - 86400;
-  const buckets: { key: string; label: string; items: FeedItem[] }[] = [
-    { key: "today", label: "今天", items: [] },
-    { key: "yesterday", label: "昨天", items: [] },
-    { key: "earlier", label: "更早", items: [] },
-  ];
-  for (const it of [...items.value].sort((a, b) => b.ts - a.ts).slice(0, 14)) {
-    if (it.ts >= startOfToday) buckets[0].items.push(it);
-    else if (it.ts >= startOfYesterday) buckets[1].items.push(it);
-    else buckets[2].items.push(it);
-  }
-  return buckets.filter((b) => b.items.length > 0);
-});
-const unreadCount = computed(() => items.value.filter((it) => it.read === 0).length);
-
-function itemTime(ts: number): string {
-  const d = new Date(ts * 1000);
-  const diff = Date.now() / 1000 - ts;
-  if (diff < 60) return "刚刚";
-  if (diff < 172800) {
-    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-  }
-  return `${d.getMonth() + 1}/${d.getDate()}`;
-}
-function kindIcon(it: FeedItem): "clock" | "check" | "x" | "chat" {
-  if (it.kind === "reminder") return "clock";
-  if (it.kind === "task") return taskStatus(it) === "done" ? "check" : "x";
-  return "chat";
-}
-function taskStatus(it: FeedItem): string {
-  return String(it.meta?.status ?? "done");
-}
-async function openInChat(it: FeedItem) {
-  if (it.read === 0) {
-    it.read = 1;
-    if (stats.value.unread > 0) stats.value = { ...stats.value, unread: stats.value.unread - 1 };
-    try {
-      await markFeedRead(it.id);
-    } catch {
-      it.read = 0;
-    }
-  }
-  const oneLine = it.text.replace(/\s+/g, " ").trim();
-  const truncated = oneLine.length > 60 ? oneLine.slice(0, 60) + "…" : oneLine;
-  const prompt = typeof it.meta?.prompt === "string" && it.meta.prompt ? it.meta.prompt : "";
-  const draft = it.kind === "task" && prompt
-    ? `关于任务「${prompt.length > 40 ? prompt.slice(0, 40) + "…" : prompt}」：`
-    : `关于「${truncated}」：`;
-  emit("chat", draft);
-}
-
-// ---- 回顾 ----
-const recapDays = ref<DistillDay[]>([]);
-const recapLoaded = ref(false);
-async function loadRecap() {
-  recapDays.value = await getDistillTimelineOnce(14);
-  recapLoaded.value = true;
-}
-const recapPreview = computed(() =>
-  recapDays.value.filter((d) => d.status === "ok").slice(0, 3).map((d) => {
-    const n = d.items.filter((i) => i.kind === "insight" || i.kind === "event").length;
-    return { day: d.day, n };
-  }),
-);
-
-// ---- 订阅 ----
 let unFeed: (() => void) | null = null;
 let unWidgets: (() => void) | null = null;
 let unApprovals: (() => void) | null = null;
-let unRecapOpen: (() => void) | null = null;
 
 onMounted(async () => {
-  // 整段 try/catch 防止 invoke 抛错冒泡导致组件崩（崩了父 flex 不显示）
-  try {
-    const r = await getFeedOnce().catch(() => ({ items: [], stats: { pending_reminders: 0, running_tasks: 0, done_24h: 0, unread: 0, ignored: 0 }, running_tasks: [] }));
-    items.value = r.items ?? [];
-    if (r.stats && typeof r.stats === "object") stats.value = r.stats;
-    runningTasks.value = r.running_tasks ?? [];
+  if (browserPreview) {
     loaded.value = true;
-  } catch { /* 兜底 */ }
+    return;
+  }
   try {
-    const w = await getWidgetsOnce().catch(() => ({ widgets: [] }));
-    widgets.value = w.widgets ?? [];
-  } catch { /* 兜底 */ }
+    const result = await getFeedOnce().catch(() => ({ items: [], stats: stats.value, running_tasks: [] }));
+    if (result.stats) stats.value = result.stats;
+    runningTasks.value = result.running_tasks ?? [];
+    loaded.value = true;
+  } catch { loaded.value = true; }
   try {
-    unApprovals = onPendingConfirms((l) => (approvals.value = l));
-  } catch { /* 兜底 */ }
+    const result = await getWidgetsOnce().catch(() => ({ widgets: [] }));
+    widgets.value = result.widgets ?? [];
+  } catch { /* no related capabilities */ }
+  try { unApprovals = onPendingConfirms((list) => (approvals.value = list)); } catch { /* sidecar unavailable */ }
   try {
-    unFeed = await onFeed((r2) => {
-      items.value = r2?.items ?? [];
-      if (r2?.stats) stats.value = r2.stats;
-      runningTasks.value = r2?.running_tasks ?? [];
+    unFeed = await onFeed((result) => {
+      if (result?.stats) stats.value = result.stats;
+      runningTasks.value = result?.running_tasks ?? [];
     });
-  } catch { /* 兜底 */ }
-  try {
-    unWidgets = await onWidgets((w2) => {
-      widgets.value = w2?.widgets ?? [];
-    });
-  } catch { /* 兜底 */ }
-  try {
-    unRecapOpen = await onRecapOpen(() => {
-      void loadRecap();
-    });
-  } catch { /* 兜底 */ }
-  try {
-    void recapCheck().catch(() => {});
-    void loadRecap();
-  } catch { /* 兜底 */ }
+  } catch { /* sidecar unavailable */ }
+  try { unWidgets = await onWidgets((result) => (widgets.value = result?.widgets ?? [])); } catch { /* sidecar unavailable */ }
 });
+
 onUnmounted(() => {
   unFeed?.();
   unWidgets?.();
   unApprovals?.();
-  unRecapOpen?.();
 });
 </script>
 
 <template>
-  <aside class="ctx-panel">
-    <!-- AI 此刻 -->
-    <section class="cp-block">
-      <div class="cp-title"><span class="cp-dot" />此刻</div>
-      <div v-if="nowText" class="cp-now">
-        <b>{{ nowText }}</b>
-      </div>
-      <div v-if="nowChips.length" class="cp-chips">
-        <span v-for="o in nowChips" :key="o.key" class="cp-chip">
-          <strong class="yb-num">{{ o.n }}</strong>{{ o.label }}
-        </span>
-      </div>
-      <div v-if="runningTasks.length" class="cp-runs">
-        <button v-for="t in runningTasks" :key="t.id" class="cp-run" @click="openTasks">
-          <span class="cp-run-dot" />
-          <span class="cp-run-main">
-            <strong>{{ t.label }}</strong>
-            <span>{{ elapsedSince(t.created_at) }}</span>
-          </span>
+  <aside class="session-inspector" aria-label="本次会话状态与上下文">
+    <header class="inspector-head">
+      <span class="inspector-kicker">本次会话</span>
+      <strong>{{ sessionTitle || "新对话" }}</strong>
+      <p>{{ goalText }}</p>
+      <span class="session-state" :class="`state-${sessionState}`"><i />{{ stateLabel }}</span>
+    </header>
+
+    <div v-if="hasInspectorContent" class="session-thread">
+      <section v-if="displayApprovals.length" class="session-section needs-you" aria-labelledby="session-needs-title">
+        <h2 id="session-needs-title">需要你</h2>
+        <button
+          v-for="approval in displayApprovals"
+          :key="approval.id"
+          class="session-row attention-row"
+          type="button"
+          @click="emit('chat', `关于「${approval.label || approval.skill}」：${approval.desc || '请确认下一步'}`)"
+        >
+          <i class="row-node" />
+          <span class="row-main"><strong>{{ approval.label || approval.skill }}</strong><small>{{ approval.desc || approval.skill }}</small></span>
+          <span class="row-arrow">›</span>
         </button>
-      </div>
-      <div v-if="loaded && !nowText && !nowChips.length && !runningTasks.length" class="cp-quiet">
-        此刻很清净，随时叫我
-      </div>
-    </section>
+      </section>
 
-    <!-- 需要你决定 -->
-    <section v-if="approvals.length" class="cp-block cp-decide">
-      <div class="cp-title"><YbIcon name="lock" :size="12" />需要你决定 <span class="cp-count">{{ approvals.length }}</span></div>
-      <button v-for="p in approvals" :key="p.id" class="cp-ap" @click="emit('chat', `批准还是拒绝：${p.label || p.skill}？`)">
-        <span class="cp-ap-main">
-          <strong>{{ p.label || p.skill }}</strong>
-          <span>{{ p.desc || p.skill }}</span>
-        </span>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6" /></svg>
-      </button>
-    </section>
+      <section v-if="displayTasks.length" class="session-section" aria-labelledby="session-running-title">
+        <h2 id="session-running-title">正在进行</h2>
+        <button v-for="task in displayTasks" :key="task.id" class="session-row task-row" type="button" @click="openTasks">
+          <i class="row-node running" />
+          <span class="row-main"><strong>{{ task.label }}</strong><small>{{ browserPreview ? "2 / 4" : "执行中" }} · {{ elapsedSince(task.created_at) }}</small></span>
+          <span class="task-stop" aria-hidden="true" />
+        </button>
+      </section>
 
-    <!-- 动态：按天分组，组头可折叠 -->
-    <section class="cp-block cp-feed">
-      <div class="cp-title">
-        <YbIcon name="inbox" :size="12" />动态
-        <span v-if="unreadCount" class="cp-count">{{ unreadCount }}</span>
-        <button v-if="feedGroups.length" class="cp-all" @click="toggleAll">{{ allCollapsed ? "全部展开" : "全部收起" }}</button>
-      </div>
-      <div v-if="feedGroups.length" class="cp-feed-list">
-        <div v-for="g in feedGroups" :key="g.key" class="cp-feed-group">
-          <button class="cp-feed-head" @click="toggleGroup(g.key)">
-            <svg class="cp-chev" :class="{ on: !collapsed.has(g.key) }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6" /></svg>
-            {{ g.label }}
-            <span class="cp-gcount yb-num">{{ g.items.length }}</span>
+      <section v-if="contextRows.length" class="session-section" aria-labelledby="session-context-title">
+        <h2 id="session-context-title">上下文 <span>{{ contextRows.length }}</span></h2>
+        <div class="row-group">
+          <button v-for="row in contextRows" :key="row.id" class="plain-row" type="button" @click="emit('chat', `查看本次会话使用的上下文「${row.title}」`)">
+            <span class="context-kind" :class="`kind-${row.kind}`" aria-hidden="true">{{ row.kind === "memory" ? "忆" : row.kind === "screen" ? "屏" : row.kind === "conversation" ? "话" : "文" }}</span>
+            <span>{{ row.title }}</span><small>{{ row.meta }}</small>
           </button>
-          <template v-if="!collapsed.has(g.key)">
-            <button v-for="it in g.items" :key="it.id" class="cp-feed-row" @click="openInChat(it)">
-              <YbIcon class="cp-feed-ic" :class="`ic-${kindIcon(it)}`" :name="kindIcon(it)" :size="12" />
-              <span class="cp-feed-text" :class="{ unread: it.read === 0 }">{{ it.text }}</span>
-              <span class="cp-feed-time">{{ itemTime(it.ts) }}</span>
-            </button>
-          </template>
         </div>
-      </div>
-      <div v-else-if="loaded" class="cp-quiet">还没有动态</div>
-    </section>
+      </section>
 
-    <!-- 回顾 -->
-    <section class="cp-block">
-      <div class="cp-title"><YbIcon name="sparkle" :size="12" />回顾</div>
-      <div v-if="recapPreview.length" class="cp-recap-list">
-        <button v-for="d in recapPreview" :key="d.day" class="cp-recap" @click="emit('chat', `看看 ${d.day} 那天的回顾`)">
-          <span class="cp-recap-day">{{ d.day }}</span>
-          <span class="cp-recap-text">{{ d.n }} 条洞察</span>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6" /></svg>
+      <section v-if="relatedWidgets.length" class="session-section" aria-labelledby="session-capability-title">
+        <h2 id="session-capability-title">关联能力</h2>
+        <div class="row-group">
+          <button v-for="widget in relatedWidgets" :key="widget.panel" class="plain-row capability-row" type="button" :disabled="!widget.open" @click="openWidget(widget)">
+            <i class="ability-dot" /><span>{{ widget.title }}</span><span class="row-arrow">›</span>
+          </button>
+        </div>
+      </section>
+
+      <section v-if="outputs.length" class="session-section" aria-labelledby="session-output-title">
+        <h2 id="session-output-title">本次产出</h2>
+        <div class="row-group">
+          <button v-for="output in outputs" :key="output.id" class="plain-row" type="button" @click="emit('chat', `查看本次会话的产出「${output.title}」`)">
+            <span class="output-mark" aria-hidden="true" /><span>{{ output.title }}</span><small>{{ output.meta }}</small>
+          </button>
+        </div>
+      </section>
+
+      <section v-if="processRows.length" class="session-section process-section">
+        <button class="process-toggle" type="button" :aria-expanded="processOpen" @click="processOpen = !processOpen">
+          <span>过程记录</span><small>{{ processRows.length }}</small><span class="process-chevron" :class="{ open: processOpen }">⌄</span>
         </button>
-      </div>
-      <div v-else class="cp-quiet">{{ recapLoaded ? "还没有回顾" : "回顾整理中…" }}</div>
-    </section>
+        <div v-if="processOpen" class="process-list">
+          <span v-for="(row, index) in processRows" :key="`${row.label}-${index}`" class="process-row">
+            <i :class="{ done: row.done, failed: row.done && row.ok === false }" />{{ row.label }}
+          </span>
+        </div>
+      </section>
+    </div>
 
-    <!-- 插件入口 -->
-    <section v-if="widgets.length" class="cp-block">
-      <div class="cp-title"><YbIcon name="plug" :size="12" />插件</div>
-      <button v-for="w in widgets" :key="w.panel" class="cp-widget" :disabled="!w.open" @click="openWidget(w)">
-        <span>{{ w.title }}</span>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6" /></svg>
-      </button>
-    </section>
+    <div v-else-if="loaded" class="inspector-empty">
+      <i />
+      <strong>尚未加入上下文</strong>
+      <span>文件、屏幕、记忆和执行状态会随本次会话出现在这里</span>
+    </div>
   </aside>
 </template>
 
 <style scoped>
-.ctx-panel {
-  width: 260px;
+.session-inspector {
+  width: 280px;
   flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 14px 12px;
+  min-height: 0;
+  box-sizing: border-box;
+  padding: 16px 14px 18px 16px;
   overflow-y: auto;
   scrollbar-width: thin;
-  border-left: none;
-  background:
-    radial-gradient(80% 40% at 100% 0%, rgba(var(--yb-c-sky-rgb), 0.05), transparent 70%),
-    var(--yb-content-bg);
+  color: var(--yb-text);
+  background: var(--yb-content-bg);
   position: relative;
 }
-/* 左边界渐变 hairline（与智能体栏同语言） */
-.ctx-panel::before {
+
+button { font: inherit; }
+
+.session-inspector::before {
   content: "";
   position: absolute;
   left: 0;
-  top: 12%;
-  bottom: 12%;
+  top: 8%;
+  bottom: 8%;
   width: 1px;
-  background: linear-gradient(
-    180deg,
-    transparent,
-    rgba(var(--yb-c-sky-rgb), 0.14) 50%,
-    transparent
-  );
-  pointer-events: none;
+  background: linear-gradient(180deg, transparent, rgba(var(--yb-c-sky-rgb), 0.15) 20%, rgba(var(--yb-c-sky-rgb), 0.08) 82%, transparent);
 }
 
-/* 块：与对话一体——无卡片，仅分组标题 + 内容 */
-.cp-block {
+.inspector-head {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--yb-border-base);
+  gap: 4px;
+  padding: 1px 4px 15px 0;
 }
-.cp-block:last-child {
-  border-bottom: none;
+
+.inspector-kicker {
+  margin-bottom: 3px;
+  color: var(--yb-text-faint);
+  font-size: 10px;
+  font-weight: var(--yb-fw-bold);
+  letter-spacing: 0.08em;
 }
-.cp-title {
-  display: flex;
+
+.inspector-head strong {
+  color: var(--yb-text-strong);
+  font-size: 14px;
+  font-weight: var(--yb-fw-bold);
+  line-height: 1.35;
+}
+
+.inspector-head p {
+  margin: 0;
+  color: var(--yb-text-dim);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.session-state {
+  margin-top: 3px;
+  display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: var(--yb-fs-xs);
-  font-weight: var(--yb-fw-bold);
   color: var(--yb-text-faint);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: 10px;
 }
-.cp-dot {
+
+.session-state i {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--yb-accent);
-  box-shadow: 0 0 0 3px var(--yb-accent-soft);
+  background: var(--yb-state-idle);
+  box-shadow: 0 0 0 3px rgba(var(--yb-c-sky-rgb), 0.07);
 }
-.cp-count {
-  margin-left: auto;
-  padding: 0 7px;
-  border-radius: var(--yb-radius-pill);
-  background: var(--yb-btn-neutral);
-  font-size: var(--yb-fs-sm);
-  text-transform: none;
-  letter-spacing: 0;
-}
-.cp-quiet {
-  font-size: var(--yb-fs-sm);
-  color: var(--yb-text-faint);
-  line-height: 1.4;
+.session-state.state-listen i { background: var(--yb-state-listen); }
+.session-state.state-think i { background: var(--yb-state-think); }
+.session-state.state-work i { background: var(--yb-state-work); }
+.session-state.state-say i { background: var(--yb-state-say); }
+.session-state.state-success i { background: var(--yb-state-success); }
+.session-state.state-error i { background: var(--yb-state-error); }
+
+.session-thread {
+  position: relative;
+  padding-left: 15px;
 }
 
-/* 此刻 */
-.cp-now {
-  font-size: var(--yb-fs-md);
-  font-weight: var(--yb-fw-bold);
-  color: var(--yb-accent-deep);
-  line-height: 1.3;
+.session-thread::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 4px;
+  bottom: 17px;
+  width: 1px;
+  background: linear-gradient(180deg, rgba(var(--yb-c-sky-rgb), 0.26), rgba(var(--yb-c-sky-rgb), 0.06));
 }
-.cp-chips {
+
+.session-section {
+  position: relative;
+  padding: 8px 0 10px;
+}
+
+.session-section::before {
+  content: "";
+  position: absolute;
+  left: -15px;
+  top: 14px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  transform: translateX(-50%);
+  background: #7ba9cc;
+  box-shadow: 0 0 0 3px rgba(var(--yb-c-sky-rgb), 0.07);
+}
+
+.session-section h2 {
+  margin: 0 0 6px;
   display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-.cp-chip {
-  display: inline-flex;
   align-items: baseline;
-  gap: 3px;
-  padding: 2px 8px;
-  border: 1px solid var(--yb-border-base);
-  border-radius: var(--yb-radius-pill);
-  background: var(--yb-surface-2);
-  font-size: var(--yb-fs-sm);
-  color: var(--yb-text-dim);
-}
-.cp-chip strong {
-  font-size: var(--yb-fs-md);
+  gap: 5px;
+  color: var(--yb-text-faint);
+  font-size: 10px;
   font-weight: var(--yb-fw-bold);
-  color: var(--yb-accent-deep);
+  letter-spacing: 0.05em;
 }
-.cp-runs {
+
+.session-section h2 span { font-size: 9px; font-weight: var(--yb-fw-medium); }
+.needs-you h2 { color: var(--yb-intent-pending-ink); }
+.needs-you::before { background: var(--yb-intent-pending); }
+
+.session-row,
+.plain-row {
+  width: 100%;
+  min-height: 36px;
+  box-sizing: border-box;
+  border: 0;
+  background: transparent;
+  color: var(--yb-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-row {
+  padding: 7px 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(var(--yb-c-sky-rgb), 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.attention-row {
+  border-color: var(--yb-intent-pending-soft);
+  background: color-mix(in srgb, var(--yb-intent-pending-soft) 54%, white);
+}
+
+.session-row:hover,
+.plain-row:hover { background: var(--yb-row-hover); }
+
+.row-node {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  border: 1.5px solid var(--yb-intent-pending);
+}
+.row-node.running {
+  border-color: var(--yb-accent);
+  border-top-color: transparent;
+  animation: row-spin 1.15s linear infinite;
+}
+
+.row-main {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
-.cp-run {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 5px 7px;
-  border: none;
-  border-radius: var(--yb-radius-xs);
-  background: transparent;
-  color: var(--yb-text);
-  font-family: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: background var(--yb-dur-fast) var(--yb-ease-out);
-}
-.cp-run:hover {
-  background: var(--yb-row-hover);
-}
-.cp-run-dot {
-  flex-shrink: 0;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--yb-accent);
-}
-.cp-run-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-.cp-run-main strong {
-  font-size: var(--yb-fs-md);
-  font-weight: var(--yb-fw-medium);
+.row-main strong {
   overflow: hidden;
+  color: var(--yb-text-strong);
+  font-size: 11px;
+  font-weight: var(--yb-fw-medium);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.cp-run-main span {
-  font-size: var(--yb-fs-xs);
+.row-main small {
+  overflow: hidden;
   color: var(--yb-text-faint);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.row-arrow { flex: none; color: var(--yb-text-faint); font-size: 14px; }
+.task-stop { width: 8px; height: 8px; flex: none; border-radius: 2px; background: var(--yb-text-faint); opacity: 0.55; }
+
+.row-group {
+  overflow: hidden;
+  border: 1px solid rgba(var(--yb-c-sky-rgb), 0.1);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.38);
 }
 
-/* 待批准（琥珀） */
-.cp-decide .cp-title {
-  color: var(--yb-intent-pending-ink);
-}
-.cp-ap {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-  padding: 6px 9px;
-  border: 1px solid var(--yb-intent-pending-soft);
-  border-radius: var(--yb-radius-sm);
-  background: var(--yb-intent-pending-soft);
-  color: var(--yb-text);
-  font-family: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: all var(--yb-dur-fast) var(--yb-ease-out);
-}
-.cp-ap:hover {
-  border-color: var(--yb-intent-pending);
-}
-.cp-ap svg {
-  flex-shrink: 0;
-  width: 11px;
-  height: 11px;
-  color: var(--yb-intent-pending);
-}
-.cp-ap-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-.cp-ap-main strong {
-  font-size: var(--yb-fs-md);
-  font-weight: var(--yb-fw-medium);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.cp-ap-main span {
-  font-size: var(--yb-fs-xs);
-  color: var(--yb-text-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* 动态 */
-.cp-feed-list,
-.cp-recap-list {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-/* 动态分组 */
-.cp-feed-group {
-  display: flex;
-  flex-direction: column;
-}
-.cp-feed-head {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  width: 100%;
-  padding: 3px 7px;
-  border: none;
-  border-radius: var(--yb-radius-xs);
-  background: transparent;
-  color: var(--yb-text-faint);
-  font-size: var(--yb-fs-xs);
-  font-weight: var(--yb-fw-bold);
-  letter-spacing: 0.03em;
-  font-family: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: color var(--yb-dur-fast) var(--yb-ease-out);
-}
-.cp-feed-head:hover {
-  color: var(--yb-text);
-}
-.cp-chev {
-  flex-shrink: 0;
-  width: 10px;
-  height: 10px;
-  transition: transform var(--yb-dur-fast) var(--yb-ease-out);
-}
-.cp-chev.on {
-  transform: rotate(180deg);
-}
-.cp-gcount {
-  margin-left: auto;
-  font-size: var(--yb-fs-xs);
-  color: var(--yb-text-faint);
-}
-/* 全部展开/收起 */
-.cp-all {
-  margin-left: auto;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--yb-accent-deep);
-  font-size: var(--yb-fs-xs);
-  font-family: inherit;
-  cursor: pointer;
-  text-transform: none;
-  letter-spacing: 0;
-  transition: color var(--yb-dur-fast) var(--yb-ease-out);
-}
-.cp-all:hover {
-  color: var(--yb-accent);
-}
-.cp-feed-row {
+.plain-row {
+  padding: 6px 8px;
   display: flex;
   align-items: center;
   gap: 7px;
-  width: 100%;
-  padding: 5px 7px;
-  border: none;
-  border-radius: var(--yb-radius-xs);
-  background: transparent;
-  color: var(--yb-text);
-  font-family: inherit;
-  font-size: var(--yb-fs-md);
-  text-align: left;
-  cursor: pointer;
-  transition: background var(--yb-dur-fast) var(--yb-ease-out);
+  border-bottom: 1px solid rgba(var(--yb-c-slate-rgb), 0.07);
+  font-size: 11px;
 }
-.cp-feed-row:hover {
-  background: var(--yb-row-hover);
-}
-.cp-feed-ic {
-  flex-shrink: 0;
-  color: var(--yb-text-faint);
-}
-.cp-feed-ic.ic-clock { color: var(--yb-accent); }
-.cp-feed-ic.ic-check { color: var(--yb-intent-ok); }
-.cp-feed-ic.ic-x { color: var(--yb-danger); }
-.cp-feed-text {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--yb-fs-md);
-}
-.cp-feed-text.unread {
-  font-weight: var(--yb-fw-medium);
-}
-.cp-feed-time {
-  flex-shrink: 0;
-  font-size: var(--yb-fs-xs);
-  color: var(--yb-text-faint);
-}
+.plain-row:last-child { border-bottom: 0; }
+.plain-row > span:nth-of-type(2) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plain-row small { margin-left: auto; flex: none; color: var(--yb-text-faint); font-size: 9px; }
+.plain-row:disabled { opacity: 0.48; cursor: default; }
 
-/* 回顾 */
-.cp-recap {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 5px 7px;
-  border: none;
-  border-radius: var(--yb-radius-xs);
-  background: transparent;
-  color: var(--yb-text);
-  font-family: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: all var(--yb-dur-fast) var(--yb-ease-out);
-}
-.cp-recap:hover {
-  background: var(--yb-accent-soft);
-}
-.cp-recap:hover svg {
-  color: var(--yb-accent);
-  transform: translateX(2px);
-}
-.cp-recap svg {
-  flex-shrink: 0;
-  width: 11px;
-  height: 11px;
-  color: var(--yb-text-faint);
-  transition: transform var(--yb-dur-fast) var(--yb-ease-out), color var(--yb-dur-fast) var(--yb-ease-out);
-}
-.cp-recap-day {
-  flex-shrink: 0;
-  font-size: var(--yb-fs-sm);
-  font-weight: var(--yb-fw-bold);
+.context-kind {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background: rgba(var(--yb-c-sky-rgb), 0.08);
   color: var(--yb-accent-deep);
+  font-size: 9px;
+  font-weight: var(--yb-fw-bold);
 }
-.cp-recap-text {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--yb-fs-sm);
-  color: var(--yb-text-dim);
-}
+.kind-memory { color: #6d6ab7; background: rgba(109, 106, 183, 0.08); }
+.kind-screen { color: #567d95; }
 
-/* 插件入口 */
-.cp-widget {
+.capability-row > span:nth-of-type(1) { flex: 1; }
+.ability-dot,
+.output-mark { width: 6px; height: 6px; flex: none; border-radius: 50%; background: #7ba9cc; box-shadow: 0 0 0 3px rgba(var(--yb-c-sky-rgb), 0.06); }
+.output-mark { border-radius: 2px; }
+
+.process-section { padding-bottom: 0; }
+.process-toggle {
+  width: 100%;
+  min-height: 32px;
+  padding: 4px 0;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-  padding: 6px 9px;
-  border: 1px dashed var(--yb-card-border);
-  border-radius: var(--yb-radius-sm);
-  background: var(--yb-surface-2);
-  color: var(--yb-text);
-  font-family: inherit;
-  font-size: var(--yb-fs-md);
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--yb-text-faint);
+  font-size: 10px;
   text-align: left;
   cursor: pointer;
-  transition: all var(--yb-dur-fast) var(--yb-ease-out);
 }
-.cp-widget:hover:not(:disabled) {
-  border-color: var(--yb-accent);
-  border-style: solid;
-}
-.cp-widget:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.cp-widget svg {
-  flex-shrink: 0;
-  width: 11px;
-  height: 11px;
+.process-toggle span:first-child { color: var(--yb-text-dim); font-weight: var(--yb-fw-medium); }
+.process-toggle small { font-size: 9px; }
+.process-chevron { margin-left: auto; transition: transform 160ms var(--yb-ease-out); }
+.process-chevron.open { transform: rotate(180deg); }
+.process-list { padding: 2px 0 6px; display: flex; flex-direction: column; gap: 5px; }
+.process-row { display: flex; align-items: center; gap: 7px; color: var(--yb-text-dim); font-size: 10px; }
+.process-row i { width: 6px; height: 6px; border-radius: 50%; border: 1px solid var(--yb-accent); }
+.process-row i.done { background: var(--yb-intent-ok); border-color: var(--yb-intent-ok); }
+.process-row i.failed { background: var(--yb-danger); border-color: var(--yb-danger); }
+
+.inspector-empty {
+  min-height: 180px;
+  padding: 36px 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
   color: var(--yb-text-faint);
+}
+.inspector-empty i { width: 8px; height: 8px; border-radius: 50%; background: var(--yb-border-strong); }
+.inspector-empty strong { color: var(--yb-text-dim); font-size: 12px; }
+.inspector-empty span { max-width: 190px; font-size: 10px; line-height: 1.5; }
+
+@keyframes row-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .row-node.running { animation: none; border-top-color: var(--yb-accent); }
+  .process-chevron { transition: none; }
 }
 </style>
