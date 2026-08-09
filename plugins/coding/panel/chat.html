@@ -73,6 +73,13 @@
   #cwd:hover { background-color: #e9edf3; }
   #cwd:focus { border-color: var(--accent); background-color: var(--card); }
   #cwd::placeholder { color: var(--faint); font-family: var(--sans); }
+  /* 📁 文件夹选择器按钮（cwd 药丸旁；picker 是补充，药丸仍可手输） */
+  #cwd-pick {
+    flex: none; border: 1px solid transparent; background: transparent;
+    color: var(--muted); font-size: 13px; padding: 4px 7px; border-radius: 8px;
+    cursor: pointer; transition: all .15s ease;
+  }
+  #cwd-pick:hover { background: var(--surface-2); color: var(--accent-deep); border-color: var(--border); }
   #agent {
     flex: none; display: inline-flex; align-items: center; gap: 5px;
     font-size: 11.5px; color: var(--accent-deep); background: var(--accent-soft);
@@ -347,6 +354,7 @@
 <header>
   <span class="lbl">项目</span>
   <input id="cwd" type="text" spellcheck="false" placeholder="项目路径（如 /Users/.../myapp）">
+  <button id="cwd-pick" type="button" title="选择项目文件夹（也可直接在药丸里输入路径）">📁</button>
   <span id="agent">agent: Claude Code</span>
   <span class="spacer"></span>
   <button id="handoff" type="button" title="从 Codex 会话接续：读取该项目下的 Codex 会话，生成交接 brief 后用 Claude Code 接续">↩ 从 Codex 接续</button>
@@ -1230,10 +1238,22 @@
     });
   }
 
+  // 📁 文件夹选择器：native:pick_folder 走 WebviewPanel 白名单旁路直调 Tauri（不经 sidecar）。
+  // 桥 resolve 的就是结果本体（路径字符串；取消为 null）——回填 cwd 药丸，手输仍可用。
+  function pickCwd() {
+    if (!hasBridge) { setStatus("未连译宝桥（设计预览模式）", true); return; }
+    window.yibao.invoke("native:pick_folder", {}).then(function (r) {
+      if (r) { $("cwd").value = r; }
+    }).catch(function () {
+      setStatus("选择文件夹失败", true);
+    });
+  }
+
   $("send").addEventListener("click", send);
   $("stop").addEventListener("click", stop);
   $("new-chat").addEventListener("click", newChat);
   $("handoff").addEventListener("click", handoff);
+  $("cwd-pick").addEventListener("click", pickCwd);
   $("history").addEventListener("click", openHistory);
   $("history-close").addEventListener("click", closeHistory);
   $("history-overlay").addEventListener("click", function (e) {
