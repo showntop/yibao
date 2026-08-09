@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -15,8 +16,8 @@ _MAX_LINE_KB = 512  # 单行防御上限（超长行截断解析）
 
 def read_transcript(cc_session_id: str, limit: int = 40) -> list[dict]:
     """按 session id 找 transcript，提取最近 limit 条 user/assistant 文本消息（时间正序）。"""
-    if not cc_session_id:
-        return []
+    if not cc_session_id or not re.fullmatch(r"[A-Za-z0-9_-]+", cc_session_id):
+        return []  # id 直接进 glob：白名单挡 ../ 路径逃逸与 / 分段（CC id 实为 uuid-hex）
     try:
         base = Path(os.path.expanduser("~/.claude/projects"))
         hits = sorted(base.glob(f"**/{cc_session_id}.jsonl"))

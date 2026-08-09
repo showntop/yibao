@@ -753,10 +753,14 @@
   function setStatusDone(u) {
     var parts = ["✓ 完成"];
     if (u) {
-      if (u.duration_ms != null) parts.push(Math.round(u.duration_ms / 1000) + "s");
-      var tok = ((u.input_tokens || 0) + (u.output_tokens || 0));
+      // 数值强转：usage 段若非数字，旧码直接 .toFixed 抛错 → initCbs try/catch 吞掉
+      // → onSessionEnded 被跳过（流式卡死）。Number+isFinite 守一下，坏值静默略过该段。
+      var dur = Number(u.duration_ms);
+      if (u.duration_ms != null && isFinite(dur)) parts.push(Math.round(dur / 1000) + "s");
+      var tok = (Number(u.input_tokens) || 0) + (Number(u.output_tokens) || 0);
       if (tok) parts.push(tok >= 1000 ? (tok / 1000).toFixed(1) + "k tok" : tok + " tok");
-      if (u.cost_usd != null) parts.push("$" + u.cost_usd.toFixed(3));
+      var cost = Number(u.cost_usd);
+      if (u.cost_usd != null && isFinite(cost)) parts.push("$" + cost.toFixed(3));
     }
     setStatus(parts.join(" · "));
   }

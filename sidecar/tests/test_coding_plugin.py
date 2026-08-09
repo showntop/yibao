@@ -460,3 +460,63 @@ def test_normalize_done_carries_usage():
     u = evs[0]["usage"]
     assert u["duration_ms"] == 12345 and u["cost_usd"] == 0.012
     assert u["input_tokens"] == 3000 and u["output_tokens"] == 200
+
+
+# ---------- 终审修复：stop 无 live runner 补发终态 / send 查 live entry ----------
+from coding import StopSkill  # noqa: E402
+
+
+class _EmitCtx:
+    """带事件记录的 ctx 鸭式：db + emit_event（记录到 .events）。"""
+    def __init__(self, db):
+        self.db = db
+        self.events = []
+    def emit_event(self, e):
+        self.events.append(e)
+
+
+def test_stop_stale_running_emits_stopped_terminal(monkeypatch):
+    """陈旧 running（live registry 空，如底座重启 mid-run）：stop 仍成功，
+    且补发 panel_data/stopped 终态让面板复位（否则发送键永久锁死）。"""
+    db = _FakeDB()
+    db.rows["s-stale"] = {"id": "s-stale", "status": "running"}
+    monkeypatch.setattr(codingmod, "_SESSIONS", {})   # 无 live runner
+    ctx = _EmitCtx(db)
+    res = StopSkill().run({"id": "s-stale"}, ctx)
+    assert res.success is True
+    assert db.rows["s-stale"]["status"] == "stopped"          # db 已落 stopped
+    term = [e for e in ctx.events
+            if e.get("kind") == "panel_data"
+            and e["payload"]["data"]["event"].get("kind") == "stopped"]
+    assert term, ctx.events
+    assert term[0]["payload"]["panel"] == "coding:chat"
+    assert term[0]["payload"]["data"]["session_id"] == "s-stale"
+
+
+def test_stop_with_live_runner_no_extra_terminal(monkeypatch):
+    """有 live runner：_stop_session 走正常 cancel（runner 取消路径自发 stopped），
+    StopSkill 不补发——否则面板「已中断」marker 翻倍。"""
+    db = _FakeDB()
+    db.rows["s-live"] = {"id": "s-live", "status": "running"}
+    cancel = _threading.Event()
+    monkeypatch.setattr(codingmod, "_SESSIONS", {"s-live": {"cancel": cancel}})
+    ctx = _EmitCtx(db)
+    res = StopSkill().run({"id": "s-live"}, ctx)
+    assert res.success is True and cancel.is_set()
+    assert ctx.events == []     # 不重复补发
+
+
+def test_send_rejects_when_runner_finishing(monkeypatch):
+    """check-then-act 缝：db=stopped 但 _SESSIONS 仍有 live entry（runner 卡长工具）→ 拒；
+    entry 退清后放行。"""
+    called = {"n": 0}
+    monkeypatch.setattr(codingmod, "_spawn_stream",
+                        lambda *a, **k: called.__setitem__("n", called["n"] + 1))
+    ctx = _make_ctx_with_session(status="stopped")   # sid-1：db 已 terminal
+    monkeypatch.setattr(codingmod, "_SESSIONS", {"sid-1": {"cancel": _threading.Event()}})
+    r = SendSkill().run({"id": "sid-1", "prompt": "再来一条"}, ctx)
+    assert not r.success and "收尾" in (r.error or "")
+    assert called["n"] == 0
+    monkeypatch.setattr(codingmod, "_SESSIONS", {})   # runner 线程退清 → 放行
+    r2 = SendSkill().run({"id": "sid-1", "prompt": "再来一条"}, ctx)
+    assert r2.success, r2.error

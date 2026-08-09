@@ -221,3 +221,18 @@ def test_history_skill_returns_messages(tmp_path, monkeypatch):
     assert [m["text"] for m in r.data["messages"]] == ["第一句话", "回答一"]
     r2 = HistorySkill().run({"id": "nope"}, ctx)
     assert not r2.success and "nope" in r2.error
+
+
+def test_cc_reader_rejects_traversal_ids(monkeypatch, tmp_path):
+    """cc_session_id 白名单：../ 与含 / 分段直接 []——id 进 glob `**/{sid}.jsonl`，
+    不挡可逃逸出 ~/.claude/projects。fixture 在逃逸落点放文件，防回归假阳性。"""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    # base = tmp_path/.claude/projects；../escape 逃逸落点 = tmp_path/.claude/escape.jsonl
+    os.makedirs(tmp_path / ".claude", exist_ok=True)
+    with open(tmp_path / ".claude" / "escape.jsonl", "w") as f:
+        f.write(json.dumps({"type": "user", "message": {"content": "escaped"}}) + "\n")
+    # a/b 分段落点 = projects 下任意 a 目录里的 b.jsonl
+    _write_cc_transcript(str(tmp_path), "a", "b", [{"type": "user", "message": {"content": "seg"}}])
+    assert read_transcript("../escape") == []
+    assert read_transcript("a/b") == []
+    assert read_transcript("") == []

@@ -305,6 +305,8 @@ class SendSkill(Skill):
         row = rows[0]
         if row.get("status") == "running":
             return ActionResult(success=False, error="会话正在运行中，请先中断或等待完成")
+        if sid in _SESSIONS:  # check-then-act 缝：stop 落 stopped 但 runner 线程未退（长工具中）→ 同样拒
+            return ActionResult(success=False, error="会话正在收尾中，请稍候")
         cc = row.get("cc_session_id") or ""
         if not cc:
             return ActionResult(
@@ -355,7 +357,16 @@ class StopSkill(Skill):
             return ActionResult(success=False, error=f"会话不存在：{sid}")
         if rows[0].get("status") not in ("running",):
             return ActionResult(success=False, error=f"会话已结束（{rows[0].get('status')}），无需停止")
-        _stop_session(ctx.db, _SESSIONS, sid)
+        ok = _stop_session(ctx.db, _SESSIONS, sid)
+        if not ok:
+            # 无 live runner（陈旧 running，如底座重启 mid-run）：db 已落 stopped——
+            # 补发终态事件让面板复位，否则发送键永久锁死
+            emit = getattr(ctx, "emit_event", None)
+            if emit is not None:
+                emit({"kind": "panel_data",
+                      "payload": {"panel": "coding:chat",
+                                  "data": {"session_id": sid,
+                                           "event": {"kind": "stopped", "text": "已中断"}}}})
         return ActionResult(success=True, data={
             "id": sid,
             "human": f"已停止会话 {sid}",
