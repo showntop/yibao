@@ -20,8 +20,22 @@ columns = [
   {name = "finished_at", type = "integer", default = 0},
   {name = "cc_session_id", type = "text", default = ""},   # Claude Code 会话 id（runner.run 返回；后续多轮 resume 用）
   {name = "source", type = "text", default = ""},           # 会话来源：""=用户直起；"codex:<sid>"=交接切过来
+  {name = "mode", type = "text", default = "acceptEdits"},  # 权限模式（plan/acceptEdits/…，下一任务接线用）
 ]
 indexes = ["status", "created_at"]
+
+[[table]]
+name = "messages"
+columns = [
+  {name = "id", type = "text", pk = true},
+  {name = "session_id", type = "text"},
+  {name = "role", type = "text"},        # user/assistant/marker
+  {name = "text", type = "text"},
+  {name = "ts", type = "integer"},
+  {name = "seq", type = "integer"},
+  {name = "uuid", type = "text", default = ""},   # user 消息的 CC uuid（rewind 回滚锚点）
+]
+indexes = ["session_id", "seq"]
 
 [[panel]]
 type = "webview"

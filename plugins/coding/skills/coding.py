@@ -128,16 +128,41 @@ def _spawn_stream(db, sid: str, cwd: str, prompt: str, runner, emit_event,
 
 async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cancel,
                   resume_session_id: str | None = None) -> None:
-    """跑 runner；每条事件转 panel_data 推面板；结束按 cancel/error/done 落最终状态。
+    """跑 runner；每条事件转 panel_data 推面板 + 落 messages 表；结束按 cancel/error/done 落最终状态。
 
-    落库前先查当前 status——用户主动 stop 时 _stop_session 已先写 stopped，
+    transcript 落库：user_msg（带 CC uuid，rewind 锚点）/ text_delta / done·stopped 终态 marker，
+    seq 每轮流式局部自增（多轮各自重计；HistorySkill 按 seq ASC 取最近 40 条）。
+    落库 try/except 隔离——transcript 丢失绝不许炸断流式。
+    落最终状态前先查当前 status——用户主动 stop 时 _stop_session 已先写 stopped，
     这里保留 stopped 不被 done/failed 覆盖（race-safe，仿 agents._common._wait:66-73）。
     resume_session_id：非 None 时透传 runner.run，续上同一 CC 会话历史（多轮）。
     """
     state = {"error": False}
     cc_sid: str | None = None   # runner.run 返回值（ResultMessage.session_id）；None=取消/失败
+    seq = {"n": 0}              # 本轮 transcript 序号（per-stream 重计，多轮各自局部编号）
+
+    def _persist(role: str, text: str, uuid: str = "") -> None:
+        if not text:
+            return
+        seq["n"] += 1
+        try:
+            db.insert("messages", {
+                "session_id": sid, "role": role, "text": text,
+                "ts": int(time.time()), "seq": seq["n"], "uuid": uuid,
+            })
+        except Exception as e:
+            print(f"[yibao/coding] transcript 落库失败（跳过）：{e}", file=sys.stderr)
 
     def on_event(ev: dict) -> None:
+        kind = ev.get("kind")
+        if kind == "user_msg":
+            _persist("user", str(ev.get("text") or ""), str(ev.get("uuid") or ""))
+        elif kind == "text_delta":
+            _persist("assistant", str(ev.get("text") or ""))
+        elif kind == "done":
+            _persist("marker", "完成")
+        elif kind == "stopped":
+            _persist("marker", str(ev.get("text") or "已中断"))
         if emit_event is not None:
             # panel/data 必须包在 payload 下：PanelApp.vue 的 panel_data 处理读
             # e.payload?.panel / e.payload?.data，shell proactive→Rust→PanelApp 不再加包装。
@@ -505,13 +530,14 @@ class HandoffBriefSkill(Skill):
 class HistorySkill(Skill):
     """读某个 coding 会话的信息与最近消息（历史抽屉恢复旧会话用）。
 
-    sessions 行取 cwd/cc_session_id/prompt，消息经 `_sibling("_cc_reader")`
-    读 Claude Code 本地 transcript；读不到（无 cc_session_id / transcript 丢失）
-    messages 静默为空——恢复不了就当新会话，不报错。L0 只读。
+    消息优先读本插件 messages 表（_stream 流式落库的 transcript，按 seq 正序取最近 40 条，
+    含 user 消息的 CC uuid 供 rewind 用）；库里空才 fallback `_sibling("_cc_reader")`
+    读 Claude Code 本地 transcript（老会话没有落库数据）。都读不到 messages 静默为空——
+    恢复不了就当新会话，不报错。L0 只读。
     """
     id = "coding.history"
     label = "读取会话历史"
-    description = "读取某个 coding 会话的信息与最近消息（恢复旧会话用）：读 Claude Code 本地 transcript，失败静默为空。"
+    description = "读取某个 coding 会话的信息与最近消息（恢复旧会话用）：优先读插件 messages 表，空则回退 Claude Code 本地 transcript，失败静默为空。"
     default_risk = RiskLevel.L0_READONLY
 
     def openai_schema(self) -> dict:
@@ -535,8 +561,13 @@ class HistorySkill(Skill):
             return ActionResult(success=False, error=f"会话不存在：{sid}")
         row = rows[0]
         cc = row.get("cc_session_id") or ""
-        reader = _sibling("_cc_reader")
-        messages = reader.read_transcript(cc, limit=40) if cc else []
+        rows = ctx.db.query("messages", where={"session_id": sid}, order="seq", limit=40)
+        if rows:
+            messages = [{"role": r["role"], "text": r["text"], "uuid": r.get("uuid") or ""}
+                        for r in rows]
+        else:
+            reader = _sibling("_cc_reader")
+            messages = reader.read_transcript(cc, limit=40) if cc else []
         return ActionResult(success=True, data={
             "session_id": sid, "cwd": row.get("cwd") or "", "cc_session_id": cc,
             "prompt": row.get("prompt") or "", "messages": messages,

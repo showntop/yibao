@@ -236,11 +236,26 @@ from coding import _stop_session  # noqa: E402
 
 
 class _FakeDB:
-    """极小鸭式 db：记录 insert/update，query 全量返回。"""
-    def __init__(self): self.rows = {}; self.updates = []
-    def insert(self, table, row): self.rows[row["id"]] = dict(row); return row["id"]
+    """极小鸭式 db：记录 insert/update；sessions 存 rows（按 id），其余表存 _tables。
+    query 支持 where 等值过滤 + order（"col [DESC]"）+ limit（仿 PluginDb 形态）。"""
+    def __init__(self): self.rows = {}; self.updates = []; self._tables = {}
+    def insert(self, table, row):
+        row = dict(row)
+        if table == "sessions":
+            self.rows[row["id"]] = row; return row["id"]
+        row.setdefault("id", f"{table}-{len(self._tables.get(table, [])) + 1}")
+        self._tables.setdefault(table, []).append(row)
+        return row["id"]
     def update(self, table, rid, fields): self.updates.append((rid, fields)); self.rows.setdefault(rid, {}).update(fields)
-    def query(self, *a, **k): return list(self.rows.values())
+    def query(self, table, where=None, order=None, limit=None, **_):
+        out = list(self.rows.values()) if table == "sessions" else list(self._tables.get(table, []))
+        if where:
+            out = [r for r in out if all(r.get(k) == v for k, v in where.items())]
+        if order:
+            parts = order.split()
+            out = sorted(out, key=lambda r: r.get(parts[0]) or 0,
+                         reverse=len(parts) > 1 and parts[1].upper() == "DESC")
+        return out[:limit] if limit else out
 
 
 def test_start_inserts_running_session(monkeypatch):
@@ -405,11 +420,15 @@ def test_start_skill_does_not_pass_resume(monkeypatch):
 # ---------- 流式防重入：send 拒 running 会话 ----------
 
 
-def _make_ctx_with_session(status):
-    """仿 _Ctx/_FakeDB 既有约定：造一个带指定 status 会话（sid-1）的 ctx。"""
+def _make_ctx_with_session(status, with_messages=None):
+    """仿 _Ctx/_FakeDB 既有约定：造一个带指定 status 会话（sid-1）的 ctx。
+    with_messages：可选 [(role, text), ...] 预置 messages 表 transcript（history 测试用）。"""
     db = _FakeDB()
     db.rows["sid-1"] = {"id": "sid-1", "cwd": "/tmp/p",
                         "cc_session_id": "cc-old-1", "status": status}
+    for i, (role, text) in enumerate(with_messages or []):
+        db.insert("messages", {"session_id": "sid-1", "role": role, "text": text,
+                               "ts": 0, "seq": i + 1, "uuid": ""})
     return _Ctx(db)
 
 
@@ -577,3 +596,48 @@ def test_cancel_calls_client_interrupt_before_stopped():
     _run(runner.run("p", "/tmp", on_event=events.append, cancel_event=_SetEvent()))
     assert calls == ["interrupt"]
     assert events and events[-1]["kind"] == "stopped"
+
+
+# ---------- R2 Task 2: transcript 落库（messages 表 + history 读库优先）----------
+from coding import HistorySkill  # noqa: E402
+
+
+class _EventsRunner:
+    """鸭式 runner：依次回放预置事件后返回 cc-sess-x（transcript 落库测试用）。"""
+    def __init__(self, events): self._events = events
+    async def run(self, prompt, cwd, *, on_event, cancel_event, resume_session_id=None):
+        for ev in self._events:
+            on_event(ev)
+        return "cc-sess-x"
+
+
+def _run_fake_stream(ctx, events):
+    """跑一轮 _stream：_EventsRunner 回放 events（不起线程，直跑 coroutine）。"""
+    _run(_stream(ctx.db, "sid-1", "/tmp/p", "p", _EventsRunner(events),
+                 emit_event=None, cancel=_threading.Event()))
+
+
+def test_stream_persists_transcript_to_messages_table():
+    """流式：user prompt + assistant 块 + 终态 marker 都落 messages 表（seq 单调）。"""
+    ctx = _make_ctx_with_session(status="running")
+    _run_fake_stream(ctx, events=[
+        {"kind": "user_msg", "uuid": "u-1", "text": "任务一"},
+        {"kind": "text_delta", "text": "好的"},
+        {"kind": "done", "usage": {}},
+    ])
+    rows = sorted(ctx.db.query("messages", where={"session_id": "sid-1"}), key=lambda r: r["seq"])
+    assert [(r["role"], r["text"]) for r in rows] == [
+        ("user", "任务一"), ("assistant", "好的"), ("marker", "完成"),
+    ]
+    assert rows[0]["uuid"] == "u-1" and rows[1]["uuid"] == ""
+
+
+def test_history_prefers_db_transcript_over_cc_reader(monkeypatch):
+    """库里有 → 直接返回（不读 jsonl）；库里空 → fallback _cc_reader。"""
+    ctx = _make_ctx_with_session(status="done", with_messages=[("user", "旧任务")])
+    # _sibling 把 _cc_reader 缓存成模块对象（sys.modules 别名），patch 其函数属性
+    monkeypatch.setattr(
+        codingmod._sibling("_cc_reader"), "read_transcript",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("不该读 jsonl")))
+    r = HistorySkill().run({"id": "sid-1"}, ctx)
+    assert r.success and r.data["messages"] == [{"role": "user", "text": "旧任务", "uuid": ""}]

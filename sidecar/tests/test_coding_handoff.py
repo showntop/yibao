@@ -197,7 +197,9 @@ def test_cc_reader_missing_returns_empty(monkeypatch, tmp_path):
 
 class _FakeDBWhere(_FakeDB):
     """query 真按 where={'id': ...} 过滤（_FakeDB 全量回，history 按 id 查需要真过滤）。"""
-    def query(self, table, where=None, order=None):
+    def query(self, table, where=None, order=None, limit=None):
+        if table != "sessions":
+            return []   # 本文件只种 sessions；messages 空 → history 走 _cc_reader fallback
         rows = list(self.rows.values())
         if where and "id" in where:
             rows = [r for r in rows if r.get("id") == where["id"]]
