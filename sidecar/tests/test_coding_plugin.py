@@ -417,3 +417,14 @@ def test_send_rejects_when_session_running(monkeypatch):
     ctx2 = _make_ctx_with_session(status="done")
     r2 = SendSkill().run({"id": "sid-1", "prompt": "再来一条"}, ctx2)
     assert r2.success, r2.error
+
+
+# ---------- start/send 风险降噪：L2 → L1 ----------
+from yibao_brain.ipc import RiskLevel  # noqa: E402
+
+
+def test_start_send_are_l1_no_confirm():
+    """会话启动/续聊 = L1（直调不弹确认）：文件改动已由 SDK permission_mode=acceptEdits 管理，
+    高频对话循环不该每次弹风险确认。"""
+    assert StartSkill.default_risk == RiskLevel.L1_LOW
+    assert SendSkill.default_risk == RiskLevel.L1_LOW

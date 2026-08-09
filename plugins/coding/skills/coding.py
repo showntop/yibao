@@ -220,7 +220,7 @@ class StartSkill(Skill):
         "面板实时回显文本/文件改动。立即返回，完成主动推 panel_data。"
         "【需要】cwd（用户显式选的工作目录）、prompt（任务描述）。"
     )
-    default_risk = RiskLevel.L2_MEDIUM   # 改文件
+    default_risk = RiskLevel.L1_LOW   # 会话启动/续聊本身不执行高危动作；文件改动由 SDK acceptEdits 管理
 
     def openai_schema(self) -> dict:
         return {
@@ -272,7 +272,7 @@ class SendSkill(Skill):
         "继续在同一上下文里干活，面板实时回显。立即返回，完成主动推 panel_data。"
         "【需要】id（coding.start 返回的 session_id）、prompt（本轮任务描述）。"
     )
-    default_risk = RiskLevel.L2_MEDIUM   # 改文件
+    default_risk = RiskLevel.L1_LOW   # 会话启动/续聊本身不执行高危动作；文件改动由 SDK acceptEdits 管理
     refresh = "coding.list"
 
     def openai_schema(self) -> dict:
