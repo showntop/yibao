@@ -46,7 +46,7 @@ def _run(coro): return asyncio.run(coro)
 def test_runner_streams_and_done():
     events = []
     msgs = [_FakeAssistant([_FakeText("hello")]), _FakeResultMessage("success")]
-    runner = ClaudeCodeRunner(client_factory=lambda cwd, tools, resume=None: _FakeClient(msgs))
+    runner = ClaudeCodeRunner(client_factory=lambda cwd, tools, resume=None, **k: _FakeClient(msgs))
     cancel = asyncio.Event()
     _run(runner.run("do X", "/tmp", on_event=events.append, cancel_event=cancel))
     kinds = [e["kind"] for e in events]
@@ -61,7 +61,7 @@ def test_runner_cancel_mid_stream():
         _FakeAssistant([_FakeText("c")]),
         _FakeResultMessage("success"),
     ]
-    runner = ClaudeCodeRunner(client_factory=lambda cwd, tools, resume=None: _FakeClient(msgs))
+    runner = ClaudeCodeRunner(client_factory=lambda cwd, tools, resume=None, **k: _FakeClient(msgs))
     cancel = asyncio.Event()
     def on_event(e):
         sent.append(e)
@@ -76,7 +76,7 @@ def test_runner_cancel_mid_stream():
 
 def test_runner_error_isolated():
     events = []
-    def factory(cwd, tools, resume=None):
+    def factory(cwd, tools, resume=None, **k):
         class Bad:
             async def __aenter__(self): return self
             async def __aexit__(self, *a): return False
@@ -98,7 +98,7 @@ class _SetEvent:
 def _cancel_immediately_factory():
     """fake client factory：首条消息前取消即触发（配合 _SetEvent 恒 set）。"""
     msgs = [_FakeAssistant([_FakeText("a")]), _FakeResultMessage("success")]
-    return lambda cwd, tools, resume=None: _FakeClient(msgs)
+    return lambda cwd, tools, resume=None, **k: _FakeClient(msgs)
 
 
 def test_runner_cancel_emits_stopped_terminal_event():
@@ -120,7 +120,7 @@ class _FakeResultWithSession:
 def test_runner_returns_cc_session_id():
     captured = []
     msgs = [_FakeAssistant([_FakeText("hi")]), _FakeResultWithSession(session_id="cc-sess-123")]
-    runner = ClaudeCodeRunner(client_factory=lambda cwd, tools, resume=None: _FakeClient(msgs))
+    runner = ClaudeCodeRunner(client_factory=lambda cwd, tools, resume=None, **k: _FakeClient(msgs))
     sid = _run(runner.run("p", "/tmp", on_event=captured.append, cancel_event=asyncio.Event()))
     assert sid == "cc-sess-123"
     assert any(e["kind"] == "done" for e in captured)
@@ -128,7 +128,7 @@ def test_runner_returns_cc_session_id():
 
 def test_runner_resume_passes_session_id():
     seen = {}
-    def factory(cwd, tools, resume=None):
+    def factory(cwd, tools, resume=None, **k):
         seen["resume"] = resume
         class C:
             async def __aenter__(self): return self
@@ -197,9 +197,13 @@ def test_normalize_result_done():
     assert normalize(_FakeResultMessage("success")) == [{"kind": "done", "usage": {}}]
 
 
-def test_normalize_ignores_system_and_user():
+def test_normalize_ignores_system_message():
     assert normalize(_FakeSystemMessage()) == []
-    assert normalize(_FakeUserMessage("hi")) == []
+
+
+def test_normalize_str_user_message_emits_user_msg():
+    """字符串 content 的 UserMessage（replay-user-messages 回流）→ user_msg 事件；无 uuid 降级空串。"""
+    assert normalize(_FakeUserMessage("hi")) == [{"kind": "user_msg", "uuid": "", "text": "hi"}]
 
 
 def test_normalize_none():
@@ -520,3 +524,56 @@ def test_send_rejects_when_runner_finishing(monkeypatch):
     monkeypatch.setattr(codingmod, "_SESSIONS", {})   # runner 线程退清 → 放行
     r2 = SendSkill().run({"id": "sid-1", "prompt": "再来一条"}, ctx)
     assert r2.success, r2.error
+
+
+# ---------- R2 Task 1: checkpointing + replay + interrupt + mode 参数 + user_msg ----------
+def test_factory_passes_checkpointing_and_replay_args():
+    """生产 options：checkpointing 开 + replay-user-messages（rewind 原料）；mode 可参数化。"""
+    from claude_agent_sdk import ClaudeAgentOptions
+    seen = {}
+    def factory(cwd, tools, resume=None, permission_mode="acceptEdits", can_use_tool=None):
+        seen["mode"] = permission_mode
+        opts = ClaudeAgentOptions(
+            cwd=cwd, permission_mode=permission_mode, allowed_tools=tools, resume=resume,
+            enable_file_checkpointing=True, extra_args={"replay-user-messages": None},
+            can_use_tool=can_use_tool,
+        )
+        seen["opts"] = opts
+        return _FakeClient(opts)
+    runner = ClaudeCodeRunner(client_factory=factory)
+    _run(runner.run("p", "/tmp", on_event=lambda e: None, cancel_event=asyncio.Event(),
+                    permission_mode="plan"))
+    assert seen["mode"] == "plan"
+    assert seen["opts"].enable_file_checkpointing is True
+    assert seen["opts"].extra_args == {"replay-user-messages": None}
+
+
+def test_user_message_yields_user_msg_event_with_uuid():
+    """replay 开启后 UserMessage（无 tool_result 块）→ user_msg 事件带 uuid；无 uuid 降级空串。"""
+    # SimpleNamespace 不能改 __class__（C 类型），用本地类控制类名进 User 分支
+    class UserMessage:
+        def __init__(self, content, uuid=None):
+            self.content = content
+            if uuid is not None:
+                self.uuid = uuid
+    evs = normalize(UserMessage("帮我改一下登录页", uuid="u-1"))
+    assert evs == [{"kind": "user_msg", "uuid": "u-1", "text": "帮我改一下登录页"}]
+    assert normalize(UserMessage("没 uuid 的老消息")) == [
+        {"kind": "user_msg", "uuid": "", "text": "没 uuid 的老消息"}]
+
+
+def test_cancel_calls_client_interrupt_before_stopped():
+    """取消时先 client.interrupt() 杀后台工具，再发 stopped 终态。"""
+    calls = []
+    class FakeClient:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return None
+        async def query(self, p): pass
+        async def receive_response(self):
+            yield SimpleNamespace(content=[])
+        async def interrupt(self): calls.append("interrupt")
+    runner = ClaudeCodeRunner(client_factory=lambda *a, **k: FakeClient())
+    events = []
+    _run(runner.run("p", "/tmp", on_event=events.append, cancel_event=_SetEvent()))
+    assert calls == ["interrupt"]
+    assert events and events[-1]["kind"] == "stopped"

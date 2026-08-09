@@ -18,7 +18,9 @@ def normalize(msg: Any) -> list[dict]:
               其余（Read/Bash/Glob/Grep…）        → {"kind":"tool_use","tool","input"}
       - ResultMessage（type 名含 "Result"，或 duck-typed .subtype+.is_error）→
           [{"kind":"done","usage":{...}}]（duration_ms/total_cost_usd/usage 鸭子类型，拿不到就空 dict 降级）
-      - UserMessage（类名含 "User"）→ ToolResultBlock 逐块提取 → {"kind":"tool_result","text","is_error"}
+      - UserMessage（类名含 "User"）→ 先 _user_text 提取纯文本（replay-user-messages 回流的
+          用户消息，str content 或 text 块列表）→ {"kind":"user_msg","uuid","text"}；
+          空则回退 ToolResultBlock 逐块提取 → {"kind":"tool_result","text","is_error"}
       - SystemMessage / 未知 → []（忽略）
     None → []。
     末尾保留 duck-typed 扁平 fallback（.text / .tool+.path / .type∈{result,done}），
@@ -30,6 +32,9 @@ def normalize(msg: Any) -> list[dict]:
     # UserMessage：提取 tool_result（工具输出可见是透明底线）；SystemMessage 仍忽略
     # （SystemMessage 也有 .subtype，须在 ResultMessage 判定前排除）
     if "User" in mtype:
+        text = _user_text(msg)
+        if text:
+            return [{"kind": "user_msg", "uuid": str(getattr(msg, "uuid", "") or ""), "text": text}]
         return _tool_result_events(msg)
     if "System" in mtype:
         return []
@@ -82,6 +87,20 @@ def _normalize_block(block: Any) -> dict | None:
     if text is not None:
         return {"kind": "text_delta", "text": str(text)}
     return None
+
+
+def _user_text(msg: Any) -> str:
+    """UserMessage 的纯文本提取（str content 或 text 块列表）；空 → 走 tool_result 分支。
+
+    只取 `getattr(b, "text")`：ToolResultBlock 的内容在 .content 而非 .text，不会误伤。
+    """
+    content = getattr(msg, "content", None)
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts = [str(getattr(b, "text", "") or "") for b in content]
+        return "\n".join(p for p in parts if p).strip()
+    return ""
 
 
 def _tool_result_events(msg: Any) -> list[dict]:
@@ -141,7 +160,8 @@ def _normalize_flat(msg: Any) -> dict | None:
 class AgentRunner(Protocol):
     async def run(self, prompt: str, cwd: str, *,
                   on_event: Callable[[dict], None], cancel_event,
-                  resume_session_id: str | None = None) -> str | None: ...
+                  resume_session_id: str | None = None,
+                  permission_mode: str = "acceptEdits", can_use_tool=None) -> str | None: ...
 
 
 class ClaudeCodeRunner:
@@ -152,33 +172,49 @@ class ClaudeCodeRunner:
         self._allowed_tools = allowed_tools or ["Read", "Write", "Edit", "MultiEdit", "Bash", "Glob", "Grep"]
         self._client_factory = client_factory  # None → 生产用真 SDK（lazy 导入）
 
-    def _default_factory(self, cwd: str, tools: list[str], resume: str | None = None):
+    def _default_factory(self, cwd: str, tools: list[str], resume: str | None = None,
+                         permission_mode: str = "acceptEdits", can_use_tool=None):
         from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions  # lazy：测试不依赖真 SDK
         options = ClaudeAgentOptions(
-            cwd=cwd, permission_mode="acceptEdits", allowed_tools=tools, resume=resume,
+            cwd=cwd, permission_mode=permission_mode, allowed_tools=tools, resume=resume,
+            enable_file_checkpointing=True,            # rewind：CLI 侧文件检查点
+            extra_args={"replay-user-messages": None},  # rewind：流中回 UserMessage（带 uuid 作回滚锚点）
+            can_use_tool=can_use_tool,
         )
         return ClaudeSDKClient(options=options)
 
     async def run(self, prompt: str, cwd: str, *, on_event, cancel_event,
-                  resume_session_id: str | None = None) -> str | None:
+                  resume_session_id: str | None = None,
+                  permission_mode: str = "acceptEdits", can_use_tool=None) -> str | None:
         """流式跑 prompt；每条 SDK 消息 normalize 后 on_event；取消则发 stopped 终态后早退；异常隔离成 error 事件。
 
         - resume_session_id：非 None 时透传 ClaudeAgentOptions.resume，续上同一 CC 会话历史。
+        - permission_mode：透传 ClaudeAgentOptions.permission_mode（如 acceptEdits/plan）。
+        - can_use_tool：透传 ClaudeAgentOptions.can_use_tool 权限回调（None = SDK 默认）。
         - cc_session_id 捕获：流中遇到 ResultMessage（duck-typed 带 .session_id）时缓存其值，
           run 结束返回（str | None）。失败时返回 None；取消时返回已捕获的 cc_sid。
-        - 取消语义：在每条 SDK 消息前查 cancel_event.is_set() → True 则发 stopped 终态后立即 return（不发 done）。
+        - 取消语义：在每条 SDK 消息前查 cancel_event.is_set() → True 则先 client.interrupt()
+          真杀后台工具（旧行为只停读，后台还在跑；interrupt 鸭子类型，缺失/失败静默），
+          再发 stopped 终态后立即 return（不发 done）。
         - 容错语义：run 内任何异常 → on_event({"kind":"error","text":str(e)})，绝不向调用方抛。
         - 正常结束：on_event({"kind":"done"})。
         """
         factory = self._client_factory or self._default_factory
         cc_sid: str | None = None
         try:
-            client = factory(cwd, self._allowed_tools, resume=resume_session_id)
+            client = factory(cwd, self._allowed_tools, resume=resume_session_id,
+                             permission_mode=permission_mode, can_use_tool=can_use_tool)
             async with client as c:
                 await c.query(prompt)
                 async for msg in c.receive_response():
                     if cancel_event.is_set():
-                        # 取消必须给终态：此前静默 return → 面板永远停「运行中」、按钮锁死
+                        # 先 interrupt 真杀后台工具，再发 stopped 终态（否则面板永远停「运行中」、按钮锁死）
+                        interrupt = getattr(c, "interrupt", None)
+                        if interrupt is not None:
+                            try:
+                                await interrupt()
+                            except Exception:
+                                pass
                         on_event({"kind": "stopped", "text": "已中断"})
                         return cc_sid
                     # ResultMessage 携 session_id：先从原 msg 读，再 normalize
