@@ -774,6 +774,22 @@ fn open_data_dir(app: AppHandle) -> Result<(), String> {
         .map_err(|e| format!("打开数据目录失败：{e}"))
 }
 
+/// 原生文件夹选择器（coding 面板 cwd 药丸用）：webview iframe 无 Tauri IPC，
+/// 面板经 WebviewPanel `native:` 白名单旁路直调本命令，对话框必须 Rust 侧开。
+/// 返回所选绝对路径；用户取消返回 None。
+#[tauri::command]
+fn pick_folder(app: AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let folder = app
+        .dialog()
+        .file()
+        .set_title("选择项目文件夹")
+        .blocking_pick_folder();
+    Ok(folder
+        .and_then(|p| p.into_path().ok())
+        .map(|p| p.to_string_lossy().into_owned()))
+}
+
 /// 看门狗：每 5s 发 ping；运行中 >15s 无 pong 视为疑似僵死。
 /// 两轮确认：第一轮只补发 ping 并标记 warned，下一轮仍无 pong 才 kill（由桥任务 Terminated 统一重启）——
 /// macOS App Nap/休眠会把整个壳挂起，苏醒后 last_pong 时间跳变，单轮判断会误杀健康大脑。
@@ -1723,6 +1739,8 @@ pub fn run() {
         .plugin(shortcuts)
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
+        // 原生文件/文件夹对话框（pick_folder 命令经 DialogExt 使用）
+        .plugin(tauri_plugin_dialog::init())
         // 开机启动（macOS LaunchAgent）；前端直接调插件 API（enable/disable/isEnabled）
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -1993,7 +2011,8 @@ pub fn run() {
             open_data_dir,
             open_home_window,
             close_home_window,
-            set_pet_expanded
+            set_pet_expanded,
+            pick_folder
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
