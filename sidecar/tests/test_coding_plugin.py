@@ -68,9 +68,9 @@ def test_runner_cancel_mid_stream():
             cancel.set()
     _run(runner.run("p", "/tmp", on_event=on_event, cancel_event=cancel))
     kinds = [e["kind"] for e in sent]
-    assert "done" not in kinds                         # cancel 抑制终态 done
-    assert kinds == ["text_delta", "text_delta"]       # 前两条入列
-    assert len(sent) == 2                              # 第 3 条取消后丢弃
+    assert "done" not in kinds                                  # cancel 抑制终态 done
+    assert kinds == ["text_delta", "text_delta", "stopped"]     # 前两条入列 + 取消终态
+    assert len(sent) == 3                              # 第 3 条取消后丢弃
 
 
 def test_runner_error_isolated():
@@ -86,6 +86,27 @@ def test_runner_error_isolated():
     runner = ClaudeCodeRunner(client_factory=factory)
     _run(runner.run("p", "/tmp", on_event=events.append, cancel_event=asyncio.Event()))
     assert any(e["kind"] == "error" for e in events)
+
+
+class _SetEvent:
+    """is_set() 恒 True 的 cancel_event 替身（asyncio.Event 极简仿）。"""
+    def is_set(self): return True
+    def set(self): pass
+
+
+def _cancel_immediately_factory():
+    """fake client factory：首条消息前取消即触发（配合 _SetEvent 恒 set）。"""
+    msgs = [_FakeAssistant([_FakeText("a")]), _FakeResultMessage("success")]
+    return lambda cwd, tools, resume=None: _FakeClient(msgs)
+
+
+def test_runner_cancel_emits_stopped_terminal_event():
+    """取消路径必须发 stopped 终态事件（此前静默早退 → 面板永远卡在「运行中」）。"""
+    events = []
+    runner = ClaudeCodeRunner(client_factory=_cancel_immediately_factory())
+    _run(runner.run("p", "/tmp", on_event=events.append, cancel_event=_SetEvent()))
+    assert any(ev.get("kind") == "stopped" for ev in events), events
+    assert not any(ev.get("kind") == "done" for ev in events), events
 
 
 # ---------- runner：resume + cc_session_id 捕获 ----------

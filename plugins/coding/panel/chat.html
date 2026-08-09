@@ -701,6 +701,14 @@
         currentBubble = null;
         appendToolUse(ev);
         break;
+      case "stopped":
+        if (currentBubble) {
+          currentBubble.classList.add("done");
+          currentBubble = null;
+        }
+        appendMarker(ev.text || "已中断", true);
+        onSessionEnded();
+        break;
       case "done":
         if (currentBubble) {
           currentBubble.classList.add("done");

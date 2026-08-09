@@ -121,12 +121,12 @@ class ClaudeCodeRunner:
 
     async def run(self, prompt: str, cwd: str, *, on_event, cancel_event,
                   resume_session_id: str | None = None) -> str | None:
-        """流式跑 prompt；每条 SDK 消息 normalize 后 on_event；取消则早退；异常隔离成 error 事件。
+        """流式跑 prompt；每条 SDK 消息 normalize 后 on_event；取消则发 stopped 终态后早退；异常隔离成 error 事件。
 
         - resume_session_id：非 None 时透传 ClaudeAgentOptions.resume，续上同一 CC 会话历史。
         - cc_session_id 捕获：流中遇到 ResultMessage（duck-typed 带 .session_id）时缓存其值，
-          run 结束返回（str | None）。失败/取消时返回 None。
-        - 取消语义：在每条 SDK 消息前查 cancel_event.is_set() → True 则立即 return（不发 done）。
+          run 结束返回（str | None）。失败时返回 None；取消时返回已捕获的 cc_sid。
+        - 取消语义：在每条 SDK 消息前查 cancel_event.is_set() → True 则发 stopped 终态后立即 return（不发 done）。
         - 容错语义：run 内任何异常 → on_event({"kind":"error","text":str(e)})，绝不向调用方抛。
         - 正常结束：on_event({"kind":"done"})。
         """
@@ -138,7 +138,9 @@ class ClaudeCodeRunner:
                 await c.query(prompt)
                 async for msg in c.receive_response():
                     if cancel_event.is_set():
-                        return None
+                        # 取消必须给终态：此前静默 return → 面板永远停「运行中」、按钮锁死
+                        on_event({"kind": "stopped", "text": "已中断"})
+                        return cc_sid
                     # ResultMessage 携 session_id：先从原 msg 读，再 normalize
                     sid = getattr(msg, "session_id", None)
                     if sid:
