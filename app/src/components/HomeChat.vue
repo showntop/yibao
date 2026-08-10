@@ -772,6 +772,7 @@ onUnmounted(() => {
     <!-- 三栏 AI 工作台：内心+会话（复合栏）｜对话｜AI 进程 -->
     <!-- 用 wrapper div 包左/右栏：scoped CSS 才能命中（直接 class 加在子组件根会因 scope 不匹配而失效） -->
     <div v-else class="chat-cols" :class="{ 'left-collapsed': !props.leftRailOpen, 'right-collapsed': !props.rightRailOpen }">
+    <!-- 左栏折叠时露出 36×36 团子头像按钮（展开入口）；展开态无按钮——左栏有更多折叠方式（点空白/脑会话 tab 切换/键盘等），与右栏信息密度需求不同 -->
     <button v-if="!props.leftRailOpen" class="rail-avatar-reopen" type="button" title="展开左栏" aria-label="展开左栏" @click="emit('toggleLeft')">
       <Avatar :state="state" :size="28" compact />
     </button>
@@ -991,12 +992,9 @@ onUnmounted(() => {
   flex-direction: column;
   position: relative; /* 锚定"跳到最新"浮钮 */
 }
-/* 宽屏全展开；逐档收栏（左复合栏 < 右进程 < 对话）保证对话区始终可用 */
-@media (max-width: 1180px) {
-  .chat-cols > .col-left {
-    display: none;
-  }
-}
+/* 宽屏全展开；逐档收栏保证对话区始终可用。
+ * 左栏收起/展开由 Home.vue 的 leftRailOpen 状态控制（非全屏默认收起，按钮始终可点）；
+ * 这里只保留右栏在极小屏的兜底。 */
 @media (max-width: 900px) {
   .chat-cols > .col-context {
     display: none;

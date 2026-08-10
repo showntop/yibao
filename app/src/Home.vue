@@ -27,6 +27,8 @@ const chatState = ref<AvatarState>("idle");
 const panelState = ref<AvatarState>("idle");
 const leftRailOpen = ref(true);
 const rightRailOpen = ref(true);
+// 非全屏（窗口窄）默认收起左栏：展开/折叠按钮始终可点，用户手动切换后不再被覆盖
+const isNarrowWindow = () => window.innerWidth <= 1180;
 const clockNow = ref(new Date());
 const productNote = "让信息自然归位。";
 
@@ -248,6 +250,7 @@ let unApprovals: (() => void) | null = null;
 onMounted(async () => {
   if (!qaMode) unApprovals = onPendingConfirms((l) => (approvalCount.value = l.length));
   window.addEventListener("keydown", onGlobalKeydown);
+  if (isNarrowWindow()) leftRailOpen.value = false; // 非全屏默认收起左栏（按钮仍可展开）
   clockTimer = window.setInterval(() => (clockNow.value = new Date()), 30_000);
 });
 onUnmounted(() => {
