@@ -220,7 +220,7 @@
       <button class="mini" id="json-sample">示例</button>
       <button class="mini" id="json-copy">⧉ 复制</button>
     </div>
-    <div class="editor">
+    <div class="editor" id="json-editor">
       <textarea id="json-in" rows="12" spellcheck="false"
         placeholder="粘贴 JSON，或对译宝说「格式化这段 JSON」；点「格式化」后就地美化"></textarea>
     </div>
@@ -499,8 +499,9 @@
   function setJsonMode(mode, obj) {
     jsonMode = mode;
     var isTree = mode === "tree";
-    // 用 class 切换显隐：inline display="" 不会覆盖 .hidden { display:none } 的 class
-    isTree ? hide($("json-in")) : show($("json-in"));
+    // 树模式必须把整个 .editor 容器一起隐藏——它和 .jtree 是同级 flex:1 兄弟，
+    // 不隐藏 .editor 会让 .jtree 被挤到下半部分（textarea display:none 但容器仍占 flex 空间）。
+    isTree ? hide($("json-editor")) : show($("json-editor"));
     isTree ? show($("json-tree")) : hide($("json-tree"));
     $("json-mode-tree").hidden = isTree;
     $("json-mode-text").hidden = !isTree;
