@@ -527,6 +527,11 @@ function onEvent(e: BrainEvent) {
       if (!panelOpen.value) {
         panelOpen.value = true;
         bubbles.value.push({ role: "ai", text: `⇢ 正在和「${title}」协作`, panelLink: true });
+      } else {
+        // 已协作中再打开另一个插件（A→B）：更新最近一条「⇢ 协作」气泡为当前插件，
+        // 保持单条"正在和 xxx 协作"（否则不会显示 B）
+        const link = [...bubbles.value].reverse().find((b) => b.panelLink);
+        if (link) link.text = `⇢ 正在和「${title}」协作`;
       }
       break;
     }
