@@ -165,6 +165,30 @@
   .ts-v { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12px; }
   .ts-v + button.mini { flex: none; }
   #ts-in { font-family: var(--mono); font-size: 12.5px; }
+
+  /* ---- JSON 树视图（节点展开/折叠） ---- */
+  .jtree { flex: 1; min-height: 0; overflow: auto; padding: 8px 4px 12px; font: var(--mono); user-select: text; }
+  .jt-kids { padding-left: 16px; border-left: 1px solid var(--border-soft); margin-left: 4px; }
+  .jt-line { display: flex; align-items: center; gap: 4px; padding: 1.5px 4px; border-radius: 5px; white-space: nowrap; }
+  .jt-line:hover { background: var(--border-soft); }
+  .jt-line.hit { background: var(--warn-bg); box-shadow: inset 2px 0 var(--warn); }
+  .jt-complex { cursor: pointer; }
+  .jt-toggle { flex: none; width: 13px; color: var(--faint); font-size: 10px; text-align: center; }
+  .jt-k { color: var(--muted); }
+  .jt-k.arr { color: var(--faint); }
+  .jt-v { color: var(--text); }
+  .jt-v.jt-str { color: var(--green); }
+  .jt-v.jt-num { color: var(--accent); }
+  .jt-v.jt-bool, .jt-v.jt-null { color: var(--warn); }
+  .jt-v.jt-punct { color: var(--faint); }
+  .jt-summary { color: var(--faint); }
+
+  /* ---- 面板内搜索条（⌘F；Tauri webview 无原生 Find 命令，需自己实现） ---- */
+  .find-bar { display: flex; align-items: center; gap: 6px; padding: 6px 8px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+  .find-bar input { flex: 1; min-width: 0; border: none; outline: none; background: transparent; color: var(--text); font-size: 12.5px; }
+  .find-bar input::placeholder { color: var(--faint); }
+  .find-count { flex: none; min-width: 46px; text-align: center; font-size: 11px; color: var(--faint); }
+  .find-bar button.mini { flex: none; }
   #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 </style>
 </head>
@@ -175,12 +199,23 @@
   <button id="tab-ts">时间戳</button>
 </div>
 
+<!-- 面板内搜索（⌘F 唤起；Tauri webview 无原生 Find，需面板自实现） -->
+<div class="find-bar hidden" id="find-bar">
+  <input id="find-input" placeholder="在工具箱中查找…" spellcheck="false" />
+  <span class="find-count" id="find-count"></span>
+  <button class="mini" id="find-prev" title="上一个 (⇧⏎)">↑</button>
+  <button class="mini" id="find-next" title="下一个 (⏎)">↓</button>
+  <button class="mini" id="find-close" title="关闭 (Esc)">×</button>
+</div>
+
 <!-- JSON -->
 <div id="page-json">
   <div class="card">
     <div class="card-head">
       JSON <span class="muted" id="json-in-count"></span>
       <span class="spacer"></span>
+      <button class="mini" id="json-mode-tree" title="节点展开/折叠查看">树视图</button>
+      <button class="mini" id="json-mode-text" hidden>文本</button>
       <button class="mini" id="json-paste">⧉ 粘贴</button>
       <button class="mini" id="json-sample">示例</button>
       <button class="mini" id="json-copy">⧉ 复制</button>
@@ -189,6 +224,7 @@
       <textarea id="json-in" rows="12" spellcheck="false"
         placeholder="粘贴 JSON，或对译宝说「格式化这段 JSON」；点「格式化」后就地美化"></textarea>
     </div>
+    <div class="jtree hidden" id="json-tree"></div>
   </div>
   <div class="toolbar">
     <button class="act" id="json-pretty">格式化</button>
@@ -393,6 +429,164 @@
     ta.setSelectionRange(0, 0);
   }
 
+  // ---- JSON 树视图（节点展开/折叠，惰性渲染） ----
+  function escapeHtml(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  // 惰性：对象/数组先渲染折叠行（摘要），点开才递归建子节点——大 JSON 首屏不卡
+  function buildJsonNode(value, key, isArrItem) {
+    var wrap = document.createElement("div");
+    wrap.className = "jt-node";
+    var isObj = value && typeof value === "object" && !Array.isArray(value);
+    var isArr = Array.isArray(value);
+    if (isObj || isArr) {
+      var keys = Object.keys(value);
+      var summary = (isArr ? "[ " : "{ ") + keys.length + (isArr ? " ]" : " }");
+      var line = document.createElement("div");
+      line.className = "jt-line jt-complex";
+      line.innerHTML =
+        '<span class="jt-toggle">▸</span>' +
+        (key ? '<span class="jt-k' + (isArrItem ? " arr" : "") + '">' + escapeHtml(key) + ":</span> " : "") +
+        '<span class="jt-v jt-punct">' + (isArr ? "[" : "{") + "</span>" +
+        '<span class="jt-summary">' + summary + "</span>" +
+        '<span class="jt-v jt-punct">' + (isArr ? "]" : "}") + "</span>";
+      var box = document.createElement("div");
+      box.className = "jt-kids";
+      box.style.display = "none";
+      wrap.appendChild(line);
+      wrap.appendChild(box);
+      line.addEventListener("click", function () {
+        var isOpen = box.style.display !== "none";
+        line.querySelector(".jt-toggle").textContent = isOpen ? "▸" : "▾";
+        box.style.display = isOpen ? "none" : "";
+        if (!isOpen && !box.children.length) {
+          keys.forEach(function (k) { box.appendChild(buildJsonNode(value[k], k, isArr)); });
+        }
+      });
+    } else {
+      var t = typeof value, cls = "jt-str", text = JSON.stringify(value);
+      if (value === null) { cls = "jt-null"; text = "null"; }
+      else if (t === "number") cls = "jt-num";
+      else if (t === "boolean") cls = "jt-bool";
+      var line2 = document.createElement("div");
+      line2.className = "jt-line";
+      line2.innerHTML =
+        (key ? '<span class="jt-k' + (isArrItem ? " arr" : "") + '">' + escapeHtml(key) + ":</span> " : "") +
+        '<span class="jt-v ' + cls + '">' + escapeHtml(text) + "</span>";
+      wrap.appendChild(line2);
+    }
+    return wrap;
+  }
+  function jtreeRender(obj) {
+    var el = $("json-tree");
+    el.innerHTML = "";
+    el.appendChild(buildJsonNode(obj, null, false));
+  }
+  // 展开全部折叠节点（搜索前用，保证能搜到折叠内容）
+  function expandAllJsonTree() {
+    var guard = 0;
+    while (guard++ < 80) {
+      var any = false;
+      document.querySelectorAll("#json-tree .jt-complex").forEach(function (c) {
+        var box = c.nextElementSibling;
+        if (box && box.style.display === "none") { c.click(); any = true; }
+      });
+      if (!any) break;
+    }
+  }
+
+  var jsonMode = "text"; // text | tree
+  function setJsonMode(mode, obj) {
+    jsonMode = mode;
+    var isTree = mode === "tree";
+    // 用 class 切换显隐：inline display="" 不会覆盖 .hidden { display:none } 的 class
+    isTree ? hide($("json-in")) : show($("json-in"));
+    isTree ? show($("json-tree")) : hide($("json-tree"));
+    $("json-mode-tree").hidden = isTree;
+    $("json-mode-text").hidden = !isTree;
+    if (isTree && obj !== undefined) jtreeRender(obj);
+    else if (!isTree) $("json-tree").innerHTML = "";
+  }
+  $("json-mode-tree").addEventListener("click", function () {
+    try { setJsonMode("tree", JSON.parse($("json-in").value)); }
+    catch (e) { toast("当前不是合法 JSON，无法切换树视图"); }
+  });
+  $("json-mode-text").addEventListener("click", function () { setJsonMode("text"); });
+
+  // ---- 面板内搜索（⌘F；Tauri webview 无原生 Find 命令，面板自实现） ----
+  var findQ = "", findMatches = [], findIdx = -1;
+  function findTarget() {
+    if (tool === "json" && jsonMode === "tree") return "tree";
+    if (tool === "json") return $("json-in");
+    if (tool === "diff") return (document.activeElement === $("diff-new")) ? $("diff-new") : $("diff-old");
+    return $("ts-in");
+  }
+  function clearHits() {
+    document.querySelectorAll("#json-tree .jt-line.hit").forEach(function (el) { el.classList.remove("hit"); });
+  }
+  function doFind(dir) {
+    var q = $("find-input").value;
+    if (q !== findQ) { findQ = q; findIdx = -1; } // 查询变化重置导航
+    var t = findTarget();
+    if (t === "tree") {
+      clearHits();
+      if (!q) { $("find-count").textContent = ""; findMatches = []; return; }
+      expandAllJsonTree();
+      var lines = Array.prototype.slice.call(document.querySelectorAll("#json-tree .jt-line"));
+      findMatches = lines.filter(function (l) { return l.textContent.toLowerCase().indexOf(q.toLowerCase()) !== -1; });
+      if (!findMatches.length) { $("find-count").textContent = "0/0"; return; }
+      findIdx = dir === "prev"
+        ? (findIdx < 0 ? findMatches.length - 1 : findIdx - 1)
+        : (findIdx + 1 >= findMatches.length ? 0 : findIdx + 1);
+      var m = findMatches[findIdx];
+      m.classList.add("hit");
+      m.scrollIntoView({ block: "nearest" });
+      $("find-count").textContent = (findIdx + 1) + "/" + findMatches.length;
+    } else if (t && t.tagName === "TEXTAREA") {
+      var text = t.value, lower = text.toLowerCase(), lq = q.toLowerCase();
+      if (!lq) { $("find-count").textContent = ""; return; }
+      var count = 0, i2 = -1;
+      while ((i2 = lower.indexOf(lq, i2 + 1)) !== -1) count++;
+      if (!count) { $("find-count").textContent = "0/0"; return; }
+      var start = dir === "prev" ? (t.selectionStart - 1) : (t.selectionEnd || 0);
+      var pos = dir === "prev" ? lower.lastIndexOf(lq, start) : lower.indexOf(lq, start);
+      if (pos === -1) pos = dir === "prev" ? lower.lastIndexOf(lq) : lower.indexOf(lq);
+      t.setSelectionRange(pos, pos + lq.length);
+      try { t.focus({ preventScroll: true }); } catch (e) { t.focus(); }
+      // 粗略滚动到光标行附近
+      var lineNo = (text.slice(0, pos).match(/\n/g) || []).length;
+      t.scrollTop = Math.max(0, (lineNo - 2) * 19);
+      $("find-count").textContent = count + " 处";
+    }
+  }
+  function openFind() {
+    show($("find-bar"));
+    $("find-input").focus();
+    $("find-input").select();
+  }
+  function closeFind() {
+    hide($("find-bar"));
+    $("find-input").value = "";
+    $("find-count").textContent = "";
+    clearHits();
+    findQ = ""; findMatches = []; findIdx = -1;
+  }
+  $("find-input").addEventListener("input", function () { findQ = ""; doFind("next"); });
+  $("find-input").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { e.preventDefault(); doFind(e.shiftKey ? "prev" : "next"); }
+    else if (e.key === "Escape") closeFind();
+  });
+  $("find-prev").addEventListener("click", function () { doFind("prev"); });
+  $("find-next").addEventListener("click", function () { doFind("next"); });
+  $("find-close").addEventListener("click", closeFind);
+  document.addEventListener("keydown", function (e) {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
+      e.preventDefault();
+      openFind();
+    }
+    if (e.key === "Escape" && !$("find-bar").classList.contains("hidden")) closeFind();
+  });
+
   // ---- JSON：就地格式化 ----
   function runJson(mode) {
     hide($("json-err"));
@@ -403,6 +597,10 @@
     }).then(function (r) {
       var out = (r && r.output) || "";
       if (out && out !== $("json-in").value) replaceText($("json-in"), out);
+      // 格式化/压缩出合法 JSON 后自动切树视图（可折叠浏览）
+      if (mode === "pretty" || mode === "minify") {
+        try { setJsonMode("tree", JSON.parse(out)); return; } catch (e) { /* 非 JSON 文本保持文本模式 */ }
+      }
       toast({pretty: "已格式化", minify: "已压缩",
              escape: "已添加转义", unescape: "已去除转义"}[mode] || "完成");
     }).catch(function (e) {
@@ -414,19 +612,22 @@
   $("json-minify").addEventListener("click", function () { runJson("minify"); });
   $("json-unescape").addEventListener("click", function () { runJson("unescape"); });
   $("json-escape").addEventListener("click", function () { runJson("escape"); });
+  // 树模式下这些编辑操作要先回文本模式（textarea 被隐藏）
   $("json-clear").addEventListener("click", function () {
+    setJsonMode("text");
     $("json-in").value = ""; updJsonIn(); hide($("json-err"));
   });
   $("json-copy").addEventListener("click", function () {
-    copyText($("json-in").value);
+    copyText(jsonMode === "tree" ? JSON.stringify(JSON.parse($("json-in").value), null, parseInt($("json-indent").value, 10)) : $("json-in").value);
   });
   $("json-paste").addEventListener("click", function () {
     if (!navigator.clipboard || !navigator.clipboard.readText) { toast("读不到剪贴板"); return; }
     navigator.clipboard.readText().then(function (s) {
-      if (s) { $("json-in").value = s; updJsonIn(); toast("已粘贴"); }
+      if (s) { setJsonMode("text"); $("json-in").value = s; updJsonIn(); toast("已粘贴"); }
     }, function () { toast("读不到剪贴板"); });
   });
   $("json-sample").addEventListener("click", function () {
+    setJsonMode("text");
     $("json-in").value = '{"name":"译宝","tags":["桌宠","AI"],"meta":{"version":2,"plugins":4}}';
     updJsonIn();
     hide($("json-err"));
