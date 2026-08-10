@@ -433,8 +433,10 @@
   function escapeHtml(s) {
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
-  // 惰性：对象/数组先渲染折叠行（摘要），点开才递归建子节点——大 JSON 首屏不卡
-  function buildJsonNode(value, key, isArrItem) {
+  // 惰性：对象/数组先渲染折叠行（摘要），点开才递归建子节点——大 JSON 首屏不卡。
+  // autoExpand=true 时默认展开该节点（递归全展开）；超大节点（>60 键）仍折叠防卡；
+  // 手动点开的分支子节点默认折叠（保持可控）。
+  function buildJsonNode(value, key, isArrItem, autoExpand) {
     var wrap = document.createElement("div");
     wrap.className = "jt-node";
     var isObj = value && typeof value === "object" && !Array.isArray(value);
@@ -452,7 +454,12 @@
         '<span class="jt-v jt-punct">' + (isArr ? "]" : "}") + "</span>";
       var box = document.createElement("div");
       box.className = "jt-kids";
-      box.style.display = "none";
+      var expanded = autoExpand && keys.length <= 60;
+      box.style.display = expanded ? "" : "none";
+      if (expanded) {
+        keys.forEach(function (k) { box.appendChild(buildJsonNode(value[k], k, isArr, true)); });
+        line.querySelector(".jt-toggle").textContent = "▾";
+      }
       wrap.appendChild(line);
       wrap.appendChild(box);
       line.addEventListener("click", function () {
@@ -460,7 +467,7 @@
         line.querySelector(".jt-toggle").textContent = isOpen ? "▸" : "▾";
         box.style.display = isOpen ? "none" : "";
         if (!isOpen && !box.children.length) {
-          keys.forEach(function (k) { box.appendChild(buildJsonNode(value[k], k, isArr)); });
+          keys.forEach(function (k) { box.appendChild(buildJsonNode(value[k], k, isArr, false)); });
         }
       });
     } else {
@@ -480,7 +487,7 @@
   function jtreeRender(obj) {
     var el = $("json-tree");
     el.innerHTML = "";
-    el.appendChild(buildJsonNode(obj, null, false));
+    el.appendChild(buildJsonNode(obj, null, false, true)); // 默认全展开
   }
   // 展开全部折叠节点（搜索前用，保证能搜到折叠内容）
   function expandAllJsonTree() {
