@@ -26,12 +26,15 @@ import type { TrustStats } from "../lib/brain";
 // ---- 分类导航（macOS 系统设置语言）----
 // 原先 11 个分组平铺一列要滚很久，且「感知日志」「记忆管理」这种数据浏览器
 // 混在开关中间。按语义收成 4 类，每类内仍是分组卡片。
-type Cat = "general" | "proactive" | "privacy";
+// 「关于」原塞在「通用」末位，与可配置项混在一起；版本/版权是只读元信息，
+// 单独成类更明确——「通用」只剩真正可改的设置。
+type Cat = "general" | "proactive" | "privacy" | "about";
 const cat = ref<Cat>("general");
-const CATS: { id: Cat; label: string; icon: "gear" | "sparkle" | "lock" }[] = [
+const CATS: { id: Cat; label: string; icon: "gear" | "sparkle" | "lock" | "info" }[] = [
   { id: "general", label: "通用", icon: "gear" },
   { id: "proactive", label: "主动协助", icon: "sparkle" },
   { id: "privacy", label: "隐私与权限", icon: "lock" },
+  { id: "about", label: "关于", icon: "info" },
 ];
 
 // ---- 模型 / 语音（写 .env，重启大脑生效）----
@@ -595,11 +598,19 @@ onUnmounted(() => {
           </div>
         </section>
 
-        <!-- 保存（模型+语音）：写 .env → 重启大脑生效。sticky 贴底，长表单里始终可达 -->
-        <div class="s-actions">
-          <span v-if="saveErr" class="s-msg err"><YbIcon name="alert" :size="13" />{{ saveErr }}</span>
-          <span v-else-if="saveMsg" class="s-msg ok">{{ saveMsg }}</span>
-          <button class="s-primary" :disabled="saving" @click="save">{{ saving ? "保存中…" : "保存并重启大脑" }}</button>
+        <!-- 操作带：只针对「模型」+「语音」两组（写 .env → 重启大脑）。
+             sticky 贴 s-scroll 底部：滚到下面的"启动/搜索/扩展"卡时也始终可达；
+             渐变遮罩防止下方卡从透明区透出，盖在 s-group 之上但本身不是 s-group（不带卡边）。 -->
+        <div class="s-ops-band">
+          <div class="s-ops-text">
+            <YbIcon class="s-ops-ic" name="info" :size="14" />
+            <span>以上「模型」与「语音」的改动需保存后重启大脑才生效</span>
+          </div>
+          <div class="s-ops-cta">
+            <span v-if="saveErr" class="s-msg err"><YbIcon name="alert" :size="13" />{{ saveErr }}</span>
+            <span v-else-if="saveMsg" class="s-msg ok">{{ saveMsg }}</span>
+            <button class="s-primary" :disabled="saving" @click="save">{{ saving ? "保存中…" : "保存并重启大脑" }}</button>
+          </div>
         </div>
 
         <section class="s-group">
@@ -675,14 +686,6 @@ onUnmounted(() => {
             <span class="s-row-value">19527（YIBAO_HTTP_PORT 可覆盖，重启大脑生效）</span>
           </div>
           <div class="s-note">安装：chrome://extensions → 开发者模式 → 加载已解压 → 选仓库 extension/ 目录；扩展选项页粘贴 token。右键或工具栏按钮即可「存素材 / 存为选题」。</div>
-        </section>
-
-        <section class="s-group">
-          <div class="s-group-title">关于</div>
-          <div class="s-row">
-            <span class="s-row-label">译宝</span>
-            <span class="s-row-value">v{{ version }}</span>
-          </div>
         </section>
       </template>
 
@@ -881,6 +884,21 @@ onUnmounted(() => {
           <div class="s-row">
             <span class="s-row-why">{{ perms ? "授权后点重新检测；屏幕录制需重启译宝生效" : "大脑连接后自动检测" }}</span>
             <button class="s-mini" @click="recheck">重新检测</button>
+          </div>
+        </section>
+      </template>
+
+      <!-- ============ 关于：版本号 / 仓库存放点（只读元信息）============ -->
+      <template v-else-if="cat === 'about'">
+        <section class="s-group">
+          <div class="s-group-title">译宝</div>
+          <div class="s-row">
+            <span class="s-row-label">版本</span>
+            <span class="s-row-value">v{{ version }}</span>
+          </div>
+          <div class="s-row">
+            <span class="s-row-label">数据目录</span>
+            <span class="s-row-value">~/Library/Application Support/com.yibao.desktop/</span>
           </div>
         </section>
       </template>
@@ -1372,16 +1390,47 @@ select option {
   opacity: 0.5;
   cursor: default;
 }
-/* 保存行：消息在左、主按钮在右；与分组卡同宽左对齐 */
-.s-actions {
+/* 操作带：粘到 s-scroll 底部，长表单（启动/搜索/扩展）也能始终看到保存按钮。
+   不是 s-group 也不带卡边——它是「针对上面卡组的横切操作」，
+   用 surface 底 + hairline 描边 + 微阴影与卡区分，又跟 card page bg 协调。 */
+.s-ops-band {
   box-sizing: border-box;
   width: 100%;
   max-width: 760px;
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: var(--yb-space-3);
-  padding: 0 2px;
+  padding: var(--yb-space-3) var(--yb-space-4);
+  margin-top: calc(-1 * var(--yb-space-4));
+  border: 1px solid var(--yb-card-border);
+  border-radius: var(--yb-card-radius);
+  background: var(--yb-card-bg);
+  box-shadow: var(--yb-shadow-1);
+  /* 渐变遮罩：从 card-bg 渐变到透明，让带子「贴」在内容之上而非孤立浮空 */
+  backdrop-filter: var(--yb-blur);
+}
+.s-ops-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--yb-fs-md);
+  color: var(--yb-text-dim);
+  line-height: var(--yb-lh-ui);
+  min-width: 0;
+}
+.s-ops-ic {
+  color: var(--yb-text-faint);
+  flex-shrink: 0;
+}
+.s-ops-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--yb-space-3);
+  flex-shrink: 0;
 }
 .s-msg {
   display: flex;

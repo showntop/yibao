@@ -403,7 +403,12 @@ onUnmounted(() => {
     <div ref="barRef" class="bench">
       <transition name="pop">
         <div v-if="layerVisible && (msgs.length || listeningHint)" ref="layerRef" class="thread">
-          <button class="thread-x" title="收起" @click="layerVisible = false">×</button>
+          <button class="thread-x" title="收起" aria-label="收起对话" @click="layerVisible = false">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
           <div
             v-for="(m, i) in msgs"
             :key="i"
@@ -595,38 +600,80 @@ onUnmounted(() => {
   position: relative;
   margin: 0 var(--yb-space-2) var(--yb-space-2);
 }
+/* thread：取消 box-shadow / 独立圆角 / 独立边框。
+   原版像独立 popover（圆角+边框+阴影+实色背景），与下方 .bar (InputBar)
+   视觉割裂，弹出显得"飘着"且生硬。
+   新版：用半透玻璃与 .bar 同源，顶端一根细 hairline 给出"起点"，不再是 popover；
+   bottom 紧贴 .bar 顶端 4px，让两者像「输入条向上延伸出的时间线」。
+   hover 才出关闭按钮，不常驻占位。 */
 .thread {
   position: absolute;
-  left: 4px;
-  right: 4px;
-  bottom: calc(100% + 6px);
-  max-height: 260px;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 4px);
+  max-height: 240px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: var(--yb-space-3) var(--yb-space-4);
+  gap: 4px;
+  /* top padding 24px = thread-x (top:4 + 20) 留位；首行不被关闭按钮遮挡 */
+  padding: 24px 10px 6px;
   border-radius: var(--yb-radius-lg);
-  background: var(--yb-surface-solid);
+  background: var(--yb-glass);
+  -webkit-backdrop-filter: var(--yb-blur);
+  backdrop-filter: var(--yb-blur);
   border: 1px solid var(--yb-surface-border);
-  box-shadow: var(--yb-shadow-soft);
+  box-shadow: none;
   scrollbar-width: thin;
+}
+/* 顶端 hairline：用伪元素画一根从透明到描边的渐变，给 thread 一个"起点"，
+   同时不让 thread 显得从内容区凭空冒出 */
+.thread::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: var(--yb-space-3);
+  right: var(--yb-space-3);
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    var(--yb-card-row-line) 20%,
+    var(--yb-card-row-line) 80%,
+    transparent
+  );
+  pointer-events: none;
 }
 .thread-x {
   position: absolute;
-  top: 6px;
-  right: 8px;
+  top: 4px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
   border: none;
   background: transparent;
-  color: var(--yb-text-dim);
-  font-size: var(--yb-fs-lg);
-  line-height: 1;
+  color: var(--yb-text-faint);
   cursor: pointer;
-  padding: 2px 6px;
-  border-radius: var(--yb-radius-sm);
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  opacity: 0;
+  transition: opacity var(--yb-dur-fast) var(--yb-ease-out),
+    background var(--yb-dur-fast) var(--yb-ease-out);
+  flex-shrink: 0;
+  z-index: 1;
+}
+.thread-x svg {
+  width: 10px;
+  height: 10px;
+}
+.thread:hover .thread-x,
+.thread-x:focus-visible {
+  opacity: 1;
 }
 .thread-x:hover {
   background: var(--yb-btn-neutral);
+  color: var(--yb-text);
 }
 .t-row {
   padding: 4px 10px;

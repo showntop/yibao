@@ -13,7 +13,8 @@ type IconName =
   | "lock" | "pin" | "doc" | "alert" | "inbox" | "sparkle" | "plug"
   | "dumpling" | "mic" | "wave" | "thumb-up" | "thumb-down" | "search"
   | "panel-left" | "panel-right" | "plus" | "expand"
-  | "sliders" | "sun" | "moon";
+  | "sliders" | "sun" | "moon"
+  | "info";
 
 withDefaults(
   defineProps<{
@@ -94,6 +95,9 @@ const paths: Record<IconName, string> = {
   moon:
     // 主题切换：深色模式（暗）
     '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"/>',
+  // 关于：圆圈 + 底部小点（与 Lucide info 同构，比 alert 三角更"陈述"少"警告"）
+  info:
+    '<circle cx="12" cy="12" r="8.5"/><path d="M12 10.5v5"/><circle cx="12" cy="7.6" r="0.6" fill="currentColor" stroke="none"/>',
 };
 </script>
 
