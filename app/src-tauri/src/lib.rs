@@ -1,4 +1,7 @@
 // 译宝桌面壳：拉起 Python 大脑 sidecar + stdio 桥 + 守护（崩溃重启/看门狗）+ 全局热键 + 输入/确认命令。
+mod event_recorder;
+mod session_db;
+
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -129,10 +132,22 @@ struct BrainState {
     last_panel: Option<Value>,
     /// 面板浮窗被大窗临时藏起（大小窗互斥）：关大窗时凭它还原。
     panel_hidden_by_home: bool,
+    /// 会话持久化库（conversation 域唯一权威存储；打开失败降级为 None 不落库，
+    /// 此时对话仅内存态，不阻塞大脑主流程）。
+    session_db: Option<session_db::SessionDb>,
+    /// 对话事件落库器（流式缓冲 + proc 索引，瞬态随 run / sidecar 重启而清）。
+    recorder: event_recorder::EventRecorder,
 }
 
 impl BrainState {
     fn new() -> Self {
+        let db_path = runtime_root().join("session.db");
+        if let Some(parent) = db_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let session_db = session_db::SessionDb::open(&db_path)
+            .map_err(|e| eprintln!("[session] 会话库打开失败（降级内存态）：{e}"))
+            .ok();
         Self {
             child: None,
             last_pong: Instant::now(),
@@ -145,6 +160,8 @@ impl BrainState {
             hold_restart: false,
             last_panel: None,
             panel_hidden_by_home: false,
+            session_db,
+            recorder: event_recorder::EventRecorder::new(),
         }
     }
 }
@@ -476,11 +493,45 @@ fn spawn_bridge(app: AppHandle, mut rx: tauri::async_runtime::Receiver<CommandEv
                                 if let Some(s) = v.get("surface") {
                                     payload["surface"] = s.clone();
                                 }
+                                // M3 会话归属：sidecar 事件透传 conversation_id（run 发起时确定），
+                                // 提到事件顶层供落库/各窗过滤——流式中切会话不影响在途 run 的归属。
+                                // 双 key：snake_case 供 Rust 落库读；camelCase 供前端 BrainEvent.conversationId 读
+                                // （前端类型是 camelCase，只写 snake_case 会让前端过滤永远拿不到 id → 串台）。
+                                if let Some(c) = v.get("conversation_id").and_then(|c| c.as_str()) {
+                                    payload["conversation_id"] = serde_json::Value::String(c.to_string());
+                                    payload["conversationId"] = serde_json::Value::String(c.to_string());
+                                }
                                 // panel 事件顺带缓存载荷，供面板窗首开竞态下补拉
                                 if payload.get("kind").and_then(|k| k.as_str()) == Some("panel") {
                                     if let Some(p) = payload.get("payload") {
                                         let state = app.state::<Brain>();
                                         state.0.lock().unwrap().last_panel = Some(p.clone());
+                                    }
+                                }
+                                // 对话事件落库（Rust 是 conversation 域唯一写者；webview 只读渲染）。
+                                // 归属主会话：panel 事件（panelLink）全收；其余仅 pet/无 surface 的主对话，
+                                // 面板工作台（surface=panel:xxx）的瞬时消息不持久化。
+                                {
+                                    let kind = payload.get("kind").and_then(|k| k.as_str()).unwrap_or("");
+                                    let surface = payload.get("surface").and_then(|s| s.as_str()).unwrap_or("");
+                                    let belongs_main = kind == "panel" || surface.is_empty() || surface == "pet";
+                                    if belongs_main {
+                                        let state = app.state::<Brain>();
+                                        let mut g = state.0.lock().unwrap();
+                                        // 字段解构拆分借用：db 不可变 + recorder 可变共存
+                                        let BrainState { session_db, recorder, .. } = &mut *g;
+                                        if let Some(db) = session_db.as_ref() {
+                                            // M3：优先用事件透传的 conversation_id（流式切会话归属仍准确）；
+                                            // 空则回退活跃会话指针（reminder/proactive 等无归属事件兜底）。
+                                            let conv_id = payload
+                                                .get("conversation_id")
+                                                .and_then(|c| c.as_str())
+                                                .filter(|c| !c.is_empty())
+                                                .map(|c| c.to_string())
+                                                .or_else(|| db.get_active_conversation().ok().flatten())
+                                                .unwrap_or_default();
+                                            recorder.record(db, &conv_id, &payload);
+                                        }
                                     }
                                 }
                                 let _ = app.emit("brain-event", payload);
@@ -501,6 +552,16 @@ fn spawn_bridge(app: AppHandle, mut rx: tauri::async_runtime::Receiver<CommandEv
                                         .is_some_and(|t| t.elapsed() > Duration::from_secs(60))
                                     {
                                         g.restarts = 0;
+                                    }
+                                    // 新进程接管：前一代残留流式缓冲按 interrupted 兜底落库（防"说了半句消失"）
+                                    {
+                                        let BrainState { session_db, recorder, .. } = &mut *g;
+                                        if let Some(db) = session_db.as_ref() {
+                                            let conv_id = db.get_active_conversation().ok().flatten().unwrap_or_default();
+                                            recorder.flush_stream_as_interrupted(db, &conv_id);
+                                        } else {
+                                            recorder.reset_run();
+                                        }
                                     }
                                 }
                                 if let Some(perms) = v.get("permissions") {
@@ -748,6 +809,17 @@ async fn clear_brain_data(app: AppHandle, kind: String) -> Result<(), String> {
         if hist.exists() {
             result = std::fs::remove_file(&hist).map_err(|e| format!("删除对话历史失败：{e}"));
         }
+        // 联动清会话持久化库（消息权威已前移到 Rust SQLite）：清历史必须连会话一起清，
+        // 否则用户「清空对话」后气泡仍从 session.db 恢复。
+        if result.is_ok() {
+            let state = app.state::<Brain>();
+            let g = state.0.lock().map_err(|e| e.to_string())?;
+            if let Some(db) = g.session_db.as_ref() {
+                if let Err(e) = db.clear_all() {
+                    result = Err(format!("清空会话库失败：{e}"));
+                }
+            }
+        }
     }
     // 无论删除成败都退出维护模式——回到可拉起状态优先，别把大脑卡在停止态
     {
@@ -829,10 +901,43 @@ fn spawn_watchdog(app: AppHandle) {
 }
 
 #[tauri::command]
-fn run_input(state: tauri::State<Brain>, text: String, surface: Option<String>) -> Result<(), String> {
+fn run_input(
+    window: tauri::WebviewWindow,
+    app_handle: tauri::AppHandle,
+    state: tauri::State<Brain>,
+    text: String,
+    surface: Option<String>,
+    conversation_id: Option<String>,
+) -> Result<(), String> {
+    let surface_str = surface.unwrap_or_else(|| "pet".into());
+    // 用户消息落库（Rust 是 conversation 域唯一写者）：M3 显式归属——
+    // 前端传入 conversation_id 即落库到该会话（大小窗各自传自己的会话）；
+    // 空 id（面板工作台 surface=panel:xxx 的瞬时输入）不持久化。
+    if let Some(conv_id) = conversation_id.as_deref().filter(|c| !c.is_empty()) {
+        let g = state.0.lock().map_err(|e| e.to_string())?;
+        if let Some(db) = g.session_db.as_ref() {
+            let _ = db.append_message(
+                conv_id,
+                &event_recorder::new_id(),
+                "user",
+                serde_json::json!({ "text": text }),
+                session_db::now_ms(),
+                false,
+            );
+            // 跨窗同步：用户消息无事件流（其他窗口收不到），广播轻量信号让
+            // 正在看同一会话的窗口刷新（不主动抢流式——订阅方自己判断）。
+            let _ = app_handle.emit(
+                "conversation-updated",
+                serde_json::json!({ "conversationId": conv_id, "from": window.label() }),
+            );
+        }
+    }
     write_to_brain(
         &state,
-        serde_json::json!({ "id": 0, "type": "run", "text": text, "surface": surface.unwrap_or_else(|| "pet".into()) }),
+        serde_json::json!({
+            "id": 0, "type": "run", "text": text, "surface": surface_str,
+            "conversation_id": conversation_id.unwrap_or_default(),
+        }),
     )
 }
 
@@ -1387,6 +1492,163 @@ fn get_conversation_history(limit: Option<usize>) -> Result<Vec<Value>, String> 
             Some(projected)
         })
         .collect())
+}
+
+// ---- 会话持久化恢复 API（conversation 域；Rust SQLite 是唯一权威，webview 只读）----
+
+/// 会话列表（updated_at 倒序）。
+#[tauri::command]
+fn list_conversations(state: tauri::State<Brain>) -> Result<Vec<session_db::ConversationMeta>, String> {
+    let g = state.0.lock().map_err(|e| e.to_string())?;
+    match g.session_db.as_ref() {
+        Some(db) => db.list_conversations(),
+        None => Ok(Vec::new()),
+    }
+}
+
+/// 拉取某会话的消息（恢复用；只读，不重放任何动作）。
+#[tauri::command]
+fn get_conversation_messages(
+    state: tauri::State<Brain>,
+    id: String,
+    limit: Option<i64>,
+) -> Result<Vec<session_db::Message>, String> {
+    let g = state.0.lock().map_err(|e| e.to_string())?;
+    match g.session_db.as_ref() {
+        Some(db) => db.get_messages(&id, limit.unwrap_or(500)),
+        None => Ok(Vec::new()),
+    }
+}
+
+/// 新建会话（id 由 Rust 生成返回，保证多端一致）；自动设为活跃会话。
+#[tauri::command]
+fn create_conversation(
+    state: tauri::State<Brain>,
+    title: Option<String>,
+) -> Result<session_db::ConversationMeta, String> {
+    let g = state.0.lock().map_err(|e| e.to_string())?;
+    let db = g.session_db.as_ref().ok_or("会话库不可用")?;
+    let id = event_recorder::new_id();
+    let meta = db.create_conversation(&id, title.as_deref().unwrap_or("新对话"), session_db::now_ms())?;
+    let _ = db.set_active_conversation(&id);
+    Ok(meta)
+}
+
+/// 设置活跃会话指针（事件落库归属兜底 + 大小窗镜面同步）。
+/// 广播 active-conversation-changed：大窗切会话后小窗跟随切换（两窗镜面同一条会话）。
+#[tauri::command]
+fn set_active_conversation(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<Brain>,
+    id: String,
+) -> Result<(), String> {
+    {
+        let g = state.0.lock().map_err(|e| e.to_string())?;
+        if let Some(db) = g.session_db.as_ref() {
+            db.set_active_conversation(&id)?;
+        }
+    }
+    let _ = app_handle.emit("active-conversation-changed", serde_json::json!({ "conversationId": id }));
+    Ok(())
+}
+
+/// 读活跃会话指针（前端恢复时定位当前会话）。
+#[tauri::command]
+fn get_active_conversation(state: tauri::State<Brain>) -> Result<Option<String>, String> {
+    let g = state.0.lock().map_err(|e| e.to_string())?;
+    match g.session_db.as_ref() {
+        Some(db) => db.get_active_conversation(),
+        None => Ok(None),
+    }
+}
+
+/// 确保存在活跃会话：无则新建并设为活跃（大窗首启直接输入时兜底）。
+/// 大窗专用；小窗走 ensure_pet_conversation（固定会话，不镜像活跃会话）。
+#[tauri::command]
+fn ensure_active_conversation(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<Brain>,
+) -> Result<Option<session_db::ConversationMeta>, String> {
+    let g = state.0.lock().map_err(|e| e.to_string())?;
+    let Some(db) = g.session_db.as_ref() else { return Ok(None) };
+    if let Some(id) = db.get_active_conversation()?.filter(|c| !c.is_empty()) {
+        // 指针存在但会话已被删 → 视为无效，重建
+        if let Some(meta) = db.list_conversations()?.into_iter().find(|m| m.id == id) {
+            return Ok(Some(meta));
+        }
+    }
+    let id = event_recorder::new_id();
+    let meta = db.create_conversation(&id, "新对话", session_db::now_ms())?;
+    db.set_active_conversation(&id)?;
+    let _ = app_handle.emit("active-conversation-changed", serde_json::json!({ "conversationId": id }));
+    Ok(Some(meta))
+}
+
+/// 小窗固定会话（方案 A）：小窗永远用同一个会话，不镜像活跃会话。
+/// 无指针或指针指向的会话已被删 → 自动新建并返回（幂等）。固定性从架构上消灭串台：
+/// 小窗 run 永远带这个 id，事件归属恒定，大窗切会话完全不影响小窗。
+#[tauri::command]
+fn ensure_pet_conversation(
+    state: tauri::State<Brain>,
+) -> Result<Option<session_db::ConversationMeta>, String> {
+    let g = state.0.lock().map_err(|e| e.to_string())?;
+    let Some(db) = g.session_db.as_ref() else { return Ok(None) };
+    if let Some(id) = db.get_pet_conversation()?.filter(|c| !c.is_empty()) {
+        if let Some(meta) = db.list_conversations()?.into_iter().find(|m| m.id == id) {
+            return Ok(Some(meta));
+        }
+    }
+    let id = event_recorder::new_id();
+    let meta = db.create_conversation(&id, "小窗对话", session_db::now_ms())?;
+    db.set_pet_conversation(&id)?;
+    Ok(Some(meta))
+}
+
+/// 更新会话标题（首条用户消息自动生成）。
+#[tauri::command]
+fn update_conversation_title(state: tauri::State<Brain>, id: String, title: String) -> Result<(), String> {
+    let g = state.0.lock().map_err(|e| e.to_string())?;
+    if let Some(db) = g.session_db.as_ref() {
+        db.update_conversation_title(&id, &title, session_db::now_ms())?;
+    }
+    Ok(())
+}
+
+/// 删除会话（级联清消息；若删的是活跃会话则清指针）。
+#[tauri::command]
+fn delete_conversation(state: tauri::State<Brain>, id: String) -> Result<(), String> {
+    let g = state.0.lock().map_err(|e| e.to_string())?;
+    if let Some(db) = g.session_db.as_ref() {
+        db.delete_conversation(&id)?;
+        if db.get_active_conversation().ok().flatten().as_deref() == Some(id.as_str()) {
+            let _ = db.set_active_conversation("");
+        }
+    }
+    Ok(())
+}
+
+/// 清空全部会话（联动 clear_brain_data）。
+#[tauri::command]
+fn clear_conversations(state: tauri::State<Brain>) -> Result<(), String> {
+    let g = state.0.lock().map_err(|e| e.to_string())?;
+    if let Some(db) = g.session_db.as_ref() {
+        db.clear_all()?;
+    }
+    Ok(())
+}
+
+/// 截断会话到前 keep_count 条（重新生成/编辑重发：其后对话作废）。
+#[tauri::command]
+fn truncate_conversation_messages(
+    state: tauri::State<Brain>,
+    id: String,
+    keep_count: i64,
+) -> Result<(), String> {
+    let g = state.0.lock().map_err(|e| e.to_string())?;
+    if let Some(db) = g.session_db.as_ref() {
+        db.truncate_messages(&id, keep_count)?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -2049,6 +2311,17 @@ pub fn run() {
             get_current_panel,
             remember_panel,
             get_conversation_history,
+            list_conversations,
+            get_conversation_messages,
+            create_conversation,
+            set_active_conversation,
+            get_active_conversation,
+            ensure_active_conversation,
+            ensure_pet_conversation,
+            update_conversation_title,
+            delete_conversation,
+            clear_conversations,
+            truncate_conversation_messages,
             voice_start,
             interrupt,
             report_panel_context,

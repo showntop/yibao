@@ -5,6 +5,7 @@
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import Avatar from "./Avatar.vue";
 import InputBar from "./InputBar.vue";
 import Bubble from "./Bubble.vue";
@@ -25,6 +26,10 @@ import {
   type BrainStatusMsg,
 } from "../lib/brain";
 import { procLabel, procSkip, procResultSuffix, procDetail } from "../lib/proc";
+import { sessionStore } from "../state/store";
+import { newId } from "../state/domains/conversation";
+import type { MessageInput } from "../state/domains/conversation";
+import type { Message } from "../state/types";
 import YbIcon from "./YbIcon.vue";
 
 type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
@@ -33,6 +38,8 @@ type ProcInfo = { label: string; action?: BrainEvent["action"]; result?: BrainEv
 /** 溯源引用：本条 AI 回复调用过什么工具/记忆（"参考了 ▾"展开） */
 type RunRef = { label: string; detail: string; ok: boolean };
 type BubbleMsg = {
+  /** 稳定 id：持久化增量跟踪用（渲染忽略） */
+  id?: string;
   role: "user" | "ai" | "sys";
   text: string;
   panelLink?: boolean;
@@ -46,82 +53,77 @@ type BubbleMsg = {
   /** 溯源折叠展开态（仅 AI 消息） */
   refsOpen?: boolean;
 };
-type StoredBubble = {
-  role: BubbleMsg["role"];
-  text: string;
-  panelLink?: boolean;
-  proc?: { label: string; done: boolean; ok?: boolean };
-  halted?: boolean;
-  icon?: BubbleMsg["icon"];
-  ts?: number;
-  refs?: RunRef[];
-};
-const SESSION_MESSAGES_KEY = "yb-session-messages-v1";
 
-function loadSessionMessageStore(): Record<string, StoredBubble[]> {
-  try {
-    const raw = localStorage.getItem(SESSION_MESSAGES_KEY);
-    const parsed = raw ? JSON.parse(raw) : {};
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
+function bubbleToInput(b: BubbleMsg, ephemeral = false): MessageInput {
+  return {
+    id: b.id,
+    role: b.role,
+    payload: {
+      text: b.text,
+      panelLink: b.panelLink,
+      halted: b.halted,
+      icon: b.icon,
+      refs: b.refs,
+      proc: b.proc
+        ? {
+            label: b.proc.label,
+            done: b.proc.done,
+            ok: b.proc.done ? b.proc.result?.success !== false : undefined,
+          }
+        : undefined,
+    },
+    ts: b.ts,
+    ephemeral,
+  };
 }
 
-const sessionMessageStore = loadSessionMessageStore();
-
-function serializeBubbles(list: BubbleMsg[]): StoredBubble[] {
-  return list.slice(-240).map((bubble) => ({
-    role: bubble.role,
-    text: bubble.text,
-    panelLink: bubble.panelLink,
-    halted: bubble.halted,
-    icon: bubble.icon,
-    ts: bubble.ts,
-    refs: bubble.refs,
-    proc: bubble.proc ? {
-      label: bubble.proc.label,
-      done: bubble.proc.done,
-      ok: bubble.proc.done ? bubble.proc.result?.success !== false : undefined,
-    } : undefined,
-  }));
+function msgToBubble(m: Message): BubbleMsg {
+  return {
+    id: m.id,
+    role: m.role,
+    text: m.payload.text,
+    panelLink: m.payload.panelLink,
+    halted: m.payload.halted,
+    icon: m.payload.icon,
+    ts: m.ts,
+    refs: m.payload.refs,
+    proc: m.payload.proc
+      ? {
+          label: m.payload.proc.label,
+          done: m.payload.proc.done,
+          expanded: false,
+          result: m.payload.proc.ok === undefined ? undefined : { success: m.payload.proc.ok },
+        }
+      : undefined,
+  };
 }
 
-function hydrateBubbles(list: StoredBubble[] | undefined): BubbleMsg[] {
-  if (!Array.isArray(list)) return [];
-  return list.filter((bubble) => bubble && typeof bubble.text === "string").map((bubble) => ({
-    role: bubble.role,
-    text: bubble.text,
-    panelLink: bubble.panelLink,
-    halted: bubble.halted,
-    icon: bubble.icon,
-    ts: bubble.ts,
-    refs: bubble.refs,
-    proc: bubble.proc ? {
-      label: bubble.proc.label,
-      done: bubble.proc.done,
-      expanded: false,
-      result: bubble.proc.ok === undefined ? undefined : { success: bubble.proc.ok },
-    } : undefined,
-  }));
+/** 持久化当前会话的指定气泡（新增/更新），返回带 id 的气泡 */
+function persistBubble(b: BubbleMsg, ephemeral = false): BubbleMsg {
+  if (!currentSessionId.value) return b;
+  const stored = sessionStore.conversation.appendMessage(currentSessionId.value, bubbleToInput(b, ephemeral));
+  if (!b.id) b.id = stored.id;
+  else void stored;
+  return b;
 }
 
-function readSessionBubbles(id: string): BubbleMsg[] {
-  return hydrateBubbles(sessionMessageStore[id]);
+/** 流式/过程行结束收尾：按 id 更新已持久化消息 */
+function syncBubble(b: BubbleMsg): BubbleMsg {
+  if (!currentSessionId.value || !b.id) return b;
+  const stored = sessionStore.conversation.syncMessage(currentSessionId.value, bubbleToInput(b));
+  if (!b.id) b.id = stored.id;
+  return b;
 }
 
-function persistSessionBubbles(id: string, list: BubbleMsg[]) {
-  if (!id) return;
-  sessionMessageStore[id] = serializeBubbles(list);
-  try { localStorage.setItem(SESSION_MESSAGES_KEY, JSON.stringify(sessionMessageStore)); } catch { /* 存储不可用时仍保留内存会话 */ }
-}
 /** 技能/场景快速呼出 chip（动态：预设场景 + list_plugins） */
 type SkillChip = { key: string; label: string; icon: "clock" | "doc" | "sparkle" | "chat" | "plug"; draft: string };
 type InputContext = { kind: "attachment" | "reference"; label: string };
 
 /** 告警气泡：⚠️ 前缀改行首 alert 图标渲染（文案纯净，图标走 YbIcon） */
 function pushWarn(text: string) {
-  bubbles.value.push({ role: "ai", text, icon: "alert" });
+  const b: BubbleMsg = { role: "ai", text, icon: "alert", ts: Date.now() };
+  bubbles.value.push(b);
+  persistBubble(b);
 }
 
 // state：同步给父级顶栏状态；openPanel：关联气泡点击 → 在当前任务展开能力工作面；reminder：父级切回本页
@@ -159,50 +161,39 @@ function onInfoChat(d: string) {
   void nextTick(() => (draftRef.value = d));
 }
 
-// ---- 会话（左复合栏）：标题/预览随对话更新；切换会话保存/恢复气泡（内存 map）----
+// ---- 会话（左复合栏）：标题/预览随对话更新；切换会话保存/恢复气泡（SessionStore.conversation 权威）----
 const sessionRef = ref<InstanceType<typeof BrainSession> | null>(null);
-const sessionBubbles = new Map<string, typeof bubbles.value>(); // 会话 id → 当前窗口快照（持久化由 sessionMessageStore 同步）
-const currentSessionId = ref(readActiveSessionId());
+const currentSessionId = ref(sessionStore.conversation.getActiveConversationId() ?? "");
 let sessionStarted = false; // 当前会话是否已有首条用户消息（决定是否生成标题）
 
-function readActiveSessionId(): string {
-  try {
-    const active = localStorage.getItem("yb-active-session");
-    if (active) return active;
-    const raw = localStorage.getItem("yb-sessions");
-    const sessions = raw ? JSON.parse(raw) as Array<{ id?: string }> : [];
-    return sessions.find((item) => item.id)?.id || "";
-  } catch {
-    return "";
-  }
+function readSessionTitle(id: string): string {
+  const meta = sessionStore.conversation.getConversation(id);
+  return meta?.title?.trim() || "新对话";
 }
 
-function readSessionTitle(id?: string): string {
-  try {
-    const targetId = id || localStorage.getItem("yb-active-session") || "";
-    const raw = localStorage.getItem("yb-sessions");
-    const sessions = raw ? JSON.parse(raw) as Array<{ id?: string; title?: string }> : [];
-    return sessions.find((item) => item.id === targetId)?.title?.trim() || "新对话";
-  } catch {
-    return "新对话";
-  }
-}
+const currentSessionTitle = ref(readSessionTitle(currentSessionId.value));
+/** 在途流式回复所属会话（null=无流式）：流式中切走再切回时，final_reply 不重复建气泡 */
+let streamingConvId: string | null = null;
 
-const currentSessionTitle = ref(readSessionTitle());
-function onSessionActive(id: string) {
-  if (currentSessionId.value) persistSessionBubbles(currentSessionId.value, bubbles.value);
-  currentSessionId.value = id;
-  const restored = readSessionBubbles(id);
-  sessionBubbles.set(id, restored);
+/** 恢复目标会话气泡：从 Rust 权威重拉（内存缓存可能被在途 run / 别的窗口写过） */
+async function restoreConversation(id: string) {
+  const msgs = await sessionStore.conversation.loadMessages(id);
+  const restored = msgs.map(msgToBubble);
   bubbles.value = restored;
+  // 气泡重建 → 依赖下标的瞬态全部作废（否则 action_result 会更新错位置）
+  procIdx.clear();
+  runRefs.length = 0;
   sessionStarted = restored.some((bubble) => bubble.role === "user");
   currentSessionTitle.value = readSessionTitle(id);
 }
+function onSessionActive(id: string) {
+  currentSessionId.value = id;
+  void sessionStore.conversation.setActiveConversationId(id);
+  void restoreConversation(id);
+}
+/** 新建会话：会话创建由 SessionList.newChat 完成（emit newChat + active），这里只重置 UI。
+ *  currentSessionId 由随后的 onSessionActive(id) 设置（含 loadMessages 恢复空会话）。 */
 function onSessionNew() {
-  if (currentSessionId.value) {
-    sessionBubbles.set(currentSessionId.value, bubbles.value.slice());
-    persistSessionBubbles(currentSessionId.value, bubbles.value);
-  }
   bubbles.value = [];
   streamingIdx.value = null;
   state.value = "idle"; // showTyping 由 state 推导，自动收起
@@ -210,19 +201,12 @@ function onSessionNew() {
   currentSessionTitle.value = "新对话";
 }
 function onSessionSelect(id: string) {
-  // 保存当前会话气泡 → 恢复目标会话气泡（内存快照 + localStorage 持久化）
-  if (currentSessionId.value) {
-    sessionBubbles.set(currentSessionId.value, bubbles.value.slice());
-    persistSessionBubbles(currentSessionId.value, bubbles.value);
-  }
+  // 切到目标会话：domain 内存由 onEvent 双写保持最新，直接恢复目标（补拉非活跃会话消息）
   currentSessionId.value = id;
-  const restored = sessionBubbles.get(id) ?? readSessionBubbles(id);
-  sessionBubbles.set(id, restored);
-  bubbles.value = restored;
+  void sessionStore.conversation.setActiveConversationId(id);
+  void restoreConversation(id);
   streamingIdx.value = null;
   state.value = "idle";
-  sessionStarted = true; // 该会话已有历史，后续消息不再生成标题
-  currentSessionTitle.value = readSessionTitle(id);
 }
 
 const state = ref<AvatarState>("idle");
@@ -247,7 +231,9 @@ async function onSetupNeeded() {
 }
 function onSetupSaved() {
   setupNeeded.value = false;
-  bubbles.value.push({ role: "sys", text: "配置已保存，大脑启动中…" });
+  const b: BubbleMsg = { role: "sys", text: "配置已保存，大脑启动中…", ts: Date.now() };
+  bubbles.value.push(b);
+  persistBubble(b);
 }
 
 // success/error 是短暂 valence（不可打断），不算 busy
@@ -357,7 +343,9 @@ function onEditMessage(i: number) {
   });
 }
 function onFeedback(ok: boolean) {
-  bubbles.value.push({ role: "sys", text: ok ? "已收到正面反馈，会继续保持" : "已收到反馈，会调整回答方式" });
+  const b: BubbleMsg = { role: "sys", text: ok ? "已收到正面反馈，会继续保持" : "已收到反馈，会调整回答方式", ts: Date.now() };
+  bubbles.value.push(b);
+  persistBubble(b);
 }
 /** 重新生成/重试：找到该 AI 消息前最近一条用户消息，截断到它（含）重新 runInput */
 async function regenerate(i: number) {
@@ -368,11 +356,12 @@ async function regenerate(i: number) {
   if (j < 0) return;
   const text = bubbles.value[j].text;
   bubbles.value = bubbles.value.slice(0, j + 1);
+  if (currentSessionId.value) sessionStore.conversation.truncateMessages(currentSessionId.value, j + 1);
   streamingIdx.value = null;
   state.value = "think";
   try {
     await Promise.race([
-      runInput(text, "pet"),
+      runInput(text, "pet", currentSessionId.value),
       new Promise<never>((_, rej) => setTimeout(() => rej(new Error("大脑响应超时")), 15000)),
     ]);
   } catch (err) {
@@ -395,9 +384,7 @@ watch(() => bubbles.value.length, () => scrollBubbles(true));
 watch(() => bubbles.value[bubbles.value.length - 1]?.text, () => scrollBubbles(false));
 watch(showTyping, () => scrollBubbles(true));
 watch(state, (s) => emit("state", s));
-watch(bubbles, (list) => {
-  if (currentSessionId.value) persistSessionBubbles(currentSessionId.value, list);
-}, { deep: true });
+// 持久化不在 deep watch 全量写：各事件点显式 appendMessage/syncMessage（流式 chunk 只改内存，消除写放大）
 
 let unlisten: (() => void) | null = null;
 let unlistenStatus: (() => void) | null = null;
@@ -406,21 +393,29 @@ let unlistenPanelClosed: (() => void) | null = null;
 let unlistenSetup: (() => void) | null = null;
 let unlistenSetupErr: (() => void) | null = null;
 let unlistenSetupCfg: (() => void) | null = null;
+let unlistenUpdated: (() => void) | null = null;
 
 function onEvent(e: BrainEvent) {
   // 会话分流：面板场景的对话事件只归插件页；panel 事件例外（关联气泡，本页也收）
   if (e.surface && e.surface !== "pet" && e.kind !== "panel") return;
+  // M3 会话归属过滤：事件带 conversationId 且不属于当前会话 → 跳过渲染
+  // （已由 Rust 落库到所属会话，切到该会话即见；流式中切会话不污染当前视图）
+  if (e.conversationId && currentSessionId.value && e.conversationId !== currentSessionId.value) return;
   switch (e.kind) {
     case "action_proposed":
       state.value = "work";
       // 过程行：🔧 技能短标签（use_plugin 跳过——成功有 notice，不重复）
       if (e.action?.id && !procSkip(e.action)) {
-        procIdx.set(e.action.id, bubbles.value.length);
-        bubbles.value.push({
+        const procBubble: BubbleMsg = {
+          id: newId(),
           role: "sys",
           text: "",
           proc: { label: procLabel(e.action), action: e.action, done: false, expanded: false },
-        });
+          ts: Date.now(),
+        };
+        procIdx.set(e.action.id, bubbles.value.length);
+        bubbles.value.push(procBubble);
+        persistBubble(procBubble);
         runRefs.push({ label: procLabel(e.action), detail: "调用工具中…", ok: false });
       }
       break;
@@ -435,6 +430,8 @@ function onEvent(e: BrainEvent) {
           p.done = true;
           p.result = e.result;
         }
+        const bubble = bubbles.value[idx];
+        if (bubble && bubble.id) syncBubble(bubble);
         procIdx.delete(e.action!.id!);
       }
       // 溯源收尾：把该工具的结果摘要写回最近一条未完成引用
@@ -448,16 +445,23 @@ function onEvent(e: BrainEvent) {
       break;
     }
     case "final_reply_chunk":
-      // 流式增量：拼到当前 streaming bubble（首片时新建；同时挂上本次 run 的溯源引用）
+      // 流式增量：拼到当前 streaming bubble（首片时新建；同时挂上本次 run 的溯源引用）。
+      // 持久化策略：chunk 只改内存，final_reply 结束时 syncMessage 一次性落盘（消除写放大）。
       if (streamingIdx.value === null) {
-        bubbles.value.push({
+        const chunkBubble: BubbleMsg = {
+          id: newId(),
           role: "ai",
           text: e.text ?? "",
           ts: Date.now(),
           refs: runRefs.length ? [...runRefs] : undefined,
-        });
+        };
+        bubbles.value.push(chunkBubble);
+        if (currentSessionId.value) {
+          sessionStore.conversation.appendMessage(currentSessionId.value, bubbleToInput(chunkBubble));
+        }
         runRefs.length = 0;
         streamingIdx.value = bubbles.value.length - 1;
+        streamingConvId = e.conversationId || currentSessionId.value; // 记在途流式归属
       } else {
         bubbles.value[streamingIdx.value].text += e.text ?? "";
       }
@@ -465,11 +469,34 @@ function onEvent(e: BrainEvent) {
     case "final_reply": {
       // 以完整文本为准收尾（兜底 chunk 丢失）；语音中保持 say 等 speaking_done
       const full = e.text ?? "";
+      const wasStreamed = streamingConvId !== null && streamingConvId === (e.conversationId || currentSessionId.value);
+      streamingConvId = null;
       if (streamingIdx.value !== null) {
         bubbles.value[streamingIdx.value].text = full;
+        const streamed = bubbles.value[streamingIdx.value];
+        if (streamed.id) syncBubble(streamed); // 流式终态落盘
         streamingIdx.value = null;
+      } else if (wasStreamed) {
+        // 流式期间切走过又切回：Rust 已 update 首片消息为终态，此处从权威重拉，
+        // 不新建气泡（否则与重拉到的首片消息重复）。
+        const convId = currentSessionId.value;
+        if (convId) {
+          void sessionStore.conversation.loadMessages(convId).then((msgs) => {
+            bubbles.value = msgs.map(msgToBubble);
+            procIdx.clear();
+          });
+        }
+        runRefs.length = 0;
       } else {
-        bubbles.value.push({ role: "ai", text: full, ts: Date.now(), refs: runRefs.length ? [...runRefs] : undefined });
+        const finalBubble: BubbleMsg = {
+          id: newId(),
+          role: "ai",
+          text: full,
+          ts: Date.now(),
+          refs: runRefs.length ? [...runRefs] : undefined,
+        };
+        bubbles.value.push(finalBubble);
+        persistBubble(finalBubble);
         runRefs.length = 0;
       }
       sessionRef.value?.updateCurrent({ preview: full.replace(/\s+/g, " ").trim().slice(0, 44) });
@@ -479,10 +506,14 @@ function onEvent(e: BrainEvent) {
     case "interrupted":
       runRefs.length = 0; // 打断：本次 run 的引用作废
       if (streamingIdx.value !== null) {
-        bubbles.value[streamingIdx.value].halted = true;
+        const haltedBubble = bubbles.value[streamingIdx.value];
+        haltedBubble.halted = true;
+        if (haltedBubble.id) syncBubble(haltedBubble);
         streamingIdx.value = null;
       } else {
-        bubbles.value.push({ role: "ai", text: "已打断", halted: true, ts: Date.now() });
+        const interruptedBubble: BubbleMsg = { role: "ai", text: "已打断", halted: true, ts: Date.now() };
+        bubbles.value.push(interruptedBubble);
+        persistBubble(interruptedBubble);
       }
       state.value = "idle";
       break;
@@ -491,11 +522,19 @@ function onEvent(e: BrainEvent) {
       break;
     case "notice":
       // 轻提示（插件展开等，§12-2 要知情）：居中淡色小字，不弹窗不打断
-      bubbles.value.push({ role: "sys", text: e.text ?? "" });
+      {
+        const noticeBubble: BubbleMsg = { role: "sys", text: e.text ?? "", ts: Date.now() };
+        bubbles.value.push(noticeBubble);
+        persistBubble(noticeBubble);
+      }
       break;
     case "reminder":
       // 主动提醒：落气泡 + 通知父级切回本页（大窗已可见，宠物窗自己管亮窗，两边互不抢）
-      bubbles.value.push({ role: "ai", text: e.text ?? "到点了", icon: "clock" });
+      {
+        const reminderBubble: BubbleMsg = { role: "ai", text: e.text ?? "到点了", icon: "clock", ts: Date.now() };
+        bubbles.value.push(reminderBubble);
+        persistBubble(reminderBubble);
+      }
       emit("reminder");
       break;
     case "error":
@@ -512,10 +551,14 @@ function onEvent(e: BrainEvent) {
       // 空识别（超时/没说话）：回 idle 并提示——不能进 think，run_done 不复位状态，会永远卡「思考中」
       if (e.text) {
         state.value = "think";
-        bubbles.value.push({ role: "user", text: e.text, ts: Date.now() });
+        const userBubble: BubbleMsg = { role: "user", text: e.text, ts: Date.now() };
+        bubbles.value.push(userBubble);
+        persistBubble(userBubble);
       } else {
         state.value = "idle";
-        bubbles.value.push({ role: "ai", text: "没听清，再试一次？", ts: Date.now() });
+        const missBubble: BubbleMsg = { role: "ai", text: "没听清，再试一次？", ts: Date.now() };
+        bubbles.value.push(missBubble);
+        persistBubble(missBubble);
       }
       break;
     case "speaking":
@@ -523,16 +566,22 @@ function onEvent(e: BrainEvent) {
       break;
     case "panel": {
       // 面板先成为当前任务的可恢复能力；不主动抢页面，用户从关联卡/活动胶囊展开。
+      // 查重：最近一条「⇢ 协作」气泡存在（含重启恢复的旧气泡）→ 原地更新文案，不新增（修重启重复 push bug）
       const title = e.payload?.title || e.payload?.panel || "插件面板";
-      if (!panelOpen.value) {
-        panelOpen.value = true;
-        bubbles.value.push({ role: "ai", text: `⇢ 正在和「${title}」协作`, panelLink: true });
+      const text = `⇢ 正在和「${title}」协作`;
+      const existing = [...bubbles.value].reverse().find((b) => b.panelLink);
+      if (existing) {
+        existing.text = text;
+        if (currentSessionId.value) sessionStore.conversation.upsertPanelLink(currentSessionId.value, text);
       } else {
-        // 已协作中再打开另一个插件（A→B）：更新最近一条「⇢ 协作」气泡为当前插件，
-        // 保持单条"正在和 xxx 协作"（否则不会显示 B）
-        const link = [...bubbles.value].reverse().find((b) => b.panelLink);
-        if (link) link.text = `⇢ 正在和「${title}」协作`;
+        const linkBubble: BubbleMsg = { role: "ai", text, panelLink: true, ts: Date.now() };
+        bubbles.value.push(linkBubble);
+        if (currentSessionId.value) {
+          const stored = sessionStore.conversation.upsertPanelLink(currentSessionId.value, text);
+          linkBubble.id = stored.id; // 与 domain 消息 id 对齐，后续 syncMessage 可命中
+        }
       }
+      panelOpen.value = true;
       break;
     }
   }
@@ -553,7 +602,9 @@ function onStatus(m: BrainStatusMsg) {
   if (m.status === "up") {
     if (brainDown.value) {
       brainDown.value = false;
-      bubbles.value.push({ role: "ai", text: "✓ 大脑已恢复" });
+      const b: BubbleMsg = { role: "ai", text: "✓ 大脑已恢复", ts: Date.now() };
+      bubbles.value.push(b);
+      persistBubble(b);
     }
     return;
   }
@@ -572,27 +623,43 @@ async function submit(text: string, contexts: InputContext[] = []) {
     ? `${contexts.map((context) => `【${context.kind === "attachment" ? "附件" : "引用"}：${context.label}】`).join("\n")}\n\n`
     : "";
   const messageText = `${contextPrefix}${text}`;
+  // 无会话时确保存在（首启直接输入）：M3 下 run 必须带会话 id，否则消息不落库。
+  // 大窗走 ensure_active_conversation；小窗走 ensure_pet_conversation（固定会话，两窗互不干扰）。
+  if (!currentSessionId.value) {
+    const meta = await invoke<{ id: string } | null>("ensure_active_conversation").catch(() => null);
+    if (meta?.id) {
+      currentSessionId.value = meta.id;
+      await sessionStore.conversation.refreshConversations().catch(() => {});
+      currentSessionTitle.value = readSessionTitle(meta.id);
+      sessionRef.value?.syncSessions?.();
+    }
+  }
   // 编辑重发：从被编辑的用户消息起截断，用新文本替换（其后对话作废）
   if (editTarget.value !== null) {
     bubbles.value = bubbles.value.slice(0, editTarget.value);
+    if (currentSessionId.value) sessionStore.conversation.truncateMessages(currentSessionId.value, editTarget.value);
     editTarget.value = null;
     runRefs.length = 0;
   }
   // 首条用户消息 → 自动生成会话标题
   if (!sessionStarted) {
     const title = text.replace(/\s+/g, " ").trim().slice(0, 16);
-    sessionRef.value?.updateCurrent({ title: title || "新对话" });
-    currentSessionTitle.value = title || "新对话";
+    const t = title || "新对话";
+    sessionRef.value?.updateCurrent({ title: t });
+    if (currentSessionId.value) sessionStore.conversation.updateMetaTitle(currentSessionId.value, t);
+    currentSessionTitle.value = t;
     sessionStarted = true;
   }
   // 若 AI 正在生成/播报，InputBar 已在发送前 emit interrupt（先打断再发）；
   // 这里兜底：state 异常卡 busy（无响应）时也允许发送（runInput 会覆盖 state）
-  bubbles.value.push({ role: "user", text: messageText, ts: Date.now() });
+  const userBubble: BubbleMsg = { role: "user", text: messageText, ts: Date.now() };
+  bubbles.value.push(userBubble);
+  persistBubble(userBubble);
   state.value = "think";
   try {
     // 15s 超时兜底：runInput invoke 挂起会让 state 一直卡 think（主按钮变"打断"，发不出新消息）
     await Promise.race([
-      runInput(messageText, "pet"),
+      runInput(messageText, "pet", currentSessionId.value),
       new Promise<never>((_, rej) => setTimeout(() => rej(new Error("大脑响应超时")), 15000)),
     ]);
   } catch (err) {
@@ -627,13 +694,20 @@ function flashValence(v: "success" | "error") {
 }
 
 onMounted(async () => {
-  const activeId = readActiveSessionId();
+  // SessionStore 恢复编排：hydrate 三域后按活跃会话恢复气泡（与小窗镜面共用同一条会话）
+  await sessionStore.restore().catch(() => {});
+  let activeId = sessionStore.conversation.getActiveConversationId();
+  if (!activeId) {
+    // 首启无会话（或小窗已建会话但本域未同步）：走 Rust 确保并刷新列表
+    const meta = await invoke<{ id: string } | null>("ensure_active_conversation").catch(() => null);
+    if (meta?.id) {
+      await sessionStore.conversation.refreshConversations().catch(() => {});
+      activeId = meta.id;
+    }
+  }
   if (activeId) {
     currentSessionId.value = activeId;
-    const restored = readSessionBubbles(activeId);
-    sessionBubbles.set(activeId, restored);
-    bubbles.value = restored;
-    sessionStarted = restored.some((bubble) => bubble.role === "user");
+    await restoreConversation(activeId);
   }
   // 技能 chip 动态数据：与左栏技能同源（list_plugins），不另起炉灶
   try { plugins.value = await invoke<{ id: string; name: string }[]>("list_plugins").catch(() => []); } catch { plugins.value = []; }
@@ -643,16 +717,32 @@ onMounted(async () => {
   unlistenPanelClosed = await onPanelClosed(() => {
     if (!panelOpen.value) return;
     panelOpen.value = false;
-    bubbles.value.push({ role: "ai", text: "⇠ 协作结束" });
+    const b: BubbleMsg = { role: "ai", text: "⇠ 协作结束", ts: Date.now() };
+    bubbles.value.push(b);
+    persistBubble(b);
   });
   // 首启引导（生产打包首跑：装 Python 环境/下模型，大脑还没起来，走 Tauri 事件直推）
   unlistenSetup = await listen<{ stage: string; detail: string }>("setup-progress", (e) => {
-    bubbles.value.push({ role: "sys", text: e.payload.detail });
+    const b: BubbleMsg = { role: "sys", text: e.payload.detail, ts: Date.now() };
+    bubbles.value.push(b);
+    persistBubble(b);
   });
   unlistenSetupErr = await listen<string>("setup-error", (e) => {
     pushWarn(e.payload);
   });
   unlistenSetupCfg = await listen<string>("setup-config-needed", () => void onSetupNeeded());
+  // 跨窗镜面：小窗向当前会话发了消息 → 本页重拉（用户消息无事件流，只能靠此信号）
+  unlistenUpdated = await listen<{ conversationId: string; from: string }>("conversation-updated", (e) => {
+    const { conversationId, from } = e.payload;
+    if (from === getCurrentWindow().label) return; // 自己发的，本窗已渲染
+    if (!currentSessionId.value || conversationId !== currentSessionId.value) return; // 不是当前会话
+    if (streamingIdx.value !== null) return; // 流式中不抢刷新（会重建气泡打断渲染）
+    void sessionStore.conversation.loadMessages(conversationId).then((msgs) => {
+      bubbles.value = msgs.map(msgToBubble);
+      procIdx.clear(); // 过程行下标随气泡重建作废
+    });
+  });
+  // 小窗已改为固定会话（不跟随大窗，也不再广播切会话）→ 大窗无需订阅 active-conversation-changed
   // 主动拉一次配置：setup-config-needed 可能先于挂载发出而丢——靠拉取兜底
   try {
     const cfg = await invoke<{ has_key: boolean }>("get_setup_config");
@@ -668,6 +758,7 @@ onUnmounted(() => {
   unlistenSetup?.();
   unlistenSetupErr?.();
   unlistenSetupCfg?.();
+  unlistenUpdated?.();
   if (valenceTimer !== null) clearTimeout(valenceTimer);
   if (thinkNoteTimer !== null) clearInterval(thinkNoteTimer);
 });

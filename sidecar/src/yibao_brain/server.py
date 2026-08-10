@@ -954,14 +954,14 @@ async def serve_async(
         if not cancel.is_set():
             write_msg({"type": "event", "surface": surface, "event": {"kind": "speaking_done"}})
 
-    async def _stream_agent(text: str, rid, cancel: asyncio.Event, surface: str = "pet", emit_done: bool = True):
+    async def _stream_agent(text: str, rid, cancel: asyncio.Event, surface: str = "pet", conversation_id: str = "", emit_done: bool = True):
         t0 = time.monotonic()
         tts_q: asyncio.Queue | None = asyncio.Queue() if voice is not None else None
         tts_task = asyncio.create_task(_pump_tts(tts_q, cancel, surface)) if tts_q is not None else None
         started_speaking = False
         try:
             async for event in agent.arun(text, cancel, surface=surface):
-                write_msg({"type": "event", "surface": surface, "event": event.model_dump(mode="json")})
+                write_msg({"type": "event", "surface": surface, "conversation_id": conversation_id, "event": event.model_dump(mode="json")})
                 if (
                     tts_q is not None
                     and event.kind == "final_reply_chunk"
@@ -969,12 +969,12 @@ async def serve_async(
                 ):
                     if not started_speaking:
                         started_speaking = True
-                        write_msg({"type": "event", "surface": surface, "event": {"kind": "speaking"}})
+                        write_msg({"type": "event", "surface": surface, "conversation_id": conversation_id, "event": {"kind": "speaking"}})
                     await tts_q.put(event.text)
         except Exception as e:
             # arun 抛异常（如 provider 400）→ 发 error + 停 TTS，别让前端卡死
             cancel.set()
-            write_msg({"type": "event", "surface": surface, "event": {"kind": "error", "text": f"大脑出错：{e}"}})
+            write_msg({"type": "event", "surface": surface, "conversation_id": conversation_id, "event": {"kind": "error", "text": f"大脑出错：{e}"}})
         finally:
             if tts_q is not None:
                 await tts_q.put(None)  # 收尾哨兵，唤醒可能在 get() 上等待的 _pump_tts
@@ -984,10 +984,10 @@ async def serve_async(
                 write_msg({"type": "run_done", "id": rid})
             print(f"[yibao] run 完成 rid={rid}（{time.monotonic() - t0:.1f}s）", file=sys.stderr)
 
-    async def _drive_run(text: str, rid, cancel: asyncio.Event, surface: str = "pet"):
-        await _stream_agent(text, rid, cancel, surface)
+    async def _drive_run(text: str, rid, cancel: asyncio.Event, surface: str = "pet", conversation_id: str = ""):
+        await _stream_agent(text, rid, cancel, surface, conversation_id)
 
-    async def _drive_voice_start(rid, cancel: asyncio.Event, surface: str = "pet", continuous: bool = False):
+    async def _drive_voice_start(rid, cancel: asyncio.Event, surface: str = "pet", conversation_id: str = "", continuous: bool = False):
         # 连续对话（长按团子进入）：答完接着听。退出：退出语 / 连续两次没听清 / 打断。
         if continuous:
             write_msg({"type": "event", "surface": surface, "event": {
@@ -1045,7 +1045,7 @@ async def serve_async(
                 write_msg({"type": "run_done", "id": rid})
                 return
             # 连续会话的 run_done 由本函数在会话结束时发（每轮结束就发会让前端以为请求完结）
-            await _stream_agent(text, rid, cancel, surface, emit_done=not continuous)
+            await _stream_agent(text, rid, cancel, surface, conversation_id, emit_done=not continuous)
             if not continuous:
                 return
             if cancel.is_set():
@@ -1168,6 +1168,7 @@ async def serve_async(
                 write_msg({"type": "run_done", "id": rid})
                 continue
             surface = str(msg.get("surface") or "pet")  # 会话分流：随 run 贯穿事件流与历史
+            conversation_id = str(msg.get("conversation_id") or "")  # M3：会话归属随 run 贯穿（sidecar 单流，事件带归属）
             _preempt_if_same_surface(surface)
             prev = run_state["task"]
             run_state["surface"] = surface  # 受理即记录：下次 dispatch 判断同/跨 surface 无调度竞态
@@ -1177,13 +1178,13 @@ async def serve_async(
                 ctx_text = _consume_invoke_context(invoke_ctx)
                 if ctx_text:
                     text = f"[屏幕上下文] {ctx_text}\n\n{text}"
-                start = lambda c, t=text, r=rid, s=surface: _drive_run(t, r, c, s)
-                print(f"[yibao] run 受理 rid={rid} surface={surface}：{text[:30]!r}", file=sys.stderr)
+                start = lambda c, t=text, r=rid, s=surface, ci=conversation_id: _drive_run(t, r, c, s, ci)
+                print(f"[yibao] run 受理 rid={rid} surface={surface} conv={conversation_id}：{text[:30]!r}", file=sys.stderr)
             elif voice is not None:
                 rid = msg.get("id")
                 cont = bool(msg.get("continuous"))
-                start = lambda c, r=rid, s=surface, ct=cont: _drive_voice_start(r, c, s, ct)
-                print(f"[yibao] voice_start 受理 rid={rid} surface={surface} continuous={cont}", file=sys.stderr)
+                start = lambda c, r=rid, s=surface, ci=conversation_id, ct=cont: _drive_voice_start(r, c, s, ci, ct)
+                print(f"[yibao] voice_start 受理 rid={rid} surface={surface} conv={conversation_id} continuous={cont}", file=sys.stderr)
             else:
                 continue
             run_state["task"] = asyncio.ensure_future(
@@ -1204,11 +1205,12 @@ async def serve_async(
                 continue
             # 面板写操作/意图方法：与 run 同槽位（同 surface 抢占 / 跨 surface 排队，主循环不阻塞）
             surface = str(msg.get("surface") or "pet")
+            conversation_id = str(msg.get("conversation_id") or "")
             _preempt_if_same_surface(surface)
             prev = run_state["task"]
             run_state["surface"] = surface
-            start = lambda c, m=msg, s=surface: handle_panel_action(
-                m, agent, write_msg, run_text=lambda text, rid: _stream_agent(text, rid, c, s)
+            start = lambda c, m=msg, s=surface, ci=conversation_id: handle_panel_action(
+                m, agent, write_msg, run_text=lambda text, rid, c=c, s=s, ci=ci: _stream_agent(text, rid, c, s, ci)
             )
             run_state["task"] = asyncio.ensure_future(
                 _chain_start(prev, start, run_state["preempt_gen"])

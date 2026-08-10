@@ -1,0 +1,151 @@
+/** SessionState 体系跨域公共类型 */
+
+/** 状态域标识：域间平行，仅 surface 域内存在嵌套链 */
+export type DomainId = "conversation" | "surface" | "window";
+
+/** 域描述符：统一容错配置（SchemaRegistry 注册项） */
+export interface DomainDescriptor<T> {
+  readonly domain: DomainId;
+  /** schema 版本：不符即视为损坏（该条记录降级/丢弃） */
+  readonly version: number;
+  /** 过期时间 ms；null = 不过期 */
+  readonly ttl: number | null;
+  /** 结构校验：非法返回 null */
+  readonly validate: (raw: unknown) => T | null;
+}
+
+/** KV 存储抽象：引擎接口（IndexedDB / 内存 / localStorage 均可实现） */
+export interface KVStore {
+  get<T = unknown>(table: string, key: string): Promise<T | null>;
+  put(table: string, key: string, value: unknown): Promise<void>;
+  delete(table: string, key: string): Promise<void>;
+  clear(table: string): Promise<void>;
+  /** 表内全部条目（无顺序保证） */
+  entries<T = unknown>(table: string): Promise<Array<{ key: string; value: T }>>;
+  /** 原子批量写入：value 为 undefined 表示删除 */
+  batch(ops: Array<{ table: string; key: string; value?: unknown }>): Promise<void>;
+}
+
+// ---- conversation 域 ----
+
+export type MessageRole = "user" | "ai" | "sys";
+
+/** proc 过程展示：只持久化投影（action/result 完整对象不落盘） */
+export interface ProcProjection {
+  label: string;
+  done: boolean;
+  ok?: boolean;
+}
+
+/** 溯源引用（仅 AI 消息） */
+export interface RunRef {
+  label: string;
+  detail: string;
+  ok: boolean;
+}
+
+/** 消息载荷：UI 呈现所需的最小字段集 */
+export interface MessagePayload {
+  text: string;
+  panelLink?: boolean;
+  proc?: ProcProjection;
+  refs?: RunRef[];
+  halted?: boolean;
+  icon?: "clock" | "alert";
+}
+
+/** 持久化的消息记录（messages 表条目） */
+export interface Message {
+  id: string;
+  conversationId: string;
+  /** 会话内单调序号（排序不依赖 ts，防时钟回拨） */
+  seq: number;
+  role: MessageRole;
+  payload: MessagePayload;
+  ts: number;
+  /** 敏感内容：只活内存，永不落盘（对齐 Rust 侧标记） */
+  ephemeral?: boolean;
+}
+
+/** 会话元数据（conversations 表条目） */
+export interface ConversationMeta {
+  id: string;
+  title: string;
+  preview: string;
+  createdAt: number;
+  updatedAt: number;
+  messageCount: number;
+}
+
+/** 待审批快照（重启后暂停、不自动执行） */
+export interface PendingApproval {
+  id: string;
+  skill: string;
+  label: string;
+  detail?: string;
+  createdAt: number;
+}
+
+/** 已办活动（隐私安全投影） */
+export interface ProcessedItem {
+  id: string;
+  taskId?: string;
+  skill: string;
+  label: string;
+  ok: boolean;
+  at: number;
+}
+
+/** 会话级 UI 呈现状态（conversation-ui 表条目；高频小写） */
+export interface ConversationUIState {
+  conversationId: string;
+  draft: string;
+  scrollTop: number;
+  /** 筛选/折叠态，按需扩展 */
+  filter: string;
+  processed: ProcessedItem[];
+  pendingApprovals: PendingApproval[];
+}
+
+// ---- surface 域 ----
+
+export type CapabilityPresentation = "stage" | "focus";
+
+/** scene：布局壳（嵌套链第一层） */
+export interface SurfaceScene {
+  panel: string;
+  visible: boolean;
+  presentation: CapabilityPresentation;
+  tab: string;
+}
+
+/** panel：面板数据（嵌套链第二层；大载荷由 validate/容量截断守卫） */
+export interface SurfacePanel {
+  panel: string;
+  title: string;
+  schema: Record<string, unknown> | null;
+  data: Record<string, unknown>;
+  webview: { html?: string } | null;
+}
+
+/** interact：面板内交互态（嵌套链第三层；乐观可失效） */
+export interface SurfaceInteract {
+  panel: string;
+  expandedNodes: string[];
+  searchQuery: string;
+  activeTab: string;
+}
+
+// ---- window 域 ----
+
+export type WindowId = "main" | "pet" | "panel";
+
+/** 窗口状态：只存引用（展示什么），数据本体在 conversation/surface 域 */
+export interface WindowState {
+  windowId: WindowId;
+  bounds: { x: number; y: number; width: number; height: number } | null;
+  visible: boolean;
+  alwaysOnTop: boolean;
+  focusedConversationId: string | null;
+  focusedPanelId: string | null;
+}

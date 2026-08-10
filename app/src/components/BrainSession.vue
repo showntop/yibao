@@ -24,7 +24,11 @@ const sessionRef = ref<InstanceType<typeof SessionList> | null>(null);
 function updateCurrent(partial: { title?: string; preview?: string }) {
   sessionRef.value?.updateCurrent(partial);
 }
-defineExpose({ updateCurrent });
+/** 供父组件转发：从 domain 重拉会话列表（提交首条消息自动建会话后同步列表）。 */
+function syncSessions() {
+  sessionRef.value?.sync();
+}
+defineExpose({ updateCurrent, syncSessions });
 </script>
 
 <template>

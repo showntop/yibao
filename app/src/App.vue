@@ -46,6 +46,7 @@ import {
 } from "./lib/window";
 import { SUGGESTIONS } from "./lib/suggestions";
 import { procLabel, procSkip, procResultSuffix } from "./lib/proc";
+import { sessionStore, clearLegacySessionKeys } from "./state/store";
 import YbIcon from "./components/YbIcon.vue";
 
 type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error" | "notify" | "drowsy" | "stretch";
@@ -58,6 +59,17 @@ type BubbleMsg = {
   icon?: "clock" | "alert" | "doc";
   /** 晨间反刍 deep-link：morning_recap 提醒气泡携带 day 字符串时，点击切到 home 回顾视图 */
   recap?: string;
+};
+
+/** Rust SessionDb 消息的序列化形状（camelCase）——小窗恢复拉取用 */
+type PetMessage = {
+  id: string;
+  conversationId: string;
+  seq: number;
+  role: string;
+  payload: { text: string; halted?: boolean; icon?: string };
+  ts: number;
+  ephemeral?: boolean;
 };
 
 const state = ref<AvatarState>("idle");
@@ -73,6 +85,9 @@ const petState = computed<AvatarState>(() => {
 });
 const bubbles = ref<BubbleMsg[]>([]);
 const streamingIdx = ref<number | null>(null); // 正在接收 chunk 的 bubble 下标
+/** 小窗固定会话 id（方案 A）：永远用同一个会话，不镜像大窗活跃会话。
+ *  run 带它使消息归属、重启可恢复；固定性从架构上消灭串台（大窗切会话不影响本窗）。 */
+const petConvId = ref("");
 const pendingConfirms = ref<PendingConfirm[]>([]);
 const pending = computed(() => pendingConfirms.value[0] ?? null);
 const pendingCanRemember = computed(() => canRememberSkill(pending.value?.skill ?? ""));
@@ -149,6 +164,7 @@ let unlistenApprovals: (() => void) | null = null;
 let unlistenSettings: (() => void) | null = null;
 let unlistenCursorEnter: (() => void) | null = null;
 let unlistenCursorLeave: (() => void) | null = null;
+let unlistenConvUpdated: (() => void) | null = null;
 let rectTimer: ReturnType<typeof setInterval> | null = null;
 
 const statusText = computed(
@@ -535,6 +551,9 @@ async function handleInvokeAction(action: string) {
 function onEvent(e: BrainEvent) {
   // 会话分流：面板场景的对话事件只归面板窗；panel 事件例外（管开窗 + 关联气泡，两窗都收）
   if (e.surface && e.surface !== "pet" && e.kind !== "panel") return;
+  // M3 归属过滤：事件属于其他会话（大窗的 run / 别的会话）→ 跳过渲染。
+  // 小窗固定会话：只渲染 petConvId 归属的事件，其余已落库到各自会话（切过去可见）。
+  if (e.conversationId && petConvId.value && e.conversationId !== petConvId.value) return;
   switch (e.kind) {
     case "action_proposed":
       state.value = "work";
@@ -771,7 +790,8 @@ async function submit(text: string) {
     selectionCtx.value = null;
   }
   try {
-    await runInput(msg);
+    await ensurePetConversation(); // 兜底：首启未取到会话时先建（否则消息不落库）
+    await runInput(msg, "pet", petConvId.value);
   } catch (err) {
     pushWarn("发送失败：" + String(err));
     state.value = "idle";
@@ -874,9 +894,41 @@ watch(expanded, (v) => {
   void setInteractiveFull(v);
 });
 
+/** 确保小窗固定会话存在（方案 A：不镜像大窗活跃会话；无则 Rust 侧新建 + 存 pet 指针） */
+async function ensurePetConversation(): Promise<void> {
+  if (petConvId.value) return;
+  const meta = await invoke<{ id: string } | null>("ensure_pet_conversation").catch(() => null);
+  if (meta?.id) petConvId.value = meta.id;
+}
+
+/** 从 Rust 权威重拉小窗固定会话消息渲染（启动恢复 / 跨窗刷新）。
+ *  流式进行中不刷新——重建气泡会打断正在渲染的回复。 */
+async function reloadMessages(): Promise<void> {
+  if (!petConvId.value) return;
+  if (streamingIdx.value !== null) return;
+  const rows = await invoke<PetMessage[]>("get_conversation_messages", { id: petConvId.value, limit: 500 }).catch(() => null);
+  if (!rows) return;
+  bubbles.value = rows.map((m) => ({
+    role: m.role,
+    text: m.payload.text,
+    halted: m.payload.halted,
+    icon: m.payload.icon,
+  }) as BubbleMsg);
+  streamingIdx.value = null;
+  procIdx.clear(); // 过程行下标随气泡重建作废
+}
+
 onMounted(async () => {
   void setInteractiveFull(false);
   syncHotRects(); // 初始上报团子热区（Rust 据此放行穿透 + 驱动 hover）
+  // 会话恢复：与大窗镜面共用 active_conversation（Rust SQLite 权威），重启拉回消息。
+  try {
+    clearLegacySessionKeys();
+    await sessionStore.restore();
+    await ensurePetConversation();
+    await reloadMessages();
+    sessionStore.window.updateState("pet", { visible: true, focusedConversationId: petConvId.value });
+  } catch { /* 恢复失败不阻塞宠物窗启动 */ }
   // 顶部边界自适应：监听窗口移动（拖动 setPosition 触发），贴顶时调整团子锚点
   try {
     scaleCached = (await getCurrentWindow().scaleFactor()) || 1;
@@ -890,6 +942,13 @@ onMounted(async () => {
   unlisten = await onBrainEvent(onEvent);
   unlistenStatus = await onBrainStatus(onStatus);
   unlistenPerms = await onBrainPermissions(onPerms);
+  // 跨窗刷新：大窗向本窗固定会话发了消息（用户消息无事件流）→ 重拉。
+  // 方案 A 下小窗不跟随大窗切会话（固定 pet 会话），故不订阅 active-conversation-changed。
+  unlistenConvUpdated = await listen<{ conversationId: string; from: string }>("conversation-updated", (e) => {
+    if (e.payload.from === getCurrentWindow().label) return; // 自己发的已渲染
+    if (e.payload.conversationId !== petConvId.value) return;
+    void reloadMessages();
+  });
   unlistenPanelClosed = await onPanelClosed(() => {
     if (!panelOpen.value) return;
     panelOpen.value = false;
@@ -973,6 +1032,7 @@ onUnmounted(() => {
   unlistenSettings?.();
   unlistenCursorEnter?.();
   unlistenCursorLeave?.();
+  unlistenConvUpdated?.();
   unlistenMoved?.();
   if (rectTimer) clearInterval(rectTimer);
   if (speechTimer) clearTimeout(speechTimer);

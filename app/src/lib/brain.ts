@@ -60,6 +60,9 @@ export interface BrainEvent {
   payload?: PanelPayload;
   /** 会话分流：本次 run 的发起场景（pet / panel:<plugin>）；空 = 全局事件（两窗都处理） */
   surface?: string;
+  /** M3 会话归属：run 发起时确定的会话 id，随事件透传（流式中切会话不影响归属）。
+   *  空 = 无归属事件（panel/notice 等全局信号，两窗都渲染） */
+  conversationId?: string;
   /** 自主权档位（reminder 类主动事件；缺省按 full 处理，兼容旧 sidecar） */
   level?: "quiet" | "bubble" | "full";
   /** morning_recap 深链接：反刍提醒携带 type/day 供 deep-link */
@@ -95,9 +98,13 @@ export function setSurface(s: string): void {
   _surface = s;
 }
 
-/** 发送用户输入，触发大脑一次 run。surface 显式传参优先（大窗多页共享 JS 上下文，模块级 _surface 不够分）。 */
-export function runInput(text: string, surface?: string): Promise<void> {
-  return invoke("run_input", { text, surface: surface ?? _surface });
+/**
+ * 发送用户输入，触发大脑一次 run。surface 显式传参优先（大窗多页共享 JS 上下文，模块级 _surface 不够分）。
+ * conversationId（M3 会话归属）：大窗/小窗各自传自己的会话 id，随 run 贯穿事件流，AI 回复按它落库；
+ * 面板工作台（surface=panel:xxx 瞬时输入）不传——不持久化。
+ */
+export function runInput(text: string, surface?: string, conversationId?: string): Promise<void> {
+  return invoke("run_input", { text, surface: surface ?? _surface, conversationId: conversationId ?? null });
 }
 
 /** 截图唤起（v1.1）：⌘⇧Y 唤起主窗时通知大脑抓屏描述，下次 run 注入屏幕上下文（静默失败）。 */
