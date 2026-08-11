@@ -223,7 +223,8 @@ class AgentLoop:
             "data": payload["data"],
         }
 
-    def run(self, user_text: str, surface: str | None = None) -> Iterator[Event]:
+    def run(self, user_text: str, surface: str | None = None, conversation_id: str | None = None) -> Iterator[Event]:
+        """同步回路（历史按 conversation_id 分桶，见 arun 注释）。"""
         memories = self.memory.recall(user_text, self.user_id)
         messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
         if memories:
@@ -233,7 +234,7 @@ class AgentLoop:
             messages.append(focus_msg)
         messages.append(_now_message())
         if self.history:
-            messages.extend(self.history.messages())
+            messages.extend(self.history.messages(conversation_id))
         messages.append({"role": "user", "content": user_text})
         run_start = len(messages) - 1  # 本轮轨迹起点（user 消息），成功收尾时整轮入史（含工具调用）
         safe_tool_content: dict[str, str] = {}
@@ -253,7 +254,8 @@ class AgentLoop:
                     span = messages[run_start:] + [{"role": "assistant", "content": resp.text}]
                     span[0] = _tag_surface(span[0], surface)
                     self.history.record_messages(
-                        _history_safe_span(span, safe_tool_content, sensitive_turn)
+                        _history_safe_span(span, safe_tool_content, sensitive_turn),
+                        conversation_id,
                     )
                 yield Event(kind="final_reply", text=resp.text)
                 for notice in post_reply_notices:
@@ -336,20 +338,23 @@ class AgentLoop:
             span = messages[run_start:] + [{"role": "assistant", "content": final_text}]
             span[0] = _tag_surface(span[0], surface)
             self.history.record_messages(
-                _history_safe_span(span, safe_tool_content, sensitive_turn)
+                _history_safe_span(span, safe_tool_content, sensitive_turn),
+                conversation_id,
             )
         yield Event(kind="final_reply", text=final_text)
         for notice in post_reply_notices:
             yield Event(kind="notice", text=notice)
 
     async def arun(
-        self, user_text: str, cancel=None, surface: str | None = None
+        self, user_text: str, cancel=None, surface: str | None = None, conversation_id: str | None = None
     ) -> AsyncIterator[Event]:
         """流式异步回路：LLM 边生成边吐 final_reply_chunk；cancel.is_set() 随时打断。
 
         cancel 为 asyncio.Event（或任何带 is_set() 的对象）。打断时产出 interrupted 并返回。
         confirmer 可同步也可异步（返回协程则 await）。
         surface 为会话分流标签（pet / panel:<plugin>）：只落历史，不进发给 provider 的消息。
+        conversation_id（M3 会话隔离）：该 run 所属会话，历史按此分桶读写——
+        模型上下文只含本会话的最近轮次，不跨会话串台（小窗不再知道你在别的会话问过什么）。
         """
         memories = await _offload(self.memory.recall, user_text, self.user_id)
         messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -360,7 +365,7 @@ class AgentLoop:
             messages.append(focus_msg)
         messages.append(_now_message())
         if self.history:
-            messages.extend(self.history.messages())
+            messages.extend(self.history.messages(conversation_id))
         messages.append({"role": "user", "content": user_text})
         run_start = len(messages) - 1  # 本轮轨迹起点（user 消息），成功收尾时整轮入史（含工具调用）
         safe_tool_content: dict[str, str] = {}
@@ -398,7 +403,8 @@ class AgentLoop:
                     span = messages[run_start:] + [{"role": "assistant", "content": text_buf}]
                     span[0] = _tag_surface(span[0], surface)
                     self.history.record_messages(
-                        _history_safe_span(span, safe_tool_content, sensitive_turn)
+                        _history_safe_span(span, safe_tool_content, sensitive_turn),
+                        conversation_id,
                     )
                 yield Event(kind="final_reply", text=text_buf)
                 for notice in post_reply_notices:
@@ -512,7 +518,8 @@ class AgentLoop:
             span = messages[run_start:] + [{"role": "assistant", "content": final_text}]
             span[0] = _tag_surface(span[0], surface)
             self.history.record_messages(
-                _history_safe_span(span, safe_tool_content, sensitive_turn)
+                _history_safe_span(span, safe_tool_content, sensitive_turn),
+                conversation_id,
             )
         yield Event(kind="final_reply", text=final_text)
         for notice in post_reply_notices:

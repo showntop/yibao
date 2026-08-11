@@ -1,4 +1,10 @@
-"""会话历史：短期对话上下文，JSON 落盘，大脑重启后恢复（mem0 管长期事实，这里管最近几轮对话）。"""
+"""会话历史：按会话（conversation_id）分桶的短期对话上下文，JSON 落盘。
+
+M3 会话隔离闭环：模型上下文与前端 UI 会话一一对齐。
+- 每个会话独立桶，历史互不可见（小窗不再"知道"你在其他会话问过什么）。
+- 无会话 id 的事件（reminder 等主动推送）落 default 桶。
+- mem0 管长期事实，这里管最近几轮对话（per 会话）。
+"""
 from __future__ import annotations
 
 import json
@@ -9,6 +15,9 @@ from pathlib import Path
 # 历史里的 tool 结果只留要点：完整结果可能很大（长列表/截图数据），
 # 模型从历史需要的是「调过工具、拿到过什么」的模式，不是全量数据。
 _TOOL_CONTENT_MAX = 300
+
+# 无会话 id 事件的默认桶（reminder 等主动推送）
+_DEFAULT_BUCKET = "default"
 
 
 def _valid_msg(m) -> bool:
@@ -31,7 +40,7 @@ def _sanitize(m: dict) -> dict:
 
 
 class ConversationHistory:
-    """最近 N 轮消息（含 tool 调用轨迹）。load 容错（文件缺失/损坏 → 空），save 失败只告警不炸 run。
+    """按会话分桶的最近 N 轮消息（含 tool 调用轨迹）。load 容错（文件缺失/损坏 → 空）。
 
     一轮 = 一条 user 消息 + 其后的 assistant/tool 消息（工具轮一轮多条）。
     裁剪只在 user 边界下刀：孤儿 tool 消息（缺配对的 assistant tool_calls）会让严格校验的 provider 400。
@@ -40,26 +49,44 @@ class ConversationHistory:
     def __init__(self, path: str | Path, max_turns: int = 10):
         self.path = Path(path)
         self.max_turns = max_turns
-        self._messages: list[dict] = self._load()
+        # {conversation_id: [messages...]}；空字符串会话也归 default 桶
+        self._buckets: dict[str, list[dict]] = self._load()
 
-    def _load(self) -> list[dict]:
+    def _bucket(self, conversation_id: str) -> str:
+        return conversation_id or _DEFAULT_BUCKET
+
+    def _load(self) -> dict[str, list[dict]]:
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            return []
-        if not isinstance(data, list):
-            return []
-        msgs = [m for m in data if _valid_msg(m)]
-        # 必须从 user 开始（老文件/手工编辑可能留下孤儿 assistant/tool 头）
-        while msgs and msgs[0].get("role") != "user":
-            msgs.pop(0)
-        return msgs
+            return {}
+        if not isinstance(data, dict):
+            # 兼容旧版：单列表结构 → 归入 default 桶（一次迁移，不反复）
+            if isinstance(data, list):
+                msgs = self._clean_msgs(data)
+                return {_DEFAULT_BUCKET: msgs} if msgs else {}
+            return {}
+        out: dict[str, list[dict]] = {}
+        for cid, msgs in data.items():
+            if isinstance(cid, str) and isinstance(msgs, list):
+                cleaned = self._clean_msgs(msgs)
+                if cleaned:
+                    out[cid] = cleaned
+        return out
 
-    def messages(self) -> list[dict]:
-        """喂给 LLM 的上下文：剥掉 surface 元数据（provider 不认的字段），
-        面板场景的 user 轮加【xx 面板】标记——「刚才在面板里做的」这类指代有解。"""
+    @staticmethod
+    def _clean_msgs(msgs: list) -> list[dict]:
+        valid = [m for m in msgs if _valid_msg(m)]
+        # 必须从 user 开始（老文件/手工编辑可能留下孤儿 assistant/tool 头）
+        while valid and valid[0].get("role") != "user":
+            valid.pop(0)
+        return valid
+
+    def messages(self, conversation_id: str | None = None) -> list[dict]:
+        """喂给 LLM 的上下文：只取指定会话桶（None/空 → default）。
+        剥掉 surface 元数据（provider 不认的字段），面板场景的 user 轮加【xx 面板】标记。"""
         out: list[dict] = []
-        for m in self._messages:
+        for m in self._buckets.get(self._bucket(conversation_id or ""), []):
             surface = m.get("surface")
             if not surface:
                 out.append(m)
@@ -71,33 +98,36 @@ class ConversationHistory:
             out.append(m)
         return out
 
-    def record_turn(self, user_text: str, assistant_text: str) -> None:
+    def record_messages(self, msgs: list[dict], conversation_id: str | None = None) -> None:
+        """记录一轮完整轨迹到指定会话桶：user + (assistant tool_calls + tool 结果)* + assistant 终复。
+
+        conversation_id 缺省 → default 桶（无会话维度的事件/兼容旧调用）。
+        关键：工具调用轨迹必须入史。只记「请求→文字答复」会教会模型跳过工具直接声称完成
+        （模型模仿自己历史的说话模式），带轨迹它才模仿「先调工具再答复」。
+        """
+        bucket = self._bucket(conversation_id or "")
+        bucket_msgs = self._buckets.setdefault(bucket, [])
+        bucket_msgs.extend(_sanitize(m) for m in msgs if _valid_msg(m))
+        self._trim(bucket_msgs)
+        self._save()
+
+    def record_turn(self, user_text: str, assistant_text: str, conversation_id: str | None = None) -> None:
         """纯对话轮（无工具调用）。"""
         self.record_messages([
             {"role": "user", "content": user_text},
             {"role": "assistant", "content": assistant_text},
-        ])
+        ], conversation_id)
 
-    def record_messages(self, msgs: list[dict]) -> None:
-        """记录一轮完整轨迹：user + (assistant tool_calls + tool 结果)* + assistant 终复。
-
-        关键：工具调用轨迹必须入史。只记「请求→文字答复」会教会模型跳过工具直接声称完成
-        （模型模仿自己历史的说话模式），带轨迹它才模仿「先调工具再答复」。
-        """
-        self._messages.extend(_sanitize(m) for m in msgs if _valid_msg(m))
-        self._trim()
-        self._save()
-
-    def _trim(self) -> None:
-        user_idx = [i for i, m in enumerate(self._messages) if m.get("role") == "user"]
+    def _trim(self, bucket_msgs: list[dict]) -> None:
+        user_idx = [i for i, m in enumerate(bucket_msgs) if m.get("role") == "user"]
         if len(user_idx) > self.max_turns:
-            del self._messages[: user_idx[len(user_idx) - self.max_turns]]
+            del bucket_msgs[: user_idx[len(user_idx) - self.max_turns]]
 
     def _save(self) -> None:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-            tmp.write_text(json.dumps(self._messages, ensure_ascii=False), encoding="utf-8")
+            tmp.write_text(json.dumps(self._buckets, ensure_ascii=False), encoding="utf-8")
             os.replace(tmp, self.path)
         except OSError as e:
             print(f"[yibao] 会话历史写入失败（已跳过）：{e}", file=sys.stderr)

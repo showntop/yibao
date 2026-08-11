@@ -93,9 +93,9 @@ def test_corrupt_history_file_ignored(tmp_path):
     path.write_text("{{{not json")
     history = ConversationHistory(path)
     assert history.messages() == []
-    # 损坏不碍事：继续记录并覆盖成合法 JSON
+    # 损坏不碍事：继续记录并覆盖成合法 JSON（default 桶）
     history.record_turn("u", "a")
-    assert json.loads(path.read_text())[0]["content"] == "u"
+    assert json.loads(path.read_text())["default"][0]["content"] == "u"
 
 
 class _SeqProvider:
@@ -222,3 +222,33 @@ def test_arun_panel_surface_tagged(tmp_path):
     msgs = provider.astream_calls[1]["messages"]
     assert all("surface" not in m for m in msgs)
     assert {"role": "user", "content": "【zimeiti 面板】写初稿"} in msgs
+
+
+def test_conversation_isolation_between_buckets(tmp_path):
+    """M3 会话隔离闭环：不同 conversation_id 的历史互不可见，同会话跨 run 保持上下文。
+    这就是「小窗不该知道你在另一会话问过 MySQL」的保证。"""
+    history = ConversationHistory(tmp_path / "h.json")
+
+    async def run(conv, text):
+        provider = FakeProvider(text=f"回复{text}")
+        loop = build_loop(tmp_path, provider, history)
+        async for _ in loop.arun(text, conversation_id=conv):
+            pass
+        return provider.chat_calls if hasattr(provider, "chat_calls") else provider.astream_calls
+
+    # 会话 A：问 MySQL → 会话 B：随便问 → 会话 A 再来一轮
+    asyncio.run(run("conv-A", "MySQL 怎么优化"))
+    asyncio.run(run("conv-B", "天气怎么样"))
+    a2 = asyncio.run(run("conv-A", "继续"))
+
+    # 会话 A 的第三轮上下文应含 A 的历史、不含 B 的历史
+    all_msgs = [m for call in a2 for m in call["messages"]]
+    contents = [m.get("content", "") for m in all_msgs]
+    assert any("MySQL 怎么优化" in c for c in contents), "会话 A 应看到自己之前的 MySQL 上下文"
+    assert not any("天气怎么样" in c for c in contents), "会话 A 不应看到会话 B 的内容（串台）"
+
+    # 落盘文件按桶隔离
+    data = json.loads((tmp_path / "h.json").read_text())
+    assert "conv-A" in data and "conv-B" in data
+    assert any("MySQL 怎么优化" in m["content"] for m in data["conv-A"])
+    assert not any("MySQL 怎么优化" in m["content"] for m in data["conv-B"])

@@ -762,6 +762,7 @@ async def serve_async(
                 memory=agent.memory,
                 feed=feed,
                 memories_fn=lambda: agent.memory.recall("作息 使用习惯 工作模式", "default"),
+                # 提炼器总结用 default 桶（无会话维度；不掺具体会话对话，避免串台）
                 history_fn=lambda: agent.history.messages()[-10:],
             )
         except Exception as e:
@@ -960,7 +961,7 @@ async def serve_async(
         tts_task = asyncio.create_task(_pump_tts(tts_q, cancel, surface)) if tts_q is not None else None
         started_speaking = False
         try:
-            async for event in agent.arun(text, cancel, surface=surface):
+            async for event in agent.arun(text, cancel, surface=surface, conversation_id=conversation_id or None):
                 write_msg({"type": "event", "surface": surface, "conversation_id": conversation_id, "event": event.model_dump(mode="json")})
                 if (
                     tts_q is not None
