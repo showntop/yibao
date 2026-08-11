@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import YbIcon from "./YbIcon.vue";
+import { sessionStore } from "../state/store";
+import type { ConversationMeta } from "../state/types";
 
 export interface SessionMeta {
   id: string;
@@ -9,11 +11,9 @@ export interface SessionMeta {
   updatedAt: number;
 }
 
-const STORAGE_KEY = "yb-sessions";
-const ACTIVE_KEY = "yb-active-session";
-
-const sessions = ref<SessionMeta[]>(load());
-const activeId = ref(localStorage.getItem(ACTIVE_KEY) ?? sessions.value[0]?.id ?? "");
+// 会话列表/活动会话：权威在 SessionStore.conversation，本组件只做 UI 投影
+const sessions = ref<SessionMeta[]>([]);
+const activeId = ref(sessionStore.conversation.getActiveConversationId() ?? "");
 
 const emit = defineEmits<{
   select: [id: string];
@@ -21,61 +21,59 @@ const emit = defineEmits<{
   active: [id: string];
 }>();
 
-function load(): SessionMeta[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    const list = raw ? JSON.parse(raw) : [];
-    return Array.isArray(list) ? list.filter((item) => item && typeof item.id === "string") : [];
-  } catch {
-    return [];
-  }
+/** 从 domain 拉取列表投影（updatedAt 倒序）；会话变化后由 sync 刷新 */
+function sync(): void {
+  sessions.value = sessionStore.conversation.listConversations().map((m: ConversationMeta) => ({
+    id: m.id,
+    title: m.title,
+    preview: m.preview,
+    updatedAt: m.updatedAt,
+  }));
+  activeId.value = sessionStore.conversation.getActiveConversationId() ?? "";
 }
 
-function persist() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions.value.slice(0, 60))); } catch { /* storage unavailable */ }
-}
+// 挂载时 hydrate + 首次投影（domain 由 HomeChat/App 的 restore 触发；这里兜底再拉一次）
+void sessionStore.restore().catch(() => {}).then(sync);
 
 function updateCurrent(partial: { title?: string; preview?: string }) {
-  const session = sessions.value.find((item) => item.id === activeId.value);
-  if (!session) return;
-  if (partial.title !== undefined) session.title = partial.title;
-  if (partial.preview !== undefined) session.preview = partial.preview;
-  session.updatedAt = Date.now();
-  const index = sessions.value.indexOf(session);
-  if (index > 0) {
-    sessions.value.splice(index, 1);
-    sessions.value.unshift(session);
-  }
-  persist();
+  const id = activeId.value;
+  if (!id) return;
+  if (partial.title !== undefined) sessionStore.conversation.updateMetaTitle(id, partial.title);
+  sync();
 }
 
-function newChat() {
-  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-  sessions.value.unshift({ id, title: "新对话", preview: "", updatedAt: Date.now() });
-  activeId.value = id;
-  localStorage.setItem(ACTIVE_KEY, id);
-  persist();
+async function newChat() {
+  const meta = await sessionStore.conversation.createConversation();
+  await sessionStore.conversation.setActiveConversationId(meta.id);
+  sync();
   emit("newChat");
-  emit("active", id);
+  emit("active", meta.id);
 }
 
 function select(session: SessionMeta) {
   if (session.id === activeId.value) return;
   activeId.value = session.id;
-  localStorage.setItem(ACTIVE_KEY, session.id);
+  void sessionStore.conversation.setActiveConversationId(session.id);
   emit("select", session.id);
   emit("active", session.id);
 }
 
-function remove(id: string) {
-  sessions.value = sessions.value.filter((item) => item.id !== id);
-  persist();
-  if (activeId.value === id) {
-    activeId.value = sessions.value[0]?.id ?? "";
-    localStorage.setItem(ACTIVE_KEY, activeId.value);
+async function remove(id: string) {
+  const wasActive = activeId.value === id;
+  await sessionStore.conversation.removeConversation(id);
+  sync();
+  if (wasActive) {
+    const next = sessions.value[0];
+    if (next) {
+      activeId.value = next.id;
+      void sessionStore.conversation.setActiveConversationId(next.id);
+    }
     emit("active", activeId.value);
   }
 }
+
+defineExpose({ updateCurrent, newChat, sessions, sync });
+
 
 function fmtTime(ts: number): string {
   const date = new Date(ts);
@@ -88,8 +86,6 @@ function fmtTime(ts: number): string {
   if (date.getFullYear() === now.getFullYear()) return `${date.getMonth() + 1}/${date.getDate()}`;
   return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
 }
-
-defineExpose({ updateCurrent, newChat, sessions });
 </script>
 
 <template>

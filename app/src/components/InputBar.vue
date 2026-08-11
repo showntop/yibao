@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from "vue";
 import YbIcon from "./YbIcon.vue";
+import { sessionStore } from "../state/store";
 
 // busy = 生成/播报中（可打断）；listening = 录音中（麦克风切声波态，点击=取消录音）
 // draft = 外部预填草稿（主屏 Feed 点击带上下文来）；变化即填入并聚焦
@@ -18,19 +19,21 @@ const addOpen = ref(false);
 const pendingContexts = ref<InputContext[]>([]);
 const canSend = computed(() => text.value.trim().length > 0);
 
-// 草稿暂存：输入内容 localStorage 持久化，误关/刷新后恢复（发送或外部草稿填入时清除）
-const DRAFT_KEY = "yb-input-draft";
+// 草稿暂存：写入 SessionStore.conversation（按活动会话），300ms trailing debounce 避免高频写
+let draftTimer: ReturnType<typeof setTimeout> | null = null;
 function persistDraft(v: string) {
-  try {
-    if (v.trim()) localStorage.setItem(DRAFT_KEY, v);
-    else localStorage.removeItem(DRAFT_KEY);
-  } catch { /* 存储不可用忽略 */ }
+  if (draftTimer) clearTimeout(draftTimer);
+  draftTimer = setTimeout(() => {
+    const id = sessionStore.conversation.getActiveConversationId();
+    if (id) sessionStore.conversation.setDraft(id, v);
+  }, 300);
 }
 onMounted(() => {
-  try {
-    const saved = localStorage.getItem(DRAFT_KEY);
+  const id = sessionStore.conversation.getActiveConversationId();
+  if (id) {
+    const saved = sessionStore.conversation.getUIState(id).draft;
     if (saved) text.value = saved;
-  } catch { /* 忽略 */ }
+  }
 });
 watch(text, (v) => persistDraft(v));
 

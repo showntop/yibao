@@ -22,12 +22,7 @@ import {
   type PanelFocus,
 } from "../lib/brain";
 import { procLabel, procSkip, procResultSuffix } from "../lib/proc";
-import {
-  saveCapabilitySnapshot,
-  loadCapabilitySnapshot,
-  clearCapabilitySnapshot,
-  restoreRustPanelCache,
-} from "../lib/capability-snapshot";
+import { sessionStore } from "../state/store";
 
 type AvatarState = "idle" | "listen" | "think" | "work" | "say";
 type CapabilityPresentation = "stage" | "focus";
@@ -299,8 +294,14 @@ function setCurrent(v: NonNullable<typeof current.value>, silent = false) {
   current.value = v;
   viewingList.value = false;
   focus.value = computeFocus(v);
-  // 面板载荷快照：重启后恢复工作面的数据来源（Tauri last_panel 是内存态，重启即失）
-  saveCapabilitySnapshot(v);
+  // 面板载荷写入 surface 域：重启后恢复工作面的数据来源（Tauri last_panel 是内存态，重启即失）
+  sessionStore.surface.setPanel({
+    panel: v.panel,
+    title: v.title,
+    schema: v.schema ?? null,
+    data: v.data ?? {},
+    webview: v.webview ?? null,
+  });
   // panel 事件可以先于用户展开工作面到达；隐藏能力不得抢占“当前对象”。
   void reportPanelContext(props.scene ? focus.value : null).catch(() => {});
   const plugin = v.panel.split(":", 1)[0] || v.panel;
@@ -325,7 +326,7 @@ async function backToList() {
   await collapseOut();
   viewingList.value = true;
   focus.value = null;
-  clearCapabilitySnapshot();
+  sessionStore.surface.clearScene();
   void reportPanelContext(null).catch(() => {});
   void emitTauri("panel-closed").catch(() => {});
   emit("close");
@@ -526,17 +527,15 @@ async function pullCache() {
       setCurrent({ ...cached, title: cached.title ?? cached.panel }, true);
       return;
     }
-  } catch { /* Tauri 缓存缺失/不可用（含重启后内存态已清）→ 走快照回退 */ }
+  } catch { /* Tauri 缓存缺失/不可用（含重启后内存态已清）→ 走 surface 域回退 */ }
 
   if (current.value === null) {
-    const snap = loadCapabilitySnapshot();
-    if (snap) {
+    const panel = sessionStore.surface.getPanel();
+    if (panel) {
       setCurrent(
-        { panel: snap.panel, title: snap.title, schema: snap.schema, webview: snap.webview, data: snap.data },
+        { panel: panel.panel, title: panel.title, schema: panel.schema, webview: panel.webview, data: panel.data },
         true,
       );
-      // 快照回填 Rust last_panel：让面板窗/宠物窗拿到同一份面板数据
-      void restoreRustPanelCache(snap).catch(() => {});
     }
   }
 }

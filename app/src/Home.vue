@@ -11,7 +11,7 @@ import CommandPalette, { type PaletteTab } from "./components/CommandPalette.vue
 import HomeChat from "./components/HomeChat.vue";
 import HomePlugins from "./components/HomePlugins.vue";
 import CapabilityConversationRail, { type CapabilityRailSurface } from "./components/CapabilityConversationRail.vue";
-import { clearCapabilitySnapshot } from "./lib/capability-snapshot";
+import { sessionStore, clearLegacySessionKeys } from "./state/store";
 import DataView from "./components/DataView.vue";
 import SettingsView from "./components/SettingsView.vue";
 import appLogo from "./assets/logo.png";
@@ -89,52 +89,49 @@ const surfaceVisible = ref(false);
 const presentation = ref<CapabilityPresentation>("stage");
 const sceneActive = computed(() => tab.value === "home" && surfaceVisible.value && capability.value !== null);
 const activityBusy = computed(() => panelState.value !== "idle");
-const SCENE_KEY = "yb-capability-scene-v1";
-
-function loadScenePreference(): { panel: string; visible: boolean; presentation: CapabilityPresentation } | null {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(SCENE_KEY) || "null") as {
-      panel?: string;
-      visible?: boolean;
-      presentation?: CapabilityPresentation;
-    } | null;
-    if (!parsed?.panel) return null;
-    return {
-      panel: parsed.panel,
-      visible: Boolean(parsed.visible),
-      presentation: parsed.presentation === "focus" ? "focus" : "stage",
-    };
-  } catch {
-    return null;
-  }
-}
-const savedScene = loadScenePreference();
-let restorePending = Boolean(savedScene?.visible);
-// 恢复只允许在启动后的短暂窗口内发生：pullCache 会从 localStorage 快照回退并发出首个 surface；
+// 场景布局（scene）持久化在 surface 域：hydrate 完成后 onMounted 读入，watch 写回
+let savedScene: { panel: string; visible: boolean; presentation: CapabilityPresentation } | null = null;
+let restorePending = false;
+// 恢复只允许在启动后的短暂窗口内发生：pullCache 会从 surface 域回退并发出首个 surface；
 // 超时未匹配就放弃 pending，防止后续用户手动操作被旧布局"拽回去"。
 let restoreTimer: number | null = null;
-if (restorePending) restoreTimer = window.setTimeout(() => { restorePending = false; }, 8000);
 
 watch([capability, surfaceVisible, presentation], () => {
   try {
-    if (!capability.value) localStorage.removeItem(SCENE_KEY);
-    else localStorage.setItem(SCENE_KEY, JSON.stringify({
-      panel: capability.value.panel,
-      visible: surfaceVisible.value,
-      presentation: presentation.value,
-    }));
+    if (!capability.value) sessionStore.surface.clearScene();
+    else {
+      sessionStore.surface.setScene({
+        panel: capability.value.panel,
+        visible: surfaceVisible.value,
+        presentation: presentation.value,
+        tab: tab.value,
+      });
+    }
   } catch { /* UI 布局偏好写入失败只降级为本次窗口状态。 */ }
 }, { deep: true });
+
+/** 启动恢复初始化：hydrate 后读 scene，设置恢复窗口 */
+function initSceneRestore(): void {
+  const scene = sessionStore.surface.getScene();
+  if (scene) {
+    savedScene = { panel: scene.panel, visible: scene.visible, presentation: scene.presentation };
+    if (scene.visible) {
+      restorePending = true;
+      restoreTimer = window.setTimeout(() => { restorePending = false; }, 8000);
+    }
+  }
+}
 
 function onSurface(surface: CapabilityRailSurface) {
   capability.value = surface;
   // 只有「启动恢复待定 && 布局偏好指向的面板」才恢复；不匹配则保留 pending，
   // 等 pullCache 快照回退发出的后续 surface（多段恢复容错）。
-  const shouldRestore = restorePending && savedScene?.visible && savedScene.panel === surface.panel;
+  const scene = savedScene;
+  const shouldRestore = restorePending && scene !== null && scene.visible && scene.panel === surface.panel;
   if (shouldRestore) {
     if (restoreTimer !== null) { clearTimeout(restoreTimer); restoreTimer = null; }
     restorePending = false;
-    presentation.value = savedScene.presentation;
+    presentation.value = scene.presentation;
     surfaceVisible.value = true;
     tab.value = "home";
     void nextTick(() => pluginHost.value?.restoreSurface());
@@ -170,7 +167,7 @@ async function hideSurface() {
 }
 
 function closeCapability() {
-  clearCapabilitySnapshot();
+  sessionStore.surface.clearScene();
   surfaceVisible.value = false;
   presentation.value = "stage";
   capability.value = null;
@@ -252,6 +249,18 @@ onMounted(async () => {
   window.addEventListener("keydown", onGlobalKeydown);
   if (isNarrowWindow()) leftRailOpen.value = false; // 非全屏默认收起左栏（按钮仍可展开）
   clockTimer = window.setInterval(() => (clockNow.value = new Date()), 30_000);
+  // 启动恢复：hydrate 后按 surface 域 scene 设置布局恢复窗口
+  try {
+    clearLegacySessionKeys();
+    await sessionStore.restore();
+    initSceneRestore();
+    // window 域：注册主窗 + 当前聚焦会话（多窗协调的最小接入）
+    sessionStore.window.updateState("main", {
+      visible: true,
+      focusedConversationId: sessionStore.conversation.getActiveConversationId(),
+      focusedPanelId: capability.value?.panel ?? sessionStore.surface.getPanel()?.panel ?? null,
+    });
+  } catch { /* 恢复失败不阻塞主屏 */ }
 });
 onUnmounted(() => {
   unApprovals?.();
