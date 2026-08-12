@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from "vue";
+import { ref, computed, watch, onMounted, nextTick } from "vue";
 import YbIcon from "./YbIcon.vue";
 import { sessionStore } from "../state/store";
 
@@ -13,7 +13,14 @@ const emit = defineEmits<{
   (e: "interrupt"): void;
 }>();
 const text = ref("");
-const inputRef = ref<HTMLInputElement | null>(null);
+const inputRef = ref<HTMLTextAreaElement | null>(null);
+/** textarea 自适应高度：内容增长时行增高，清空/发送后回落 */
+function autoGrow() {
+  const el = inputRef.value;
+  if (!el) return;
+  el.style.height = "auto";
+  el.style.height = `${Math.min(el.scrollHeight, 140)}px`; // 上限 140px 防过高
+}
 const fileRef = ref<HTMLInputElement | null>(null);
 const addOpen = ref(false);
 const pendingContexts = ref<InputContext[]>([]);
@@ -57,6 +64,7 @@ function send() {
     text.value = "";
     pendingContexts.value = [];
     persistDraft("");
+    nextTick(() => autoGrow()); // 清空后高度回落（nextTick 等 v-model 生效）
   }
 }
 
@@ -135,12 +143,14 @@ defineExpose({ focus: () => inputRef.value?.focus() });
         <button type="button" aria-label="移除内容" @click="removeContext(index)">×</button>
       </span>
     </div>
-    <input
+    <textarea
       ref="inputRef"
       v-model="text"
-      placeholder="对译宝说点什么…"
-      @keydown.enter.prevent="send"
-    />
+      rows="1"
+      placeholder="对译宝说点什么…（shift+回车换行）"
+      @keydown.enter.exact.prevent="send"
+      @input="autoGrow"
+    ></textarea>
     <button
       type="button"
       class="mic"
@@ -210,7 +220,7 @@ defineExpose({ focus: () => inputRef.value?.focus() });
   outline: 2px solid var(--yb-accent-soft);
   outline-offset: 1px;
 }
-input {
+textarea {
   flex: 1;
   min-width: 0;
   border: none;
@@ -224,9 +234,22 @@ input {
   font-size: 14px;                            /* 13.5 → 14 更清晰 */
   outline: none;
   color: var(--yb-text);
+  resize: none;                               /* 去右下角拖拽柄 */
+  overflow-y: auto;                           /* 超上限滚动 */
+  line-height: 1.45;
+  padding: 7px 0;                             /* 单行时垂直居中接近原 input */
+  font-family: inherit;
 }
-input::placeholder {
+textarea::placeholder {
   color: var(--yb-text-dim);
+}
+/* 滚动条细化（多行输入时可见） */
+textarea::-webkit-scrollbar {
+  width: 4px;
+}
+textarea::-webkit-scrollbar-thumb {
+  background: var(--yb-text-faint);
+  border-radius: 2px;
 }
 .add-wrap {
   position: relative;
