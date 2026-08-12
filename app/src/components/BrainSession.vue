@@ -1,7 +1,6 @@
 <script setup lang="ts">
 /* BrainSession — 左侧状态、能力与会话复合栏。
- * 上部呈现译宝当下的记忆、感知、思考与行动，下部保留最近会话，
- * 两者共享同一片背景和纵向节奏，不再表现成两块独立功能导航。
+ * 上：认知浮层；下：会话浮层。两块独立 widget，中间留缝，不再共一张底卡。
  */
 import { ref } from "vue";
 import AgentBrain from "./AgentBrain.vue";
@@ -33,22 +32,20 @@ defineExpose({ updateCurrent, syncSessions });
 
 <template>
   <aside class="brain-session">
-    <!-- 上部：抽象心智，不重复完整 Avatar -->
-    <div class="bs-core">
+    <!-- 上：大脑 / 状态与能力 -->
+    <section class="bs-sheet bs-sheet-brain">
       <AgentBrain :state="state" compact @chat="(d) => emit('chat', d)" @toggle="emit('toggle')" />
-    </div>
+    </section>
 
-    <div class="bs-bridge" aria-hidden="true"><i /></div>
-
-    <!-- 下部：会话历史（滚动） -->
-    <div class="bs-session">
+    <!-- 下：会话列表（独立浮层） -->
+    <section class="bs-sheet bs-sheet-sessions">
       <SessionList
         ref="sessionRef"
         @select="(id) => emit('select', id)"
         @new-chat="emit('newChat')"
         @active="(id) => emit('active', id)"
       />
-    </div>
+    </section>
   </aside>
 </template>
 
@@ -57,94 +54,40 @@ defineExpose({ updateCurrent, syncSessions });
   width: 304px;
   max-width: 100%;
   box-sizing: border-box;
-  /* 关键：必须撑满父级（col-left stretch 满高）——flex column 容器 auto 高度
-   * = 内容高度和，会话区 flex:1 分不到"剩余空间"，echo-list 的滚动会失效 */
   height: 100%;
   min-height: 0;
-  overflow: visible;
+  overflow: hidden;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  position: relative;
-  background:
-    radial-gradient(100% 46% at 50% 4%, rgba(var(--yb-c-sky-rgb), 0.065), transparent 74%),
-    radial-gradient(82% 30% at 50% 100%, rgba(var(--yb-c-sky-rgb), 0.045), transparent 72%),
-    var(--yb-content-bg);
+  gap: 8px;
+  padding: 10px 8px 10px 10px;
+  /* 与中栏同底，不再铺一层灰蓝「侧栏色」 */
+  background: transparent;
   user-select: none;
 }
-/* 右边界渐变 hairline（与右栏同语言） */
-.brain-session::after {
-  content: "";
-  position: absolute;
-  right: 0;
-  top: 12%;
-  bottom: 12%;
-  width: 1px;
-  background: linear-gradient(
-    180deg,
-    transparent,
-    rgba(var(--yb-c-sky-rgb), 0.14) 50%,
-    transparent
-  );
-  pointer-events: none;
-}
 
-.bs-core {
-  flex-shrink: 0;
+.bs-sheet {
   position: relative;
-  overflow: visible;
-}
-.bs-core::after {
-  content: "";
-  position: absolute;
-  left: 8%;
-  right: 8%;
-  bottom: -16px;
-  height: 34px;
-  background: radial-gradient(58% 100% at 50% 0%, rgba(var(--yb-c-sky-rgb), 0.12), transparent 72%);
-  pointer-events: none;
-  z-index: 3;
+  border-radius: var(--yb-note-radius);
+  background: var(--yb-note-bg);
+  border: 1px solid var(--yb-note-border);
+  box-shadow: var(--yb-note-shadow);
+  overflow: hidden;
 }
 
-/* 上下区域共享同一条纵向线索，避免硬分割。 */
-.bs-bridge {
+.bs-sheet-brain {
   flex-shrink: 0;
-  position: relative;
-  height: 13px;
-  margin: 0 14px;
-}
-.bs-bridge::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 4px;
-  height: 1px;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    rgba(var(--yb-c-sky-rgb), 0.09) 30%,
-    rgba(var(--yb-c-sky-rgb), 0.09) 70%,
-    transparent
-  );
-}
-.bs-bridge i {
-  position: absolute;
-  left: 24px;
-  top: 2px;
-  transform: translate(-50%, -50%);
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--yb-accent);
-  box-shadow: 0 0 0 5px rgba(var(--yb-c-sky-rgb), 0.07), 0 0 12px rgba(var(--yb-c-sky-rgb), 0.32);
 }
 
-/* 下部会话区：占满剩余高度，列表自身滚动 */
-.bs-session {
+.bs-sheet-sessions {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+.bs-sheet-sessions :deep(.session) {
+  height: 100%;
 }
 </style>

@@ -512,6 +512,7 @@ onUnmounted(() => {
 
 <template>
   <aside class="session-inspector" aria-label="本次会话状态与上下文">
+    <div class="si-sheet">
     <header class="inspector-head">
       <span class="inspector-kicker">本次会话</span>
       <strong>{{ sessionTitle || "新对话" }}</strong>
@@ -640,6 +641,7 @@ onUnmounted(() => {
       <strong>尚未加入上下文</strong>
       <span>文件、屏幕、记忆和执行状态会随本次会话出现在这里</span>
     </div>
+    </div>
   </aside>
 </template>
 
@@ -649,33 +651,59 @@ onUnmounted(() => {
   flex-shrink: 0;
   min-height: 0;
   box-sizing: border-box;
-  padding: 16px 14px 18px 16px;
+  padding: 12px 12px 12px 10px;
+  overflow: hidden;
+  color: var(--yb-paper-ink);
+  /* 与中栏同底，不再铺侧栏灰蓝底色 */
+  background: transparent;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.si-sheet {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   scrollbar-width: thin;
-  color: var(--yb-text);
-  background: var(--yb-content-bg);
-  position: relative;
+  border-radius: var(--yb-note-radius);
+  background: var(--yb-note-bg);
+  border: 1px solid var(--yb-note-border);
+  box-shadow: var(--yb-note-shadow);
+  padding: 0 12px 16px;
 }
 
 button { font: inherit; }
 
 .inspector-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 1px 4px 15px 0;
+  padding: 14px 2px 12px;
+  margin: 0 -12px;
+  padding-left: 14px;
+  padding-right: 14px;
+  background: var(--yb-paper-sticky);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
 
 .inspector-kicker {
   margin-bottom: 3px;
-  color: var(--yb-text-faint);
+  color: var(--yb-paper-ink-dim);
   font-size: 10px;
   font-weight: var(--yb-fw-bold);
   letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .inspector-head strong {
-  color: var(--yb-text-strong);
+  color: var(--yb-paper-ink);
   font-size: 14px;
   font-weight: var(--yb-fw-bold);
   line-height: 1.35;
@@ -683,7 +711,7 @@ button { font: inherit; }
 
 .inspector-head p {
   margin: 0;
-  color: var(--yb-text-dim);
+  color: var(--yb-paper-ink-dim);
   font-size: 11px;
   line-height: 1.45;
 }
@@ -723,26 +751,26 @@ button { font: inherit; }
 
 .session-section {
   position: relative;
-  padding: 10px 0 8px;
-  border-top: 1px solid var(--yb-card-row-line);
+  padding: 12px 0 10px;
+  border-top: 1px solid var(--yb-note-border);
 }
-.session-section:first-child { border-top: 0; padding-top: 4px; }
+.session-section:first-child { border-top: 0; padding-top: 6px; }
 
 .session-section h2 {
-  margin: 0 0 6px;
+  margin: 0 0 8px;
   display: flex;
   align-items: baseline;
   gap: 6px;
-  color: var(--yb-text-dim);
+  color: var(--yb-paper-ink-dim);
   font-size: 11px;
   font-weight: var(--yb-fw-bold);
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
-.session-section h2 span { font-size: 10px; font-weight: var(--yb-fw-medium); color: var(--yb-text-faint); }
+.session-section h2 span { font-size: 10px; font-weight: var(--yb-fw-medium); color: var(--yb-paper-ink-dim); opacity: 0.75; }
 .needs-you h2 { color: var(--yb-intent-pending-ink); }
-.interrupted-section h2 { color: var(--yb-text-faint); }
+.interrupted-section h2 { color: var(--yb-paper-ink-dim); }
 
 .session-row,
 .plain-row {
@@ -757,26 +785,29 @@ button { font: inherit; }
 }
 
 .session-row {
-  padding: 7px 8px;
+  padding: 8px 10px;
   display: flex;
   align-items: center;
   gap: 8px;
-  border: 1px solid rgba(var(--yb-c-sky-rgb), 0.12);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid var(--yb-note-border);
+  border-radius: var(--yb-radius-sm);
+  background: var(--yb-note-soft);
+  box-shadow: 0 2px 8px rgba(var(--yb-paper-shade-rgb), 0.06);
+  transition: transform 160ms var(--yb-ease-out), box-shadow 160ms var(--yb-ease-out);
 }
 
 .approval-card {
   box-sizing: border-box;
   padding: 10px;
   border: 1px solid var(--yb-intent-pending-soft);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--yb-intent-pending-soft) 45%, white);
+  border-radius: var(--yb-radius-sm);
+  background: color-mix(in srgb, var(--yb-intent-pending-soft) 28%, var(--yb-note-bg));
+  box-shadow: 0 3px 12px rgba(var(--yb-paper-shade-rgb), 0.08);
 }
 
 .interrupted-card {
-  border-color: rgba(var(--yb-c-slate-rgb), 0.1);
-  background: rgba(247, 249, 251, 0.76);
+  border-color: var(--yb-note-border);
+  background: var(--yb-note-mute);
 }
 
 .interrupted-card + .interrupted-card { margin-top: 7px; }
@@ -832,9 +863,9 @@ button { font: inherit; }
   margin-top: 8px;
   padding: 7px 8px;
   overflow: hidden;
-  border: 1px solid rgba(var(--yb-c-slate-rgb), 0.08);
+  border: 1px solid var(--yb-note-border);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.58);
+  background: var(--yb-note-mute);
 }
 
 .command-preview code,
@@ -892,21 +923,24 @@ button { font: inherit; }
 }
 
 .approval-btn.reject {
-  border: 1px solid rgba(var(--yb-c-slate-rgb), 0.1);
-  background: rgba(255, 255, 255, 0.62);
-  color: var(--yb-text-dim);
+  border: 0;
+  background: var(--yb-note-soft);
+  color: var(--yb-paper-ink-dim);
+  box-shadow: 0 1px 3px rgba(var(--yb-paper-shade-rgb), 0.06);
 }
 
 .approval-btn.allow {
-  border: 1px solid color-mix(in srgb, var(--yb-intent-pending) 45%, transparent);
+  border: 0;
   background: var(--yb-intent-pending);
   color: white;
+  box-shadow: 0 2px 8px rgba(242, 160, 60, 0.28);
 }
 
 .approval-btn.resume {
-  border: 1px solid rgba(var(--yb-c-sky-rgb), 0.22);
-  background: rgba(255, 255, 255, 0.72);
+  border: 0;
+  background: var(--yb-note-soft);
   color: var(--yb-accent-deep);
+  box-shadow: 0 1px 3px rgba(var(--yb-paper-shade-rgb), 0.06);
 }
 
 .approval-btn:hover:not(:disabled) { filter: brightness(0.98); }
@@ -919,8 +953,11 @@ button { font: inherit; }
   font-size: 9px;
 }
 
-.session-row:hover,
-.plain-row:hover { background: var(--yb-row-hover); }
+.session-row:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(var(--yb-paper-shade-rgb), 0.1);
+}
+.plain-row:hover { background: var(--yb-note-mute); }
 
 /* 装饰圆点：改为 hairline 短竖条（2px 宽），仅起轻量指示作用，无状态色 */
 .row-node {
@@ -968,18 +1005,20 @@ button { font: inherit; }
 
 .row-group {
   overflow: hidden;
-  border: 1px solid rgba(var(--yb-c-sky-rgb), 0.1);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.38);
+  border: 1px solid var(--yb-note-border);
+  border-radius: var(--yb-radius-sm);
+  background: var(--yb-note-soft);
+  box-shadow: 0 2px 10px rgba(var(--yb-paper-shade-rgb), 0.05);
 }
 
 .plain-row {
-  padding: 6px 8px;
+  padding: 7px 10px;
   display: flex;
   align-items: center;
   gap: 7px;
-  border-bottom: 1px solid rgba(var(--yb-c-slate-rgb), 0.07);
+  border-bottom: 1px solid rgba(var(--yb-paper-shade-rgb), 0.07);
   font-size: 11px;
+  color: var(--yb-paper-ink);
 }
 .plain-row:last-child { border-bottom: 0; }
 .plain-row > span:nth-of-type(2) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1044,7 +1083,7 @@ button { font: inherit; }
   display: flex;
   align-items: center;
   gap: 8px;
-  border-top: 1px solid rgba(var(--yb-c-slate-rgb), 0.06);
+  border-top: 1px solid var(--yb-note-border);
 }
 
 .processed-row > i {
@@ -1083,15 +1122,20 @@ button { font: inherit; }
 
 .inspector-empty {
   min-height: 180px;
-  padding: 36px 18px;
+  margin-top: 8px;
+  padding: 28px 16px;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 6px;
-  color: var(--yb-text-faint);
+  color: var(--yb-paper-ink-dim);
+  border-radius: var(--yb-radius-sm);
+  background: var(--yb-note-soft);
+  border: 1px solid var(--yb-note-border);
+  box-shadow: 0 2px 10px rgba(var(--yb-paper-shade-rgb), 0.05);
 }
-.inspector-empty i { width: 8px; height: 8px; border-radius: 50%; background: var(--yb-border-strong); }
-.inspector-empty strong { color: var(--yb-text-dim); font-size: 12px; }
+.inspector-empty i { width: 8px; height: 8px; border-radius: 50%; background: rgba(var(--yb-paper-shade-rgb), 0.22); }
+.inspector-empty strong { color: var(--yb-paper-ink); font-size: 12px; }
 .inspector-empty span { max-width: 190px; font-size: 10px; line-height: 1.5; }
 
 @media (prefers-reduced-motion: reduce) {

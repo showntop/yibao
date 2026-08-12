@@ -280,7 +280,7 @@ onUnmounted(() => {
 .neural-brain {
   position: relative;
   width: 100%;
-  height: 220px;
+  height: 176px;
   overflow: visible;
   color: var(--yb-text-dim);
 }

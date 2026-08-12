@@ -262,6 +262,32 @@
   /* 分段控件（Segmented Control）：macOS 用凹槽 + 白滑块 */
   --yb-segment-track: rgba(var(--yb-c-slate-rgb), 0.08);
   --yb-segment-thumb: var(--yb-c-white);
+
+  /* ---- 大窗侧栏浮层（Home 左右栏专用；设置页仍用上方 sidebar 语言） ----
+   * 质感：灰蓝底上浮起白卡 + 多层软阴影 + 大圆角。
+   * 配色：天青冷调，不做暖纸/糖果便签。 */
+  --yb-paper-bg: #e4e9f1;
+  --yb-paper-bg-deep: #dce3ed;
+  --yb-paper-ink: var(--yb-text-strong);
+  --yb-paper-ink-dim: var(--yb-text-dim);
+  --yb-paper-shade-rgb: var(--yb-c-slate-rgb);
+  --yb-paper-grain: rgba(var(--yb-c-slate-rgb), 0.028);
+  --yb-note-bg: #ffffff;
+  --yb-note-border: rgba(var(--yb-c-slate-rgb), 0.07);
+  --yb-note-radius: var(--yb-radius-sm); /* 10px：比 xl 更克制，少「气球感」 */
+  --yb-note-shadow:
+    0 1px 1px rgba(var(--yb-c-slate-rgb), 0.03),
+    0 8px 20px rgba(var(--yb-c-slate-rgb), 0.07),
+    0 24px 48px -18px rgba(var(--yb-c-slate-rgb), 0.12);
+  --yb-note-shadow-lift:
+    0 2px 4px rgba(var(--yb-c-slate-rgb), 0.05),
+    0 12px 28px rgba(var(--yb-c-slate-rgb), 0.10),
+    0 32px 56px -16px rgba(var(--yb-c-sky-rgb), 0.14);
+  /* 浮层内嵌卡：近白 / 极淡石板 / 极淡天青（选中） */
+  --yb-note-soft: #f7f9fc;
+  --yb-note-mute: #f2f5f9;
+  --yb-note-accent: rgba(var(--yb-c-sky-rgb), 0.10);
+  --yb-paper-sticky: rgba(255, 255, 255, 0.86);
 }
 
 /* ============ 历史别名 ============
@@ -417,9 +443,32 @@ pre {
     --yb-card-page-bg: #10161d;
     --yb-row-hover: rgba(255, 255, 255, 0.05);
     --yb-row-selected: rgba(77, 144, 196, 0.22);
-    --yb-sticky-bg: rgba(16, 22, 29, 0.82);
+    /* sticky 压在 sidebar (#161e27) 上：同系半透，避免偏成 content-bg 黑块 */
+    --yb-sticky-bg: rgba(22, 30, 39, 0.88);
     --yb-segment-track: rgba(255, 255, 255, 0.1);
     --yb-segment-thumb: #3a4a5c;
+
+    /* 浮层侧栏（深色：冷石板底 + 深灰白卡） */
+    --yb-paper-bg: #121820;
+    --yb-paper-bg-deep: #0e1319;
+    --yb-paper-ink: var(--yb-text-strong);
+    --yb-paper-ink-dim: var(--yb-text-dim);
+    --yb-paper-shade-rgb: 0, 0, 0;
+    --yb-paper-grain: rgba(255, 255, 255, 0.025);
+    --yb-note-bg: #1a222c;
+    --yb-note-border: rgba(255, 255, 255, 0.07);
+    --yb-note-shadow:
+      0 1px 1px rgba(0, 0, 0, 0.3),
+      0 10px 24px rgba(0, 0, 0, 0.4),
+      0 28px 56px -16px rgba(0, 0, 0, 0.5);
+    --yb-note-shadow-lift:
+      0 2px 4px rgba(0, 0, 0, 0.35),
+      0 14px 32px rgba(0, 0, 0, 0.45),
+      0 36px 64px -16px rgba(77, 144, 196, 0.18);
+    --yb-note-soft: #1f2833;
+    --yb-note-mute: #242e3a;
+    --yb-note-accent: rgba(77, 144, 196, 0.18);
+    --yb-paper-sticky: rgba(26, 34, 44, 0.9);
 
     /* ---- 历史别名 ---- */
     --yb-surface: rgba(24, 33, 43, 0.78);
@@ -498,9 +547,32 @@ pre {
   --yb-card-page-bg: #10161d;
   --yb-row-hover: rgba(255, 255, 255, 0.05);
   --yb-row-selected: rgba(77, 144, 196, 0.22);
-  --yb-sticky-bg: rgba(16, 22, 29, 0.82);
+  /* sticky 压在 sidebar (#161e27) 上：同系半透，避免偏成 content-bg 黑块 */
+  --yb-sticky-bg: rgba(22, 30, 39, 0.88);
   --yb-segment-track: rgba(255, 255, 255, 0.1);
   --yb-segment-thumb: #3a4a5c;
+
+  /* 浮层侧栏（深色：冷石板底 + 深灰白卡） */
+  --yb-paper-bg: #121820;
+  --yb-paper-bg-deep: #0e1319;
+  --yb-paper-ink: var(--yb-text-strong);
+  --yb-paper-ink-dim: var(--yb-text-dim);
+  --yb-paper-shade-rgb: 0, 0, 0;
+  --yb-paper-grain: rgba(255, 255, 255, 0.025);
+  --yb-note-bg: #1a222c;
+  --yb-note-border: rgba(255, 255, 255, 0.07);
+  --yb-note-shadow:
+    0 1px 1px rgba(0, 0, 0, 0.3),
+    0 10px 24px rgba(0, 0, 0, 0.4),
+    0 28px 56px -16px rgba(0, 0, 0, 0.5);
+  --yb-note-shadow-lift:
+    0 2px 4px rgba(0, 0, 0, 0.35),
+    0 14px 32px rgba(0, 0, 0, 0.45),
+    0 36px 64px -16px rgba(77, 144, 196, 0.18);
+  --yb-note-soft: #1f2833;
+  --yb-note-mute: #242e3a;
+  --yb-note-accent: rgba(77, 144, 196, 0.18);
+  --yb-paper-sticky: rgba(26, 34, 44, 0.9);
 
   --yb-surface: rgba(24, 33, 43, 0.78);
   --yb-surface-solid: #1f2a36;

@@ -199,7 +199,7 @@ onUnmounted(() => {
       <button class="identity" type="button" title="和译宝聊聊它的记忆与能力" @click="greet">
         <!-- 本尊 Avatar：与顶栏同一角色（小=全局品牌 / 大=本尊特写），
              同一身份两次亮相不冲突；pointer-events 禁用其拖动手势，避免移动窗口 -->
-        <span class="identity-avatar" title="折叠左栏" @click.stop="emit('toggle')"><Avatar :state="state" :size="48" compact /></span>
+        <span class="identity-avatar" title="折叠左栏" @click.stop="emit('toggle')"><Avatar :state="state" :size="36" compact /></span>
         <span class="identity-copy">
           <span class="identity-line"><strong>译宝</strong><i class="state-dot" />{{ stateText }}</span>
           <span>{{ stateDetail }}</span>
@@ -253,11 +253,11 @@ onUnmounted(() => {
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
-  padding: 16px 14px 10px;
+  padding: 10px 12px 8px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  color: var(--yb-text);
+  gap: 8px;
+  color: var(--yb-paper-ink);
   user-select: none;
 }
 
@@ -279,7 +279,7 @@ button {
   background: transparent;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   color: inherit;
   text-align: left;
   cursor: pointer;
@@ -300,7 +300,7 @@ button {
   flex-direction: column;
   gap: 3px;
   font-size: 11px;
-  color: var(--yb-text-faint);
+  color: var(--yb-paper-ink-dim);
   white-space: nowrap;
 }
 
@@ -308,13 +308,13 @@ button {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--yb-text-dim);
+  color: var(--yb-paper-ink-dim);
 }
 
 .identity-line strong {
   margin-right: 2px;
-  font-size: 15px;
-  color: var(--yb-text-strong);
+  font-size: 13px;
+  color: var(--yb-paper-ink);
 }
 
 .state-dot {
@@ -336,7 +336,8 @@ button {
   flex: none;
   font-size: 10px;
   letter-spacing: 0.08em;
-  color: var(--yb-text-faint);
+  color: var(--yb-paper-ink-dim);
+  text-transform: uppercase;
 }
 
 .mind {
@@ -350,18 +351,20 @@ button {
 }
 
 .capability-detail {
-  margin: 0 10px 10px;
-  padding: 9px 10px;
-  min-height: 38px;
-  border-radius: 12px;
+  margin: 0 0 2px;
+  padding: 6px 8px;
+  min-height: 0;
+  border-radius: var(--yb-radius-sm);
+  border: 1px solid var(--yb-note-border);
   display: flex;
   align-items: center;
-  gap: 8px;
-  background: rgba(var(--yb-c-sky-rgb), 0.055);
-  color: var(--yb-text-dim);
+  gap: 6px;
+  background: var(--yb-note-soft);
+  box-shadow: none;
+  color: var(--yb-paper-ink-dim);
 }
 
-.cap-detail-title { font-size: 11px; font-weight: var(--yb-fw-bold); color: var(--yb-text-strong); }
+.cap-detail-title { font-size: 11px; font-weight: var(--yb-fw-bold); color: var(--yb-paper-ink); }
 .cap-detail-copy { flex: 1; min-width: 0; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .skill-links { display: flex; gap: 4px; }
 .skill-links button {
@@ -369,13 +372,14 @@ button {
   padding: 3px 6px;
   border: 0;
   border-radius: 7px;
-  background: rgba(255, 255, 255, 0.82);
+  background: var(--yb-note-bg);
   color: var(--yb-accent-deep);
   font-size: 9px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   cursor: pointer;
+  box-shadow: 0 1px 2px rgba(var(--yb-paper-shade-rgb), 0.05);
 }
 
 .cap-detail-enter-active,
@@ -384,21 +388,22 @@ button {
 .cap-detail-leave-to { opacity: 0; transform: translateY(-5px); }
 
 .today {
-  height: 34px;
-  padding: 0 10px;
-  border-radius: 12px;
-  border: 1px solid rgba(var(--yb-c-sky-rgb), 0.10);
-  background: rgba(255, 255, 255, 0.48);
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--yb-radius-sm);
+  border: 1px solid var(--yb-note-border);
+  background: var(--yb-note-mute);
+  box-shadow: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 7px;
+  gap: 6px;
   font-size: 10px;
-  color: var(--yb-text-dim);
+  color: var(--yb-paper-ink-dim);
 }
 
-.today-title { color: var(--yb-text-faint); letter-spacing: 0.06em; }
-.today b { margin-right: 2px; color: var(--yb-accent-deep); font-size: 12px; font-variant-numeric: tabular-nums; }
+.today-title { color: var(--yb-paper-ink-dim); letter-spacing: 0.04em; }
+.today b { margin-right: 2px; color: var(--yb-accent-deep); font-size: 11px; font-variant-numeric: tabular-nums; }
 .today i { width: 2px; height: 2px; border-radius: 50%; background: var(--yb-border-strong); }
 
 </style>

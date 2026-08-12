@@ -101,16 +101,14 @@ function fmtTime(ts: number): string {
     </header>
 
     <div class="echo-list" role="list" aria-label="最近会话">
-      <div v-for="(session, index) in sessions" :key="session.id" class="echo-row" :class="{ active: session.id === activeId }" role="listitem">
-        <span class="echo-node" aria-hidden="true"><i /></span>
+      <div v-for="session in sessions" :key="session.id" class="echo-row" :class="{ active: session.id === activeId }" role="listitem">
         <button class="echo-main" type="button" :title="session.title" @click="select(session)">
-          <span class="echo-meta">
-            <span>{{ session.id === activeId ? "当前" : index === 0 ? "最近" : "会话" }}</span>
+          <span class="echo-line1">
+            <strong>{{ session.title }}</strong>
             <time>{{ fmtTime(session.updatedAt) }}</time>
           </span>
-          <strong>{{ session.title }}</strong>
           <span v-if="session.preview" class="echo-preview">{{ session.preview }}</span>
-          <span v-else class="echo-preview quiet">这段对话还没有留下内容</span>
+          <span v-else class="echo-preview quiet">暂无内容</span>
         </button>
         <button class="echo-delete" type="button" title="删除这段会话" aria-label="删除这段会话" @click="remove(session.id)">
           <YbIcon name="x" :size="10" />
@@ -135,17 +133,26 @@ function fmtTime(ts: number): string {
   display: flex;
   flex-direction: column;
   position: relative;
+  /* 整栏滚动，echo-head sticky 才能压住下方列表 */
+  overflow-y: auto;
+  scrollbar-width: thin;
 }
 
 button { font: inherit; }
 
 .echo-head {
   flex: none;
-  padding: 10px 14px 9px 18px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 8px 10px 6px 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
+  background: var(--yb-paper-sticky);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
 
 .echo-head > div {
@@ -156,176 +163,148 @@ button { font: inherit; }
 }
 
 .echo-kicker {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: var(--yb-fw-bold);
-  color: var(--yb-text-strong);
-  letter-spacing: 0.03em;
+  color: var(--yb-paper-ink-dim);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .echo-count {
   font-size: 10px;
-  color: var(--yb-text-faint);
+  color: var(--yb-paper-ink-dim);
+  opacity: 0.75;
 }
 
 .echo-new {
   flex: none;
-  height: 28px;
+  height: 24px;
   padding: 0 9px;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  border: 1px solid rgba(var(--yb-c-sky-rgb), 0.15);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.62);
-  color: var(--yb-accent-deep);
+  gap: 4px;
+  border: 0;
+  border-radius: var(--yb-radius-pill);
+  background: var(--yb-accent);
+  color: var(--yb-text-on-accent);
   font-size: 10px;
+  font-weight: var(--yb-fw-medium);
   cursor: pointer;
-  transition: transform 160ms var(--yb-ease-out), background 160ms var(--yb-ease-out), border-color 160ms var(--yb-ease-out);
+  box-shadow: 0 1px 4px rgba(var(--yb-c-sky-rgb), 0.22);
+  transition: transform 160ms var(--yb-ease-out), box-shadow 160ms var(--yb-ease-out), filter 160ms var(--yb-ease-out);
 }
 
 .echo-new:hover {
   transform: translateY(-1px);
-  border-color: rgba(var(--yb-c-sky-rgb), 0.34);
-  background: rgba(255, 255, 255, 0.94);
+  filter: brightness(1.03);
+  box-shadow: 0 3px 10px rgba(var(--yb-c-sky-rgb), 0.3);
 }
 
 .echo-list {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  padding: 2px 10px 16px 14px;
+  flex: none;
+  padding: 2px 8px 12px;
   position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
 }
 
-.echo-list::before {
-  content: "";
-  position: absolute;
-  left: 24px;
-  top: 10px;
-  bottom: 24px;
-  width: 1px;
-  background: linear-gradient(180deg, rgba(var(--yb-c-sky-rgb), 0.28), rgba(var(--yb-c-sky-rgb), 0.04));
-}
+.echo-list::before { display: none; }
 
 .echo-row {
-  min-height: 56px;
   position: relative;
-  padding-left: 22px;
   display: flex;
   align-items: stretch;
-}
-
-.echo-node {
-  position: absolute;
-  left: 6px;
-  top: 18px;
-  width: 9px;
-  height: 9px;
-  z-index: 2;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.96);
-  border: 1px solid rgba(var(--yb-c-sky-rgb), 0.28);
-}
-
-.echo-node i {
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: rgba(var(--yb-c-sky-rgb), 0.45);
 }
 
 .echo-main {
   min-width: 0;
   flex: 1;
-  margin: 2px 0;
-  padding: 8px 31px 8px 10px;
-  border: 1px solid transparent;
-  border-radius: 12px;
-  background: transparent;
-  color: var(--yb-text);
+  margin: 0;
+  padding: 7px 28px 7px 10px;
+  border: 1px solid var(--yb-note-border);
+  border-radius: var(--yb-radius-sm);
+  background: var(--yb-note-soft);
+  color: var(--yb-paper-ink);
   text-align: left;
   cursor: pointer;
-  transition: background 170ms var(--yb-ease-out), border-color 170ms var(--yb-ease-out), transform 170ms var(--yb-ease-out), box-shadow 170ms var(--yb-ease-out);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  box-shadow: 0 1px 4px rgba(var(--yb-paper-shade-rgb), 0.04);
+  transition:
+    transform 160ms var(--yb-ease-out),
+    box-shadow 160ms var(--yb-ease-out),
+    background 160ms var(--yb-ease-out),
+    border-color 160ms var(--yb-ease-out);
 }
 
 .echo-row:hover .echo-main {
-  background: rgba(255, 255, 255, 0.52);
-  border-color: rgba(var(--yb-c-sky-rgb), 0.08);
+  background: var(--yb-note-bg);
+  box-shadow: 0 4px 12px rgba(var(--yb-paper-shade-rgb), 0.08);
 }
 
 .echo-row.active .echo-main {
-  padding-top: 9px;
-  padding-bottom: 9px;
-  background: rgba(255, 255, 255, 0.76);
-  border-color: rgba(var(--yb-c-sky-rgb), 0.16);
-  box-shadow: 0 10px 26px rgba(var(--yb-c-sky-rgb), 0.09), inset 0 1px 0 rgba(255, 255, 255, 0.92);
+  background: var(--yb-note-accent);
+  border-color: rgba(var(--yb-c-sky-rgb), 0.18);
+  box-shadow: 0 4px 14px rgba(var(--yb-c-sky-rgb), 0.12);
 }
 
-.echo-row.active .echo-node {
-  top: 17px;
-  width: 11px;
-  height: 11px;
-  left: 5px;
-  border-color: rgba(var(--yb-c-sky-rgb), 0.55);
-  box-shadow: 0 0 0 5px rgba(var(--yb-c-sky-rgb), 0.08), 0 0 12px rgba(var(--yb-c-sky-rgb), 0.28);
-}
-
-.echo-row.active .echo-node i {
-  width: 5px;
-  height: 5px;
-  background: var(--yb-accent);
-}
-
-.echo-meta {
-  margin-bottom: 2px;
+/* 两行：标题+时间 / 预览 */
+.echo-line1 {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
   gap: 8px;
-  font-size: 9px;
-  color: var(--yb-text-faint);
-  letter-spacing: 0.03em;
+  min-width: 0;
 }
 
-.echo-main strong {
-  display: block;
+.echo-line1 strong {
+  min-width: 0;
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
   font-weight: var(--yb-fw-medium);
-  color: var(--yb-text-strong);
+  color: var(--yb-paper-ink);
+  line-height: 1.3;
+}
+
+.echo-line1 time {
+  flex: none;
+  font-size: 10px;
+  color: var(--yb-paper-ink-dim);
+  font-variant-numeric: tabular-nums;
 }
 
 .echo-preview {
   display: block;
-  margin-top: 2px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 10px;
-  color: var(--yb-text-faint);
+  line-height: 1.3;
+  color: var(--yb-paper-ink-dim);
 }
 
 .echo-preview.quiet { opacity: 0.72; }
 
 .echo-delete {
   position: absolute;
-  right: 7px;
-  top: 19px;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
   z-index: 4;
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   padding: 0;
   display: grid;
   place-items: center;
   border: 0;
-  border-radius: 7px;
+  border-radius: 6px;
   background: transparent;
-  color: var(--yb-text-faint);
+  color: var(--yb-paper-ink-dim);
   opacity: 0;
   cursor: pointer;
   transition: opacity 140ms var(--yb-ease-out), color 140ms var(--yb-ease-out), background 140ms var(--yb-ease-out);
@@ -336,29 +315,31 @@ button { font: inherit; }
 .echo-delete:hover { color: var(--yb-danger); background: var(--yb-danger-soft); }
 
 .echo-empty {
-  width: calc(100% - 22px);
-  margin: 22px 0 0 22px;
-  padding: 18px 12px;
-  border: 0;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.34);
+  width: 100%;
+  margin: 4px 0 0;
+  padding: 14px 12px;
+  border: 1px solid var(--yb-note-border);
+  border-radius: var(--yb-radius-sm);
+  background: var(--yb-note-soft);
+  box-shadow: none;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 5px;
-  color: var(--yb-text-faint);
+  gap: 4px;
+  color: var(--yb-paper-ink-dim);
   cursor: pointer;
 }
 
 .empty-ripple {
-  width: 34px;
-  height: 34px;
-  margin-bottom: 3px;
+  width: 28px;
+  height: 28px;
+  margin-bottom: 2px;
   display: grid;
   place-items: center;
   border-radius: 50%;
-  border: 1px solid rgba(var(--yb-c-sky-rgb), 0.18);
-  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid var(--yb-note-border);
+  background: var(--yb-note-bg);
+  box-shadow: 0 1px 3px rgba(var(--yb-paper-shade-rgb), 0.06);
 }
 
 .empty-ripple i {
