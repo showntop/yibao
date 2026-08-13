@@ -16,6 +16,7 @@ import {
   onBrainEvent,
   onBrainStatus,
   onBrainPermissions,
+  onRunDone,
   onPanelClosed,
   onPendingConfirms,
   onSettings,
@@ -128,7 +129,7 @@ let unlistenMoved: (() => void) | null = null;
 const panelOpen = ref(false); // 面板浮窗当前打开状态
 // 过程展示：action.id → 过程行（sys 淡色小字）在 bubbles 里的下标，结果回来原地更新
 const procIdx = new Map<string, number>();
-// explicit run 标记：插件视图点击 / 窄规则命中两个来源共用，随本次 run 终态清理
+// explicit run 标记：插件视图点击 / 窄规则命中两个来源共用；run_done、final_reply、interrupted 或发起失败时清理
 let requestedPlugin = "";
 function markExplicit(pluginId: string): void {
   requestedPlugin = pluginId;
@@ -169,6 +170,7 @@ function openBubbleSticky(text: string) {
   void expand();
 }
 let unlisten: (() => void) | null = null;
+let unlistenRunDone: (() => void) | null = null;
 let unlistenStatus: (() => void) | null = null;
 let unlistenPerms: (() => void) | null = null;
 let unlistenPanelClosed: (() => void) | null = null;
@@ -736,7 +738,6 @@ function onEvent(e: BrainEvent) {
       streamingIdx.value = null;
       pushWarn(e.text ?? "出错了");
       flashValence("error");
-      clearExplicit();
       break;
     case "listening":
       state.value = "listen";
@@ -1006,7 +1007,7 @@ onMounted(async () => {
     await reloadMessages();
     sessionStore.window.updateState("pet", { visible: true, focusedConversationId: petConvId.value });
   } catch { /* 恢复失败不阻塞宠物窗启动 */ }
-  await loadPlugins();
+  void loadPlugins();
   // 顶部边界自适应：监听窗口移动（拖动 setPosition 触发），贴顶时调整团子锚点
   try {
     scaleCached = (await getCurrentWindow().scaleFactor()) || 1;
@@ -1018,6 +1019,7 @@ onMounted(async () => {
     onWindowMoved({ x: p0.x, y: p0.y });
   } catch { /* 忽略 */ }
   unlisten = await onBrainEvent(onEvent);
+  unlistenRunDone = await onRunDone(() => clearExplicit());
   unlistenStatus = await onBrainStatus(onStatus);
   unlistenPerms = await onBrainPermissions(onPerms);
   // 跨窗刷新：大窗向本窗固定会话发了消息（用户消息无事件流）→ 重拉。
@@ -1095,6 +1097,7 @@ onMounted(async () => {
 });
 onUnmounted(() => {
   unlisten?.();
+  unlistenRunDone?.();
   unlistenStatus?.();
   unlistenPerms?.();
   unlistenPanelClosed?.();
