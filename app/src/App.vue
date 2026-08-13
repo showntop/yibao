@@ -125,7 +125,7 @@ let speechTimer: ReturnType<typeof setTimeout> | null = null;
 const petY = ref(100);
 let scaleCached = 1; // Retina 缩放（窗口创建后不变，onMoved 计算用）
 let unlistenMoved: (() => void) | null = null;
-const panelOpen = ref(false); // 面板协作会话进行中（关联气泡只插一次，panel 刷新不重复插）
+const panelOpen = ref(false); // 面板浮窗当前打开状态
 // 过程展示：action.id → 过程行（sys 淡色小字）在 bubbles 里的下标，结果回来原地更新
 const procIdx = new Map<string, number>();
 // explicit 时间窗：插件视图点击 / 窄规则命中两个来源共用
@@ -756,7 +756,7 @@ function onEvent(e: BrainEvent) {
       break;
     case "panel": {
       // 面板不再无条件弹独立浮窗（调研 §16 反模式）：先把表面属性补到发起它的
-      // 那一行上（找不到就新建），再决定要不要开窗。stage/focus 只可能在
+      // 那一行上；无 origin 的刷新事件复用同 panel 最近行，否则新建。stage/focus 只可能在
       // explicit 时出现——裁决器非 explicit 本就封顶 peek。
       const panel = e.payload?.panel ?? "";
       const title = e.payload?.title || panel || "插件面板";
@@ -780,8 +780,19 @@ function onEvent(e: BrainEvent) {
       const attr: SurfaceAttr = { panel, title, count: surfaceCount(e.payload?.data), live: true };
       const at = e.payload?.origin ? surfaceAnchor.get(e.payload.origin) : undefined;
       const row = at !== undefined ? bubbles.value[at] : undefined;
-      if (row) row.surface = attr;
-      else bubbles.value.push({ role: "sys", text: "", surface: attr });
+      if (row) {
+        row.surface = attr;
+      } else {
+        let surfaceRow = -1;
+        for (let i = bubbles.value.length - 1; i >= 0; i--) {
+          if (bubbles.value[i].surface?.panel === panel) {
+            surfaceRow = i;
+            break;
+          }
+        }
+        if (surfaceRow >= 0) bubbles.value[surfaceRow].surface = attr;
+        else bubbles.value.push({ role: "sys", text: "", surface: attr });
+      }
       if (e.payload?.origin) surfaceAnchor.delete(e.payload.origin);
 
       if (petFormOf(decision) === "window") openPanelWindow();
