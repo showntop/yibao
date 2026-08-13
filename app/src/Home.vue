@@ -199,6 +199,13 @@ function openFromActivity(item: { panel: string; title: string; plugin: string; 
   showSurface();
 }
 
+// 运行中胶囊：面板正在处理（HomePlugins @state != idle）且已知当前能力时显示
+const busyActivity = computed(() =>
+  panelState.value !== "idle" && capability.value
+    ? { title: capability.value.title, plugin: capability.value.plugin }
+    : null,
+);
+
 function showSurface() {
   if (!capability.value || sceneClosing.value) return;
   surfaceVisible.value = true;
@@ -457,8 +464,15 @@ function close() {
       @close="peekSurface = null"
     />
 
-    <!-- 活动轨（Phase 1）：quiet 结果只记账，点开回看升到 stage -->
-    <ActivityShelf v-if="activityFeed.length" :items="activityFeed" @open="openFromActivity" />
+    <!-- 活动轨（Phase 1）：运行中/待批准/已完成三态胶囊；不抢焦点，点开回看 -->
+    <ActivityShelf
+      v-if="activityFeed.length || busyActivity || approvalCount > 0"
+      :items="activityFeed"
+      :busy="busyActivity"
+      :pending-count="approvalCount"
+      @open="openFromActivity"
+      @open-pending="navigate('home')"
+    />
   </div>
 </template>
 
