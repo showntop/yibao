@@ -101,6 +101,38 @@ Slice 1 已经消灭了「跳页」，但只做了 Stage/Focus 两档重表面�
 
 **验收线**（取自调研 §15，可自动化的部分写成测试）：简单动作默认不开面板；模型建议不自动展开 Stage/Focus；对话/草稿/滚动/当前对象在展开收起后保持；后台任务退出表面后仍可追踪、停止、恢复。
 
+### Phase 1.5 · 表面触达补全（Phase 1 的两个缺口）
+
+**目标：让 Phase 1 建好的表面模型真正覆盖到用户实际所在的入口。**
+
+Phase 1 的裁决器、Inline、Peek、活动轨都已落地并通过测试，但 review 发现两个缺口，使得验收条 ①「记一下这句话」只出 Inline 不开面板」在**两个窗口里都不成立**。两个缺口互相独立，成因不同。
+
+**缺口 A：声明式插件无法声明表面建议（协议层）**
+
+Phase 1 Task 1 把 `presentation`/`attention` 加在 `ActionResult` 上，这只惠及**代码式** Skill（Python 类）。`plugins.py` 全程未解析这两个字段，`DeclarativeTool.run` 返回的 `ActionResult` 恒为默认值。而 notes、reminders 这批**最该走 Inline 的轻量插件恰好全是声明式的**——`notes.keep` 只在 `manifest.toml` 里写了 `panel = "notes:list"`，没有任何渠道说「我这个结果是回执，不要开面板」。
+
+于是即便在大窗，「记一下这句话」也是 `suggested=null` → 回落 stage → 非 explicit 封顶 → 开 **Peek 探窗**，而非 Inline 回执。
+
+**声明位置的关键区分：`presentation`/`attention` 属于 `[[tool]]`，不是 `[[panel]]`。** `[[panel]]` 上已有的 `surfaces`/`min_width` 描述的是**面板的能力范围**（这个面板能以哪些形态呈现，是静态属性）；而 `presentation` 是**单次调用的建议**——同一个 `notes:list` 面板，被 `keep` 触发时该 inline（只是「记下了」的回执），被 `list` 触发时该 stage（用户要浏览）。声明在 panel 上无法区分这两次调用。
+
+**缺口 B：小窗未接裁决器（接线层）**
+
+裁决器只接进了 `Home.vue` / `HomePlugins.vue`（大窗）。`App.vue:727-738` 的 `case "panel"` 仍是无条件 `openPanel()` —— `invoke("open_panel_window")` 直接弹**独立 Tauri 窗口**，同时宠物窗收回球形态。这比大窗的 Stage 更重（大窗至少还在同一窗口内），且正是调研 §16 列为反模式的「多个自由漂浮面板制造窗口管理负担」。而「记一下这句话」这类轻量动作，绝大多数就发生在小窗——桌宠常驻形态本就是主入口。
+
+> **范围澄清：** 仓库里有五处 `case "panel"`，但**只有 `App.vue` 是缺口**。`PanelApp.vue` 是浮窗内部的内容渲染器（被打开后消费 payload，不决定开窗）；`HomeChat.vue` 仅维护「⇢ 协作」关联气泡且已明确「不主动抢页面」；`CapabilityConversationRail.vue` 仅 push 一条活动行；`HomePlugins.vue` 已接裁决。四者职责各异，**不抽共享 `useBrainSurface` 层**——那会把职责不同的代码强行归一，造出错误的抽象。
+
+**小窗的表面映射**
+
+小窗物理形态是宠物球 + 可展开对话框（展开 360×520），**没有 Stage/Focus 的空间概念**，不能直接套用大窗四档。改为对话流里的**痕迹三态**（卡 / 活行 / 死行），详见独立 spec。
+
+关键结论：**`decideSurface` 不需要任何改动**。裁决器在非 explicit 时本就封顶到 `peek`，因此把输出直接映射为「`inline`→卡、`peek`/`show=false`→活行、`stage`/`focus`→开浮窗」之后，「模型自动调用绝不在小窗开浮窗」这条硬规则自动成立。同理 `explicit` 与计数都不需要新增协议字段——前端信息已足。
+
+**详细设计：`docs/superpowers/specs/2026-08-13-pet-window-surface-design.md`**（痕迹三态、explicit 三来源、协议改动、明确不做）
+
+计划：`docs/superpowers/plans/2026-08-13-phase1_5-surface-reach.md`
+
+**验收线：** 小窗说「记一下这句话」只出卡、不开浮窗；小窗模型自动调用任何情况下不开浮窗；小窗说「打开闪念列表」窄规则命中直达浮窗；小窗点插件视图仍能开窗（回归项）；大窗同一句话出 Inline 回执而非 Peek。
+
 ### Phase 2 · TaskTimeline 与可恢复会话
 
 **目标：让「它在我不看的时候干的活」可追溯、可恢复。**
@@ -164,13 +196,17 @@ Phase 0（止血）
    └─> 所有阶段（真机验收前提）
 
 Phase 1（Inline/Peek/活动轨）
-   └─> Phase 2（TaskTimeline 为活动轨提供权威存储）
-        └─> Phase 4（coding 接 Focus + 活动轨）
+   └─> Phase 1.5（表面触达补全：声明式插件可声明 + 小窗接裁决）
+        ├─> Phase 1 验收条 ① 的前提（缺 1.5 则大窗出 Peek、小窗开浮窗）
+        └─> Phase 2（TaskTimeline 为活动轨提供权威存储）
+             └─> Phase 4（coding 接 Focus + 活动轨）
 
 Phase 3（生命感）—— 与 1/2 无强依赖，可并行；但需先出独立 spec
 ```
 
 Phase 1 是最大杠杆：Slice 1 已把路铺好（scene 持久化、Stage/Focus、panel 不抢页），补上 Inline/Peek/活动轨之后，能力表面这套模型才算闭环，之后每个插件都自动受益。
+
+Phase 1.5 是 Phase 1 的必要收尾而非可选增强：表面模型建好了但没接到用户实际所在的入口（小窗），也没接到最该受益的那批插件（声明式），杠杆就没真正落地。Phase 2 的活动轨持久化不依赖它，可并行。
 
 ---
 
@@ -211,4 +247,4 @@ Phase 1 是最大杠杆：Slice 1 已把路铺好（scene 持久化、Stage/Focu
 
 **验证：** sidecar 905 passed（+5 新测：表面透传×2、manifest 声明×3）；vue-tsc / vite build / vitest **70 passed**（裁决器 11 条：初版 6 + review 回归 5）；cargo check Finished。
 
-**待真机验收**（自动化无法覆盖，对应计划 Task 7 Step 2 七条）：①「记一下这句话」只出 Inline 不开面板；②模型自作主张最多 Peek、不切顶层导航；③插件库明确点击直达 Stage；④Peek Esc 缩回原锚点、背后对话保持；⑤coding 长任务 → 活动轨运行中胶囊 → 点击恢复；⑥待批准琥珀胶囊不抢输入焦点；⑦`surfaces=["inline","peek"]` 的插件被要求 focus 回落 peek 不崩。真机打包已通过（`tauri build --debug` 出 `.app`），七条交互待用户跑 App 逐条确认。
+**待真机验收**（自动化无法覆盖，对应计划 Task 7 Step 2 七条）：①「记一下这句话」只出 Inline 不开面板（**已知不成立，阻塞于 Phase 1.5**：notes 是全声明式插件而 `plugins.py` 未解析 tool 级 `presentation`，大窗实际出 Peek；小窗未接裁决器，实际开独立浮窗）；②模型自作主张最多 Peek、不切顶层导航；③插件库明确点击直达 Stage；④Peek Esc 缩回原锚点、背后对话保持；⑤coding 长任务 → 活动轨运行中胶囊 → 点击恢复；⑥待批准琥珀胶囊不抢输入焦点；⑦`surfaces=["inline","peek"]` 的插件被要求 focus 回落 peek 不崩。真机打包已通过（`tauri build --debug` 出 `.app`），七条交互待用户跑 App 逐条确认。
