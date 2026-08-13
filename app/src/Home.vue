@@ -11,6 +11,8 @@ import CommandPalette, { type PaletteTab } from "./components/CommandPalette.vue
 import HomeChat from "./components/HomeChat.vue";
 import HomePlugins from "./components/HomePlugins.vue";
 import CapabilityConversationRail, { type CapabilityRailSurface } from "./components/CapabilityConversationRail.vue";
+import InlineReceipt from "./components/InlineReceipt.vue";
+import PeekSurface from "./components/PeekSurface.vue";
 import { sessionStore, clearLegacySessionKeys } from "./state/store";
 import DataView from "./components/DataView.vue";
 import SettingsView from "./components/SettingsView.vue";
@@ -143,9 +145,12 @@ function onSurface(surface: CapabilityRailSurface) {
   }
 }
 
-// 待 Inline 回执（Task 5）/ 活动轨（Task 6）接入的挂点
+// 表面展示挂点：pendingInline（Inline 回执）/ peekSurface（Peek 探窗）/ activityFeed（活动轨）
 const pendingInline = ref<CapabilitySurfaceEvent | null>(null);
+const peekSurface = ref<CapabilitySurfaceEvent | null>(null);
 const activityFeed = ref<CapabilitySurfaceEvent[]>([]);
+/** Peek 探窗内容：面板载荷已由 HomePlugins 存进 surface 域（emit("panel") 之前 setPanel 已执行）。 */
+const peekPanel = computed(() => (peekSurface.value ? sessionStore.surface.getPanel() : null));
 
 function onPanelAvailable(surface: CapabilitySurfaceEvent) {
   capability.value = surface;
@@ -163,12 +168,25 @@ function onPanelAvailable(surface: CapabilitySurfaceEvent) {
     return;
   }
   if (p === null || p === "inline") {
-    // null 理论不可达（quiet 已 return）；inline：过程行原地收束为回执卡（Task 5 消费），不开面板
+    // null 理论不可达（quiet 已 return）；inline：过程行原地收束为回执卡，不开面板
     if (p === "inline") pendingInline.value = surface;
     return;
   }
-  // peek/stage/focus：进入主屏场景（peek 由 Task 5 的浮层承载，stage/focus 走既有场景布局）
+  if (p === "peek") {
+    // 探窗浮层：不重排主屏，背后对话仍可见；Esc / 点空白 / 完成动作缩回原锚点
+    peekSurface.value = surface;
+    return;
+  }
+  // stage/focus：进入主屏场景（走既有场景布局）
   presentation.value = p;
+  showSurface();
+}
+
+/** Inline 回执「展开」：用户明确要求 → 升到 stage 场景。 */
+function upgradeInline() {
+  if (!pendingInline.value) return;
+  pendingInline.value = null;
+  presentation.value = "stage";
   showSurface();
 }
 
@@ -406,6 +424,29 @@ function close() {
 
     <!-- ⌘K 命令面板：覆盖在主屏上（AI 原生：找页面用搜/说） -->
     <CommandPalette :open="paletteOpen" @close="paletteOpen = false" @navigate="onPaletteNavigate" @collapse="close" />
+
+    <!-- Inline 回执（Phase 1）：简单结果原地收束为宿主原生卡，不抢焦点；「展开」升到 stage 场景 -->
+    <div v-if="pendingInline" class="inline-host">
+      <InlineReceipt
+        :provider="pendingInline.plugin"
+        :title="pendingInline.title"
+        :summary="pendingInline.objectTitle ?? ''"
+        @dismiss="pendingInline = null"
+        @expand="upgradeInline"
+      />
+    </div>
+
+    <!-- Peek 探窗（Phase 1）：从锚点长出，不重排主屏；Esc / 点空白 / 完成动作缩回 -->
+    <PeekSurface
+      v-if="peekSurface"
+      :panel="peekSurface.panel"
+      :title="peekSurface.title"
+      :provider="peekSurface.plugin"
+      :schema="peekPanel?.schema ?? null"
+      :webview="peekPanel?.webview ?? null"
+      :data="peekPanel?.data ?? {}"
+      @close="peekSurface = null"
+    />
   </div>
 </template>
 
@@ -707,6 +748,14 @@ function close() {
 }
 .content.capability-focus { grid-template-columns: minmax(0, 1fr); }
 .capability-focus .plugin-host { grid-column: 1; }
+
+/* Inline 回执（Phase 1）：右下角常驻位，不重排布局；会话/场景之上，命令面板之下 */
+.inline-host {
+  position: fixed;
+  right: var(--yb-space-3);
+  bottom: calc(var(--yb-space-3) + 8px);
+  z-index: var(--yb-z-popover);
+}
 
 @media (max-width: 980px) {
   .content.capability-scene { grid-template-columns: minmax(0, 1fr); }
