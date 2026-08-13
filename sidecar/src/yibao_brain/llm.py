@@ -142,26 +142,6 @@ def _usage_from_openai(raw) -> Usage:
         return Usage()
 
 
-def _debug_dump(label: str, messages: list[dict], usage: Usage | None = None, *, tools: int = 0) -> None:
-    """调试：把实际发给 provider 的消息构成与用量打到 stderr（排查缓存命中/ token 用）。
-
-    每条消息显示 role + 字符数 + 前 40 字，一眼看清各段大小；usage 打印四项 token。
-    """
-    print(f"[llm:{label}] tools={tools}", file=sys.stderr)
-    for m in messages:
-        c = m.get("content")
-        if isinstance(c, list):  # 多模态内容（图片等）
-            c = json.dumps(c, ensure_ascii=False)
-        c = (c or "").replace("\n", " ")
-        print(f"  [{m.get('role')}:{len(m.get('content') or '')}c] {c[:40]}", file=sys.stderr)
-    if usage is not None:
-        print(
-            f"  -> usage: prompt={usage.prompt_tokens} cached={usage.cached_tokens} "
-            f"completion={usage.completion_tokens} total={usage.total_tokens}",
-            file=sys.stderr,
-        )
-
-
 def merge_tool_call_deltas(deltas: list[ToolCallDelta]) -> list[ToolCall]:
     """把跨 chunk 的 ToolCallDelta 按 index 聚合成完整 ToolCall 列表。"""
     acc: dict[int, dict] = {}
@@ -289,7 +269,6 @@ class GLMProvider:
             ]
         if timeout is not None:  # 仅显式传入时下发（如 Distiller 离线提炼 60s）；主对话回路保持 SDK 默认
             kwargs["timeout"] = timeout
-        _debug_dump("chat", messages, tools=len(tools or []))
         resp = self.client.chat.completions.create(**kwargs)
         msg = resp.choices[0].message
         tool_calls: list[ToolCall] = []
@@ -302,7 +281,6 @@ class GLMProvider:
                 params = {}
             tool_calls.append(ToolCall(id=tc.id, skill_id=fn.name, params=params))
         usage = _usage_from_openai(getattr(resp, "usage", None))
-        _debug_dump("chat", [], usage, tools=len(tools or []))
         return LLMResponse(text=msg.content or "", tool_calls=tool_calls, usage=usage)
 
     async def astream(
@@ -319,7 +297,6 @@ class GLMProvider:
         import asyncio
 
         client = self._ensure_async_client()
-        _debug_dump("astream", messages, tools=len(tools or []))
         try:
             stream = await asyncio.wait_for(
                 client.chat.completions.create(**kwargs), timeout=_STREAM_IDLE_TIMEOUT
@@ -342,7 +319,6 @@ class GLMProvider:
                 usage = _usage_from_openai(getattr(chunk, "usage", None))
                 if usage.total_tokens:
                     usage_yielded = True
-                    _debug_dump("astream", [], usage)
                     yield LLMDelta(usage=usage)
             choices = getattr(chunk, "choices", None) or []
             if not choices:
