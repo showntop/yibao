@@ -26,8 +26,19 @@ describe("matchExplicitOpen", () => {
   });
 
   it("弱动词不算明确意图", () => {
-    // 「看看」「查查」语气太弱，误判的代价是抢屏——宁可漏
+    // 「看看」「查查」「有没有」语气太弱，误判的代价是抢屏——宁可漏
     expect(matchExplicitOpen("看看闪念盘", PLUGINS)).toBeNull();
+    expect(matchExplicitOpen("查查闪念盘", PLUGINS)).toBeNull();
+    expect(matchExplicitOpen("有没有日历", PLUGINS)).toBeNull();
+  });
+
+  it("否定语气 → 不命中", () => {
+    expect(matchExplicitOpen("不要打开日历", PLUGINS)).toBeNull();
+    expect(matchExplicitOpen("别显示日历", PLUGINS)).toBeNull();
+  });
+
+  it("疑问语气 → 不命中", () => {
+    expect(matchExplicitOpen("怎么打开日历？", PLUGINS)).toBeNull();
   });
 
   it("空插件列表 → 不命中", () => {

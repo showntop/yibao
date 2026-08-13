@@ -6,16 +6,25 @@
  * sidecar 认不了——agent loop 视角里「用户要求所以模型调了 list」和「模型
  * 自己想调 list」是同一个形状；让模型自报 explicit 又等于让被守的人当守门人。
  *
- * 刻意做窄：动词与宾语都取自有限集合。漏报只是退化成可点行、用户点一下（语义
+ * 刻意做窄：动词与宾语都取自有限集合；否定句、疑问句一律不命中。漏报只是退化成可点行、用户点一下（语义
  * 仍通顺），误报却会抢屏——成本不对称，所以宁可漏。
  */
 
 /** 只认强指令动词。「看看」「查查」「有没有」这类语气太弱，是查询不是导航。 */
 const OPEN_VERBS = ["打开", "展开", "显示", "调出", "给我看"];
 
+/** 否定语气：含这些片段的一律不命中，哪怕后面跟了强动词和插件名。 */
+const NEGATION = [/不要/, /别(?:打开|展开|显示|调出|看)/];
+
+/** 疑问语气：用户在问「怎么/如何」，不是在下打开指令。 */
+const INTERROGATIVE = [/怎么/, /如何/, /怎样/, /[？?]\s*$/];
+
 export function matchExplicitOpen(text: string, plugins: { id: string; name: string }[]): string | null {
   if (!text || !plugins.length) return null;
-  if (!OPEN_VERBS.some((v) => text.includes(v))) return null;
-  const hit = plugins.find((p) => (p.name && text.includes(p.name)) || (p.id && text.includes(p.id)));
+  const t = text.trim();
+  if (NEGATION.some((p) => p.test(t))) return null;
+  if (INTERROGATIVE.some((p) => p.test(t))) return null;
+  if (!OPEN_VERBS.some((v) => t.includes(v))) return null;
+  const hit = plugins.find((p) => (p.name && t.includes(p.name)) || (p.id && t.includes(p.id)));
   return hit ? hit.id : null;
 }
