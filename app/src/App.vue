@@ -129,7 +129,10 @@ let unlistenMoved: (() => void) | null = null;
 const panelOpen = ref(false); // 面板浮窗当前打开状态
 // 过程展示：action.id → 过程行（sys 淡色小字）在 bubbles 里的下标，结果回来原地更新
 const procIdx = new Map<string, number>();
-// explicit run 标记：插件视图点击 / 窄规则命中两个来源共用；run_done、final_reply、interrupted 或发起失败时清理
+// explicit run 标记：插件视图点击 / 窄规则命中两个来源共用；run_done、final_reply、interrupted 或发起失败时清理。
+// 刻意不设过期时间：文本路径要等两轮 LLM 往返，任何墙钟窗口都会在慢模型上静默失效。
+// 注意 run_done 是不带 surface 的全局广播（任何窗口的任何 run 结束都会触发），所以无关 run
+// 可能提前清掉标记 —— 方向是「该开的窗没开」，退化成一条可点行，绝不会反向违反「模型不得自动开窗」。
 let requestedPlugin = "";
 function markExplicit(pluginId: string): void {
   requestedPlugin = pluginId;

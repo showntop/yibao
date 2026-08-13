@@ -224,6 +224,12 @@ Phase 1 落地了裁决器、Inline 回执、Peek 探窗、活动轨，四道闸
 
 **其二，8 秒时间窗是从错误的路径抄来的。** 该值抄自 `HomePlugins.vue:184-185`，那里计时起点紧挨着一次直调 `panelAction`（百毫秒级）。而 `submit` 这条路的起点是用户回车，终点是 panel 事件，中间隔着「LLM 决定调插件」和「LLM 再决定调 list」两轮往返加工具执行，5–15 秒很正常。**8 秒是掷硬币，且输了以后静默降级**——窗就是不开，不报错。改为不用墙钟：`markExplicit` 只记插件，标志在 run 终止（`final_reply` / `error` / `interrupted`）与每次 `submit` 起始清除。这同时消掉了「无关面板事件偷走时间窗」那条遗留 Minor，无需单独加守卫。
 
+**这三处修完之后，复评又抓出一个更糟的：其一的修法本身把泄漏从 8 秒放大成了无限期。** 把自动过期的标志换成必须显式清除的标志之后，`launchPlugin` 的**成功**路径没有任何清除点——直调走 `handle_panel_action`，它发完 panel 事件只写 `run_done`，不产 `final_reply`/`error`/`interrupted`，而小窗压根没订阅 `run_done`（`brain.ts:217` 的 `onRunDone` 当时全仓零调用者）。8 秒窗虽然套不住文本路径，却一直在兜这个底。
+
+后果之一正是验收条 ② 要禁止的：语音输入不经过 `submit`、拿不到起始清除，于是插件视图启动过一次之后，该插件在任何一次语音对话里的自动面板事件都会弹窗。之二是面板窗内每次点击都被判 explicit，重新 show+focus 并把展开的小窗强制收回球形态。
+
+订阅 `onRunDone` 清除即闭合——它是「直调成功」「直调四种早退」「agent run 三种收尾」唯一共有的信号。同时移除 `error` 分支的清除：`error` 并非 run 终态（`loop.py:319` 用户拒绝确认、`:324` 策略禁止，都是 yield 之后 `continue`），在那里清会让同一轮里稍后到达的面板事件被判非 explicit，用户要的窗反而不开。
+
 **其三，行上渲染出了三段点号。** sidecar 给的 title 本身已是全限定的（`plugins.py:387` 拼 `插件名 · 面板 label`），再接计数就成了 `闪念盘 · 闪念列表 · 3 条 ›`，在 360px 里会折行，也与 spec 和验收清单写的 `闪念列表 · N 条` 不符。在 `App.vue` 构造表面属性时剥掉插件前缀（`SurfaceLine` 保持无脑渲染）。
 
 ### 待真机验收
@@ -245,6 +251,8 @@ Phase 1 落地了裁决器、Inline 回执、Peek 探窗、活动轨，四道闸
 **同根的两条，建议一起做：** 倒查找无距离下限（有 `origin` 但锚点已被 `submit` 清空时，可能改写视野外的老行），以及 `surfaceAnchor` 仅在 `submit` 清空（自发 run 如提醒、晨间反刍若产生过程行但无面板事件，锚点会留到用户下次说话）。两者的根因都是锚点生命周期挂在 `submit` 上而非挂在 run 上——改成随 run 结束失效，两条同时消失，倒查兜底也就很少被走到。
 
 **同处的两条，也建议一起做：** `reloadMessages` 从 DB 重建时 `surface` 不在持久化字段里，会丢掉活的表面行；而 Rust 侧 `event_recorder.rs:223-232` 仍在持久化本分支已删掉的「⇢ 正在和「X」协作」（`upsert_panel_link`）。于是实时渲染与重建渲染现在讲两套模型——live 是「一行带表面属性」，重启后是「一条 ✓ 过程行 + 一条协作气泡」。注意 `panelLink` 这行 DB 数据还在给大窗 `HomeChat.vue:822` 的关联按钮供数，不能直接删 `on_panel`。
+
+**`run_done` 的粗糙是买来的，别顺手"优化"掉：** 它不带 surface、跨窗广播，所以一次无关 run 结束会提前清掉 explicit 标记，用户明确要求的窗静默不开。但这个粗糙同时兜住了两件事——`submit` 那轮只发 `error` 不发 `final_reply` 的 run 不会泄漏标记，以及 sidecar 崩溃后残留的标记能自愈。失效方向是「该开的没开」，退化成一条可点行，**永远不会反向违反「模型不得自动开窗」**。若将来要收紧，`brain.ts:171-177` 的 `panelAction` 支持外部传 id，可在 `launchPlugin` 内自铸 rid 并在回调里比对——但必须保留 `submit` 侧的无条件清除，否则会把上面那个洞重新打开。
 
 **其余：** `panelOpen` 退化为只写状态（原为协作气泡去重服务，该 push 已删；删除时应在注释里留一句它曾承担跨窗去重）；规则 ② 按 `panel` id 去重而非按插件，钻取到子面板仍会新增一行；三条归属规则约 35 行内联在 `case "panel"`，spec §7 原打算把它也做成可单测的纯函数，抽成 `attachSurface(rows, attr, at)` 约十行即可与另外三个单元齐平；sidecar 非法值用例只覆盖了 `presentation`，未覆盖 `attention`；sidecar 没有一条测试同时覆盖 `presentation` + `panel` + `refresh`——而 Gap A 真实走的恰是「refresh 把 payload 整个换掉」这个接缝（终审读过三个返回点确认当前正确，但这条不变式没有测试守着）。
 
