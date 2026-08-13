@@ -247,4 +247,4 @@ Phase 1.5 是 Phase 1 的必要收尾而非可选增强：表面模型建好了�
 
 **验证：** sidecar 905 passed（+5 新测：表面透传×2、manifest 声明×3）；vue-tsc / vite build / vitest **70 passed**（裁决器 11 条：初版 6 + review 回归 5）；cargo check Finished。
 
-**待真机验收**（自动化无法覆盖，对应计划 Task 7 Step 2 七条）：①「记一下这句话」只出 Inline 不开面板（**已知不成立，阻塞于 Phase 1.5**：notes 是全声明式插件而 `plugins.py` 未解析 tool 级 `presentation`，大窗实际出 Peek；小窗未接裁决器，实际开独立浮窗）；②模型自作主张最多 Peek、不切顶层导航；③插件库明确点击直达 Stage；④Peek Esc 缩回原锚点、背后对话保持；⑤coding 长任务 → 活动轨运行中胶囊 → 点击恢复；⑥待批准琥珀胶囊不抢输入焦点；⑦`surfaces=["inline","peek"]` 的插件被要求 focus 回落 peek 不崩。真机打包已通过（`tauri build --debug` 出 `.app`），七条交互待用户跑 App 逐条确认。
+**待真机验收**（自动化无法覆盖，对应计划 Task 7 Step 2 七条）：①「记一下这句话」只出 Inline 不开面板（当时不成立——notes 是全声明式插件而 `plugins.py` 未解析 tool 级 `presentation`，大窗实际出 Peek；小窗未接裁决器，实际开独立浮窗。**已由 Phase 1.5 补齐**，见 `2026-08-13-pet-window-surface-design.md` §9，真机确认待跑）；②模型自作主张最多 Peek、不切顶层导航；③插件库明确点击直达 Stage；④Peek Esc 缩回原锚点、背后对话保持；⑤coding 长任务 → 活动轨运行中胶囊 → 点击恢复；⑥待批准琥珀胶囊不抢输入焦点；⑦`surfaces=["inline","peek"]` 的插件被要求 focus 回落 peek 不崩。真机打包已通过（`tauri build --debug` 出 `.app`），七条交互待用户跑 App 逐条确认。
