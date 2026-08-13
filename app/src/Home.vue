@@ -15,6 +15,7 @@ import InlineReceipt from "./components/InlineReceipt.vue";
 import PeekSurface from "./components/PeekSurface.vue";
 import ActivityShelf from "./components/ActivityShelf.vue";
 import { sessionStore, clearLegacySessionKeys } from "./state/store";
+import type { SurfacePanel } from "./state/types";
 import DataView from "./components/DataView.vue";
 import SettingsView from "./components/SettingsView.vue";
 import appLogo from "./assets/logo.png";
@@ -150,8 +151,15 @@ function onSurface(surface: CapabilityRailSurface) {
 const pendingInline = ref<CapabilitySurfaceEvent | null>(null);
 const peekSurface = ref<CapabilitySurfaceEvent | null>(null);
 const activityFeed = ref<CapabilitySurfaceEvent[]>([]);
-/** Peek 探窗内容：面板载荷已由 HomePlugins 存进 surface 域（emit("panel") 之前 setPanel 已执行）。 */
-const peekPanel = computed(() => (peekSurface.value ? sessionStore.surface.getPanel() : null));
+/** Peek 探窗内容：开窗那一刻**快照**面板载荷。surface 域只存「最近一个」面板，
+ *  peek 开着时若有别的 panel 事件到达（如 quiet 结果落活动轨），跟着它走会让探窗
+ *  在旧标题下显示新内容。 */
+const peekPanel = ref<SurfacePanel | null>(null);
+
+function closePeek(): void {
+  peekSurface.value = null;
+  peekPanel.value = null;
+}
 
 function onPanelAvailable(surface: CapabilitySurfaceEvent) {
   capability.value = surface;
@@ -177,6 +185,7 @@ function onPanelAvailable(surface: CapabilitySurfaceEvent) {
   if (p === "peek") {
     // 探窗浮层：不重排主屏，背后对话仍可见；Esc / 点空白 / 完成动作缩回原锚点
     peekSurface.value = surface;
+    peekPanel.value = sessionStore.surface.getPanel();
     return;
   }
   // stage/focus：进入主屏场景（走既有场景布局）
@@ -184,19 +193,41 @@ function onPanelAvailable(surface: CapabilitySurfaceEvent) {
   showSurface();
 }
 
-/** Inline 回执「展开」：用户明确要求 → 升到 stage 场景。 */
-function upgradeInline() {
-  if (!pendingInline.value) return;
-  pendingInline.value = null;
-  presentation.value = "stage";
+/**
+ * 用户明确要求展开（Inline「展开」/ 活动轨点开）：仍走同一裁决器（explicit=true）。
+ * 建议档位固定为 stage——用户点的是「展开/回看」，要的是工作面，不再沿用技能的轻量建议；
+ * 但面板声明的 supported 依然生效，不会给只支持到 peek 的面板硬开 stage。
+ */
+function openExplicit(surface: CapabilitySurfaceEvent | null) {
+  const { presentation: p, show } = decideSurface({
+    suggested: "stage",
+    attention: "suggest",
+    explicit: true,
+    current: null,
+    supported: surface?.supported,
+  });
+  if (!show || p === null || p === "inline") return;
+  if (p === "peek") {
+    peekSurface.value = surface;
+    peekPanel.value = sessionStore.surface.getPanel();
+    return;
+  }
+  presentation.value = p;
   showSurface();
 }
 
-/** 活动轨点开：用户明确要求回看 → 升到 stage 场景（面板载荷已存 surface 域）。 */
+function upgradeInline() {
+  const surface = pendingInline.value;
+  if (!surface) return;
+  pendingInline.value = null;
+  openExplicit(surface);
+}
+
 function openFromActivity(item: { panel: string; title: string; plugin: string; objectTitle?: string }) {
-  capability.value = activityFeed.value.find((s) => s.panel === item.panel) ?? capability.value;
-  presentation.value = "stage";
-  showSurface();
+  // 找不到原始事件（活动轨已挤出）→ 按无声明处理，回落既有 stage 行为
+  const surface = activityFeed.value.find((s) => s.panel === item.panel) ?? null;
+  if (surface) capability.value = surface;
+  openExplicit(surface);
 }
 
 // 运行中胶囊：面板正在处理（HomePlugins @state != idle）且已知当前能力时显示
@@ -461,7 +492,7 @@ function close() {
       :schema="peekPanel?.schema ?? null"
       :webview="peekPanel?.webview ?? null"
       :data="peekPanel?.data ?? {}"
-      @close="peekSurface = null"
+      @close="closePeek()"
     />
 
     <!-- 活动轨（Phase 1）：运行中/待批准/已完成三态胶囊；不抢焦点，点开回看 -->

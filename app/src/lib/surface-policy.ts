@@ -20,18 +20,29 @@ export function decideSurface(input: {
   // quiet：只记账，不打扰（进活动轨 / Feed，由调用方处理）
   if (input.attention === "quiet") return { presentation: null, show: false };
 
-  let target: Presentation = input.suggested ?? "stage";
-  if (!input.explicit && RANK[target] > RANK[AUTO_MAX]) target = AUTO_MAX;
+  // 支持范围按档位升序规整一次，后续一律基于它取值——避免结果依赖 manifest 里的声明顺序
+  const asc = input.supported?.length ? [...input.supported].sort((a, b) => RANK[a] - RANK[b]) : null;
+  const highestAtMost = (cap: Presentation): Presentation | undefined =>
+    asc ? [...asc].reverse().find((s) => RANK[s] <= RANK[cap]) : cap;
 
-  // 面板声明的支持范围：向下回落到它支持的最高档
-  const supported = input.supported;
-  if (supported && supported.length && !supported.includes(target)) {
-    const fallback = [...supported].sort((a, b) => RANK[b] - RANK[a]).find((s) => RANK[s] <= RANK[target]);
-    target = fallback ?? supported[0];
+  let target: Presentation = input.suggested ?? "stage";
+
+  // 面板声明的支持范围：优先向下回落；没有更低档就取它支持的最低档
+  if (asc && !asc.includes(target)) target = highestAtMost(target) ?? asc[0];
+
+  // 自动上限必须在回落「之后」施加：回落可能把档位抬高（面板只支持 stage/focus 时），
+  // 先施加会被绕过——那正是「结果一回来就跳页」的复发路径。
+  if (!input.explicit && RANK[target] > RANK[AUTO_MAX]) {
+    const capped = highestAtMost(AUTO_MAX);
+    // 连最低支持档都超过上限 → 不自动展开，只记账（用户可从活动轨点开）
+    if (!capped) return { presentation: null, show: false };
+    target = capped;
   }
 
-  // 不把用户正在用的工作面缩掉：新结果只升不降
-  if (input.current && RANK[input.current] > RANK[target]) target = input.current;
+  // 不把用户正在用的工作面缩掉：新结果只升不降——但不得越过面板支持范围
+  if (input.current && RANK[input.current] > RANK[target] && (!asc || asc.includes(input.current))) {
+    target = input.current;
+  }
 
   return { presentation: target, show: true };
 }
