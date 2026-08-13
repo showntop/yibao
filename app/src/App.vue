@@ -11,6 +11,7 @@ import Bubble from "./components/Bubble.vue";
 import SpeechBubble from "./components/SpeechBubble.vue";
 import PermissionsBanner from "./components/PermissionsBanner.vue";
 import SetupWizard from "./components/SetupWizard.vue";
+import SurfaceLine from "./components/SurfaceLine.vue";
 import {
   onBrainEvent,
   onBrainStatus,
@@ -45,6 +46,9 @@ import {
   setHotRects,
 } from "./lib/window";
 import { SUGGESTIONS } from "./lib/suggestions";
+import { matchExplicitOpen } from "./lib/explicit-intent";
+import { decideSurface, type Attention, type Presentation } from "./lib/surface-policy";
+import { deactivateAll, petFormOf, surfaceCount, type SurfaceAttr } from "./lib/pet-surface";
 import { procLabel, procSkip, procResultSuffix } from "./lib/proc";
 import { sessionStore, clearLegacySessionKeys } from "./state/store";
 import YbIcon from "./components/YbIcon.vue";
@@ -59,6 +63,8 @@ type BubbleMsg = {
   icon?: "clock" | "alert" | "doc";
   /** 晨间反刍 deep-link：morning_recap 提醒气泡携带 day 字符串时，点击切到 home 回顾视图 */
   recap?: string;
+  /** 表面属性（Phase 1.5）：与 pstate 正交。有则该行渲染为面板入口 */
+  surface?: SurfaceAttr;
 };
 
 /** Rust SessionDb 消息的序列化形状（camelCase）——小窗恢复拉取用 */
@@ -122,6 +128,18 @@ let unlistenMoved: (() => void) | null = null;
 const panelOpen = ref(false); // 面板协作会话进行中（关联气泡只插一次，panel 刷新不重复插）
 // 过程展示：action.id → 过程行（sys 淡色小字）在 bubbles 里的下标，结果回来原地更新
 const procIdx = new Map<string, number>();
+// explicit 时间窗：插件视图点击 / 窄规则命中两个来源共用
+let requestedPlugin = "";
+let requestedUntil = 0;
+function markExplicit(pluginId: string): void {
+  requestedPlugin = pluginId;
+  requestedUntil = Date.now() + 8000;
+}
+
+// action id → 过程行下标：panel 事件按 origin 找回该行补表面属性。
+// 必须与 procIdx 分开：procIdx 在 action_result 就删了（:575），
+// 而 panel 事件在 action_result 之后才到（loop.py:331 → :337）。
+const surfaceAnchor = new Map<string, number>();
 
 /** 告警气泡：⚠️ 前缀改行首 alert 图标渲染（文案纯净，图标走 YbIcon） */
 function pushWarn(text: string) {
@@ -448,11 +466,22 @@ async function loadPlugins() {
 /** 点插件 → 调它的 list 直调（约定的主面板入口）；panel 事件回来会自动 openPanel + 收起对话。 */
 async function launchPlugin(p: PluginInfo) {
   pluginErr.value = "";
+  markExplicit(p.id);
   try {
     await panelAction(`${p.id}.list`, {});
   } catch (err) {
+    requestedUntil = 0;
     pluginErr.value = "启动失败：" + String(err);
   }
+}
+
+/** 开面板浮窗 + 宠物窗收回球形态。
+ *  行点击不必携带面板身份：可点行恒为最新那条，而面板窗内容渲染器本就
+ *  跟着最新 panel 事件走，两者天然指向同一个面板。 */
+function openPanelWindow(): void {
+  panelOpen.value = true;
+  void openPanel();
+  if (expanded.value) void collapse();
 }
 
 /** header「大窗」钮 → 打开大窗（完整 APP 主界面，与小窗互斥，宠物窗保持纯粹）。 */
@@ -560,6 +589,7 @@ function onEvent(e: BrainEvent) {
       // 过程行：技能短标签 + pstate 驱动图标（use_plugin 跳过——成功有 notice，不重复）
       if (e.action?.id && !procSkip(e.action)) {
         procIdx.set(e.action.id, bubbles.value.length);
+        surfaceAnchor.set(e.action.id, bubbles.value.length);
         bubbles.value.push({ role: "sys", text: procLabel(e.action), pstate: "run" });
       }
       break;
@@ -725,15 +755,36 @@ function onEvent(e: BrainEvent) {
       state.value = "say";
       break;
     case "panel": {
-      // 面板 = 独立浮窗（工作模式）：交给面板窗，宠物窗收回球形态；
-      // 主对话框只留一条「派生」关联气泡，协作过程不镜像（会话分流）
-      const title = e.payload?.title || e.payload?.panel || "插件面板";
-      if (!panelOpen.value) {
-        panelOpen.value = true;
-        bubbles.value.push({ role: "ai", text: `⇢ 正在和「${title}」协作` });
-      }
-      void openPanel();
-      if (expanded.value) void collapse();
+      // 面板不再无条件弹独立浮窗（调研 §16 反模式）：先把表面属性补到发起它的
+      // 那一行上（找不到就新建），再决定要不要开窗。stage/focus 只可能在
+      // explicit 时出现——裁决器非 explicit 本就封顶 peek。
+      const panel = e.payload?.panel ?? "";
+      const title = e.payload?.title || panel || "插件面板";
+      const plugin = panel.split(":", 1)[0] || panel;
+      const explicit = requestedPlugin === plugin && Date.now() <= requestedUntil;
+      requestedUntil = 0;
+
+      // cast 与 HomePlugins.vue:391-393 同款：PanelPayload 里这些字段是宽类型，
+      // 而裁决器要窄联合。安全性由 sidecar 保证——_load_panels 已按
+      // _SURFACE_LEVELS 过滤过非法值，ActionResult 的 Literal 类型同理。
+      const decision = decideSurface({
+        suggested: (e.payload?.presentation as Presentation | null | undefined) ?? null,
+        attention: (e.payload?.attention as Attention | undefined) ?? "suggest",
+        explicit,
+        current: null,
+        supported: e.payload?.surfaces as Presentation[] | undefined,
+      });
+
+      // 先记痕：开窗与否都留一条可点行，用户关窗后仍能一键回去
+      deactivateAll(bubbles.value);
+      const attr: SurfaceAttr = { panel, title, count: surfaceCount(e.payload?.data), live: true };
+      const at = e.payload?.origin ? surfaceAnchor.get(e.payload.origin) : undefined;
+      const row = at !== undefined ? bubbles.value[at] : undefined;
+      if (row) row.surface = attr;
+      else bubbles.value.push({ role: "sys", text: "", surface: attr });
+      if (e.payload?.origin) surfaceAnchor.delete(e.payload.origin);
+
+      if (petFormOf(decision) === "window") openPanelWindow();
       break;
     }
   }
@@ -769,6 +820,9 @@ function onPerms(p: BrainPermissions) {
 
 async function submit(text: string) {
   bubbles.value.push({ role: "user", text });
+  surfaceAnchor.clear();
+  const wanted = matchExplicitOpen(text, plugins.value);
+  if (wanted) markExplicit(wanted);
   state.value = "think";
   // 截图即问：有框选待提问 → 走 vision 直答（不占 run/对话历史）
   if (snipCtx.value) {
@@ -1152,18 +1206,20 @@ onUnmounted(() => {
             <button v-for="c in suggestions" :key="c" class="chip" @click="submit(c)">{{ c }}</button>
           </div>
         </div>
-        <Bubble
-          v-for="(b, i) in bubbles"
-          :key="i"
-          :role="b.role"
-          :text="b.text"
-          :streaming="i === streamingIdx"
-          :pstate="b.pstate"
-          :halted="b.halted"
-          :icon="b.icon"
-          :class="{ 'recap-clickable': !!b.recap }"
-          @click="onRecapClick(b.recap)"
-        />
+        <template v-for="(b, i) in bubbles" :key="i">
+          <SurfaceLine v-if="b.surface" :attr="b.surface" @open="openPanelWindow()" />
+          <Bubble
+            v-else
+            :role="b.role"
+            :text="b.text"
+            :streaming="i === streamingIdx"
+            :pstate="b.pstate"
+            :halted="b.halted"
+            :icon="b.icon"
+            :class="{ 'recap-clickable': !!b.recap }"
+            @click="onRecapClick(b.recap)"
+          />
+        </template>
         <Bubble v-if="showTyping" role="ai" text="" typing />
       </div>
 
