@@ -8,37 +8,29 @@ const PLUGINS = [
 ];
 
 describe("matchExplicitOpen", () => {
-  it("动词 + 插件名 → 命中", () => {
-    expect(matchExplicitOpen("打开闪念盘", PLUGINS)).toBe("notes");
+  it.each([
+    ["打开日历", "calendar"],
+    ["打开闪念盘", "notes"],
+    ["展开 calendar", "calendar"],
+  ])("动词开头 + 插件 → 命中：%s", (input, expected) => {
+    expect(matchExplicitOpen(input, PLUGINS)).toBe(expected);
   });
 
-  it("动词 + 插件 id → 命中", () => {
-    expect(matchExplicitOpen("展开 calendar", PLUGINS)).toBe("calendar");
+  it.each([
+    ["不要打开日历"],
+    ["别给我看日历"],
+    ["能打开日历吗"],
+    ["怎么打开日历？"],
+    ["打开日历了吗"],
+    ["闪念盘里有牛奶吗"],
+    ["看看闪念盘"],
+    ["帮我打开日历"],
+  ])("非明确打开指令 → 不命中：%s", (input) => {
+    expect(matchExplicitOpen(input, PLUGINS)).toBeNull();
   });
 
   it("只有动词没有宾语 → 不命中", () => {
     expect(matchExplicitOpen("打开", PLUGINS)).toBeNull();
-  });
-
-  it("只有插件名没有动词 → 不命中", () => {
-    // 「闪念盘里有牛奶吗」是查询不是打开指令，绝不能判成 explicit
-    expect(matchExplicitOpen("闪念盘里有牛奶吗", PLUGINS)).toBeNull();
-  });
-
-  it("弱动词不算明确意图", () => {
-    // 「看看」「查查」「有没有」语气太弱，误判的代价是抢屏——宁可漏
-    expect(matchExplicitOpen("看看闪念盘", PLUGINS)).toBeNull();
-    expect(matchExplicitOpen("查查闪念盘", PLUGINS)).toBeNull();
-    expect(matchExplicitOpen("有没有日历", PLUGINS)).toBeNull();
-  });
-
-  it("否定语气 → 不命中", () => {
-    expect(matchExplicitOpen("不要打开日历", PLUGINS)).toBeNull();
-    expect(matchExplicitOpen("别显示日历", PLUGINS)).toBeNull();
-  });
-
-  it("疑问语气 → 不命中", () => {
-    expect(matchExplicitOpen("怎么打开日历？", PLUGINS)).toBeNull();
   });
 
   it("空插件列表 → 不命中", () => {
