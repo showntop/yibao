@@ -970,6 +970,7 @@ async function reloadMessages(): Promise<void> {
   }) as BubbleMsg);
   streamingIdx.value = null;
   procIdx.clear(); // 过程行下标随气泡重建作废
+  surfaceAnchor.clear(); // 表面锚点同样指向气泡下标，随重建作废
 }
 
 onMounted(async () => {
@@ -1006,7 +1007,6 @@ onMounted(async () => {
   unlistenPanelClosed = await onPanelClosed(() => {
     if (!panelOpen.value) return;
     panelOpen.value = false;
-    bubbles.value.push({ role: "ai", text: "⇠ 协作结束" });
   });
   unlistenApprovals = onPendingConfirms((items) => {
     const previousCount = pendingConfirms.value.length;
