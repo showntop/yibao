@@ -210,7 +210,21 @@ Phase 1 落地了裁决器、Inline 回执、Peek 探窗、活动轨，四道闸
 
 ### 与设计的偏差
 
-无。§2/§3/§4/§5 的结论全部按原样落地，改动都发生在实现层面（判据形状、状态清理点、去重规则），没有回头动设计。
+**一处，在 §2.3 与 §4。** 两节都写「行的点击 = 置 explicit 标志后 `openPanel()`」，并把「可点行的点击」列为 explicit 的第二个来源。实装的 `openPanelWindow()` **不置标志**。
+
+这个偏差是对的，设计写错了：标志的作用是让**后续到达的** panel 事件被判为 explicit，而行点击只开窗、不触发任何新的工具调用，没有后续事件需要它。开窗后在窗内点击走 `handle_panel_action`，事件既无 `origin` 也无 hints，小窗算出 `peek` 落成行——而窗已经开着，无害。
+
+因此 explicit 实际只有**两个**来源（插件视图点击、窄规则），不是三个。
+
+### 终审后的三处修复
+
+全分支评审判 **Merge with fixes**，两条 Important 都直接打在验收条 ③ 上，且都是计划阶段没看见的：
+
+**其一，窄规则在默认路径上恒不命中。** `plugins.value` 的唯一填充者是插件视图的 `expandTo`，用户没进过插件视图它就是空数组，而 `matchExplicitOpen` 第一行就 `if (!plugins.length) return null`。也就是说**每次冷启动后「打开闪念盘」都不开窗，直到用户先去插件视图逛一圈**——整个窄规则在主路径上是哑的，且失败表现为「时灵时不灵」，排查会跑偏。改为挂载时加载（`list_plugins` 是本地 Rust 命令，`HomeChat`/`AgentBrain` 早有同样先例），并把匹配用的列表与插件视图的 `.slice(0, 8)` 展示列表分开——截断不该限制能匹配到什么。
+
+**其二，8 秒时间窗是从错误的路径抄来的。** 该值抄自 `HomePlugins.vue:184-185`，那里计时起点紧挨着一次直调 `panelAction`（百毫秒级）。而 `submit` 这条路的起点是用户回车，终点是 panel 事件，中间隔着「LLM 决定调插件」和「LLM 再决定调 list」两轮往返加工具执行，5–15 秒很正常。**8 秒是掷硬币，且输了以后静默降级**——窗就是不开，不报错。改为不用墙钟：`markExplicit` 只记插件，标志在 run 终止（`final_reply` / `error` / `interrupted`）与每次 `submit` 起始清除。这同时消掉了「无关面板事件偷走时间窗」那条遗留 Minor，无需单独加守卫。
+
+**其三，行上渲染出了三段点号。** sidecar 给的 title 本身已是全限定的（`plugins.py:387` 拼 `插件名 · 面板 label`），再接计数就成了 `闪念盘 · 闪念列表 · 3 条 ›`，在 360px 里会折行，也与 spec 和验收清单写的 `闪念列表 · N 条` 不符。在 `App.vue` 构造表面属性时剥掉插件前缀（`SurfaceLine` 保持无脑渲染）。
 
 ### 待真机验收
 
@@ -228,4 +242,12 @@ Phase 1 落地了裁决器、Inline 回执、Peek 探窗、活动轨，四道闸
 
 ### 遗留 Minor（终审已 triage）
 
-倒查找无距离下限（有 `origin` 但锚点已被 `submit` 清空时，可能改写视野外的老行）；`panelOpen` 退化为只写状态（原为协作气泡去重服务，该 push 已删）；规则 ② 按 `panel` id 去重而非按插件，钻取到子面板仍会新增一行；`requestedUntil` 无条件清零会被无关面板事件偷走时间窗（继承 `HomePlugins.vue:330` 同款写法，未因本阶段恶化）；`surfaceAnchor` 仅在 `submit` 清空，自发 run（提醒、晨间反刍）若产生过程行但无面板事件，锚点会留到用户下次说话；`reloadMessages` 从 DB 重建时 `surface` 不在持久化字段里，跨窗写入可能丢掉活的表面行；sidecar 非法值用例只覆盖了 `presentation`，未覆盖 `attention`。
+**同根的两条，建议一起做：** 倒查找无距离下限（有 `origin` 但锚点已被 `submit` 清空时，可能改写视野外的老行），以及 `surfaceAnchor` 仅在 `submit` 清空（自发 run 如提醒、晨间反刍若产生过程行但无面板事件，锚点会留到用户下次说话）。两者的根因都是锚点生命周期挂在 `submit` 上而非挂在 run 上——改成随 run 结束失效，两条同时消失，倒查兜底也就很少被走到。
+
+**同处的两条，也建议一起做：** `reloadMessages` 从 DB 重建时 `surface` 不在持久化字段里，会丢掉活的表面行；而 Rust 侧 `event_recorder.rs:223-232` 仍在持久化本分支已删掉的「⇢ 正在和「X」协作」（`upsert_panel_link`）。于是实时渲染与重建渲染现在讲两套模型——live 是「一行带表面属性」，重启后是「一条 ✓ 过程行 + 一条协作气泡」。注意 `panelLink` 这行 DB 数据还在给大窗 `HomeChat.vue:822` 的关联按钮供数，不能直接删 `on_panel`。
+
+**其余：** `panelOpen` 退化为只写状态（原为协作气泡去重服务，该 push 已删；删除时应在注释里留一句它曾承担跨窗去重）；规则 ② 按 `panel` id 去重而非按插件，钻取到子面板仍会新增一行；三条归属规则约 35 行内联在 `case "panel"`，spec §7 原打算把它也做成可单测的纯函数，抽成 `attachSurface(rows, attr, at)` 约十行即可与另外三个单元齐平；sidecar 非法值用例只覆盖了 `presentation`，未覆盖 `attention`；sidecar 没有一条测试同时覆盖 `presentation` + `panel` + `refresh`——而 Gap A 真实走的恰是「refresh 把 payload 整个换掉」这个接缝（终审读过三个返回点确认当前正确，但这条不变式没有测试守着）。
+
+### 一个终审顺带解答的开放问题
+
+上面「待真机验收」里那条「行点击重开浮窗的内容是否正确」，静态其实判得了，而且是好消息：`lib.rs:1334-1344` 的 `open_panel_window` 复用隐藏窗（show + focus，不重建），隐藏期间 webview 存活、监听不断；即便是从未创建过的首开，也有 `lib.rs:504-510` 的 `last_panel` 缓存加 `PanelApp.vue:305-317` 的 `pullCache` 兜底。延后点击行重开浮窗，内容会是最新那个面板。
