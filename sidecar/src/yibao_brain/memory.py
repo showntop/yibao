@@ -89,6 +89,11 @@ class FakeMemory(Memory):
         return True
 
 
+# 每轮对话注入模型的记忆条数上限：太多既贵又随 query 变化切断缓存前缀。
+# 5 条 ≈ 1k tokens，足够覆盖高相关事实，且召回集小、相邻轮次更可能重叠。
+_RECALL_TOP_K = 5
+
+
 class Mem0Memory(Memory):
     """mem0 封装：主 LLM 复用(事实抽取) + 本地 fastembed/ONNX(embedder) + 本地 qdrant(vector)。
 
@@ -149,7 +154,9 @@ class Mem0Memory(Memory):
 
     def recall(self, query: str, user_id: str) -> list[str]:
         try:
-            res = self._m.search(query=query, filters={"user_id": user_id})
+            # top_k 必须显式给：mem0 默认返回 20 条，几十条事实动辄 3000+ tokens，
+            # 既把 prompt 撑爆也随 query 变化反复切断缓存前缀（cost 全按未命中收）。
+            res = self._m.search(query=query, filters={"user_id": user_id}, top_k=_RECALL_TOP_K)
         except Exception:
             return []
         out: list[str] = []

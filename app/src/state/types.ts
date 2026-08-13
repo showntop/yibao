@@ -44,6 +44,17 @@ export interface RunRef {
   ok: boolean;
 }
 
+/** run 统计（token/费用/耗时）：final_reply 的 AI 气泡挂 indicator bar */
+export interface RunMetrics {
+  prompt_tokens: number;
+  completion_tokens: number;
+  cached_tokens: number;
+  total_tokens: number;
+  cost: number | null;
+  elapsed_ms: number;
+  model: string;
+}
+
 /** 消息载荷：UI 呈现所需的最小字段集 */
 export interface MessagePayload {
   text: string;
@@ -52,6 +63,7 @@ export interface MessagePayload {
   refs?: RunRef[];
   halted?: boolean;
   icon?: "clock" | "alert";
+  metrics?: RunMetrics;
 }
 
 /** 持久化的消息记录（messages 表条目） */

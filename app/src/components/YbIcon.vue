@@ -14,7 +14,8 @@ type IconName =
   | "dumpling" | "mic" | "wave" | "thumb-up" | "thumb-down" | "search"
   | "panel-left" | "panel-right" | "plus" | "expand"
   | "sliders" | "sun" | "moon"
-  | "info";
+  | "info"
+  | "token" | "coin" | "timer";
 
 withDefaults(
   defineProps<{
@@ -98,6 +99,15 @@ const paths: Record<IconName, string> = {
   // 关于：圆圈 + 底部小点（与 Lucide info 同构，比 alert 三角更"陈述"少"警告"）
   info:
     '<circle cx="12" cy="12" r="8.5"/><path d="M12 10.5v5"/><circle cx="12" cy="7.6" r="0.6" fill="currentColor" stroke="none"/>',
+  // 用量条 indicator：菱形小方块+两条短水平线（代表 token 计量），比纯 hash 更明确
+  token:
+    '<rect x="3" y="10" width="8" height="4" rx="1" transform="rotate(-20 7 12)"/><line x1="13" y1="9" x2="21" y2="9"/><line x1="13" y1="15" x2="21" y2="15"/>',
+  // 费用：圆币+中央纵向线（与 Lucide coin 同构，比 dollar 字符更"币"少"币种"）
+  coin:
+    '<circle cx="12" cy="12" r="8.5"/><path d="M12 6.5v11"/><path d="M15 9.3c-.6-.5-1.7-.9-3-.9-2 0-3.5.9-3.5 2.3 0 1.4 1.5 1.8 3.5 2.2 2 .4 3.5.8 3.5 2.2 0 1.4-1.5 2.3-3.5 2.3-1.3 0-2.4-.4-3-.9"/>',
+  // 耗时：圆+底部两点（沙漏抽象，比 clock 更"耗时"少"时刻"）
+  timer:
+    '<path d="M5 5h14M9 5v3.2L7 17h10l-2-8.8V5"/><line x1="8" y1="20" x2="16" y2="20"/>',
 };
 </script>
 

@@ -26,11 +26,13 @@ import {
   type BrainStatusMsg,
 } from "../lib/brain";
 import { procLabel, procSkip, procResultSuffix, procDetail } from "../lib/proc";
+import type { RunMetrics } from "../lib/brain";
 import { sessionStore } from "../state/store";
 import { newId } from "../state/domains/conversation";
 import type { MessageInput } from "../state/domains/conversation";
 import type { Message } from "../state/types";
 import YbIcon from "./YbIcon.vue";
+import UsageBar from "./UsageBar.vue";
 
 type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
 // proc：过程展示（工具调用行，可点开展开参数/结果）；panelLink：「⇢ 协作」关联气泡
@@ -52,6 +54,8 @@ type BubbleMsg = {
   refs?: RunRef[];
   /** 溯源折叠展开态（仅 AI 消息） */
   refsOpen?: boolean;
+  /** 本次 run 统计（token/费用/耗时）：AI 终复气泡挂 indicator bar */
+  metrics?: RunMetrics;
 };
 
 function bubbleToInput(b: BubbleMsg, ephemeral = false): MessageInput {
@@ -64,6 +68,7 @@ function bubbleToInput(b: BubbleMsg, ephemeral = false): MessageInput {
       halted: b.halted,
       icon: b.icon,
       refs: b.refs,
+      metrics: b.metrics,
       proc: b.proc
         ? {
             label: b.proc.label,
@@ -87,6 +92,7 @@ function msgToBubble(m: Message): BubbleMsg {
     icon: m.payload.icon,
     ts: m.ts,
     refs: m.payload.refs,
+    metrics: m.payload.metrics,
     proc: m.payload.proc
       ? {
           label: m.payload.proc.label,
@@ -469,11 +475,14 @@ function onEvent(e: BrainEvent) {
     case "final_reply": {
       // 以完整文本为准收尾（兜底 chunk 丢失）；语音中保持 say 等 speaking_done
       const full = e.text ?? "";
+      // run 统计（sidecar 聚合进 final_reply 的 payload.metrics）：挂到本条 AI 回复的 indicator bar
+      const metrics: RunMetrics | undefined = (e.payload as { metrics?: RunMetrics } | undefined)?.metrics;
       const wasStreamed = streamingConvId !== null && streamingConvId === (e.conversationId || currentSessionId.value);
       streamingConvId = null;
       if (streamingIdx.value !== null) {
         bubbles.value[streamingIdx.value].text = full;
         const streamed = bubbles.value[streamingIdx.value];
+        if (metrics) streamed.metrics = metrics;
         if (streamed.id) syncBubble(streamed); // 流式终态落盘
         streamingIdx.value = null;
       } else if (wasStreamed) {
@@ -494,6 +503,7 @@ function onEvent(e: BrainEvent) {
           text: full,
           ts: Date.now(),
           refs: runRefs.length ? [...runRefs] : undefined,
+          metrics,
         };
         bubbles.value.push(finalBubble);
         persistBubble(finalBubble);
@@ -842,6 +852,8 @@ onUnmounted(() => {
             <Avatar class="ai-ava" :state="state" :size="22" compact />
             <Bubble :role="b.role" :text="b.text" plain :streaming="i === streamingIdx" :halted="b.halted" :icon="b.icon" />
           </div>
+          <!-- run 统计 indicator bar（token/费用/耗时；hover 看明细） -->
+          <UsageBar v-if="b.metrics" :metrics="b.metrics" />
           <div v-if="b.refs?.length" class="refs">
             <button class="refs-toggle" @click="b.refsOpen = !b.refsOpen">
               <span>参考了 {{ b.refs.length }} 项</span>

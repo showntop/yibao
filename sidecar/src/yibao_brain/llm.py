@@ -47,9 +47,23 @@ class ToolCall(BaseModel):
     params: dict = Field(default_factory=dict)
 
 
+class Usage(BaseModel):
+    """一次 LLM 调用的 token 用量（OpenAI 兼容 usage 结构；缺省 0）。
+
+    cached 为「命中缓存」的输入 token（DeepSeek/GLM 等按更低价计费）。
+    未命中/写入由 prompt_cached 拆分：详情页把 cached 标「命中」，其余输入标「未命中」。
+    """
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    cached_tokens: int = 0
+    total_tokens: int = 0
+
+
 class LLMResponse(BaseModel):
     text: str = ""
     tool_calls: list[ToolCall] = Field(default_factory=list)
+    usage: Usage = Field(default_factory=Usage)
 
 
 class ToolCallDelta(BaseModel):
@@ -65,10 +79,14 @@ class ToolCallDelta(BaseModel):
 
 
 class LLMDelta(BaseModel):
-    """单次流式增量：text 是自上一 delta 起的文字增量；tool_call_deltas 是工具片段。"""
+    """单次流式增量：text 是自上一 delta 起的文字增量；tool_call_deltas 是工具片段。
+
+    usage 只在流式末尾（最后一个 chunk，choices 空但带 usage）出现一次。
+    """
 
     text: str = ""
     tool_call_deltas: list[ToolCallDelta] = Field(default_factory=list)
+    usage: Usage | None = None
 
 
 class LLMProvider(Protocol):
@@ -79,6 +97,69 @@ class LLMProvider(Protocol):
     async def astream(
         self, messages: list[dict], tools: list[dict] | None = None
     ) -> AsyncIterator[LLMDelta]: ...
+
+
+def _usage_from_openai(raw) -> Usage:
+    """把 OpenAI SDK 的 usage 对象（或 dict）转成 Usage；无/异常返回全 0。
+
+    cached_tokens 取 prompts 里的 cached_tokens（DeepSeek/GLM 的缓存计费字段）。
+    """
+    if raw is None:
+        return Usage()
+    try:
+        if hasattr(raw, "prompt_tokens"):
+            prompt = int(getattr(raw, "prompt_tokens", 0) or 0)
+            completion = int(getattr(raw, "completion_tokens", 0) or 0)
+            total = int(getattr(raw, "total_tokens", 0) or 0)
+            cached = 0
+            # prompt_tokens_details.cached_tokens（OpenAI 新结构）或顶层 cached_tokens
+            details = getattr(raw, "prompt_tokens_details", None)
+            if details is not None:
+                cached = int(getattr(details, "cached_tokens", 0) or 0)
+            if not cached:
+                cached = int(getattr(raw, "cached_tokens", 0) or 0)
+            return Usage(
+                prompt_tokens=prompt,
+                completion_tokens=completion,
+                total_tokens=total or (prompt + completion),
+                cached_tokens=cached,
+            )
+        d = dict(raw)
+        prompt = int(d.get("prompt_tokens", 0) or 0)
+        completion = int(d.get("completion_tokens", 0) or 0)
+        total = int(d.get("total_tokens", 0) or 0)
+        cached = int(d.get("cached_tokens", 0) or 0)
+        details = d.get("prompt_tokens_details") or {}
+        if isinstance(details, dict):
+            cached = cached or int(details.get("cached_tokens", 0) or 0)
+        return Usage(
+            prompt_tokens=prompt,
+            completion_tokens=completion,
+            total_tokens=total or (prompt + completion),
+            cached_tokens=cached,
+        )
+    except (TypeError, ValueError):
+        return Usage()
+
+
+def _debug_dump(label: str, messages: list[dict], usage: Usage | None = None, *, tools: int = 0) -> None:
+    """调试：把实际发给 provider 的消息构成与用量打到 stderr（排查缓存命中/ token 用）。
+
+    每条消息显示 role + 字符数 + 前 40 字，一眼看清各段大小；usage 打印四项 token。
+    """
+    print(f"[llm:{label}] tools={tools}", file=sys.stderr)
+    for m in messages:
+        c = m.get("content")
+        if isinstance(c, list):  # 多模态内容（图片等）
+            c = json.dumps(c, ensure_ascii=False)
+        c = (c or "").replace("\n", " ")
+        print(f"  [{m.get('role')}:{len(m.get('content') or '')}c] {c[:40]}", file=sys.stderr)
+    if usage is not None:
+        print(
+            f"  -> usage: prompt={usage.prompt_tokens} cached={usage.cached_tokens} "
+            f"completion={usage.completion_tokens} total={usage.total_tokens}",
+            file=sys.stderr,
+        )
 
 
 def merge_tool_call_deltas(deltas: list[ToolCallDelta]) -> list[ToolCall]:
@@ -117,11 +198,13 @@ class FakeProvider:
         tool_calls: list[ToolCall] | None = None,
         chunks: list[str] | None = None,
         delay: float = 0.0,
+        usage: Usage | dict | None = None,
     ):
         self._text = text
         self._tool_calls = tool_calls or []
         self._chunks = chunks  # 显式分片；None 时按 text 整体（或切片）输出
         self._delay = delay
+        self._usage = usage if isinstance(usage, Usage) else (Usage(**usage) if usage else None)
         self.calls: list[dict] = []
         self.astream_calls: list[dict] = []
 
@@ -129,7 +212,7 @@ class FakeProvider:
         self, messages: list[dict], tools: list[dict] | None = None, timeout: float | None = None
     ) -> LLMResponse:
         self.calls.append({"messages": messages, "tools": tools})
-        return LLMResponse(text=self._text, tool_calls=list(self._tool_calls))
+        return LLMResponse(text=self._text, tool_calls=list(self._tool_calls), usage=self._usage or Usage())
 
     async def astream(
         self, messages: list[dict], tools: list[dict] | None = None
@@ -150,12 +233,16 @@ class FakeProvider:
                     for i, tc in enumerate(self._tool_calls)
                 ]
             )
+            if self._usage:
+                yield LLMDelta(usage=self._usage)  # 流式末尾 usage chunk（对齐真实 provider）
             return
         pieces = self._chunks if self._chunks is not None else ([self._text] if self._text else [])
         for piece in pieces:
             if self._delay:
                 await asyncio.sleep(self._delay)
             yield LLMDelta(text=piece)
+        if self._usage:
+            yield LLMDelta(usage=self._usage)  # 末尾 usage chunk
 
 
 class GLMProvider:
@@ -202,6 +289,7 @@ class GLMProvider:
             ]
         if timeout is not None:  # 仅显式传入时下发（如 Distiller 离线提炼 60s）；主对话回路保持 SDK 默认
             kwargs["timeout"] = timeout
+        _debug_dump("chat", messages, tools=len(tools or []))
         resp = self.client.chat.completions.create(**kwargs)
         msg = resp.choices[0].message
         tool_calls: list[ToolCall] = []
@@ -213,12 +301,16 @@ class GLMProvider:
             except json.JSONDecodeError:
                 params = {}
             tool_calls.append(ToolCall(id=tc.id, skill_id=fn.name, params=params))
-        return LLMResponse(text=msg.content or "", tool_calls=tool_calls)
+        usage = _usage_from_openai(getattr(resp, "usage", None))
+        _debug_dump("chat", [], usage, tools=len(tools or []))
+        return LLMResponse(text=msg.content or "", tool_calls=tool_calls, usage=usage)
 
     async def astream(
         self, messages: list[dict], tools: list[dict] | None = None
     ) -> AsyncIterator[LLMDelta]:
         kwargs = {"model": self.model, "messages": messages, "stream": True}
+        # OpenAI 兼容端点：要求流式末尾带 usage chunk（否则 token 统计拿不到）
+        kwargs["stream_options"] = {"include_usage": True}
         if tools:
             kwargs["tools"] = [
                 {"type": "function", "function": t} if "function" not in t else t
@@ -227,6 +319,7 @@ class GLMProvider:
         import asyncio
 
         client = self._ensure_async_client()
+        _debug_dump("astream", messages, tools=len(tools or []))
         try:
             stream = await asyncio.wait_for(
                 client.chat.completions.create(**kwargs), timeout=_STREAM_IDLE_TIMEOUT
@@ -234,6 +327,7 @@ class GLMProvider:
         except asyncio.TimeoutError:
             raise TimeoutError("LLM 流式请求建立超时（60s 无响应）") from None
         it = stream.__aiter__()
+        usage_yielded = False  # usage 是累计值，多个 chunk 重复带时应只 yield 一次（防 loop 重复累加）
         while True:
             try:
                 chunk = await asyncio.wait_for(it.__anext__(), timeout=_STREAM_IDLE_TIMEOUT)
@@ -241,6 +335,15 @@ class GLMProvider:
                 break
             except asyncio.TimeoutError:
                 raise TimeoutError("LLM 流式响应超过 60s 无数据（连接僵死）") from None
+            # usage 提取不受 choices 空否影响：OpenAI 兼容端点的 usage chunk
+            # 常带非空 choices（[{delta:{}, finish_reason:"stop"}]）而非空数组，
+            # 只在「choices 为空」时查 usage 会漏掉它 → token 恒 0。
+            if not usage_yielded:
+                usage = _usage_from_openai(getattr(chunk, "usage", None))
+                if usage.total_tokens:
+                    usage_yielded = True
+                    _debug_dump("astream", [], usage)
+                    yield LLMDelta(usage=usage)
             choices = getattr(chunk, "choices", None) or []
             if not choices:
                 continue

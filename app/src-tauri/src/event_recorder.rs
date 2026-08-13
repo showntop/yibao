@@ -175,11 +175,17 @@ impl EventRecorder {
 
     fn on_final_reply(&mut self, db: &SessionDb, conv_id: &str, e: &Value) {
         let full = e.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string();
+        // run 统计（token/费用/耗时）：sidecar 把 metrics 塞进 final_reply 的 payload 里，
+        // 落库时透传→重启恢复后 UsageBar 仍可见
+        let metrics = e.get("payload").and_then(|p| p.get("metrics")).cloned();
         if let Some(msg_id) = self.stream_msg_id.take() {
             // 流式终态落盘：更新已建消息
             let mut payload = json!({ "text": full });
             if !self.stream_refs.is_empty() {
                 payload["refs"] = json!(self.stream_refs);
+            }
+            if let Some(m) = metrics {
+                payload["metrics"] = m;
             }
             let _ = db.update_message_payload(conv_id, &msg_id, payload);
             self.stream_text.clear();
@@ -190,6 +196,9 @@ impl EventRecorder {
             let mut payload = json!({ "text": full });
             if !refs.is_empty() {
                 payload["refs"] = json!(refs);
+            }
+            if let Some(m) = metrics {
+                payload["metrics"] = m;
             }
             self.append(db, conv_id, "ai", payload, now_ms());
         }
@@ -353,5 +362,37 @@ mod tests {
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].payload["halted"], true);
         assert_eq!(msgs[0].payload["text"], "半截话");
+    }
+
+    #[test]
+    fn final_reply_metrics_persist_in_message_payload() {
+        // 用量条（UsageBar）依赖 metrics 落库：重启后从 SQLite 拉回仍可见
+        let (db, mut r) = setup();
+        r.record(&db, "c1", &json!({
+            "kind":"final_reply",
+            "text":"你好",
+            "payload":{"metrics":{"prompt_tokens":120,"completion_tokens":30,"cached_tokens":50,"total_tokens":150,"cost":0.0001,"elapsed_ms":17400,"model":"glm-4.6"}}
+        }));
+        let msgs = db.get_messages("c1", 10).unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].payload["text"], "你好");
+        assert_eq!(msgs[0].payload["metrics"]["total_tokens"], 150);
+        assert_eq!(msgs[0].payload["metrics"]["model"], "glm-4.6");
+    }
+
+    #[test]
+    fn final_reply_metrics_persist_for_streamed_message() {
+        // 流式场景：首片 chunk 建消息，终态 update 写 metrics
+        let (db, mut r) = setup();
+        r.record(&db, "c1", &json!({"kind":"final_reply_chunk","text":"你"}));
+        r.record(&db, "c1", &json!({
+            "kind":"final_reply",
+            "text":"你好",
+            "payload":{"metrics":{"prompt_tokens":100,"completion_tokens":2,"cached_tokens":0,"total_tokens":102,"cost":null,"elapsed_ms":1000,"model":"glm-4.6"}}
+        }));
+        let msgs = db.get_messages("c1", 10).unwrap();
+        assert_eq!(msgs.len(), 1, "流式全程只一条消息");
+        assert_eq!(msgs[0].payload["text"], "你好");
+        assert_eq!(msgs[0].payload["metrics"]["total_tokens"], 102);
     }
 }

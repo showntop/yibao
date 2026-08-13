@@ -12,7 +12,8 @@ from .history import ConversationHistory
 from .host import Host
 from .invoker import ToolInvoker
 from .ipc import Action, ActionResult, Event
-from .llm import LLMProvider, LLMResponse, ToolCall, merge_tool_call_deltas
+from .llm import LLMProvider, LLMResponse, ToolCall, Usage, merge_tool_call_deltas
+from .pricing import compute_cost
 from .memory import Memory
 from .plugins import get_panel, get_panel_title, panel_payload
 from .safety import Decision, Gate, RiskClassifier
@@ -88,6 +89,7 @@ class AgentLoop:
         self.host = host
         self.memory = memory
         self.log = log
+        self._run_start = 0.0  # run_metrics 耗时基准（run/arun 开头置 time.monotonic）
         # 批量 confirmer：list[Action] -> {action.id: (approved, remember)}；
         # 默认空 dict（=全拒），由 invoker.batch_confirm 透传，loop 用 .get(id, (False,False)) 读。
         self.confirmer = confirmer or (lambda _actions: {})
@@ -225,24 +227,35 @@ class AgentLoop:
 
     def run(self, user_text: str, surface: str | None = None, conversation_id: str | None = None) -> Iterator[Event]:
         """同步回路（历史按 conversation_id 分桶，见 arun 注释）。"""
+        self._run_start = time.monotonic()  # run_metrics 耗时基准
         memories = self.memory.recall(user_text, self.user_id)
         messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
-        if memories:
-            messages.append({"role": "system", "content": "关于用户的记忆：\n" + "\n".join(memories)})
         focus_msg = self._focus_message()
         if focus_msg:
             messages.append(focus_msg)
-        messages.append(_now_message())
         if self.history:
             messages.extend(self.history.messages(conversation_id))
+        # 变化内容（记忆/时间戳）放 history 之后：固定段（system+focus+history）整段为缓存前缀。
+        # 记忆按 query 语义召回、每次可能不同，放前面会把前缀切断 → 整轮 history+user 全 miss。
+        if memories:
+            messages.append({"role": "system", "content": "关于用户的记忆：\n" + "\n".join(memories)})
+        messages.append(_now_message())
         messages.append({"role": "user", "content": user_text})
         run_start = len(messages) - 1  # 本轮轨迹起点（user 消息），成功收尾时整轮入史（含工具调用）
         safe_tool_content: dict[str, str] = {}
         sensitive_turn = False
         post_reply_notices: list[str] = []
+        usage_acc = Usage()  # 整轮 LLM 调用用量累加（工具轮多次调用合并）
+
+        def _acc_usage(u: Usage) -> None:
+            usage_acc.prompt_tokens += u.prompt_tokens
+            usage_acc.completion_tokens += u.completion_tokens
+            usage_acc.cached_tokens += u.cached_tokens
+            usage_acc.total_tokens += u.total_tokens
 
         for _ in range(self.max_steps):
             resp: LLMResponse = self.provider.chat(messages, tools=self._visible_tools())
+            _acc_usage(resp.usage)
             if not resp.tool_calls:
                 if self.memory.add(user_text, self.user_id) and self.feed is not None:
                     h = int(time.time()) // 3600 * 3600
@@ -257,7 +270,7 @@ class AgentLoop:
                         _history_safe_span(span, safe_tool_content, sensitive_turn),
                         conversation_id,
                     )
-                yield Event(kind="final_reply", text=resp.text)
+                yield Event(kind="final_reply", text=resp.text, payload=self._metrics_payload(usage_acc))
                 for notice in post_reply_notices:
                     yield Event(kind="notice", text=notice)
                 return
@@ -330,6 +343,7 @@ class AgentLoop:
         # 成功后直接报错，导致任务明明可能完成却没有最终答复。
         final_messages = messages + [{"role": "system", "content": _TOOL_BUDGET_FINAL_PROMPT}]
         resp = self.provider.chat(final_messages, tools=[])
+        _acc_usage(resp.usage)
         final_text = (resp.text or "").strip()
         if resp.tool_calls or not final_text:
             yield Event(kind="error", text=_TOOL_BUDGET_FALLBACK)
@@ -341,7 +355,7 @@ class AgentLoop:
                 _history_safe_span(span, safe_tool_content, sensitive_turn),
                 conversation_id,
             )
-        yield Event(kind="final_reply", text=final_text)
+        yield Event(kind="final_reply", text=final_text, payload=self._metrics_payload(usage_acc))
         for notice in post_reply_notices:
             yield Event(kind="notice", text=notice)
 
@@ -356,21 +370,31 @@ class AgentLoop:
         conversation_id（M3 会话隔离）：该 run 所属会话，历史按此分桶读写——
         模型上下文只含本会话的最近轮次，不跨会话串台（小窗不再知道你在别的会话问过什么）。
         """
+        self._run_start = time.monotonic()  # run_metrics 耗时基准
         memories = await _offload(self.memory.recall, user_text, self.user_id)
         messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
-        if memories:
-            messages.append({"role": "system", "content": "关于用户的记忆：\n" + "\n".join(memories)})
         focus_msg = self._focus_message()
         if focus_msg:
             messages.append(focus_msg)
-        messages.append(_now_message())
         if self.history:
             messages.extend(self.history.messages(conversation_id))
+        # 变化内容（记忆/时间戳）放 history 之后：固定段（system+focus+history）整段为缓存前缀。
+        # 记忆按 query 语义召回、每次可能不同，放前面会把前缀切断 → 整轮 history+user 全 miss。
+        if memories:
+            messages.append({"role": "system", "content": "关于用户的记忆：\n" + "\n".join(memories)})
+        messages.append(_now_message())
         messages.append({"role": "user", "content": user_text})
         run_start = len(messages) - 1  # 本轮轨迹起点（user 消息），成功收尾时整轮入史（含工具调用）
         safe_tool_content: dict[str, str] = {}
         sensitive_turn = False
         post_reply_notices: list[str] = []
+        usage_acc = Usage()  # 整轮 LLM 调用用量累加（流式末尾 usage chunk 收集）
+
+        def _acc_usage(u: Usage) -> None:
+            usage_acc.prompt_tokens += u.prompt_tokens
+            usage_acc.completion_tokens += u.completion_tokens
+            usage_acc.cached_tokens += u.cached_tokens
+            usage_acc.total_tokens += u.total_tokens
 
         def cancelled() -> bool:
             return bool(cancel and cancel.is_set())
@@ -385,6 +409,8 @@ class AgentLoop:
                 if cancelled():
                     yield Event(kind="interrupted")
                     return
+                if delta.usage is not None:
+                    _acc_usage(delta.usage)  # 流式末尾 usage chunk
                 if delta.text:
                     text_buf += delta.text
                     yield Event(kind="final_reply_chunk", text=delta.text)
@@ -406,7 +432,7 @@ class AgentLoop:
                         _history_safe_span(span, safe_tool_content, sensitive_turn),
                         conversation_id,
                     )
-                yield Event(kind="final_reply", text=text_buf)
+                yield Event(kind="final_reply", text=text_buf, payload=self._metrics_payload(usage_acc))
                 for notice in post_reply_notices:
                     yield Event(kind="notice", text=notice)
                 return
@@ -505,6 +531,8 @@ class AgentLoop:
             if cancelled():
                 yield Event(kind="interrupted")
                 return
+            if delta.usage is not None:
+                _acc_usage(delta.usage)
             if delta.text:
                 final_text += delta.text
                 yield Event(kind="final_reply_chunk", text=delta.text)
@@ -521,9 +549,29 @@ class AgentLoop:
                 _history_safe_span(span, safe_tool_content, sensitive_turn),
                 conversation_id,
             )
-        yield Event(kind="final_reply", text=final_text)
+        yield Event(kind="final_reply", text=final_text, payload=self._metrics_payload(usage_acc))
         for notice in post_reply_notices:
             yield Event(kind="notice", text=notice)
+
+    def _metrics_payload(self, usage: Usage) -> dict:
+        """整轮用量 → final_reply 的 payload 里带 metrics（token/cost/elapsed）。
+
+        放 final_reply 而非独立事件：不破坏「run 以 final_reply 收尾」的既有契约，
+        前端拿到 final_reply 即获得统计。
+        """
+        cost = compute_cost(self.provider.model if hasattr(self.provider, "model") else "", usage)
+        elapsed_ms = int((time.monotonic() - self._run_start) * 1000) if self._run_start else 0
+        return {
+            "metrics": {
+                "prompt_tokens": usage.prompt_tokens,
+                "completion_tokens": usage.completion_tokens,
+                "cached_tokens": usage.cached_tokens,
+                "total_tokens": usage.total_tokens,
+                "cost": cost,
+                "elapsed_ms": elapsed_ms,
+                "model": getattr(self.provider, "model", ""),
+            }
+        }
 
 
 _WEEKDAYS = "一二三四五六日"

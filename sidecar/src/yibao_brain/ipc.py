@@ -49,7 +49,24 @@ EventKind = Literal[
     "panel",
     "reminder",  # 主动提醒触发（server 调度循环发出）
     "notice",  # 轻提示（插件展开等，§12-2 要知情；前端居中淡色小字）
+    "run_metrics",  # 一次 run 结束的 token/费用/耗时统计（final_reply 后发出）
 ]
+
+
+class RunMetrics(BaseModel):
+    """一次 run 的统计（kind="run_metrics" 时 payload 放它）。
+
+    usage 为整轮所有 LLM 调用的累加（工具轮多次调用合并）；cost 按模型定价计算（元）。
+    elapsed 为整轮耗时（秒，含工具调用）。model 为本次使用的模型名。
+    """
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    cached_tokens: int = 0
+    total_tokens: int = 0
+    cost: float | None = None  # 元；未知模型/计费不可靠为 None
+    elapsed_ms: int = 0
+    model: str = ""
 
 
 class Event(BaseModel):
@@ -62,6 +79,7 @@ class Event(BaseModel):
     result: ActionResult | None = None
     confirmation_id: str | None = None
     payload: dict = Field(default_factory=dict)  # kind="panel" 时放 {panel, schema, data}
+    metrics: RunMetrics | None = None  # kind="run_metrics" 时携带统计
 
 
 def _new_id(prefix: str) -> str:

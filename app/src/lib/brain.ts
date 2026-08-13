@@ -48,6 +48,22 @@ export interface PanelPayload {
   data?: Record<string, unknown>;
 }
 
+/** final_reply 携带的 run 统计（sidecar loop 聚合：token/费用/耗时）。 */
+export interface RunMetrics {
+  prompt_tokens: number;
+  completion_tokens: number;
+  /** 命中缓存的输入 token（详情页标「缓存命中」） */
+  cached_tokens: number;
+  total_tokens: number;
+  /** 费用（元）；未知模型/计费不可靠为 null */
+  cost: number | null;
+  elapsed_ms: number;
+  model: string;
+}
+
+/** final_reply 的 payload：正常是 PanelPayload；带 metrics 时含 run 统计 */
+export type ReplyPayload = PanelPayload & { metrics?: RunMetrics };
+
 export interface BrainEvent {
   kind: BrainEventKind;
   text?: string;
