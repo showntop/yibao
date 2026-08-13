@@ -20,6 +20,7 @@ function onOpen(): void {
     :tabindex="attr.live ? 0 : undefined"
     @click="onOpen"
     @keydown.enter="onOpen"
+    @keydown.space.prevent="onOpen"
   >
     <span>{{ attr.title }}<template v-if="attr.count !== null"> · {{ attr.count }} 条</template></span>
     <span v-if="attr.live" class="sl-ar" aria-hidden="true">›</span>
