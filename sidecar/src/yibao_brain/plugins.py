@@ -152,6 +152,13 @@ class DeclarativeTool(Skill):
             else:
                 refresh = f"{plugin_id}.{refresh}"
         self.refresh = refresh
+        # 表面建议（能力表面 Phase 1.5）：属于「单次调用」的语义，故声明在 [[tool]]
+        # 而非 [[panel]]——同一个 notes:list 面板，被 keep 触发该 inline（只是回执），
+        # 被 list 触发该 stage（用户要浏览）。非法值静默过滤，与 surfaces 约定一致。
+        pres = spec.get("presentation")
+        self._presentation = pres if pres in _SURFACE_LEVELS else None
+        att = spec.get("attention")
+        self._attention = att if att in ("quiet", "suggest", "focus") else None
         self._registry = registry  # composite 顺序调用同 registry 的其他 tool
 
     def openai_schema(self) -> dict:
@@ -179,8 +186,13 @@ class DeclarativeTool(Skill):
         if handler is None:
             return ActionResult(success=False, error=f"未知 tool 类型：{self._type!r}")
         result = handler(params, ctx)
-        if result.success and self._panel_ref:  # 失败不放 panel 引用
-            result.panel = self._panel_ref
+        if result.success:  # 失败不放 panel 引用，也不带表面建议
+            if self._panel_ref:
+                result.panel = self._panel_ref
+            if self._presentation:
+                result.presentation = self._presentation
+            if self._attention:
+                result.attention = self._attention
         return result
 
     def _run_db(self, params: dict, ctx: SkillContext) -> ActionResult:

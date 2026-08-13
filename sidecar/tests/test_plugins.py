@@ -1053,3 +1053,116 @@ def test_refresh_unregistered_tool_rejected(data_dir, tmp_path):
     _write_plugin(tmp_path, "notes", REFRESH_MANIFEST.replace('refresh = "list"', 'refresh = "ghost"'))
     results = _load(tmp_path, SkillRegistry())
     assert results["notes"].startswith("ValueError") and "未注册" in results["notes"]
+
+
+SURFACE_MANIFEST = """
+id = "notes"
+name = "闪念盘"
+capabilities = ["db"]
+
+[[table]]
+name = "notes"
+columns = [
+  {name = "id", type = "text", pk = true},
+  {name = "text", type = "text"},
+  {name = "created_at", type = "integer"},
+]
+
+[[tool]]
+id = "keep"
+type = "db"
+description = "记一条闪念"
+risk = "L1"
+presentation = "inline"
+attention = "quiet"
+[tool.params]
+text = {type = "string", description = "内容"}
+[tool.db]
+op = "insert"
+table = "notes"
+
+[[tool]]
+id = "bad"
+type = "db"
+description = "非法声明"
+risk = "L1"
+presentation = "gigantic"
+[tool.db]
+op = "insert"
+table = "notes"
+
+[[tool]]
+id = "silent"
+type = "db"
+description = "不声明"
+risk = "L1"
+[tool.db]
+op = "insert"
+table = "notes"
+
+[[tool]]
+id = "boom"
+type = "composite"
+description = "会失败的编排"
+risk = "L1"
+presentation = "inline"
+[tool.composite]
+steps = [{tool = "notes.ghost", params = {}}]
+"""
+
+
+def test_declarative_tool_carries_surface_hints(data_dir, tmp_path):
+    """声明式 tool 的 presentation/attention 必须带进 ActionResult。
+
+    notes/reminders 这批最该走 Inline 的插件全是声明式的；Phase 1 只给
+    ActionResult 加了字段，等于把它们排除在表面模型之外。"""
+    _write_plugin(tmp_path, "notes", SURFACE_MANIFEST)
+    reg = SkillRegistry()
+    _load(tmp_path, reg)
+
+    keep = reg.get("notes.keep")
+    r = keep.run({"text": "买点牛奶", "created_at": 1}, keep.plugin_ctx)
+    assert r.success
+    assert r.presentation == "inline"
+    assert r.attention == "quiet"
+
+
+def test_declarative_tool_invalid_presentation_ignored(data_dir, tmp_path):
+    """非法值静默过滤（与 [[panel]].surfaces 既有约定一致），不抛错、不阻断加载。"""
+    _write_plugin(tmp_path, "notes", SURFACE_MANIFEST)
+    reg = SkillRegistry()
+    assert _load(tmp_path, reg) == {"notes": "ok"}
+
+    bad = reg.get("notes.bad")
+    r = bad.run({"text": "x", "created_at": 1}, bad.plugin_ctx)
+    assert r.success
+    assert r.presentation is None
+
+
+def test_declarative_tool_silent_defaults(data_dir, tmp_path):
+    """不声明 → presentation=None、attention 保持 ActionResult 默认 "suggest"。
+
+    这条锁住向后兼容：旧插件行为完全不变。"""
+    _write_plugin(tmp_path, "notes", SURFACE_MANIFEST)
+    reg = SkillRegistry()
+    _load(tmp_path, reg)
+
+    silent = reg.get("notes.silent")
+    r = silent.run({"text": "x", "created_at": 1}, silent.plugin_ctx)
+    assert r.success
+    assert r.presentation is None
+    assert r.attention == "suggest"
+
+
+def test_declarative_tool_failure_carries_no_hints(data_dir, tmp_path):
+    """失败结果不带表面建议——失败不该建议展开面板。
+
+    与既有「失败不放 panel 引用」共用同一个 if result.success 判断。"""
+    _write_plugin(tmp_path, "notes", SURFACE_MANIFEST)
+    reg = SkillRegistry()
+    _load(tmp_path, reg)
+
+    boom = reg.get("notes.boom")
+    r = boom.run({"id": "x"}, boom.plugin_ctx)
+    assert not r.success
+    assert r.presentation is None
