@@ -14,6 +14,8 @@ export const SCENE_KEY = "scene";
 export const PANEL_KEY = "panel";
 export const INTERACT_KEY = "interact";
 
+const SCENE_PRESENTATIONS: readonly string[] = ["inline", "peek", "stage", "focus"];
+
 function isScene(raw: unknown): SurfaceScene | null {
   if (typeof raw !== "object" || raw === null) return null;
   const s = raw as Record<string, unknown>;
@@ -21,7 +23,9 @@ function isScene(raw: unknown): SurfaceScene | null {
   return {
     panel: s.panel,
     visible: s.visible === true,
-    presentation: s.presentation === "focus" ? "focus" : "stage",
+    presentation: typeof s.presentation === "string" && SCENE_PRESENTATIONS.includes(s.presentation)
+      ? (s.presentation as SurfaceScene["presentation"])
+      : "stage",
     tab: typeof s.tab === "string" ? s.tab : "home",
   };
 }
@@ -51,7 +55,7 @@ function isInteract(raw: unknown): SurfaceInteract | null {
   };
 }
 
-registerDomain("surface:scene", { domain: "surface", version: 1, ttl: 24 * 60 * 60 * 1000, validate: isScene });
+registerDomain("surface:scene", { domain: "surface", version: 2, ttl: 24 * 60 * 60 * 1000, validate: isScene });
 registerDomain("surface:panel", { domain: "surface", version: 2, ttl: 24 * 60 * 60 * 1000, validate: isPanel });
 registerDomain("surface:interact", { domain: "surface", version: 1, ttl: 60 * 60 * 1000, validate: isInteract });
 

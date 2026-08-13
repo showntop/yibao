@@ -121,7 +121,7 @@ export interface ConversationUIState {
 
 // ---- surface 域 ----
 
-export type CapabilityPresentation = "stage" | "focus";
+export type CapabilityPresentation = "inline" | "peek" | "stage" | "focus";
 
 /** scene：布局壳（嵌套链第一层） */
 export interface SurfaceScene {

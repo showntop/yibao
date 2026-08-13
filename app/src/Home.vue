@@ -16,6 +16,7 @@ import DataView from "./components/DataView.vue";
 import SettingsView from "./components/SettingsView.vue";
 import appLogo from "./assets/logo.png";
 import { onPendingConfirms } from "./lib/brain";
+import { decideSurface, type Attention, type Presentation } from "./lib/surface-policy";
 
 // 主屏（home）= 对话 + 信息面板的融合体（AI 原生：对话是主入口，动态/回顾/插件一瞥都在右侧）
 type Tab = "home" | "plugins" | "data" | "settings";
@@ -73,9 +74,13 @@ const clockText = computed(() => new Intl.DateTimeFormat("zh-CN", {
   hour12: false,
 }).format(clockNow.value));
 
-type SurfaceAttention = "available" | "stage" | "restore";
-type CapabilityPresentation = "stage" | "focus";
-type CapabilitySurfaceEvent = CapabilityRailSurface & { attention: SurfaceAttention };
+// Phase 1：surface 裁决事件——后端建议（presentation/attention）+ 前端 explicit 推断一起进裁决器
+interface CapabilitySurfaceEvent extends CapabilityRailSurface {
+  explicit: boolean;
+  suggested: Presentation | null;
+  attention: Attention;
+  supported?: Presentation[];
+}
 type HomePluginsRef = {
   backToList: () => void;
   suspendSurface: () => void;
@@ -86,11 +91,11 @@ type HomePluginsRef = {
 const pluginHost = ref<HomePluginsRef | null>(null);
 const capability = ref<CapabilityRailSurface | null>(null);
 const surfaceVisible = ref(false);
-const presentation = ref<CapabilityPresentation>("stage");
+const presentation = ref<Presentation>("stage");
 const sceneActive = computed(() => tab.value === "home" && surfaceVisible.value && capability.value !== null);
 const activityBusy = computed(() => panelState.value !== "idle");
 // 场景布局（scene）持久化在 surface 域：hydrate 完成后 onMounted 读入，watch 写回
-let savedScene: { panel: string; visible: boolean; presentation: CapabilityPresentation } | null = null;
+let savedScene: { panel: string; visible: boolean; presentation: Presentation } | null = null;
 let restorePending = false;
 // 恢复只允许在启动后的短暂窗口内发生：pullCache 会从 surface 域回退并发出首个 surface；
 // 超时未匹配就放弃 pending，防止后续用户手动操作被旧布局"拽回去"。
@@ -138,10 +143,33 @@ function onSurface(surface: CapabilityRailSurface) {
   }
 }
 
+// 待 Inline 回执（Task 5）/ 活动轨（Task 6）接入的挂点
+const pendingInline = ref<CapabilitySurfaceEvent | null>(null);
+const activityFeed = ref<CapabilitySurfaceEvent[]>([]);
+
 function onPanelAvailable(surface: CapabilitySurfaceEvent) {
   capability.value = surface;
-  // 插件库里的明确点击直接展开；模型自行产出的 panel 只进入活动胶囊，避免抢焦点。
-  if (surface.attention === "stage" || surfaceVisible.value) showSurface();
+  // 表面裁决：模型最多自动展开到 peek；stage/focus 必须有明确意图（裁决器是唯一判据）。
+  const { presentation: p, show } = decideSurface({
+    suggested: surface.suggested,
+    attention: surface.attention,
+    explicit: surface.explicit,
+    current: surfaceVisible.value ? presentation.value : null,
+    supported: surface.supported,
+  });
+  if (!show) {
+    // quiet：只记入活动轨，不展开任何表面（Task 6 消费）
+    activityFeed.value.push(surface);
+    return;
+  }
+  if (p === null || p === "inline") {
+    // null 理论不可达（quiet 已 return）；inline：过程行原地收束为回执卡（Task 5 消费），不开面板
+    if (p === "inline") pendingInline.value = surface;
+    return;
+  }
+  // peek/stage/focus：进入主屏场景（peek 由 Task 5 的浮层承载，stage/focus 走既有场景布局）
+  presentation.value = p;
+  showSurface();
 }
 
 function showSurface() {

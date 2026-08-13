@@ -23,29 +23,31 @@ import {
 } from "../lib/brain";
 import { procLabel, procSkip, procResultSuffix } from "../lib/proc";
 import { sessionStore } from "../state/store";
+import type { Attention, Presentation } from "../lib/surface-policy";
 
 type AvatarState = "idle" | "listen" | "think" | "work" | "say";
-type CapabilityPresentation = "stage" | "focus";
-interface CapabilitySurfaceEvent {
-  panel: string;
-  title: string;
-  plugin: string;
-  objectTitle?: string;
-  attention: "available" | "stage" | "restore";
-}
 const props = withDefaults(defineProps<{
   scene?: boolean;
-  presentation?: CapabilityPresentation;
+  presentation?: Presentation;
 }>(), {
   scene: false,
   presentation: "stage",
 });
+/** 面板身份元数据（锚点定位用，不带裁决字段） */
+type SurfaceMeta = { panel: string; title: string; plugin: string; objectTitle?: string };
+/** 父级 surface 裁决事件：后端建议（suggested/attention/supported）+ 前端 explicit 推断一起走裁决器 */
+interface CapabilitySurfaceEvent extends SurfaceMeta {
+  explicit: boolean;
+  suggested: Presentation | null;
+  attention: Attention;
+  supported?: Presentation[];
+}
 // state：同步给父级侧边栏团子（插件页活跃时团子跟着面板会话走）
 // panel：新面板打开时外发（父级自动切到本页；同面板刷新/挂载补拉不发，不抢用户所在页）
 const emit = defineEmits<{
   state: [AvatarState];
   panel: [surface: CapabilitySurfaceEvent];
-  surface: [surface: Omit<CapabilitySurfaceEvent, "attention">];
+  surface: [surface: SurfaceMeta];
   close: [];
   focus: [];
 }>();
@@ -204,12 +206,14 @@ async function openPluginPanel(p: PluginInfo, panel: PluginPanelEntry, event?: M
 }
 
 // ---- 当前面板：kind="panel" 事件整体替换刷新（webview 非空 → webview 面板，否则 schema 面板）----
+// hints：后端随 panel 事件透传的表面建议（presentation/attention/surfaces），父级裁决用
 const current = ref<{
   panel: string;
   title: string;
   schema: any;
   webview: { html?: string } | null;
   data: Record<string, unknown>;
+  hints?: { presentation: Presentation | null; attention: Attention; surfaces?: Presentation[] };
 } | null>(null);
 const errorText = ref(""); // 面板内顶部错误细条（不进对话气泡）
 let unlisten: (() => void) | null = null;
@@ -313,8 +317,15 @@ function setCurrent(v: NonNullable<typeof current.value>, silent = false) {
   };
   emit("surface", meta);
   if (isNewPanel && !silent) {
-    const explicitlyRequested = requestedPlugin === plugin && Date.now() <= requestedUntil;
-    emit("panel", { ...meta, attention: explicitlyRequested ? "stage" : "available" });
+    // 表面裁决输入：本地时间窗推断只是 explicit 的来源之一；presentation/attention 从后端透传
+    const explicit = requestedPlugin === plugin && Date.now() <= requestedUntil;
+    emit("panel", {
+      ...meta,
+      explicit,
+      suggested: v.hints?.presentation ?? null,
+      attention: v.hints?.attention ?? "suggest",
+      supported: v.hints?.surfaces ?? undefined,
+    });
   }
   requestedUntil = 0;
   if (wasList) void nextTick(() => growIn());
@@ -376,6 +387,11 @@ function onEvent(e: BrainEvent) {
         schema: (e.payload?.schema as any) ?? null,
         webview: (e.payload?.webview as { html?: string } | null) ?? null,
         data: e.payload?.data ?? {},
+        hints: {
+          presentation: (e.payload?.presentation as Presentation | null | undefined) ?? null,
+          attention: (e.payload?.attention as Attention | undefined) ?? "suggest",
+          surfaces: e.payload?.surfaces as Presentation[] | undefined,
+        },
       });
       break;
     case "action_proposed":

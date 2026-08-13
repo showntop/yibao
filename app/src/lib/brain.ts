@@ -46,6 +46,19 @@ export interface PanelPayload {
   /** webview 面板：插件 HTML 文本（父侧注入桥 JS 后以 iframe srcdoc 渲染）；schema 面板无此字段 */
   webview?: { html?: string } | null;
   data?: Record<string, unknown>;
+  // ---- 能力表面提示（Phase 1）：sidecar 透传的技能建议，宿主裁决用；缺省按老规则 ----
+  /** 技能建议的展示级别（建议非命令）；旧插件缺省 null */
+  presentation?: "inline" | "peek" | "stage" | "focus" | null;
+  /** 注意力级别；旧插件缺省 "suggest" */
+  attention?: "quiet" | "suggest" | "focus";
+  /** 跨应用接力对象 {type,id,title}；不依赖面板 DOM */
+  object?: { type?: string; id?: string; title?: string } | null;
+  /** 面板声明的支持表面范围（manifest [[panel]].surfaces）；缺省 = 全档 */
+  surfaces?: string[];
+  /** 面板声明的最小宽度（px）；宿主窄窗降级用 */
+  min_width?: number;
+  /** 发起动作 id：前端把表面锚定到对应的过程行 */
+  origin?: string;
 }
 
 /** final_reply 携带的 run 统计（sidecar loop 聚合：token/费用/耗时）。 */
