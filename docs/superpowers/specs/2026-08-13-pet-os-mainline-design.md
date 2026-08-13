@@ -198,7 +198,10 @@ Phase 1 是最大杠杆：Slice 1 已把路铺好（scene 持久化、Stage/Focu
 
 **manifest 声明（`_load_panels`）：** `[[panel]]` 新增 `surfaces`（合法值 inline/peek/stage/focus，非法值静默过滤、全非法回落全档）与 `min_width`（非正数忽略）；解析结果随 `panel_payload` 顶层透传（`surfaces`/`min_width`），供宿主裁决回落。
 
-**裁决器硬规则（`app/src/lib/surface-policy.ts`）：** 模型/插件**自动最多展开到 peek**——stage/focus 必须有用户明确意图（explicit）；attention=quiet 一律只进活动轨不展开；面板不支持的档位向下回落；已开着的 stage/focus 不因新结果降级。6 条单测固化。
+**裁决器硬规则（`app/src/lib/surface-policy.ts`）：** 模型/插件**自动最多展开到 peek**——stage/focus 必须有用户明确意图（explicit）；attention=quiet 一律只进活动轨不展开；面板不支持的档位向下回落，**连最低支持档都超过自动上限时不自动展开、只记账进活动轨**；已开着的 stage/focus 不因新结果降级，但降级豁免不得越过面板支持范围。11 条单测固化。
+
+> **Review 修正（`ab19488`）：** 首版存在三处击穿。① `supported` 回落的兜底会把档位抬回 stage/focus，而自动上限在回落**之前**施加、不再复查——面板声明 `surfaces=["stage","focus"]`（coding 类面板的自然声明）时，模型自作主张即可开 stage/focus，正是本阶段要根治的「结果一回来就跳页」；且兜底取的是未排序原数组首元素，结果依赖 manifest 里的声明顺序。② `current` 抬升绕过 `supported`，会给只支持 inline/peek 的面板返回 focus。③ Inline「展开」/ 活动轨点开硬编码 stage、不查 `supported`。
+> 修正要点：支持范围先升序规整（消除顺序依赖）；**自动上限挪到回落之后施加**；explicit 路径统一走裁决器。该缺陷当时未触发——`_load_panels` 未声明时默认全档，而当时无插件声明 `surfaces`；但它会在该特性首次被真正使用时立刻发作。
 
 **接线：** HomePlugins 本地时间窗推断降级为 `explicit` 的**来源之一**（用户点插件库确属明确意图），`presentation`/`attention`/`surfaces` 改从 panel 事件 payload 读取；Home 的 `onPanelAvailable` 改用 `decideSurface` 裁决，按结果分发到 活动轨 / Inline / Peek / Stage/Focus。
 
@@ -206,6 +209,6 @@ Phase 1 是最大杠杆：Slice 1 已把路铺好（scene 持久化、Stage/Focu
 
 **活动轨取舍：** 三态胶囊（运行中/待批准/已完成）数据源本阶段接**内存态**（`panelState` + 待批准队列 `onPendingConfirms` + quiet 结果）；刷新即丢，权威持久化推迟到 Phase 2 TaskTimeline——已知且可接受的分期取舍。**位置决策变更**：计划原定「顶栏右侧」，实装改为底部固定横条——顶栏右侧已被当前能力胶囊 + 窗口按钮占满且无横向滚动空间；底部横条不抢任何 tab 的既有控件，窄窗自然横滚。`surface_id` 本阶段用 `panel` ref 代替。
 
-**验证：** sidecar 905 passed（+5 新测：表面透传×2、manifest 声明×3）；vue-tsc / vite build / vitest 65 passed（+6 裁决器测试）；cargo check Finished。
+**验证：** sidecar 905 passed（+5 新测：表面透传×2、manifest 声明×3）；vue-tsc / vite build / vitest **70 passed**（裁决器 11 条：初版 6 + review 回归 5）；cargo check Finished。
 
 **待真机验收**（自动化无法覆盖，对应计划 Task 7 Step 2 七条）：①「记一下这句话」只出 Inline 不开面板；②模型自作主张最多 Peek、不切顶层导航；③插件库明确点击直达 Stage；④Peek Esc 缩回原锚点、背后对话保持；⑤coding 长任务 → 活动轨运行中胶囊 → 点击恢复；⑥待批准琥珀胶囊不抢输入焦点；⑦`surfaces=["inline","peek"]` 的插件被要求 focus 回落 peek 不崩。真机打包已通过（`tauri build --debug` 出 `.app`），七条交互待用户跑 App 逐条确认。
