@@ -147,7 +147,24 @@ const SEARCH_PROVIDERS: { id: SearchProvider; label: string }[] = [
   { id: "tavily", label: "Tavily（API key）" },
   { id: "serper", label: "Serper（API key）" },
 ];
-const KEY_PROVIDERS: SearchProvider[] = ["brave", "tavily", "serper"];
+type KeyProvider = "brave" | "tavily" | "serper";
+const KEY_PROVIDERS: KeyProvider[] = ["brave", "tavily", "serper"];
+
+/** 6 值联合收窄到「需要 key 的 3 个」；不是则 null。模板与逻辑共用，避免依赖模板收窄。 */
+function asKeyProvider(p: SearchProvider): KeyProvider | null {
+  return (KEY_PROVIDERS as readonly SearchProvider[]).includes(p) ? (p as KeyProvider) : null;
+}
+
+function searchKeyOf(p: SearchProvider): string {
+  const k = asKeyProvider(p);
+  return k ? searchKeys.value[k] : "";
+}
+
+function updateSearchKey(p: SearchProvider, v: string): void {
+  const k = asKeyProvider(p);
+  if (k) void setSearchKey(k, v);
+}
+
 const searchProvider = ref<SearchProvider>("browser");
 const searchSearxngUrl = ref("");
 const searchKeys = ref<{ brave: string; tavily: string; serper: string }>({ brave: "", tavily: "", serper: "" });
@@ -655,15 +672,15 @@ onUnmounted(() => {
               @change="setSearchSearxngUrl(($event.target as HTMLInputElement).value)"
             />
           </label>
-          <template v-if="KEY_PROVIDERS.includes(searchProvider)">
+          <template v-if="asKeyProvider(searchProvider)">
             <div class="s-note">API key 此处填写优先于 .env（YIBAO_SEARCH_{{ searchProvider.toUpperCase() }}_KEY）；留空 = 用 .env 配置。</div>
             <label class="s-field">
               <span class="s-label">{{ searchProvider === "brave" ? "Brave" : searchProvider === "tavily" ? "Tavily" : "Serper" }} API Key</span>
               <input
                 type="password"
-                :value="searchKeys[searchProvider]"
-                :placeholder="searchKeys[searchProvider] ? '已配置（输入以更换）' : '未配置'"
-                @change="setSearchKey(searchProvider, ($event.target as HTMLInputElement).value)"
+                :value="searchKeyOf(searchProvider)"
+                :placeholder="searchKeyOf(searchProvider) ? '已配置（输入以更换）' : '未配置'"
+                @change="updateSearchKey(searchProvider, ($event.target as HTMLInputElement).value)"
               />
             </label>
           </template>
