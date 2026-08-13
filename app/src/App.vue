@@ -137,7 +137,7 @@ function markExplicit(pluginId: string): void {
 }
 
 // action id → 过程行下标：panel 事件按 origin 找回该行补表面属性。
-// 必须与 procIdx 分开：procIdx 在 action_result 就删了（:575），
+// 必须与 procIdx 分开：procIdx 在 action_result 就删了，
 // 而 panel 事件在 action_result 之后才到（loop.py:331 → :337）。
 const surfaceAnchor = new Map<string, number>();
 
