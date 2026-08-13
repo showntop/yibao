@@ -308,15 +308,22 @@ Expected: FAIL —— `Failed to resolve import "./explicit-intent"`
 /** 只认强指令动词。「看看」「查查」「有没有」这类语气太弱，是查询不是导航。 */
 const OPEN_VERBS = ["打开", "展开", "显示", "调出", "给我看"];
 
+/** 句末疑问语气：用户在问，不是在下打开指令。 */
+const INTERROGATIVE_END = /[吗呢？?]\s*$/;
+
 export function matchExplicitOpen(text: string, plugins: { id: string; name: string }[]): string | null {
   if (!text || !plugins.length) return null;
-  if (!OPEN_VERBS.some((v) => text.includes(v))) return null;
-  const hit = plugins.find((p) => (p.name && text.includes(p.name)) || (p.id && text.includes(p.id)));
+  const t = text.trim();
+  if (INTERROGATIVE_END.test(t)) return null;
+  if (!OPEN_VERBS.some((v) => t.startsWith(v))) return null;
+  const hit = plugins.find((p) => (p.name && t.includes(p.name)) || (p.id && t.includes(p.id)));
   return hit ? hit.id : null;
 }
 ```
 
-> **已知边界（不修）：** 「打开闪念列表」匹配不到名为「闪念盘」的插件，会退化成可点行加一次点击。这是宁缺毋滥的预期代价；真机验收若发现漏报过多，再考虑把面板标题也纳入匹配材料。
+**判据是「整句以强动词开头」，不是「句中含强动词」。** 这条锚定是本模块的核心：否定（「不要打开日历」）、疑问（「能打开日历吗」）、陈述（「闪念盘里有牛奶吗」）都会把别的词放在动词前面，因而天然不命中，**不需要枚举任何 blocklist**。用两个全串 `includes` 的写法会让这三类全部误命中并抢屏——那正是本模块最该避免的。句末疑问词是唯一的补充规则，兜底「打开日历了吗」这类动词确实开头的疑问句。
+
+> **已知边界（不修）：** 「打开闪念列表」匹配不到名为「闪念盘」的插件；「帮我打开日历」因礼貌前缀破坏锚定也不命中。两者都退化成可点行加一次点击——宁缺毋滥的预期代价。真机验收若发现漏报过多，再考虑白名单少量礼貌前缀或把面板标题纳入匹配材料。
 
 - [ ] **Step 4: 跑测试确认通过**
 
@@ -738,7 +745,7 @@ function openPanelWindow(): void {
 - [ ] **Step 7: 类型、构建与单测闸门**
 
 Run: `cd app && npx vue-tsc --noEmit && npx vite build && npx vitest run`
-Expected: 三者 exit 0，vitest **87 passed**（基线 70 + Task 2 的 6 + Task 3 的 11）
+Expected: 三者 exit 0，vitest **94 passed**（基线 70 + Task 2 实际落地 13 + Task 3 的 11）
 
 - [ ] **Step 8: Commit**
 
@@ -762,7 +769,7 @@ cd sidecar && uv run pytest
 cd ../app && npx vue-tsc --noEmit && npx vite build && npx vitest run
 cd src-tauri && cargo check
 ```
-Expected: pytest 909 passed；vitest 87 passed；vue-tsc / vite build / cargo check 全 exit 0
+Expected: pytest 909 passed；vitest 94 passed；vue-tsc / vite build / cargo check 全 exit 0
 
 - [ ] **Step 2: 真机验收**
 
