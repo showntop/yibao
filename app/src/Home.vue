@@ -13,6 +13,7 @@ import HomePlugins from "./components/HomePlugins.vue";
 import CapabilityConversationRail, { type CapabilityRailSurface } from "./components/CapabilityConversationRail.vue";
 import InlineReceipt from "./components/InlineReceipt.vue";
 import PeekSurface from "./components/PeekSurface.vue";
+import ActivityShelf from "./components/ActivityShelf.vue";
 import { sessionStore, clearLegacySessionKeys } from "./state/store";
 import DataView from "./components/DataView.vue";
 import SettingsView from "./components/SettingsView.vue";
@@ -163,8 +164,9 @@ function onPanelAvailable(surface: CapabilitySurfaceEvent) {
     supported: surface.supported,
   });
   if (!show) {
-    // quiet：只记入活动轨，不展开任何表面（Task 6 消费）
+    // quiet：只记入活动轨，不展开任何表面；最多保留 12 条，最旧出队
     activityFeed.value.push(surface);
+    if (activityFeed.value.length > 12) activityFeed.value.shift();
     return;
   }
   if (p === null || p === "inline") {
@@ -186,6 +188,13 @@ function onPanelAvailable(surface: CapabilitySurfaceEvent) {
 function upgradeInline() {
   if (!pendingInline.value) return;
   pendingInline.value = null;
+  presentation.value = "stage";
+  showSurface();
+}
+
+/** 活动轨点开：用户明确要求回看 → 升到 stage 场景（面板载荷已存 surface 域）。 */
+function openFromActivity(item: { panel: string; title: string; plugin: string; objectTitle?: string }) {
+  capability.value = activityFeed.value.find((s) => s.panel === item.panel) ?? capability.value;
   presentation.value = "stage";
   showSurface();
 }
@@ -447,6 +456,9 @@ function close() {
       :data="peekPanel?.data ?? {}"
       @close="peekSurface = null"
     />
+
+    <!-- 活动轨（Phase 1）：quiet 结果只记账，点开回看升到 stage -->
+    <ActivityShelf v-if="activityFeed.length" :items="activityFeed" @open="openFromActivity" />
   </div>
 </template>
 
