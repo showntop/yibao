@@ -406,9 +406,10 @@ describe("deactivateAll", () => {
     expect(rows[2].surface!.live).toBe(false);
   });
 
-  it("没有表面属性的行不受影响", () => {
-    const rows = [{}, {}];
-    expect(() => deactivateAll(rows)).not.toThrow();
+  it("已失活的行保持失活（幂等）", () => {
+    const rows = [{ surface: { panel: "p", title: "t", count: null, live: false } }];
+    deactivateAll(rows);
+    expect(rows[0].surface.live).toBe(false);
   });
 });
 ```
@@ -646,7 +647,22 @@ async function launchPlugin(p: PluginInfo) {
 
 `plugins.value`（:408）由 `loadPlugins()`（:437）填充。用户若从未进过插件视图它是空数组，窄规则自然不命中——可接受的降级，用户点一下行即可。
 
-- [ ] **Step 4: 记锚点并改写 case "panel"**
+- [ ] **Step 4: 抽开窗动作**
+
+在 `launchPlugin` 附近加（`case "panel"` 与行点击共用，避免两处各写一遍收窗逻辑）。**必须先于 Step 5 建立**，Step 5 的代码会调用它：
+
+```ts
+/** 开面板浮窗 + 宠物窗收回球形态。
+ *  行点击不必携带面板身份：可点行恒为最新那条，而面板窗内容渲染器本就
+ *  跟着最新 panel 事件走，两者天然指向同一个面板。 */
+function openPanelWindow(): void {
+  panelOpen.value = true;
+  void openPanel();
+  if (expanded.value) void collapse();
+}
+```
+
+- [ ] **Step 5: 记锚点并改写 case "panel"**
 
 `action_proposed`（:561-564）在既有 `procIdx.set` 旁加一行：
 
@@ -696,20 +712,7 @@ async function launchPlugin(p: PluginInfo) {
     }
 ```
 
-- [ ] **Step 5: 抽开窗动作并渲染**
-
-在 `launchPlugin` 附近加（`case "panel"` 与行点击共用，避免两处各写一遍收窗逻辑）：
-
-```ts
-/** 开面板浮窗 + 宠物窗收回球形态。
- *  行点击不必携带面板身份：可点行恒为最新那条，而面板窗内容渲染器本就
- *  跟着最新 panel 事件走，两者天然指向同一个面板。 */
-function openPanelWindow(): void {
-  panelOpen.value = true;
-  void openPanel();
-  if (expanded.value) void collapse();
-}
-```
+- [ ] **Step 6: 渲染**
 
 渲染处（`App.vue:1155-1166`）把 `v-for` 上移到 `<template>`，有表面属性的行改走 `SurfaceLine`：
 
@@ -732,12 +735,12 @@ function openPanelWindow(): void {
 
 > `v-for` 与 `:key` 只能留在 `<template>` 上，别在 `<Bubble>` 上也留一份。
 
-- [ ] **Step 6: 类型、构建与单测闸门**
+- [ ] **Step 7: 类型、构建与单测闸门**
 
 Run: `cd app && npx vue-tsc --noEmit && npx vite build && npx vitest run`
 Expected: 三者 exit 0，vitest **87 passed**（基线 70 + Task 2 的 6 + Task 3 的 11）
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add app/src/App.vue
