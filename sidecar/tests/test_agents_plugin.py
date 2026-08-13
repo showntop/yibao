@@ -173,7 +173,11 @@ def test_api_whitelist_and_panel_schema(env):
     assert schema["card"]["actions"], "面板没有卡片 action"
     for a in schema["card"]["actions"]:  # 面板引用的 method 必须都在白名单（防手滑）
         assert get_api(a["method"]) is not None, a["method"]
-    assert get_panel("agents:tasks") == schema
+    registered = get_panel("agents:tasks")
+    assert {k: registered[k] for k in ("type", "bind", "columns", "card")} == {
+        k: schema[k] for k in ("type", "bind", "columns", "card")
+    }
+    assert registered["surfaces"] == ["inline", "peek", "stage", "focus"]  # 未声明 → 默认全档
 
 
 # ---------- 适配表（argv 构造 + 摘要解析）----------

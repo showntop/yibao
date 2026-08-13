@@ -653,7 +653,8 @@ def test_panel_schema_registered_and_tool_result_carries_ref(data_dir, tmp_path)
     _write_plugin(tmp_path, "notes", NOTES_PANEL_MANIFEST, {"panel/list.schema.json": LIST_SCHEMA})
     reg = SkillRegistry()
     assert _load(tmp_path, reg) == {"notes": "ok"}
-    assert get_panel("notes:list") == {"type": "list", "bind": {"items": "$data.rows"}}
+    assert get_panel("notes:list")["type"] == "list"
+    assert get_panel("notes:list")["bind"] == {"items": "$data.rows"}
     keep = reg.get("notes.keep")
     r = keep.run({"text": "x"}, keep.plugin_ctx)
     assert r.success and r.panel == "notes:list"  # 成功才带 panel 引用
@@ -696,7 +697,8 @@ def test_webview_panel_loaded_as_html(data_dir, tmp_path):
 
     reg = SkillRegistry()
     assert _load(tmp_path, reg) == {"webv": "ok"}
-    assert get_panel("webv:list") == {"type": "webview", "html": "<html><body>hi</body></html>"}
+    assert get_panel("webv:list")["type"] == "webview"
+    assert get_panel("webv:list")["html"] == "<html><body>hi</body></html>"
 
 
 def test_unknown_panel_type_skipped(data_dir, tmp_path, capsys):
@@ -723,6 +725,59 @@ def test_panel_missing_src_skipped(data_dir, tmp_path, capsys):
     assert "跳过" in capsys.readouterr().err
 
 
+# ---------- Phase 1 Task 2：manifest 面板声明 surfaces/min_width ----------
+
+
+def test_panel_declares_supported_surfaces(data_dir, tmp_path):
+    """manifest [[panel]] 的 surfaces/min_width 被解析进面板注册表（宿主裁决回落依据）。"""
+    manifest = NOTES_PANEL_MANIFEST.replace(
+        'type = "schema"\nname = "list"',
+        'type = "schema"\nname = "list"\nsurfaces = ["peek", "stage"]\nmin_width = 720',
+    )
+    _write_plugin(tmp_path, "notes", manifest, {"panel/list.schema.json": LIST_SCHEMA})
+    reg = SkillRegistry()
+    assert _load(tmp_path, reg) == {"notes": "ok"}
+    from yibao_brain.plugins import get_panel
+
+    panel = get_panel("notes:list")
+    assert panel["surfaces"] == ["peek", "stage"]
+    assert panel["min_width"] == 720
+
+
+def test_panel_surfaces_default_all(data_dir, tmp_path):
+    """未声明 → 默认全档支持（inline/peek/stage/focus），宿主裁决不误伤。"""
+    _write_plugin(tmp_path, "notes", NOTES_PANEL_MANIFEST, {"panel/list.schema.json": LIST_SCHEMA})
+    reg = SkillRegistry()
+    _load(tmp_path, reg)
+    from yibao_brain.plugins import get_panel
+
+    assert get_panel("notes:list")["surfaces"] == ["inline", "peek", "stage", "focus"]
+
+
+def test_panel_surfaces_invalid_filtered(data_dir, tmp_path):
+    """非法表面档位静默过滤（不报错不拖垮加载）；全非法 → 回落全档默认。"""
+    manifest = NOTES_PANEL_MANIFEST.replace(
+        'type = "schema"\nname = "list"',
+        'type = "schema"\nname = "list"\nsurfaces = ["fullscreen", "peek", "bogus"]',
+    )
+    _write_plugin(tmp_path, "notes", manifest, {"panel/list.schema.json": LIST_SCHEMA})
+    reg = SkillRegistry()
+    assert _load(tmp_path, reg) == {"notes": "ok"}
+    from yibao_brain.plugins import get_panel
+
+    assert get_panel("notes:list")["surfaces"] == ["peek"]
+
+    # 全是非法值 → 等于未声明，默认全档
+    manifest2 = NOTES_PANEL_MANIFEST.replace(
+        'type = "schema"\nname = "list"',
+        'type = "schema"\nname = "list"\nsurfaces = ["hologram"]',
+    )
+    _write_plugin(tmp_path, "notes2", manifest2.replace('id = "notes"', 'id = "notes2"').replace("notes:", "notes2:"), {"panel/list.schema.json": LIST_SCHEMA})
+    reg2 = SkillRegistry()
+    assert _load(tmp_path, reg2)["notes2"] == "ok"
+    assert get_panel("notes2:list")["surfaces"] == ["inline", "peek", "stage", "focus"]
+
+
 def test_panel_payload_webview_shape(data_dir, tmp_path):
     """webview 面板事件 payload：{panel, schema: None, webview: {html}, data}；schema 面板形状不变。"""
     from yibao_brain.plugins import panel_payload
@@ -734,13 +789,14 @@ def test_panel_payload_webview_shape(data_dir, tmp_path):
     _load(tmp_path, reg)
 
     r = ActionResult(success=True, data={"rows": [1]}, panel="webv:list")
-    assert panel_payload(r) == {
-        "panel": "webv:list",
-        "title": "webv · list",
-        "schema": None,
-        "webview": {"html": "<html>wv</html>"},
-        "data": {"rows": [1]},
-    }
+    p = panel_payload(r)
+    assert p["panel"] == "webv:list"
+    assert p["title"] == "webv · list"
+    assert p["schema"] is None
+    assert p["webview"] == {"html": "<html>wv</html>"}
+    assert p["data"] == {"rows": [1]}
+    # 未声明 surfaces → 默认全档随 payload 透传（宿主裁决用）
+    assert p["surfaces"] == ["inline", "peek", "stage", "focus"]
     r2 = ActionResult(success=True, data={"x": 1})  # 无 panel 引用 → None
     assert panel_payload(r2) is None
 

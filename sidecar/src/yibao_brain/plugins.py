@@ -25,6 +25,8 @@ from .skills import Skill, SkillContext, SkillRegistry
 # 合法 capability 集合（v2 §3.3）；host 不由加载器注入（invoker 执行时嫁接）
 # process：声明本插件会 spawn 子进程（如调本机 CLI 智能体）；仅声明不注入，供审计/闸门识别
 CAPABILITIES = {"db", "memory", "http", "llm", "host", "reminders", "process"}
+# 能力表面四档（调研 §12.7）：manifest 面板可声明支持哪些档；非法值静默过滤
+_SURFACE_LEVELS = ("inline", "peek", "stage", "focus")
 # 声明式 tool 类型 → 所需 capability（加载期校验，manifest 未声明即加载失败）
 TOOL_TYPE_CAPABILITY = {"db": "db", "http": "http", "prompt": "llm"}
 
@@ -329,19 +331,33 @@ def get_widgets() -> dict[str, dict]:
     return {ref: dict(decl) for ref, decl in _WIDGETS.items()}
 
 
+def _surface_decl_from(panel) -> dict:
+    """面板声明的表面范围（surfaces/min_width）→ payload 顶层字段，供宿主裁决回落。"""
+    if not isinstance(panel, dict):
+        return {}
+    out: dict = {}
+    if "surfaces" in panel:
+        out["surfaces"] = panel["surfaces"]
+    if "min_width" in panel:
+        out["min_width"] = panel["min_width"]
+    return out
+
+
 def panel_payload(result) -> dict | None:
     """result.panel 非空时构造 panel 事件 payload（loop 与 panel_action 共用）。
 
     schema 面板：{panel, title, schema, data}；webview 面板：{panel, title, schema: None, webview: {html}, data}
     （html 随事件发出，前端 iframe srcdoc 渲染；schema 面板 payload 其余形状保持不变）。
+    面板声明过 surfaces/min_width 时顶层同步带上（宿主裁决回落依据）。
     """
     if not result.panel:
         return None
     title = get_panel_title(result.panel)
     panel = get_panel(result.panel)
+    decl = _surface_decl_from(panel)
     if isinstance(panel, dict) and panel.get("type") == "webview" and "html" in panel:
-        return {"panel": result.panel, "title": title, "schema": None, "webview": {"html": panel["html"]}, "data": result.data}
-    return {"panel": result.panel, "title": title, "schema": panel, "data": result.data}
+        return {"panel": result.panel, "title": title, "schema": None, "webview": {"html": panel["html"]}, "data": result.data, **decl}
+    return {"panel": result.panel, "title": title, "schema": panel, "data": result.data, **decl}
 
 
 def _load_panels(child: Path, pid: str, manifest: dict, registry: SkillRegistry) -> None:
@@ -379,6 +395,15 @@ def _load_panels(child: Path, pid: str, manifest: dict, registry: SkillRegistry)
                 print(f"[yibao] 插件 {pid} widget {ref} 无效（已跳过）：{e}", file=sys.stderr)
                 continue
             _WIDGETS[ref] = {"method": full, "open": open_method, "title": _PANEL_TITLES[ref]}
+        # 表面声明（调研 §12.6）：支持的档位 + 最小宽度；非法值静默过滤——单插件不该拖垮加载。
+        # 未声明 → 默认全档支持（裁决器按建议走，宿主不误伤）。min_width 供宿主窄窗降级用。
+        surfaces = [s for s in (p.get("surfaces") or []) if s in _SURFACE_LEVELS] or list(_SURFACE_LEVELS)
+        parsed["surfaces"] = surfaces
+        mw = p.get("min_width")
+        if isinstance(mw, bool) or not isinstance(mw, (int, float)) or mw <= 0:
+            mw = None
+        if mw is not None:
+            parsed["min_width"] = int(mw)
         _PANELS[ref] = parsed
 
 
