@@ -128,12 +128,13 @@ let unlistenMoved: (() => void) | null = null;
 const panelOpen = ref(false); // 面板浮窗当前打开状态
 // 过程展示：action.id → 过程行（sys 淡色小字）在 bubbles 里的下标，结果回来原地更新
 const procIdx = new Map<string, number>();
-// explicit 时间窗：插件视图点击 / 窄规则命中两个来源共用
+// explicit run 标记：插件视图点击 / 窄规则命中两个来源共用，随本次 run 终态清理
 let requestedPlugin = "";
-let requestedUntil = 0;
 function markExplicit(pluginId: string): void {
   requestedPlugin = pluginId;
-  requestedUntil = Date.now() + 8000;
+}
+function clearExplicit(): void {
+  requestedPlugin = "";
 }
 
 // action id → 过程行下标：panel 事件按 origin 找回该行补表面属性。
@@ -423,6 +424,7 @@ function initial(name: string): string {
   return ch ? ch.toUpperCase() : "?";
 }
 const view = ref<PetView>("chat");
+const allPlugins = ref<PluginInfo[]>([]);
 const plugins = ref<PluginInfo[]>([]);
 const pluginErr = ref("");
 let clickTimer: ReturnType<typeof setTimeout> | null = null;
@@ -456,8 +458,10 @@ async function loadPlugins() {
   pluginErr.value = "";
   try {
     // 上限 8 个：插件是精选的，不会多；超出说明该做设置页了
-    plugins.value = (await invoke<PluginInfo[]>("list_plugins")).slice(0, 8);
+    allPlugins.value = await invoke<PluginInfo[]>("list_plugins");
+    plugins.value = allPlugins.value.slice(0, 8);
   } catch (err) {
+    allPlugins.value = [];
     plugins.value = [];
     pluginErr.value = String(err);
   }
@@ -470,7 +474,7 @@ async function launchPlugin(p: PluginInfo) {
   try {
     await panelAction(`${p.id}.list`, {});
   } catch (err) {
-    requestedUntil = 0;
+    clearExplicit();
     pluginErr.value = "启动失败：" + String(err);
   }
 }
@@ -646,6 +650,7 @@ function onEvent(e: BrainEvent) {
         showSpeechBubble();
         if (speechTimer) clearTimeout(speechTimer);
         speechTimer = setTimeout(hideSpeechBubble, 8000);
+        clearExplicit();
         break;
       }
       // 展开态：以完整文本为准收尾（兜底 chunk 丢失）；语音中保持 say 等 speaking_done
@@ -657,6 +662,7 @@ function onEvent(e: BrainEvent) {
         bubbles.value.push({ role: "ai", text: full });
       }
       if (state.value !== "say") state.value = "idle";
+      clearExplicit();
       break;
     }
     case "interrupted":
@@ -667,6 +673,7 @@ function onEvent(e: BrainEvent) {
         bubbles.value.push({ role: "ai", text: "已打断", halted: true });
       }
       state.value = "idle";
+      clearExplicit();
       break;
     case "speaking_done":
       state.value = "idle";
@@ -729,6 +736,7 @@ function onEvent(e: BrainEvent) {
       streamingIdx.value = null;
       pushWarn(e.text ?? "出错了");
       flashValence("error");
+      clearExplicit();
       break;
     case "listening":
       state.value = "listen";
@@ -760,9 +768,10 @@ function onEvent(e: BrainEvent) {
       // explicit 时出现——裁决器非 explicit 本就封顶 peek。
       const panel = e.payload?.panel ?? "";
       const title = e.payload?.title || panel || "插件面板";
+      const titleParts = title.split(" · ").map((part) => part.trim()).filter(Boolean);
+      const surfaceTitle = titleParts[titleParts.length - 1] || title;
       const plugin = panel.split(":", 1)[0] || panel;
-      const explicit = requestedPlugin === plugin && Date.now() <= requestedUntil;
-      requestedUntil = 0;
+      const explicit = requestedPlugin === plugin;
 
       // cast 与 HomePlugins.vue:391-393 同款：PanelPayload 里这些字段是宽类型，
       // 而裁决器要窄联合。安全性由 sidecar 保证——_load_panels 已按
@@ -777,7 +786,7 @@ function onEvent(e: BrainEvent) {
 
       // 先记痕：开窗与否都留一条可点行，用户关窗后仍能一键回去
       deactivateAll(bubbles.value);
-      const attr: SurfaceAttr = { panel, title, count: surfaceCount(e.payload?.data), live: true };
+      const attr: SurfaceAttr = { panel, title: surfaceTitle, count: surfaceCount(e.payload?.data), live: true };
       const at = e.payload?.origin ? surfaceAnchor.get(e.payload.origin) : undefined;
       const row = at !== undefined ? bubbles.value[at] : undefined;
       if (row) {
@@ -832,8 +841,7 @@ function onPerms(p: BrainPermissions) {
 async function submit(text: string) {
   bubbles.value.push({ role: "user", text });
   surfaceAnchor.clear();
-  const wanted = matchExplicitOpen(text, plugins.value);
-  if (wanted) markExplicit(wanted);
+  clearExplicit();
   state.value = "think";
   // 截图即问：有框选待提问 → 走 vision 直答（不占 run/对话历史）
   if (snipCtx.value) {
@@ -856,8 +864,11 @@ async function submit(text: string) {
   }
   try {
     await ensurePetConversation(); // 兜底：首启未取到会话时先建（否则消息不落库）
+    const wanted = matchExplicitOpen(text, allPlugins.value);
+    if (wanted) markExplicit(wanted);
     await runInput(msg, "pet", petConvId.value);
   } catch (err) {
+    clearExplicit();
     pushWarn("发送失败：" + String(err));
     state.value = "idle";
   }
@@ -995,6 +1006,7 @@ onMounted(async () => {
     await reloadMessages();
     sessionStore.window.updateState("pet", { visible: true, focusedConversationId: petConvId.value });
   } catch { /* 恢复失败不阻塞宠物窗启动 */ }
+  await loadPlugins();
   // 顶部边界自适应：监听窗口移动（拖动 setPosition 触发），贴顶时调整团子锚点
   try {
     scaleCached = (await getCurrentWindow().scaleFactor()) || 1;
