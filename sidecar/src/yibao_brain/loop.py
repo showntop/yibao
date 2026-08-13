@@ -67,6 +67,17 @@ async def _offload(fn, *args):
     return await asyncio.get_running_loop().run_in_executor(None, lambda: fn(*args))
 
 
+def _with_surface_hints(payload: dict, result: ActionResult, origin: str | None) -> dict:
+    """把技能的表面建议并进 panel 载荷。origin 供宿主做 matched-geometry 与返回定位。"""
+    return {
+        **payload,
+        "presentation": result.presentation,
+        "attention": result.attention,
+        "object": result.object,
+        "origin": origin,
+    }
+
+
 class AgentLoop:
     def __init__(
         self,
@@ -175,7 +186,8 @@ class AgentLoop:
             return payload
         refresh_id = getattr(self.skills.get(action.skill_id), "refresh", None)
         if not refresh_id:
-            return self._redirect_to_focused_webview(payload)
+            # hints 必须在 _redirect_to_focused_webview 之后并入：它重建 dict，会丢掉新字段
+            return _with_surface_hints(self._redirect_to_focused_webview(payload), result, action.id)
         r_params: dict = {}
         try:
             props = (
@@ -188,10 +200,10 @@ class AgentLoop:
             ToolCall(id=f"refresh_{action.id}", skill_id=refresh_id, params=r_params)
         )
         if self.invoker.decide(r_action) != Decision.AUTO:
-            return self._redirect_to_focused_webview(payload)
+            return _with_surface_hints(self._redirect_to_focused_webview(payload), result, action.id)
         r_result = self.invoker.execute(r_action, r_params)
         payload = panel_payload(r_result) or payload
-        return self._redirect_to_focused_webview(payload)
+        return _with_surface_hints(self._redirect_to_focused_webview(payload), result, action.id)
 
     def _redirect_to_focused_webview(self, payload: dict) -> dict:
         """用户正盯着同插件 webview 面板的同一条目（focus）→ 回跳改落到该 webview。

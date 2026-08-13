@@ -652,7 +652,13 @@ def test_run_emits_panel_event_after_action_result(tmp_path, monkeypatch):
     kinds = [e.kind for e in events]
     assert kinds.index("panel") == kinds.index("action_result") + 1  # 紧跟其后
     pe = next(e for e in events if e.kind == "panel")
-    assert pe.payload == {"panel": "notes:list", "title": "notes:list", "schema": {"type": "list"}, "data": {"rows": [1]}}
+    assert pe.payload["panel"] == "notes:list"
+    assert pe.payload["title"] == "notes:list"
+    assert pe.payload["schema"] == {"type": "list"}
+    assert pe.payload["data"] == {"rows": [1]}
+    # 旧插件不声明表面 → 默认值（presentation=None 宿主按老规则推断）
+    assert pe.payload["presentation"] is None
+    assert pe.payload["attention"] == "suggest"
 
 
 def test_arun_emits_panel_event_after_action_result(tmp_path, monkeypatch):
@@ -681,7 +687,10 @@ def test_panel_event_unknown_schema_gives_none(tmp_path):
     loop = _build_panel_loop(tmp_path, provider, _PanelSkill(ref="zz:ghost"))
     events = list(loop.run("go"))
     pe = next(e for e in events if e.kind == "panel")
-    assert pe.payload == {"panel": "zz:ghost", "title": "zz:ghost", "schema": None, "data": {"rows": [1]}}
+    assert pe.payload["panel"] == "zz:ghost"
+    assert pe.payload["title"] == "zz:ghost"
+    assert pe.payload["schema"] is None
+    assert pe.payload["data"] == {"rows": [1]}
 
 
 def test_no_panel_event_without_ref(tmp_path):
@@ -1226,3 +1235,74 @@ def test_arun_single_confirm_rejected_still_emits_error(tmp_path):
     assert "confirmation_needed" in kinds
     assert "error" in kinds
     assert not any(e.kind == "action_result" and e.result and e.result.data.get("did") for e in events)
+
+
+# ---------- Phase 1 Task 1：表面提示下沉（presentation/attention/object/origin） ----------
+
+
+class _SurfaceSkill(Skill):
+    """带表面提示的 panel 技能：presentation/attention/object 随 ActionResult 透传。"""
+
+    id = "surface_demo"
+    description = "演示表面提示"
+
+    def __init__(self, ref="notes:list", presentation=None, attention="suggest", object_=None):
+        self._ref = ref
+        self._presentation = presentation
+        self._attention = attention
+        self._object = object_
+
+    def run(self, params, ctx):
+        return ActionResult(
+            success=True,
+            data={"rows": [1]},
+            panel=self._ref,
+            presentation=self._presentation,
+            attention=self._attention,
+            object=self._object,
+        )
+
+
+def test_panel_event_carries_surface_hints(tmp_path, monkeypatch):
+    """技能声明的 presentation/attention/object 必须透传进 panel 事件——
+    宿主裁决需要这些信息，此前只能靠前端猜「是不是用户明确要的」。"""
+    from yibao_brain import plugins
+
+    monkeypatch.setitem(plugins._PANELS, "notes:list", {"type": "list"})
+    monkeypatch.delitem(plugins._PANEL_TITLES, "notes:list", raising=False)
+    skill = _SurfaceSkill(
+        presentation="inline",
+        attention="quiet",
+        object_={"type": "note", "id": "7", "title": "读书笔记"},
+    )
+    provider = _TwoStepProvider(
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="surface_demo", params={})]),
+        second=FakeProvider(text="done"),
+    )
+    loop = _build_panel_loop(tmp_path, provider, skill)
+    events = list(loop.run("go"))
+    ev = next(e for e in events if e.kind == "panel")
+    assert ev.payload["presentation"] == "inline"
+    assert ev.payload["attention"] == "quiet"
+    assert ev.payload["object"]["id"] == "7"
+    ar = next(e for e in events if e.kind == "action_result")
+    assert ev.payload["origin"] == ar.action.id  # 锚点 = 发起动作的 id
+
+
+def test_panel_event_defaults_when_skill_silent(tmp_path, monkeypatch):
+    """旧插件不声明 → presentation=None（宿主按老规则推断）、attention="suggest"。"""
+    from yibao_brain import plugins
+
+    monkeypatch.setitem(plugins._PANELS, "notes:list", {"type": "list"})
+    monkeypatch.delitem(plugins._PANEL_TITLES, "notes:list", raising=False)
+    skill = _SurfaceSkill(ref="notes:list")
+    provider = _TwoStepProvider(
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="surface_demo", params={})]),
+        second=FakeProvider(text="done"),
+    )
+    loop = _build_panel_loop(tmp_path, provider, skill)
+    events = list(loop.run("go"))
+    ev = next(e for e in events if e.kind == "panel")
+    assert ev.payload["presentation"] is None
+    assert ev.payload["attention"] == "suggest"
+    assert ev.payload["object"] is None

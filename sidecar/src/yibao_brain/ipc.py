@@ -31,6 +31,10 @@ class ActionResult(BaseModel):
     error: str = ""
     screenshot_path: str | None = None
     panel: str | None = None  # 面板引用「plugin_id:name」：执行成功时带上，壳侧渲染对应面板
+    # ---- 能力表面提示（调研 §12.7）：都是「建议」，最终展示级别由宿主裁决 ----
+    presentation: Literal["inline", "peek", "stage", "focus"] | None = None
+    attention: Literal["quiet", "suggest", "focus"] = "suggest"
+    object: dict | None = None  # {type,id,title}：跨应用接力用，不依赖面板 DOM
 
 
 EventKind = Literal[
