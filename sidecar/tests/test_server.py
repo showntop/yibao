@@ -2243,3 +2243,64 @@ def test_mobile_interrupt_scoped_to_mobile_surface(tmp_path):
             await asyncio.wait_for(serve_task, 5)
 
     asyncio.run(main())
+
+
+def test_confirm_mobile_unknown_bound_and_shell_cross_surface_dedup(tmp_path):
+    """/v1/confirm 两个负路径（真 HTTP 路径，serve_async 级）：
+    ① 未知 id 且 early_answers 已满 32 条 → 404（垃圾 id 不无界堆积）；
+    ② 壳 confirm_batch 已处理的 cid → 手机端再点 → 404（跨端防重，答案不滞留）。"""
+    import os
+    import queue as _q
+    os.environ["YIBAO_HTTP_PORT"] = "19864"
+    import yibao_brain.server as S
+
+    orig_load = S.load_settings
+    S.load_settings = lambda: {"http.token": "btok", "http.mobile_token": "mtok"}
+    inbox = _q.Queue()
+
+    async def main():
+        out = []
+        serve_task = asyncio.ensure_future(S.serve_async(
+            inbox.get, lambda m: out.append(m), use_real=False,
+            db_path=str(tmp_path / "cm.db"), provider=FakeProvider(text="ok"), http_enabled=True))
+        try:
+            await asyncio.sleep(0.4)  # 等服务起
+            import aiohttp
+
+            async with aiohttp.ClientSession() as sess:
+                # ② 先做跨端防重（干净状态）：壳 confirm_batch 兑现/缓存 shell_1
+                inbox.put({"type": "confirm_batch",
+                           "items": [{"id": "shell_1", "approved": True, "remember": False}]})
+                for _ in range(100):
+                    if any(m.get("type") == "confirm_batched" for m in out):
+                        break
+                    await asyncio.sleep(0.05)
+                assert any(m.get("type") == "confirm_batched" for m in out)
+                async with sess.post("http://127.0.0.1:19864/v1/confirm",
+                                     headers={"X-Yibao-Token": "mtok"},
+                                     json={"id": "shell_1", "approved": True}) as r:
+                    assert r.status == 404  # 壳已处理 → 跨端防重
+
+                # ① 未知 id 灌满 early_answers（32 条上界；shell_1 已占 1 条 → 再收 31 条）
+                for i in range(31):
+                    async with sess.post("http://127.0.0.1:19864/v1/confirm",
+                                         headers={"X-Yibao-Token": "mtok"},
+                                         json={"id": f"junk_{i}", "approved": False}) as r:
+                        assert r.status == 200  # 上界内：当作早到答案收下
+                async with sess.post("http://127.0.0.1:19864/v1/confirm",
+                                     headers={"X-Yibao-Token": "mtok"},
+                                     json={"id": "junk_31", "approved": False}) as r:
+                    assert r.status == 404  # 已满：未知/垃圾 id 不再堆积
+
+                # 垃圾 id 不该出现在待批列表（confirm_meta 只由 batch_confirmer 登记）
+                async with sess.get("http://127.0.0.1:19864/v1/state",
+                                    headers={"X-Yibao-Token": "mtok"}) as r:
+                    body = await r.json()
+                    assert r.status == 200 and body["pending"] == []
+        finally:
+            S.load_settings = orig_load
+            os.environ.pop("YIBAO_HTTP_PORT", None)
+            inbox.put(None)  # 结束 stdin 读线程
+            await asyncio.wait_for(serve_task, 5)
+
+    asyncio.run(main())

@@ -1110,14 +1110,20 @@ async def serve_async(
 
     def _confirm_mobile(cid: str, approved: bool, remember: bool) -> bool:
         """与壳 confirm_batch 同路径：兑现 future；confirmer 未注册（SSE 事件先到一步）
-        存 early_answers 待兑现。重复点击 → False（404）。"""
+        存 early_answers 待兑现。重复点击 → False（404）。
+
+        early_answers 设 32 条上界：真实竞态（SSE 事件先到一步）最多攒 1-2 条，
+        存到 32 还没被 confirmer 取走，只可能是未知/垃圾 id——继续存就是无界堆积
+        （持有 token 的客户端可无限灌条目），故满员后按未知处理 → False（404）。"""
         if cid in _confirm_done:
             return False
         fut = pending_confirms.get(cid)
         if fut is not None and not fut.done():
             fut.set_result((approved, remember))
-        else:
+        elif len(early_answers) < 32:
             early_answers[cid] = (approved, remember)
+        else:
+            return False  # 无 future 且早到缓存已满：未知 id，不当真
         _confirm_done.append(cid)
         return True
 
@@ -1298,6 +1304,9 @@ async def serve_async(
                 else:
                     # confirmer 还没注册（消息先于 run 任务到达）→ 缓存，由 batch_confirmer 兑现
                     early_answers[cid] = (approved, remember)
+                # 跨端防重：壳已处理的 cid 记入 _confirm_done——手机端随后点同一确认
+                # → _confirm_mobile 判已处理 → 404，答案也不会滞留在 early_answers。
+                _confirm_done.append(cid)
             write_msg({"type": "confirm_batched", "ok": True})
         elif rtype == "feed":
             # 主屏查询：动态列表（倒序）+ 问候统计
