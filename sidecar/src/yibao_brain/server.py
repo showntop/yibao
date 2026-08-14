@@ -538,6 +538,8 @@ async def serve_async(
     """
     ai_loop = asyncio.get_running_loop()
     tap = EventTap(write_msg)  # 事件分接头：stdio 照发 + SSE 广播（Task 9 起替换 write_msg）
+    write_msg = tap  # 重绑：本函数内所有闭包（_stream_agent/dispatcher/reader 等）经分接头
+    # ——stdio 输出字节不变（tap 透传），event/run_done 额外复制进 SSE 环形缓冲
     _LOOP_TICK["t"] = time.monotonic()
 
     async def _tick() -> None:
@@ -1222,6 +1224,7 @@ async def serve_async(
             reminder_task.cancel()
             perception_cleanup_task.cancel()
             if bridge_server is not None:
+                tap.close()  # 先给 SSE 订阅者投哨兵：handler 立即退出，cleanup 不用等 30s 心跳
                 await bridge_server.cleanup()  # aiohttp AppRunner（cleanup 是协程，漏 await = 端口/连接不释放）
             await watch_service.stop()
             jobs = getattr(agent.skills, "background_jobs", None)

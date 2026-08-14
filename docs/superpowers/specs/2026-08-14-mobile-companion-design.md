@@ -58,7 +58,7 @@
 | 端点 | 方法 | 请求 → 响应 |
 |---|---|---|
 | `/v1/health` | GET | `{ok, service:"yibao", version}` |
-| `/v1/state` | GET | `{ok, running:{surface,text,started_at}\|null, pending:[{id,skill_id,summary,risk,created_at}]}` |
+| `/v1/state` | GET | `{ok, running:{surface}\|null, pending:[{id,skill_id,summary,risk,created_at}]}` |
 | `/v1/chat` | POST | `{text, conversation_id?}` → `{ok, run_id, conversation_id}` |
 | `/v1/interrupt` | POST | `{}` → `{ok}`（只打断 mobile surface 的 run） |
 | `/v1/events` | GET | SSE 流（见 4.3），token 走 query 参数 |
@@ -81,7 +81,7 @@ event: chunk
 data: {"run_id":"...","text":"部分回复"}
 ```
 
-事件 kind：`chunk`（final_reply 片段）、`run_done`（含 interrupted 标记）、`confirm_request`（待审批，见 4.4）、`proactive`（reminder 等已过闸门的主动事件）
+事件 kind：`chunk`（final_reply 片段）、`run_done`（含 interrupted 标记）、`confirmation_needed`（复用现有 `confirmation_needed` 事件，不新增 kind）、`proactive`（reminder 等已过闸门的主动事件）
 - token 经 query 参数（EventSource 无法设 header）；TLS 下可接受，风险记录于 §10
 
 ### 4.4 审批闭环（双端一个真相）

@@ -2135,12 +2135,7 @@ def _held_reader_done():
 def test_mobile_submit_run_uses_mobile_surface(tmp_path):
     """serve_async 内 /v1/chat 走 mobile surface：受理事件带 surface=mobile、final_reply、run_done。
     （interrupt 域内语义由 test_mobile_interrupt_scoped_to_mobile_surface 覆盖。）"""
-    from types import SimpleNamespace
-
-    srv = None
-
     async def main():
-        nonlocal srv
         out = []
         # 直接驱动 serve_async 太重；此处借 http_enabled 走真 HTTP（端口 19862 避冲突）
         import os
@@ -2301,6 +2296,49 @@ def test_confirm_mobile_unknown_bound_and_shell_cross_surface_dedup(tmp_path):
             S.load_settings = orig_load
             os.environ.pop("YIBAO_HTTP_PORT", None)
             inbox.put(None)  # 结束 stdin 读线程
+            await asyncio.wait_for(serve_task, 5)
+
+    asyncio.run(main())
+
+
+def test_mobile_end_to_end_sse_receives_stream(tmp_path):
+    """/v1/chat → 经 EventTap → /v1/events 收到 final_reply(_chunk) 与 run_done 帧。"""
+
+    async def main():
+        import os
+
+        # brief 给的 19863 与既有 test_mobile_interrupt_scoped_to_mobile_surface 冲突 → 用 19865
+        os.environ["YIBAO_HTTP_PORT"] = "19865"
+        out = []
+        import yibao_brain.server as S
+
+        orig_load = S.load_settings
+        S.load_settings = lambda: {"http.token": "btok", "http.mobile_token": "mtok"}
+        try:
+            serve_task = asyncio.ensure_future(S.serve_async(
+                _held_reader()[0], lambda m: out.append(m), use_real=False,
+                db_path=str(tmp_path / "e2e.db"), provider=FakeProvider(text="端到端回复"),
+                http_enabled=True))
+            await asyncio.sleep(0.4)
+            import aiohttp
+
+            async with aiohttp.ClientSession() as sess:
+                events = await sess.get("http://127.0.0.1:19865/v1/events", params={"token": "mtok"})
+                chat = await sess.post("http://127.0.0.1:19865/v1/chat",
+                                       headers={"X-Yibao-Token": "mtok"}, json={"text": "你好"})
+                assert chat.status == 200
+                buf = b""
+                deadline = time.monotonic() + 5
+                while b"run_done" not in buf and time.monotonic() < deadline:
+                    chunk = await asyncio.wait_for(events.content.read(64), 2)
+                    buf += chunk
+                assert b"final_reply" in buf  # 流式回复帧（kind=final_reply 或 final_reply_chunk）
+                assert b"run_done" in buf
+                events.close()
+        finally:
+            S.load_settings = orig_load
+            os.environ.pop("YIBAO_HTTP_PORT", None)
+            _held_reader_done()
             await asyncio.wait_for(serve_task, 5)
 
     asyncio.run(main())

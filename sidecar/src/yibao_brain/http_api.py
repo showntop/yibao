@@ -39,6 +39,7 @@ class EventTap:
         self._seq = itertools.count(1)
         self._buf: deque[tuple[int, str, str]] = deque(maxlen=capacity)
         self._subs: set[asyncio.Queue] = set()
+        self._closed = False
 
     def __call__(self, msg: dict) -> None:
         self._write(msg)
@@ -49,10 +50,12 @@ class EventTap:
             self.publish("run_done", {"id": msg.get("id")})
 
     def publish(self, event: str, data: dict) -> int:
-        """发布一帧（带外主动帧也走这里）。返回 seq。"""
+        """发布一帧（带外主动帧也走这里）。返回 seq。close 后不再投递订阅者。"""
         seq = next(self._seq)
         frame = (seq, event, json.dumps(data, ensure_ascii=False))
         self._buf.append(frame)
+        if self._closed:  # 进程退出路径：缓冲照记，订阅者已收哨兵不再打扰
+            return seq
         for q in list(self._subs):
             try:
                 q.put_nowait(frame)
@@ -71,6 +74,23 @@ class EventTap:
 
     def unsubscribe(self, q: asyncio.Queue) -> None:
         self._subs.discard(q)
+
+    def close(self) -> None:
+        """关闭分接头（进程退出路径，幂等）：给每个订阅队列投 None 哨兵，
+        让阻塞在 q.get() 的 SSE handler 立即收尾——否则要等 30s 心跳写到
+        已断连接才抛错，serve_async 的 bridge_server.cleanup() 会挂到心跳超时。"""
+        if self._closed:
+            return
+        self._closed = True
+        for q in list(self._subs):
+            try:
+                q.put_nowait(None)
+            except asyncio.QueueFull:
+                try:
+                    q.get_nowait()  # 丢最旧保活，确保哨兵送达
+                    q.put_nowait(None)
+                except (asyncio.QueueEmpty, asyncio.QueueFull):
+                    self._subs.discard(q)  # 竞态兜底：队列已不可用，放弃该订阅
 
     def replay(self, last_seq: int) -> list[tuple[int, str, str]]:
         """断线补发：seq > last_seq 的缓冲帧（超出缓冲窗口只能全量拉 /v1/state 重建）。"""
@@ -226,13 +246,17 @@ def build_app(*, bridge_token: str, mobile_token: str, tap: EventTap,
                 last_written = frames[-1][0] if frames else 0  # 取实际写出的最大 seq（服务端重启场景快照空→0）
                 while True:
                     try:
-                        seq, event, data = await asyncio.wait_for(q.get(), timeout=_HEARTBEAT_S)
-                        if seq <= last_written:  # 去重：replay 已写出的帧跳过
-                            continue
-                        await resp.write(_sse_frame(seq, event, data))
-                        last_written = seq
+                        frame = await asyncio.wait_for(q.get(), timeout=_HEARTBEAT_S)
                     except asyncio.TimeoutError:
                         await resp.write(b": ping\n\n")
+                        continue
+                    if frame is None:  # tap.close() 哨兵：进程退出，立即收尾别等心跳
+                        break
+                    seq, event, data = frame
+                    if seq <= last_written:  # 去重：replay 已写出的帧跳过
+                        continue
+                    await resp.write(_sse_frame(seq, event, data))
+                    last_written = seq
             finally:
                 tap.unsubscribe(q)
         except (ConnectionResetError, asyncio.CancelledError):

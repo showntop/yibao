@@ -53,6 +53,34 @@ def test_tap_subscriber_gets_frames_and_slow_consumer_drops_oldest():
     asyncio.run(main())
 
 
+def test_tap_close_sends_sentinel_and_publish_after_close_is_noop():
+    """close 语义（进程退出路径）：订阅者收到 None 哨兵立即退流；close 后 publish
+    不投递订阅者也不炸；close 幂等；stdio 透传（__call__）不受影响。"""
+    async def main():
+        stdio = []
+        tap = EventTap(lambda m: stdio.append(m))
+        q = tap.subscribe()
+        tap.close()
+        assert await q.get() is None  # 哨兵：SSE handler 据此立即收尾
+        tap.close()  # 幂等：再关一次不炸、不再投哨兵
+        assert q.empty()
+        tap.publish("chunk", {"i": 9})  # close 后 publish：不投递订阅者、不炸
+        assert q.empty()
+        tap({"type": "event", "event": {"kind": "chunk", "text": "hi"}})  # stdio 透传照常
+        assert stdio and stdio[0]["event"]["kind"] == "chunk"
+
+        # 满队列也能收到哨兵：丢最旧保送达（exit 时慢消费者不得拖住收尾）
+        small = EventTap(lambda m: None)
+        sq = small.subscribe()
+        for _ in range(256):
+            small.publish("chunk", {"x": 1})
+        small.close()
+        drained = [sq.get_nowait() for _ in range(sq.qsize())]  # 排空到哨兵为止
+        assert drained[-1] is None and None not in drained[:-1]
+
+    asyncio.run(main())
+
+
 def test_rate_limiter_locks_after_5_fails():
     from yibao_brain.http_api import RateLimiter
 
