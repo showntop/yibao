@@ -1484,6 +1484,7 @@ name = "yibao-brain"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "aiohttp" },
     { name = "claude-agent-sdk" },
     { name = "cryptography" },
     { name = "edge-tts" },
@@ -1513,6 +1514,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", specifier = ">=3.10,<4" },
     { name = "claude-agent-sdk", specifier = ">=0.2,<0.3" },
     { name = "cryptography", specifier = ">=43.0" },
     { name = "edge-tts", specifier = ">=7.2" },

@@ -32,6 +32,9 @@ dependencies = [
     # 同模型 bge-small-zh-v1.5 但不拖 PyTorch（~500MB）——打包体积砍半，2026-07-22 定）
     "mem0ai>=0.1.20",
     "fastembed>=0.4.0",
+    # 手机伴生端 HTTP 面（P1）：扩展桥 + /v1/* 移动 API + SSE。程序化嵌入 serve_async
+    # 的 asyncio loop（AppRunner/TCPSite），无 uvicorn 信号处理器/事件循环集成坑。
+    "aiohttp>=3.10,<4",
 ]
 
 [project.optional-dependencies]
