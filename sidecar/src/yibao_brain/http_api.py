@@ -193,9 +193,10 @@ def build_app(*, bridge_token: str, mobile_token: str, tap: EventTap,
             q = tap.subscribe()  # 先订阅：避免 replay 窗口丢帧
             try:
                 # 再补发：此时队列已订阅，后续帧不会丢
-                for seq, event, data in tap.replay(last_seq):
+                frames = tap.replay(last_seq)
+                for seq, event, data in frames:
                     await resp.write(_sse_frame(seq, event, data))
-                last_written = last_seq  # 记录已写出的最大 seq
+                last_written = frames[-1][0] if frames else 0  # 取实际写出的最大 seq（服务端重启场景快照空→0）
                 while True:
                     try:
                         seq, event, data = await asyncio.wait_for(q.get(), timeout=_HEARTBEAT_S)
