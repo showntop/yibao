@@ -165,3 +165,44 @@ def test_auth_lockout_after_5_fails():
 
     asyncio.run(main())
 
+
+def test_v1_events_streams_frames_and_replays():
+    async def main():
+        tap = EventTap(lambda m: None)
+        app = build_app(bridge_token="btok", mobile_token="mtok", tap=tap)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            resp = await client.get("/v1/events", params={"token": "mtok"})
+            assert resp.status == 200
+            assert resp.headers["Content-Type"].startswith("text/event-stream")
+            tap.publish("chunk", {"text": "你好"})  # 已连接后发布
+            line = await asyncio.wait_for(resp.content.readline(), 2)
+            assert line == b"id: 1\n"
+            resp.close()  # 断开（EventSource 会自动重连）
+
+            tap.publish("chunk", {"text": "断线期间"})  # 断线期间继续发布
+            resp2 = await client.get("/v1/events", params={"token": "mtok"},
+                                     headers={"Last-Event-ID": "1"})
+            line2 = await asyncio.wait_for(resp2.content.readline(), 2)
+            assert line2 == b"id: 2\n"  # 从断点补发
+            resp2.close()
+        finally:
+            await client.close()
+
+    asyncio.run(main())
+
+
+def test_v1_events_requires_token():
+    async def main():
+        app = build_app(bridge_token="btok", mobile_token="mtok", tap=EventTap(lambda m: None))
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            r = await client.get("/v1/events")  # 无 token
+            assert r.status == 401
+        finally:
+            await client.close()
+
+    asyncio.run(main())
+

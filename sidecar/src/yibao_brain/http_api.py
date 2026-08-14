@@ -19,6 +19,11 @@ from dataclasses import dataclass
 from aiohttp import web
 
 _SUB_QSIZE = 256  # 每订阅者队列容量；满则丢最旧保活（EventSource 重连+Last-Event-ID 补齐）
+_HEARTBEAT_S = 30.0  # SSE 心跳：连接保活 + 让死连接尽快暴露
+
+
+def _sse_frame(seq: int, event: str, data: str) -> bytes:
+    return f"id: {seq}\nevent: {event}\ndata: {data}\n\n".encode()
 
 
 class EventTap:
@@ -170,12 +175,44 @@ def build_app(*, bridge_token: str, mobile_token: str, tap: EventTap,
             return web.json_response({"ok": False, "error": "not wired"}, status=503)
         return web.json_response({"ok": True, "interrupted": bool(deps.interrupt())})
 
+    async def v1_events(request):
+        """SSE 事件流：先补发 Last-Event-ID 之后的缓冲帧，再实时订阅。
+        EventSource 不能设 header → token 走 query（auth 中间件已验）。"""
+        resp = web.StreamResponse(headers={
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # 反代（Caddy/nginx）别缓冲
+        })
+        await resp.prepare(request)
+        try:
+            last = request.headers.get("Last-Event-ID")
+            try:
+                last_seq = int(last) if last else 0
+            except ValueError:
+                last_seq = 0
+            for seq, event, data in tap.replay(last_seq):
+                await resp.write(_sse_frame(seq, event, data))
+            q = tap.subscribe()
+            try:
+                while True:
+                    try:
+                        seq, event, data = await asyncio.wait_for(q.get(), timeout=_HEARTBEAT_S)
+                        await resp.write(_sse_frame(seq, event, data))
+                    except asyncio.TimeoutError:
+                        await resp.write(b": ping\n\n")
+            finally:
+                tap.unsubscribe(q)
+        except (ConnectionResetError, asyncio.CancelledError):
+            pass  # 客户端断开 / 应用关闭：正常收尾
+        return resp
+
     app.router.add_get("/health", health)
     app.router.add_get("/v1/health", v1_health)
     app.router.add_post("/save", save)
     app.router.add_post("/v1/save", save)
     app.router.add_post("/v1/chat", v1_chat)
     app.router.add_post("/v1/interrupt", v1_interrupt)
+    app.router.add_get("/v1/events", v1_events)
     return app
 
 
