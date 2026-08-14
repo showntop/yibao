@@ -1,6 +1,7 @@
 """http_api（aiohttp HTTP 面）：EventTap / RateLimiter / build_app 单元测试。
 函数级 + asyncio.run 风格（仓内无 pytest-asyncio）；路由级测试用 aiohttp TestServer。"""
 import asyncio
+import time
 
 from yibao_brain.http_api import EventTap
 
@@ -49,3 +50,25 @@ def test_tap_subscriber_gets_frames_and_slow_consumer_drops_oldest():
         assert sq.qsize() == 256  # 没炸、没断订阅
 
     asyncio.run(main())
+
+
+def test_rate_limiter_locks_after_5_fails():
+    from yibao_brain.http_api import RateLimiter
+
+    rl = RateLimiter(fails=5, window=60.0, lock=60.0)
+    for _ in range(4):
+        assert rl.allow() is True
+        rl.record_fail()
+    assert rl.allow() is True  # 第 5 次尝试仍放行（失败后才锁）
+    rl.record_fail()
+    assert rl.allow() is False  # 已锁
+
+
+def test_rate_limiter_lock_expires():
+    from yibao_brain.http_api import RateLimiter
+
+    rl = RateLimiter(fails=2, window=60.0, lock=0.05)
+    rl.record_fail(); rl.record_fail()
+    assert rl.allow() is False
+    time.sleep(0.06)
+    assert rl.allow() is True  # 锁过期

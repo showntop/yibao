@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import json
+import time
 from collections import deque
 from collections.abc import Callable
 from typing import Any
@@ -68,3 +69,27 @@ class EventTap:
     def replay(self, last_seq: int) -> list[tuple[int, str, str]]:
         """断线补发：seq > last_seq 的缓冲帧（超出缓冲窗口只能全量拉 /v1/state 重建）。"""
         return [f for f in self._buf if f[0] > last_seq]
+
+
+class RateLimiter:
+    """认证失败限速：window 秒内 fails 次失败 → 锁 lock 秒。内存级、全局单桶——
+    个人服务器（1-2 台设备）够用，别为它上 per-ip 表。"""
+
+    def __init__(self, fails: int = 5, window: float = 60.0, lock: float = 60.0):
+        self.fails, self.window, self.lock = fails, window, lock
+        self._hits: list[float] = []
+        self._locked_until = 0.0
+
+    def allow(self) -> bool:
+        now = time.monotonic()
+        if now < self._locked_until:
+            return False
+        self._hits = [t for t in self._hits if now - t < self.window]
+        return True
+
+    def record_fail(self) -> None:
+        now = time.monotonic()
+        self._hits.append(now)
+        if len(self._hits) >= self.fails:
+            self._locked_until = now + self.lock
+            self._hits.clear()
