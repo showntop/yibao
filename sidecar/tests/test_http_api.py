@@ -3,7 +3,9 @@
 import asyncio
 import time
 
-from yibao_brain.http_api import EventTap
+from aiohttp.test_utils import TestClient, TestServer
+
+from yibao_brain.http_api import EventTap, MobileDeps, build_app
 
 
 def test_tap_passes_through_and_frames_event_and_run_done():
@@ -42,7 +44,6 @@ def test_tap_subscriber_gets_frames_and_slow_consumer_drops_oldest():
         # 慢消费：小容量队列满后丢最旧保活（客户端靠 Last-Event-ID 重连补齐）
         small = EventTap(lambda m: None)
         sq = small.subscribe()
-        small._subs.clear(); small._subs.add(sq)  # 复用订阅但直接压小容量
         # 直接构造满队列场景：容量 256 默认，改为手动灌满
         for _ in range(256):
             small.publish("chunk", {"x": 1})
@@ -72,3 +73,63 @@ def test_rate_limiter_lock_expires():
     assert rl.allow() is False
     time.sleep(0.06)
     assert rl.allow() is True  # 锁过期
+
+
+def _mkapp():
+    return build_app(bridge_token="btok", mobile_token="mtok", tap=EventTap(lambda m: None))
+
+
+def test_health_with_bridge_token():
+    async def main():
+        client = TestClient(TestServer(_mkapp()))
+        await client.start_server()
+        try:
+            r = await client.get("/health", headers={"X-Yibao-Token": "btok"})
+            assert r.status == 200 and (await r.json())["service"] == "yibao-bridge"
+            r = await client.get("/v1/health", headers={"X-Yibao-Token": "mtok"})
+            assert r.status == 200 and (await r.json())["service"] == "yibao"
+        finally:
+            await client.close()
+
+    asyncio.run(main())
+
+
+def test_tokens_are_isolated():
+    async def main():
+        client = TestClient(TestServer(_mkapp()))
+        await client.start_server()
+        try:
+            # 扩展 token 打移动端 → 401（隔离）
+            r = await client.get("/v1/health", headers={"X-Yibao-Token": "btok"})
+            assert r.status == 401
+            # 移动 token 打扩展桥 → 401
+            r = await client.get("/health", headers={"X-Yibao-Token": "mtok"})
+            assert r.status == 401
+            # 移动端允许 token 走 query（EventSource 不能设 header）
+            r = await client.get("/v1/health", params={"token": "mtok"})
+            assert r.status == 200
+        finally:
+            await client.close()
+
+    asyncio.run(main())
+
+
+def test_auth_lockout_after_5_fails():
+    async def main():
+        from yibao_brain.http_api import RateLimiter
+
+        app = build_app(bridge_token="btok", mobile_token="mtok",
+                        tap=EventTap(lambda m: None), limiter=RateLimiter(fails=5, window=60, lock=60))
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            for _ in range(5):
+                r = await client.get("/v1/health", headers={"X-Yibao-Token": "bad"})
+                assert r.status == 401
+            r = await client.get("/v1/health", headers={"X-Yibao-Token": "mtok"})  # 对 token 也被锁
+            assert r.status == 429
+        finally:
+            await client.close()
+
+    asyncio.run(main())
+
