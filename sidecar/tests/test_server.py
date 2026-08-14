@@ -2132,9 +2132,9 @@ def _held_reader_done():
     _HELD["done"] = True
 
 
-def test_mobile_submit_run_uses_mobile_surface_and_interrupt_scoped(tmp_path):
-    """serve_async 内 /v1/chat 走 mobile surface：受理事件带 surface=mobile；
-    _interrupt_mobile 只在当前 surface=mobile 时打断。"""
+def test_mobile_submit_run_uses_mobile_surface(tmp_path):
+    """serve_async 内 /v1/chat 走 mobile surface：受理事件带 surface=mobile、final_reply、run_done。
+    （interrupt 域内语义由 test_mobile_interrupt_scoped_to_mobile_surface 覆盖。）"""
     from types import SimpleNamespace
 
     srv = None
@@ -2173,6 +2173,73 @@ def test_mobile_submit_run_uses_mobile_surface_and_interrupt_scoped(tmp_path):
             S.load_settings = orig_load
             os.environ.pop("YIBAO_HTTP_PORT", None)
             _held_reader_done()
+            await asyncio.wait_for(serve_task, 5)
+
+    asyncio.run(main())
+
+
+def test_mobile_interrupt_scoped_to_mobile_surface(tmp_path):
+    """_interrupt_mobile 域内打断（真 HTTP 路径）：
+    负路径——pet run 在跑时手机 /v1/interrupt 返回 interrupted=false，桌面对话照常完成；
+    正路径——mobile run 在跑时打断返回 true，interrupted 事件带 surface=mobile。"""
+    import os
+    import queue as _q
+    os.environ["YIBAO_HTTP_PORT"] = "19863"
+    provider = FakeProvider(chunks=["A", "B", "C", "D"], delay=0.08)
+    import yibao_brain.server as S
+
+    orig_load = S.load_settings
+    S.load_settings = lambda: {"http.token": "btok", "http.mobile_token": "mtok"}
+    inbox = _q.Queue()  # 测试可控的 stdin：put 消息 = 壳投递，put None = stdin 关闭
+
+    async def main():
+        out = []
+        serve_task = asyncio.ensure_future(S.serve_async(
+            inbox.get, lambda m: out.append(m), use_real=False,
+            db_path=str(tmp_path / "mi.db"), provider=provider, http_enabled=True))
+        try:
+            await asyncio.sleep(0.4)  # 等服务起
+            import aiohttp
+
+            async with aiohttp.ClientSession() as sess:
+                # 负路径：pet run 在跑（慢流式 0.08s/chunk），手机打断不误伤
+                inbox.put({"id": 11, "type": "run", "surface": "pet", "text": "桌面长回答"})
+                await asyncio.sleep(0.15)  # 此刻 pet run 仍在流式中
+                assert not any(m.get("type") == "run_done" for m in out)
+                async with sess.post("http://127.0.0.1:19863/v1/interrupt",
+                                     headers={"X-Yibao-Token": "mtok"}, json={}) as r:
+                    assert r.status == 200
+                    assert await r.json() == {"ok": True, "interrupted": False}
+                for _ in range(100):
+                    if any(m.get("type") == "run_done" and m.get("id") == 11 for m in out):
+                        break
+                    await asyncio.sleep(0.05)
+                assert any(m.get("type") == "run_done" and m.get("id") == 11 for m in out)  # 照常完成
+                kinds = [m["event"]["kind"] for m in out if m.get("type") == "event"]
+                assert "final_reply" in kinds and "interrupted" not in kinds
+
+                # 正路径：mobile run 在跑，手机打断生效
+                async with sess.post("http://127.0.0.1:19863/v1/chat",
+                                     headers={"X-Yibao-Token": "mtok"},
+                                     json={"text": "手机长回答", "conversation_id": "c1"}) as r:
+                    body = await r.json()
+                    assert r.status == 200 and body["run_id"].startswith("mob_")
+                await asyncio.sleep(0.15)  # 此刻 mobile run 仍在流式中
+                async with sess.post("http://127.0.0.1:19863/v1/interrupt",
+                                     headers={"X-Yibao-Token": "mtok"}, json={}) as r:
+                    assert r.status == 200
+                    assert await r.json() == {"ok": True, "interrupted": True}
+                for _ in range(100):
+                    if any(m.get("type") == "run_done" and m.get("id") == body["run_id"] for m in out):
+                        break
+                    await asyncio.sleep(0.05)
+                assert any(m.get("type") == "run_done" and m.get("id") == body["run_id"] for m in out)
+                assert any(m.get("type") == "event" and m.get("surface") == "mobile"
+                           and m["event"]["kind"] == "interrupted" for m in out)
+        finally:
+            S.load_settings = orig_load
+            os.environ.pop("YIBAO_HTTP_PORT", None)
+            inbox.put(None)  # 结束 stdin 读线程
             await asyncio.wait_for(serve_task, 5)
 
     asyncio.run(main())
