@@ -155,10 +155,27 @@ def build_app(*, bridge_token: str, mobile_token: str, tap: EventTap,
         status, obj = await deps.save(await request.json())
         return web.json_response(obj, status=status)
 
+    async def v1_chat(request):
+        if deps.submit_run is None:
+            return web.json_response({"ok": False, "error": "not wired"}, status=503)
+        body = await request.json()
+        text = str(body.get("text") or "").strip()
+        if not text:
+            return web.json_response({"ok": False, "error": "text 为空"}, status=400)
+        return web.json_response(
+            deps.submit_run(text, str(body.get("conversation_id") or "")))
+
+    async def v1_interrupt(request):
+        if deps.interrupt is None:
+            return web.json_response({"ok": False, "error": "not wired"}, status=503)
+        return web.json_response({"ok": True, "interrupted": bool(deps.interrupt())})
+
     app.router.add_get("/health", health)
     app.router.add_get("/v1/health", v1_health)
     app.router.add_post("/save", save)
     app.router.add_post("/v1/save", save)
+    app.router.add_post("/v1/chat", v1_chat)
+    app.router.add_post("/v1/interrupt", v1_interrupt)
     return app
 
 

@@ -1070,6 +1070,34 @@ async def serve_async(
             write_msg({"type": "event", "surface": surface, "event": {
                 "kind": "notice", "text": "另一个窗口还在说，等它说完就轮到你…"}})
 
+    def _schedule_run(surface: str, rid, start) -> None:
+        """受理尾巴（run/voice_start/手机 chat 共用）：同 surface 抢占 + 跨 surface 链式排队。"""
+        _preempt_if_same_surface(surface)
+        prev = run_state["task"]
+        run_state["surface"] = surface  # 受理即记录：下次 dispatch 判断同/跨 surface 无调度竞态
+        run_state["task"] = asyncio.ensure_future(
+            _chain_start(prev, start, run_state["preempt_gen"]))
+
+    _MOB_SEQ = itertools.count(1)
+
+    def _submit_run(text: str, conversation_id: str) -> dict:
+        """手机 /v1/chat 受理：surface=mobile（不抢桌宠，桌宠也不抢手机）。"""
+        rid = f"mob_{next(_MOB_SEQ)}"
+        ctx_text = _consume_invoke_context(invoke_ctx)
+        if ctx_text:
+            text = f"[屏幕上下文] {ctx_text}\n\n{text}"
+        start = lambda c, t=text, r=rid, ci=conversation_id: _drive_run(t, r, c, "mobile", ci)
+        print(f"[yibao] run 受理 rid={rid} surface=mobile conv={conversation_id}：{text[:30]!r}", file=sys.stderr)
+        _schedule_run("mobile", rid, start)
+        return {"ok": True, "run_id": rid, "conversation_id": conversation_id}
+
+    def _interrupt_mobile() -> bool:
+        """只打断 mobile surface 的 run。壳 interrupt 是「全都停」；手机不该误伤桌面对话。"""
+        if run_state["surface"] == "mobile" and run_state["cancel"] is not None:
+            _preempt_current()
+            return True
+        return False
+
     async def _chain_start(prev, start, queued_gen: int) -> None:
         """槽位串行：等上一任务收尾再启动；主循环不在这里阻塞（ping 照答，看门狗不误杀）。
 
@@ -1120,6 +1148,8 @@ async def serve_async(
             return await _bridge_save(agent, _emit, body)
 
         _http_deps.save = _http_save
+        _http_deps.submit_run = _submit_run
+        _http_deps.interrupt = _interrupt_mobile
         bridge_server = await _start_http_api(agent, write_msg, settings, tap, _http_deps)
 
     while True:
@@ -1147,7 +1177,7 @@ async def serve_async(
             reminder_task.cancel()
             perception_cleanup_task.cancel()
             if bridge_server is not None:
-                bridge_server.cleanup()  # aiohttp AppRunner
+                await bridge_server.cleanup()  # aiohttp AppRunner（cleanup 是协程，漏 await = 端口/连接不释放）
             await watch_service.stop()
             jobs = getattr(agent.skills, "background_jobs", None)
             if jobs is not None:
@@ -1173,9 +1203,6 @@ async def serve_async(
                 continue
             surface = str(msg.get("surface") or "pet")  # 会话分流：随 run 贯穿事件流与历史
             conversation_id = str(msg.get("conversation_id") or "")  # M3：会话归属随 run 贯穿（sidecar 单流，事件带归属）
-            _preempt_if_same_surface(surface)
-            prev = run_state["task"]
-            run_state["surface"] = surface  # 受理即记录：下次 dispatch 判断同/跨 surface 无调度竞态
             if rtype == "run":
                 text, rid = msg.get("text", ""), msg.get("id")
                 # 截图唤起：新鲜（<60s）的屏幕描述注入本次 run，一次性消费
@@ -1184,16 +1211,15 @@ async def serve_async(
                     text = f"[屏幕上下文] {ctx_text}\n\n{text}"
                 start = lambda c, t=text, r=rid, s=surface, ci=conversation_id: _drive_run(t, r, c, s, ci)
                 print(f"[yibao] run 受理 rid={rid} surface={surface} conv={conversation_id}：{text[:30]!r}", file=sys.stderr)
+                _schedule_run(surface, rid, start)
             elif voice is not None:
                 rid = msg.get("id")
                 cont = bool(msg.get("continuous"))
                 start = lambda c, r=rid, s=surface, ci=conversation_id, ct=cont: _drive_voice_start(r, c, s, ci, ct)
                 print(f"[yibao] voice_start 受理 rid={rid} surface={surface} conv={conversation_id} continuous={cont}", file=sys.stderr)
+                _schedule_run(surface, rid, start)
             else:
                 continue
-            run_state["task"] = asyncio.ensure_future(
-                _chain_start(prev, start, run_state["preempt_gen"])
-            )
         elif rtype == "panel_action":
             if _is_readonly_direct(msg, agent):
                 # L0 只读直调：独立任务并发跑，不占槽位、不抢占在跑的 run（编辑器/面板加载数据不该踩对话）

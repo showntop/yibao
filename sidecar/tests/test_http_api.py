@@ -114,6 +114,38 @@ def test_tokens_are_isolated():
     asyncio.run(main())
 
 
+def test_v1_chat_and_interrupt_routes():
+    async def main():
+        calls = []
+
+        def submit_run(text, conversation_id):
+            calls.append((text, conversation_id))
+            return {"ok": True, "run_id": "mob_1", "conversation_id": conversation_id}
+
+        def interrupt():
+            return True
+
+        deps = MobileDeps(submit_run=submit_run, interrupt=interrupt)
+        app = build_app(bridge_token="btok", mobile_token="mtok",
+                        tap=EventTap(lambda m: None), deps=deps)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            r = await client.post("/v1/chat", headers={"X-Yibao-Token": "mtok"},
+                                  json={"text": "你好", "conversation_id": "c1"})
+            assert r.status == 200
+            assert await r.json() == {"ok": True, "run_id": "mob_1", "conversation_id": "c1"}
+            assert calls == [("你好", "c1")]
+            r = await client.post("/v1/chat", headers={"X-Yibao-Token": "mtok"}, json={"text": "  "})
+            assert r.status == 400
+            r = await client.post("/v1/interrupt", headers={"X-Yibao-Token": "mtok"}, json={})
+            assert r.status == 200 and (await r.json()) == {"ok": True, "interrupted": True}
+        finally:
+            await client.close()
+
+    asyncio.run(main())
+
+
 def test_auth_lockout_after_5_fails():
     async def main():
         from yibao_brain.http_api import RateLimiter

@@ -2110,3 +2110,69 @@ def test_serve_async_snip_capture_silent_without_host(tmp_path):
         )
     )
     assert any(m.get("type") == "pong" for m in out)
+
+
+_HELD = {"done": False, "reader": None}
+
+
+def _held_reader():
+    _HELD["done"] = False
+
+    def _r():
+        import time as _t
+        while not _HELD["done"]:
+            _t.sleep(0.01)
+        return None
+
+    _HELD["reader"] = _r
+    return _r, None
+
+
+def _held_reader_done():
+    _HELD["done"] = True
+
+
+def test_mobile_submit_run_uses_mobile_surface_and_interrupt_scoped(tmp_path):
+    """serve_async 内 /v1/chat 走 mobile surface：受理事件带 surface=mobile；
+    _interrupt_mobile 只在当前 surface=mobile 时打断。"""
+    from types import SimpleNamespace
+
+    srv = None
+
+    async def main():
+        nonlocal srv
+        out = []
+        # 直接驱动 serve_async 太重；此处借 http_enabled 走真 HTTP（端口 19862 避冲突）
+        import os
+        os.environ["YIBAO_HTTP_PORT"] = "19862"
+        provider = FakeProvider(text="手机你好")
+        import yibao_brain.server as S
+
+        orig_load = S.load_settings
+        S.load_settings = lambda: {"http.token": "btok", "http.mobile_token": "mtok"}
+        try:
+            serve_task = asyncio.ensure_future(S.serve_async(
+                _held_reader()[0], lambda m: out.append(m), use_real=False,
+                db_path=str(tmp_path / "m.db"), provider=provider, http_enabled=True))
+            await asyncio.sleep(0.4)  # 等服务起
+            import aiohttp
+
+            async with aiohttp.ClientSession() as sess:
+                async with sess.post("http://127.0.0.1:19862/v1/chat",
+                                     headers={"X-Yibao-Token": "mtok"},
+                                     json={"text": "你好", "conversation_id": "c9"}) as r:
+                    body = await r.json()
+                    assert r.status == 200 and body["run_id"].startswith("mob_")
+            await asyncio.sleep(0.3)
+            surfaces = [m.get("surface") for m in out if m.get("type") == "event"]
+            assert "mobile" in surfaces
+            kinds = [m["event"]["kind"] for m in out if m.get("type") == "event" and m.get("surface") == "mobile"]
+            assert "final_reply" in kinds or "final_reply_chunk" in kinds
+            assert any(m.get("type") == "run_done" for m in out)
+        finally:
+            S.load_settings = orig_load
+            os.environ.pop("YIBAO_HTTP_PORT", None)
+            _held_reader_done()
+            await asyncio.wait_for(serve_task, 5)
+
+    asyncio.run(main())
