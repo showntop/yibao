@@ -176,7 +176,7 @@ def build_app(*, bridge_token: str, mobile_token: str, tap: EventTap,
         return web.json_response({"ok": True, "interrupted": bool(deps.interrupt())})
 
     async def v1_events(request):
-        """SSE 事件流：先补发 Last-Event-ID 之后的缓冲帧，再实时订阅。
+        """SSE 事件流：先订阅（避免 replay → subscribe 窗口丢帧），再补发 Last-Event-ID 之后的缓冲帧，最后实时消费队列并按 seq 去重。
         EventSource 不能设 header → token 走 query（auth 中间件已验）。"""
         resp = web.StreamResponse(headers={
             "Content-Type": "text/event-stream",
@@ -190,14 +190,19 @@ def build_app(*, bridge_token: str, mobile_token: str, tap: EventTap,
                 last_seq = int(last) if last else 0
             except ValueError:
                 last_seq = 0
-            for seq, event, data in tap.replay(last_seq):
-                await resp.write(_sse_frame(seq, event, data))
-            q = tap.subscribe()
+            q = tap.subscribe()  # 先订阅：避免 replay 窗口丢帧
             try:
+                # 再补发：此时队列已订阅，后续帧不会丢
+                for seq, event, data in tap.replay(last_seq):
+                    await resp.write(_sse_frame(seq, event, data))
+                last_written = last_seq  # 记录已写出的最大 seq
                 while True:
                     try:
                         seq, event, data = await asyncio.wait_for(q.get(), timeout=_HEARTBEAT_S)
+                        if seq <= last_written:  # 去重：replay 已写出的帧跳过
+                            continue
                         await resp.write(_sse_frame(seq, event, data))
+                        last_written = seq
                     except asyncio.TimeoutError:
                         await resp.write(b": ping\n\n")
             finally:

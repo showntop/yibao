@@ -179,6 +179,12 @@ def test_v1_events_streams_frames_and_replays():
             tap.publish("chunk", {"text": "你好"})  # 已连接后发布
             line = await asyncio.wait_for(resp.content.readline(), 2)
             assert line == b"id: 1\n"
+            event_line = await asyncio.wait_for(resp.content.readline(), 2)
+            assert event_line == b"event: chunk\n"
+            data_line = await asyncio.wait_for(resp.content.readline(), 2)
+            assert data_line == 'data: {"text": "你好"}\n'.encode()
+            empty_line = await asyncio.wait_for(resp.content.readline(), 2)
+            assert empty_line == b"\n"
             resp.close()  # 断开（EventSource 会自动重连）
 
             tap.publish("chunk", {"text": "断线期间"})  # 断线期间继续发布
@@ -186,6 +192,12 @@ def test_v1_events_streams_frames_and_replays():
                                      headers={"Last-Event-ID": "1"})
             line2 = await asyncio.wait_for(resp2.content.readline(), 2)
             assert line2 == b"id: 2\n"  # 从断点补发
+            event_line2 = await asyncio.wait_for(resp2.content.readline(), 2)
+            assert event_line2 == b"event: chunk\n"
+            data_line2 = await asyncio.wait_for(resp2.content.readline(), 2)
+            assert data_line2 == 'data: {"text": "断线期间"}\n'.encode()
+            empty_line2 = await asyncio.wait_for(resp2.content.readline(), 2)
+            assert empty_line2 == b"\n"
             resp2.close()
         finally:
             await client.close()
