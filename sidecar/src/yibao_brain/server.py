@@ -36,6 +36,7 @@ from .feed import FeedStore
 from .distiller import Distiller, DistillerStore
 from .jobstore import JobsStore
 from .history import ConversationHistory
+from .http_api import EventTap, MobileDeps
 from .ipc import Action, Event, RiskLevel
 from .llm import FakeProvider, GLMProvider, ToolCall
 from .loop import AgentLoop, _offload
@@ -346,74 +347,59 @@ async def handle_panel_action(msg: dict, agent: AgentLoop, write_msg: WriteMsg, 
 # ---------- 浏览器扩展桥（127.0.0.1 微 HTTP → zimeiti quiet 直调）----------
 
 
-def _ensure_bridge_token(settings: dict) -> str:
-    """扩展桥共享 token：空则生成并持久化（save_settings 只落已知键，http.token 已在默认表）。"""
-    tok = str(settings.get("http.token") or "")
+def _ensure_http_token(settings: dict, key: str) -> str:
+    """HTTP 面共享 token（http.token=扩展桥 / http.mobile_token=手机伴生端）：
+    空则生成并持久化（save_settings 只落已知键，两键均已在默认表）。"""
+    tok = str(settings.get(key) or "")
     if not tok:
         import secrets
 
         tok = secrets.token_hex(16)
-        save_settings({"http.token": tok})
-        settings["http.token"] = tok
+        save_settings({key: tok})
+        settings[key] = tok
     return tok
 
 
-def _make_bridge_route(agent: AgentLoop, write_msg: WriteMsg, token: str, *, emit=None):
-    """造桥路由（httpserver Handler 签名）：/save → zimeiti quiet 直调；回执与 panel_action 同协议（pa_ 前缀）。
-    emit 注入便于测试；缺省直接 write_msg 发 event（不带 surface——壳侧分流过滤放行，与唤起条回执同行为）。
-    """
-    counter = itertools.count(1)
+_BRIDGE_SEQ = itertools.count(1)  # 桥/分享保存的 action id 序（跨调用唯一）
 
-    def _emit(action, result) -> None:
-        ev = Event(kind="action_result", action=action, result=result)
-        if emit is not None:
-            emit(ev.model_dump(mode="json"))
-        else:
-            write_msg({"type": "event", "event": ev.model_dump(mode="json")})
 
-    async def _route(method: str, path: str, headers: dict, body: dict) -> tuple[int, dict]:
-        if headers.get("x-yibao-token") != token:
-            return 401, {"ok": False, "error": "token 不对"}
-        if method == "GET" and path == "/health":
-            return 200, {"ok": True, "service": "yibao-bridge"}
-        if method != "POST" or path != "/save":
-            return 404, {"ok": False, "error": "not found"}
-        url = str(body.get("url") or "").strip()
-        title = str(body.get("title") or "").strip()[:200]
-        text = str(body.get("text") or "").strip()[:20000]
-        mode = str(body.get("mode") or "material")
-        if not text:
-            return 400, {"ok": False, "error": "text 为空"}
-        if mode == "material":
-            api_name = "zimeiti.invoke_mat_save"
-            # 先存后整理：defer 跳过 LLM 摘要立刻落库（秒回），mat_enrich 后台补元数据
-            params = {"url": url, "text": f"{title}\n\n{text}" if title else text, "title": title, "defer": True}
-        elif mode == "topic":
-            api_name = "zimeiti.invoke_add_topic"
-            params = {"title": title or text[:30], "source": url or "浏览器扩展"}
-        else:
-            return 400, {"ok": False, "error": f"未知 mode：{mode}"}
-        api = get_api(api_name)
-        if api is None or not api.direct:
-            return 500, {"ok": False, "error": f"方法不可用：{api_name}"}
-        rid = f"http_{next(counter)}"
-        action = agent.invoker.propose(ToolCall(id=f"pa_{rid}", skill_id=api.handler, params=params))
-        action.id = f"pa_{rid}"  # 壳侧靠 pa_ 前缀认领回执（与 panel_action 同协议）
-        if api.risk is not None:
-            action.risk = max(action.risk, api.risk)
-        decision = agent.invoker.decide(action)
-        if decision != Decision.AUTO:
-            return 403, {"ok": False, "error": "策略要求确认或禁止（桥场景无确认通道），未执行"}
-        result = await _offload(agent.invoker.execute, action, params)
-        _emit(action, result)
-        if not result.success:
-            return 500, {"ok": False, "error": result.error or "执行失败"}
-        data = result.data or {}
-        if mode == "material" and data.get("pending"):
-            asyncio.ensure_future(_enrich_later(agent, data.get("id")))
-        return 200, {"ok": True, "title": data.get("title", title)}
-
-    return _route
+async def _bridge_save(agent: AgentLoop, emit, body: dict) -> tuple[int, dict]:
+    """存素材/选题核心（扩展桥 /save 与手机 /v1/save 共用；原 _make_bridge_route._route 主体）。
+    emit(action, result)：回执出口（经 EventTap → stdio 壳 + SSE 手机）。"""
+    url = str(body.get("url") or "").strip()
+    title = str(body.get("title") or "").strip()[:200]
+    text = str(body.get("text") or "").strip()[:20000]
+    mode = str(body.get("mode") or "material")
+    if not text:
+        return 400, {"ok": False, "error": "text 为空"}
+    if mode == "material":
+        api_name = "zimeiti.invoke_mat_save"
+        # 先存后整理：defer 跳过 LLM 摘要立刻落库（秒回），mat_enrich 后台补元数据
+        params = {"url": url, "text": f"{title}\n\n{text}" if title else text, "title": title, "defer": True}
+    elif mode == "topic":
+        api_name = "zimeiti.invoke_add_topic"
+        params = {"title": title or text[:30], "source": url or "浏览器扩展"}
+    else:
+        return 400, {"ok": False, "error": f"未知 mode：{mode}"}
+    api = get_api(api_name)
+    if api is None or not api.direct:
+        return 500, {"ok": False, "error": f"方法不可用：{api_name}"}
+    rid = f"http_{next(_BRIDGE_SEQ)}"
+    action = agent.invoker.propose(ToolCall(id=f"pa_{rid}", skill_id=api.handler, params=params))
+    action.id = f"pa_{rid}"  # 壳侧靠 pa_ 前缀认领回执（与 panel_action 同协议）
+    if api.risk is not None:
+        action.risk = max(action.risk, api.risk)
+    decision = agent.invoker.decide(action)
+    if decision != Decision.AUTO:
+        return 403, {"ok": False, "error": "策略要求确认或禁止（桥场景无确认通道），未执行"}
+    result = await _offload(agent.invoker.execute, action, params)
+    emit(action, result)
+    if not result.success:
+        return 500, {"ok": False, "error": result.error or "执行失败"}
+    data = result.data or {}
+    if mode == "material" and data.get("pending"):
+        asyncio.ensure_future(_enrich_later(agent, data.get("id")))
+    return 200, {"ok": True, "title": data.get("title", title)}
 
 
 async def _enrich_later(agent: AgentLoop, material_id: str | None) -> None:
@@ -432,17 +418,22 @@ async def _enrich_later(agent: AgentLoop, material_id: str | None) -> None:
         print(f"[yibao] 素材后台精整失败（已跳过）：{e}", file=sys.stderr)
 
 
-async def _start_bridge(agent: AgentLoop, write_msg: WriteMsg, settings: dict) -> "asyncio.AbstractServer | None":
-    """起浏览器扩展桥；端口占用/任何失败 → stderr + None（不拖垮大脑）。"""
-    from .httpserver import serve
-
+async def _start_http_api(agent: AgentLoop, write_msg: WriteMsg, settings: dict, tap, deps) -> "object | None":
+    """起 aiohttp HTTP 面（扩展桥 + 移动 API）；失败 → stderr + None（不拖垮大脑）。"""
     try:
-        token = _ensure_bridge_token(settings)
-        srv = await serve("127.0.0.1", http_port(), _make_bridge_route(agent, write_msg, token))
-        print(f"[yibao] 浏览器扩展桥已监听 127.0.0.1:{http_port()}", file=sys.stderr)
-        return srv
+        from .http_api import build_app, run_server
+
+        app = build_app(
+            bridge_token=_ensure_http_token(settings, "http.token"),
+            mobile_token=_ensure_http_token(settings, "http.mobile_token"),
+            tap=tap,
+            deps=deps,
+        )
+        runner = await run_server(app, "127.0.0.1", http_port())
+        print(f"[yibao] HTTP 面（桥+移动 API）已监听 127.0.0.1:{http_port()}", file=sys.stderr)
+        return runner
     except Exception as e:
-        print(f"[yibao] 浏览器扩展桥启动失败（{e}，已禁用）", file=sys.stderr)
+        print(f"[yibao] HTTP 面启动失败（{e}，已禁用）", file=sys.stderr)
         return None
 
 
@@ -545,6 +536,7 @@ async def serve_async(
     新 run 到来会抢占并打断未完成的旧 run。
     """
     ai_loop = asyncio.get_running_loop()
+    tap = EventTap(write_msg)  # 事件分接头：stdio 照发 + SSE 广播（Task 9 起替换 write_msg）
     _LOOP_TICK["t"] = time.monotonic()
 
     async def _tick() -> None:
@@ -910,9 +902,7 @@ async def serve_async(
 
     if http_enabled is None:
         http_enabled = use_real  # 测试默认关；生产（use_real=True）默认开
-    bridge_server = None
-    if http_enabled:
-        bridge_server = await _start_bridge(agent, write_msg, settings)
+    bridge_server = None  # aiohttp runner（Task 4 起）：deps 闭包依赖后文定义的 _drive_run 等，启动挪到主循环前
 
     def _reader():
         while True:
@@ -1119,6 +1109,19 @@ async def serve_async(
         except Exception as e:  # 兜底：任务未预期的异常不能毒死槽位
             print(f"[yibao] 任务异常收尾：{type(e).__name__}: {e}", file=sys.stderr)
 
+    # HTTP 面（扩展桥+移动 API）：deps 里的闭包依赖上文 _drive_run 等，故在主循环前才组装启动
+    _http_deps = MobileDeps()
+    if http_enabled:
+        async def _http_save(body: dict) -> tuple[int, dict]:
+            def _emit(action, result) -> None:
+                ev = Event(kind="action_result", action=action.model_dump(mode="json") if hasattr(action, "model_dump") else action,
+                           result=result.model_dump(mode="json") if hasattr(result, "model_dump") else result)
+                write_msg({"type": "event", "event": ev.model_dump(mode="json")})
+            return await _bridge_save(agent, _emit, body)
+
+        _http_deps.save = _http_save
+        bridge_server = await _start_http_api(agent, write_msg, settings, tap, _http_deps)
+
     while True:
         msg = await queue.get()
         if msg is None:
@@ -1144,7 +1147,7 @@ async def serve_async(
             reminder_task.cancel()
             perception_cleanup_task.cancel()
             if bridge_server is not None:
-                bridge_server.close()
+                bridge_server.cleanup()  # aiohttp AppRunner
             await watch_service.stop()
             jobs = getattr(agent.skills, "background_jobs", None)
             if jobs is not None:

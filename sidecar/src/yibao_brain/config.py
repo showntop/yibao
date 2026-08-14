@@ -325,6 +325,9 @@ _SETTINGS_DEFAULTS: dict = {
     "watch.look_max_per_hour": 6,          # 主动搭话每小时上限
     "watch.look_max_per_day": 50,          # 主动搭话每日上限
     "http.token": "",  # 浏览器扩展桥共享 token（空 = 启动时生成并持久化）
+    "http.mobile_token": "",  # 手机伴生端 token（与扩展桥隔离，可单独重置）
+    "http.public_url": "",    # 对外域名（VPS Caddy）；配对二维码用，空=仅局域网调试
+    "push.devices": [],       # 已注册推送设备 [{registration_id, platform, added_at}]
 }
 
 # 枚举型设置的合法取值；非法值拒收保持原值（防前端/手滑写坏）

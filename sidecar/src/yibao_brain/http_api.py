@@ -149,8 +149,16 @@ def build_app(*, bridge_token: str, mobile_token: str, tap: EventTap,
     async def v1_health(request):
         return web.json_response({"ok": True, "service": "yibao", "version": _VERSION})
 
+    async def save(request):
+        if deps.save is None:
+            return web.json_response({"ok": False, "error": "not wired"}, status=503)
+        status, obj = await deps.save(await request.json())
+        return web.json_response(obj, status=status)
+
     app.router.add_get("/health", health)
     app.router.add_get("/v1/health", v1_health)
+    app.router.add_post("/save", save)
+    app.router.add_post("/v1/save", save)
     return app
 
 
