@@ -205,6 +205,39 @@ def test_v1_events_streams_frames_and_replays():
     asyncio.run(main())
 
 
+def test_v1_confirm_and_state_routes():
+    async def main():
+        def confirm(cid, approved, remember):
+            return cid != "already-done"
+
+        def state():
+            return {"running": {"surface": "mobile"},
+                    "pending": [{"id": "pa_1", "skill_id": "danger", "summary": "rm -rf", "risk": 3, "created_at": 1}]}
+
+        deps = MobileDeps(confirm=confirm, state=state)
+        app = build_app(bridge_token="btok", mobile_token="mtok",
+                        tap=EventTap(lambda m: None), deps=deps)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            r = await client.post("/v1/confirm", headers={"X-Yibao-Token": "mtok"},
+                                  json={"id": "pa_1", "approved": True, "remember": False})
+            assert r.status == 200
+            r = await client.post("/v1/confirm", headers={"X-Yibao-Token": "mtok"},
+                                  json={"id": "already-done", "approved": True})
+            assert r.status == 404  # 已处理/未知
+            r = await client.post("/v1/confirm", headers={"X-Yibao-Token": "mtok"}, json={"id": ""})
+            assert r.status == 400
+            r = await client.get("/v1/state", headers={"X-Yibao-Token": "mtok"})
+            body = await r.json()
+            assert body["running"] == {"surface": "mobile"}
+            assert body["pending"][0]["id"] == "pa_1"
+        finally:
+            await client.close()
+
+    asyncio.run(main())
+
+
 def test_v1_events_requires_token():
     async def main():
         app = build_app(bridge_token="btok", mobile_token="mtok", tap=EventTap(lambda m: None))

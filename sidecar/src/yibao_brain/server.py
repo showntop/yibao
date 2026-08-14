@@ -12,6 +12,7 @@ import os
 import sys
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 
 from . import permissions
@@ -553,6 +554,8 @@ async def serve_async(
     # 多槽不假设并发数：当前单 run 抢占（dict 通常 1 entry），未来多 run 并发这层不用改。
     pending_confirms: dict[str, asyncio.Future] = {}
     early_answers: dict[str, tuple[bool, bool]] = {}
+    confirm_meta: dict[str, dict] = {}  # cid -> {skill_id, summary, risk, created_at}：手机 /v1/state 待批列表
+    _confirm_done: deque[str] = deque(maxlen=100)  # 已处理确认（防手机重复点击 404）
     # preempt_gen：抢占代数。新请求到来即 +1；排队中的任务启动时发现自己落后 →
     # 一启动即置 cancel（快速跳过），保证「只有最新请求真正执行」。
     # surface：最近一次受理请求的窗口（pet=主窗 / 面板 id，dispatch 受理即写入）。
@@ -592,6 +595,12 @@ async def serve_async(
                 out[cid] = early_answers.pop(cid)
                 continue
             fut = pending_confirms.setdefault(cid, ai_loop.create_future())
+            confirm_meta[cid] = {
+                "skill_id": skill_id,
+                "summary": str(getattr(action, "params", "") or "")[:120] or skill_id,
+                "risk": int(getattr(getattr(action, "risk", None), "value", getattr(action, "risk", 0)) or 0),
+                "created_at": int(time.time()),
+            }
             # 确认等待必须响应抢占/打断：否则新请求 join 一个永不结束的确认 →
             # 派发循环卡死、ping 不应答、看门狗误杀（2026-07-19 复现确认）
             cancel = run_state["cancel"]
@@ -614,6 +623,7 @@ async def serve_async(
                     cancel_wait.cancel()
                 if pending_confirms.get(cid) is fut:
                     del pending_confirms[cid]
+                confirm_meta.pop(cid, None)
         return out
 
     # 主屏 Feed 存储（OS 感 §4.2）：任务播报/提醒触发在此落库，主屏查询时一次拿回。
@@ -1098,6 +1108,24 @@ async def serve_async(
             return True
         return False
 
+    def _confirm_mobile(cid: str, approved: bool, remember: bool) -> bool:
+        """与壳 confirm_batch 同路径：兑现 future；confirmer 未注册（SSE 事件先到一步）
+        存 early_answers 待兑现。重复点击 → False（404）。"""
+        if cid in _confirm_done:
+            return False
+        fut = pending_confirms.get(cid)
+        if fut is not None and not fut.done():
+            fut.set_result((approved, remember))
+        else:
+            early_answers[cid] = (approved, remember)
+        _confirm_done.append(cid)
+        return True
+
+    def _mobile_state() -> dict:
+        task = run_state["task"]
+        running = {"surface": run_state["surface"]} if (task is not None and not task.done()) else None
+        return {"running": running, "pending": [{"id": cid, **meta} for cid, meta in confirm_meta.items()]}
+
     async def _chain_start(prev, start, queued_gen: int) -> None:
         """槽位串行：等上一任务收尾再启动；主循环不在这里阻塞（ping 照答，看门狗不误杀）。
 
@@ -1150,6 +1178,8 @@ async def serve_async(
         _http_deps.save = _http_save
         _http_deps.submit_run = _submit_run
         _http_deps.interrupt = _interrupt_mobile
+        _http_deps.confirm = _confirm_mobile
+        _http_deps.state = _mobile_state
         bridge_server = await _start_http_api(agent, write_msg, settings, tap, _http_deps)
 
     while True:

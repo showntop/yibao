@@ -175,6 +175,22 @@ def build_app(*, bridge_token: str, mobile_token: str, tap: EventTap,
             return web.json_response({"ok": False, "error": "not wired"}, status=503)
         return web.json_response({"ok": True, "interrupted": bool(deps.interrupt())})
 
+    async def v1_confirm(request):
+        if deps.confirm is None:
+            return web.json_response({"ok": False, "error": "not wired"}, status=503)
+        body = await request.json()
+        cid = str(body.get("id") or "")
+        if not cid:
+            return web.json_response({"ok": False, "error": "id 为空"}, status=400)
+        if not deps.confirm(cid, bool(body.get("approved")), bool(body.get("remember"))):
+            return web.json_response({"ok": False, "error": "未知或已处理的确认"}, status=404)
+        return web.json_response({"ok": True})
+
+    async def v1_state(request):
+        if deps.state is None:
+            return web.json_response({"ok": False, "error": "not wired"}, status=503)
+        return web.json_response({"ok": True, **deps.state()})
+
     async def v1_events(request):
         """SSE 事件流：先订阅（避免 replay → subscribe 窗口丢帧），再补发 Last-Event-ID 之后的缓冲帧，最后实时消费队列并按 seq 去重。
         EventSource 不能设 header → token 走 query（auth 中间件已验）。"""
@@ -219,6 +235,8 @@ def build_app(*, bridge_token: str, mobile_token: str, tap: EventTap,
     app.router.add_post("/v1/chat", v1_chat)
     app.router.add_post("/v1/interrupt", v1_interrupt)
     app.router.add_get("/v1/events", v1_events)
+    app.router.add_post("/v1/confirm", v1_confirm)
+    app.router.add_get("/v1/state", v1_state)
     return app
 
 
