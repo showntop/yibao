@@ -191,6 +191,17 @@ def build_app(*, bridge_token: str, mobile_token: str, tap: EventTap,
             return web.json_response({"ok": False, "error": "not wired"}, status=503)
         return web.json_response({"ok": True, **deps.state()})
 
+    async def v1_push_register(request):
+        """推送设备登记：同 registration_id 覆盖，防重复堆积"""
+        if deps.register_push is None:
+            return web.json_response({"ok": False, "error": "not wired"}, status=503)
+        body = await request.json()
+        rid = str(body.get("registration_id") or "").strip()
+        if not rid:
+            return web.json_response({"ok": False, "error": "registration_id 为空"}, status=400)
+        deps.register_push(rid, str(body.get("platform") or ""))
+        return web.json_response({"ok": True})
+
     async def v1_events(request):
         """SSE 事件流：先订阅（避免 replay → subscribe 窗口丢帧），再补发 Last-Event-ID 之后的缓冲帧，最后实时消费队列并按 seq 去重。
         EventSource 不能设 header → token 走 query（auth 中间件已验）。"""
@@ -237,6 +248,7 @@ def build_app(*, bridge_token: str, mobile_token: str, tap: EventTap,
     app.router.add_get("/v1/events", v1_events)
     app.router.add_post("/v1/confirm", v1_confirm)
     app.router.add_get("/v1/state", v1_state)
+    app.router.add_post("/v1/push/register", v1_push_register)
     return app
 
 

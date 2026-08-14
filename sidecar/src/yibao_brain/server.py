@@ -1132,6 +1132,14 @@ async def serve_async(
         running = {"surface": run_state["surface"]} if (task is not None and not task.done()) else None
         return {"running": running, "pending": [{"id": cid, **meta} for cid, meta in confirm_meta.items()]}
 
+    def _register_push(registration_id: str, platform: str) -> None:
+        """推送设备登记（P4 极光发送消费）。同 registration_id 覆盖，防重复堆积。"""
+        devices = [d for d in (settings.get("push.devices") or [])
+                   if d.get("registration_id") != registration_id]
+        devices.append({"registration_id": registration_id, "platform": platform, "added_at": int(time.time())})
+        settings["push.devices"] = devices
+        save_settings({"push.devices": devices})
+
     async def _chain_start(prev, start, queued_gen: int) -> None:
         """槽位串行：等上一任务收尾再启动；主循环不在这里阻塞（ping 照答，看门狗不误杀）。
 
@@ -1186,6 +1194,7 @@ async def serve_async(
         _http_deps.interrupt = _interrupt_mobile
         _http_deps.confirm = _confirm_mobile
         _http_deps.state = _mobile_state
+        _http_deps.register_push = _register_push
         bridge_server = await _start_http_api(agent, write_msg, settings, tap, _http_deps)
 
     while True:

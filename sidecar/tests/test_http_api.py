@@ -251,3 +251,30 @@ def test_v1_events_requires_token():
 
     asyncio.run(main())
 
+
+def test_v1_push_register_route():
+    """推送设备登记路由测试"""
+    async def main():
+        saved = []
+
+        def register_push(rid, platform):
+            saved.append((rid, platform))
+
+        deps = MobileDeps(register_push=register_push)
+        app = build_app(bridge_token="btok", mobile_token="mtok",
+                        tap=EventTap(lambda m: None), deps=deps)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            r = await client.post("/v1/push/register", headers={"X-Yibao-Token": "mtok"},
+                                  json={"registration_id": "jp-abc", "platform": "ios"})
+            assert r.status == 200 and (await r.json())["ok"] is True
+            assert saved == [("jp-abc", "ios")]
+            r = await client.post("/v1/push/register", headers={"X-Yibao-Token": "mtok"},
+                                  json={"registration_id": "", "platform": "ios"})
+            assert r.status == 400
+        finally:
+            await client.close()
+
+    asyncio.run(main())
+
