@@ -14,7 +14,9 @@ _perm_seq = itertools.count(1)
 
 def make_permission_callback(sid: str, on_event, *, timeout_s: float = 60.0):
     """can_use_tool 回调桥：向面板发 permission_request，等 coding.decide 裁决（超时默认 deny）。
-    回调本体与事件任何异常 → deny（安全默认）+ stderr。返回 SDK 期望的 async callable。"""
+    请求发送失败 → deny；等待被取消/中断 → deny（fail-closed）；注册表清理与
+    permission_done 事件在任何结局下都保证执行（emit 自身异常不再穿透回 SDK）。
+    返回 SDK 期望的 async callable。"""
     async def _cb(tool_name, input, context=None):
         rid = f"perm_{sid}_{next(_perm_seq)}"
         entry = {"event": threading.Event(), "allow": None}
@@ -26,13 +28,21 @@ def make_permission_callback(sid: str, on_event, *, timeout_s: float = 60.0):
             print(f"[yibao/coding] 权限请求事件发送失败（deny）：{e}", file=sys.stderr)
             _PERM.pop(rid, None)
             return _deny(f"请求发送失败：{e}")
-        got = await asyncio.to_thread(entry["event"].wait, timeout_s)
+        try:
+            got = await asyncio.to_thread(entry["event"].wait, timeout_s)
+        except BaseException:  # 取消/中断穿透（含 CancelledError，BaseException 系）：按拒绝收场（fail-closed），清理照做
+            got = False
         allow = entry["allow"] if got else None
         _PERM.pop(rid, None)
+        try:
+            if allow is True:
+                on_event({"kind": "permission_done", "rid": rid, "allow": True})
+                return _allow()
+            on_event({"kind": "permission_done", "rid": rid, "allow": False})
+        except Exception:
+            pass  # 面板流已断：deny 照返，不再多错
         if allow is True:
-            on_event({"kind": "permission_done", "rid": rid, "allow": True})
             return _allow()
-        on_event({"kind": "permission_done", "rid": rid, "allow": False})
         return _deny("用户拒绝" if allow is False else "超时未批准")
     return _cb
 
