@@ -12,6 +12,21 @@ _PERM: dict = {}
 _perm_seq = itertools.count(1)
 
 
+def release_pending_permissions(sid: str) -> int:
+    """放行该会话所有挂起的权限等待（按 deny 收场），返回放行数。
+    会话停止时调用：否则 cancel 要等权限 60s 超时才被消费，停止响应最长延迟 60s。
+    等待方（make_permission_callback 的 _cb）被 set 唤醒后走 allow=False 分支，
+    permission_done(deny) 照常发、注册表照常清——面板审批卡收敛「✗ 已拒绝」。"""
+    n = 0
+    prefix = f"perm_{sid}_"
+    for rid, entry in list(_PERM.items()):
+        if rid.startswith(prefix) and entry.get("allow") is None:
+            entry["allow"] = False
+            entry["event"].set()
+            n += 1
+    return n
+
+
 def make_permission_callback(sid: str, on_event, *, timeout_s: float = 60.0):
     """can_use_tool 回调桥：向面板发 permission_request，等 coding.decide 裁决（超时默认 deny）。
     请求发送失败 → deny；等待被取消/中断 → deny（fail-closed）；注册表清理与

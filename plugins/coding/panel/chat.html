@@ -10,8 +10,22 @@
      default-src 'none' 屏蔽一切外部脚本，故不依赖任何 CDN 资源）。
      Edit 推 old/new → 着色 diff + 头行 +x/-y 统计；Write 仅推 new → 全文按新增着色；
      MultiEdit 的 new 为 edits JSON → 逐段 old_string→new_string diff（解析失败退回原文本）；
-     runner 未推内容 → 仅显示"修改：path"说明。工具调用卡片折叠展示 input 的 JSON
-     （Read/Bash/Grep 等的参数）。 -->
+     runner 未推内容 → 仅显示"修改：path"说明。工具调用卡默认折叠单行（R3 B1：
+     chevron + 图标 + 工具名 + 意图摘要 + 结果计数），点头行展开 input JSON 详情；
+     长输出 >8 行折叠为「… +N lines」单行（B2）；错误不上消息流，走底部 turn 级
+     错误条（B3）；工具失败只把对应卡标红 ✗，不新增卡片（B4）。
+     审批与状态（R3 C 项）：审批卡主按钮按工具动态动词（Bash→运行命令、Edit/Write→保存修改…），
+     等待中琥珀脉冲边框、裁决后收敛为灰小字单行记录（C1/C2）；运行状态为底部居中悬浮 pill
+     （spinner + 秒表 + 累计 token + 红 Stop，与 #errbar 垂直堆叠，不占消息流，C3）；
+     顶栏右侧会话级成本聚合「N tok · $X.XXXX」（done 事件 usage 累加，C4）；
+     完成行保留耗时/token/cost 明细，灰小字一行（C5）。
+     输入区三段式（R3 D1，对标 opencode 底栏）：① 输入框（2px 左竖条 accent）→ ② 上下文行
+     （cwd 药丸+📁+权限模式 pill+@ 提示）→ ③ 快捷键行（键白动作灰；↵ 发送 / ⇧↵ 换行 / @ 文件 /
+     esc 停止，IME 组字 Enter 不上屏误发）；顶栏收窄为 标题+成本聚合+历史/新对话（D4）；
+     消息带宽屏限 760px 居中、气泡/卡 max-width 85%、meta 灰小字 11px（D3 排版 token）。
+     AI 气泡 markdown 基座（R3）：marked(GFM) → DOMPurify 消毒 → hljs 高亮，vendor 三库
+     经 sidecar 占位内联（head 内三个 script 占位注释，见 vendor/README.md）；
+     注入缺失/异常自动降级为纯文本，不抛异常。 -->
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
@@ -24,22 +38,29 @@
     --bg: #eef2f7;              /* slate-100 主区底 */
     --card: #ffffff;            /* 表面 L1：卡 / 工具栏 / 输入条 */
     --surface-2: #f3f6fa;       /* slate-050：头部底 / 输入填充 / 卡头 */
+    --surface-2h: #e9edf3;      /* surface-2 的 hover 加深 */
     --text: #1e2a38;            /* ink-900 */
     --muted: #6b7d91;           /* ink-500 次要文本 */
     --faint: #8a9aac;           /* ink-400 占位 / 极弱 */
     --accent: #4d90c4;          /* sky-500 主色 */
     --accent-deep: #3d7aa8;     /* sky-600 hover / 强调 */
     --accent-soft: #e7f0f8;     /* sky-050 薄膜 */
+    --accent-line: #cfe0ed;     /* sky-100：accent-soft 区块的 hairline 描边 */
     --border: rgba(40,60,90,0.10);
     --border-strong: rgba(40,60,90,0.18);
     --border-soft: rgba(40,60,90,0.08);  /* hairline 分界（= --line） */
     --line: rgba(40,60,90,0.08);
-    --green-bg: #dceee3; --green: #3e8e5a; --green-bar: #8fd0a6;
+    --green-bg: #dceee3; --green: #3e8e5a; --green-bar: #8fd0a6; --green-line: #c4e0cf;
     --red-bg: #f4dedb; --red: #b6554a; --red-bar: #dca59e;
+    --amber: #d97706; --amber-bg: #fdf5e7;   /* 等待审批脉冲（C2） */
+    --amber-deep: #9a7b28;      /* 警示黄字（历史 stopped 态 / handoff 不完整记录） */
     --ai-bg: #ffffff;           /* AI 气泡：白底 + 描边 */
     --user-bg: #4d90c4;         /* 用户气泡：sky-500 */
+    --code-bg: #22303f;         /* ink-900 加深：markdown 代码块底 */
+    --code-text: #d9e3ee;       /* 代码块正文 */
     --sans: -apple-system, "PingFang SC", sans-serif;
     --mono: 12.5px/1.6 "SF Mono", ui-monospace, Menlo, monospace;
+    --mono-family: "SF Mono", ui-monospace, Menlo, monospace;  /* 仅字族：给需自定字号的 mono 场景（--mono 是 font 全简写，不能喂 font-family） */
     --r-sm: 10px; --r-md: 14px; --r-pill: 999px;
     --shadow-card: 0 1px 2px rgba(30,42,56,0.04);
     --shadow-pop: 0 8px 24px rgba(30,42,56,0.14);
@@ -52,63 +73,47 @@
   }
   .hidden { display: none !important; }
 
-  /* ---- 顶栏：极简工具条（cwd 项目药丸 + agent 徽标 + 右侧安静 ghost 按钮） ---- */
+  /* ---- 顶栏（D4 收窄，高约 40px）：左标题「编码对话」+ 右成本聚合 + 历史/新对话 ghost；
+     cwd 药丸 / 📁 / 权限模式 pill 已迁入 footer 上下文行（D1） ---- */
   header {
     flex: none; display: flex; align-items: center; gap: 8px;
-    padding: 8px 14px; border-bottom: 1px solid var(--line);
+    padding: 5px 14px; min-height: 40px; border-bottom: 1px solid var(--line);
     background: var(--card);
   }
-  header .lbl { font-size: 12px; color: var(--muted); flex: none; }
-  header .spacer { flex: 1; }
-  /* cwd：项目药丸（可点击编辑的"标签"），不再像对话输入框 */
-  #cwd {
-    flex: 0 1 auto; min-width: 120px; max-width: 280px;
-    border: 1px solid transparent; border-radius: var(--r-pill);
-    padding: 4px 12px 4px 26px; font-size: 12px; font-family: var(--mono);
-    background: var(--surface-2) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7d91' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'/></svg>") no-repeat 10px 50%;
-    color: var(--text); outline: none; cursor: text;
-    transition: border-color .15s ease, background-color .15s ease;
-    overflow: hidden; text-overflow: ellipsis;
+  header .title { flex: none; font-size: 13px; font-weight: 600; color: var(--text); }
+  .spacer { flex: 1; }
+  /* 会话成本聚合（C4）：顶栏右侧灰小字「N tok · $X.XXXX」，done 事件 usage 前端累加 */
+  #cost {
+    flex: none; font: var(--mono); font-size: 11px; color: var(--faint);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  #cwd:hover { background-color: #e9edf3; }
-  #cwd:focus { border-color: var(--accent); background-color: var(--card); }
-  #cwd::placeholder { color: var(--faint); font-family: var(--sans); }
-  /* 📁 文件夹选择器按钮（cwd 药丸旁；picker 是补充，药丸仍可手输） */
-  #cwd-pick {
+  /* 右上工具按钮：安静 ghost（#history / #new-chat 共用） */
+  #history, #new-chat {
     flex: none; border: 1px solid transparent; background: transparent;
-    color: var(--muted); font-size: 13px; padding: 4px 7px; border-radius: 8px;
-    cursor: pointer; transition: all .15s ease;
-  }
-  #cwd-pick:hover { background: var(--surface-2); color: var(--accent-deep); border-color: var(--border); }
-  #agent {
-    flex: none; display: inline-flex; align-items: center; gap: 5px;
-    font-size: 11.5px; color: var(--accent-deep); background: var(--accent-soft);
-    border-radius: var(--r-pill); padding: 4px 10px; font-weight: 600;
-  }
-  #agent::before { content: "●"; font-size: 9px; color: var(--accent); }
-  /* 右上工具按钮：安静 ghost（#new-chat / #handoff 共用） */
-  #new-chat, #handoff {
-    flex: none; border: 1px solid transparent; background: transparent;
-    color: var(--muted); font-size: 12px; padding: 5px 12px; border-radius: 8px;
+    color: var(--muted); font-size: 12px; padding: 4px 10px; border-radius: 8px;
     cursor: pointer; font-weight: 500; transition: all .15s ease;
   }
-  #new-chat:hover, #handoff:hover {
+  #history:hover, #new-chat:hover {
     background: var(--surface-2); color: var(--accent-deep); border-color: var(--border);
   }
-  #new-chat:disabled, #handoff:disabled { opacity: .5; cursor: default; }
+  #history:disabled, #new-chat:disabled { opacity: .5; cursor: default; }
 
-  /* ---- 主区：流式日志（唯一视觉焦点） ---- */
+  /* ---- 主区：流式日志（唯一视觉焦点）。D3：消息节奏 8/12/16 梯度（行距 12），
+     宽屏限 760px 消息带居中（不拉飞）；marker 小丸自带 align-self 居中不受影响 ---- */
   #log {
     flex: 1; overflow-y: auto; padding: 16px 14px;
-    display: flex; flex-direction: column; gap: 10px;
+    display: flex; flex-direction: column; gap: 12px;
     background: var(--bg);
+  }
+  #log > .row, #log > .card, #log > .tool-result {
+    width: 100%; max-width: 760px; margin-left: auto; margin-right: auto;
   }
   .row { display: flex; width: 100%; }
   .row.user { justify-content: flex-end; }
   .row.ai { justify-content: flex-start; }
 
   .bubble {
-    max-width: 86%; padding: 9px 13px; border-radius: var(--r-md);
+    max-width: 85%; padding: 9px 13px; border-radius: var(--r-md);
     font-size: 13px; line-height: 1.7; word-break: break-word; white-space: pre-wrap;
   }
   .row.user .bubble { background: var(--user-bg); color: #fff; border-bottom-right-radius: 4px; position: relative; }
@@ -127,9 +132,71 @@
     content: " ✓"; color: var(--green); font-weight: 600; font-size: 11px;
   }
 
+  /* ---- AI 气泡 markdown（R3 渲染基座：marked → DOMPurify → hljs；.md 类仅渲染成功时挂上） ---- */
+  .row.ai .bubble.md { white-space: normal; }  /* markdown 结构自带块距，弃 pre-wrap 防空行加倍 */
+  .bubble.md > :first-child { margin-top: 0; }
+  .bubble.md > :last-child { margin-bottom: 0; }
+  .bubble.md p { margin: 6px 0; }
+  .bubble.md h1, .bubble.md h2, .bubble.md h3,
+  .bubble.md h4, .bubble.md h5, .bubble.md h6 { margin: 12px 0 6px; line-height: 1.4; font-weight: 600; }
+  .bubble.md h1 { font-size: 17px; }
+  .bubble.md h2 { font-size: 15.5px; }
+  .bubble.md h3 { font-size: 14px; }
+  .bubble.md h4, .bubble.md h5, .bubble.md h6 { font-size: 13px; }
+  .bubble.md ul, .bubble.md ol { margin: 6px 0; padding-left: 22px; }
+  .bubble.md li { margin: 2px 0; }
+  .bubble.md li > p { margin: 2px 0; }         /* GFM 松散列表内段落不撑双距 */
+  .bubble.md li input[type="checkbox"] { margin-right: 5px; vertical-align: -1px; }
+  .bubble.md blockquote {
+    margin: 8px 0; padding: 2px 12px; color: var(--muted);
+    border-left: 3px solid var(--border-strong);
+  }
+  .bubble.md blockquote p { margin: 4px 0; }
+  .bubble.md a { color: var(--accent-deep); }
+  .bubble.md hr { border: none; border-top: 1px solid var(--line); margin: 10px 0; }
+  .bubble.md img { max-width: 100%; }
+  /* 行内码：浅底 chip（与深色代码块区分） */
+  .bubble.md code {
+    font: var(--mono); font-size: 12px; padding: 1px 5px;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px;
+  }
+  /* 表格：细边框 + 轻斑马纹；超宽整块横向滚动 */
+  .bubble.md table {
+    display: block; overflow-x: auto; max-width: 100%;
+    border-collapse: collapse; margin: 8px 0; font-size: 12.5px;
+  }
+  .bubble.md th, .bubble.md td { border: 1px solid var(--border-strong); padding: 4px 10px; text-align: left; }
+  .bubble.md th { background: var(--surface-2); font-weight: 600; }
+  .bubble.md tr:nth-child(even) td { background: rgba(40,60,90,0.03); }
+  /* 代码块：深色块 + 顶部细条（左语言标签灰小字 / 右复制钮；JS 把 pre 包进 .codeblock） */
+  .bubble.md .codeblock { margin: 8px 0; border-radius: 10px; overflow: hidden; background: var(--code-bg); }
+  .bubble.md .code-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 2px 8px 2px 12px; border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  .bubble.md .code-lang { font-size: 11px; color: #8fa3b8; }
+  .bubble.md .code-copy {
+    border: none; background: transparent; color: #8fa3b8; font-size: 11px;
+    padding: 2px 8px; border-radius: 6px; cursor: pointer; transition: all .15s ease;
+  }
+  .bubble.md .code-copy:hover { background: rgba(255,255,255,0.10); color: #e4ecf4; }
+  .bubble.md .code-copy.ok { color: var(--green-bar); }
+  .bubble.md pre { margin: 0; padding: 10px 12px; overflow-x: auto; font: var(--mono); color: var(--code-text); white-space: pre; }
+  .bubble.md pre code { padding: 0; background: none; border: none; border-radius: 0; font-size: inherit; color: inherit; }
+  /* hljs 迷你深色主题（vendor 不含主题 CSS，手写常用 token 配色，向 slate/sky 色板靠） */
+  .bubble.md .hljs-comment, .bubble.md .hljs-quote { color: #7f93a8; font-style: italic; }
+  .bubble.md .hljs-keyword, .bubble.md .hljs-selector-tag, .bubble.md .hljs-built_in, .bubble.md .hljs-literal { color: #7cb3e8; }
+  .bubble.md .hljs-string, .bubble.md .hljs-regexp, .bubble.md .hljs-addition { color: #9ed3a9; }
+  .bubble.md .hljs-number, .bubble.md .hljs-symbol, .bubble.md .hljs-bullet { color: #e0b184; }
+  .bubble.md .hljs-title, .bubble.md .hljs-section { color: #e5c07b; }
+  .bubble.md .hljs-attr, .bubble.md .hljs-attribute, .bubble.md .hljs-variable, .bubble.md .hljs-template-variable { color: #d9a87e; }
+  .bubble.md .hljs-type, .bubble.md .hljs-name, .bubble.md .hljs-selector-class { color: #6fc7bd; }
+  .bubble.md .hljs-deletion { color: #e08a80; }
+  .bubble.md .hljs-meta { color: #b493e6; }
+
   /* 文件改动 / 工具调用卡片（v1 单列） */
   .card {
-    max-width: 86%; background: var(--card); border: 1px solid var(--border);
+    max-width: 85%; background: var(--card); border: 1px solid var(--border);
     border-radius: var(--r-md); overflow: hidden; box-shadow: var(--shadow-card);
   }
   .card-head {
@@ -139,22 +206,20 @@
   }
   .card-head .ic { flex: none; }
   .card-head .lbl { font-weight: 600; color: var(--text); flex: none; }
-  .card-head .path {
-    flex: 1; min-width: 0; font: var(--mono); color: var(--accent-deep);
+  .card.tooluse .card-head .ic { color: var(--muted); }
+  /* 工具卡单行头（B1）：chevron + 图标 + 工具名 + 意图摘要 + 结果计数；整行点击展开详情 */
+  .card.tooluse .card-head { cursor: pointer; user-select: none; }
+  .card.tooluse .card-head:hover { background: var(--surface-2h); }
+  .card-head .chev { flex: none; width: 11px; color: var(--faint); font-size: 10px; }
+  .card-head .intent {
+    flex: 1; min-width: 0; font: var(--mono); color: var(--muted);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .card-head .tool {
-    flex: none; font-size: 11px; color: var(--muted);
-    background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px;
-  }
-  .card-head .spacer { flex: 1; }
-  .card-head .mini {
-    flex: none; border: none; background: transparent; color: var(--muted); cursor: pointer;
-    font-size: 11.5px; padding: 2px 8px; border-radius: 7px; transition: all .15s ease;
-  }
-  .card-head .mini:hover { background: var(--accent-soft); color: var(--accent-deep); }
-  .card.fileedit .card-head .ic { color: var(--accent-deep); }
-  .card.tooluse .card-head .ic { color: var(--muted); }
+  .card-head .tally { flex: none; font: var(--mono); font-size: 11px; color: var(--faint); }
+  /* B4：工具失败标红（卡级 err 态 + 单行尾 ✗，不新增卡片） */
+  .card.tooluse.err { border-color: var(--red-bar); }
+  .card.tooluse.err .card-head .ic { color: var(--red); }
+  .card.tooluse.err .card-head .tally { color: var(--red); font-weight: 600; }
   .card-body { padding: 0; background: var(--card); }
   .card-body.collapsed { display: none; }
   .card-body.open { display: block; }
@@ -184,7 +249,7 @@
 
   /* 思考块（thinking 事件）：淡色斜体小块，挂 assistant 气泡内 */
   .think-block {
-    margin-top: 6px; padding: 6px 10px; border-radius: 8px;
+    margin-top: 8px; padding: 6px 10px; border-radius: 8px;
     background: var(--surface-2); color: var(--muted);
     font-size: 12px; font-style: italic; white-space: pre-wrap; word-break: break-word;
   }
@@ -193,9 +258,10 @@
     color: var(--faint); margin-right: 6px;
   }
 
-  /* 工具输出（tool_result 事件）：折叠 details，挂最近一张工具卡下；无卡则独立暗块 */
+  /* 工具输出（tool_result 事件）：挂最近一张工具卡下（无卡则独立暗块）。
+     B2：≤8 行直接可见（.plain 无 summary），>8 行 details 默认收起、summary 显示「… +N lines」；err 红态 */
   .tool-result {
-    max-width: 86%; margin-top: 6px; padding: 6px 11px 8px;
+    max-width: 85%; margin-top: 8px; padding: 6px 11px 8px;
     border-top: 1px dashed var(--border); font-size: 12px;
   }
   #log > .tool-result {
@@ -209,69 +275,180 @@
     color: var(--muted); background: var(--surface-2);
     max-height: 240px; overflow-y: auto;
   }
+  .tool-result.plain > pre { margin-top: 2px; }
   .tool-result.err > summary, .tool-result.err > pre { color: var(--red); }
   .tool-result.err > pre { background: var(--red-bg); }
 
-  /* 权限审批卡（permission_request 事件）：警示色描边 + 拒绝/允许按钮 + 超时提示；裁决后 ok/no 着色锁定 */
-  .perm-card { border-color: var(--warn, #b45309); padding: 10px 13px; }
+  /* turn 级错误条（B3）：底部固定红底细条——左摘要单行截断 + 右「详情」展开/收起全文；
+     协议 XML/堆栈只进详情区，摘要只显示人话首行；新 turn 开始（send/user_msg）消失 */
+  #errbar {
+    flex: none; padding: 6px 12px; background: var(--red-bg);
+    border-top: 1px solid var(--red-bar); font-size: 12px;
+  }
+  #errbar .err-row { display: flex; align-items: center; gap: 8px; }
+  #errbar .err-summary {
+    flex: 1; min-width: 0; color: var(--red);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  #errbar .err-toggle {
+    flex: none; border: 1px solid var(--red-bar); background: transparent; color: var(--red);
+    font-size: 11px; padding: 1px 10px; border-radius: 6px; cursor: pointer; transition: all .15s ease;
+  }
+  #errbar .err-toggle:hover { background: rgba(182,85,74,0.12); }
+  #errbar .err-detail {
+    margin-top: 6px; max-height: 160px; overflow-y: auto; padding: 6px 9px;
+    border-radius: 8px; background: rgba(255,255,255,0.55);
+    font: var(--mono); font-size: 11.5px; color: var(--red);
+    white-space: pre-wrap; word-break: break-word;
+  }
+
+  /* 权限审批卡（C1/C2）：等待中 = 琥珀脉冲边框 + 动态动词绿主钮/灰次钮通栏双排；
+     permission_done 后收敛为灰小字单行记录（.perm-done，按钮区整段移除）。
+     脉冲用 ::before 叠层只动 opacity（transform/opacity 性能约束），60s 超时后端默认拒绝逻辑不动 */
+  .perm-card { position: relative; border-color: var(--amber); background: var(--amber-bg); padding: 10px 13px; }
+  .perm-card::before {
+    content: ""; position: absolute; inset: 0; border-radius: inherit;
+    border: 2px solid var(--amber); pointer-events: none;
+    animation: perm-pulse 2s ease-in-out infinite;
+  }
+  @keyframes perm-pulse { 0%, 100% { opacity: .25; } 50% { opacity: .9; } }
   .perm-head { font-weight: 600; }
   .perm-input {
     max-height: 120px; overflow: auto; font-size: 11px; margin-top: 6px;
-    padding: 6px 9px; border-radius: 8px; background: var(--surface-2);
+    padding: 6px 9px; border-radius: 8px; background: var(--card);
     font-family: ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-word;
   }
-  .perm-actions { display: flex; gap: 8px; margin: 6px 0; }
+  .perm-actions { display: flex; gap: 8px; margin: 8px 0 4px; }
   .perm-actions button {
-    border: none; border-radius: 8px; padding: 5px 18px; cursor: pointer;
-    font-size: 12px; font-weight: 600; color: #fff; transition: opacity .15s ease;
+    flex: 1; border: 1px solid transparent; border-radius: 8px; padding: 7px 12px;
+    cursor: pointer; font-size: 12.5px; font-weight: 600; transition: all .15s ease;
   }
-  .perm-actions button:disabled { opacity: .45; cursor: default; }
-  .perm-ok { background: #16a34a; }
-  .perm-no { background: #dc2626; }
-  .perm-card.ok { border-color: #16a34a; }
-  .perm-card.no { border-color: #dc2626; }
-  .perm-state { font-size: 11px; opacity: .7; }
+  .perm-ok { background: var(--green); color: #fff; }
+  .perm-ok:hover { filter: brightness(0.92); }
+  .perm-no { background: transparent; color: var(--muted); border-color: var(--border-strong); }
+  .perm-no:hover { background: var(--surface-2); color: var(--text); }
+  .perm-state { font-size: 11px; color: var(--amber); }
+  /* 裁决后收敛：灰小字单行「✓ 已允许 运行命令」/「✗ 已拒绝」，内容宽度自适应；
+     D3 消息带居中后贴带左缘（margin-left = 带宽外余量），不随 #log>.card 整宽居中 */
+  #log > .card.perm-card.perm-done {
+    width: fit-content; margin-left: max(0px, calc(50% - 380px)); margin-right: auto;
+    padding: 4px 12px;
+    background: var(--surface-2); border-color: var(--border);
+    font-size: 11.5px; color: var(--muted); box-shadow: none;
+  }
+  .perm-card.perm-done::before { content: none; }
 
-  /* 终止标 / 错误 */
+  /* 终止标 / 错误（D3 meta 规范：灰小字 11px --faint） */
   .marker {
-    align-self: center; font-size: 11.5px; color: var(--faint);
+    align-self: center; font-size: 11px; color: var(--faint);
     padding: 2px 10px; border-radius: var(--r-pill); background: var(--surface-2);
   }
   .marker.err { color: var(--red); background: var(--red-bg); }
 
-  /* ---- 底栏：flush 输入条（连续对话，非第二个对话窗口） ---- */
+  /* ---- 底栏三段式（D1，对标 opencode 底栏；三段合计 ≤110px 紧凑） ----
+     ① 输入框：2px 左竖条 accent（focus 时 accent-deep），圆角 --r-md
+     ② 上下文行：cwd 药丸（顶栏迁入，📁 picker/手输不变）+ 权限模式 pill + @ 提示灰小字
+     ③ 快捷键行：键白动作灰（kbd 白底小圆角描边 + --faint 动作词）；#status 灰小字融入本行
+        左侧不独占一行；操作钮收敛右侧：#send accent 实心主钮 / #stop ghost / #handoff ghost 小钮 */
   footer {
     flex: none; border-top: 1px solid var(--line); background: var(--card);
-    padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 8px;
+    padding: 8px 12px 5px; display: flex; flex-direction: column; gap: 4px;
   }
+  /* 段①：输入框（display:block 消除 inline 基线下方虚高） */
   #prompt {
-    width: 100%; border: 1px solid transparent; border-radius: var(--r-md); padding: 10px 12px;
+    display: block;
+    width: 100%; border: 1px solid var(--border); border-left: 2px solid var(--accent);
+    border-radius: var(--r-md); padding: 6px 10px;
     font: 13px/1.6 var(--sans); background: var(--surface-2); color: var(--text);
-    outline: none; resize: none; min-height: 56px; max-height: 160px;
+    outline: none; resize: none; min-height: 35px; max-height: 160px;
     transition: border-color .15s ease, background-color .15s ease;
   }
-  #prompt:focus { border-color: var(--border-strong); background: var(--card); }
+  #prompt:focus { border-color: var(--border-strong); border-left-color: var(--accent-deep); background: var(--card); }
   #prompt::placeholder { color: var(--faint); }
-  /* @ 补全下拉：textarea 容器相对定位，菜单向上展开 */
+  /* @ 补全下拉：textarea 容器相对定位，菜单向上展开（三段式重构后锚点不变） */
   .prompt-wrap { position: relative; }
   .at-menu { position: absolute; bottom: 100%; left: 0; right: 0; max-height: 200px; overflow: auto; background: var(--card); border: 1px solid var(--border); border-radius: var(--r-md); box-shadow: var(--shadow-card); z-index: 30; }
-  .at-item { padding: 6px 10px; font-family: var(--mono); font-size: 12px; cursor: pointer; }
+  .at-item { padding: 6px 10px; font-family: var(--mono-family); font-size: 12px; cursor: pointer; }
   .at-item.sel { background: var(--surface-2); }
   .at-empty { padding: 8px; opacity: .6; font-size: 12px; }
-  .actions { display: flex; align-items: center; gap: 8px; }
-  .actions .spacer { flex: 1; }
-  #status { font-size: 11.5px; color: var(--muted); min-height: 18px; flex: 1; }
+  /* 段②：上下文行——cwd 药丸（小圆角底板 + mono 小字；change/persist、pickCwd 逻辑不动） */
+  .ctx-row { display: flex; align-items: center; gap: 6px; }
+  #cwd {
+    flex: 1 1 auto; min-width: 90px;
+    border: 1px solid transparent; border-radius: var(--r-sm);
+    padding: 2px 10px 2px 24px; font: var(--mono); font-size: 11.5px;
+    background: var(--surface-2) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7d91' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'/></svg>") no-repeat 8px 50%;
+    color: var(--text); outline: none; cursor: text;
+    transition: border-color .15s ease, background-color .15s ease;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  #cwd:hover { background-color: var(--surface-2h); }
+  #cwd:focus { border-color: var(--accent); background-color: var(--card); }
+  #cwd::placeholder { color: var(--faint); font-family: var(--sans); }
+  /* 📁 文件夹选择器按钮（cwd 药丸旁；picker 是补充，药丸仍可手输） */
+  #cwd-pick {
+    flex: none; border: 1px solid transparent; background: transparent;
+    color: var(--muted); font-size: 12px; line-height: 1.2; padding: 2px 6px; border-radius: 7px;
+    cursor: pointer; transition: all .15s ease;
+  }
+  #cwd-pick:hover { background: var(--surface-2); color: var(--accent-deep); border-color: var(--border); }
+  .at-hint { flex: none; margin-left: auto; font-size: 11px; color: var(--faint); white-space: nowrap; }
+  /* 段③：快捷键行（键白动作灰） */
+  .keys-row { display: flex; align-items: center; gap: 8px; }
+  #status {
+    flex: 1; min-width: 0; font-size: 11px; color: var(--faint);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   #status.err { color: var(--red); }
-  /* 运行状态条 spinner：10px 边框圆 + 旋转（setStatus 第三个参控制显隐） */
-  #status .spin {
+  .keys {
+    flex: 0 1 auto; overflow: hidden; display: flex; align-items: center; gap: 8px;
+    font-size: 11px; color: var(--faint); white-space: nowrap;
+  }
+  .keys kbd {
+    display: inline-block; margin-right: 3px; padding: 0 5px; line-height: 15px;
+    background: var(--card); border: 1px solid var(--border-strong); border-radius: 4px;
+    font: var(--mono); font-size: 10px; color: var(--muted);
+  }
+  /* 窄面板优先保住状态行与操作钮：快捷键提示让位（裁切→整组隐藏） */
+  @media (max-width: 480px) { .keys { display: none; } }
+  /* #handoff 顶栏迁入本行：ghost 小钮 */
+  #handoff {
+    flex: none; border: 1px solid transparent; background: transparent;
+    color: var(--muted); font-size: 11.5px; padding: 3px 9px; border-radius: 7px;
+    cursor: pointer; font-weight: 500; transition: all .15s ease; white-space: nowrap;
+  }
+  #handoff:hover { background: var(--surface-2); color: var(--accent-deep); border-color: var(--border); }
+  #handoff:disabled { opacity: .5; cursor: default; }
+  /* spinner：10px 边框圆 + 旋转（状态行 / 运行 pill 共用） */
+  .spin {
     display: inline-block; width: 10px; height: 10px; margin-right: 6px;
     border: 2px solid var(--border-strong); border-top-color: var(--accent);
     border-radius: 50%; vertical-align: -1px;
     animation: status-spin .8s linear infinite;
   }
   @keyframes status-spin { to { transform: rotate(360deg); } }
+
+  /* 运行状态悬浮 pill（C3）：底部居中浮在 footer 上方（fixed，JS 按 footer/#errbar
+     高度算 bottom，垂直堆叠不重叠），不占消息流空间；仅 streaming/sending 期间可见。
+     spinner + 已耗时秒表 + 会话累计 token + 红 Stop；done/stopped/error 后消失 */
+  #runpill {
+    position: fixed; left: 50%; transform: translateX(-50%); bottom: 110px; z-index: 35;
+    display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 12px;
+    border-radius: var(--r-pill); background: var(--card);
+    border: 1px solid var(--border-strong); box-shadow: var(--shadow-pop);
+    font-size: 11.5px; color: var(--muted); white-space: nowrap;
+  }
+  #runpill .rp-tok { font: var(--mono); font-size: 11px; color: var(--faint); }
+  #runpill .rp-stop {
+    border: none; border-radius: var(--r-pill); padding: 3px 12px; cursor: pointer;
+    background: var(--red); color: #fff; font-size: 11.5px; font-weight: 600;
+    transition: filter .15s ease;
+  }
+  #runpill .rp-stop:hover { filter: brightness(0.92); }
+  /* pill 可见时给消息流底部让位，末条消息不被盖住 */
+  body.pill-on #log { padding-bottom: 58px; }
   button.act {
-    border: none; border-radius: var(--r-pill); padding: 7px 20px; cursor: pointer;
+    border: none; border-radius: var(--r-pill); padding: 5px 16px; cursor: pointer;
     background: var(--accent); color: #fff; font-size: 12.5px; font-weight: 600;
     box-shadow: 0 1px 3px rgba(77,144,196,0.25); transition: all .15s ease;
   }
@@ -286,7 +463,7 @@
   button.ghost:disabled { opacity: .5; cursor: default; }
   /* 权限模式 pill：两态切换（自动改文件 ⇄ 只读规划），plan 态用强调色描边 */
   .pill {
-    flex: none; font-size: 11px; padding: 2px 10px; border-radius: 999px;
+    flex: none; font-size: 11px; padding: 2px 10px; border-radius: var(--r-pill);
     border: 1px solid var(--border-strong); background: var(--surface-2);
     color: var(--muted); cursor: pointer; transition: all .15s ease;
   }
@@ -300,14 +477,14 @@
     background: var(--card); border: 1px solid var(--border); border-radius: var(--r-md);
     box-shadow: var(--shadow-pop); padding: 6px;
   }
-  /* 历史抽屉静态定位：header 下方靠右（handoff picker 由 JS 贴按钮定位） */
-  #history-picker { top: 52px; right: 12px; }
+  /* 历史抽屉静态定位：header（40px）下方靠右（handoff picker 由 JS 贴按钮定位） */
+  #history-picker { top: 46px; right: 12px; }
   #handoff-picker .pick-item, #history-picker .hrow {
     padding: 8px 10px; border-radius: 8px; cursor: pointer; transition: background .12s ease;
     display: flex; flex-direction: column; gap: 2px;
   }
   #handoff-picker .pick-item:hover, #history-picker .hrow:hover { background: var(--accent-soft); }
-  #handoff-picker .pick-item .ts, #history-picker .hrow .ht { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+  #handoff-picker .pick-item .ts, #history-picker .hrow .ht { font-size: 11px; color: var(--muted); font-family: var(--mono-family); }
   #handoff-picker .pick-item .fl, #history-picker .hrow .hp {
     font-size: 12.5px; color: var(--text);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -322,11 +499,11 @@
   /* 历史抽屉专有：hrow 是 <button>（需重置默认样式）；.hc 目录名 / .hs 状态 / .mempty 空态 */
   #history-picker .hrow { border: 0; background: none; width: 100%; text-align: left; font: inherit; color: inherit; }
   #history-picker .hrow .hc { font-size: 11px; color: var(--muted); }
-  #history-picker .hrow .hs { font-size: 10.5px; color: var(--muted); font-family: var(--mono); }
+  #history-picker .hrow .hs { font-size: 10.5px; color: var(--muted); font-family: var(--mono-family); }
   #history-picker .hrow .hs.done { color: var(--green); }
   #history-picker .hrow .hs.running { color: var(--accent-deep); }
   #history-picker .hrow .hs.failed { color: var(--red); }
-  #history-picker .hrow .hs.stopped { color: #9a7b28; }
+  #history-picker .hrow .hs.stopped { color: var(--amber-deep); }
   #history-picker .mempty { padding: 18px 12px; text-align: center; color: var(--muted); font-size: 12px; }
 
   /* ---- 交接卡：session 起点（区别于普通文件改动/工具卡片，整宽 + sky 强调色左边条） ---- */
@@ -335,7 +512,7 @@
     background: var(--card);
   }
   .card.handoff .card-head {
-    background: var(--accent-soft); border-bottom: 1px solid #cfe0ed;
+    background: var(--accent-soft); border-bottom: 1px solid var(--accent-line);
   }
   .card.handoff .card-head .ic,
   .card.handoff .card-head .lbl { color: var(--accent-deep); }
@@ -344,14 +521,14 @@
     background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px;
   }
   .card.handoff .card-head .warn {
-    flex: none; font-size: 11px; color: #9a7b28; font-style: italic;
+    flex: none; font-size: 11px; color: var(--amber-deep); font-style: italic;
   }
   .card.handoff.sealed {
     border: 1px solid var(--green-bar); border-left: 3px solid var(--green);
     background: var(--card);
   }
   .card.handoff.sealed .card-head {
-    background: var(--green-bg); border-bottom: 1px solid #c4e0cf;
+    background: var(--green-bg); border-bottom: 1px solid var(--green-line);
   }
   .card.handoff.sealed .card-head .ic,
   .card.handoff.sealed .card-head .lbl { color: var(--green); }
@@ -386,37 +563,76 @@
   /* 设计预览态（无 window.yibao 桥时） */
   #bridge-warn {
     padding: 6px 12px; background: var(--accent-soft); color: var(--accent-deep); font-size: 11.5px;
-    text-align: center; border-bottom: 1px solid #cfe0ed;
+    text-align: center; border-bottom: 1px solid var(--accent-line);
   }
 </style>
+<!-- vendor 渲染基座（sidecar _inline_vendor 占位内联，见 vendor/README.md；注入缺失时下方 JS 自动降级纯文本）：
+     marked(GFM) → DOMPurify 消毒 → highlight.js 高亮 -->
+<script><!--inject:vendor/marked.min.js--></script>
+<script><!--inject:vendor/dompurify.min.js--></script>
+<script><!--inject:vendor/highlight.min.js--></script>
 </head>
 <body>
 
 <!-- 桥缺失时可见，提示这是设计预览 -->
 <div id="bridge-warn" class="hidden">设计预览：未检测到译宝桥（window.yibao），起停/流式回显不可用。</div>
 
+<!-- D4 收窄：cwd 药丸/📁/模式 pill 迁入 footer 上下文行，handoff 迁入快捷键行；
+     顶栏只留 标题 + 成本聚合 + 历史/新对话 ghost -->
 <header>
-  <span class="lbl">项目</span>
-  <input id="cwd" type="text" spellcheck="false" placeholder="项目路径（如 /Users/.../myapp）">
-  <button id="cwd-pick" type="button" title="选择项目文件夹（也可直接在药丸里输入路径）">📁</button>
-  <span id="agent">agent: Claude Code</span>
+  <span class="title">编码对话</span>
   <span class="spacer"></span>
-  <button id="handoff" type="button" title="从 Codex 会话接续：读取该项目下的 Codex 会话，生成交接 brief 后用 Claude Code 接续">↩ 从 Codex 接续</button>
+  <span id="cost" title="本会话累计 token 与成本（done 事件累加；新对话/恢复历史后清零重计）"></span>
   <button id="history" type="button" title="历史会话：列出本会话记录，点击恢复后继续在同一上下文聊">历史</button>
   <button id="new-chat" type="button" title="清空当前对话，开新会话（下次发送走 coding.start）" disabled>新对话</button>
 </header>
 
 <main id="log"></main>
 
+<!-- turn 级错误条（B3）：错误不上消息流——底部固定红条，摘要 + 「详情」展开全文；新 turn 开始自动消失 -->
+<div id="errbar" class="hidden">
+  <div class="err-row">
+    <span id="err-summary" class="err-summary"></span>
+    <button id="err-toggle" type="button" class="err-toggle">详情</button>
+  </div>
+  <pre id="err-detail" class="err-detail hidden"></pre>
+</div>
+
+<!-- 运行状态悬浮 pill（C3）：底部居中浮于 footer 上方（bottom 由 JS 按 footer/#errbar 高度计算，
+     与错误条垂直堆叠不重叠）；spinner + 秒表 + 累计 token + 红 Stop，仅 streaming/sending 可见 -->
+<div id="runpill" class="hidden">
+  <span class="spin"></span>
+  <span id="rp-label"></span>
+  <span id="rp-tok" class="rp-tok"></span>
+  <button id="rp-stop" type="button" class="rp-stop" title="中断当前会话">Stop</button>
+</div>
+
+<!-- D1 三段式（对标 opencode 底栏）：① 输入框 → ② 上下文行 → ③ 快捷键行（键白动作灰）。
+     所有 id 不变，JS 行为（cwd persist / pickCwd / mode pill / @ 补全锚定）不受影响 -->
 <footer>
+  <!-- 段①：输入框（2px 左竖条 accent）；.prompt-wrap 是 @ 补全菜单的定位锚（向上展开） -->
   <div class="prompt-wrap">
-    <textarea id="prompt" placeholder="描述要做的事（⌘/Ctrl + Enter 发送）；Claude Code 会在上面的项目目录里执行" rows="2"></textarea>
+    <textarea id="prompt" placeholder="输入消息，@ 引用文件…" rows="1"></textarea>
     <div id="at-menu" class="at-menu" hidden></div>
   </div>
-  <div class="actions">
+  <!-- 段②：上下文行——cwd 药丸（顶栏迁入）+ 📁 选目录 + 权限模式 pill + @ 提示 -->
+  <div class="ctx-row">
+    <input id="cwd" type="text" spellcheck="false" placeholder="项目路径（如 /Users/.../myapp）">
+    <button id="cwd-pick" type="button" title="选择项目文件夹（也可直接在药丸里输入路径）">📁</button>
     <button id="mode-pill" type="button" class="pill" title="点击切换权限模式">自动改文件</button>
+    <span class="at-hint">@ 引用文件</span>
+  </div>
+  <!-- 段③：快捷键行——左 #status 灰小字（不独占一行），中 kbd 提示，右操作钮
+       （#handoff ghost 小钮 / #stop ghost 运行态才有意义 / #send accent 实心主钮） -->
+  <div class="keys-row">
     <span id="status"></span>
-    <span class="spacer"></span>
+    <span class="keys">
+      <span><kbd>↵</kbd>发送</span>
+      <span><kbd>⇧↵</kbd>换行</span>
+      <span><kbd>@</kbd>文件</span>
+      <span><kbd>esc</kbd>停止</span>
+    </span>
+    <button id="handoff" type="button" title="从 Codex 会话接续：读取该项目下的 Codex 会话，生成交接 brief 后用 Claude Code 接续">↩ Codex 接续</button>
     <button id="stop" class="act ghost" disabled>中断</button>
     <button id="send" class="act">发送</button>
   </div>
@@ -440,8 +656,7 @@
   var hasBridge = !!(window.yibao && window.yibao.invoke && window.yibao.onInit);
   if (!hasBridge) {
     document.getElementById("bridge-warn").classList.remove("hidden");
-    // 预置一段示例对话，让设计预览不空
-    renderPreviewSample();
+    // 示例对话的注入在 IIFE 末尾（此处 $/raf 等 var 尚未赋值，顶部调用会被 try/catch 静默吞掉）
   }
 
   // ============================================================
@@ -455,6 +670,7 @@
   var sending = false;         // send 按钮 re-entry 保护（仅覆盖 invoke 同步窗）
   var streaming = false;       // 流式进行中（invoke 返回 → done/error）；为 true 时锁定「新对话」
   var discardedSessions = {};  // 被「新对话」抛弃的 session_id → true 集合；防陈旧流块污染新对话
+  var pendingTurnEnded = false; // 终态事件先于 invoke 返回（runner 秒败）的竞态标记：onSessionEnded 在 sending 窗口置真，.then 据此跳过 streaming/ticker（防永久卡死）
   var curMode = "acceptEdits"; // acceptEdits=自动改文件；plan=只读规划
   var pendingUserEcho = null;  // send() 后等 user_msg 回流画用户气泡的 1.5s 兜底 timer（事件到达则清，防双份）
   var fallbackUserBubble = null; // 兜底 timer 画出的无锚用户气泡 {el, text}；迟到的 user_msg 文本匹配时原地升级挂 ⏪（防双份）
@@ -480,14 +696,68 @@
     s.className = isErr ? "err" : "";
   }
 
-  // 运行状态条秒表：spinner + 每秒刷新已耗时；终态（done/stopped/error）由 onSessionEnded 停
+  // ---- 会话成本聚合（C4）：done 事件 usage（{duration_ms, cost_usd, input_tokens,
+  //   output_tokens}）前端累加 → 顶栏右侧「N tok · $X.XXXX」；newChat/resumeSession
+  //   清零（恢复历史不补，接受降级）。运行 pill 的累计 token 段共用这本账。 ----
+  var sessionUsage = { tok: 0, cost: 0 };
+  function fmtTok(n) {
+    if (!isFinite(n)) return "0";
+    if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
+    return n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(n);
+  }
+  function addUsage(u) {
+    if (!u) return;
+    // 与 setStatusDone 同款守御：坏值静默略过该段，绝不上抛（initCbs try/catch 会吞掉后续终态处理）
+    sessionUsage.tok += (Number(u.input_tokens) || 0) + (Number(u.output_tokens) || 0);
+    var cost = Number(u.cost_usd);
+    if (u.cost_usd != null && isFinite(cost)) sessionUsage.cost += cost;
+    renderCost();
+  }
+  function renderCost() {
+    var el = $("cost");
+    if (!sessionUsage.tok && !sessionUsage.cost) { el.textContent = ""; return; }
+    el.textContent = fmtTok(sessionUsage.tok) + " tok · $" + sessionUsage.cost.toFixed(4);
+  }
+  function resetUsage() { sessionUsage.tok = 0; sessionUsage.cost = 0; renderCost(); }
+
+  // ---- 运行状态悬浮 pill（C3）：spinner + 已耗时秒表 + 会话累计 token + 红 Stop。
+  //   fixed 底部居中，bottom 按 footer + #errbar（可见时）高度计算，垂直堆叠不重叠；
+  //   仅 streaming/sending 期间可见，终态（done/stopped/error → onSessionEnded）消失。 ----
+  function showRunPill(text) {
+    $("rp-label").textContent = text;
+    renderRunPillTok();
+    $("runpill").classList.remove("hidden");
+    document.body.classList.add("pill-on");  // #log 底部让位，末条消息不被 pill 盖住
+    layoutRunPill();
+  }
+  function hideRunPill() {
+    $("runpill").classList.add("hidden");
+    document.body.classList.remove("pill-on");
+  }
+  // bottom = footer 高 +（errbar 可见时）errbar 高 + 10px 间隙
+  function layoutRunPill() {
+    var p = $("runpill");
+    if (p.classList.contains("hidden")) return;
+    var f = document.querySelector("footer");
+    var e = $("errbar");
+    var b = (f ? f.offsetHeight : 0) + 10;
+    if (e && !e.classList.contains("hidden")) b += e.offsetHeight;
+    p.style.bottom = b + "px";
+  }
+  function renderRunPillTok() {
+    $("rp-tok").textContent = sessionUsage.tok > 0 ? fmtTok(sessionUsage.tok) + " tok" : "";
+  }
+
+  // 运行秒表：pill 内每秒刷新已耗时；终态（done/stopped/error）由 onSessionEnded 停
   var ticker = null, tickStart = 0;
   function startTicker(prefix) {
     stopTicker();
     tickStart = Date.now();
-    setStatus(prefix + " · 0s", false, true);  // 第三个参 = spinner 开
+    setStatus(prefix + " 运行中…");      // footer 状态行别停在「提交中…」撒谎
+    $("rp-stop").disabled = false;      // invoke 已受理（streaming）：pill 的 Stop 此刻起可点
+    showRunPill(prefix + " · 0s");
     ticker = setInterval(function () {
-      setStatus(prefix + " · " + Math.floor((Date.now() - tickStart) / 1000) + "s", false, true);
+      showRunPill(prefix + " · " + Math.floor((Date.now() - tickStart) / 1000) + "s");
     }, 1000);
   }
   function stopTicker() { if (ticker) { clearInterval(ticker); ticker = null; } }
@@ -500,6 +770,11 @@
     var log = $("log");
     // 距底 < 60px 视为贴底（容忍亚像素与 padding 误差）
     atBottom = (log.scrollHeight - log.scrollTop - log.clientHeight) < 60;
+  });
+  // markdown 气泡里的链接：sandbox iframe 无导航出口，点开只会把面板替换成外部页（钓鱼视觉面）——
+  // 一律拦下（选中复制 URL 仍可用）。
+  $("log").addEventListener("click", function (e) {
+    if (e.target.closest && e.target.closest("a")) e.preventDefault();
   });
 
   // ============================================================
@@ -537,7 +812,7 @@
     return b;
   }
 
-  // 返回文本容器节点（之后往里 appendChild 文本节点）
+  // 返回 AI 气泡节点（文本经 appendTextToBubble 累积到 dataset.raw 并走 markdown 渲染管线）
   function appendAssistantBubble() {
     var row = document.createElement("div");
     row.className = "row ai";
@@ -549,9 +824,157 @@
     return b;
   }
 
+  // ============================================================
+  //   AI 气泡 markdown 渲染管线（R3 基座）
+  //   raw 累积在 bubble.dataset.raw；渲染 = marked(GFM/breaks) → DOMPurify.sanitize
+  //   → innerHTML → pre 包装 .codeblock（语言标签 + 复制钮）+ hljs 高亮（仅有语言标签
+  //   的 fence，无标签保留深色 pre 但不染色，防 common 包误判）。
+  //   流式期 rAF 对齐 + 150ms 最小间隔合并（只重渲当前活动气泡——text_delta 只落在
+  //   currentBubble 上）；done/stopped/error 终渲一次全量。raw > 50KB 时流式期保持
+  //   纯文本（textContent），终渲再上 markdown；vendor 缺失/异常一律退回纯文本，不抛。
+  // ============================================================
+  var MD_MIN_INTERVAL = 150;   // 流式重渲最小间隔（ms）
+  var MD_PLAIN_LIMIT = 50000;  // 长消息护栏：raw 超过则流式期纯文本
+
+  // vendor 可用性：marked/DOMPurify 是底线（缺一即纯文本）；hljs 缺失只跳高亮不降级
+  function mdAvailable() {
+    return !!(window.marked && typeof window.marked.parse === "function" &&
+              window.DOMPurify && typeof window.DOMPurify.sanitize === "function");
+  }
+
+  // rAF 对齐（无 rAF 的环境退化为 16ms timer；用函数声明求提升——设计预览在 IIFE 顶部就会走到）
+  function raf(cb) {
+    if (window.requestAnimationFrame) return window.requestAnimationFrame(cb);
+    return setTimeout(cb, 16);
+  }
+
   function appendTextToBubble(bubble, text) {
-    bubble.appendChild(document.createTextNode(text));
+    bubble.dataset.raw = (bubble.dataset.raw || "") + text;
+    scheduleBubbleRender(bubble);
     scrollIfAtBottom();
+  }
+
+  // 流式节流：每气泡一个 pending 位——已排队则合并（flush 读最新 dataset.raw，无丢失）；
+  // 排队帧里距上次渲染 <150ms 则延后到满间隔再渲（trailing flush 兜底最后一块）。
+  function scheduleBubbleRender(bubble) {
+    if (bubble._mdPending) return;
+    bubble._mdPending = true;
+    raf(function () {
+      if (!bubble._mdPending) return;  // 期间已被终渲接管
+      var wait = MD_MIN_INTERVAL - (Date.now() - (bubble._mdLast || 0));
+      if (wait <= 0) flushBubbleRender(bubble);
+      else setTimeout(function () { flushBubbleRender(bubble); }, wait);
+    });
+  }
+
+  function flushBubbleRender(bubble) {
+    if (!bubble._mdPending) return;    // 期间已被终渲接管
+    bubble._mdPending = false;
+    bubble._mdLast = Date.now();
+    renderBubble(bubble, false);
+    scrollIfAtBottom();
+  }
+
+  // 终渲：done/stopped/error 后全量渲一次（解除长消息护栏）；历史恢复同样走这里。
+  // pending 位置假使排队中的 rAF/timer 失效（flush 重入无害但浪费）。
+  function finalizeBubble(bubble) {
+    if (!bubble) return;
+    bubble._mdPending = false;
+    renderBubble(bubble, true);
+    scrollIfAtBottom();
+  }
+
+  // 渲染本体：final=true 忽略长消息护栏。think-block（思考小块）不是 markdown 内容，
+  // 每次重渲前摘出、渲完插回顶部（thinking 正常先于文本到达，视觉顺序保持一致）。
+  function renderBubble(bubble, final) {
+    var raw = bubble.dataset.raw || "";
+    var thinks = [];
+    var kids = bubble.children;
+    var i;
+    for (i = 0; i < kids.length; i++) {
+      if (kids[i].classList.contains("think-block")) thinks.push(kids[i]);
+    }
+    var html = null;
+    if (mdAvailable() && (final || raw.length <= MD_PLAIN_LIMIT)) {
+      try {
+        html = window.DOMPurify.sanitize(
+          window.marked.parse(raw, { gfm: true, breaks: true }),
+          { FORBID_ATTR: ["style"] });   // 收掉模型输出里原始 HTML 的 style 属性面
+      } catch (e) { html = null; }  // 解析/消毒异常 → 纯文本兜底，绝不上抛
+    }
+    if (html != null) {
+      bubble.innerHTML = html;
+      bubble.classList.add("md");
+      enhanceCodeBlocks(bubble);
+    } else {
+      bubble.textContent = raw;  // 纯文本路径：.bubble 原生 white-space:pre-wrap 承担换行
+      bubble.classList.remove("md");
+    }
+    for (i = thinks.length - 1; i >= 0; i--) {
+      bubble.insertBefore(thinks[i], bubble.firstChild);
+    }
+  }
+
+  // 代码块增强：pre 外套 .codeblock（顶部细条 = 左语言标签 + 右复制钮）
+  function enhanceCodeBlocks(bubble) {
+    var pres = bubble.querySelectorAll("pre");
+    for (var i = 0; i < pres.length; i++) wrapCodeBlock(pres[i]);
+  }
+
+  function wrapCodeBlock(pre) {
+    var code = pre.querySelector("code");
+    var lang = "";
+    if (code) {
+      var m = /(?:^|\s)language-([\w-]+)/.exec(code.className || "");
+      if (m) lang = m[1];
+    }
+    var box = document.createElement("div");
+    box.className = "codeblock";
+    var head = document.createElement("div");
+    head.className = "code-head";
+    var langEl = document.createElement("span");
+    langEl.className = "code-lang";
+    langEl.textContent = lang || "code";
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "code-copy";
+    btn.textContent = "复制";
+    btn.addEventListener("click", function () {
+      // hljs 高亮只包 span，textContent 仍是代码原文
+      copyText(code ? code.textContent || "" : pre.textContent || "");
+      btn.textContent = "✓";
+      btn.classList.add("ok");
+      setTimeout(function () { btn.textContent = "复制"; btn.classList.remove("ok"); }, 1200);
+    });
+    head.appendChild(langEl);
+    head.appendChild(btn);
+    pre.parentNode.insertBefore(box, pre);
+    box.appendChild(head);
+    box.appendChild(pre);
+    if (lang && code && window.hljs && typeof window.hljs.highlightElement === "function" &&
+        typeof window.hljs.getLanguage === "function" && window.hljs.getLanguage(lang)) {
+      try { window.hljs.highlightElement(code); } catch (e) { /* 高亮失败不影响原文 */ }
+    }
+  }
+
+  // 复制：优先 clipboard API；srcdoc 沙箱可能无权限 → execCommand 兜底（失败静默，按钮已给 ✓ 反馈）
+  function copyText(text) {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      navigator.clipboard.writeText(text).catch(function () { legacyCopy(text); });
+    } else {
+      legacyCopy(text);
+    }
+  }
+  function legacyCopy(text) {
+    try {
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.cssText = "position:fixed;opacity:0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+    } catch (e) { /* 复制失败静默 */ }
   }
 
   function appendMarker(text, isErr) {
@@ -562,18 +985,35 @@
     scrollIfAtBottom();
   }
 
+  // ---- turn 级错误条（B3）：错误不上消息流——底部固定红底细条（左摘要单行截断 +
+  //   右「详情」展开/收起全文）；协议 XML/堆栈只进详情区，摘要只显示人话首行。
+  //   新 turn 开始（send / user_msg 回流）或清屏（新对话 / 恢复历史）时消失。 ----
   function appendError(text) {
-    var row = document.createElement("div");
-    row.className = "row ai";
-    var b = document.createElement("div");
-    b.className = "bubble";
-    b.style.color = "var(--red)";
-    b.style.background = "var(--red-bg)";
-    b.style.borderColor = "#f5d5d0";
-    b.textContent = "✗ " + text;
-    row.appendChild(b);
-    $("log").appendChild(row);
-    scrollIfAtBottom();
+    $("err-summary").textContent = "✗ " + humanFirstLine(text);
+    var detail = $("err-detail");
+    detail.textContent = text || "";
+    detail.classList.add("hidden");
+    $("err-toggle").textContent = "详情";
+    $("errbar").classList.remove("hidden");
+    layoutRunPill();  // 错误条出现，pill 上移一档保持垂直堆叠（C3）
+  }
+  function hideErrBar() {
+    $("errbar").classList.add("hidden");
+    layoutRunPill();  // 错误条消失，pill 落回 footer 上方
+  }
+
+  // 人话首行：跳过空行 / 协议 XML 行（< 开头）/ 堆栈帧（at …、File "…"、Traceback），
+  // 全都不是人话时给兜底文案（错误全文仍在详情区可见）；行内残留标签（如 "失败原因</tool_use_error>"）剥掉
+  function humanFirstLine(text) {
+    var lines = String(text || "").split("\n");
+    for (var i = 0; i < lines.length; i++) {
+      var ln = lines[i].trim();
+      if (!ln || ln.charAt(0) === "<") continue;
+      if (/^(at\s|File\s"|Traceback)/.test(ln)) continue;
+      ln = ln.replace(/<[^>]*>/g, "").trim();   // 人话与闭合标签同行的尾巴剥除
+      if (ln) return ln;
+    }
+    return "执行出错（点「详情」查看全文）";
   }
 
   // ---- 文件改动卡片（默认展开：头行 ✎ path +x -y tool + 着色 LCS diff 体） ----
@@ -744,27 +1184,74 @@
     body.appendChild(frag);
   }
 
-  // ---- 工具调用卡片（折叠/展开） ----
+  // ---- 工具调用卡片（B1：默认折叠单行 = chevron + 图标 + 工具名 + 意图摘要 + 结果计数；
+  //   点击头行展开/折叠 input JSON 详情，populate 逻辑保留） ----
+  // 工具图标：emoji/字符与现有 ✎/🔐 风格一致；未列出的工具默认 ⚙
+  var TOOL_ICONS = {
+    Bash: "❯", Read: "📄", Write: "✎", Edit: "✎", MultiEdit: "✎",
+    Grep: "🔍", Glob: "📂", WebFetch: "🌐", WebSearch: "🔎",
+    Task: "🤖", TodoWrite: "☰"
+  };
+  function toolIcon(tool) { return TOOL_ICONS[tool] || "⚙"; }
+
+  // 意图摘要：从 input 提炼单行意图（换行压平、超 60 字截断；拿不到返回空串）
+  function summarizeTool(tool, input) {
+    if (!input || typeof input !== "object") return "";
+    var s = "";
+    if (tool === "Bash") s = input.command || "";
+    else if (tool === "Read" || tool === "Glob") s = input.file_path || input.pattern || input.path || "";
+    else if (tool === "Grep") s = input.pattern ? "\"" + input.pattern + "\"" : "";
+    else if (tool === "Edit" || tool === "Write" || tool === "MultiEdit") s = input.file_path || "";
+    else if (tool === "WebFetch") s = input.url || "";
+    else if (tool === "WebSearch") s = input.query || "";
+    else if (tool === "Task") s = input.description || "";
+    else {
+      for (var k in input) {           // 其它工具：首个字符串参数
+        if (typeof input[k] === "string") { s = input[k]; break; }
+      }
+    }
+    s = String(s).replace(/\s+/g, " ").trim();
+    return s.length > 60 ? s.slice(0, 59) + "…" : s;
+  }
+
   function appendToolUse(ev) {
     var tool = ev.tool || "(未知工具)";
     var input = ev.input || null;
     var card = document.createElement("div");
     card.className = "card tooluse";
+    card.dataset.tool = tool;  // tool_result 到达时按工具名提炼结果计数
+
     var head = document.createElement("div");
     head.className = "card-head";
-    head.innerHTML =
-      '<span class="ic">⚙</span>' +
-      '<span class="lbl">工具</span>' +
-      '<span class="path">' + esc(tool) + '</span>' +
-      '<span class="spacer"></span>' +
-      '<button type="button" class="mini toggle">展开</button>';
+    head.title = "点击展开参数详情";
+    var chev = document.createElement("span");
+    chev.className = "chev";
+    chev.textContent = "▸";
+    var ic = document.createElement("span");
+    ic.className = "ic";
+    ic.textContent = toolIcon(tool);
+    var lbl = document.createElement("span");
+    lbl.className = "lbl";
+    lbl.textContent = tool;
+    var intent = document.createElement("span");
+    intent.className = "intent";
+    intent.textContent = summarizeTool(tool, input);
+    var tally = document.createElement("span");
+    tally.className = "tally";
+    card._tallyEl = tally;     // tool_result 直接写计数/✗（免 querySelector）
+    head.appendChild(chev);
+    head.appendChild(ic);
+    head.appendChild(lbl);
+    head.appendChild(intent);
+    head.appendChild(tally);
+
     var body = document.createElement("div");
     body.className = "card-body collapsed";
-    head.querySelector(".toggle").addEventListener("click", function () {
+    head.addEventListener("click", function () {
       var willOpen = body.classList.contains("collapsed");
       body.classList.toggle("collapsed");
       body.classList.toggle("open", willOpen);
-      head.querySelector(".toggle").textContent = willOpen ? "收起" : "展开";
+      chev.textContent = willOpen ? "▾" : "▸";
       if (willOpen && !body.dataset.populated) {
         body.dataset.populated = "1";
         populateToolUseBody(body, tool, input);
@@ -808,31 +1295,97 @@
     d.className = "think-block";
     d.innerHTML = "<span class=\"think-tag\">思考</span>" + esc(text);
     bubble.appendChild(d);
+    // thinking 晚于文本到达时触发重渲——renderBubble 会把 think-block 摘出插回顶部
+    scheduleBubbleRender(bubble);
     scrollIfAtBottom();
   }
 
-  // 工具输出：挂到最近一张工具卡下（无卡则独立暗块），截断显示
+  // 结果计数（B1）：Grep→matches 数（非空行）；Read/Bash→行数；其余工具拿不到 → 不加
+  function resultTally(tool, text) {
+    if (!text) return "";
+    var lines = text.split("\n");
+    if (lines.length && lines[lines.length - 1] === "") lines.pop();
+    if (tool === "Grep") {
+      var n = 0;
+      for (var i = 0; i < lines.length; i++) if (lines[i].trim()) n++;
+      return n ? n + " matches" : "";
+    }
+    if (tool === "Read" || tool === "Bash") {
+      return lines.length ? lines.length + " lines" : "";
+    }
+    return "";
+  }
+
+  // 工具失败标红（B4）：对应卡加 err 态 + 单行尾 ✗，不新增卡片
+  function markToolCardError(card) {
+    card.classList.add("err");
+    if (card._tallyEl) card._tallyEl.textContent = "✗";
+  }
+
+  // 工具输出：挂到最近一张工具卡下（无卡则独立暗块）。
+  // B2：≤8 行直接可见；>8 行默认折叠为「… +N lines」单行，点击展开全文。
+  // B4：is_error → 对应卡标红 ✗（结果体照常挂卡下，红态）；无卡 → 退化进 turn 级错误条（B3）。
   function appendToolResult(ev) {
-    var d = document.createElement("details");
-    d.className = "tool-result" + (ev.is_error ? " err" : "");
-    d.innerHTML = "<summary>结果" + (ev.is_error ? "（错误）" : "") + "</summary><pre>" + esc(ev.text || "") + "</pre>";
+    var text = ev.text || "";
+    if (ev.is_error) {
+      if (!lastToolCard) { appendError(text || "工具执行失败"); return; }
+      markToolCardError(lastToolCard);
+    } else if (lastToolCard) {
+      var tally = resultTally(lastToolCard.dataset.tool, text);
+      if (tally && lastToolCard._tallyEl) lastToolCard._tallyEl.textContent = tally;
+    }
+    var lines = text.split("\n");
+    if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+    var d, pre;
+    if (lines.length <= 8) {
+      d = document.createElement("div");   // 短输出：直接可见，无折叠壳
+      pre = document.createElement("pre");
+      pre.textContent = text;
+      d.appendChild(pre);
+      d.className = "tool-result plain";
+    } else {
+      d = document.createElement("details");  // 长输出：默认收起，summary 显示隐藏行数
+      var sum = document.createElement("summary");
+      sum.textContent = "… +" + lines.length + " lines";
+      pre = document.createElement("pre");
+      pre.textContent = text;
+      d.appendChild(sum);
+      d.appendChild(pre);
+      d.className = "tool-result";
+    }
+    if (ev.is_error) d.className += " err";
     if (lastToolCard) lastToolCard.appendChild(d);
     else $("log").appendChild(d);
     scrollIfAtBottom();
   }
 
-  // 权限审批卡：工具名 + 参数摘要 + 拒绝/允许按钮（60s 无裁决后端默认拒绝）
+  // ---- 权限审批卡（C1/C2）----
+  // 主按钮动态动词：按工具映射，默认「允许」；裁决记录复用此文案（「✓ 已允许 运行命令」）
+  var PERM_VERBS = {
+    Bash: "运行命令",
+    Edit: "保存修改", MultiEdit: "保存修改", Write: "保存修改",
+    WebFetch: "抓取网页", WebSearch: "联网搜索",
+    NotebookEdit: "保存 notebook"
+  };
+  function permVerb(tool) { return PERM_VERBS[tool] || "允许"; }
+
+  // 审批卡：标题（工具名+需要许可）+ 参数摘要 + 灰「拒绝」/绿动词主钮通栏双排；
+  // 等待中琥珀脉冲边框（.perm-card::before），60s 无裁决后端默认拒绝（逻辑不动）
   function appendPermission(ev) {
     var card = document.createElement("div");
     card.className = "card perm-card";
     card.id = "perm-" + ev.rid;
+    var verb = permVerb(ev.tool);
+    card.dataset.verb = verb;  // permission_done 收敛单行时复用（「✓ 已允许 运行命令」）
     var inputStr = "";
     try { inputStr = JSON.stringify(ev.input || {}); } catch (e) { inputStr = String(ev.input); }
     if (inputStr.length > 300) inputStr = inputStr.slice(0, 300) + "…";
-    card.innerHTML = "<div class=\"perm-head\">🔐 工具「" + esc(ev.tool) + "」请求权限</div>" +
+    card.innerHTML = "<div class=\"perm-head\">🔐 「" + esc(ev.tool) + "」需要你的许可</div>" +
       "<pre class=\"perm-input\">" + esc(inputStr) + "</pre>" +
-      "<div class=\"perm-actions\"><button class=\"perm-no\">拒绝</button><button class=\"perm-ok\">允许</button></div>" +
-      "<div class=\"perm-state\">等待批准（60s 后默认拒绝）</div>";
+      "<div class=\"perm-actions\"><button type=\"button\" class=\"perm-no\">拒绝</button>" +
+      "<button type=\"button\" class=\"perm-ok\"></button></div>" +
+      "<div class=\"perm-state\">等待你的裁决 · 60s 无操作将默认拒绝</div>";
+    card.querySelector(".perm-ok").textContent = verb;  // 动态动词经 textContent 注入（非拼接 HTML）
     card.querySelector(".perm-ok").addEventListener("click", function () { decidePerm(ev.rid, true); });
     card.querySelector(".perm-no").addEventListener("click", function () { decidePerm(ev.rid, false); });
     $("log").appendChild(card);
@@ -845,7 +1398,7 @@
     });
   }
 
-  // 完成状态行：耗时 + token + 成本（有 usage 才显示对应段）
+  // 完成状态行（C5）：耗时 + token + 成本明细保留，灰小字一行（#status 本色即是）
   function setStatusDone(u) {
     var parts = ["✓ 完成"];
     if (u) {
@@ -854,7 +1407,7 @@
       var dur = Number(u.duration_ms);
       if (u.duration_ms != null && isFinite(dur)) parts.push(Math.round(dur / 1000) + "s");
       var tok = (Number(u.input_tokens) || 0) + (Number(u.output_tokens) || 0);
-      if (tok) parts.push(tok >= 1000 ? (tok / 1000).toFixed(1) + "k tok" : tok + " tok");
+      if (tok) parts.push(fmtTok(tok) + " tok");
       var cost = Number(u.cost_usd);
       if (u.cost_usd != null && isFinite(cost)) parts.push("$" + cost.toFixed(3));
     }
@@ -880,7 +1433,9 @@
       case "user_msg":
         // runner 回流的用户消息（replay-user-messages）：画带 uuid 的用户气泡（⏪ 回滚锚点）。
         // send() 不再直接画气泡，由本事件画；事件到达清掉 1.5s 兜底 timer（防双份）。
+        hideErrBar();  // 新 turn 开始：turn 级错误条（B3）消失
         if (pendingUserEcho) { clearTimeout(pendingUserEcho); pendingUserEcho = null; }
+        if (currentBubble) finalizeBubble(currentBubble);  // 切断前终渲（长消息护栏下的气泡不留纯文本）
         currentBubble = null;  // 用户气泡切断 assistant 流
         // 兜底气泡已画出（冷启动 > 1.5s 事件迟到）且文本一致 → 原地升级挂 ⏪，不再画第二份；
         // 不匹配（或气泡已随 #log 清空 detach）→ 清掉记忆，走正常路径画新气泡。
@@ -904,10 +1459,15 @@
         break;
       case "file_edit":
         // 非文本事件切断当前文本气泡：下次 text_delta 起新气泡
+        if (currentBubble) finalizeBubble(currentBubble);
         currentBubble = null;
+        // Edit/Write/MultiEdit 走 file_edit 不产生工具卡——清掉归属指针，防其 tool_result
+        // 的计数/红 ✗ 错挂到前一张工具卡（Read→Edit 串行是最高频流）
+        lastToolCard = null;
         appendFileEdit(ev);
         break;
       case "tool_use":
+        if (currentBubble) finalizeBubble(currentBubble);
         currentBubble = null;
         appendToolUse(ev);
         break;
@@ -915,16 +1475,19 @@
         appendToolResult(ev);
         break;
       case "permission_request":
+        if (currentBubble) finalizeBubble(currentBubble);
         currentBubble = null;
         appendPermission(ev);
         break;
       case "permission_done": {
         var card = document.getElementById("perm-" + ev.rid);
         if (card) {
-          card.classList.add(ev.allow ? "ok" : "no");
-          var btns = card.querySelectorAll("button");
-          for (var i = 0; i < btns.length; i++) btns[i].disabled = true;
-          card.querySelector(".perm-state").textContent = ev.allow ? "已允许" : "已拒绝";
+          // C2 收敛：撤琥珀脉冲、按钮区整段移除（textContent 覆盖），变灰小字单行记录
+          card.classList.add("perm-done");
+          var verb = card.dataset.verb;
+          card.textContent = ev.allow
+            ? "✓ 已允许" + (verb && verb !== "允许" ? " " + verb : "")
+            : "✗ 已拒绝";
         }
         break;
       }
@@ -933,6 +1496,7 @@
         break;
       case "stopped":
         if (currentBubble) {
+          finalizeBubble(currentBubble);   // 终渲全量（解除长消息护栏）
           currentBubble.classList.add("done");
           currentBubble = null;
         }
@@ -942,16 +1506,18 @@
         break;
       case "done":
         if (currentBubble) {
+          finalizeBubble(currentBubble);   // 终渲全量（解除长消息护栏）
           currentBubble.classList.add("done");
         } else {
           appendMarker("完成", false);
         }
         currentBubble = null;
+        addUsage(ev.usage);   // C4：会话级成本聚合（顶栏 + pill 累计 token 共用）
         setStatusDone(ev.usage);
         onSessionEnded();
         break;
       case "error":
-        currentBubble = null;
+        if (currentBubble) { finalizeBubble(currentBubble); currentBubble = null; }
         appendError(ev.text || "未知错误");
         setStatus("✗ " + (ev.text || "未知错误"), true);  // 清掉秒表 spinner，状态行落到错误终态
         onSessionEnded();
@@ -963,7 +1529,9 @@
   }
 
   function onSessionEnded() {
+    if (sending) pendingTurnEnded = true;  // invoke 未返回就收到终态（秒败）：.then 里别再置 streaming
     stopTicker();
+    hideRunPill();   // C3：运行 pill 只在 streaming/sending 期间可见
     // 多轮保持：不清 currentSession —— 下次 send 走 coding.send 接续同一 CC 会话；
     // 仅靠「新对话」按钮显式重置。
     streaming = false;
@@ -973,6 +1541,7 @@
     $("new-chat").disabled = !currentSession;
     // handoff 在流式中被禁用；会话终态后放开（仍受 streaming guard 在 handoff() 里兜底）
     $("handoff").disabled = false;
+    var histBtn = $("history"); if (histBtn) histBtn.disabled = false;  // 与 handoff 同闸（send 入口禁用过）
   }
 
   // ============================================================
@@ -991,7 +1560,9 @@
   renderModePill();
 
   function send() {
-    if (sending) return;
+    // re-entry 保护：sending 覆盖 invoke 同步窗；streaming 覆盖整个流式期——
+    // ↵ 直发（D1）后误触门槛大降，流式中必须拒发（与 send 钮 disabled 态一致）
+    if (sending || streaming) return;
     if (!hasBridge) {
       setStatus("设计预览模式：未连译宝桥，无法发送", true);
       return;
@@ -1002,9 +1573,14 @@
     if (!prompt) { setStatus("请输入任务描述", true); $("prompt").focus(); return; }
 
     sending = true;
+    pendingTurnEnded = false;   // 新 turn 开窗：终态若抢在 invoke 返回前到达，onSessionEnded 会把它置真
     $("send").disabled = true;
     $("new-chat").disabled = true;
+    $("handoff").disabled = true;  // invoke 飞行窗口内禁开 handoff（防双重 start）
+    var histBtn = $("history"); if (histBtn) histBtn.disabled = true;
     setStatus("提交中…");
+    showRunPill("提交中…");   // C3：sending 期间 pill 已可见（秒表待 invoke 返回后起跑）
+    $("rp-stop").disabled = true;   // 会话 id 未回填前 Stop 是死点击，invoke 受理后 startTicker 解锁
 
     // 用户气泡不直接画：等 runner 的 user_msg 事件（带 CC uuid，⏪ 回滚锚点）来画；
     // 事件长时间不到（老 SDK / 启动失败）则 1.5s 后兜底画无 ⏪ 气泡。事件到达会清掉本 timer；
@@ -1016,6 +1592,7 @@
       fallbackUserBubble = { el: appendUser(prompt), text: prompt };
     }, 1500);
     currentBubble = null;  // 用户气泡不属于 assistant 流
+    hideErrBar();        // 新 turn 开始：turn 级错误条（B3）消失
 
     // 多轮路由：currentSession 为空 → coding.start 新建；否则 → coding.send 接续同一会话。
     // 这是本次多轮修复的核心：第二条起走 send(resume)，被驱动的 CC 才能拿到历史上下文。
@@ -1029,13 +1606,22 @@
       var sid = r && r.session_id;
       if (!sid) throw new Error("未返回 session_id");
       currentSession = sid;       // start 回填新 id；send 路径下 sid 与原 id 一致（保留不动）
-      streaming = true;
       $("prompt").value = "";
+      if (pendingTurnEnded) {
+        // 终态事件先于 invoke 返回（runner 秒败）：onSessionEnded 已解锁 UI，
+        // 别再置 streaming/起跑秒表（否则死会话上 pill 永挂、发送键永禁）。
+        pendingTurnEnded = false;
+        return;
+      }
+      streaming = true;
       $("stop").disabled = false;
       startTicker("会话 " + sid + (isStart ? " 启动" : " 接续"));
     }).catch(function (e) {
       appendError(verb + "失败：" + emsg(e));
       setStatus(verb + "失败：" + emsg(e), true);
+      hideRunPill();  // invoke 未受理：没到 streaming，onSessionEnded 不会走，pill 在此收
+      $("handoff").disabled = false;  // 入口禁用过，失败路径手动复位（onSessionEnded 不会走）
+      var hb = $("history"); if (hb) hb.disabled = false;
     }).finally(function () {
       sending = false;
       // 发送键解锁挪到 onSessionEnded（done/stopped/error）——
@@ -1050,6 +1636,7 @@
     if (!currentSession) { setStatus("没有活动会话可中断", true); return; }
     var sid = currentSession;
     $("stop").disabled = true;
+    $("rp-stop").disabled = true;   // 与 #stop 同步防连点；终态 onSessionEnded 收 pill，下次 startTicker 解锁
     setStatus("中断 " + sid + "…");
     window.yibao.invoke("coding.stop", { id: sid }).then(function () {
       setStatus("已请求中断 " + sid);
@@ -1057,6 +1644,7 @@
     }).catch(function (e) {
       setStatus("中断失败：" + emsg(e), true);
       $("stop").disabled = false;
+      $("rp-stop").disabled = false;
     });
   }
 
@@ -1069,7 +1657,12 @@
     currentSession = null;
     currentBubble = null;
     lastToolCard = null;   // #log 清空后旧卡已 detach，防 tool_result 落进不可见节点
+    if (pendingUserEcho) { clearTimeout(pendingUserEcho); pendingUserEcho = null; }  // 防 1.5s 兜底 timer 把旧 prompt 画成幻影气泡落进新会话
     fallbackUserBubble = null;  // 兜底气泡随 #log 清空 detach，清引用防迟到 user_msg 升级陈旧节点
+    hideErrBar();          // 清屏：turn 级错误条一并消失
+    stopTicker();
+    hideRunPill();         // 竞态兜底：done/error 与点击之间 ticker/pill 不残留
+    resetUsage();          // C4：成本聚合清零重计
     streaming = false;
     sending = false;
     $("log").innerHTML = "";
@@ -1149,9 +1742,12 @@
     document.body.appendChild(backdrop);
     document.body.appendChild(picker);
 
-    // 定位：紧贴 handoff 按钮下方，右对齐按钮右边（防溢出左移）
+    // 定位：右对齐按钮右边（防溢出左移）。D1 后 #handoff 在 footer 快捷键行（贴视口底），
+    // 下方空间不足时翻到按钮上方展开，防 picker 跌出视口。
     var rect = $("handoff").getBoundingClientRect();
-    picker.style.top = (rect.bottom + 6) + "px";
+    var ph = picker.offsetHeight;
+    var below = window.innerHeight - rect.bottom;
+    picker.style.top = (below >= ph + 12 ? rect.bottom + 6 : Math.max(8, rect.top - ph - 6)) + "px";
     var rightOffset = window.innerWidth - rect.right;
     var maxRight = window.innerWidth - 14 - picker.offsetWidth;
     picker.style.right = Math.max(14, Math.min(rightOffset, maxRight)) + "px";
@@ -1294,14 +1890,18 @@
     if (!cwd) { setStatus("内部错误：cwd 丢失", true); return; }
 
     sending = true;
+    pendingTurnEnded = false;   // 同 send：终态抢跑时 onSessionEnded 置真，.then 跳过秒表
     streaming = true;
     $("send").disabled = true;
     $("new-chat").disabled = true;
     $("handoff").disabled = true;
     $("stop").disabled = false;
     setStatus("Codex 接续启动中…");
+    showRunPill("Codex 接续启动中…");
+    $("rp-stop").disabled = true;   // 同 send：invoke 受理后 startTicker 解锁
 
     currentBubble = null;
+    hideErrBar();   // handoff 也是新 turn 入口：与 send 对齐清掉旧错误条（老 SDK 不回放 user_msg 时靠这里）
 
     window.yibao.invoke("coding.start", {
       cwd: cwd,
@@ -1311,10 +1911,16 @@
       var csid = r && r.session_id;
       if (!csid) throw new Error("未返回 session_id");
       currentSession = csid;
-      setStatus("Codex 接续会话 " + csid + " 启动，运行中…");
+      if (pendingTurnEnded) {
+        // 终态先于 invoke 返回：onSessionEnded 已收场（streaming 已 false、UI 已解锁），别起跑秒表
+        pendingTurnEnded = false;
+        return;
+      }
+      startTicker("Codex 接续会话 " + csid);   // 与 send 对齐：运行态走 pill 秒表（C3）
     }).catch(function (e) {
       appendError("Codex 接续启动失败：" + emsg(e));
       setStatus("Codex 接续启动失败：" + emsg(e), true);
+      hideRunPill();
       streaming = false;
       $("stop").disabled = true;
       $("send").disabled = false;
@@ -1373,12 +1979,17 @@
       delete discardedSessions[sid]; // 恢复的目标会话必须出黑名单——否则它自己的流全被「陈旧会话」过滤器吞掉，面板锁死
       currentBubble = null;
       lastToolCard = null;   // #log 清空后旧卡已 detach，防 tool_result 落进不可见节点（同 newChat）
+      if (pendingUserEcho) { clearTimeout(pendingUserEcho); pendingUserEcho = null; }  // 同 newChat：防兜底 timer 画幻影气泡
       fallbackUserBubble = null;  // 同 newChat：清兜底气泡引用，防迟到 user_msg 升级陈旧节点
+      hideErrBar();          // 同 newChat：清屏后旧 turn 错误条一并消失
+      stopTicker();
+      hideRunPill();         // 同 newChat：pill 不残留
+      resetUsage();          // C4：恢复历史不补旧账，清零重计（接受降级）
       streaming = false;
       $("log").innerHTML = "";
       (r.messages || []).forEach(function (m) {
         if (m.role === "user") appendUser(m.text, m.uuid || "");
-        else { var b = appendAssistantBubble(); appendTextToBubble(b, m.text); b.classList.add("done"); }
+        else { var b = appendAssistantBubble(); appendTextToBubble(b, m.text); finalizeBubble(b); b.classList.add("done"); }
       });
       if ((r.messages || []).length) appendMarker("—— 以上为历史，继续聊 ↓ ——", false);
       if (r.cwd) $("cwd").value = r.cwd;
@@ -1406,11 +2017,22 @@
 
   $("send").addEventListener("click", send);
   $("stop").addEventListener("click", stop);
+  $("rp-stop").addEventListener("click", stop);   // 运行 pill 的红 Stop 复用同一中断逻辑（C3）
   $("new-chat").addEventListener("click", newChat);
   $("handoff").addEventListener("click", handoff);
   $("cwd-pick").addEventListener("click", pickCwd);
   $("history").addEventListener("click", openHistory);
   $("history-close").addEventListener("click", closeHistory);
+  // turn 级错误条「详情」：展开/收起错误全文（摘要行常驻单行）
+  $("err-toggle").addEventListener("click", function () {
+    var d = $("err-detail");
+    var willOpen = d.classList.contains("hidden");
+    d.classList.toggle("hidden", !willOpen);
+    this.textContent = willOpen ? "收起" : "详情";
+    layoutRunPill();  // 详情展开会撑高错误条，pill 重新算 bottom（C3）
+  });
+  // footer 换行/字号变化导致高度变 → pill 重新贴合（C3）
+  window.addEventListener("resize", layoutRunPill);
   $("history-overlay").addEventListener("click", function (e) {
     if (e.target === this) closeHistory();  // 点空白处收起（picker 内点击不冒泡到 overlay 的 target 判定）
   });
@@ -1461,6 +2083,10 @@
   });
   // capture 注册在本元素最前：菜单打开时 Enter/↑↓/Esc 在此消费（preventDefault），
   // 下方发送处理器经 e.defaultPrevented 守卫跳过——同元素监听 stopPropagation 挡不住。
+  // IME 组字兜底（WebKit bug 165004：compositionend 先于确认 Enter 的 keydown，其 isComposing=false，
+  // 单靠 e.isComposing 会穿透）——compositionend 时间戳 50ms 窗口，发送与 @ 菜单两处 Enter 共用。
+  var lastCompEnd = 0;
+  $("prompt").addEventListener("compositionend", function () { lastCompEnd = Date.now(); });
   $("prompt").addEventListener("keydown", function (e) {
     if (!atState.open) return;
     if (e.key === "Escape") { closeAt(); e.stopPropagation(); }
@@ -1472,17 +2098,25 @@
       atState.idx = (atState.idx + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
       items[atState.idx].classList.add("sel");
     } else if (e.key === "Enter" && atState.items.length) {
+      // IME 组字选词的 Enter 不触发插文件（同发送路径的 WebKit compositionend 时序兜底）
+      if (e.isComposing || Date.now() - lastCompEnd < 50) return;
       e.preventDefault(); e.stopPropagation();
       atInsert(atState.items[atState.idx].rel);
     }
   }, true);
 
+  // D1 快捷键与提示行一致：↵ 发送 / ⇧↵ 换行（⌘/Ctrl+↵ 保留为发送别名）。
+  // IME 组字（中文输入）中的 Enter 只是上屏，绝不触发发送（isComposing + lastCompEnd 双重守卫见上）。
   $("prompt").addEventListener("keydown", function (e) {
     if (e.defaultPrevented) return;  // @ 补全菜单已消费本次 Enter（注册在前的 capture 处理器）
-    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-      e.preventDefault();
-      send();
-    }
+    if (e.key !== "Enter" || e.shiftKey || e.isComposing || Date.now() - lastCompEnd < 50) return;
+    e.preventDefault();
+    send();
+  });
+  // esc 停止：运行/提交中且有活动会话时 = 点 Stop（复用同一中断逻辑）。
+  // @ 菜单打开时 prompt 的 capture 处理器已 stopPropagation，这里不会误触发。
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && currentSession && (streaming || sending)) stop();
   });
 
   // ============================================================
@@ -1517,11 +2151,16 @@
       appendTextToBubble(b, "我打开项目看一下 main.rs 的结构…");
       appendFileEdit({ tool: "Read", path: "src/main.rs" });
       appendToolUse({ tool: "Bash", input: { command: "wc -l src/main.rs", description: "统计行数" } });
+      appendToolResult({ text: "152 src/main.rs" });
       var b2 = appendAssistantBubble();
       appendTextToBubble(b2, "入口在 src/main.rs:12 的 fn main()。需要我加点日志吗？");
       b2.classList.add("done");
     } catch (e) { /* 预览失败无所谓 */ }
   }
+
+  // 设计预览入口：必须在 IIFE 末尾调用——顶部桥检测时 $/raf 等 var 尚未赋值，
+  // 提前调用会 TypeError 并被 renderPreviewSample 的 try/catch 静默吞掉（HEAD 版即此 bug）
+  if (!hasBridge) renderPreviewSample();
 })();
 </script>
 </body>
