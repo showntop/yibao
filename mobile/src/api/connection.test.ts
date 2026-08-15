@@ -8,6 +8,9 @@ describe("normalizeHost", () => {
     expect(normalizeHost("https://yibao.wuyill.com/")).toBe("https://yibao.wuyill.com");
     expect(normalizeHost(" http://a.com ")).toBe("http://a.com");
   });
+  it("空串归一为 'http:'（truthy 无 netloc，防锁死靠 parsePairUrl 的 netloc 判）", () => {
+    expect(normalizeHost("")).toBe("http:");
+  });
 });
 
 describe("parsePairUrl", () => {
@@ -19,6 +22,11 @@ describe("parsePairUrl", () => {
     expect(parsePairUrl("yibao://chat")).toBeNull();
     expect(parsePairUrl("yibao://pair?host=x")).toBeNull(); // 缺 token
     expect(parsePairUrl("https://evil.com/pair?host=x&token=y")).toBeNull();
+  });
+  it("缺 host / host 无 netloc 返回 null（防 'http:' 落盘锁死）", () => {
+    expect(parsePairUrl("yibao://pair?token=abc")).toBeNull(); // 缺 host
+    expect(parsePairUrl("yibao://pair?host=&token=abc")).toBeNull(); // 空 host
+    expect(parsePairUrl("yibao://pair?host=http%3A%2F%2F&token=abc")).toBeNull(); // 有 scheme 无 hostname
   });
 });
 

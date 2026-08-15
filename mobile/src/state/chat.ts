@@ -51,6 +51,10 @@ export function useChat(
   stream.on("error", (d) => {
     if (mine(d)) error.value = d.text ?? "大脑出错";
   });
+  // 排队 notice（手机跨 surface 时 server 发「另一个窗口还在说…」）：写入提示位，气泡 pending 才有解释
+  stream.on("notice", (d) => {
+    if (mine(d) && d.text) error.value = d.text;
+  });
 
   async function send(text: string): Promise<void> {
     const t = text.trim();

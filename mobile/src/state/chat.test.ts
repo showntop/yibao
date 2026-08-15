@@ -68,4 +68,13 @@ describe("useChat", () => {
     expect(chat.messages.value[1].done).toBe(true);
     expect(chat.busy.value).toBe(false);
   });
+
+  it("排队 notice：mobile 写入提示位，桌面 notice 不写", async () => {
+    const { chat, emit } = mkChat();
+    await chat.send("跨 surface 排队");
+    emit("notice", { kind: "notice", surface: "mobile", text: "另一个窗口还在说，等它说完…" });
+    expect(chat.error.value).toBe("另一个窗口还在说，等它说完…");
+    emit("notice", { kind: "notice", surface: "desktop", text: "桌面 notice" });
+    expect(chat.error.value).toBe("另一个窗口还在说，等它说完…");
+  });
 });

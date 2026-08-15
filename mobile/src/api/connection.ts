@@ -13,6 +13,15 @@ export function normalizeHost(h: string): string {
   return s.replace(/\/+$/, "");
 }
 
+// normalizeHost("") 会得 "http:"（truthy 但无 netloc）——靠这里判 hostname 兜住缺 host 的深链
+function hasNetloc(h: string): boolean {
+  try {
+    return new URL(h).hostname !== "";
+  } catch {
+    return false;
+  }
+}
+
 export function parsePairUrl(u: string): ConnConfig | null {
   // 深链：yibao://pair?host=<urlencoded>&token=<...>（桌面设置页二维码内容，P5 落地）
   try {
@@ -20,7 +29,7 @@ export function parsePairUrl(u: string): ConnConfig | null {
     if (url.protocol !== "yibao:" || url.host !== "pair") return null;
     const host = normalizeHost(url.searchParams.get("host") || "");
     const token = (url.searchParams.get("token") || "").trim();
-    if (!host || !token) return null;
+    if (!hasNetloc(host) || !token) return null;
     return { host, token };
   } catch {
     return null;
@@ -40,6 +49,10 @@ export async function loadConn(): Promise<ConnConfig | null> {
 
 export async function saveConn(c: ConnConfig): Promise<void> {
   await Preferences.set({ key: KEY, value: JSON.stringify(c) });
+}
+
+export async function clearConn(): Promise<void> {
+  await Preferences.remove({ key: KEY });
 }
 
 export async function testConn(

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, shallowRef, watch } from "vue";
 import { useRouter } from "vue-router";
-import { loadConn } from "../api/connection";
+import { loadConn, clearConn } from "../api/connection";
 import { useChat } from "../state/chat";
 import ConnBar from "../components/ConnBar.vue";
 
@@ -26,8 +26,7 @@ watch(
 onMounted(async () => {
   const conn = await loadConn();
   if (!conn) return router.replace("/pairing");
-  chat.value = useChat(conn);
-  chat.value.stream.start();
+  chat.value = useChat(conn); // 构造即 start，无需再显式连
 });
 onUnmounted(() => {
   window.clearTimeout(retryTimer);
@@ -40,13 +39,23 @@ async function onSend() {
   input.value = "";
   await chat.value.send(t);
 }
+
+// 坏配置出口：清掉落盘连接回配对页（否则 malformed 配置会困死在 /chat）
+async function rePair() {
+  chat.value?.stream.stop();
+  await clearConn();
+  router.replace("/pairing");
+}
 </script>
 
 <template>
   <div class="chat" v-if="chat">
     <header class="head">
       <ConnBar :state="chat.stream.state.value" />
-      <button class="ghost" @click="chat.newChat()">新对话</button>
+      <div class="actions">
+        <button class="ghost" @click="chat.newChat()">新对话</button>
+        <button class="ghost" @click="rePair">重新配对</button>
+      </div>
     </header>
     <main class="list">
       <p v-for="(m, i) in chat.messages.value" :key="i" class="msg" :class="m.role">
@@ -74,6 +83,7 @@ async function onSend() {
 .chat { display: flex; flex-direction: column; height: 100dvh; }
 .head { display: flex; justify-content: space-between; align-items: center; }
 .ghost { background: none; border: none; color: #2f6fed; font-size: 14px; }
+.actions { display: flex; gap: 4px; }
 .list { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 .msg { max-width: 82%; padding: 10px 12px; border-radius: 14px; font-size: 15px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
 .msg.user { align-self: flex-end; background: #2f6fed; color: #fff; }
