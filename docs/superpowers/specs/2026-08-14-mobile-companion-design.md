@@ -198,3 +198,13 @@ data: {"run_id":"...","text":"部分回复"}
 - iOS WKWebView CORS 大概率要补响应头（P3 计划风险项）（P3 已解决：Task 1 CORS）
 - 跨 surface 排队窗口内手机 interrupt 连环杀（P3 客户端落地前收紧为 cancel 属主判）（P3 已解决：Task 2 running_surface）
 - `_register_push` 落盘缺测试（P4 消费 push.devices 前补）
+
+## 15. 移动端 v2 功能全景（2026-08-15 用户确认）
+
+验收过 v1 后用户定夺：做满 A/C/D/E/F 五组，**语音两组（TTS 播报、语音输入）明确不做**。
+
+- **M1 基建+会话体验**：HTTPS dev（mkcert）+ PWA manifest；断线补帧（SSE seq 客户端接上：EventSource.lastEventId 透传 + 手动重连带 last_event_id query + 帧级 seq 去重）；多会话列表+历史回显（/v1/conversations + /v1/history，复用 ConversationHistory 桶）；Markdown 渲染+代码复制（marked + DOMPurify）
+- **M2 信息浏览**：Feed 动态流 / 待办提醒管理 / 记忆库查看（feed/reminders/mem IPC 移植到 /v1）+ 底部导航重构
+- **M3 桌面监控+分享**：在跑任务+感知状态 / 后台盯任务列表（jobs）；分享送素材模板（iOS 快捷指令 + Android HTTP Shortcuts 文档，LAN 可用）
+- 顺带勾销 P3 终审遗留的「手动重连丢 Last-Event-ID」「run_done 抢跑挂死」（seq 补帧后气泡状态可由补帧收敛）
+- 导航结构（M2 起）：底部 Tab = 对话 / 动态 / 审批（角标）/ 设置（连接+记忆+关于）
