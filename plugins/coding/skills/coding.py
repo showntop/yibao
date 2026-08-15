@@ -48,6 +48,7 @@ def _sibling(stem: str):
 
 _runner = _sibling("_runner")
 ClaudeCodeRunner = _runner.ClaudeCodeRunner   # 生产默认 runner factory
+_PERM = _runner._PERM                         # can_use_tool 裁决注册表（rid → {event, allow}；DecideSkill 消费）
 
 # codex_reader / _brief 也是同目录兄弟模块（非包内），经 _sibling 加载（同 _runner）。
 # _build_brief / _codex_sessions_root 做模块级间接：测试 monkeypatch 这两个属性即可
@@ -68,17 +69,20 @@ def _codex_sessions_root() -> str:
 _SESSIONS: dict[str, dict] = {}
 
 
-def start_session(db, *, agent: str, cwd: str, prompt: str, source: str = "") -> str:
+def start_session(db, *, agent: str, cwd: str, prompt: str, source: str = "",
+                  mode: str = "acceptEdits") -> str:
     """纯函数：往 sessions 表插一行 running，返回 sid。不碰线程/runner（测试可直打）。
 
     source：会话来源标记——""=用户直起；"codex:<sid>"=从 codex 交接切过来（HandoffSkill 起）。
     透传落库，便于后续面板/审计按来源过滤；不参与 runner 行为。
+    mode：权限模式（acceptEdits=自动改文件 / plan=只读规划）落 mode 列，
+    后续 send 不带 mode 时沿用库值。
     """
     sid = uuid.uuid4().hex[:12]
     db.insert("sessions", {
         "id": sid, "agent": agent, "cwd": cwd, "prompt": prompt,
         "status": "running", "created_at": int(time.time()), "finished_at": 0,
-        "source": source,
+        "source": source, "mode": mode,
     })
     return sid
 
@@ -94,13 +98,17 @@ class _AsyncShield:
 
 
 def _spawn_stream(db, sid: str, cwd: str, prompt: str, runner, emit_event,
-                  resume_session_id: str | None = None) -> None:
+                  resume_session_id: str | None = None,
+                  permission_mode: str = "acceptEdits") -> None:
     """起 daemon 线程跑 runner（线程内自带 asyncio loop）。
 
     emit_event 已线程安全（proactive_dispatcher.emit → call_soon_threadsafe），
     daemon 线程直调即可。db 经参数链一路传到 _stream（落最终状态用）。
     resume_session_id：非 None 时透传 runner.run，续上同一 CC 会话历史（多轮）；
         None（StartSkill 路径）→ 全新会话。
+    permission_mode：透传 runner.run（acceptEdits/plan），进 SDK options。
+    _SESSIONS[sid] entry 同时是运行中切模式的通道（coding.mode 写 mode_pending，
+    runner 每条消息前消费 → client.set_permission_mode）。
     """
     cancel = threading.Event()
     _SESSIONS[sid] = {"cancel": cancel}
@@ -111,7 +119,8 @@ def _spawn_stream(db, sid: str, cwd: str, prompt: str, runner, emit_event,
             asyncio.set_event_loop(loop)
             loop.run_until_complete(
                 _stream(db, sid, cwd, prompt, runner, emit_event, cancel,
-                        resume_session_id=resume_session_id))
+                        resume_session_id=resume_session_id,
+                        permission_mode=permission_mode))
         except Exception as e:  # 兜底：流式线程任何意外都不许炸出来
             print(f"[yibao/coding] session {sid} stream 线程崩：{type(e).__name__}: {e}",
                   file=sys.stderr)
@@ -127,17 +136,54 @@ def _spawn_stream(db, sid: str, cwd: str, prompt: str, runner, emit_event,
 
 
 async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cancel,
-                  resume_session_id: str | None = None) -> None:
-    """跑 runner；每条事件转 panel_data 推面板；结束按 cancel/error/done 落最终状态。
+                  resume_session_id: str | None = None,
+                  permission_mode: str = "acceptEdits") -> None:
+    """跑 runner；每条事件转 panel_data 推面板 + 落 messages 表；结束按 cancel/error/done 落最终状态。
 
-    落库前先查当前 status——用户主动 stop 时 _stop_session 已先写 stopped，
+    transcript 落库：user_msg（带 CC uuid，rewind 锚点）/ text_delta / done·stopped 终态 marker，
+    seq 跨轮续号（每轮流式开始时从库里查本 sid 当前 max seq 续起，多轮不交错；
+    HistorySkill 按 seq 取最近 40 条）。
+    落库 try/except 隔离——transcript 丢失绝不许炸断流式。
+    落最终状态前先查当前 status——用户主动 stop 时 _stop_session 已先写 stopped，
     这里保留 stopped 不被 done/failed 覆盖（race-safe，仿 agents._common._wait:66-73）。
     resume_session_id：非 None 时透传 runner.run，续上同一 CC 会话历史（多轮）。
+    permission_mode：透传 runner.run（acceptEdits/plan）。
+    session_entry：_SESSIONS[sid] live entry 透传 runner.run——coding.mode 写入
+    mode_pending 后，runner 每条消息前消费并 client.set_permission_mode（运行中切模式）。
+    can_use_tool：每轮新建权限回调桥（make_permission_callback(sid, on_event)）——SDK 触发
+    权限询问时发 permission_request 进面板流并阻塞等 coding.decide 裁决（超时默认 deny）。
     """
     state = {"error": False}
     cc_sid: str | None = None   # runner.run 返回值（ResultMessage.session_id）；None=取消/失败
+    # seq 跨轮续号：从库里本 sid 当前 max seq 续起（每轮重计会让多轮消息在 ORDER BY seq 下交错）
+    try:
+        prev = db.query("messages", where={"session_id": sid}, order="seq DESC", limit=1)
+        seq = {"n": int(prev[0]["seq"]) if prev else 0}
+    except Exception:
+        seq = {"n": 0}
+
+    def _persist(role: str, text: str, uuid: str = "") -> None:
+        if not text:
+            return
+        seq["n"] += 1
+        try:
+            db.insert("messages", {
+                "session_id": sid, "role": role, "text": text,
+                "ts": int(time.time()), "seq": seq["n"], "uuid": uuid,
+            })
+        except Exception as e:
+            print(f"[yibao/coding] transcript 落库失败（跳过）：{e}", file=sys.stderr)
 
     def on_event(ev: dict) -> None:
+        kind = ev.get("kind")
+        if kind == "user_msg":
+            _persist("user", str(ev.get("text") or ""), str(ev.get("uuid") or ""))
+        elif kind == "text_delta":
+            _persist("assistant", str(ev.get("text") or ""))
+        elif kind == "done":
+            _persist("marker", "完成")
+        elif kind == "stopped":
+            _persist("marker", str(ev.get("text") or "已中断"))
         if emit_event is not None:
             # panel/data 必须包在 payload 下：PanelApp.vue 的 panel_data 处理读
             # e.payload?.panel / e.payload?.data，shell proactive→Rust→PanelApp 不再加包装。
@@ -149,7 +195,10 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
 
     try:
         cc_sid = await runner.run(prompt, cwd, on_event=on_event, cancel_event=_AsyncShield(cancel),
-                                  resume_session_id=resume_session_id)
+                                  resume_session_id=resume_session_id,
+                                  permission_mode=permission_mode,
+                                  can_use_tool=_runner.make_permission_callback(sid, on_event),
+                                  session_entry=_SESSIONS.get(sid))
     except Exception as e:  # runner 内部应已吞异常→error 事件；框架级异常兜底
         print(f"[yibao/coding] session {sid} runner 框架异常：{type(e).__name__}: {e}",
               file=sys.stderr)
@@ -253,10 +302,12 @@ class StartSkill(Skill):
             return ActionResult(success=False, error="缺少任务描述 prompt")
         agent = str(params.get("agent") or "claude-code").strip() or "claude-code"
         source = str(params.get("source") or "").strip()
-        sid = start_session(ctx.db, agent=agent, cwd=cwd, prompt=prompt, source=source)
+        mode = str(params.get("mode") or "acceptEdits").strip() or "acceptEdits"
+        sid = start_session(ctx.db, agent=agent, cwd=cwd, prompt=prompt, source=source, mode=mode)
         # 生产默认 runner；测试经 monkeypatch _spawn_stream 不真起线程
         # resume_session_id 不传 → None → 全新 CC 会话（首条消息）
-        _spawn_stream(ctx.db, sid, cwd, prompt, ClaudeCodeRunner(), ctx.emit_event)
+        _spawn_stream(ctx.db, sid, cwd, prompt, ClaudeCodeRunner(), ctx.emit_event,
+                      permission_mode=mode)
         return ActionResult(success=True, data={
             "session_id": sid,
             "panel": "coding:chat",
@@ -314,10 +365,12 @@ class SendSkill(Skill):
                 error="该会话尚未建立上下文（cc_session_id 为空），请先用首条消息开始",
             )
         cwd = row.get("cwd") or ""
-        # 重置 running 状态：resume 是新一轮流式，finished_at 归零
-        ctx.db.update("sessions", sid, {"status": "running", "finished_at": 0})
+        # mode 跨轮沿用：send 不带 mode → 用库值（start/coding.mode 落的）；带 → 覆盖回写
+        mode = str(params.get("mode") or row.get("mode") or "acceptEdits")
+        # 重置 running 状态：resume 是新一轮流式，finished_at 归零；mode 一并回写
+        ctx.db.update("sessions", sid, {"status": "running", "finished_at": 0, "mode": mode})
         _spawn_stream(ctx.db, sid, cwd, prompt, ClaudeCodeRunner(), ctx.emit_event,
-                      resume_session_id=cc)
+                      resume_session_id=cc, permission_mode=mode)
         return ActionResult(success=True, data={
             "session_id": sid,
             "panel": "coding:chat",
@@ -505,13 +558,14 @@ class HandoffBriefSkill(Skill):
 class HistorySkill(Skill):
     """读某个 coding 会话的信息与最近消息（历史抽屉恢复旧会话用）。
 
-    sessions 行取 cwd/cc_session_id/prompt，消息经 `_sibling("_cc_reader")`
-    读 Claude Code 本地 transcript；读不到（无 cc_session_id / transcript 丢失）
-    messages 静默为空——恢复不了就当新会话，不报错。L0 只读。
+    消息优先读本插件 messages 表（_stream 流式落库的 transcript，取最近 40 条——
+    seq DESC LIMIT 40 再反转回正序，含 user 消息的 CC uuid 供 rewind 用）；库里空才 fallback `_sibling("_cc_reader")`
+    读 Claude Code 本地 transcript（老会话没有落库数据）。都读不到 messages 静默为空——
+    恢复不了就当新会话，不报错。L0 只读。
     """
     id = "coding.history"
     label = "读取会话历史"
-    description = "读取某个 coding 会话的信息与最近消息（恢复旧会话用）：读 Claude Code 本地 transcript，失败静默为空。"
+    description = "读取某个 coding 会话的信息与最近消息（恢复旧会话用）：优先读插件 messages 表，空则回退 Claude Code 本地 transcript，失败静默为空。"
     default_risk = RiskLevel.L0_READONLY
 
     def openai_schema(self) -> dict:
@@ -535,15 +589,184 @@ class HistorySkill(Skill):
             return ActionResult(success=False, error=f"会话不存在：{sid}")
         row = rows[0]
         cc = row.get("cc_session_id") or ""
-        reader = _sibling("_cc_reader")
-        messages = reader.read_transcript(cc, limit=40) if cc else []
+        # 取最近 40 条：seq DESC LIMIT 40 拿尾部，再反转回时间正序（ASC LIMIT 会拿到会话头部）
+        rows = ctx.db.query("messages", where={"session_id": sid}, order="seq DESC", limit=40)
+        if rows:
+            rows.reverse()
+            messages = [{"role": r["role"], "text": r["text"], "uuid": r.get("uuid") or ""}
+                        for r in rows]
+        else:
+            reader = _sibling("_cc_reader")
+            messages = reader.read_transcript(cc, limit=40) if cc else []
         return ActionResult(success=True, data={
             "session_id": sid, "cwd": row.get("cwd") or "", "cc_session_id": cc,
             "prompt": row.get("prompt") or "", "messages": messages,
         })
 
 
+class ModeSkill(Skill):
+    id = "coding.mode"
+    label = "切换权限模式"
+    description = "切换某个 coding 会话的权限模式（acceptEdits=自动改文件 / plan=只读规划）：落库下轮生效；会话在跑则通知 runner 运行中切换。"
+    default_risk = RiskLevel.L1_LOW
+
+    def openai_schema(self) -> dict:
+        return {"type": "function", "function": {"name": self.id, "description": self.description,
+                "parameters": {"type": "object",
+                    "properties": {"id": {"type": "string"}, "mode": {"type": "string"}},
+                    "required": ["id", "mode"]}}}
+
+    def run(self, params: dict, ctx: Any) -> ActionResult:
+        sid = str(params.get("id") or "").strip()
+        mode = str(params.get("mode") or "").strip()
+        if mode not in ("acceptEdits", "plan"):
+            return ActionResult(success=False, error=f"不支持的模式：{mode}（仅 acceptEdits/plan）")
+        rows = ctx.db.query("sessions", where={"id": sid})
+        if not rows:
+            return ActionResult(success=False, error=f"会话不存在：{sid}")
+        ctx.db.update("sessions", sid, {"mode": mode})
+        entry = _SESSIONS.get(sid)   # .get 防御 KeyError 缝：stop/收尾线程 pop entry 与 check-then-act 竞态（T3 评审）
+        live = entry is not None
+        if live:
+            entry["mode_pending"] = mode
+        return ActionResult(success=True, data={"ok": True, "mode": mode, "live": live})
+
+
+def _rewind_fresh_client(cc_sid: str, cwd: str, uuid: str) -> None:
+    """非 live 路径：新开 client（resume + checkpointing on）执行 rewind_files。CLI 侧 checkpoint 持久，跨实例应可；
+    失败抛给调用方（RewindSkill 降级成 error 事件）。"""
+    runner = ClaudeCodeRunner()
+    factory = runner._default_factory  # 复用 options（checkpointing/replay 已开）
+
+    async def _do() -> None:
+        client = factory(cwd, ["Read", "Write", "Edit", "MultiEdit", "Bash", "Glob", "Grep"], resume=cc_sid)
+        await client.connect()
+        try:
+            await client.rewind_files(uuid)
+        finally:
+            await client.disconnect()
+
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(_do())
+    finally:
+        loop.close()
+
+
+class RewindSkill(Skill):
+    id = "coding.rewind"
+    label = "回滚文件检查点"
+    description = "把会话改过的文件回滚到某条用户消息时的状态（Claude Code 文件检查点）。会话在跑则下条消息前执行；已结束则新开 client 执行。"
+    default_risk = RiskLevel.L1_LOW
+
+    def openai_schema(self) -> dict:
+        return {"type": "function", "function": {"name": self.id, "description": self.description,
+                "parameters": {"type": "object",
+                    "properties": {"id": {"type": "string"}, "user_msg_id": {"type": "string"}},
+                    "required": ["id", "user_msg_id"]}}}
+
+    def run(self, params: dict, ctx: Any) -> ActionResult:
+        sid = str(params.get("id") or "").strip()
+        uuid = str(params.get("user_msg_id") or "").strip()
+        if not uuid:
+            return ActionResult(success=False, error="缺少回滚锚点 user_msg_id")
+        rows = ctx.db.query("sessions", where={"id": sid})
+        if not rows:
+            return ActionResult(success=False, error=f"会话不存在：{sid}")
+        row = rows[0]
+        emit = getattr(ctx, "emit_event", None)
+
+        def _emit(ev: dict) -> None:
+            if emit is not None:
+                emit({"kind": "panel_data", "payload": {"panel": "coding:chat",
+                      "data": {"session_id": sid, "event": ev}}})
+
+        # 在跑：下条消息前由 runner 执行（消费 rewind_pending）。
+        # .get 防御 KeyError 缝：stop/收尾线程 pop entry 与 check-then-act 竞态（T3 评审 mode_pending 同款）
+        entry = _SESSIONS.get(sid)
+        live = entry is not None
+        if live:
+            entry["rewind_pending"] = uuid
+            return ActionResult(success=True, data={"ok": True, "live": True})
+        cc = row.get("cc_session_id") or ""
+        if not cc:
+            return ActionResult(success=False, error="该会话无检查点可回滚（cc_session_id 为空）")
+        try:
+            _rewind_fresh_client(cc, row.get("cwd") or "", uuid)
+        except Exception as e:
+            _emit({"kind": "error", "text": f"回滚失败：{e}"})
+            return ActionResult(success=False, error=f"回滚失败：{e}")
+        _emit({"kind": "rewind_ok", "text": "已回滚到此前的文件状态"})
+        return ActionResult(success=True, data={"ok": True, "live": False})
+
+
+class DecideSkill(Skill):
+    id = "coding.decide"
+    label = "裁决工具权限"
+    description = "对 can_use_tool 弹出的权限请求做允许/拒绝裁决（rid 来自 permission_request 事件）。"
+    default_risk = RiskLevel.L1_LOW
+
+    def openai_schema(self) -> dict:
+        return {"type": "function", "function": {"name": self.id, "description": self.description,
+                "parameters": {"type": "object",
+                    "properties": {"rid": {"type": "string"}, "allow": {"type": "boolean"}},
+                    "required": ["rid", "allow"]}}}
+
+    def run(self, params: dict, ctx: Any) -> ActionResult:
+        rid = str(params.get("rid") or "").strip()
+        allow = bool(params.get("allow"))
+        entry = _PERM.get(rid)
+        if entry is None:
+            return ActionResult(success=False, error="权限请求不存在或已超时")
+        entry["allow"] = allow
+        entry["event"].set()
+        return ActionResult(success=True, data={"ok": True})
+
+
+_FILES_EXCLUDE = {".git", "node_modules", "dist", "target", ".venv", "build", "out", "__pycache__", ".next", ".cache"}
+
+
+class FilesSkill(Skill):
+    id = "coding.files"
+    label = "项目文件模糊搜索"
+    description = "在 cwd 下按文件名模糊匹配（@ 补全用）：限深 6 层、限 200 条、排除依赖/构建目录。"
+    default_risk = RiskLevel.L0_READONLY
+
+    def openai_schema(self) -> dict:
+        return {"type": "function", "function": {"name": self.id, "description": self.description,
+                "parameters": {"type": "object",
+                    "properties": {"cwd": {"type": "string"}, "q": {"type": "string"}},
+                    "required": ["cwd"]}}}
+
+    def run(self, params: dict, ctx: Any) -> ActionResult:
+        cwd = os.path.expanduser(str(params.get("cwd") or "").strip())
+        q = str(params.get("q") or "").strip().lower()
+        out: list[dict] = []
+        if not os.path.isdir(cwd):
+            return ActionResult(success=True, data={"files": []})
+        try:
+            for root, dirs, files in os.walk(cwd):
+                rel_root = os.path.relpath(root, cwd)
+                depth = 0 if rel_root == "." else rel_root.count(os.sep) + 1
+                dirs[:] = [d for d in dirs if d not in _FILES_EXCLUDE and not d.startswith(".")]
+                if depth >= 6:
+                    dirs[:] = []
+                for name in files:
+                    if name.startswith("."):
+                        continue
+                    rel = name if rel_root == "." else f"{rel_root}/{name}"
+                    if q and q not in rel.lower():
+                        continue
+                    out.append({"path": os.path.join(root, name), "rel": rel})
+                    if len(out) >= 200:
+                        return ActionResult(success=True, data={"files": out})
+        except Exception as e:
+            print(f"[yibao/coding] files 遍历失败（截断返回）：{e}", file=sys.stderr)
+        return ActionResult(success=True, data={"files": out})
+
+
 def make_tools(ctx: Any) -> list[Skill]:
     """插件加载器入口（_load_code_tools 遍历 skills/*.py 调本函数）。"""
     return [StartSkill(), SendSkill(), StopSkill(), ListSkill(),
-            HandoffListSkill(), HandoffBriefSkill(), HistorySkill()]
+            HandoffListSkill(), HandoffBriefSkill(), HistorySkill(), ModeSkill(),
+            RewindSkill(), DecideSkill(), FilesSkill()]

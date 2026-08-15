@@ -37,3 +37,31 @@ name = "history"
 handler = "coding.history"
 direct = true
 quiet = true
+
+# 面板 mode pill：切换权限模式（落库 + 运行中切换；quiet 不发 panel 事件）
+[[method]]
+name = "mode"
+handler = "coding.mode"
+direct = true
+quiet = true
+
+# 用户气泡 ⏪：文件检查点回滚（quiet 不发 panel 事件）
+[[method]]
+name = "rewind"
+handler = "coding.rewind"
+direct = true
+quiet = true
+
+# 权限审批卡按钮：允许/拒绝（quiet 不发 panel 事件）
+[[method]]
+name = "decide"
+handler = "coding.decide"
+direct = true
+quiet = true
+
+# @ 补全：项目文件模糊搜索（quiet 不发 panel 事件）
+[[method]]
+name = "files"
+handler = "coding.files"
+direct = true
+quiet = true

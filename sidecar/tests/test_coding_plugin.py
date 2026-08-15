@@ -46,7 +46,7 @@ def _run(coro): return asyncio.run(coro)
 def test_runner_streams_and_done():
     events = []
     msgs = [_FakeAssistant([_FakeText("hello")]), _FakeResultMessage("success")]
-    runner = ClaudeCodeRunner(client_factory=lambda cwd, tools, resume=None: _FakeClient(msgs))
+    runner = ClaudeCodeRunner(client_factory=lambda cwd, tools, resume=None, **k: _FakeClient(msgs))
     cancel = asyncio.Event()
     _run(runner.run("do X", "/tmp", on_event=events.append, cancel_event=cancel))
     kinds = [e["kind"] for e in events]
@@ -61,7 +61,7 @@ def test_runner_cancel_mid_stream():
         _FakeAssistant([_FakeText("c")]),
         _FakeResultMessage("success"),
     ]
-    runner = ClaudeCodeRunner(client_factory=lambda cwd, tools, resume=None: _FakeClient(msgs))
+    runner = ClaudeCodeRunner(client_factory=lambda cwd, tools, resume=None, **k: _FakeClient(msgs))
     cancel = asyncio.Event()
     def on_event(e):
         sent.append(e)
@@ -76,7 +76,7 @@ def test_runner_cancel_mid_stream():
 
 def test_runner_error_isolated():
     events = []
-    def factory(cwd, tools, resume=None):
+    def factory(cwd, tools, resume=None, **k):
         class Bad:
             async def __aenter__(self): return self
             async def __aexit__(self, *a): return False
@@ -98,7 +98,7 @@ class _SetEvent:
 def _cancel_immediately_factory():
     """fake client factory：首条消息前取消即触发（配合 _SetEvent 恒 set）。"""
     msgs = [_FakeAssistant([_FakeText("a")]), _FakeResultMessage("success")]
-    return lambda cwd, tools, resume=None: _FakeClient(msgs)
+    return lambda cwd, tools, resume=None, **k: _FakeClient(msgs)
 
 
 def test_runner_cancel_emits_stopped_terminal_event():
@@ -120,7 +120,7 @@ class _FakeResultWithSession:
 def test_runner_returns_cc_session_id():
     captured = []
     msgs = [_FakeAssistant([_FakeText("hi")]), _FakeResultWithSession(session_id="cc-sess-123")]
-    runner = ClaudeCodeRunner(client_factory=lambda cwd, tools, resume=None: _FakeClient(msgs))
+    runner = ClaudeCodeRunner(client_factory=lambda cwd, tools, resume=None, **k: _FakeClient(msgs))
     sid = _run(runner.run("p", "/tmp", on_event=captured.append, cancel_event=asyncio.Event()))
     assert sid == "cc-sess-123"
     assert any(e["kind"] == "done" for e in captured)
@@ -128,7 +128,7 @@ def test_runner_returns_cc_session_id():
 
 def test_runner_resume_passes_session_id():
     seen = {}
-    def factory(cwd, tools, resume=None):
+    def factory(cwd, tools, resume=None, **k):
         seen["resume"] = resume
         class C:
             async def __aenter__(self): return self
@@ -197,9 +197,13 @@ def test_normalize_result_done():
     assert normalize(_FakeResultMessage("success")) == [{"kind": "done", "usage": {}}]
 
 
-def test_normalize_ignores_system_and_user():
+def test_normalize_ignores_system_message():
     assert normalize(_FakeSystemMessage()) == []
-    assert normalize(_FakeUserMessage("hi")) == []
+
+
+def test_normalize_str_user_message_emits_user_msg():
+    """字符串 content 的 UserMessage（replay-user-messages 回流）→ user_msg 事件；无 uuid 降级空串。"""
+    assert normalize(_FakeUserMessage("hi")) == [{"kind": "user_msg", "uuid": "", "text": "hi"}]
 
 
 def test_normalize_none():
@@ -232,11 +236,26 @@ from coding import _stop_session  # noqa: E402
 
 
 class _FakeDB:
-    """极小鸭式 db：记录 insert/update，query 全量返回。"""
-    def __init__(self): self.rows = {}; self.updates = []
-    def insert(self, table, row): self.rows[row["id"]] = dict(row); return row["id"]
+    """极小鸭式 db：记录 insert/update；sessions 存 rows（按 id），其余表存 _tables。
+    query 支持 where 等值过滤 + order（"col [DESC]"）+ limit（仿 PluginDb 形态）。"""
+    def __init__(self): self.rows = {}; self.updates = []; self._tables = {}
+    def insert(self, table, row):
+        row = dict(row)
+        if table == "sessions":
+            self.rows[row["id"]] = row; return row["id"]
+        row.setdefault("id", f"{table}-{len(self._tables.get(table, [])) + 1}")
+        self._tables.setdefault(table, []).append(row)
+        return row["id"]
     def update(self, table, rid, fields): self.updates.append((rid, fields)); self.rows.setdefault(rid, {}).update(fields)
-    def query(self, *a, **k): return list(self.rows.values())
+    def query(self, table, where=None, order=None, limit=None, **_):
+        out = list(self.rows.values()) if table == "sessions" else list(self._tables.get(table, []))
+        if where:
+            out = [r for r in out if all(r.get(k) == v for k, v in where.items())]
+        if order:
+            parts = order.split()
+            out = sorted(out, key=lambda r: r.get(parts[0]) or 0,
+                         reverse=len(parts) > 1 and parts[1].upper() == "DESC")
+        return out[:limit] if limit else out
 
 
 def test_start_inserts_running_session(monkeypatch):
@@ -269,8 +288,11 @@ from coding import _stream  # noqa: E402
 class _FakeRunner:
     """鸭式 runner：run() 返回预设 cc_sid；记录传入参数。"""
     def __init__(self, cc_sid): self._cc_sid = cc_sid; self.called_with = None
-    async def run(self, prompt, cwd, *, on_event, cancel_event, resume_session_id=None):
-        self.called_with = {"prompt": prompt, "cwd": cwd, "resume": resume_session_id}
+    async def run(self, prompt, cwd, *, on_event, cancel_event, resume_session_id=None,
+                  permission_mode="acceptEdits", can_use_tool=None, session_entry=None):
+        self.called_with = {"prompt": prompt, "cwd": cwd, "resume": resume_session_id,
+                            "permission_mode": permission_mode, "can_use_tool": can_use_tool,
+                            "session_entry": session_entry}
         if self._cc_sid is not None:
             on_event({"kind": "done"})
         return self._cc_sid
@@ -379,12 +401,13 @@ def test_send_skill_openai_schema_shape():
 
 
 def test_make_tools_includes_send():
-    """make_tools 返回 Start/Send/Stop/List + HandoffList/HandoffBrief/History 七件。"""
+    """make_tools 返回 Start/Send/Stop/List + HandoffList/HandoffBrief/History/Mode/Rewind/Decide/Files 十一件。"""
     tools = codingmod.make_tools(type("C", (), {"db": None, "emit_event": None})())
     ids = [t.id for t in tools]
     assert "coding.send" in ids
     assert ids == ["coding.start", "coding.send", "coding.stop", "coding.list",
-                   "coding.handoff_list", "coding.handoff_brief", "coding.history"]
+                   "coding.handoff_list", "coding.handoff_brief", "coding.history",
+                   "coding.mode", "coding.rewind", "coding.decide", "coding.files"]
 
 
 def test_start_skill_does_not_pass_resume(monkeypatch):
@@ -401,11 +424,15 @@ def test_start_skill_does_not_pass_resume(monkeypatch):
 # ---------- 流式防重入：send 拒 running 会话 ----------
 
 
-def _make_ctx_with_session(status):
-    """仿 _Ctx/_FakeDB 既有约定：造一个带指定 status 会话（sid-1）的 ctx。"""
+def _make_ctx_with_session(status, with_messages=None):
+    """仿 _Ctx/_FakeDB 既有约定：造一个带指定 status 会话（sid-1）的 ctx。
+    with_messages：可选 [(role, text), ...] 预置 messages 表 transcript（history 测试用）。"""
     db = _FakeDB()
     db.rows["sid-1"] = {"id": "sid-1", "cwd": "/tmp/p",
                         "cc_session_id": "cc-old-1", "status": status}
+    for i, (role, text) in enumerate(with_messages or []):
+        db.insert("messages", {"session_id": "sid-1", "role": role, "text": text,
+                               "ts": 0, "seq": i + 1, "uuid": ""})
     return _Ctx(db)
 
 
@@ -520,3 +547,537 @@ def test_send_rejects_when_runner_finishing(monkeypatch):
     monkeypatch.setattr(codingmod, "_SESSIONS", {})   # runner 线程退清 → 放行
     r2 = SendSkill().run({"id": "sid-1", "prompt": "再来一条"}, ctx)
     assert r2.success, r2.error
+
+
+# ---------- R2 Task 1: checkpointing + replay + interrupt + mode 参数 + user_msg ----------
+def test_factory_passes_checkpointing_and_replay_args():
+    """生产 options：checkpointing 开 + replay-user-messages（rewind 原料）；mode 可参数化。"""
+    from claude_agent_sdk import ClaudeAgentOptions
+    seen = {}
+    def factory(cwd, tools, resume=None, permission_mode="acceptEdits", can_use_tool=None):
+        seen["mode"] = permission_mode
+        opts = ClaudeAgentOptions(
+            cwd=cwd, permission_mode=permission_mode, allowed_tools=tools, resume=resume,
+            enable_file_checkpointing=True, extra_args={"replay-user-messages": None},
+            can_use_tool=can_use_tool,
+        )
+        seen["opts"] = opts
+        return _FakeClient(opts)
+    runner = ClaudeCodeRunner(client_factory=factory)
+    _run(runner.run("p", "/tmp", on_event=lambda e: None, cancel_event=asyncio.Event(),
+                    permission_mode="plan"))
+    assert seen["mode"] == "plan"
+    assert seen["opts"].enable_file_checkpointing is True
+    assert seen["opts"].extra_args == {"replay-user-messages": None}
+
+
+def test_user_message_yields_user_msg_event_with_uuid():
+    """replay 开启后 UserMessage（无 tool_result 块）→ user_msg 事件带 uuid；无 uuid 降级空串。"""
+    # SimpleNamespace 不能改 __class__（C 类型），用本地类控制类名进 User 分支
+    class UserMessage:
+        def __init__(self, content, uuid=None):
+            self.content = content
+            if uuid is not None:
+                self.uuid = uuid
+    evs = normalize(UserMessage("帮我改一下登录页", uuid="u-1"))
+    assert evs == [{"kind": "user_msg", "uuid": "u-1", "text": "帮我改一下登录页"}]
+    assert normalize(UserMessage("没 uuid 的老消息")) == [
+        {"kind": "user_msg", "uuid": "", "text": "没 uuid 的老消息"}]
+
+
+def test_cancel_calls_client_interrupt_before_stopped():
+    """取消时先 client.interrupt() 杀后台工具，再发 stopped 终态。"""
+    calls = []
+    class FakeClient:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return None
+        async def query(self, p): pass
+        async def receive_response(self):
+            yield SimpleNamespace(content=[])
+        async def interrupt(self): calls.append("interrupt")
+    runner = ClaudeCodeRunner(client_factory=lambda *a, **k: FakeClient())
+    events = []
+    _run(runner.run("p", "/tmp", on_event=events.append, cancel_event=_SetEvent()))
+    assert calls == ["interrupt"]
+    assert events and events[-1]["kind"] == "stopped"
+
+
+# ---------- R2 Task 2: transcript 落库（messages 表 + history 读库优先）----------
+from coding import HistorySkill  # noqa: E402
+
+
+class _EventsRunner:
+    """鸭式 runner：依次回放预置事件后返回 cc-sess-x（transcript 落库测试用）。"""
+    def __init__(self, events): self._events = events
+    async def run(self, prompt, cwd, *, on_event, cancel_event, resume_session_id=None, **_):
+        for ev in self._events:
+            on_event(ev)
+        return "cc-sess-x"
+
+
+def _run_fake_stream(ctx, events):
+    """跑一轮 _stream：_EventsRunner 回放 events（不起线程，直跑 coroutine）。"""
+    _run(_stream(ctx.db, "sid-1", "/tmp/p", "p", _EventsRunner(events),
+                 emit_event=None, cancel=_threading.Event()))
+
+
+def test_stream_persists_transcript_to_messages_table():
+    """流式：user prompt + assistant 块 + 终态 marker 都落 messages 表（seq 单调）。"""
+    ctx = _make_ctx_with_session(status="running")
+    _run_fake_stream(ctx, events=[
+        {"kind": "user_msg", "uuid": "u-1", "text": "任务一"},
+        {"kind": "text_delta", "text": "好的"},
+        {"kind": "done", "usage": {}},
+    ])
+    rows = sorted(ctx.db.query("messages", where={"session_id": "sid-1"}), key=lambda r: r["seq"])
+    assert [(r["role"], r["text"]) for r in rows] == [
+        ("user", "任务一"), ("assistant", "好的"), ("marker", "完成"),
+    ]
+    assert rows[0]["uuid"] == "u-1" and rows[1]["uuid"] == ""
+
+
+def test_history_prefers_db_transcript_over_cc_reader(monkeypatch):
+    """库里有 → 直接返回（不读 jsonl）；库里空 → fallback _cc_reader。"""
+    ctx = _make_ctx_with_session(status="done", with_messages=[("user", "旧任务")])
+    # _sibling 把 _cc_reader 缓存成模块对象（sys.modules 别名），patch 其函数属性
+    monkeypatch.setattr(
+        codingmod._sibling("_cc_reader"), "read_transcript",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("不该读 jsonl")))
+    r = HistorySkill().run({"id": "sid-1"}, ctx)
+    assert r.success and r.data["messages"] == [{"role": "user", "text": "旧任务", "uuid": ""}]
+
+
+# ---------- T2 评审修复：history 取最近 40 条 / seq 跨轮续号 ----------
+def test_history_returns_latest_40_in_ascending_order():
+    """45 条消息（seq 1..45）→ history 返回 seq 6..45 正序，而不是头部 seq 1..40。"""
+    ctx = _make_ctx_with_session(
+        status="done",
+        with_messages=[("assistant", f"m{i}") for i in range(1, 46)])
+    r = HistorySkill().run({"id": "sid-1"}, ctx)
+    assert r.success
+    texts = [m["text"] for m in r.data["messages"]]
+    assert len(texts) == 40
+    assert texts[0] == "m6" and texts[-1] == "m45"     # 尾部 40 条
+    assert "m5" not in texts and "m1" not in texts     # 不是头部 40 条
+    assert texts == sorted(texts, key=lambda t: int(t[1:]))  # 时间正序
+
+
+def test_stream_seq_continues_across_rounds():
+    """同一 sid 两轮 _stream：第二轮首条消息 seq = 第一轮 max + 1（不交错）。"""
+    ctx = _make_ctx_with_session(status="running")
+    _run_fake_stream(ctx, events=[
+        {"kind": "user_msg", "uuid": "u-1", "text": "第一轮"},
+        {"kind": "text_delta", "text": "好"},
+        {"kind": "done", "usage": {}},
+    ])
+    r1_max = max(r["seq"] for r in ctx.db.query("messages", where={"session_id": "sid-1"}))
+    ctx.db.rows["sid-1"]["status"] = "running"          # 第一轮落 done 后 send 重置回 running
+    _run_fake_stream(ctx, events=[
+        {"kind": "user_msg", "uuid": "u-2", "text": "第二轮"},
+        {"kind": "done", "usage": {}},
+    ])
+    rows = sorted(ctx.db.query("messages", where={"session_id": "sid-1"}),
+                  key=lambda r: r["seq"])
+    seqs = [r["seq"] for r in rows]
+    assert seqs == list(range(1, len(rows) + 1))        # 全局单调不重复
+    r2_first = next(r for r in rows if r["text"] == "第二轮")
+    assert r2_first["seq"] == r1_max + 1                # 续号，不是从 1 重计
+
+
+# ---------- R2 Task 3: plan mode 切换（db mode + 透传 + 运行中 set_permission_mode）----------
+from coding import ModeSkill  # noqa: E402
+
+
+def test_start_and_send_persist_mode(monkeypatch):
+    """start 落 mode 列并透传 permission_mode；send 不带 mode 沿用库值，带则覆盖回写。"""
+    db = _FakeDB()
+    captured = []
+    # 不真起线程：_spawn_stream 占位，只记录 kwargs
+    monkeypatch.setattr(codingmod, "_spawn_stream", lambda *a, **k: captured.append(k))
+    monkeypatch.setattr(codingmod, "ClaudeCodeRunner", lambda: object())
+    r = StartSkill().run({"cwd": "/tmp", "prompt": "x", "mode": "plan"}, _Ctx(db))
+    assert r.success, r.error
+    sid = r.data["session_id"]
+    assert db.rows[sid]["mode"] == "plan"                     # mode 落列
+    assert captured[-1].get("permission_mode") == "plan"      # 透传到流式
+    # send 不带 mode → 沿用库里的 plan
+    db.rows[sid]["status"] = "done"
+    db.rows[sid]["cc_session_id"] = "cc-1"
+    r2 = SendSkill().run({"id": sid, "prompt": "再来"}, _Ctx(db))
+    assert r2.success, r2.error
+    assert captured[-1].get("permission_mode") == "plan"
+    assert db.rows[sid]["mode"] == "plan"                     # 库值不被重置
+    # send 带 mode → 覆盖并回写库
+    db.rows[sid]["status"] = "done"
+    r3 = SendSkill().run({"id": sid, "prompt": "再来", "mode": "acceptEdits"}, _Ctx(db))
+    assert r3.success, r3.error
+    assert captured[-1].get("permission_mode") == "acceptEdits"
+    assert db.rows[sid]["mode"] == "acceptEdits"
+
+
+def test_send_mode_defaults_accept_edits_when_db_missing(monkeypatch):
+    """老会话（无 mode 列值）send 不带 mode → 默认 acceptEdits。"""
+    captured = []
+    monkeypatch.setattr(codingmod, "_spawn_stream", lambda *a, **k: captured.append(k))
+    ctx = _make_ctx_with_session(status="done")   # sid-1 行无 mode 键
+    r = SendSkill().run({"id": "sid-1", "prompt": "再来"}, ctx)
+    assert r.success, r.error
+    assert captured[-1].get("permission_mode") == "acceptEdits"
+    assert ctx.db.rows["sid-1"]["mode"] == "acceptEdits"
+
+
+def test_stream_passes_permission_mode_to_runner():
+    """_stream 把 permission_mode 透传 runner.run（send/start 的 mode 最终到 SDK options）。"""
+    db = _FakeDB(); db.rows["s9"] = {"id": "s9", "status": "running"}
+    runner = _FakeRunner(cc_sid=None)
+    _run(_stream(db, "s9", "/tmp/p", "hi", runner, emit_event=None,
+                 cancel=_threading.Event(), permission_mode="plan"))
+    assert runner.called_with["permission_mode"] == "plan"
+
+
+def test_stream_passes_live_session_entry_to_runner(monkeypatch):
+    """_stream 把 _SESSIONS[sid]（live entry）透传 runner.run 的 session_entry（运行中切模式的通道）。"""
+    db = _FakeDB(); db.rows["s10"] = {"id": "s10", "status": "running"}
+    entry = {"cancel": _threading.Event()}
+    monkeypatch.setattr(codingmod, "_SESSIONS", {"s10": entry})
+    runner = _FakeRunner(cc_sid=None)
+    _run(_stream(db, "s10", "/tmp/p", "hi", runner, emit_event=None,
+                 cancel=_threading.Event()))
+    assert runner.called_with["session_entry"] is entry
+
+
+def test_mode_skill_updates_db_and_live_pending(monkeypatch):
+    """coding.mode：落库 + live 会话置 mode_pending（runner 下条消息生效）；返回 live 标记。"""
+    ctx = _make_ctx_with_session(status="running")
+    entry = {"cancel": _threading.Event()}
+    monkeypatch.setattr(codingmod, "_SESSIONS", {"sid-1": entry})
+    r = ModeSkill().run({"id": "sid-1", "mode": "plan"}, ctx)
+    assert r.success and r.data["live"] is True            # 有 live entry → mode_pending 已置
+    assert entry["mode_pending"] == "plan"
+    assert ctx.db.query("sessions", where={"id": "sid-1"})[0]["mode"] == "plan"
+    assert r.data["ok"] is True and r.data["mode"] == "plan"
+    # 非 live（会话已结束/无 runner）：只落库，不置 pending
+    monkeypatch.setattr(codingmod, "_SESSIONS", {})
+    r2 = ModeSkill().run({"id": "sid-1", "mode": "acceptEdits"}, ctx)
+    assert r2.success and r2.data["live"] is False
+    assert ctx.db.rows["sid-1"]["mode"] == "acceptEdits"
+
+
+def test_mode_skill_rejects_bad_mode_and_unknown_session():
+    """非法 mode / 不存在会话 → 友好错误，不碰库。"""
+    ctx = _make_ctx_with_session(status="running")
+    r = ModeSkill().run({"id": "sid-1", "mode": "yolo"}, ctx)
+    assert not r.success and "不支持" in (r.error or "")
+    r2 = ModeSkill().run({"id": "ghost", "mode": "plan"}, ctx)
+    assert not r2.success and "不存在" in (r2.error or "")
+    assert "mode" not in ctx.db.rows["sid-1"]              # 均未落库
+
+
+def test_runner_applies_pending_mode_between_messages():
+    """runner 每条消息前检查 session_entry.mode_pending → client.set_permission_mode（消费即弹出）。"""
+    calls = []
+
+    class ModeClient:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def query(self, p): pass
+        async def set_permission_mode(self, mode): calls.append(mode)
+        async def receive_response(self):
+            yield _FakeAssistant([_FakeText("a")])
+            yield _FakeAssistant([_FakeText("b")])
+            yield _FakeResultMessage("success")
+
+    runner = ClaudeCodeRunner(client_factory=lambda cwd, tools, resume=None, **k: ModeClient())
+    entry = {"mode_pending": "plan"}
+    events = []
+    _run(runner.run("p", "/tmp", on_event=events.append, cancel_event=asyncio.Event(),
+                    session_entry=entry))
+    assert calls == ["plan"]                               # 只消费一次
+    assert "mode_pending" not in entry                     # 消费后弹出
+    assert [e["kind"] for e in events] == ["text_delta", "text_delta", "done"]
+
+
+def test_runner_pending_mode_without_setter_is_skipped():
+    """鸭子类型：client 无 set_permission_mode → 静默跳过，流不受影响（pending 仍弹出防重复消费）。"""
+    msgs = [_FakeAssistant([_FakeText("x")]), _FakeResultMessage("success")]
+    runner = ClaudeCodeRunner(client_factory=lambda cwd, tools, resume=None, **k: _FakeClient(msgs))
+    entry = {"mode_pending": "plan"}
+    events = []
+    _run(runner.run("p", "/tmp", on_event=events.append, cancel_event=asyncio.Event(),
+                    session_entry=entry))
+    assert [e["kind"] for e in events] == ["text_delta", "done"]
+    assert "mode_pending" not in entry
+
+
+def test_runner_pending_mode_set_failure_is_silent():
+    """set_permission_mode 抛错 → 打印并跳过，流不断、不发 error 事件。"""
+
+    class BadModeClient(_FakeClient):
+        async def set_permission_mode(self, mode): raise RuntimeError("nope")
+
+    msgs = [_FakeAssistant([_FakeText("x")]), _FakeResultMessage("success")]
+    runner = ClaudeCodeRunner(client_factory=lambda cwd, tools, resume=None, **k: BadModeClient(msgs))
+    events = []
+    _run(runner.run("p", "/tmp", on_event=events.append, cancel_event=asyncio.Event(),
+                    session_entry={"mode_pending": "plan"}))
+    assert [e["kind"] for e in events] == ["text_delta", "done"]
+
+
+# ---------- R2 Task 4: rewind 检查点回滚（RewindSkill + runner rewind_pending）----------
+from coding import RewindSkill  # noqa: E402
+
+
+class _NeverSet:
+    """is_set() 恒 False 的 cancel 替身（rewind 只写 rewind_pending，不得触碰 cancel）。"""
+    def __init__(self): self.set_calls = 0
+    def is_set(self): return False
+    def set(self): self.set_calls += 1
+
+
+def test_rewind_live_session_defers_to_runner(monkeypatch):
+    """会话在跑：rewind 只写 rewind_pending，runner 下条消息前执行 rewind_files。"""
+    ctx = _make_ctx_with_session(status="running")
+    # sessions_registry 挂到 ctx 上（仿 mode 测试的 _SESSIONS monkeypatch 约定）
+    ctx.sessions_registry = {"sid-1": {"cancel": _NeverSet()}}
+    monkeypatch.setattr(codingmod, "_SESSIONS", ctx.sessions_registry)
+    r = RewindSkill().run({"id": "sid-1", "user_msg_id": "u-1"}, ctx)
+    assert r.success and r.data["live"] is True
+    assert ctx.sessions_registry["sid-1"]["rewind_pending"] == "u-1"
+    assert ctx.sessions_registry["sid-1"]["cancel"].set_calls == 0   # rewind 不触碰 cancel
+
+
+class _FreshRewindClient:
+    """记录 connect/rewind_files/disconnect 调用序的 fake client（idle rewind 路径用）。"""
+    def __init__(self): self.calls = []
+    async def connect(self): self.calls.append("connect")
+    async def rewind_files(self, uuid): self.calls.append(("rewind_files", uuid))
+    async def disconnect(self): self.calls.append("disconnect")
+
+
+def test_rewind_idle_session_uses_fresh_client(monkeypatch):
+    """会话已结束：新开 client（resume=cc_session_id）connect → rewind_files → disconnect。"""
+    ctx = _make_ctx_with_session(status="done")   # sid-1：cc_session_id="cc-old-1", cwd="/tmp/p"
+    monkeypatch.setattr(codingmod, "_SESSIONS", {})          # 非 live
+    events = []
+    ctx.emit_event = events.append
+    client = _FreshRewindClient()
+    seen = {}
+
+    class _FakeRunner:
+        def _default_factory(self, cwd, tools, resume=None):
+            seen["cwd"] = cwd
+            seen["resume"] = resume
+            return client
+
+    monkeypatch.setattr(codingmod, "ClaudeCodeRunner", lambda: _FakeRunner())
+    r = RewindSkill().run({"id": "sid-1", "user_msg_id": "u-1"}, ctx)
+    assert r.success and r.data["live"] is False
+    assert client.calls == ["connect", ("rewind_files", "u-1"), "disconnect"]
+    assert seen["resume"] == "cc-old-1" and seen["cwd"] == "/tmp/p"
+    # rewind_ok 事件经 panel_data 推到 coding:chat 面板
+    ok = [e for e in events if e.get("kind") == "panel_data"
+          and e["payload"]["data"]["event"].get("kind") == "rewind_ok"]
+    assert ok and ok[0]["payload"]["data"]["session_id"] == "sid-1"
+    assert "已回滚" in ok[0]["payload"]["data"]["event"]["text"]
+
+
+def test_rewind_fresh_client_failure_emits_error(monkeypatch):
+    """新 client rewind 抛错 → error 事件（回滚失败：…）+ success=False，不炸。"""
+    ctx = _make_ctx_with_session(status="done")
+    monkeypatch.setattr(codingmod, "_SESSIONS", {})
+    events = []
+    ctx.emit_event = events.append
+
+    class _BadClient:
+        async def connect(self): pass
+        async def rewind_files(self, uuid): raise RuntimeError("boom")
+        async def disconnect(self): pass
+
+    class _FakeRunner:
+        def _default_factory(self, cwd, tools, resume=None): return _BadClient()
+
+    monkeypatch.setattr(codingmod, "ClaudeCodeRunner", lambda: _FakeRunner())
+    r = RewindSkill().run({"id": "sid-1", "user_msg_id": "u-1"}, ctx)
+    assert not r.success and "回滚失败" in (r.error or "")
+    errs = [e for e in events if e.get("kind") == "panel_data"
+            and e["payload"]["data"]["event"].get("kind") == "error"]
+    assert errs and "回滚失败" in errs[0]["payload"]["data"]["event"]["text"]
+
+
+def test_rewind_failure_degrades(monkeypatch):
+    """无 cc_session_id 且不在跑 → 失败文案，不炸。"""
+    db = _FakeDB()
+    db.rows["sid-1"] = {"id": "sid-1", "cwd": "/tmp/p", "cc_session_id": "", "status": "done"}
+    monkeypatch.setattr(codingmod, "_SESSIONS", {})
+    r = RewindSkill().run({"id": "sid-1", "user_msg_id": "u-1"}, _Ctx(db))
+    assert not r.success and "无检查点" in (r.error or "")
+    # 缺锚点 / 不存在会话 → 友好错误，不碰库不碰 runner
+    r2 = RewindSkill().run({"id": "sid-1"}, _Ctx(db))       # 无 user_msg_id
+    assert not r2.success and "user_msg_id" in (r2.error or "")
+    r3 = RewindSkill().run({"id": "ghost", "user_msg_id": "u-1"}, _Ctx(db))
+    assert not r3.success and "不存在" in (r3.error or "")
+
+
+def test_rewind_is_l1_no_confirm():
+    """⏪ 回滚 = L1（direct+quiet 面板直调不弹确认）：回滚目标由用户显式点击的消息锚定。"""
+    assert RewindSkill.default_risk == RiskLevel.L1_LOW
+
+
+def test_runner_applies_pending_rewind_before_next_message():
+    """runner 每条消息前检查 session_entry.rewind_pending → client.rewind_files（消费即弹出 + rewind_ok）。"""
+    calls = []
+
+    class RewClient:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def query(self, p): pass
+        async def rewind_files(self, uuid): calls.append(uuid)
+        async def receive_response(self):
+            yield _FakeAssistant([_FakeText("a")])
+            yield _FakeResultMessage("success")
+
+    runner = ClaudeCodeRunner(client_factory=lambda cwd, tools, resume=None, **k: RewClient())
+    entry = {"rewind_pending": "u-9"}
+    events = []
+    _run(runner.run("p", "/tmp", on_event=events.append, cancel_event=asyncio.Event(),
+                    session_entry=entry))
+    assert calls == ["u-9"]                                # 只消费一次
+    assert "rewind_pending" not in entry                   # 消费后弹出
+    kinds = [e["kind"] for e in events]
+    assert kinds == ["rewind_ok", "text_delta", "done"]
+    assert "已回滚" in events[0]["text"]
+
+
+def test_runner_pending_rewind_without_method_is_skipped():
+    """鸭子类型：client 无 rewind_files → 静默跳过（pending 仍弹出防重复消费），无 rewind_ok。"""
+    msgs = [_FakeAssistant([_FakeText("x")]), _FakeResultMessage("success")]
+    runner = ClaudeCodeRunner(client_factory=lambda cwd, tools, resume=None, **k: _FakeClient(msgs))
+    entry = {"rewind_pending": "u-1"}
+    events = []
+    _run(runner.run("p", "/tmp", on_event=events.append, cancel_event=asyncio.Event(),
+                    session_entry=entry))
+    assert [e["kind"] for e in events] == ["text_delta", "done"]
+    assert "rewind_pending" not in entry
+
+
+def test_runner_pending_rewind_failure_emits_error_event():
+    """rewind_files 抛错 → error 事件（回滚失败：…），流不断、跑完仍有 done。"""
+    class BadRewClient(_FakeClient):
+        async def rewind_files(self, uuid): raise RuntimeError("nope")
+
+    msgs = [_FakeAssistant([_FakeText("x")]), _FakeResultMessage("success")]
+    runner = ClaudeCodeRunner(client_factory=lambda cwd, tools, resume=None, **k: BadRewClient(msgs))
+    events = []
+    _run(runner.run("p", "/tmp", on_event=events.append, cancel_event=asyncio.Event(),
+                    session_entry={"rewind_pending": "u-1"}))
+    errs = [e for e in events if e["kind"] == "error"]
+    assert errs and "回滚失败" in errs[0]["text"]
+    assert events[-1]["kind"] == "done"                    # 流继续跑完
+
+
+
+# ---------- R2 Task 5: can_use_tool 权限交互（回调桥 + coding.decide）----------
+from coding import DecideSkill  # noqa: E402
+
+# coding.py 的 `_runner` 是 _sibling 加载的模块单例（DecideSkill 查的 _PERM 就在它上面）；
+# 本文件顶部 `from _runner import ...` 是另一个模块实例（sys.modules["_runner"]），
+# Task 5 测试一律走 codingmod._runner，保证回调桥与 DecideSkill 共享同一注册表。
+_runner_mod = codingmod._runner
+
+
+def test_can_use_tool_roundtrip_approve_and_deny():
+    """回调发 permission_request 并等待；decide(allow=True) → PermissionResultAllow；decide(False) → Deny。"""
+    from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
+
+    async def _roundtrip(allow):
+        events = []
+        cb = _runner_mod.make_permission_callback("s1", events.append, timeout_s=5.0)
+
+        async def _decide():
+            # 等 permission_request 发出（回调先同步发事件再 await 等裁决）
+            while not events:
+                await asyncio.sleep(0.005)
+            rid = events[0]["rid"]
+            r = DecideSkill().run({"rid": rid, "allow": allow}, _Ctx(_FakeDB()))
+            assert r.success, r.error
+
+        decider = asyncio.create_task(_decide())
+        res = await cb("Bash", {"command": "ls -la"})
+        await decider
+        return res, events
+
+    res, events = _run(_roundtrip(True))
+    assert isinstance(res, PermissionResultAllow)
+    assert [e["kind"] for e in events] == ["permission_request", "permission_done"]
+    assert events[0]["tool"] == "Bash" and events[0]["input"] == {"command": "ls -la"}
+    assert events[0]["rid"].startswith("perm_s1_")
+    assert events[1] == {"kind": "permission_done", "rid": events[0]["rid"], "allow": True}
+    assert events[0]["rid"] not in _runner_mod._PERM        # 裁决后注册表清理
+
+    res2, events2 = _run(_roundtrip(False))
+    assert isinstance(res2, PermissionResultDeny)
+    assert res2.message == "用户拒绝"
+    assert events2[-1] == {"kind": "permission_done", "rid": events2[0]["rid"], "allow": False}
+    assert events2[0]["rid"] not in _runner_mod._PERM
+
+
+def test_can_use_tool_timeout_defaults_deny():
+    """60s（测试注入短超时）无裁决 → Deny('超时未批准')。"""
+    from claude_agent_sdk import PermissionResultDeny
+
+    events = []
+    cb = _runner_mod.make_permission_callback("s2", events.append, timeout_s=0.05)
+    res = _run(cb("Bash", {"command": "rm -rf /tmp/x"}))
+    assert isinstance(res, PermissionResultDeny)
+    assert res.message == "超时未批准"
+    assert [e["kind"] for e in events] == ["permission_request", "permission_done"]
+    assert events[1]["allow"] is False                      # 超时按拒绝收场（面板卡复位）
+    assert events[0]["rid"] not in _runner_mod._PERM
+
+
+def test_decide_skill_resolves_pending():
+    ev = _threading.Event()
+    _runner_mod._PERM["perm_1"] = {"event": ev, "allow": None}
+    try:
+        r = DecideSkill().run({"rid": "perm_1", "allow": True}, _Ctx(_FakeDB()))
+        assert r.success
+        assert _runner_mod._PERM["perm_1"]["allow"] is True and _runner_mod._PERM["perm_1"]["event"].is_set()
+        # 未知 rid → 友好错误（权限请求不存在或已超时），不炸
+        r2 = DecideSkill().run({"rid": "perm_ghost", "allow": True}, _Ctx(_FakeDB()))
+        assert not r2.success and "不存在" in (r2.error or "")
+    finally:
+        _runner_mod._PERM.pop("perm_1", None)
+
+
+def test_stream_passes_can_use_tool_to_runner():
+    """_stream 调 runner.run 时挂 can_use_tool 回调（权限审批桥进流式；Task 1 已扩 run 参数）。"""
+    db = _FakeDB(); db.rows["s11"] = {"id": "s11", "status": "running"}
+    runner = _FakeRunner(cc_sid=None)
+    _run(_stream(db, "s11", "/tmp/p", "hi", runner, emit_event=None,
+                 cancel=_threading.Event()))
+    assert callable(runner.called_with["can_use_tool"])
+
+
+# ---------- R2 Task 6: @files 上下文（FilesSkill 模糊搜索）----------
+from coding import FilesSkill  # noqa: E402
+
+
+def _ctx():
+    """FilesSkill.run 不触 ctx；沿用 _Ctx/_FakeDB 约定造最小鸭式。"""
+    return _Ctx(_FakeDB())
+
+
+def test_files_fuzzy_match_and_excludes(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "login.ts").write_text("x")
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "junk.js").write_text("x")
+    r = FilesSkill().run({"cwd": str(tmp_path), "q": "login"}, _ctx())
+    files = r.data["files"]
+    assert any(f["rel"] == "src/login.ts" for f in files)
+    assert not any("node_modules" in f["rel"] for f in files)
+
+
+def test_files_caps_results_and_bad_cwd(tmp_path):
+    r = FilesSkill().run({"cwd": str(tmp_path / "ghost"), "q": ""}, _ctx())
+    assert r.success and r.data["files"] == []

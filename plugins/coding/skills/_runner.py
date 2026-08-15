@@ -1,9 +1,60 @@
 """AgentRunner：程序化驱动 coding agent 流式跑。v1 实装 ClaudeCodeRunner（claude-agent-sdk）。"""
 from __future__ import annotations
-import json, sys
+import asyncio, itertools, json, sys, threading
 from typing import Protocol, Callable, Any
 
 _FILE_EDIT_TOOLS = {"Write", "Edit", "MultiEdit"}
+
+# can_use_tool 权限桥：rid → {"event": threading.Event, "allow": bool|None}。
+# 回调（runner 线程的 asyncio loop）发 permission_request 后在 asyncio.to_thread 里等
+# event.wait（不堵 loop）；面板审批卡按钮 → coding.decide（DecideSkill）写 allow + set。
+_PERM: dict = {}
+_perm_seq = itertools.count(1)
+
+
+def make_permission_callback(sid: str, on_event, *, timeout_s: float = 60.0):
+    """can_use_tool 回调桥：向面板发 permission_request，等 coding.decide 裁决（超时默认 deny）。
+    请求发送失败 → deny；等待被取消/中断 → deny（fail-closed）；注册表清理与
+    permission_done 事件在任何结局下都保证执行（emit 自身异常不再穿透回 SDK）。
+    返回 SDK 期望的 async callable。"""
+    async def _cb(tool_name, input, context=None):
+        rid = f"perm_{sid}_{next(_perm_seq)}"
+        entry = {"event": threading.Event(), "allow": None}
+        _PERM[rid] = entry
+        try:
+            on_event({"kind": "permission_request", "rid": rid,
+                      "tool": str(tool_name), "input": input if isinstance(input, dict) else {}})
+        except Exception as e:
+            print(f"[yibao/coding] 权限请求事件发送失败（deny）：{e}", file=sys.stderr)
+            _PERM.pop(rid, None)
+            return _deny(f"请求发送失败：{e}")
+        try:
+            got = await asyncio.to_thread(entry["event"].wait, timeout_s)
+        except BaseException:  # 取消/中断穿透（含 CancelledError，BaseException 系）：按拒绝收场（fail-closed），清理照做
+            got = False
+        allow = entry["allow"] if got else None
+        _PERM.pop(rid, None)
+        try:
+            if allow is True:
+                on_event({"kind": "permission_done", "rid": rid, "allow": True})
+                return _allow()
+            on_event({"kind": "permission_done", "rid": rid, "allow": False})
+        except Exception:
+            pass  # 面板流已断：deny 照返，不再多错
+        if allow is True:
+            return _allow()
+        return _deny("用户拒绝" if allow is False else "超时未批准")
+    return _cb
+
+
+def _allow():
+    from claude_agent_sdk import PermissionResultAllow  # lazy：与 _default_factory 同款，测试不依赖真 SDK 顶层
+    return PermissionResultAllow()
+
+
+def _deny(message: str):
+    from claude_agent_sdk import PermissionResultDeny   # lazy：同上
+    return PermissionResultDeny(message=message)
 
 
 def normalize(msg: Any) -> list[dict]:
@@ -18,7 +69,9 @@ def normalize(msg: Any) -> list[dict]:
               其余（Read/Bash/Glob/Grep…）        → {"kind":"tool_use","tool","input"}
       - ResultMessage（type 名含 "Result"，或 duck-typed .subtype+.is_error）→
           [{"kind":"done","usage":{...}}]（duration_ms/total_cost_usd/usage 鸭子类型，拿不到就空 dict 降级）
-      - UserMessage（类名含 "User"）→ ToolResultBlock 逐块提取 → {"kind":"tool_result","text","is_error"}
+      - UserMessage（类名含 "User"）→ 先 _user_text 提取纯文本（replay-user-messages 回流的
+          用户消息，str content 或 text 块列表）→ {"kind":"user_msg","uuid","text"}；
+          空则回退 ToolResultBlock 逐块提取 → {"kind":"tool_result","text","is_error"}
       - SystemMessage / 未知 → []（忽略）
     None → []。
     末尾保留 duck-typed 扁平 fallback（.text / .tool+.path / .type∈{result,done}），
@@ -30,6 +83,9 @@ def normalize(msg: Any) -> list[dict]:
     # UserMessage：提取 tool_result（工具输出可见是透明底线）；SystemMessage 仍忽略
     # （SystemMessage 也有 .subtype，须在 ResultMessage 判定前排除）
     if "User" in mtype:
+        text = _user_text(msg)
+        if text:
+            return [{"kind": "user_msg", "uuid": str(getattr(msg, "uuid", "") or ""), "text": text}]
         return _tool_result_events(msg)
     if "System" in mtype:
         return []
@@ -82,6 +138,20 @@ def _normalize_block(block: Any) -> dict | None:
     if text is not None:
         return {"kind": "text_delta", "text": str(text)}
     return None
+
+
+def _user_text(msg: Any) -> str:
+    """UserMessage 的纯文本提取（str content 或 text 块列表）；空 → 走 tool_result 分支。
+
+    只取 `getattr(b, "text")`：ToolResultBlock 的内容在 .content 而非 .text，不会误伤。
+    """
+    content = getattr(msg, "content", None)
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts = [str(getattr(b, "text", "") or "") for b in content]
+        return "\n".join(p for p in parts if p).strip()
+    return ""
 
 
 def _tool_result_events(msg: Any) -> list[dict]:
@@ -141,7 +211,9 @@ def _normalize_flat(msg: Any) -> dict | None:
 class AgentRunner(Protocol):
     async def run(self, prompt: str, cwd: str, *,
                   on_event: Callable[[dict], None], cancel_event,
-                  resume_session_id: str | None = None) -> str | None: ...
+                  resume_session_id: str | None = None,
+                  permission_mode: str = "acceptEdits", can_use_tool=None,
+                  session_entry: dict | None = None) -> str | None: ...
 
 
 class ClaudeCodeRunner:
@@ -152,35 +224,77 @@ class ClaudeCodeRunner:
         self._allowed_tools = allowed_tools or ["Read", "Write", "Edit", "MultiEdit", "Bash", "Glob", "Grep"]
         self._client_factory = client_factory  # None → 生产用真 SDK（lazy 导入）
 
-    def _default_factory(self, cwd: str, tools: list[str], resume: str | None = None):
+    def _default_factory(self, cwd: str, tools: list[str], resume: str | None = None,
+                         permission_mode: str = "acceptEdits", can_use_tool=None):
         from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions  # lazy：测试不依赖真 SDK
         options = ClaudeAgentOptions(
-            cwd=cwd, permission_mode="acceptEdits", allowed_tools=tools, resume=resume,
+            cwd=cwd, permission_mode=permission_mode, allowed_tools=tools, resume=resume,
+            enable_file_checkpointing=True,            # rewind：CLI 侧文件检查点
+            extra_args={"replay-user-messages": None},  # rewind：流中回 UserMessage（带 uuid 作回滚锚点）
+            can_use_tool=can_use_tool,
         )
         return ClaudeSDKClient(options=options)
 
     async def run(self, prompt: str, cwd: str, *, on_event, cancel_event,
-                  resume_session_id: str | None = None) -> str | None:
+                  resume_session_id: str | None = None,
+                  permission_mode: str = "acceptEdits", can_use_tool=None,
+                  session_entry: dict | None = None) -> str | None:
         """流式跑 prompt；每条 SDK 消息 normalize 后 on_event；取消则发 stopped 终态后早退；异常隔离成 error 事件。
 
         - resume_session_id：非 None 时透传 ClaudeAgentOptions.resume，续上同一 CC 会话历史。
+        - permission_mode：透传 ClaudeAgentOptions.permission_mode（如 acceptEdits/plan）。
+        - can_use_tool：透传 ClaudeAgentOptions.can_use_tool 权限回调（None = SDK 默认）。
+        - session_entry：live 会话 entry（coding.py `_SESSIONS[sid]`）；每条消息前检查并
+          弹出 `mode_pending`（coding.mode 写入）→ client.set_permission_mode 运行中切换；
+          同样弹出 `rewind_pending`（coding.rewind 写入）→ client.rewind_files 回滚文件检查点，
+          成功发 rewind_ok、失败发 error 事件（鸭子类型，client 无此方法或调用失败均跳过，延迟 ≤1 条消息）。
         - cc_session_id 捕获：流中遇到 ResultMessage（duck-typed 带 .session_id）时缓存其值，
           run 结束返回（str | None）。失败时返回 None；取消时返回已捕获的 cc_sid。
-        - 取消语义：在每条 SDK 消息前查 cancel_event.is_set() → True 则发 stopped 终态后立即 return（不发 done）。
+        - 取消语义：在每条 SDK 消息前查 cancel_event.is_set() → True 则先 client.interrupt()
+          真杀后台工具（旧行为只停读，后台还在跑；interrupt 鸭子类型，缺失/失败静默），
+          再发 stopped 终态后立即 return（不发 done）。
         - 容错语义：run 内任何异常 → on_event({"kind":"error","text":str(e)})，绝不向调用方抛。
         - 正常结束：on_event({"kind":"done"})。
         """
         factory = self._client_factory or self._default_factory
         cc_sid: str | None = None
         try:
-            client = factory(cwd, self._allowed_tools, resume=resume_session_id)
+            client = factory(cwd, self._allowed_tools, resume=resume_session_id,
+                             permission_mode=permission_mode, can_use_tool=can_use_tool)
             async with client as c:
                 await c.query(prompt)
                 async for msg in c.receive_response():
                     if cancel_event.is_set():
-                        # 取消必须给终态：此前静默 return → 面板永远停「运行中」、按钮锁死
+                        # 先 interrupt 真杀后台工具，再发 stopped 终态（否则面板永远停「运行中」、按钮锁死）
+                        interrupt = getattr(c, "interrupt", None)
+                        if interrupt is not None:
+                            try:
+                                await interrupt()
+                            except Exception:
+                                pass
                         on_event({"kind": "stopped", "text": "已中断"})
                         return cc_sid
+                    # 运行中模式切换（coding.mode 写入 _SESSIONS mode_pending；下条消息生效，延迟 ≤1 条）
+                    if session_entry is not None:
+                        pending = session_entry.pop("mode_pending", None)
+                        if pending is not None:
+                            set_mode = getattr(c, "set_permission_mode", None)
+                            if set_mode is not None:
+                                try:
+                                    await set_mode(pending)
+                                except Exception as e:
+                                    print(f"[yibao/coding] 运行中切换模式失败（已跳过）：{e}", file=sys.stderr)
+                    # 运行中回滚（coding.rewind 写入 _SESSIONS rewind_pending；下条消息前执行 rewind_files）
+                    if session_entry is not None:
+                        rew = session_entry.pop("rewind_pending", None)
+                        if rew is not None:
+                            rewind_files = getattr(c, "rewind_files", None)
+                            if rewind_files is not None:
+                                try:
+                                    await rewind_files(rew)
+                                    on_event({"kind": "rewind_ok", "text": "已回滚到此前的文件状态"})
+                                except Exception as e:
+                                    on_event({"kind": "error", "text": f"回滚失败：{e}"})
                     # ResultMessage 携 session_id：先从原 msg 读，再 normalize
                     sid = getattr(msg, "session_id", None)
                     if sid:
