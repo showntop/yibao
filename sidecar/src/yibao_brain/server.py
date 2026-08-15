@@ -1110,8 +1110,13 @@ async def serve_async(
 
     def _interrupt_mobile() -> bool:
         """只打断真正在跑的 mobile 轮（running_surface；排队中 surface 已翻但没开跑）。
-        壳 interrupt 是「全都停」；手机不该误伤桌面对话。"""
-        if run_state.get("running_surface") == "mobile" and run_state["cancel"] is not None:
+        task 判活对齐 _mobile_state：消掉「上轮收尾后陈旧的 running_surface=mobile」
+        误报 True + 平白推进 preempt_gen 顶掉排队桌面链的跳窗口。壳 interrupt 是
+        「全都停」；手机不该误伤桌面对话。"""
+        task = run_state["task"]
+        if (run_state.get("running_surface") == "mobile"
+                and task is not None and not task.done()
+                and run_state["cancel"] is not None):
             _preempt_current()
             return True
         return False

@@ -374,3 +374,27 @@ def test_cors_foreign_origin_gets_nothing():
 
     asyncio.run(main())
 
+
+def test_cors_reflects_on_sse_stream():
+    """SSE 流式响应：handler 内 prepare 后头部即落网线，事后中间件 update 是 no-op——
+    反射必须走 on_response_prepare（头部写出前触发），手机 EventSource 才能过 CORS。"""
+    async def main():
+        tap = EventTap(lambda m: None)
+        app = build_app(bridge_token="btok", mobile_token="mtok", tap=tap)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            resp = await client.get("/v1/events", params={"token": "mtok"},
+                                    headers={"Origin": "capacitor://localhost"})
+            assert resp.status == 200
+            assert resp.headers["Access-Control-Allow-Origin"] == "capacitor://localhost"
+            assert resp.headers["Vary"] == "Origin"
+            tap.publish("chunk", {"text": "hi"})
+            line = await asyncio.wait_for(resp.content.readline(), 2)
+            assert line == b"id: 1\n"  # 读到首帧即证明流可用
+            resp.close()
+        finally:
+            await client.close()
+
+    asyncio.run(main())
+

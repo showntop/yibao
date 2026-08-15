@@ -180,6 +180,7 @@ def _cors_headers(allow: str) -> dict:
         # Last-Event-ID：EventSource 断线重连带的头，不在 CORS 安全清单里，预检必查
         "Access-Control-Allow-Headers": "Content-Type, X-Yibao-Token, Last-Event-ID",
         "Access-Control-Max-Age": "600",
+        "Vary": "Origin",  # 反射式 ACAO：缓存键必须含 Origin，否则 CDN/代理串答
     }
 
 
@@ -190,15 +191,19 @@ def build_app(*, bridge_token: str, mobile_token: str, tap: EventTap,
 
     @web.middleware
     async def _cors(request: web.Request, handler):
-        """CORS 外层中间件：预检直接 204（无自定义头，auth 拦不得）；
-        其余响应按白名单反射 Origin——401/429 也要带，客户端要能读状态。"""
+        """CORS 外层中间件：只做预检短路——204 直返（无自定义头，auth 拦不得）。
+        反射不在这里做：SSE handler 内 prepare 后头部已落网线，事后 update 是 no-op；
+        反射交给 on_response_prepare（头部写出前触发，对流式响应也生效）。"""
         allow = _cors_allow(request.headers.get("Origin"))
         if request.method == "OPTIONS" and allow:
             return web.Response(status=204, headers=_cors_headers(allow))
-        resp = await handler(request)
+        return await handler(request)
+
+    async def _add_cors_headers(request: web.Request, response: web.StreamResponse) -> None:
+        """按白名单反射 Origin——401/429 也要带，客户端要能读状态。"""
+        allow = _cors_allow(request.headers.get("Origin"))
         if allow:
-            resp.headers.update(_cors_headers(allow))
-        return resp
+            response.headers.update(_cors_headers(allow))
 
     @web.middleware
     async def _auth(request: web.Request, handler):
@@ -217,6 +222,9 @@ def build_app(*, bridge_token: str, mobile_token: str, tap: EventTap,
         return await handler(request)
 
     app = web.Application(middlewares=[_cors, _auth])
+    # CORS 反射挂 on_response_prepare：头部写出前触发——SSE handler 内 prepare 后
+    # 中间件再 update 已是 no-op（头部落网线），信号回调对流式响应也生效。
+    app.on_response_prepare.append(_add_cors_headers)
 
     async def health(request):
         return web.json_response({"ok": True, "service": "yibao-bridge"})
