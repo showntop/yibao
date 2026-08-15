@@ -19,6 +19,10 @@
      （spinner + 秒表 + 累计 token + 红 Stop，与 #errbar 垂直堆叠，不占消息流，C3）；
      顶栏右侧会话级成本聚合「N tok · $X.XXXX」（done 事件 usage 累加，C4）；
      完成行保留耗时/token/cost 明细，灰小字一行（C5）。
+     输入区三段式（R3 D1，对标 opencode 底栏）：① 输入框（2px 左竖条 accent）→ ② 上下文行
+     （cwd 药丸+📁+权限模式 pill+@ 提示）→ ③ 快捷键行（键白动作灰；↵ 发送 / ⇧↵ 换行 / @ 文件 /
+     esc 停止，IME 组字 Enter 不上屏误发）；顶栏收窄为 标题+成本聚合+历史/新对话（D4）；
+     消息带宽屏限 760px 居中、气泡/卡 max-width 85%、meta 灰小字 11px（D3 排版 token）。
      AI 气泡 markdown 基座（R3）：marked(GFM) → DOMPurify 消毒 → hljs 高亮，vendor 三库
      经 sidecar 占位内联（head 内三个 script 占位注释，见 vendor/README.md）；
      注入缺失/异常自动降级为纯文本，不抛异常。 -->
@@ -34,19 +38,22 @@
     --bg: #eef2f7;              /* slate-100 主区底 */
     --card: #ffffff;            /* 表面 L1：卡 / 工具栏 / 输入条 */
     --surface-2: #f3f6fa;       /* slate-050：头部底 / 输入填充 / 卡头 */
+    --surface-2h: #e9edf3;      /* surface-2 的 hover 加深 */
     --text: #1e2a38;            /* ink-900 */
     --muted: #6b7d91;           /* ink-500 次要文本 */
     --faint: #8a9aac;           /* ink-400 占位 / 极弱 */
     --accent: #4d90c4;          /* sky-500 主色 */
     --accent-deep: #3d7aa8;     /* sky-600 hover / 强调 */
     --accent-soft: #e7f0f8;     /* sky-050 薄膜 */
+    --accent-line: #cfe0ed;     /* sky-100：accent-soft 区块的 hairline 描边 */
     --border: rgba(40,60,90,0.10);
     --border-strong: rgba(40,60,90,0.18);
     --border-soft: rgba(40,60,90,0.08);  /* hairline 分界（= --line） */
     --line: rgba(40,60,90,0.08);
-    --green-bg: #dceee3; --green: #3e8e5a; --green-bar: #8fd0a6;
+    --green-bg: #dceee3; --green: #3e8e5a; --green-bar: #8fd0a6; --green-line: #c4e0cf;
     --red-bg: #f4dedb; --red: #b6554a; --red-bar: #dca59e;
     --amber: #d97706; --amber-bg: #fdf5e7;   /* 等待审批脉冲（C2） */
+    --amber-deep: #9a7b28;      /* 警示黄字（历史 stopped 态 / handoff 不完整记录） */
     --ai-bg: #ffffff;           /* AI 气泡：白底 + 描边 */
     --user-bg: #4d90c4;         /* 用户气泡：sky-500 */
     --code-bg: #22303f;         /* ink-900 加深：markdown 代码块底 */
@@ -65,68 +72,47 @@
   }
   .hidden { display: none !important; }
 
-  /* ---- 顶栏：极简工具条（cwd 项目药丸 + agent 徽标 + 右侧安静 ghost 按钮） ---- */
+  /* ---- 顶栏（D4 收窄，高约 40px）：左标题「编码对话」+ 右成本聚合 + 历史/新对话 ghost；
+     cwd 药丸 / 📁 / 权限模式 pill 已迁入 footer 上下文行（D1） ---- */
   header {
     flex: none; display: flex; align-items: center; gap: 8px;
-    padding: 8px 14px; border-bottom: 1px solid var(--line);
+    padding: 5px 14px; min-height: 40px; border-bottom: 1px solid var(--line);
     background: var(--card);
   }
-  header .lbl { font-size: 12px; color: var(--muted); flex: none; }
-  header .spacer { flex: 1; }
-  /* cwd：项目药丸（可点击编辑的"标签"），不再像对话输入框 */
-  #cwd {
-    flex: 0 1 auto; min-width: 120px; max-width: 280px;
-    border: 1px solid transparent; border-radius: var(--r-pill);
-    padding: 4px 12px 4px 26px; font-size: 12px; font-family: var(--mono);
-    background: var(--surface-2) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7d91' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'/></svg>") no-repeat 10px 50%;
-    color: var(--text); outline: none; cursor: text;
-    transition: border-color .15s ease, background-color .15s ease;
-    overflow: hidden; text-overflow: ellipsis;
-  }
-  #cwd:hover { background-color: #e9edf3; }
-  #cwd:focus { border-color: var(--accent); background-color: var(--card); }
-  #cwd::placeholder { color: var(--faint); font-family: var(--sans); }
-  /* 📁 文件夹选择器按钮（cwd 药丸旁；picker 是补充，药丸仍可手输） */
-  #cwd-pick {
-    flex: none; border: 1px solid transparent; background: transparent;
-    color: var(--muted); font-size: 13px; padding: 4px 7px; border-radius: 8px;
-    cursor: pointer; transition: all .15s ease;
-  }
-  #cwd-pick:hover { background: var(--surface-2); color: var(--accent-deep); border-color: var(--border); }
-  #agent {
-    flex: none; display: inline-flex; align-items: center; gap: 5px;
-    font-size: 11.5px; color: var(--accent-deep); background: var(--accent-soft);
-    border-radius: var(--r-pill); padding: 4px 10px; font-weight: 600;
-  }
-  #agent::before { content: "●"; font-size: 9px; color: var(--accent); }
+  header .title { flex: none; font-size: 13px; font-weight: 600; color: var(--text); }
+  .spacer { flex: 1; }
   /* 会话成本聚合（C4）：顶栏右侧灰小字「N tok · $X.XXXX」，done 事件 usage 前端累加 */
   #cost {
     flex: none; font: var(--mono); font-size: 11px; color: var(--faint);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  /* 右上工具按钮：安静 ghost（#new-chat / #handoff 共用） */
-  #new-chat, #handoff {
+  /* 右上工具按钮：安静 ghost（#history / #new-chat 共用） */
+  #history, #new-chat {
     flex: none; border: 1px solid transparent; background: transparent;
-    color: var(--muted); font-size: 12px; padding: 5px 12px; border-radius: 8px;
+    color: var(--muted); font-size: 12px; padding: 4px 10px; border-radius: 8px;
     cursor: pointer; font-weight: 500; transition: all .15s ease;
   }
-  #new-chat:hover, #handoff:hover {
+  #history:hover, #new-chat:hover {
     background: var(--surface-2); color: var(--accent-deep); border-color: var(--border);
   }
-  #new-chat:disabled, #handoff:disabled { opacity: .5; cursor: default; }
+  #history:disabled, #new-chat:disabled { opacity: .5; cursor: default; }
 
-  /* ---- 主区：流式日志（唯一视觉焦点） ---- */
+  /* ---- 主区：流式日志（唯一视觉焦点）。D3：消息节奏 8/12/16 梯度（行距 12），
+     宽屏限 760px 消息带居中（不拉飞）；marker 小丸自带 align-self 居中不受影响 ---- */
   #log {
     flex: 1; overflow-y: auto; padding: 16px 14px;
-    display: flex; flex-direction: column; gap: 10px;
+    display: flex; flex-direction: column; gap: 12px;
     background: var(--bg);
+  }
+  #log > .row, #log > .card, #log > .tool-result {
+    width: 100%; max-width: 760px; margin-left: auto; margin-right: auto;
   }
   .row { display: flex; width: 100%; }
   .row.user { justify-content: flex-end; }
   .row.ai { justify-content: flex-start; }
 
   .bubble {
-    max-width: 86%; padding: 9px 13px; border-radius: var(--r-md);
+    max-width: 85%; padding: 9px 13px; border-radius: var(--r-md);
     font-size: 13px; line-height: 1.7; word-break: break-word; white-space: pre-wrap;
   }
   .row.user .bubble { background: var(--user-bg); color: #fff; border-bottom-right-radius: 4px; position: relative; }
@@ -209,7 +195,7 @@
 
   /* 文件改动 / 工具调用卡片（v1 单列） */
   .card {
-    max-width: 86%; background: var(--card); border: 1px solid var(--border);
+    max-width: 85%; background: var(--card); border: 1px solid var(--border);
     border-radius: var(--r-md); overflow: hidden; box-shadow: var(--shadow-card);
   }
   .card-head {
@@ -219,25 +205,10 @@
   }
   .card-head .ic { flex: none; }
   .card-head .lbl { font-weight: 600; color: var(--text); flex: none; }
-  .card-head .path {
-    flex: 1; min-width: 0; font: var(--mono); color: var(--accent-deep);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  .card-head .tool {
-    flex: none; font-size: 11px; color: var(--muted);
-    background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px;
-  }
-  .card-head .spacer { flex: 1; }
-  .card-head .mini {
-    flex: none; border: none; background: transparent; color: var(--muted); cursor: pointer;
-    font-size: 11.5px; padding: 2px 8px; border-radius: 7px; transition: all .15s ease;
-  }
-  .card-head .mini:hover { background: var(--accent-soft); color: var(--accent-deep); }
-  .card.fileedit .card-head .ic { color: var(--accent-deep); }
   .card.tooluse .card-head .ic { color: var(--muted); }
   /* 工具卡单行头（B1）：chevron + 图标 + 工具名 + 意图摘要 + 结果计数；整行点击展开详情 */
   .card.tooluse .card-head { cursor: pointer; user-select: none; }
-  .card.tooluse .card-head:hover { background: #e9edf3; }
+  .card.tooluse .card-head:hover { background: var(--surface-2h); }
   .card-head .chev { flex: none; width: 11px; color: var(--faint); font-size: 10px; }
   .card-head .intent {
     flex: 1; min-width: 0; font: var(--mono); color: var(--muted);
@@ -277,7 +248,7 @@
 
   /* 思考块（thinking 事件）：淡色斜体小块，挂 assistant 气泡内 */
   .think-block {
-    margin-top: 6px; padding: 6px 10px; border-radius: 8px;
+    margin-top: 8px; padding: 6px 10px; border-radius: 8px;
     background: var(--surface-2); color: var(--muted);
     font-size: 12px; font-style: italic; white-space: pre-wrap; word-break: break-word;
   }
@@ -289,7 +260,7 @@
   /* 工具输出（tool_result 事件）：挂最近一张工具卡下（无卡则独立暗块）。
      B2：≤8 行直接可见（.plain 无 summary），>8 行 details 默认收起、summary 显示「… +N lines」；err 红态 */
   .tool-result {
-    max-width: 86%; margin-top: 6px; padding: 6px 11px 8px;
+    max-width: 85%; margin-top: 8px; padding: 6px 11px 8px;
     border-top: 1px dashed var(--border); font-size: 12px;
   }
   #log > .tool-result {
@@ -356,44 +327,97 @@
   .perm-no { background: transparent; color: var(--muted); border-color: var(--border-strong); }
   .perm-no:hover { background: var(--surface-2); color: var(--text); }
   .perm-state { font-size: 11px; color: var(--amber); }
-  /* 裁决后收敛：灰小字单行「✓ 已允许 运行命令」/「✗ 已拒绝」，内容宽度自适应 */
-  .perm-card.perm-done {
-    align-self: flex-start; padding: 4px 12px;
+  /* 裁决后收敛：灰小字单行「✓ 已允许 运行命令」/「✗ 已拒绝」，内容宽度自适应；
+     D3 消息带居中后贴带左缘（margin-left = 带宽外余量），不随 #log>.card 整宽居中 */
+  #log > .card.perm-card.perm-done {
+    width: fit-content; margin-left: max(0px, calc(50% - 380px)); margin-right: auto;
+    padding: 4px 12px;
     background: var(--surface-2); border-color: var(--border);
     font-size: 11.5px; color: var(--muted); box-shadow: none;
   }
   .perm-card.perm-done::before { content: none; }
 
-  /* 终止标 / 错误 */
+  /* 终止标 / 错误（D3 meta 规范：灰小字 11px --faint） */
   .marker {
-    align-self: center; font-size: 11.5px; color: var(--faint);
+    align-self: center; font-size: 11px; color: var(--faint);
     padding: 2px 10px; border-radius: var(--r-pill); background: var(--surface-2);
   }
   .marker.err { color: var(--red); background: var(--red-bg); }
 
-  /* ---- 底栏：flush 输入条（连续对话，非第二个对话窗口） ---- */
+  /* ---- 底栏三段式（D1，对标 opencode 底栏；三段合计 ≤110px 紧凑） ----
+     ① 输入框：2px 左竖条 accent（focus 时 accent-deep），圆角 --r-md
+     ② 上下文行：cwd 药丸（顶栏迁入，📁 picker/手输不变）+ 权限模式 pill + @ 提示灰小字
+     ③ 快捷键行：键白动作灰（kbd 白底小圆角描边 + --faint 动作词）；#status 灰小字融入本行
+        左侧不独占一行；操作钮收敛右侧：#send accent 实心主钮 / #stop ghost / #handoff ghost 小钮 */
   footer {
     flex: none; border-top: 1px solid var(--line); background: var(--card);
-    padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 8px;
+    padding: 8px 12px 5px; display: flex; flex-direction: column; gap: 4px;
   }
+  /* 段①：输入框（display:block 消除 inline 基线下方虚高） */
   #prompt {
-    width: 100%; border: 1px solid transparent; border-radius: var(--r-md); padding: 10px 12px;
+    display: block;
+    width: 100%; border: 1px solid var(--border); border-left: 2px solid var(--accent);
+    border-radius: var(--r-md); padding: 6px 10px;
     font: 13px/1.6 var(--sans); background: var(--surface-2); color: var(--text);
-    outline: none; resize: none; min-height: 56px; max-height: 160px;
+    outline: none; resize: none; min-height: 35px; max-height: 160px;
     transition: border-color .15s ease, background-color .15s ease;
   }
-  #prompt:focus { border-color: var(--border-strong); background: var(--card); }
+  #prompt:focus { border-color: var(--border-strong); border-left-color: var(--accent-deep); background: var(--card); }
   #prompt::placeholder { color: var(--faint); }
-  /* @ 补全下拉：textarea 容器相对定位，菜单向上展开 */
+  /* @ 补全下拉：textarea 容器相对定位，菜单向上展开（三段式重构后锚点不变） */
   .prompt-wrap { position: relative; }
   .at-menu { position: absolute; bottom: 100%; left: 0; right: 0; max-height: 200px; overflow: auto; background: var(--card); border: 1px solid var(--border); border-radius: var(--r-md); box-shadow: var(--shadow-card); z-index: 30; }
   .at-item { padding: 6px 10px; font-family: var(--mono); font-size: 12px; cursor: pointer; }
   .at-item.sel { background: var(--surface-2); }
   .at-empty { padding: 8px; opacity: .6; font-size: 12px; }
-  .actions { display: flex; align-items: center; gap: 8px; }
-  .actions .spacer { flex: 1; }
-  #status { font-size: 11.5px; color: var(--muted); min-height: 18px; flex: 1; }
+  /* 段②：上下文行——cwd 药丸（小圆角底板 + mono 小字；change/persist、pickCwd 逻辑不动） */
+  .ctx-row { display: flex; align-items: center; gap: 6px; }
+  #cwd {
+    flex: 1 1 auto; min-width: 90px;
+    border: 1px solid transparent; border-radius: var(--r-sm);
+    padding: 2px 10px 2px 24px; font: var(--mono); font-size: 11.5px;
+    background: var(--surface-2) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7d91' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'/></svg>") no-repeat 8px 50%;
+    color: var(--text); outline: none; cursor: text;
+    transition: border-color .15s ease, background-color .15s ease;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  #cwd:hover { background-color: var(--surface-2h); }
+  #cwd:focus { border-color: var(--accent); background-color: var(--card); }
+  #cwd::placeholder { color: var(--faint); font-family: var(--sans); }
+  /* 📁 文件夹选择器按钮（cwd 药丸旁；picker 是补充，药丸仍可手输） */
+  #cwd-pick {
+    flex: none; border: 1px solid transparent; background: transparent;
+    color: var(--muted); font-size: 12px; line-height: 1.2; padding: 2px 6px; border-radius: 7px;
+    cursor: pointer; transition: all .15s ease;
+  }
+  #cwd-pick:hover { background: var(--surface-2); color: var(--accent-deep); border-color: var(--border); }
+  .at-hint { flex: none; margin-left: auto; font-size: 11px; color: var(--faint); white-space: nowrap; }
+  /* 段③：快捷键行（键白动作灰） */
+  .keys-row { display: flex; align-items: center; gap: 8px; }
+  #status {
+    flex: 1; min-width: 0; font-size: 11px; color: var(--faint);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   #status.err { color: var(--red); }
+  .keys {
+    flex: 0 1 auto; overflow: hidden; display: flex; align-items: center; gap: 8px;
+    font-size: 11px; color: var(--faint); white-space: nowrap;
+  }
+  .keys kbd {
+    display: inline-block; margin-right: 3px; padding: 0 5px; line-height: 15px;
+    background: var(--card); border: 1px solid var(--border-strong); border-radius: 4px;
+    font: var(--mono); font-size: 10px; color: var(--muted);
+  }
+  /* 窄面板优先保住状态行与操作钮：快捷键提示让位（裁切→整组隐藏） */
+  @media (max-width: 480px) { .keys { display: none; } }
+  /* #handoff 顶栏迁入本行：ghost 小钮 */
+  #handoff {
+    flex: none; border: 1px solid transparent; background: transparent;
+    color: var(--muted); font-size: 11.5px; padding: 3px 9px; border-radius: 7px;
+    cursor: pointer; font-weight: 500; transition: all .15s ease; white-space: nowrap;
+  }
+  #handoff:hover { background: var(--surface-2); color: var(--accent-deep); border-color: var(--border); }
+  #handoff:disabled { opacity: .5; cursor: default; }
   /* spinner：10px 边框圆 + 旋转（状态行 / 运行 pill 共用） */
   .spin {
     display: inline-block; width: 10px; height: 10px; margin-right: 6px;
@@ -407,7 +431,7 @@
      高度算 bottom，垂直堆叠不重叠），不占消息流空间；仅 streaming/sending 期间可见。
      spinner + 已耗时秒表 + 会话累计 token + 红 Stop；done/stopped/error 后消失 */
   #runpill {
-    position: fixed; left: 50%; transform: translateX(-50%); bottom: 90px; z-index: 35;
+    position: fixed; left: 50%; transform: translateX(-50%); bottom: 110px; z-index: 35;
     display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 12px;
     border-radius: var(--r-pill); background: var(--card);
     border: 1px solid var(--border-strong); box-shadow: var(--shadow-pop);
@@ -423,7 +447,7 @@
   /* pill 可见时给消息流底部让位，末条消息不被盖住 */
   body.pill-on #log { padding-bottom: 58px; }
   button.act {
-    border: none; border-radius: var(--r-pill); padding: 7px 20px; cursor: pointer;
+    border: none; border-radius: var(--r-pill); padding: 5px 16px; cursor: pointer;
     background: var(--accent); color: #fff; font-size: 12.5px; font-weight: 600;
     box-shadow: 0 1px 3px rgba(77,144,196,0.25); transition: all .15s ease;
   }
@@ -438,7 +462,7 @@
   button.ghost:disabled { opacity: .5; cursor: default; }
   /* 权限模式 pill：两态切换（自动改文件 ⇄ 只读规划），plan 态用强调色描边 */
   .pill {
-    flex: none; font-size: 11px; padding: 2px 10px; border-radius: 999px;
+    flex: none; font-size: 11px; padding: 2px 10px; border-radius: var(--r-pill);
     border: 1px solid var(--border-strong); background: var(--surface-2);
     color: var(--muted); cursor: pointer; transition: all .15s ease;
   }
@@ -452,8 +476,8 @@
     background: var(--card); border: 1px solid var(--border); border-radius: var(--r-md);
     box-shadow: var(--shadow-pop); padding: 6px;
   }
-  /* 历史抽屉静态定位：header 下方靠右（handoff picker 由 JS 贴按钮定位） */
-  #history-picker { top: 52px; right: 12px; }
+  /* 历史抽屉静态定位：header（40px）下方靠右（handoff picker 由 JS 贴按钮定位） */
+  #history-picker { top: 46px; right: 12px; }
   #handoff-picker .pick-item, #history-picker .hrow {
     padding: 8px 10px; border-radius: 8px; cursor: pointer; transition: background .12s ease;
     display: flex; flex-direction: column; gap: 2px;
@@ -478,7 +502,7 @@
   #history-picker .hrow .hs.done { color: var(--green); }
   #history-picker .hrow .hs.running { color: var(--accent-deep); }
   #history-picker .hrow .hs.failed { color: var(--red); }
-  #history-picker .hrow .hs.stopped { color: #9a7b28; }
+  #history-picker .hrow .hs.stopped { color: var(--amber-deep); }
   #history-picker .mempty { padding: 18px 12px; text-align: center; color: var(--muted); font-size: 12px; }
 
   /* ---- 交接卡：session 起点（区别于普通文件改动/工具卡片，整宽 + sky 强调色左边条） ---- */
@@ -487,7 +511,7 @@
     background: var(--card);
   }
   .card.handoff .card-head {
-    background: var(--accent-soft); border-bottom: 1px solid #cfe0ed;
+    background: var(--accent-soft); border-bottom: 1px solid var(--accent-line);
   }
   .card.handoff .card-head .ic,
   .card.handoff .card-head .lbl { color: var(--accent-deep); }
@@ -496,14 +520,14 @@
     background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px;
   }
   .card.handoff .card-head .warn {
-    flex: none; font-size: 11px; color: #9a7b28; font-style: italic;
+    flex: none; font-size: 11px; color: var(--amber-deep); font-style: italic;
   }
   .card.handoff.sealed {
     border: 1px solid var(--green-bar); border-left: 3px solid var(--green);
     background: var(--card);
   }
   .card.handoff.sealed .card-head {
-    background: var(--green-bg); border-bottom: 1px solid #c4e0cf;
+    background: var(--green-bg); border-bottom: 1px solid var(--green-line);
   }
   .card.handoff.sealed .card-head .ic,
   .card.handoff.sealed .card-head .lbl { color: var(--green); }
@@ -538,7 +562,7 @@
   /* 设计预览态（无 window.yibao 桥时） */
   #bridge-warn {
     padding: 6px 12px; background: var(--accent-soft); color: var(--accent-deep); font-size: 11.5px;
-    text-align: center; border-bottom: 1px solid #cfe0ed;
+    text-align: center; border-bottom: 1px solid var(--accent-line);
   }
 </style>
 <!-- vendor 渲染基座（sidecar _inline_vendor 占位内联，见 vendor/README.md；注入缺失时下方 JS 自动降级纯文本）：
@@ -552,14 +576,12 @@
 <!-- 桥缺失时可见，提示这是设计预览 -->
 <div id="bridge-warn" class="hidden">设计预览：未检测到译宝桥（window.yibao），起停/流式回显不可用。</div>
 
+<!-- D4 收窄：cwd 药丸/📁/模式 pill 迁入 footer 上下文行，handoff 迁入快捷键行；
+     顶栏只留 标题 + 成本聚合 + 历史/新对话 ghost -->
 <header>
-  <span class="lbl">项目</span>
-  <input id="cwd" type="text" spellcheck="false" placeholder="项目路径（如 /Users/.../myapp）">
-  <button id="cwd-pick" type="button" title="选择项目文件夹（也可直接在药丸里输入路径）">📁</button>
-  <span id="agent">agent: Claude Code</span>
+  <span class="title">编码对话</span>
   <span class="spacer"></span>
   <span id="cost" title="本会话累计 token 与成本（done 事件累加；新对话/恢复历史后清零重计）"></span>
-  <button id="handoff" type="button" title="从 Codex 会话接续：读取该项目下的 Codex 会话，生成交接 brief 后用 Claude Code 接续">↩ 从 Codex 接续</button>
   <button id="history" type="button" title="历史会话：列出本会话记录，点击恢复后继续在同一上下文聊">历史</button>
   <button id="new-chat" type="button" title="清空当前对话，开新会话（下次发送走 coding.start）" disabled>新对话</button>
 </header>
@@ -584,15 +606,32 @@
   <button id="rp-stop" type="button" class="rp-stop" title="中断当前会话">Stop</button>
 </div>
 
+<!-- D1 三段式（对标 opencode 底栏）：① 输入框 → ② 上下文行 → ③ 快捷键行（键白动作灰）。
+     所有 id 不变，JS 行为（cwd persist / pickCwd / mode pill / @ 补全锚定）不受影响 -->
 <footer>
+  <!-- 段①：输入框（2px 左竖条 accent）；.prompt-wrap 是 @ 补全菜单的定位锚（向上展开） -->
   <div class="prompt-wrap">
-    <textarea id="prompt" placeholder="描述要做的事（⌘/Ctrl + Enter 发送）；Claude Code 会在上面的项目目录里执行" rows="2"></textarea>
+    <textarea id="prompt" placeholder="输入消息，@ 引用文件…" rows="1"></textarea>
     <div id="at-menu" class="at-menu" hidden></div>
   </div>
-  <div class="actions">
+  <!-- 段②：上下文行——cwd 药丸（顶栏迁入）+ 📁 选目录 + 权限模式 pill + @ 提示 -->
+  <div class="ctx-row">
+    <input id="cwd" type="text" spellcheck="false" placeholder="项目路径（如 /Users/.../myapp）">
+    <button id="cwd-pick" type="button" title="选择项目文件夹（也可直接在药丸里输入路径）">📁</button>
     <button id="mode-pill" type="button" class="pill" title="点击切换权限模式">自动改文件</button>
+    <span class="at-hint">@ 引用文件</span>
+  </div>
+  <!-- 段③：快捷键行——左 #status 灰小字（不独占一行），中 kbd 提示，右操作钮
+       （#handoff ghost 小钮 / #stop ghost 运行态才有意义 / #send accent 实心主钮） -->
+  <div class="keys-row">
     <span id="status"></span>
-    <span class="spacer"></span>
+    <span class="keys">
+      <span><kbd>↵</kbd>发送</span>
+      <span><kbd>⇧↵</kbd>换行</span>
+      <span><kbd>@</kbd>文件</span>
+      <span><kbd>esc</kbd>停止</span>
+    </span>
+    <button id="handoff" type="button" title="从 Codex 会话接续：读取该项目下的 Codex 会话，生成交接 brief 后用 Claude Code 接续">↩ Codex 接续</button>
     <button id="stop" class="act ghost" disabled>中断</button>
     <button id="send" class="act">发送</button>
   </div>
@@ -1511,7 +1550,9 @@
   renderModePill();
 
   function send() {
-    if (sending) return;
+    // re-entry 保护：sending 覆盖 invoke 同步窗；streaming 覆盖整个流式期——
+    // ↵ 直发（D1）后误触门槛大降，流式中必须拒发（与 send 钮 disabled 态一致）
+    if (sending || streaming) return;
     if (!hasBridge) {
       setStatus("设计预览模式：未连译宝桥，无法发送", true);
       return;
@@ -1679,9 +1720,12 @@
     document.body.appendChild(backdrop);
     document.body.appendChild(picker);
 
-    // 定位：紧贴 handoff 按钮下方，右对齐按钮右边（防溢出左移）
+    // 定位：右对齐按钮右边（防溢出左移）。D1 后 #handoff 在 footer 快捷键行（贴视口底），
+    // 下方空间不足时翻到按钮上方展开，防 picker 跌出视口。
     var rect = $("handoff").getBoundingClientRect();
-    picker.style.top = (rect.bottom + 6) + "px";
+    var ph = picker.offsetHeight;
+    var below = window.innerHeight - rect.bottom;
+    picker.style.top = (below >= ph + 12 ? rect.bottom + 6 : Math.max(8, rect.top - ph - 6)) + "px";
     var rightOffset = window.innerWidth - rect.right;
     var maxRight = window.innerWidth - 14 - picker.offsetWidth;
     picker.style.right = Math.max(14, Math.min(rightOffset, maxRight)) + "px";
@@ -2026,12 +2070,18 @@
     }
   }, true);
 
+  // D1 快捷键与提示行一致：↵ 发送 / ⇧↵ 换行（⌘/Ctrl+↵ 保留为发送别名）。
+  // IME 组字（中文输入）中的 Enter 只是上屏，绝不触发发送（e.isComposing 守卫）。
   $("prompt").addEventListener("keydown", function (e) {
     if (e.defaultPrevented) return;  // @ 补全菜单已消费本次 Enter（注册在前的 capture 处理器）
-    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-      e.preventDefault();
-      send();
-    }
+    if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
+    e.preventDefault();
+    send();
+  });
+  // esc 停止：运行/提交中且有活动会话时 = 点 Stop（复用同一中断逻辑）。
+  // @ 菜单打开时 prompt 的 capture 处理器已 stopPropagation，这里不会误触发。
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && currentSession && (streaming || sending)) stop();
   });
 
   // ============================================================
