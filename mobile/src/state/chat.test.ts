@@ -56,4 +56,16 @@ describe("useChat", () => {
     expect(chat.conversationId.value).not.toBe(oldId);
     expect(chat.messages.value).toHaveLength(0);
   });
+
+  it("run_done 按 run_id 匹配：桌面轮 id 不误收口，自己的 id 才置 done", async () => {
+    const { chat, emit } = mkChat();
+    await chat.send("排队中的手机请求");
+    emit("final_reply_chunk", { kind: "final_reply_chunk", text: "半截", surface: "mobile" });
+    emit("run_done", { id: 11 }); // 桌面轮结束广播，id 不匹配
+    expect(chat.messages.value[1].done).toBe(false);
+    expect(chat.busy.value).toBe(true);
+    emit("run_done", { id: "mob_1" }); // 自己的轮结束
+    expect(chat.messages.value[1].done).toBe(true);
+    expect(chat.busy.value).toBe(false);
+  });
 });

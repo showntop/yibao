@@ -24,6 +24,9 @@ export function useChat(
   // 只认 surface==="mobile" 的帧（P1 信封字段；桌面/面板事件不进手机气泡）
   const mine = (d: { surface?: string }) => d.surface === "mobile";
 
+  // 当前 pending 气泡对应的 run_id（send 响应取回）：桌面轮结束广播的 run_done id 不同，不误收口
+  let myRunId = "";
+
   stream.on("final_reply_chunk", (d) => {
     if (!mine(d) || !d.text) return;
     const last = messages.value[messages.value.length - 1];
@@ -39,7 +42,9 @@ export function useChat(
     const last = messages.value[messages.value.length - 1];
     if (last && last.role === "assistant") last.interrupted = true;
   });
-  stream.on("run_done", () => {
+  stream.on("run_done", (d: { id?: string }) => {
+    if (d.id !== myRunId) return; // 桌面/其他轮的 run_done 与我无关
+    myRunId = "";
     const last = messages.value[messages.value.length - 1];
     if (last && last.role === "assistant") last.done = true;
   });
@@ -59,7 +64,10 @@ export function useChat(
         body: JSON.stringify({ text: t, conversation_id: conversationId.value }),
       });
       if (!r.ok) throw new Error(`chat ${r.status}`);
+      const body = (await r.json().catch(() => ({}))) as { run_id?: string };
+      myRunId = body.run_id ?? "";
     } catch (e) {
+      myRunId = "";
       error.value = `发送失败：${e instanceof Error ? e.message : "网络错误"}`;
       const last = messages.value[messages.value.length - 1];
       if (last?.role === "assistant") last.done = true;

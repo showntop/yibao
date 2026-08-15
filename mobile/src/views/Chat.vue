@@ -14,18 +14,20 @@ const chat = shallowRef<ReturnType<typeof useChat> | null>(null);
 // Chromium 不再自愈——state 停留 error。5s 后手动 start() 重建连接；open 即取消。
 let retryTimer: number | undefined;
 
+// 顶层同步注册：await 之后注册的 watch 脱离组件作用域（无主 watcher，卸载后仍跑）
+watch(
+  () => chat.value?.stream.state.value,
+  (s) => {
+    window.clearTimeout(retryTimer);
+    if (s === "error") retryTimer = window.setTimeout(() => chat.value?.stream.start(), 5000);
+  },
+);
+
 onMounted(async () => {
   const conn = await loadConn();
   if (!conn) return router.replace("/pairing");
   chat.value = useChat(conn);
   chat.value.stream.start();
-  watch(
-    () => chat.value?.stream.state.value,
-    (s) => {
-      window.clearTimeout(retryTimer);
-      if (s === "error") retryTimer = window.setTimeout(() => chat.value?.stream.start(), 5000);
-    },
-  );
 });
 onUnmounted(() => {
   window.clearTimeout(retryTimer);
