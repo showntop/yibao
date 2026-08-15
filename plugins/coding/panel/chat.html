@@ -60,6 +60,7 @@
     --code-text: #d9e3ee;       /* 代码块正文 */
     --sans: -apple-system, "PingFang SC", sans-serif;
     --mono: 12.5px/1.6 "SF Mono", ui-monospace, Menlo, monospace;
+    --mono-family: "SF Mono", ui-monospace, Menlo, monospace;  /* 仅字族：给需自定字号的 mono 场景（--mono 是 font 全简写，不能喂 font-family） */
     --r-sm: 10px; --r-md: 14px; --r-pill: 999px;
     --shadow-card: 0 1px 2px rgba(30,42,56,0.04);
     --shadow-pop: 0 8px 24px rgba(30,42,56,0.14);
@@ -367,7 +368,7 @@
   /* @ 补全下拉：textarea 容器相对定位，菜单向上展开（三段式重构后锚点不变） */
   .prompt-wrap { position: relative; }
   .at-menu { position: absolute; bottom: 100%; left: 0; right: 0; max-height: 200px; overflow: auto; background: var(--card); border: 1px solid var(--border); border-radius: var(--r-md); box-shadow: var(--shadow-card); z-index: 30; }
-  .at-item { padding: 6px 10px; font-family: var(--mono); font-size: 12px; cursor: pointer; }
+  .at-item { padding: 6px 10px; font-family: var(--mono-family); font-size: 12px; cursor: pointer; }
   .at-item.sel { background: var(--surface-2); }
   .at-empty { padding: 8px; opacity: .6; font-size: 12px; }
   /* 段②：上下文行——cwd 药丸（小圆角底板 + mono 小字；change/persist、pickCwd 逻辑不动） */
@@ -483,7 +484,7 @@
     display: flex; flex-direction: column; gap: 2px;
   }
   #handoff-picker .pick-item:hover, #history-picker .hrow:hover { background: var(--accent-soft); }
-  #handoff-picker .pick-item .ts, #history-picker .hrow .ht { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+  #handoff-picker .pick-item .ts, #history-picker .hrow .ht { font-size: 11px; color: var(--muted); font-family: var(--mono-family); }
   #handoff-picker .pick-item .fl, #history-picker .hrow .hp {
     font-size: 12.5px; color: var(--text);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -498,7 +499,7 @@
   /* 历史抽屉专有：hrow 是 <button>（需重置默认样式）；.hc 目录名 / .hs 状态 / .mempty 空态 */
   #history-picker .hrow { border: 0; background: none; width: 100%; text-align: left; font: inherit; color: inherit; }
   #history-picker .hrow .hc { font-size: 11px; color: var(--muted); }
-  #history-picker .hrow .hs { font-size: 10.5px; color: var(--muted); font-family: var(--mono); }
+  #history-picker .hrow .hs { font-size: 10.5px; color: var(--muted); font-family: var(--mono-family); }
   #history-picker .hrow .hs.done { color: var(--green); }
   #history-picker .hrow .hs.running { color: var(--accent-deep); }
   #history-picker .hrow .hs.failed { color: var(--red); }
@@ -2071,10 +2072,14 @@
   }, true);
 
   // D1 快捷键与提示行一致：↵ 发送 / ⇧↵ 换行（⌘/Ctrl+↵ 保留为发送别名）。
-  // IME 组字（中文输入）中的 Enter 只是上屏，绝不触发发送（e.isComposing 守卫）。
+  // IME 组字（中文输入）中的 Enter 只是上屏，绝不触发发送。
+  // 注意 WebKit bug 165004：compositionend 先于确认 Enter 的 keydown 派发，该 keydown 的
+  // isComposing=false，单靠 e.isComposing 守卫会穿透——补 compositionend 时间戳兜底（50ms 窗口）。
+  var lastCompEnd = 0;
+  $("prompt").addEventListener("compositionend", function () { lastCompEnd = Date.now(); });
   $("prompt").addEventListener("keydown", function (e) {
     if (e.defaultPrevented) return;  // @ 补全菜单已消费本次 Enter（注册在前的 capture 处理器）
-    if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
+    if (e.key !== "Enter" || e.shiftKey || e.isComposing || Date.now() - lastCompEnd < 50) return;
     e.preventDefault();
     send();
   });
