@@ -326,6 +326,7 @@ _SETTINGS_DEFAULTS: dict = {
     "watch.look_max_per_day": 50,          # 主动搭话每日上限
     "http.token": "",  # 浏览器扩展桥共享 token（空 = 启动时生成并持久化）
     "http.mobile_token": "",  # 手机伴生端 token（与扩展桥隔离，可单独重置）
+    "http.bind": "127.0.0.1",  # HTTP 面监听地址：127.0.0.1 仅本机；0.0.0.0 局域网（手机浏览器体验，token 把关）
     "http.public_url": "",    # 对外域名（VPS Caddy）；配对二维码用，空=仅局域网调试
     "push.devices": [],       # 已注册推送设备 [{registration_id, platform, added_at}]
 }

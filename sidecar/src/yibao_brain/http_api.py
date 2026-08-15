@@ -156,7 +156,8 @@ _VERSION = "1"
 
 def _cors_allow(origin: str | None) -> str | None:
     """移动端 origin 白名单（反射式）：Capacitor iOS=capacitor://localhost、
-    Android=http://localhost、开发浏览器=http://localhost:任意端口 / 127.0.0.1:任意端口。
+    Android=http://localhost、开发浏览器=http://localhost:任意端口 / 127.0.0.1:任意端口、
+    局域网体验=http://<本机私网IP>:任意端口（手机浏览器经 vite --host 访问）。
     其余 origin 不给 CORS 头（浏览器自会拦截）。"""
     if not origin:
         return None
@@ -168,8 +169,16 @@ def _cors_allow(origin: str | None) -> str | None:
         u = urlparse(origin)
     except ValueError:
         return None
-    if u.scheme in ("http", "https") and u.hostname in ("localhost", "127.0.0.1"):
-        return origin
+    if u.scheme in ("http", "https") and u.hostname:
+        if u.hostname == "localhost":
+            return origin
+        try:
+            import ipaddress
+
+            if ipaddress.ip_address(u.hostname).is_private:  # 127.x/192.168.x/10.x/172.16-31.x…
+                return origin
+        except ValueError:
+            pass
     return None
 
 

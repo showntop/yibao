@@ -398,3 +398,17 @@ def test_cors_reflects_on_sse_stream():
 
     asyncio.run(main())
 
+
+
+def test_cors_allows_private_lan_origin():
+    """局域网体验：手机浏览器经 http://<本机私网IP>:5173（vite --host）访问要放行；
+    公网 IP / 域名 origin 依旧拒绝。"""
+    from yibao_brain.http_api import _cors_allow
+
+    assert _cors_allow("http://192.168.1.23:5173") == "http://192.168.1.23:5173"
+    assert _cors_allow("http://10.0.0.5:5173") == "http://10.0.0.5:5173"
+    assert _cors_allow("http://172.16.0.8:5173") == "http://172.16.0.8:5173"
+    assert _cors_allow("http://127.0.0.1:5173") == "http://127.0.0.1:5173"
+    assert _cors_allow("http://8.8.8.8:5173") is None  # 公网 IP 不放行
+    assert _cors_allow("https://evil.com") is None
+    assert _cors_allow("http://not-an-ip.example.com:5173") is None  # 非私网主机名不放行

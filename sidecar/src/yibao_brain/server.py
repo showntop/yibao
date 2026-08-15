@@ -430,8 +430,9 @@ async def _start_http_api(agent: AgentLoop, settings: dict, tap, deps) -> "objec
             tap=tap,
             deps=deps,
         )
-        runner = await run_server(app, "127.0.0.1", http_port())
-        print(f"[yibao] HTTP 面（桥+移动 API）已监听 127.0.0.1:{http_port()}", file=sys.stderr)
+        bind = str(settings.get("http.bind") or "127.0.0.1")
+        runner = await run_server(app, bind, http_port())
+        print(f"[yibao] HTTP 面（桥+移动 API）已监听 {bind}:{http_port()}", file=sys.stderr)
         return runner
     except Exception as e:
         print(f"[yibao] HTTP 面启动失败（{e}，已禁用）", file=sys.stderr)
