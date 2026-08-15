@@ -4,6 +4,7 @@ import { useRouter } from "vue-router";
 import { loadConn, clearConn } from "../api/connection";
 import { useChat } from "../state/chat";
 import ConnBar from "../components/ConnBar.vue";
+import MessageBody from "../components/MessageBody.vue";
 
 const router = useRouter();
 const input = ref("");
@@ -63,10 +64,12 @@ async function rePair() {
       </div>
     </header>
     <main class="list">
-      <p v-for="(m, i) in chat.messages.value" :key="i" class="msg" :class="m.role">
-        {{ m.text }}<span v-if="m.role === 'assistant' && !m.done" class="cursor">▍</span>
+      <!-- 消息用 div：assistant done 走 Markdown（块级元素），p 内嵌块级不合规范 -->
+      <div v-for="(m, i) in chat.messages.value" :key="i" class="msg" :class="m.role">
+        <MessageBody v-if="m.role === 'assistant' && m.done" :text="m.text" />
+        <template v-else>{{ m.text }}<span v-if="m.role === 'assistant' && !m.done" class="cursor">▍</span></template>
         <span v-if="m.interrupted" class="stopped">（已打断）</span>
-      </p>
+      </div>
       <p v-if="chat.error.value" class="err">{{ chat.error.value }}</p>
     </main>
     <footer class="inputbar">
