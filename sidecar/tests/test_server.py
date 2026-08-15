@@ -1,5 +1,6 @@
 import asyncio
 import json
+import threading
 import time
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -2110,3 +2111,298 @@ def test_serve_async_snip_capture_silent_without_host(tmp_path):
         )
     )
     assert any(m.get("type") == "pong" for m in out)
+
+
+_HELD_DONE = threading.Event()  # 挂起态 reader 的放行闸：done 置位 → 读线程返回 None 结束
+
+
+def _held_reader():
+    _HELD_DONE.clear()
+
+    def _r():
+        import time as _t
+        while not _HELD_DONE.is_set():
+            _t.sleep(0.01)
+        return None
+
+    return _r, None
+
+
+def _held_reader_done():
+    _HELD_DONE.set()
+
+
+def test_mobile_submit_run_uses_mobile_surface(tmp_path):
+    """serve_async 内 /v1/chat 走 mobile surface：受理事件带 surface=mobile、final_reply、run_done。
+    （interrupt 域内语义由 test_mobile_interrupt_scoped_to_mobile_surface 覆盖。）"""
+    async def main():
+        out = []
+        # 直接驱动 serve_async 太重；此处借 http_enabled 走真 HTTP（端口 19862 避冲突）
+        import os
+        os.environ["YIBAO_HTTP_PORT"] = "19862"
+        provider = FakeProvider(text="手机你好")
+        import yibao_brain.server as S
+
+        orig_load = S.load_settings
+        S.load_settings = lambda: {"http.token": "btok", "http.mobile_token": "mtok"}
+        try:
+            serve_task = asyncio.ensure_future(S.serve_async(
+                _held_reader()[0], lambda m: out.append(m), use_real=False,
+                db_path=str(tmp_path / "m.db"), provider=provider, http_enabled=True))
+            await asyncio.sleep(0.4)  # 等服务起
+            import aiohttp
+
+            async with aiohttp.ClientSession() as sess:
+                async with sess.post("http://127.0.0.1:19862/v1/chat",
+                                     headers={"X-Yibao-Token": "mtok"},
+                                     json={"text": "你好", "conversation_id": "c9"}) as r:
+                    body = await r.json()
+                    assert r.status == 200 and body["run_id"].startswith("mob_")
+            await asyncio.sleep(0.3)
+            surfaces = [m.get("surface") for m in out if m.get("type") == "event"]
+            assert "mobile" in surfaces
+            kinds = [m["event"]["kind"] for m in out if m.get("type") == "event" and m.get("surface") == "mobile"]
+            assert "final_reply" in kinds or "final_reply_chunk" in kinds
+            assert any(m.get("type") == "run_done" for m in out)
+        finally:
+            S.load_settings = orig_load
+            os.environ.pop("YIBAO_HTTP_PORT", None)
+            _held_reader_done()
+            await asyncio.wait_for(serve_task, 5)
+
+    asyncio.run(main())
+
+
+def test_mobile_interrupt_scoped_to_mobile_surface(tmp_path):
+    """_interrupt_mobile 域内打断（真 HTTP 路径）：
+    负路径——pet run 在跑时手机 /v1/interrupt 返回 interrupted=false，桌面对话照常完成；
+    正路径——mobile run 在跑时打断返回 true，interrupted 事件带 surface=mobile。"""
+    import os
+    import queue as _q
+    os.environ["YIBAO_HTTP_PORT"] = "19863"
+    provider = FakeProvider(chunks=["A", "B", "C", "D"], delay=0.08)
+    import yibao_brain.server as S
+
+    orig_load = S.load_settings
+    S.load_settings = lambda: {"http.token": "btok", "http.mobile_token": "mtok"}
+    inbox = _q.Queue()  # 测试可控的 stdin：put 消息 = 壳投递，put None = stdin 关闭
+
+    async def main():
+        out = []
+        serve_task = asyncio.ensure_future(S.serve_async(
+            inbox.get, lambda m: out.append(m), use_real=False,
+            db_path=str(tmp_path / "mi.db"), provider=provider, http_enabled=True))
+        try:
+            await asyncio.sleep(0.4)  # 等服务起
+            import aiohttp
+
+            async with aiohttp.ClientSession() as sess:
+                # 负路径：pet run 在跑（慢流式 0.08s/chunk），手机打断不误伤
+                inbox.put({"id": 11, "type": "run", "surface": "pet", "text": "桌面长回答"})
+                await asyncio.sleep(0.15)  # 此刻 pet run 仍在流式中
+                assert not any(m.get("type") == "run_done" for m in out)
+                async with sess.post("http://127.0.0.1:19863/v1/interrupt",
+                                     headers={"X-Yibao-Token": "mtok"}, json={}) as r:
+                    assert r.status == 200
+                    assert await r.json() == {"ok": True, "interrupted": False}
+                for _ in range(100):
+                    if any(m.get("type") == "run_done" and m.get("id") == 11 for m in out):
+                        break
+                    await asyncio.sleep(0.05)
+                assert any(m.get("type") == "run_done" and m.get("id") == 11 for m in out)  # 照常完成
+                kinds = [m["event"]["kind"] for m in out if m.get("type") == "event"]
+                assert "final_reply" in kinds and "interrupted" not in kinds
+
+                # 正路径：mobile run 在跑，手机打断生效
+                async with sess.post("http://127.0.0.1:19863/v1/chat",
+                                     headers={"X-Yibao-Token": "mtok"},
+                                     json={"text": "手机长回答", "conversation_id": "c1"}) as r:
+                    body = await r.json()
+                    assert r.status == 200 and body["run_id"].startswith("mob_")
+                await asyncio.sleep(0.15)  # 此刻 mobile run 仍在流式中
+                async with sess.post("http://127.0.0.1:19863/v1/interrupt",
+                                     headers={"X-Yibao-Token": "mtok"}, json={}) as r:
+                    assert r.status == 200
+                    assert await r.json() == {"ok": True, "interrupted": True}
+                for _ in range(100):
+                    if any(m.get("type") == "run_done" and m.get("id") == body["run_id"] for m in out):
+                        break
+                    await asyncio.sleep(0.05)
+                assert any(m.get("type") == "run_done" and m.get("id") == body["run_id"] for m in out)
+                assert any(m.get("type") == "event" and m.get("surface") == "mobile"
+                           and m["event"]["kind"] == "interrupted" for m in out)
+        finally:
+            S.load_settings = orig_load
+            os.environ.pop("YIBAO_HTTP_PORT", None)
+            inbox.put(None)  # 结束 stdin 读线程
+            await asyncio.wait_for(serve_task, 5)
+
+    asyncio.run(main())
+
+
+def test_confirm_mobile_unknown_bound_and_shell_cross_surface_dedup(tmp_path):
+    """/v1/confirm 两个负路径（真 HTTP 路径，serve_async 级）：
+    ① 未知 id 且 early_answers 已满 32 条 → 404（垃圾 id 不无界堆积）；
+    ② 壳 confirm_batch 已处理的 cid → 手机端再点 → 404（跨端防重，答案不滞留）。"""
+    import os
+    import queue as _q
+    os.environ["YIBAO_HTTP_PORT"] = "19864"
+    import yibao_brain.server as S
+
+    orig_load = S.load_settings
+    S.load_settings = lambda: {"http.token": "btok", "http.mobile_token": "mtok"}
+    inbox = _q.Queue()
+
+    async def main():
+        out = []
+        serve_task = asyncio.ensure_future(S.serve_async(
+            inbox.get, lambda m: out.append(m), use_real=False,
+            db_path=str(tmp_path / "cm.db"), provider=FakeProvider(text="ok"), http_enabled=True))
+        try:
+            await asyncio.sleep(0.4)  # 等服务起
+            import aiohttp
+
+            async with aiohttp.ClientSession() as sess:
+                # ② 先做跨端防重（干净状态）：壳 confirm_batch 兑现/缓存 shell_1
+                inbox.put({"type": "confirm_batch",
+                           "items": [{"id": "shell_1", "approved": True, "remember": False}]})
+                for _ in range(100):
+                    if any(m.get("type") == "confirm_batched" for m in out):
+                        break
+                    await asyncio.sleep(0.05)
+                assert any(m.get("type") == "confirm_batched" for m in out)
+                async with sess.post("http://127.0.0.1:19864/v1/confirm",
+                                     headers={"X-Yibao-Token": "mtok"},
+                                     json={"id": "shell_1", "approved": True}) as r:
+                    assert r.status == 404  # 壳已处理 → 跨端防重
+
+                # ① 未知 id 灌满 early_answers（32 条上界；shell_1 已占 1 条 → 再收 31 条）
+                for i in range(31):
+                    async with sess.post("http://127.0.0.1:19864/v1/confirm",
+                                         headers={"X-Yibao-Token": "mtok"},
+                                         json={"id": f"junk_{i}", "approved": False}) as r:
+                        assert r.status == 200  # 上界内：当作早到答案收下
+                async with sess.post("http://127.0.0.1:19864/v1/confirm",
+                                     headers={"X-Yibao-Token": "mtok"},
+                                     json={"id": "junk_31", "approved": False}) as r:
+                    assert r.status == 404  # 已满：未知/垃圾 id 不再堆积
+
+                # 垃圾 id 不该出现在待批列表（confirm_meta 只由 batch_confirmer 登记）
+                async with sess.get("http://127.0.0.1:19864/v1/state",
+                                    headers={"X-Yibao-Token": "mtok"}) as r:
+                    body = await r.json()
+                    assert r.status == 200 and body["pending"] == []
+        finally:
+            S.load_settings = orig_load
+            os.environ.pop("YIBAO_HTTP_PORT", None)
+            inbox.put(None)  # 结束 stdin 读线程
+            await asyncio.wait_for(serve_task, 5)
+
+    asyncio.run(main())
+
+
+def test_mobile_end_to_end_sse_receives_stream(tmp_path):
+    """/v1/chat → 经 EventTap → /v1/events 收到 final_reply(_chunk) 与 run_done 帧。"""
+
+    async def main():
+        import os
+
+        # brief 给的 19863 与既有 test_mobile_interrupt_scoped_to_mobile_surface 冲突 → 用 19865
+        os.environ["YIBAO_HTTP_PORT"] = "19865"
+        out = []
+        import yibao_brain.server as S
+
+        orig_load = S.load_settings
+        S.load_settings = lambda: {"http.token": "btok", "http.mobile_token": "mtok"}
+        try:
+            serve_task = asyncio.ensure_future(S.serve_async(
+                _held_reader()[0], lambda m: out.append(m), use_real=False,
+                db_path=str(tmp_path / "e2e.db"), provider=FakeProvider(text="端到端回复"),
+                http_enabled=True))
+            await asyncio.sleep(0.4)
+            import aiohttp
+
+            async with aiohttp.ClientSession() as sess:
+                events = await sess.get("http://127.0.0.1:19865/v1/events", params={"token": "mtok"})
+                chat = await sess.post("http://127.0.0.1:19865/v1/chat",
+                                       headers={"X-Yibao-Token": "mtok"}, json={"text": "你好"})
+                assert chat.status == 200
+                buf = b""
+                deadline = time.monotonic() + 5
+                while b"run_done" not in buf and time.monotonic() < deadline:
+                    chunk = await asyncio.wait_for(events.content.read(64), 2)
+                    buf += chunk
+                assert b"final_reply" in buf  # 流式回复帧（kind=final_reply 或 final_reply_chunk）
+                assert b'"surface": "mobile"' in buf  # 帧带信封归属字段（spec §4.3）
+                assert b"run_done" in buf
+                events.close()
+        finally:
+            S.load_settings = orig_load
+            os.environ.pop("YIBAO_HTTP_PORT", None)
+            _held_reader_done()
+            await asyncio.wait_for(serve_task, 5)
+
+    asyncio.run(main())
+
+
+def test_mobile_chat_does_not_consume_invoke_context(tmp_path):
+    """手机 /v1/chat 不消费截图唤起上下文：invoke_ctx 是桌面截图唤起的一次性暂存，
+    手机偷吃会让桌面下一次 run 拿不到、还会把 [屏幕上下文] 注进手机回复。
+    断言：手机回复（事件与 LLM 输入）均不含 [屏幕上下文]，且随后的桌面 run 仍拿到它。"""
+    import os
+    import queue as _q
+
+    os.environ["YIBAO_HTTP_PORT"] = "19866"
+    provider = FakeProvider(text="手机回复")
+    import yibao_brain.server as S
+
+    orig_load = S.load_settings
+    S.load_settings = lambda: {"http.token": "btok", "http.mobile_token": "mtok"}
+    inbox = _q.Queue()
+
+    async def main():
+        out = []
+        serve_task = asyncio.ensure_future(S.serve_async(
+            inbox.get, lambda m: out.append(m), use_real=False,
+            db_path=str(tmp_path / "ic.db"), provider=provider, http_enabled=True,
+            invoke_context_text="用户在看 VS Code 的报错弹窗"))
+        try:
+            await asyncio.sleep(0.4)  # 等服务起
+            import aiohttp
+
+            async with aiohttp.ClientSession() as sess:
+                async with sess.post("http://127.0.0.1:19866/v1/chat",
+                                     headers={"X-Yibao-Token": "mtok"},
+                                     json={"text": "你好", "conversation_id": "c1"}) as r:
+                    body = await r.json()
+                    assert r.status == 200 and body["run_id"].startswith("mob_")
+            for _ in range(100):
+                if any(m.get("type") == "run_done" and m.get("id") == body["run_id"] for m in out):
+                    break
+                await asyncio.sleep(0.05)
+            # 手机 run 的 LLM 输入与回复事件都不含 [屏幕上下文]
+            assert provider.astream_calls
+            mobile_msgs = provider.astream_calls[0]["messages"]
+            assert not any("[屏幕上下文]" in str(m.get("content")) for m in mobile_msgs), mobile_msgs
+            finals = [m["event"].get("text") for m in out
+                      if m.get("type") == "event" and m.get("surface") == "mobile"
+                      and m["event"].get("kind") in ("final_reply", "final_reply_chunk")]
+            assert finals and not any("[屏幕上下文]" in (t or "") for t in finals), finals
+
+            # 桌面 run 仍能拿到（未被手机消费）
+            inbox.put({"id": 21, "type": "run", "surface": "pet", "text": "桌面问"})
+            for _ in range(100):
+                if any(m.get("type") == "run_done" and m.get("id") == 21 for m in out):
+                    break
+                await asyncio.sleep(0.05)
+            assert len(provider.astream_calls) >= 2
+            desktop_msgs = provider.astream_calls[1]["messages"]
+            assert any("[屏幕上下文] 用户在看 VS Code 的报错弹窗" in str(m.get("content"))
+                       for m in desktop_msgs), desktop_msgs
+        finally:
+            S.load_settings = orig_load
+            os.environ.pop("YIBAO_HTTP_PORT", None)
+            inbox.put(None)  # 结束 stdin 读线程
+            await asyncio.wait_for(serve_task, 5)
+
+    asyncio.run(main())

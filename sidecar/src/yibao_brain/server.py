@@ -12,6 +12,7 @@ import os
 import sys
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 
 from . import permissions
@@ -36,6 +37,7 @@ from .feed import FeedStore
 from .distiller import Distiller, DistillerStore
 from .jobstore import JobsStore
 from .history import ConversationHistory
+from .http_api import EventTap, MobileDeps
 from .ipc import Action, Event, RiskLevel
 from .llm import FakeProvider, GLMProvider, ToolCall
 from .loop import AgentLoop, _offload
@@ -346,74 +348,59 @@ async def handle_panel_action(msg: dict, agent: AgentLoop, write_msg: WriteMsg, 
 # ---------- 浏览器扩展桥（127.0.0.1 微 HTTP → zimeiti quiet 直调）----------
 
 
-def _ensure_bridge_token(settings: dict) -> str:
-    """扩展桥共享 token：空则生成并持久化（save_settings 只落已知键，http.token 已在默认表）。"""
-    tok = str(settings.get("http.token") or "")
+def _ensure_http_token(settings: dict, key: str) -> str:
+    """HTTP 面共享 token（http.token=扩展桥 / http.mobile_token=手机伴生端）：
+    空则生成并持久化（save_settings 只落已知键，两键均已在默认表）。"""
+    tok = str(settings.get(key) or "")
     if not tok:
         import secrets
 
         tok = secrets.token_hex(16)
-        save_settings({"http.token": tok})
-        settings["http.token"] = tok
+        save_settings({key: tok})
+        settings[key] = tok
     return tok
 
 
-def _make_bridge_route(agent: AgentLoop, write_msg: WriteMsg, token: str, *, emit=None):
-    """造桥路由（httpserver Handler 签名）：/save → zimeiti quiet 直调；回执与 panel_action 同协议（pa_ 前缀）。
-    emit 注入便于测试；缺省直接 write_msg 发 event（不带 surface——壳侧分流过滤放行，与唤起条回执同行为）。
-    """
-    counter = itertools.count(1)
+_BRIDGE_SEQ = itertools.count(1)  # 桥/分享保存的 action id 序（跨调用唯一）
 
-    def _emit(action, result) -> None:
-        ev = Event(kind="action_result", action=action, result=result)
-        if emit is not None:
-            emit(ev.model_dump(mode="json"))
-        else:
-            write_msg({"type": "event", "event": ev.model_dump(mode="json")})
 
-    async def _route(method: str, path: str, headers: dict, body: dict) -> tuple[int, dict]:
-        if headers.get("x-yibao-token") != token:
-            return 401, {"ok": False, "error": "token 不对"}
-        if method == "GET" and path == "/health":
-            return 200, {"ok": True, "service": "yibao-bridge"}
-        if method != "POST" or path != "/save":
-            return 404, {"ok": False, "error": "not found"}
-        url = str(body.get("url") or "").strip()
-        title = str(body.get("title") or "").strip()[:200]
-        text = str(body.get("text") or "").strip()[:20000]
-        mode = str(body.get("mode") or "material")
-        if not text:
-            return 400, {"ok": False, "error": "text 为空"}
-        if mode == "material":
-            api_name = "zimeiti.invoke_mat_save"
-            # 先存后整理：defer 跳过 LLM 摘要立刻落库（秒回），mat_enrich 后台补元数据
-            params = {"url": url, "text": f"{title}\n\n{text}" if title else text, "title": title, "defer": True}
-        elif mode == "topic":
-            api_name = "zimeiti.invoke_add_topic"
-            params = {"title": title or text[:30], "source": url or "浏览器扩展"}
-        else:
-            return 400, {"ok": False, "error": f"未知 mode：{mode}"}
-        api = get_api(api_name)
-        if api is None or not api.direct:
-            return 500, {"ok": False, "error": f"方法不可用：{api_name}"}
-        rid = f"http_{next(counter)}"
-        action = agent.invoker.propose(ToolCall(id=f"pa_{rid}", skill_id=api.handler, params=params))
-        action.id = f"pa_{rid}"  # 壳侧靠 pa_ 前缀认领回执（与 panel_action 同协议）
-        if api.risk is not None:
-            action.risk = max(action.risk, api.risk)
-        decision = agent.invoker.decide(action)
-        if decision != Decision.AUTO:
-            return 403, {"ok": False, "error": "策略要求确认或禁止（桥场景无确认通道），未执行"}
-        result = await _offload(agent.invoker.execute, action, params)
-        _emit(action, result)
-        if not result.success:
-            return 500, {"ok": False, "error": result.error or "执行失败"}
-        data = result.data or {}
-        if mode == "material" and data.get("pending"):
-            asyncio.ensure_future(_enrich_later(agent, data.get("id")))
-        return 200, {"ok": True, "title": data.get("title", title)}
-
-    return _route
+async def _bridge_save(agent: AgentLoop, emit, body: dict) -> tuple[int, dict]:
+    """存素材/选题核心（扩展桥 /save 与手机 /v1/save 共用；原 _make_bridge_route._route 主体）。
+    emit(action, result)：回执出口（经 EventTap → stdio 壳 + SSE 手机）。"""
+    url = str(body.get("url") or "").strip()
+    title = str(body.get("title") or "").strip()[:200]
+    text = str(body.get("text") or "").strip()[:20000]
+    mode = str(body.get("mode") or "material")
+    if not text:
+        return 400, {"ok": False, "error": "text 为空"}
+    if mode == "material":
+        api_name = "zimeiti.invoke_mat_save"
+        # 先存后整理：defer 跳过 LLM 摘要立刻落库（秒回），mat_enrich 后台补元数据
+        params = {"url": url, "text": f"{title}\n\n{text}" if title else text, "title": title, "defer": True}
+    elif mode == "topic":
+        api_name = "zimeiti.invoke_add_topic"
+        params = {"title": title or text[:30], "source": url or "浏览器扩展"}
+    else:
+        return 400, {"ok": False, "error": f"未知 mode：{mode}"}
+    api = get_api(api_name)
+    if api is None or not api.direct:
+        return 500, {"ok": False, "error": f"方法不可用：{api_name}"}
+    rid = f"http_{next(_BRIDGE_SEQ)}"
+    action = agent.invoker.propose(ToolCall(id=f"pa_{rid}", skill_id=api.handler, params=params))
+    action.id = f"pa_{rid}"  # 壳侧靠 pa_ 前缀认领回执（与 panel_action 同协议）
+    if api.risk is not None:
+        action.risk = max(action.risk, api.risk)
+    decision = agent.invoker.decide(action)
+    if decision != Decision.AUTO:
+        return 403, {"ok": False, "error": "策略要求确认或禁止（桥场景无确认通道），未执行"}
+    result = await _offload(agent.invoker.execute, action, params)
+    emit(action, result)
+    if not result.success:
+        return 500, {"ok": False, "error": result.error or "执行失败"}
+    data = result.data or {}
+    if mode == "material" and data.get("pending"):
+        asyncio.ensure_future(_enrich_later(agent, data.get("id")))
+    return 200, {"ok": True, "title": data.get("title", title)}
 
 
 async def _enrich_later(agent: AgentLoop, material_id: str | None) -> None:
@@ -432,17 +419,22 @@ async def _enrich_later(agent: AgentLoop, material_id: str | None) -> None:
         print(f"[yibao] 素材后台精整失败（已跳过）：{e}", file=sys.stderr)
 
 
-async def _start_bridge(agent: AgentLoop, write_msg: WriteMsg, settings: dict) -> "asyncio.AbstractServer | None":
-    """起浏览器扩展桥；端口占用/任何失败 → stderr + None（不拖垮大脑）。"""
-    from .httpserver import serve
-
+async def _start_http_api(agent: AgentLoop, settings: dict, tap, deps) -> "object | None":
+    """起 aiohttp HTTP 面（扩展桥 + 移动 API）；失败 → stderr + None（不拖垮大脑）。"""
     try:
-        token = _ensure_bridge_token(settings)
-        srv = await serve("127.0.0.1", http_port(), _make_bridge_route(agent, write_msg, token))
-        print(f"[yibao] 浏览器扩展桥已监听 127.0.0.1:{http_port()}", file=sys.stderr)
-        return srv
+        from .http_api import build_app, run_server
+
+        app = build_app(
+            bridge_token=_ensure_http_token(settings, "http.token"),
+            mobile_token=_ensure_http_token(settings, "http.mobile_token"),
+            tap=tap,
+            deps=deps,
+        )
+        runner = await run_server(app, "127.0.0.1", http_port())
+        print(f"[yibao] HTTP 面（桥+移动 API）已监听 127.0.0.1:{http_port()}", file=sys.stderr)
+        return runner
     except Exception as e:
-        print(f"[yibao] 浏览器扩展桥启动失败（{e}，已禁用）", file=sys.stderr)
+        print(f"[yibao] HTTP 面启动失败（{e}，已禁用）", file=sys.stderr)
         return None
 
 
@@ -545,6 +537,9 @@ async def serve_async(
     新 run 到来会抢占并打断未完成的旧 run。
     """
     ai_loop = asyncio.get_running_loop()
+    tap = EventTap(write_msg)  # 事件分接头：stdio 照发 + SSE 广播（Task 9 起替换 write_msg）
+    write_msg = tap  # 重绑：本函数内所有闭包（_stream_agent/dispatcher/reader 等）经分接头
+    # ——stdio 输出字节不变（tap 透传），event/run_done 额外复制进 SSE 环形缓冲
     _LOOP_TICK["t"] = time.monotonic()
 
     async def _tick() -> None:
@@ -561,6 +556,8 @@ async def serve_async(
     # 多槽不假设并发数：当前单 run 抢占（dict 通常 1 entry），未来多 run 并发这层不用改。
     pending_confirms: dict[str, asyncio.Future] = {}
     early_answers: dict[str, tuple[bool, bool]] = {}
+    confirm_meta: dict[str, dict] = {}  # cid -> {skill_id, summary, risk, created_at}：手机 /v1/state 待批列表
+    _confirm_done: deque[str] = deque(maxlen=100)  # 已处理确认（防手机重复点击 404）
     # preempt_gen：抢占代数。新请求到来即 +1；排队中的任务启动时发现自己落后 →
     # 一启动即置 cancel（快速跳过），保证「只有最新请求真正执行」。
     # surface：最近一次受理请求的窗口（pet=主窗 / 面板 id，dispatch 受理即写入）。
@@ -600,6 +597,12 @@ async def serve_async(
                 out[cid] = early_answers.pop(cid)
                 continue
             fut = pending_confirms.setdefault(cid, ai_loop.create_future())
+            confirm_meta[cid] = {
+                "skill_id": skill_id,
+                "summary": str(getattr(action, "params", "") or "")[:120] or skill_id,
+                "risk": int(getattr(getattr(action, "risk", None), "value", getattr(action, "risk", 0)) or 0),
+                "created_at": int(time.time()),
+            }
             # 确认等待必须响应抢占/打断：否则新请求 join 一个永不结束的确认 →
             # 派发循环卡死、ping 不应答、看门狗误杀（2026-07-19 复现确认）
             cancel = run_state["cancel"]
@@ -622,6 +625,7 @@ async def serve_async(
                     cancel_wait.cancel()
                 if pending_confirms.get(cid) is fut:
                     del pending_confirms[cid]
+                confirm_meta.pop(cid, None)
         return out
 
     # 主屏 Feed 存储（OS 感 §4.2）：任务播报/提醒触发在此落库，主屏查询时一次拿回。
@@ -910,9 +914,7 @@ async def serve_async(
 
     if http_enabled is None:
         http_enabled = use_real  # 测试默认关；生产（use_real=True）默认开
-    bridge_server = None
-    if http_enabled:
-        bridge_server = await _start_bridge(agent, write_msg, settings)
+    bridge_server = None  # aiohttp runner（Task 4 起）：deps 闭包依赖后文定义的 _drive_run 等，启动挪到主循环前
 
     def _reader():
         while True:
@@ -1080,6 +1082,64 @@ async def serve_async(
             write_msg({"type": "event", "surface": surface, "event": {
                 "kind": "notice", "text": "另一个窗口还在说，等它说完就轮到你…"}})
 
+    def _schedule_run(surface: str, rid, start) -> None:
+        """受理尾巴（run/voice_start/手机 chat 共用）：同 surface 抢占 + 跨 surface 链式排队。"""
+        _preempt_if_same_surface(surface)
+        prev = run_state["task"]
+        run_state["surface"] = surface  # 受理即记录：下次 dispatch 判断同/跨 surface 无调度竞态
+        run_state["task"] = asyncio.ensure_future(
+            _chain_start(prev, start, run_state["preempt_gen"]))
+
+    _MOB_SEQ = itertools.count(1)
+
+    def _submit_run(text: str, conversation_id: str) -> dict:
+        """手机 /v1/chat 受理：surface=mobile（不抢桌宠，桌宠也不抢手机）。
+        不消费 invoke_ctx：那是桌面截图唤起的一次性上下文，留给桌面下一次 run。"""
+        rid = f"mob_{next(_MOB_SEQ)}"
+        start = lambda c, t=text, r=rid, ci=conversation_id: _drive_run(t, r, c, "mobile", ci)
+        print(f"[yibao] run 受理 rid={rid} surface=mobile conv={conversation_id}：{text[:30]!r}", file=sys.stderr)
+        _schedule_run("mobile", rid, start)
+        return {"ok": True, "run_id": rid, "conversation_id": conversation_id}
+
+    def _interrupt_mobile() -> bool:
+        """只打断 mobile surface 的 run。壳 interrupt 是「全都停」；手机不该误伤桌面对话。"""
+        if run_state["surface"] == "mobile" and run_state["cancel"] is not None:
+            _preempt_current()
+            return True
+        return False
+
+    def _confirm_mobile(cid: str, approved: bool, remember: bool) -> bool:
+        """与壳 confirm_batch 同路径：兑现 future；confirmer 未注册（SSE 事件先到一步）
+        存 early_answers 待兑现。重复点击 → False（404）。
+
+        early_answers 设 32 条上界：真实竞态（SSE 事件先到一步）最多攒 1-2 条，
+        存到 32 还没被 confirmer 取走，只可能是未知/垃圾 id——继续存就是无界堆积
+        （持有 token 的客户端可无限灌条目），故满员后按未知处理 → False（404）。"""
+        if cid in _confirm_done:
+            return False
+        fut = pending_confirms.get(cid)
+        if fut is not None and not fut.done():
+            fut.set_result((approved, remember))
+        elif len(early_answers) < 32:
+            early_answers[cid] = (approved, remember)
+        else:
+            return False  # 无 future 且早到缓存已满：未知 id，不当真
+        _confirm_done.append(cid)
+        return True
+
+    def _mobile_state() -> dict:
+        task = run_state["task"]
+        running = {"surface": run_state["surface"]} if (task is not None and not task.done()) else None
+        return {"running": running, "pending": [{"id": cid, **meta} for cid, meta in confirm_meta.items()]}
+
+    def _register_push(registration_id: str, platform: str) -> None:
+        """推送设备登记（P4 极光发送消费）。同 registration_id 覆盖，防重复堆积。"""
+        devices = [d for d in (settings.get("push.devices") or [])
+                   if d.get("registration_id") != registration_id]
+        devices.append({"registration_id": registration_id, "platform": platform, "added_at": int(time.time())})
+        settings["push.devices"] = devices
+        save_settings({"push.devices": devices})
+
     async def _chain_start(prev, start, queued_gen: int) -> None:
         """槽位串行：等上一任务收尾再启动；主循环不在这里阻塞（ping 照答，看门狗不误杀）。
 
@@ -1119,6 +1179,24 @@ async def serve_async(
         except Exception as e:  # 兜底：任务未预期的异常不能毒死槽位
             print(f"[yibao] 任务异常收尾：{type(e).__name__}: {e}", file=sys.stderr)
 
+    # HTTP 面（扩展桥+移动 API）：deps 里的闭包依赖上文 _drive_run 等，故在主循环前才组装启动
+    _http_deps = MobileDeps()
+    if http_enabled:
+        async def _http_save(body: dict) -> tuple[int, dict]:
+            def _emit(action, result) -> None:
+                ev = Event(kind="action_result", action=action.model_dump(mode="json") if hasattr(action, "model_dump") else action,
+                           result=result.model_dump(mode="json") if hasattr(result, "model_dump") else result)
+                write_msg({"type": "event", "event": ev.model_dump(mode="json")})
+            return await _bridge_save(agent, _emit, body)
+
+        _http_deps.save = _http_save
+        _http_deps.submit_run = _submit_run
+        _http_deps.interrupt = _interrupt_mobile
+        _http_deps.confirm = _confirm_mobile
+        _http_deps.state = _mobile_state
+        _http_deps.register_push = _register_push
+        bridge_server = await _start_http_api(agent, settings, tap, _http_deps)
+
     while True:
         msg = await queue.get()
         if msg is None:
@@ -1144,7 +1222,8 @@ async def serve_async(
             reminder_task.cancel()
             perception_cleanup_task.cancel()
             if bridge_server is not None:
-                bridge_server.close()
+                tap.close()  # 先给 SSE 订阅者投哨兵：handler 立即退出，cleanup 不用等 30s 心跳
+                await bridge_server.cleanup()  # aiohttp AppRunner（cleanup 是协程，漏 await = 端口/连接不释放）
             await watch_service.stop()
             jobs = getattr(agent.skills, "background_jobs", None)
             if jobs is not None:
@@ -1170,9 +1249,6 @@ async def serve_async(
                 continue
             surface = str(msg.get("surface") or "pet")  # 会话分流：随 run 贯穿事件流与历史
             conversation_id = str(msg.get("conversation_id") or "")  # M3：会话归属随 run 贯穿（sidecar 单流，事件带归属）
-            _preempt_if_same_surface(surface)
-            prev = run_state["task"]
-            run_state["surface"] = surface  # 受理即记录：下次 dispatch 判断同/跨 surface 无调度竞态
             if rtype == "run":
                 text, rid = msg.get("text", ""), msg.get("id")
                 # 截图唤起：新鲜（<60s）的屏幕描述注入本次 run，一次性消费
@@ -1181,16 +1257,15 @@ async def serve_async(
                     text = f"[屏幕上下文] {ctx_text}\n\n{text}"
                 start = lambda c, t=text, r=rid, s=surface, ci=conversation_id: _drive_run(t, r, c, s, ci)
                 print(f"[yibao] run 受理 rid={rid} surface={surface} conv={conversation_id}：{text[:30]!r}", file=sys.stderr)
+                _schedule_run(surface, rid, start)
             elif voice is not None:
                 rid = msg.get("id")
                 cont = bool(msg.get("continuous"))
                 start = lambda c, r=rid, s=surface, ci=conversation_id, ct=cont: _drive_voice_start(r, c, s, ci, ct)
                 print(f"[yibao] voice_start 受理 rid={rid} surface={surface} conv={conversation_id} continuous={cont}", file=sys.stderr)
+                _schedule_run(surface, rid, start)
             else:
                 continue
-            run_state["task"] = asyncio.ensure_future(
-                _chain_start(prev, start, run_state["preempt_gen"])
-            )
         elif rtype == "panel_action":
             if _is_readonly_direct(msg, agent):
                 # L0 只读直调：独立任务并发跑，不占槽位、不抢占在跑的 run（编辑器/面板加载数据不该踩对话）
@@ -1239,6 +1314,9 @@ async def serve_async(
                 else:
                     # confirmer 还没注册（消息先于 run 任务到达）→ 缓存，由 batch_confirmer 兑现
                     early_answers[cid] = (approved, remember)
+                # 跨端防重：壳已处理的 cid 记入 _confirm_done——手机端随后点同一确认
+                # → _confirm_mobile 判已处理 → 404，答案也不会滞留在 early_answers。
+                _confirm_done.append(cid)
             write_msg({"type": "confirm_batched", "ok": True})
         elif rtype == "feed":
             # 主屏查询：动态列表（倒序）+ 问候统计
