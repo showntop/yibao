@@ -849,13 +849,19 @@ fn open_data_dir(app: AppHandle) -> Result<(), String> {
 /// 原生文件夹选择器（coding 面板 cwd 药丸用）：webview iframe 无 Tauri IPC，
 /// 面板经 WebviewPanel `native:` 白名单旁路直调本命令，对话框必须 Rust 侧开。
 /// 返回所选绝对路径；用户取消返回 None。
+/// 必须 async：同步命令内联跑在 macOS 主线程，而 blocking_pick_folder 内部先
+/// run_on_main_thread 派发创建对话框、再 recv() 原地阻塞——主线程被堵死则派发永不执行，
+/// 硬死锁（点击后整窗卡死、对话框根本不出现）。async 命令跑在异步运行时线程，主线程自由。
+/// .parent(&window) 把对话框挂到发起窗口（home/panel），避免被常驻置顶宠物窗压住。
 #[tauri::command]
-fn pick_folder(app: AppHandle) -> Result<Option<String>, String> {
+async fn pick_folder(window: tauri::Window) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
-    let folder = app
+    let folder = window
+        .app_handle()
         .dialog()
         .file()
         .set_title("选择项目文件夹")
+        .set_parent(&window)
         .blocking_pick_folder();
     Ok(folder
         .and_then(|p| p.into_path().ok())
