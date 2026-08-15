@@ -843,14 +843,15 @@
   function hideErrBar() { $("errbar").classList.add("hidden"); }
 
   // 人话首行：跳过空行 / 协议 XML 行（< 开头）/ 堆栈帧（at …、File "…"、Traceback），
-  // 全都不是人话时给兜底文案（错误全文仍在详情区可见）
+  // 全都不是人话时给兜底文案（错误全文仍在详情区可见）；行内残留标签（如 "失败原因</tool_use_error>"）剥掉
   function humanFirstLine(text) {
     var lines = String(text || "").split("\n");
     for (var i = 0; i < lines.length; i++) {
       var ln = lines[i].trim();
       if (!ln || ln.charAt(0) === "<") continue;
       if (/^(at\s|File\s"|Traceback)/.test(ln)) continue;
-      return ln;
+      ln = ln.replace(/<[^>]*>/g, "").trim();   // 人话与闭合标签同行的尾巴剥除
+      if (ln) return ln;
     }
     return "执行出错（点「详情」查看全文）";
   }
@@ -1285,6 +1286,9 @@
         // 非文本事件切断当前文本气泡：下次 text_delta 起新气泡
         if (currentBubble) finalizeBubble(currentBubble);
         currentBubble = null;
+        // Edit/Write/MultiEdit 走 file_edit 不产生工具卡——清掉归属指针，防其 tool_result
+        // 的计数/红 ✗ 错挂到前一张工具卡（Read→Edit 串行是最高频流）
+        lastToolCard = null;
         appendFileEdit(ev);
         break;
       case "tool_use":
@@ -1688,6 +1692,7 @@
     setStatus("Codex 接续启动中…");
 
     currentBubble = null;
+    hideErrBar();   // handoff 也是新 turn 入口：与 send 对齐清掉旧错误条（老 SDK 不回放 user_msg 时靠这里）
 
     window.yibao.invoke("coding.start", {
       cwd: cwd,
