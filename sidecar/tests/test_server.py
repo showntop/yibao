@@ -2302,6 +2302,108 @@ def test_confirm_mobile_unknown_bound_and_shell_cross_surface_dedup(tmp_path):
     asyncio.run(main())
 
 
+def test_confirm_meta_summary_readable_k_v(tmp_path):
+    """confirm_meta.summary 可读化：params 非空 dict → k=v 逗号形式（不再是 dict-repr），
+    空 params 回落 skill_id。手机审批页直接展示该字段。"""
+
+    async def main():
+        import os
+
+        from yibao_brain.skills import Skill
+        from yibao_brain.ipc import ActionResult
+
+        class DangerSkill(Skill):
+            id = "danger"; description = "危险占位"; default_risk = RiskLevel.L3_HIGH
+            def run(self, params, ctx): return ActionResult(success=True)
+
+        class BareSkill(Skill):
+            id = "bare"; description = "无参占位"; default_risk = RiskLevel.L3_HIGH
+            def run(self, params, ctx): return ActionResult(success=True)
+
+        os.environ["YIBAO_HTTP_PORT"] = "19868"
+
+        # 两轮顺序确认（同一 run 内）：第一轮 t1 有参，第二轮 t2 空 dict
+        class _ChainProvider:
+            def __init__(self, steps):
+                self._steps, self._n = list(steps), 0
+
+            def chat(self, messages, tools=None):
+                i = min(self._n, len(self._steps) - 1); self._n += 1
+                return self._steps[i].chat(messages, tools)
+
+            async def astream(self, messages, tools=None):
+                i = min(self._n, len(self._steps) - 1); self._n += 1
+                async for d in self._steps[i].astream(messages, tools):
+                    yield d
+
+        provider = _ChainProvider([
+            FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="danger",
+                                              params={"path": "/tmp/x", "force": True})]),
+            FakeProvider(tool_calls=[ToolCall(id="t2", skill_id="bare", params={})]),
+            FakeProvider(text="done"),
+        ])
+        out: list = []
+        inbox = queue.Queue()
+        inbox.put({"id": 1, "type": "run", "text": "做两件危险事"})
+        import yibao_brain.server as S
+
+        orig_load = S.load_settings
+        S.load_settings = lambda: {"http.token": "btok", "http.mobile_token": "mtok"}
+        summaries: dict = {}
+
+        async def grab_pending_id() -> str:
+            # 确认挂起期间拉 /v1/state，把当前挂起项按 id 汇入 summaries
+            import aiohttp
+
+            async with aiohttp.ClientSession() as sess:
+                async with sess.get("http://127.0.0.1:19868/v1/state",
+                                    headers={"X-Yibao-Token": "mtok"}) as r:
+                    assert r.status == 200
+                    body = await r.json()
+                    for p in body["pending"]:
+                        summaries[p["id"]] = p["summary"]
+                    return body["pending"][0]["id"]
+
+        def writer(m):
+            out.append(m)
+
+        async def wait_for(pred):
+            for _ in range(200):
+                if pred():
+                    return
+                await asyncio.sleep(0.05)
+
+        try:
+            serve_task = asyncio.ensure_future(S.serve_async(
+                inbox.get, writer, use_real=False,
+                db_path=str(tmp_path / "sm.db"), provider=provider, http_enabled=True,
+                skills_factory=lambda: _registry_with(DangerSkill(), BareSkill())))
+            # 第一轮：确认挂起时拉 state → 批准 t1
+            await wait_for(lambda: any(m.get("type") == "event"
+                                       and m["event"].get("kind") == "confirmation_needed" for m in out))
+            cid1 = await grab_pending_id()
+            inbox.put({"type": "confirm_batch", "items": [{"id": cid1, "approved": True, "remember": False}]})
+            # 第二轮：t2 确认挂起时拉 state → 批准 t2 → 等 run 收尾
+            await wait_for(lambda: sum(1 for m in out if m.get("type") == "event"
+                                       and m["event"].get("kind") == "confirmation_needed") >= 2)
+            cid2 = await grab_pending_id()
+            inbox.put({"type": "confirm_batch", "items": [{"id": cid2, "approved": True, "remember": False}]})
+            await wait_for(lambda: any(m.get("type") == "run_done" for m in out))
+            inbox.put(None)  # 结束 stdin 读线程
+            await asyncio.wait_for(serve_task, 5)
+        finally:
+            S.load_settings = orig_load
+            os.environ.pop("YIBAO_HTTP_PORT", None)
+            inbox.put(None)
+
+        # action id 由 loop 自动生成（act_*），按 summary 内容断言
+        vals = list(summaries.values())
+        assert "path=/tmp/x, force=True" in vals  # k=v 可读形式（非 dict-repr）
+        assert "bare" in vals                     # 空 params → 回落 skill_id
+
+    asyncio.run(main())
+
+
 def test_mobile_end_to_end_sse_receives_stream(tmp_path):
     """/v1/chat → 经 EventTap → /v1/events 收到 final_reply(_chunk) 与 run_done 帧。"""
 

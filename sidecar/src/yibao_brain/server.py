@@ -651,7 +651,10 @@ async def serve_async(
             fut = pending_confirms.setdefault(cid, ai_loop.create_future())
             confirm_meta[cid] = {
                 "skill_id": skill_id,
-                "summary": str(getattr(action, "params", "") or "")[:120] or skill_id,
+                # 可读摘要：params 非空 dict → k=v 逗号形式（手机审批页直接展示）；
+                # 空 dict/非 dict → 回落 skill_id。截 120 字防长参数刷屏。
+                "summary": (", ".join(f"{k}={v}" for k, v in (getattr(action, "params", None) or {}).items())[:120]
+                            if isinstance(getattr(action, "params", None), dict) and action.params else skill_id),
                 "risk": int(getattr(getattr(action, "risk", None), "value", getattr(action, "risk", 0)) or 0),
                 "created_at": int(time.time()),
             }
