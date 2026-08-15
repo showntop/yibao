@@ -4,7 +4,8 @@ import type { EventSourceLike } from "../api/events";
 import type { ConnConfig } from "../api/connection";
 
 function mkChat() {
-  const listeners = new Map<string, (e: { data: string }) => void>();
+  // lastEventId 模拟 SSE 帧 id: 行（不传则 seq=0，视为「无序号帧」不参与去重）
+  const listeners = new Map<string, (e: { data: string; lastEventId: string }) => void>();
   const es: EventSourceLike = {
     addEventListener: (k, cb) => listeners.set(k, cb),
     close: vi.fn(),
@@ -22,7 +23,12 @@ function mkChat() {
     () => es,
     fetchImpl as unknown as typeof fetch,
   );
-  return { chat, emit: (k: string, data: unknown) => listeners.get(k)?.({ data: JSON.stringify(data) }), posts };
+  return {
+    chat,
+    emit: (k: string, data: unknown, lastEventId = "") =>
+      listeners.get(k)?.({ data: JSON.stringify(data), lastEventId }),
+    posts,
+  };
 }
 
 describe("useChat", () => {
@@ -79,7 +85,7 @@ describe("useChat", () => {
   });
 
   it("待批角标：构造拉 /v1/state 计数；confirmation_needed 帧 +1；syncPendingCount 重置", async () => {
-    const listeners = new Map<string, (e: { data: string }) => void>();
+    const listeners = new Map<string, (e: { data: string; lastEventId: string }) => void>();
     const es: EventSourceLike = {
       addEventListener: (k, cb) => listeners.set(k, cb),
       close: vi.fn(),
@@ -100,7 +106,7 @@ describe("useChat", () => {
       () => es,
       fetchImpl as unknown as typeof fetch,
     );
-    const emit = (k: string, data: unknown) => listeners.get(k)?.({ data: JSON.stringify(data) });
+    const emit = (k: string, data: unknown) => listeners.get(k)?.({ data: JSON.stringify(data), lastEventId: "" });
     await new Promise((r) => setTimeout(r, 0)); // 等构造时的首次计数落地
     expect(chat.pendingCount.value).toBe(1);
     emit("confirmation_needed", {}); // 桌面又发起一条待批 → +1
@@ -109,6 +115,53 @@ describe("useChat", () => {
     pendingN = 0; // 桌面已全部处理 → sync 拉回 0（从审批页返回 Chat 时会重跑）
     await chat.syncPendingCount();
     expect(chat.pendingCount.value).toBe(0);
+  });
+
+  it("seq 去重：重放的旧 seq 帧整帧丢弃（同文本不重复拼接、run_done 不误收口）", async () => {
+    const { chat, emit } = mkChat();
+    await chat.send("断线重连场景");
+    emit("final_reply_chunk", { kind: "final_reply_chunk", text: "你好", surface: "mobile" }, "5");
+    emit("final_reply_chunk", { kind: "final_reply_chunk", text: "你好", surface: "mobile" }, "5"); // 补帧重放同 seq
+    emit("final_reply_chunk", { kind: "final_reply_chunk", text: "你好", surface: "mobile" }, "3"); // 更旧的乱序帧
+    emit("final_reply_chunk", { kind: "final_reply_chunk", text: "，接着说", surface: "mobile" }, "6"); // 新帧照收
+    expect(chat.messages.value[1].text).toBe("你好，接着说");
+    emit("run_done", { id: "mob_1" }, "2"); // 旧 seq 的 run_done 重放 → 不收口
+    expect(chat.messages.value[1].done).toBe(false);
+    emit("run_done", { id: "mob_1" }, "7");
+    expect(chat.messages.value[1].done).toBe(true);
+  });
+
+  it("服务重启 seq 归一：seenSeq 让位新纪元（不永久吞帧）", async () => {
+    const { chat, emit } = mkChat();
+    await chat.send("大脑重启场景");
+    emit("final_reply_chunk", { kind: "final_reply_chunk", text: "旧纪元", surface: "mobile" }, "500");
+    emit("final_reply_chunk", { kind: "final_reply_chunk", text: "新纪元", surface: "mobile" }, "1"); // 重启后 seq 从 1 重新计数
+    expect(chat.messages.value[1].text).toBe("旧纪元新纪元"); // 新纪元首帧不被旧 seenSeq 吞掉
+  });
+
+  it("默认 url 工厂读 lastSeq：手动重连 start 时 URL 带上 last_event_id 断点", async () => {
+    const listeners = new Map<string, (e: { data: string; lastEventId: string }) => void>();
+    const es: EventSourceLike = {
+      addEventListener: (k, cb) => listeners.set(k, cb),
+      close: vi.fn(),
+      onopen: () => {},
+      onerror: () => {},
+    };
+    const urls: string[] = [];
+    const fetchImpl = vi.fn(async () =>
+      new Response(JSON.stringify({ ok: true, run_id: "mob_1", conversation_id: "" }), { status: 200 }));
+    // 不传 url 工厂 → 默认工厂；makeES 记录每次 start 实际用的 URL
+    const chat = useChat(
+      { host: "http://x:19527", token: "t" } as ConnConfig,
+      undefined,
+      (u) => (urls.push(u), es),
+      fetchImpl as unknown as typeof fetch,
+    );
+    expect(urls[0]).toBe("http://x:19527/v1/events?token=t"); // 首连无断点
+    listeners.get("final_reply_chunk")?.({ data: JSON.stringify({ text: "a", surface: "mobile" }), lastEventId: "5" });
+    expect(chat.stream.lastSeq.value).toBe(5);
+    chat.stream.start(); // Chat.vue 的 5s 兜底重连走的正是这条路径
+    expect(urls[1]).toBe("http://x:19527/v1/events?token=t&last_event_id=5"); // 续传断点生效
   });
 });
 

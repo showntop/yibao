@@ -22,14 +22,20 @@ function uuid(): string {
 
 export function useChat(
   conn: ConnConfig,
-  url: () => string = () => buildEventsUrl(conn),
+  url?: () => string,
   makeES: (u: string) => EventSourceLike = (u) => new EventSource(u) as unknown as EventSourceLike,
   fetchImpl: typeof fetch = fetch,
 ) {
   const messages: Ref<Msg[]> = ref([]);
   const conversationId = ref(uuid());
   const error = ref("");
-  const stream = useEventStream(url, makeES);
+  // 默认 url 工厂读 stream.lastSeq 生成带 last_event_id 的断点 URL：手动重连（Chat.vue
+  // 5s 兜底 start）新建的 EventSource 带不上 Last-Event-ID header，query 是唯一续传通道。
+  // 闭包延后解引用 stream：工厂只在 start 时调用，届时 stream 已初始化完毕。
+  const stream = useEventStream(
+    () => (url ? url() : buildEventsUrl(conn, stream.lastSeq.value)),
+    makeES,
+  );
   const busy = computed(() => messages.value.some((m) => m.role === "assistant" && !m.done));
   // 待批角标：confirmation_needed 广播帧无 surface 信封（桌面发起的手机也要看到），
   // 帧 +1 只做「有新增」的提示；真实数目以 syncPendingCount 的 /v1/state 全量为准
@@ -53,36 +59,51 @@ export function useChat(
   // 当前 pending 气泡对应的 run_id（send 响应取回）：桌面轮结束广播的 run_done id 不同，不误收口
   let myRunId = "";
 
-  stream.on("final_reply_chunk", (d) => {
-    if (!mine(d) || !d.text) return;
+  // 帧去重（M1 seq 补帧）：seq 全局单调（服务端环形缓冲）；重连补帧会重放已见过的帧，
+  // seq<=seenSeq 的整帧丢弃（chunk 重放会导致文本重复拼接、run_done 重放会误收口）。
+  // 无 seq（0）帧不参与去重（防御无 id 的源）；seq 归一说明服务端重启进入新纪元 → 让位重计。
+  let seenSeq = 0;
+  const fresh = (seq: number): boolean => {
+    if (seq === 1 && seenSeq > 1) seenSeq = 0; // 新纪元首帧：服务重启 seq 从 1 重新计数
+    if (seq > 0 && seq <= seenSeq) return false;
+    if (seq > seenSeq) seenSeq = seq;
+    return true;
+  };
+
+  stream.on("final_reply_chunk", (d, seq) => {
+    if (!fresh(seq) || !mine(d) || !d.text) return;
     const last = messages.value[messages.value.length - 1];
     if (last && last.role === "assistant" && !last.done) last.text += d.text;
   });
-  stream.on("final_reply", (d) => {
-    if (!mine(d)) return;
+  stream.on("final_reply", (d, seq) => {
+    if (!fresh(seq) || !mine(d)) return;
     const last = messages.value[messages.value.length - 1];
     if (last && last.role === "assistant") last.text = d.text ?? last.text;
   });
-  stream.on("interrupted", (d) => {
-    if (!mine(d)) return;
+  stream.on("interrupted", (d, seq) => {
+    if (!fresh(seq) || !mine(d)) return;
     const last = messages.value[messages.value.length - 1];
     if (last && last.role === "assistant") last.interrupted = true;
   });
-  stream.on("run_done", (d: { id?: string }) => {
+  stream.on("run_done", (d: { id?: string }, seq) => {
+    if (!fresh(seq)) return;
     if (d.id !== myRunId) return; // 桌面/其他轮的 run_done 与我无关
     myRunId = "";
     const last = messages.value[messages.value.length - 1];
     if (last && last.role === "assistant") last.done = true;
   });
-  stream.on("error", (d) => {
-    if (mine(d)) error.value = d.text ?? "大脑出错";
+  stream.on("error", (d, seq) => {
+    if (!fresh(seq) || !mine(d)) return;
+    error.value = d.text ?? "大脑出错";
   });
   // 排队 notice（手机跨 surface 时 server 发「另一个窗口还在说…」）：写入提示位，气泡 pending 才有解释
-  stream.on("notice", (d) => {
-    if (mine(d) && d.text) error.value = d.text;
+  stream.on("notice", (d, seq) => {
+    if (!fresh(seq) || !mine(d) || !d.text) return;
+    error.value = d.text;
   });
   // 新待批到达（任意 surface 发起）：角标 +1（数目由 syncPendingCount 校准）
-  stream.on("confirmation_needed", () => {
+  stream.on("confirmation_needed", (_d, seq) => {
+    if (!fresh(seq)) return;
     pendingCount.value += 1;
   });
 

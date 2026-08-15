@@ -373,6 +373,30 @@ def test_v1_events_last_event_id_query_fallback():
     asyncio.run(main())
 
 
+def test_v1_events_header_wins_over_last_event_id_query():
+    """Last-Event-ID header 与 last_event_id query 并发时 header 优先（T1 评审补测）：
+    两条断点通道并存，以浏览器原生重连带的 header 为准，query 兜底只在 header 缺席时生效。"""
+    async def main():
+        tap = EventTap(lambda m: None)
+        app = build_app(get_bridge_token=lambda: "btok", get_mobile_token=lambda: "mtok", tap=tap)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            for i in range(4):
+                tap.publish("chunk", {"text": f"帧{i}"})
+            resp = await client.get("/v1/events",
+                                    params={"token": "mtok", "last_event_id": "1"},
+                                    headers={"Last-Event-ID": "3"})
+            assert resp.status == 200
+            line = await asyncio.wait_for(resp.content.readline(), 2)
+            assert line == b"id: 4\n"  # header(3) 生效：从 3 之后补发；query(1) 被忽略
+            resp.close()
+        finally:
+            await client.close()
+
+    asyncio.run(main())
+
+
 def test_v1_push_register_route():
     """推送设备登记路由测试"""
     async def main():
