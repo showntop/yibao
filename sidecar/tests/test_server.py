@@ -2466,6 +2466,8 @@ def test_http_pair_info_ipc(tmp_path):
     """http_pair_info IPC：回 lan_ip/port/bind（桌面设置页配对 URL 用）。
     monkeypatch load_settings 隔离真实 settings.json（本机 http.bind 可能非默认值）。"""
     async def main():
+        import os
+
         import yibao_brain.server as S
 
         out = []
@@ -2482,5 +2484,6 @@ def test_http_pair_info_ipc(tmp_path):
             assert isinstance(msg["lan_ip"], str)  # 环境相关（可能空串），只断言类型与格式
         finally:
             S.load_settings = orig_load
+            os.environ.pop("YIBAO_HTTP_PORT", None)  # 防上游用例失败泄漏端口，覆盖默认 19527 断言
 
     asyncio.run(main())

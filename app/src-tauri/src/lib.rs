@@ -639,6 +639,10 @@ fn spawn_bridge(app: AppHandle, mut rx: tauri::async_runtime::Receiver<CommandEv
                             Some("settings") => {
                                 let _ = app.emit("brain-settings", v);
                             }
+                            // 手机伴生端配对信息（设置页二维码用）
+                            Some("http_pair_info") => {
+                                let _ = app.emit("brain-http-pair-info", v);
+                            }
                             // 感知日志与删除回执：sidecar 解密后整体转发，壳不持有密钥。
                             Some("perception") => {
                                 let _ = app.emit("brain-perception", v);
@@ -1117,6 +1121,12 @@ fn mem_edit(state: tauri::State<Brain>, id: String, text: String) -> Result<(), 
 #[tauri::command]
 fn get_settings(state: tauri::State<Brain>) -> Result<(), String> {
     write_to_brain(&state, serde_json::json!({ "id": 0, "type": "settings_get" }))
+}
+
+/// 手机伴生端配对信息（回 {"type":"http_pair_info"} 经 brain-http-pair-info 广播）。
+#[tauri::command]
+fn get_http_pair_info(state: tauri::State<Brain>) -> Result<(), String> {
+    write_to_brain(&state, serde_json::json!({ "id": 0, "type": "http_pair_info" }))
 }
 
 /// 用户设置写入（仅已知键生效；回 {"type":"settings"} 经 brain-settings 广播）。
@@ -2305,6 +2315,7 @@ pub fn run() {
             mem_edit,
             get_settings,
             set_settings,
+            get_http_pair_info,
             get_perception,
             perception_delete,
             perception_clear,

@@ -1,10 +1,11 @@
 <script setup lang="ts">
 // 设置页（home 大窗唯一内容）：模型/语音（保存后重启大脑生效）+ 通用/权限/数据（即时生效）。
 // 大脑只在启动时读 .env，所以模型/语音保存链路 = save_setup_config → restart_brain。
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { getVersion } from "@tauri-apps/api/app";
 import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import QRCode from "qrcode";
 import YbIcon from "./YbIcon.vue";
 import {
   getSetupConfig,
@@ -17,11 +18,14 @@ import {
   getSettingsOnce,
   setSettings,
   getFeedStatsOnce,
+  getHttpPairInfoOnce,
   distillNow,
   type BrainPermissions,
   type SettingsValues,
+  type HttpPairInfo,
 } from "../lib/brain";
 import type { TrustStats } from "../lib/brain";
+import { buildPairUrl } from "../lib/pair";
 
 // ---- 分类导航（macOS 系统设置语言）----
 // 原先 11 个分组平铺一列要滚很久，且「感知日志」「记忆管理」这种数据浏览器
@@ -111,6 +115,83 @@ async function copyToken() {
   }
   setTimeout(() => (tokenMsg.value = ""), 2000);
 }
+
+// ---- 手机伴生端（移动 token 热重置 / 局域网开关 / 配对二维码）----
+const mobileToken = ref(""); // 空 = 大脑未连接或尚未写入 http.mobile_token
+const showMobileToken = ref(false);
+const mobileMsg = ref("");
+const mobileErr = ref("");
+const maskedMobileToken = computed(() =>
+  mobileToken.value ? "•".repeat(Math.min(mobileToken.value.length, 12)) : "（大脑未连接）",
+);
+// 局域网访问开关：http.bind === "0.0.0.0" 视为开（写入后需重启大脑生效）
+const lanOpen = ref(false);
+const lanInfo = ref<HttpPairInfo | null>(null); // null = 尚未拿到（超时=大脑不在线）
+const pairQr = ref(""); // data URL；空串不显示码（无内网 IP / 生成失败）
+
+async function copyMobileToken() {
+  try {
+    await navigator.clipboard.writeText(mobileToken.value);
+    mobileMsg.value = "已复制";
+  } catch {
+    showMobileToken.value = true;
+    mobileMsg.value = "复制失败，已为你显示全文";
+  }
+  setTimeout(() => (mobileMsg.value = ""), 2000);
+}
+
+/** 重置移动 token：写新随机 32 位 hex，大脑热生效（旧手机立刻失联需重新配对）。 */
+async function resetMobileToken() {
+  mobileErr.value = "";
+  const r = await setSettings({ "http.mobile_token": crypto.randomUUID().replace(/-/g, "") });
+  if (r === null) {
+    mobileErr.value = "设置未生效（大脑不在线？）";
+    return;
+  }
+  if (typeof r["http.mobile_token"] === "string") mobileToken.value = r["http.mobile_token"];
+  mobileMsg.value = "已重置并即时生效，旧手机需重新配对";
+  setTimeout(() => (mobileMsg.value = ""), 3000);
+  void buildQr(); // token 变了二维码要重画
+}
+
+/** 局域网开关：写 http.bind；改绑定地址要重启大脑才生效（提示里说明）。 */
+async function toggleLan() {
+  mobileErr.value = "";
+  const next = !lanOpen.value;
+  lanOpen.value = next; // 乐观更新，失败回滚
+  const r = await setSettings({ "http.bind": next ? "0.0.0.0" : "127.0.0.1" });
+  if (r === null) {
+    lanOpen.value = !next;
+    mobileErr.value = "设置未生效（大脑不在线？）";
+    return;
+  }
+  mobileMsg.value = "已保存，重启大脑后生效";
+  setTimeout(() => (mobileMsg.value = ""), 3000);
+}
+
+/** 拉配对信息并重画二维码；大脑不在线/无内网 IP 时空串隐藏码。 */
+async function refreshPair() {
+  lanInfo.value = await getHttpPairInfoOnce();
+  await buildQr();
+}
+
+async function buildQr() {
+  const url = lanInfo.value ? buildPairUrl(lanInfo.value.lan_ip, lanInfo.value.port, mobileToken.value) : "";
+  if (!url) {
+    pairQr.value = "";
+    return;
+  }
+  try {
+    pairQr.value = await QRCode.toDataURL(url);
+  } catch {
+    pairQr.value = "";
+  }
+}
+
+// 每次切回「通用」分类刷新配对信息（IP/端口可能在设置页停留期间变化）
+watch(cat, (c) => {
+  if (c === "general") void refreshPair();
+});
 
 // ---- 权限（复用引导横幅的检测/授权链路，视觉收敛为设置行）----
 // home 大窗独立挂载，收不到宠物窗的 perms prop：自行订阅 brain-permissions 广播 + 挂载时主动拉一次
@@ -531,10 +612,13 @@ onMounted(async () => {
       const tp = s["tts.provider"];
       if (tp === "edge" || tp === "cosyvoice" || tp === "cosyvoice_cloud") ttsProvider.value = tp;
       if (typeof s["http.token"] === "string") bridgeToken.value = s["http.token"];
+      if (typeof s["http.mobile_token"] === "string") mobileToken.value = s["http.mobile_token"];
+      if (typeof s["http.bind"] === "string") lanOpen.value = s["http.bind"] === "0.0.0.0";
       syncSearchSettings(s);
       syncWatchSettings(s);
     }
   });
+  void refreshPair(); // 配对二维码（大脑不在线则显示提示行）
   void getFeedStatsOnce().then((s) => { trustStats.value = s; });
   // 保存触发的重启：大脑上线事件收尾行内提示（掉线过程 UI 复用对话页既有事件）
   unlistenStatus = await onBrainStatus((m) => {
@@ -703,6 +787,41 @@ onUnmounted(() => {
             <span class="s-row-value">19527（YIBAO_HTTP_PORT 可覆盖，重启大脑生效）</span>
           </div>
           <div class="s-note">安装：chrome://extensions → 开发者模式 → 加载已解压 → 选仓库 extension/ 目录；扩展选项页粘贴 token。右键或工具栏按钮即可「存素材 / 存为选题」。</div>
+        </section>
+
+        <section class="s-group">
+          <div class="s-group-title">手机伴生端</div>
+          <div class="s-row">
+            <span class="s-row-label">
+              连接 token
+              <span class="s-row-why">手机端访问凭据，与浏览器扩展 token 相互独立</span>
+            </span>
+            <span class="s-row-value">
+              <code class="bridge-token">{{ showMobileToken ? mobileToken : maskedMobileToken }}</code>
+              <button class="s-mini-btn" @click="showMobileToken = !showMobileToken">{{ showMobileToken ? "隐藏" : "显示" }}</button>
+              <button class="s-mini-btn" :disabled="!mobileToken" @click="copyMobileToken">复制</button>
+              <button class="s-mini-btn" :disabled="!mobileToken" @click="resetMobileToken">重置</button>
+            </span>
+          </div>
+          <div v-if="mobileMsg" class="s-msg ok">{{ mobileMsg }}</div>
+          <div v-if="mobileErr" class="s-msg err"><YbIcon name="alert" :size="13" />{{ mobileErr }}</div>
+          <div class="s-row">
+            <span class="s-row-label">
+              局域网访问
+              <span class="s-row-why">允许同一 WiFi 下的手机连接；关闭仅本机可访问</span>
+            </span>
+            <button class="switch" :class="{ on: lanOpen }" role="switch" :aria-checked="lanOpen" title="局域网访问" @click="toggleLan"><i /></button>
+          </div>
+          <div class="s-row">
+            <span class="s-row-label">
+              配对二维码
+              <span class="s-row-why">手机与电脑同一 WiFi，扫码直达配对页（预填地址与 token）</span>
+            </span>
+            <span class="s-row-value">
+              <img v-if="pairQr" class="pair-qr" :src="pairQr" alt="手机伴生端配对二维码" />
+              <span v-else class="pair-qr-tip">{{ lanInfo === null ? "配对信息获取中…" : "未检测到局域网 IP（网络离线或仅本机回环），暂无法生成二维码" }}</span>
+            </span>
+          </div>
         </section>
       </template>
 
@@ -1172,6 +1291,9 @@ select option {
 }
 .s-mini-btn:hover { background: var(--yb-surface-2); }
 .bridge-token { font-family: var(--yb-mono); font-size: var(--yb-fs-sm); }
+/* 手机伴生端配对二维码：固定小尺寸，提示行与码等宽对齐 */
+.pair-qr { width: 120px; height: 120px; border-radius: 6px; background: #fff; padding: 4px; }
+.pair-qr-tip { font-size: var(--yb-fs-sm); opacity: 0.75; max-width: 220px; }
 .s-note {
   font-size: var(--yb-fs-sm);
   color: var(--yb-text-dim);

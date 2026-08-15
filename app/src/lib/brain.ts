@@ -812,6 +812,8 @@ export interface SettingsValues {
   "perception.screen"?: boolean;
   "perception.distill"?: boolean;
   "http.token": string; // 浏览器扩展桥共享 token（设置页「浏览器扩展」展示供复制）
+  "http.mobile_token": string; // 手机伴生端访问 token（设置页可热重置）
+  "http.bind": string; // HTTP 面绑定地址："0.0.0.0" 局域网 / "127.0.0.1" 仅本机（重启大脑生效）
   "search.provider": "browser" | "ddg" | "searxng" | "brave" | "tavily" | "serper"; // 联网搜索通道（即时生效）
   "search.searxng_url": string; // 自建 SearXNG 实例地址
   "search.keys"?: { brave?: string; tavily?: string; serper?: string }; // 商用搜索 API key（覆盖 .env）
@@ -851,6 +853,27 @@ export async function setSettings(values: Partial<SettingsValues>, timeoutMs = 3
 /** 订阅设置变更回推（settings_set 生效后大脑广播 brain-settings）。 */
 export function onSettings(cb: (s: SettingsValues) => void): Promise<UnlistenFn> {
   return listen<{ values: SettingsValues }>("brain-settings", (ev) => cb(ev.payload.values));
+}
+
+/** 手机伴生端配对信息（sidecar 回 {"type":"http_pair_info",...} 整体转发，字段在顶层）。 */
+export interface HttpPairInfo {
+  lan_ip: string;
+  port: number;
+  bind: string;
+}
+
+/** 一次性取手机伴生端配对信息；超时返回 null。 */
+export async function getHttpPairInfoOnce(timeoutMs = 3000): Promise<HttpPairInfo | null> {
+  const resp = new Promise<HttpPairInfo | null>((resolve) => {
+    void once<HttpPairInfo>("brain-http-pair-info", (ev) => resolve(ev.payload));
+    setTimeout(() => resolve(null), timeoutMs);
+  });
+  try {
+    await invoke("get_http_pair_info");
+  } catch {
+    return null;
+  }
+  return resp;
 }
 
 // ---- 感知（默认关闭、payload 加密落盘；这里只接收 sidecar 解密后的短暂 UI 数据）----
