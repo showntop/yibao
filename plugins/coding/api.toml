@@ -58,3 +58,10 @@ name = "decide"
 handler = "coding.decide"
 direct = true
 quiet = true
+
+# @ 补全：项目文件模糊搜索（quiet 不发 panel 事件）
+[[method]]
+name = "files"
+handler = "coding.files"
+direct = true
+quiet = true

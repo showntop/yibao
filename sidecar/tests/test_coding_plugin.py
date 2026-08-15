@@ -401,13 +401,13 @@ def test_send_skill_openai_schema_shape():
 
 
 def test_make_tools_includes_send():
-    """make_tools 返回 Start/Send/Stop/List + HandoffList/HandoffBrief/History/Mode/Rewind/Decide 十件。"""
+    """make_tools 返回 Start/Send/Stop/List + HandoffList/HandoffBrief/History/Mode/Rewind/Decide/Files 十一件。"""
     tools = codingmod.make_tools(type("C", (), {"db": None, "emit_event": None})())
     ids = [t.id for t in tools]
     assert "coding.send" in ids
     assert ids == ["coding.start", "coding.send", "coding.stop", "coding.list",
                    "coding.handoff_list", "coding.handoff_brief", "coding.history",
-                   "coding.mode", "coding.rewind", "coding.decide"]
+                   "coding.mode", "coding.rewind", "coding.decide", "coding.files"]
 
 
 def test_start_skill_does_not_pass_resume(monkeypatch):
@@ -1056,3 +1056,28 @@ def test_stream_passes_can_use_tool_to_runner():
     _run(_stream(db, "s11", "/tmp/p", "hi", runner, emit_event=None,
                  cancel=_threading.Event()))
     assert callable(runner.called_with["can_use_tool"])
+
+
+# ---------- R2 Task 6: @files 上下文（FilesSkill 模糊搜索）----------
+from coding import FilesSkill  # noqa: E402
+
+
+def _ctx():
+    """FilesSkill.run 不触 ctx；沿用 _Ctx/_FakeDB 约定造最小鸭式。"""
+    return _Ctx(_FakeDB())
+
+
+def test_files_fuzzy_match_and_excludes(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "login.ts").write_text("x")
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "junk.js").write_text("x")
+    r = FilesSkill().run({"cwd": str(tmp_path), "q": "login"}, _ctx())
+    files = r.data["files"]
+    assert any(f["rel"] == "src/login.ts" for f in files)
+    assert not any("node_modules" in f["rel"] for f in files)
+
+
+def test_files_caps_results_and_bad_cwd(tmp_path):
+    r = FilesSkill().run({"cwd": str(tmp_path / "ghost"), "q": ""}, _ctx())
+    assert r.success and r.data["files"] == []

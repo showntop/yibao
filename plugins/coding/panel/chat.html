@@ -252,6 +252,12 @@
   }
   #prompt:focus { border-color: var(--border-strong); background: var(--card); }
   #prompt::placeholder { color: var(--faint); }
+  /* @ 补全下拉：textarea 容器相对定位，菜单向上展开 */
+  .prompt-wrap { position: relative; }
+  .at-menu { position: absolute; bottom: 100%; left: 0; right: 0; max-height: 200px; overflow: auto; background: var(--card); border: 1px solid var(--border); border-radius: var(--r-md); box-shadow: var(--shadow-card); z-index: 30; }
+  .at-item { padding: 6px 10px; font-family: var(--mono); font-size: 12px; cursor: pointer; }
+  .at-item.sel { background: var(--surface-2); }
+  .at-empty { padding: 8px; opacity: .6; font-size: 12px; }
   .actions { display: flex; align-items: center; gap: 8px; }
   .actions .spacer { flex: 1; }
   #status { font-size: 11.5px; color: var(--muted); min-height: 18px; flex: 1; }
@@ -403,7 +409,10 @@
 <main id="log"></main>
 
 <footer>
-  <textarea id="prompt" placeholder="描述要做的事（⌘/Ctrl + Enter 发送）；Claude Code 会在上面的项目目录里执行" rows="2"></textarea>
+  <div class="prompt-wrap">
+    <textarea id="prompt" placeholder="描述要做的事（⌘/Ctrl + Enter 发送）；Claude Code 会在上面的项目目录里执行" rows="2"></textarea>
+    <div id="at-menu" class="at-menu" hidden></div>
+  </div>
   <div class="actions">
     <button id="mode-pill" type="button" class="pill" title="点击切换权限模式">自动改文件</button>
     <span id="status"></span>
@@ -1405,7 +1414,71 @@
   $("history-overlay").addEventListener("click", function (e) {
     if (e.target === this) closeHistory();  // 点空白处收起（picker 内点击不冒泡到 overlay 的 target 判定）
   });
+  // ---- @ 补全：输入 @ 起模糊搜项目文件，↑↓ 选择，Enter 插入，Esc 关闭 ----
+  var atState = { open: false, items: [], idx: 0, query: "", start: -1 };
+  function closeAt() { atState.open = false; $("at-menu").hidden = true; }
+  function openAt() { atState.open = true; $("at-menu").hidden = false; }
+
+  function atQuery() {
+    if (!hasBridge) return;
+    var cwd = $("cwd").value.trim();
+    if (!cwd) return;
+    window.yibao.invoke("coding.files", { cwd: cwd, q: atState.query }).then(function (r) {
+      atState.items = (r && r.files) || [];
+      atState.idx = 0;
+      var m = $("at-menu");
+      m.innerHTML = "";
+      if (!atState.items.length) { m.innerHTML = "<div class=\"at-empty\">无匹配</div>"; openAt(); return; }
+      atState.items.slice(0, 12).forEach(function (f, i) {
+        var d = document.createElement("div");
+        d.className = "at-item" + (i === 0 ? " sel" : "");
+        d.textContent = f.rel;
+        d.addEventListener("mousedown", function (e) { e.preventDefault(); atInsert(f.rel); });
+        m.appendChild(d);
+      });
+      openAt();
+    }).catch(function () { closeAt(); });
+  }
+
+  function atInsert(rel) {
+    var ta = $("prompt");
+    var v = ta.value;
+    ta.value = v.slice(0, atState.start) + "@" + rel + " " + v.slice(ta.selectionStart);
+    ta.focus();
+    closeAt();
+  }
+
+  $("prompt").addEventListener("input", function () {
+    var ta = this;
+    var pos = ta.selectionStart;
+    var before = ta.value.slice(0, pos);
+    var m = before.match(/@([\w\-./]*)$/);
+    if (m) {
+      atState.start = pos - m[0].length;
+      atState.query = m[1];
+      atQuery();
+    } else if (atState.open) closeAt();
+  });
+  // capture 注册在本元素最前：菜单打开时 Enter/↑↓/Esc 在此消费（preventDefault），
+  // 下方发送处理器经 e.defaultPrevented 守卫跳过——同元素监听 stopPropagation 挡不住。
   $("prompt").addEventListener("keydown", function (e) {
+    if (!atState.open) return;
+    if (e.key === "Escape") { closeAt(); e.stopPropagation(); }
+    else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      var items = document.querySelectorAll("#at-menu .at-item");
+      if (!items.length) return;
+      items[atState.idx].classList.remove("sel");
+      atState.idx = (atState.idx + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+      items[atState.idx].classList.add("sel");
+    } else if (e.key === "Enter" && atState.items.length) {
+      e.preventDefault(); e.stopPropagation();
+      atInsert(atState.items[atState.idx].rel);
+    }
+  }, true);
+
+  $("prompt").addEventListener("keydown", function (e) {
+    if (e.defaultPrevented) return;  // @ 补全菜单已消费本次 Enter（注册在前的 capture 处理器）
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
       send();

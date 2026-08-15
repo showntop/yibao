@@ -723,8 +723,50 @@ class DecideSkill(Skill):
         return ActionResult(success=True, data={"ok": True})
 
 
+_FILES_EXCLUDE = {".git", "node_modules", "dist", "target", ".venv", "build", "out", "__pycache__", ".next", ".cache"}
+
+
+class FilesSkill(Skill):
+    id = "coding.files"
+    label = "项目文件模糊搜索"
+    description = "在 cwd 下按文件名模糊匹配（@ 补全用）：限深 6 层、限 200 条、排除依赖/构建目录。"
+    default_risk = RiskLevel.L0_READONLY
+
+    def openai_schema(self) -> dict:
+        return {"type": "function", "function": {"name": self.id, "description": self.description,
+                "parameters": {"type": "object",
+                    "properties": {"cwd": {"type": "string"}, "q": {"type": "string"}},
+                    "required": ["cwd"]}}}
+
+    def run(self, params: dict, ctx: Any) -> ActionResult:
+        cwd = os.path.expanduser(str(params.get("cwd") or "").strip())
+        q = str(params.get("q") or "").strip().lower()
+        out: list[dict] = []
+        if not os.path.isdir(cwd):
+            return ActionResult(success=True, data={"files": []})
+        try:
+            for root, dirs, files in os.walk(cwd):
+                rel_root = os.path.relpath(root, cwd)
+                depth = 0 if rel_root == "." else rel_root.count(os.sep) + 1
+                dirs[:] = [d for d in dirs if d not in _FILES_EXCLUDE and not d.startswith(".")]
+                if depth >= 6:
+                    dirs[:] = []
+                for name in files:
+                    if name.startswith("."):
+                        continue
+                    rel = name if rel_root == "." else f"{rel_root}/{name}"
+                    if q and q not in rel.lower():
+                        continue
+                    out.append({"path": os.path.join(root, name), "rel": rel})
+                    if len(out) >= 200:
+                        return ActionResult(success=True, data={"files": out})
+        except Exception as e:
+            print(f"[yibao/coding] files 遍历失败（截断返回）：{e}", file=sys.stderr)
+        return ActionResult(success=True, data={"files": out})
+
+
 def make_tools(ctx: Any) -> list[Skill]:
     """插件加载器入口（_load_code_tools 遍历 skills/*.py 调本函数）。"""
     return [StartSkill(), SendSkill(), StopSkill(), ListSkill(),
             HandoffListSkill(), HandoffBriefSkill(), HistorySkill(), ModeSkill(),
-            RewindSkill(), DecideSkill()]
+            RewindSkill(), DecideSkill(), FilesSkill()]
