@@ -1026,6 +1026,8 @@
     d.className = "think-block";
     d.innerHTML = "<span class=\"think-tag\">思考</span>" + esc(text);
     bubble.appendChild(d);
+    // thinking 晚于文本到达时触发重渲——renderBubble 会把 think-block 摘出插回顶部
+    scheduleBubbleRender(bubble);
     scrollIfAtBottom();
   }
 
@@ -1099,6 +1101,7 @@
         // runner 回流的用户消息（replay-user-messages）：画带 uuid 的用户气泡（⏪ 回滚锚点）。
         // send() 不再直接画气泡，由本事件画；事件到达清掉 1.5s 兜底 timer（防双份）。
         if (pendingUserEcho) { clearTimeout(pendingUserEcho); pendingUserEcho = null; }
+        if (currentBubble) finalizeBubble(currentBubble);  // 切断前终渲（长消息护栏下的气泡不留纯文本）
         currentBubble = null;  // 用户气泡切断 assistant 流
         // 兜底气泡已画出（冷启动 > 1.5s 事件迟到）且文本一致 → 原地升级挂 ⏪，不再画第二份；
         // 不匹配（或气泡已随 #log 清空 detach）→ 清掉记忆，走正常路径画新气泡。
@@ -1122,10 +1125,12 @@
         break;
       case "file_edit":
         // 非文本事件切断当前文本气泡：下次 text_delta 起新气泡
+        if (currentBubble) finalizeBubble(currentBubble);
         currentBubble = null;
         appendFileEdit(ev);
         break;
       case "tool_use":
+        if (currentBubble) finalizeBubble(currentBubble);
         currentBubble = null;
         appendToolUse(ev);
         break;
@@ -1133,6 +1138,7 @@
         appendToolResult(ev);
         break;
       case "permission_request":
+        if (currentBubble) finalizeBubble(currentBubble);
         currentBubble = null;
         appendPermission(ev);
         break;
