@@ -325,3 +325,52 @@ def test_v1_push_register_route():
 
     asyncio.run(main())
 
+
+def test_cors_preflight_204_without_token():
+    async def main():
+        app = build_app(bridge_token="btok", mobile_token="mtok", tap=EventTap(lambda m: None))
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            r = await client.options("/v1/chat", headers={
+                "Origin": "capacitor://localhost",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type, x-yibao-token"})
+            assert r.status == 204  # 预检无自定义 token 头，不能被 auth 拦
+            assert r.headers["Access-Control-Allow-Origin"] == "capacitor://localhost"
+            assert "x-yibao-token" in r.headers["Access-Control-Allow-Headers"].lower()
+        finally:
+            await client.close()
+
+    asyncio.run(main())
+
+
+def test_cors_reflects_on_auth_failure_and_allows_localhost_any_port():
+    async def main():
+        app = build_app(bridge_token="btok", mobile_token="mtok", tap=EventTap(lambda m: None))
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            r = await client.get("/v1/health", headers={"Origin": "http://localhost:5173", "X-Yibao-Token": "bad"})
+            assert r.status == 401
+            assert r.headers["Access-Control-Allow-Origin"] == "http://localhost:5173"  # 401 也要带（客户端要能读到状态码）
+        finally:
+            await client.close()
+
+    asyncio.run(main())
+
+
+def test_cors_foreign_origin_gets_nothing():
+    async def main():
+        app = build_app(bridge_token="btok", mobile_token="mtok", tap=EventTap(lambda m: None))
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            r = await client.get("/v1/health", headers={"Origin": "http://evil.com", "X-Yibao-Token": "mtok"})
+            assert r.status == 200
+            assert "Access-Control-Allow-Origin" not in r.headers
+        finally:
+            await client.close()
+
+    asyncio.run(main())
+

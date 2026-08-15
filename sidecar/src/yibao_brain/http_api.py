@@ -154,10 +154,51 @@ class MobileDeps:
 _VERSION = "1"
 
 
+def _cors_allow(origin: str | None) -> str | None:
+    """移动端 origin 白名单（反射式）：Capacitor iOS=capacitor://localhost、
+    Android=http://localhost、开发浏览器=http://localhost:任意端口 / 127.0.0.1:任意端口。
+    其余 origin 不给 CORS 头（浏览器自会拦截）。"""
+    if not origin:
+        return None
+    if origin.startswith("capacitor://"):
+        return origin
+    from urllib.parse import urlparse
+
+    try:
+        u = urlparse(origin)
+    except ValueError:
+        return None
+    if u.scheme in ("http", "https") and u.hostname in ("localhost", "127.0.0.1"):
+        return origin
+    return None
+
+
+def _cors_headers(allow: str) -> dict:
+    return {
+        "Access-Control-Allow-Origin": allow,
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        # Last-Event-ID：EventSource 断线重连带的头，不在 CORS 安全清单里，预检必查
+        "Access-Control-Allow-Headers": "Content-Type, X-Yibao-Token, Last-Event-ID",
+        "Access-Control-Max-Age": "600",
+    }
+
+
 def build_app(*, bridge_token: str, mobile_token: str, tap: EventTap,
               limiter: RateLimiter | None = None, deps: MobileDeps | None = None) -> web.Application:
     limiter = limiter or RateLimiter()
     deps = deps or MobileDeps()
+
+    @web.middleware
+    async def _cors(request: web.Request, handler):
+        """CORS 外层中间件：预检直接 204（无自定义头，auth 拦不得）；
+        其余响应按白名单反射 Origin——401/429 也要带，客户端要能读状态。"""
+        allow = _cors_allow(request.headers.get("Origin"))
+        if request.method == "OPTIONS" and allow:
+            return web.Response(status=204, headers=_cors_headers(allow))
+        resp = await handler(request)
+        if allow:
+            resp.headers.update(_cors_headers(allow))
+        return resp
 
     @web.middleware
     async def _auth(request: web.Request, handler):
@@ -175,7 +216,7 @@ def build_app(*, bridge_token: str, mobile_token: str, tap: EventTap,
             return web.json_response({"ok": False, "error": "token 不对"}, status=401)
         return await handler(request)
 
-    app = web.Application(middlewares=[_auth])
+    app = web.Application(middlewares=[_cors, _auth])
 
     async def health(request):
         return web.json_response({"ok": True, "service": "yibao-bridge"})
