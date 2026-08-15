@@ -31,6 +31,21 @@ export function useChat(
   const error = ref("");
   const stream = useEventStream(url, makeES);
   const busy = computed(() => messages.value.some((m) => m.role === "assistant" && !m.done));
+  // 待批角标：confirmation_needed 广播帧无 surface 信封（桌面发起的手机也要看到），
+  // 帧 +1 只做「有新增」的提示；真实数目以 syncPendingCount 的 /v1/state 全量为准
+  const pendingCount = ref(0);
+
+  async function syncPendingCount(): Promise<void> {
+    try {
+      const r = await fetchImpl(`${conn.host}/v1/state`, {
+        headers: { "X-Yibao-Token": conn.token },
+      });
+      if (!r.ok) return;
+      const body = (await r.json()) as { pending?: unknown[] };
+      pendingCount.value = body.pending?.length ?? 0;
+    } catch { /* 拉取失败不动计数：角标宁可滞后不误清 */ }
+  }
+  void syncPendingCount(); // 构造时拉一次（run_done 等帧不动计数，只靠帧 +1 与 sync 收敛）
 
   // 只认 surface==="mobile" 的帧（P1 信封字段；桌面/面板事件不进手机气泡）
   const mine = (d: { surface?: string }) => d.surface === "mobile";
@@ -65,6 +80,10 @@ export function useChat(
   // 排队 notice（手机跨 surface 时 server 发「另一个窗口还在说…」）：写入提示位，气泡 pending 才有解释
   stream.on("notice", (d) => {
     if (mine(d) && d.text) error.value = d.text;
+  });
+  // 新待批到达（任意 surface 发起）：角标 +1（数目由 syncPendingCount 校准）
+  stream.on("confirmation_needed", () => {
+    pendingCount.value += 1;
   });
 
   async function send(text: string): Promise<void> {
@@ -107,5 +126,5 @@ export function useChat(
 
   stream.start(); // 构造即连接（测试不显式 start；Chat.vue 重复调用无害——start 先 stop 再建）
 
-  return { conn, stream, messages, busy, conversationId, error, send, interrupt, newChat };
+  return { conn, stream, messages, busy, conversationId, error, pendingCount, syncPendingCount, send, interrupt, newChat };
 }

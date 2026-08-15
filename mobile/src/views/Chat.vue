@@ -27,6 +27,7 @@ onMounted(async () => {
   const conn = await loadConn();
   if (!conn) return router.replace("/pairing");
   chat.value = useChat(conn); // 构造即 start，无需再显式连
+  void chat.value.syncPendingCount(); // 从审批页返回也会重跑（onMounted 每次进页触发）
 });
 onUnmounted(() => {
   window.clearTimeout(retryTimer);
@@ -53,6 +54,10 @@ async function rePair() {
     <header class="head">
       <ConnBar :state="chat.stream.state.value" />
       <div class="actions">
+        <!-- 待批角标：有待批才显示，点进审批页处理 -->
+        <router-link v-if="chat.pendingCount.value > 0" class="badge" to="/approvals">
+          ⏳ {{ chat.pendingCount.value }}
+        </router-link>
         <button class="ghost" @click="chat.newChat()">新对话</button>
         <button class="ghost" @click="rePair">重新配对</button>
       </div>
@@ -83,7 +88,8 @@ async function rePair() {
 .chat { display: flex; flex-direction: column; height: 100dvh; }
 .head { display: flex; justify-content: space-between; align-items: center; }
 .ghost { background: none; border: none; color: #2f6fed; font-size: 14px; }
-.actions { display: flex; gap: 4px; }
+.actions { display: flex; gap: 4px; align-items: center; }
+.badge { font-size: 13px; color: #b25000; background: rgba(255, 159, 10, 0.15); border-radius: 10px; padding: 3px 8px; text-decoration: none; }
 .list { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 .msg { max-width: 82%; padding: 10px 12px; border-radius: 14px; font-size: 15px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
 .msg.user { align-self: flex-end; background: #2f6fed; color: #fff; }

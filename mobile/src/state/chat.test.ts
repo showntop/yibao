@@ -77,6 +77,39 @@ describe("useChat", () => {
     emit("notice", { kind: "notice", surface: "desktop", text: "桌面 notice" });
     expect(chat.error.value).toBe("另一个窗口还在说，等它说完…");
   });
+
+  it("待批角标：构造拉 /v1/state 计数；confirmation_needed 帧 +1；syncPendingCount 重置", async () => {
+    const listeners = new Map<string, (e: { data: string }) => void>();
+    const es: EventSourceLike = {
+      addEventListener: (k, cb) => listeners.set(k, cb),
+      close: vi.fn(),
+      onopen: () => {},
+      onerror: () => {},
+    };
+    let pendingN = 1; // 构造时已有 1 条待批
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url.endsWith("/v1/state")) {
+        return new Response(JSON.stringify({ ok: true, running: null,
+          pending: Array.from({ length: pendingN }, (_, i) => ({ id: `pa_${i}`, skill_id: "s", summary: "x", risk: 3, created_at: 1 })) }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ ok: true, run_id: "mob_1", conversation_id: "" }), { status: 200 });
+    });
+    const chat = useChat(
+      { host: "http://x", token: "t" } as ConnConfig,
+      () => "u",
+      () => es,
+      fetchImpl as unknown as typeof fetch,
+    );
+    const emit = (k: string, data: unknown) => listeners.get(k)?.({ data: JSON.stringify(data) });
+    await new Promise((r) => setTimeout(r, 0)); // 等构造时的首次计数落地
+    expect(chat.pendingCount.value).toBe(1);
+    emit("confirmation_needed", {}); // 桌面又发起一条待批 → +1
+    emit("confirmation_needed", {});
+    expect(chat.pendingCount.value).toBe(3);
+    pendingN = 0; // 桌面已全部处理 → sync 拉回 0（从审批页返回 Chat 时会重跑）
+    await chat.syncPendingCount();
+    expect(chat.pendingCount.value).toBe(0);
+  });
 });
 
 describe("uuid（非安全上下文降级）", () => {

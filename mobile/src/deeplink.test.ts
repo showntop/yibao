@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { handlePairUrl } from "./deeplink";
+import { handlePairUrl, parseDeepPath } from "./deeplink";
 
 const passConn = vi.fn(async () => ({ ok: true }));
 const failConn = vi.fn(async () => ({ ok: false, reason: "连不上" }));
@@ -51,5 +51,23 @@ describe("handlePairUrl", () => {
     expect(ok).toBe(false);
     expect(save).not.toHaveBeenCalled();
     expect(push).not.toHaveBeenCalled();
+  });
+});
+
+describe("parseDeepPath", () => {
+  it("配对深链 → {kind:pair, host, token}", () => {
+    expect(parseDeepPath("yibao://pair?host=http%3A%2F%2F127.0.0.1%3A19527&token=abc"))
+      .toEqual({ kind: "pair", host: "http://127.0.0.1:19527", token: "abc" });
+  });
+
+  it("审批深链 yibao://approvals → {kind:approvals}", () => {
+    expect(parseDeepPath("yibao://approvals")).toEqual({ kind: "approvals" });
+  });
+
+  it("未知路径/非法 URL → null", () => {
+    expect(parseDeepPath("yibao://chat")).toBeNull();
+    expect(parseDeepPath("yibao://settings?x=1")).toBeNull();
+    expect(parseDeepPath("https://example.com/approvals")).toBeNull();
+    expect(parseDeepPath("不是 URL")).toBeNull();
   });
 });

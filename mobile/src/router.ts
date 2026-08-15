@@ -8,6 +8,7 @@ export const router = createRouter({
     { path: "/", redirect: "/chat" },
     { path: "/pairing", component: () => import("./views/Pairing.vue") },
     { path: "/chat", component: () => import("./views/Chat.vue") },
+    { path: "/approvals", component: () => import("./views/Approvals.vue") },
   ],
 });
 
