@@ -1093,11 +1093,9 @@ async def serve_async(
     _MOB_SEQ = itertools.count(1)
 
     def _submit_run(text: str, conversation_id: str) -> dict:
-        """手机 /v1/chat 受理：surface=mobile（不抢桌宠，桌宠也不抢手机）。"""
+        """手机 /v1/chat 受理：surface=mobile（不抢桌宠，桌宠也不抢手机）。
+        不消费 invoke_ctx：那是桌面截图唤起的一次性上下文，留给桌面下一次 run。"""
         rid = f"mob_{next(_MOB_SEQ)}"
-        ctx_text = _consume_invoke_context(invoke_ctx)
-        if ctx_text:
-            text = f"[屏幕上下文] {ctx_text}\n\n{text}"
         start = lambda c, t=text, r=rid, ci=conversation_id: _drive_run(t, r, c, "mobile", ci)
         print(f"[yibao] run 受理 rid={rid} surface=mobile conv={conversation_id}：{text[:30]!r}", file=sys.stderr)
         _schedule_run("mobile", rid, start)

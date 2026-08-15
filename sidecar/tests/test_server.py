@@ -2333,12 +2333,76 @@ def test_mobile_end_to_end_sse_receives_stream(tmp_path):
                     chunk = await asyncio.wait_for(events.content.read(64), 2)
                     buf += chunk
                 assert b"final_reply" in buf  # 流式回复帧（kind=final_reply 或 final_reply_chunk）
+                assert b'"surface": "mobile"' in buf  # 帧带信封归属字段（spec §4.3）
                 assert b"run_done" in buf
                 events.close()
         finally:
             S.load_settings = orig_load
             os.environ.pop("YIBAO_HTTP_PORT", None)
             _held_reader_done()
+            await asyncio.wait_for(serve_task, 5)
+
+    asyncio.run(main())
+
+
+def test_mobile_chat_does_not_consume_invoke_context(tmp_path):
+    """手机 /v1/chat 不消费截图唤起上下文：invoke_ctx 是桌面截图唤起的一次性暂存，
+    手机偷吃会让桌面下一次 run 拿不到、还会把 [屏幕上下文] 注进手机回复。
+    断言：手机回复（事件与 LLM 输入）均不含 [屏幕上下文]，且随后的桌面 run 仍拿到它。"""
+    import os
+    import queue as _q
+
+    os.environ["YIBAO_HTTP_PORT"] = "19866"
+    provider = FakeProvider(text="手机回复")
+    import yibao_brain.server as S
+
+    orig_load = S.load_settings
+    S.load_settings = lambda: {"http.token": "btok", "http.mobile_token": "mtok"}
+    inbox = _q.Queue()
+
+    async def main():
+        out = []
+        serve_task = asyncio.ensure_future(S.serve_async(
+            inbox.get, lambda m: out.append(m), use_real=False,
+            db_path=str(tmp_path / "ic.db"), provider=provider, http_enabled=True,
+            invoke_context_text="用户在看 VS Code 的报错弹窗"))
+        try:
+            await asyncio.sleep(0.4)  # 等服务起
+            import aiohttp
+
+            async with aiohttp.ClientSession() as sess:
+                async with sess.post("http://127.0.0.1:19866/v1/chat",
+                                     headers={"X-Yibao-Token": "mtok"},
+                                     json={"text": "你好", "conversation_id": "c1"}) as r:
+                    body = await r.json()
+                    assert r.status == 200 and body["run_id"].startswith("mob_")
+            for _ in range(100):
+                if any(m.get("type") == "run_done" and m.get("id") == body["run_id"] for m in out):
+                    break
+                await asyncio.sleep(0.05)
+            # 手机 run 的 LLM 输入与回复事件都不含 [屏幕上下文]
+            assert provider.astream_calls
+            mobile_msgs = provider.astream_calls[0]["messages"]
+            assert not any("[屏幕上下文]" in str(m.get("content")) for m in mobile_msgs), mobile_msgs
+            finals = [m["event"].get("text") for m in out
+                      if m.get("type") == "event" and m.get("surface") == "mobile"
+                      and m["event"].get("kind") in ("final_reply", "final_reply_chunk")]
+            assert finals and not any("[屏幕上下文]" in (t or "") for t in finals), finals
+
+            # 桌面 run 仍能拿到（未被手机消费）
+            inbox.put({"id": 21, "type": "run", "surface": "pet", "text": "桌面问"})
+            for _ in range(100):
+                if any(m.get("type") == "run_done" and m.get("id") == 21 for m in out):
+                    break
+                await asyncio.sleep(0.05)
+            assert len(provider.astream_calls) >= 2
+            desktop_msgs = provider.astream_calls[1]["messages"]
+            assert any("[屏幕上下文] 用户在看 VS Code 的报错弹窗" in str(m.get("content"))
+                       for m in desktop_msgs), desktop_msgs
+        finally:
+            S.load_settings = orig_load
+            os.environ.pop("YIBAO_HTTP_PORT", None)
+            inbox.put(None)  # 结束 stdin 读线程
             await asyncio.wait_for(serve_task, 5)
 
     asyncio.run(main())

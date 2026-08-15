@@ -26,6 +26,15 @@ def _sse_frame(seq: int, event: str, data: str) -> bytes:
     return f"id: {seq}\nevent: {event}\ndata: {data}\n\n".encode()
 
 
+def _with_envelope(msg: dict, data: dict) -> dict:
+    """帧 data 并入外层信封字段（有才带）：客户端按 surface/conversation_id 挑着渲染（spec §4.3）。"""
+    if msg.get("surface") is not None:
+        data["surface"] = msg["surface"]
+    if msg.get("conversation_id"):
+        data["conversation_id"] = msg["conversation_id"]
+    return data
+
+
 class EventTap:
     """事件分接头：包装 write_msg——stdio 照发，同时把 event/run_done 消息复制成
     SSE 帧（单调 seq + 环形缓冲，Last-Event-ID 断点补发）。
@@ -45,9 +54,9 @@ class EventTap:
         self._write(msg)
         if msg.get("type") == "event":
             ev = msg.get("event") or {}
-            self.publish(str(ev.get("kind") or "event"), ev)
+            self.publish(str(ev.get("kind") or "event"), _with_envelope(msg, dict(ev)))
         elif msg.get("type") == "run_done":
-            self.publish("run_done", {"id": msg.get("id")})
+            self.publish("run_done", _with_envelope(msg, {"id": msg.get("id")}))
 
     def publish(self, event: str, data: dict) -> int:
         """发布一帧（带外主动帧也走这里）。返回 seq。close 后不再投递订阅者。"""

@@ -20,7 +20,26 @@ def test_tap_passes_through_and_frames_event_and_run_done():
     assert frames[0][0] == 1 and frames[1][0] == 2  # seq 单调
     import json
     assert json.loads(frames[0][2])["kind"] == "final_reply_chunk"
-    assert json.loads(frames[1][2]) == {"id": "r1"}
+    assert json.loads(frames[0][2])["surface"] == "mobile"  # 信封字段并入帧 data（spec §4.3）
+    assert json.loads(frames[1][2]) == {"id": "r1"}  # run_done 无信封字段时保持原样
+
+
+def test_tap_event_frame_carries_envelope_fields():
+    """经 tap 的 event 帧 data 并入信封字段（有才带）：客户端按 surface/conversation_id
+    挑着渲染（spec §4.3）；run_done 分支同样并入；内层 event 缺省字段不造键。"""
+    import json
+
+    tap = EventTap(lambda m: None)
+    tap({"type": "event", "surface": "pet", "conversation_id": "c7",
+         "event": {"kind": "final_reply_chunk", "text": "hi"}})
+    tap({"type": "run_done", "id": "r2", "surface": "mobile", "conversation_id": "c7"})
+    tap({"type": "event", "event": {"kind": "thinking"}})  # 无信封：帧 data 不含这些键
+    f1, f2, f3 = tap.replay(0)
+    assert json.loads(f1[2]) == {"kind": "final_reply_chunk", "text": "hi",
+                                 "surface": "pet", "conversation_id": "c7"}
+    assert json.loads(f2[2]) == {"id": "r2", "surface": "mobile", "conversation_id": "c7"}
+    d3 = json.loads(f3[2])
+    assert d3 == {"kind": "thinking"}
 
 
 def test_tap_replay_from_last_seq_only():
