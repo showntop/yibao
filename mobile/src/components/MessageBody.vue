@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { marked, type Tokens } from "marked";
+import { Marked, type Tokens } from "marked";
 import DOMPurify from "dompurify";
 
 const props = defineProps<{ text: string }>();
@@ -9,10 +9,13 @@ const props = defineProps<{ text: string }>();
 // token.text 为原始码文（escaped=false 时）——自行转义防把代码当 HTML 注入。
 const escapeHtml = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-marked.use({
+// 局部实例：marked.use() 会污染全局单例（同包其他 marked 使用者一并被改渲染器），
+// new Marked() 的 options 只作用于本实例，未覆写的方法仍走默认渲染
+const md = new Marked({
   renderer: {
     code({ text, lang, escaped }: Tokens.Code): string {
-      const l = (lang || "").trim().split(/\s+/)[0] ?? "";
+      // fence 信息串做字符白名单（字母数字_-）：防语言标识里夹带的字符进 class 属性值
+      const l = ((lang || "").trim().split(/\s+/)[0] ?? "").replace(/[^\w-]/g, "");
       const body = escaped ? text : escapeHtml(text);
       return `<pre><button class="copy-btn" type="button">复制</button><code${l ? ` class="language-${l}"` : ""}>${body}</code></pre>`;
     },
@@ -21,7 +24,7 @@ marked.use({
 
 // marked 解析 + DOMPurify 清毒（USE_PROFILES html：剥事件属性/脚本，保常规标签）
 const html = computed(() =>
-  DOMPurify.sanitize(marked.parse(props.text, { async: false }), {
+  DOMPurify.sanitize(md.parse(props.text, { async: false }), {
     USE_PROFILES: { html: true },
   }),
 );
@@ -51,10 +54,16 @@ function onClick(e: MouseEvent): void {
   const btn = (e.target as HTMLElement)?.closest?.(".copy-btn");
   if (!(btn instanceof HTMLElement)) return;
   const code = btn.closest("pre")?.querySelector("code")?.textContent ?? "";
-  void copyText(code).then(() => {
-    btn.textContent = "已复制";
-    window.setTimeout(() => (btn.textContent = "复制"), 1500); // 短暂确认后复原
-  });
+  void copyText(code)
+    .then(() => {
+      btn.textContent = "已复制";
+    })
+    .catch(() => {
+      btn.textContent = "复制失败"; // 剪贴板被拒（权限/非手势上下文）：如实提示，不误示已复制
+    })
+    .finally(() => {
+      window.setTimeout(() => (btn.textContent = "复制"), 1500); // 短暂确认后复原
+    });
 }
 </script>
 

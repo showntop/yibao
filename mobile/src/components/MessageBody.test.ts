@@ -46,4 +46,25 @@ describe("MessageBody", () => {
     await vi.advanceTimersByTimeAsync(1600);
     expect(btn.textContent).toBe("复制");
   });
+
+  it("复制失败：剪贴板拒绝时按钮短示「复制失败」，随后复原（不误示已复制）", async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error("denied"));
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    vi.useFakeTimers();
+    const w = mount(MessageBody, { props: { text: "```js\nx=1\n```" } });
+    const btn = w.element.querySelector(".copy-btn") as HTMLElement;
+    btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(writeText).toHaveBeenCalledWith("x=1");
+    expect(btn.textContent).toBe("复制失败");
+    await vi.advanceTimersByTimeAsync(1600);
+    expect(btn.textContent).toBe("复制");
+  });
+
+  it("fence 语言标识白名单转义：非法字符不进 class（防属性值夹带）", () => {
+    const w = mount(MessageBody, { props: { text: '```js onload=alert(1)\nx=1\n```' } });
+    const code = w.element.querySelector("pre code") as HTMLElement;
+    expect(code.className).toBe("language-js"); // 只留字母数字连字符下划线
+    expect(code.className).toMatch(/^[\w-]*$/);
+  });
 });

@@ -75,7 +75,41 @@ describe("useEventStream", () => {
     expect(stream.lastSeq.value).toBe(5);
     f.emit("final_reply_chunk", { text: "二" }, "9");
     expect(stream.lastSeq.value).toBe(9);
-    f.emit("final_reply_chunk", { text: "三" }, "3"); // 乱序旧帧：lastSeq 不回退（重连 URL 断点不倒退）
+    f.emit("final_reply_chunk", { text: "三" }, "3"); // 同连接乱序旧帧：lastSeq 不回退（重连 URL 断点不倒退）
     expect(stream.lastSeq.value).toBe(9);
+  });
+
+  it("重启聋窗：新连接首帧 seq < lastSeq → 帧照常分发且 lastSeq 归位", () => {
+    const f1 = fakeES();
+    const f2 = fakeES();
+    let cur = f1; // makeES 每次连接取当前 fake（重连 = 新连接新对象）
+    const stream = useEventStream(() => "u", () => cur.es);
+    stream.start();
+    f1.emit("final_reply_chunk", { text: "旧纪元" }, "500");
+    expect(stream.lastSeq.value).toBe(500);
+    const chunk = vi.fn();
+    stream.on("final_reply_chunk", chunk);
+    cur = f2;
+    stream.start(); // 服务端重启后重连：新连接
+    f2.emit("final_reply_chunk", { text: "新纪元" }, "3"); // 首帧 seq 回卷（新纪元从低位重计）
+    // 帧不被吞（分发照常）——吞帧判定在 chat 层，这里保证 events 层不因旧水位拦截
+    expect(chunk).toHaveBeenCalledWith({ text: "新纪元" }, 3);
+    // 断点归位：仍挂 500 会让下次重连带 last_event_id=500 而新纪元帧全在其下 → 永久聋窗
+    expect(stream.lastSeq.value).toBe(3);
+    f2.emit("final_reply_chunk", { text: "顺推" }, "4");
+    expect(stream.lastSeq.value).toBe(4); // 归位后正常只增
+  });
+
+  it("新连接首帧 seq 未回卷（≥ lastSeq）→ lastSeq 正常前推，无归位副作用", () => {
+    const f1 = fakeES();
+    const f2 = fakeES();
+    let cur = f1;
+    const stream = useEventStream(() => "u", () => cur.es);
+    stream.start();
+    f1.emit("final_reply_chunk", { text: "一" }, "500");
+    cur = f2;
+    stream.start();
+    f2.emit("final_reply_chunk", { text: "补帧" }, "501"); // 断点续传的正常形态：首帧即新帧
+    expect(stream.lastSeq.value).toBe(501);
   });
 });

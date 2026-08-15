@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, shallowRef, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from "vue";
 import { useRouter } from "vue-router";
 import { loadConn, clearConn } from "../api/connection";
 import { useChat } from "../state/chat";
+import { useSessions } from "../state/sessions";
 import ConnBar from "../components/ConnBar.vue";
 import MessageBody from "../components/MessageBody.vue";
 
@@ -10,6 +11,10 @@ const router = useRouter();
 const input = ref("");
 // shallowRef：onMounted 里赋值要触发重渲染（普通 let 赋值模板不更新）
 const chat = shallowRef<ReturnType<typeof useChat> | null>(null);
+const sessions = shallowRef<ReturnType<typeof useSessions> | null>(null);
+const drawerOpen = ref(false);
+// 抽屉列表快照（computed 解开双层 ref，模板/vue-tsc 都省事）
+const sessionList = computed(() => sessions.value?.list.value ?? []);
 
 // 兜底重连：浏览器实测 EventSource 断线重连若落在服务端下线窗口（CORS 归类为致命），
 // Chromium 不再自愈——state 停留 error。5s 后手动 start() 重建连接；open 即取消。
@@ -28,12 +33,28 @@ onMounted(async () => {
   const conn = await loadConn();
   if (!conn) return router.replace("/pairing");
   chat.value = useChat(conn); // 构造即 start，无需再显式连
+  sessions.value = useSessions(conn);
   void chat.value.syncPendingCount(); // 从审批页返回也会重跑（onMounted 每次进页触发）
 });
 onUnmounted(() => {
   window.clearTimeout(retryTimer);
   chat.value?.stream.stop();
 });
+
+// 打开会话抽屉：每次都重新拉列表（服务端桶随时在变，列表很便宜）
+function openDrawer(): void {
+  drawerOpen.value = true;
+  void sessions.value?.refresh();
+}
+
+// 点选会话：拉历史 → 重建消息 → 切 conversationId（后续 send 落到该桶）
+async function pickSession(cid: string): Promise<void> {
+  if (!chat.value || !sessions.value) return;
+  const items = await sessions.value.open(cid);
+  chat.value.loadHistory(items);
+  chat.value.conversationId.value = cid;
+  drawerOpen.value = false;
+}
 
 async function onSend() {
   if (!chat.value || !input.value.trim()) return;
@@ -59,6 +80,7 @@ async function rePair() {
         <router-link v-if="chat.pendingCount.value > 0" class="badge" to="/approvals">
           ⏳ {{ chat.pendingCount.value }}
         </router-link>
+        <button class="ghost" @click="openDrawer">历史</button>
         <button class="ghost" @click="chat.newChat()">新对话</button>
         <button class="ghost" @click="rePair">重新配对</button>
       </div>
@@ -83,6 +105,32 @@ async function rePair() {
       />
       <button class="send" :disabled="!input.trim() || chat.busy.value" @click="onSend">发送</button>
     </footer>
+
+    <!-- 会话抽屉：覆层点空白关闭；列表项 = preview 两行截断 + 桶内消息数 -->
+    <div v-if="drawerOpen" class="mask" @click.self="drawerOpen = false">
+      <aside class="drawer">
+        <header class="d-head">
+          <h2>历史会话</h2>
+          <button class="ghost" @click="drawerOpen = false">关闭</button>
+        </header>
+        <div class="d-list">
+          <p v-if="sessionList.length === 0" class="d-empty">
+            {{ sessions?.loading.value ? "正在拉取…" : "还没有历史会话" }}
+          </p>
+          <button
+            v-for="s in sessionList"
+            :key="s.id"
+            class="d-item"
+            :class="{ cur: s.id === chat.conversationId.value }"
+            @click="pickSession(s.id)"
+          >
+            <span class="d-preview">{{ s.preview || "（无内容）" }}</span>
+            <span class="d-turns">{{ s.turns }} 条消息</span>
+          </button>
+        </div>
+        <p class="d-note">每个会话只保留最近 10 轮，回显即最近上下文</p>
+      </aside>
+    </div>
   </div>
   <p v-else style="padding:24px">加载中…</p>
 </template>
@@ -107,4 +155,18 @@ async function rePair() {
 .send { background: #2f6fed; color: #fff; }
 .send:disabled { opacity: 0.4; }
 @keyframes blink { 50% { opacity: 0; } }
+.mask { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); z-index: 20; display: flex; justify-content: flex-end; }
+.drawer { width: min(78vw, 320px); height: 100%; background: var(--bg, #fff); display: flex; flex-direction: column;
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.18); }
+.d-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px 8px; }
+.d-head h2 { font-size: 16px; margin: 0; }
+.d-list { flex: 1; overflow-y: auto; padding: 4px 8px; display: flex; flex-direction: column; gap: 6px; }
+.d-empty { color: #888; font-size: 14px; padding: 16px 8px; }
+.d-item { display: flex; flex-direction: column; gap: 4px; align-items: stretch; text-align: left; padding: 10px 12px;
+  border: none; border-radius: 12px; background: rgba(128, 128, 128, 0.08); }
+.d-item.cur { background: rgba(47, 111, 237, 0.14); }
+.d-preview { font-size: 14px; line-height: 1.4; overflow: hidden; display: -webkit-box;
+  -webkit-box-orient: vertical; -webkit-line-clamp: 2; } /* 两行截断 */
+.d-turns { font-size: 11px; color: #999; }
+.d-note { margin: 0; padding: 8px 14px calc(10px + env(safe-area-inset-bottom)); font-size: 11px; color: #aaa; }
 </style>

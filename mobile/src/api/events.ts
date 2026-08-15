@@ -44,13 +44,21 @@ export function useEventStream(
     state.value = "connecting";
     es.onopen = () => (state.value = "open");
     es.onerror = () => (state.value = "error"); // 原生 EventSource 自动重连，连上会再触发 onopen
+    // 新连接首帧标记：跨连接后 seq 变小 = 服务端 seq 回卷（重启新纪元）。旧 lastSeq
+    // 若不下调，下次重连 URL 仍带 last_event_id=旧高位，而新纪元帧序全在高位之下 →
+    // 服务端 replay 永远空转、chat 层旧水位也吞帧——重启聋窗。首帧处把断点归位。
+    let firstFrame = true;
     for (const kind of KNOWN_KINDS) {
       es.addEventListener(kind, (e) => {
         try {
           const data = JSON.parse(e.data);
           // SSE 帧 id 行 → e.lastEventId（服务端每帧必带）；解析失败按 0（无序号帧，不参与去重）
           const seq = parseInt(e.lastEventId, 10) || 0;
-          if (seq > lastSeq.value) lastSeq.value = seq;
+          if (seq > 0) {
+            if (firstFrame && seq < lastSeq.value) lastSeq.value = seq; // 回卷归位（仅新连接首帧）
+            if (seq > lastSeq.value) lastSeq.value = seq;
+            firstFrame = false; // 只认首个带 seq 的帧；同连接旧帧不回退断点
+          }
           handlers.get(kind)?.forEach((fn) => fn(data, seq));
         } catch {
           // 非 JSON data（理论不会发生）：静默丢弃

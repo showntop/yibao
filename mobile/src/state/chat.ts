@@ -59,14 +59,29 @@ export function useChat(
   // 当前 pending 气泡对应的 run_id（send 响应取回）：桌面轮结束广播的 run_done id 不同，不误收口
   let myRunId = "";
 
-  // 帧去重（M1 seq 补帧）：seq 全局单调（服务端环形缓冲）；重连补帧会重放已见过的帧，
-  // seq<=seenSeq 的整帧丢弃（chunk 重放会导致文本重复拼接、run_done 重放会误收口）。
-  // 无 seq（0）帧不参与去重（防御无 id 的源）；seq 归一说明服务端重启进入新纪元 → 让位重计。
+  // 帧去重（M1 seq 补帧）：seq 单调（服务端环形缓冲，容量 256）；重连补帧会重放已见过的
+  // 帧，已见 seq 的整帧丢弃（chunk 重放会导致文本重复拼接、run_done 重放会误收口）。
+  // seq 后跳（小于水位且非已见帧序）= 服务端 seq 回卷（重启新纪元，首帧不必是 1）→
+  // 水位让位重计，否则新纪元帧被旧水位永久吞掉（重启聋窗）。已见帧序缓存有界：补帧
+  // 窗口是 256 帧缓冲，512 两倍冗余；窗口外的低位帧序不可能来自补帧，只会是新纪元。
   let seenSeq = 0;
+  const seenFrames = new Set<number>();
+  const REPLAY_WINDOW = 512;
   const fresh = (seq: number): boolean => {
-    if (seq === 1 && seenSeq > 1) seenSeq = 0; // 新纪元首帧：服务重启 seq 从 1 重新计数
+    if (seq > 0 && seq < seenSeq && (seenSeq - seq > REPLAY_WINDOW || !seenFrames.has(seq))) {
+      seenSeq = 0; // 新纪元：水位归零重计，旧纪元帧序缓存一并作废
+      seenFrames.clear();
+    }
     if (seq > 0 && seq <= seenSeq) return false;
-    if (seq > seenSeq) seenSeq = seq;
+    if (seq > seenSeq) {
+      seenSeq = seq;
+      if (seq > 0) {
+        seenFrames.add(seq);
+        // 防无界增长：窗口外的帧序不再参与判定，顺手清掉
+        if (seenFrames.size > REPLAY_WINDOW)
+          for (const s of seenFrames) if (s < seenSeq - REPLAY_WINDOW) seenFrames.delete(s);
+      }
+    }
     return true;
   };
 
@@ -143,9 +158,29 @@ export function useChat(
     messages.value = [];
     conversationId.value = uuid();
     error.value = "";
+    myRunId = ""; // 旧轮 run_done 迟到不得收口新气泡（send 在途窗口内 myRunId 还是旧值）
+  }
+
+  // 历史回显（M1 会话抽屉）：把 /v1/history 的轮重建为已收口消息。服务端直读 LLM
+  // 上下文桶（history.messages()），里面有两类非对话内容须清洗：
+  // - role=tool 的工具轨迹轮（模型上下文要，UI 不要）
+  // - 面板场景 user 轮的「【xx 面板】」前缀（落史时拼进 content 的 surface 标记）
+  // - 空文本 assistant 轮（工具调用的占位轮，无话可显）
+  // 注意每桶仅最近 10 轮（服务端 max_turns 裁剪）——回显是「最近上下文」非完整存档。
+  function loadHistory(items: { role: string; text: string }[]): void {
+    messages.value = items
+      .filter((m) => (m.role === "user" || m.role === "assistant") && (m.role === "user" || m.text))
+      .map((m) => ({
+        role: m.role as "user" | "assistant",
+        // 前缀只剥 user 轮（assistant 正文可能合法地以【】开头）
+        text: m.role === "user" ? m.text.replace(/^【[^】]{0,24}面板】/, "") : m.text,
+        done: true, // 历史轮均已收口；busy 由 messages 派生，全 done 即清零
+      }));
+    myRunId = ""; // 切了会话：旧轮的 run_done 不再属于当前（重建后的）气泡
+    error.value = "";
   }
 
   stream.start(); // 构造即连接（测试不显式 start；Chat.vue 重复调用无害——start 先 stop 再建）
 
-  return { conn, stream, messages, busy, conversationId, error, pendingCount, syncPendingCount, send, interrupt, newChat };
+  return { conn, stream, messages, busy, conversationId, error, pendingCount, syncPendingCount, send, interrupt, newChat, loadHistory };
 }

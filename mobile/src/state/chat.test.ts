@@ -13,9 +13,11 @@ function mkChat() {
     onerror: () => {},
   };
   const posts: any[] = [];
+  let runN = 0; // 每次 send 发新 run_id（多轮场景可区分旧轮/新轮的 run_done）
   const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
     posts.push({ url, body: JSON.parse(String(init?.body)) });
-    return new Response(JSON.stringify({ ok: true, run_id: "mob_1", conversation_id: "" }), { status: 200 });
+    runN += 1;
+    return new Response(JSON.stringify({ ok: true, run_id: `mob_${runN}`, conversation_id: "" }), { status: 200 });
   });
   const chat = useChat(
     { host: "http://x", token: "t" } as ConnConfig,
@@ -117,15 +119,14 @@ describe("useChat", () => {
     expect(chat.pendingCount.value).toBe(0);
   });
 
-  it("seq 去重：重放的旧 seq 帧整帧丢弃（同文本不重复拼接、run_done 不误收口）", async () => {
+  it("seq 去重：已见 seq 的重放帧整帧丢弃（同文本不重复拼接、run_done 不误收口）", async () => {
     const { chat, emit } = mkChat();
     await chat.send("断线重连场景");
     emit("final_reply_chunk", { kind: "final_reply_chunk", text: "你好", surface: "mobile" }, "5");
-    emit("final_reply_chunk", { kind: "final_reply_chunk", text: "你好", surface: "mobile" }, "5"); // 补帧重放同 seq
-    emit("final_reply_chunk", { kind: "final_reply_chunk", text: "你好", surface: "mobile" }, "3"); // 更旧的乱序帧
+    emit("final_reply_chunk", { kind: "final_reply_chunk", text: "你好", surface: "mobile" }, "5"); // 补帧重放已见 seq → 丢弃
     emit("final_reply_chunk", { kind: "final_reply_chunk", text: "，接着说", surface: "mobile" }, "6"); // 新帧照收
     expect(chat.messages.value[1].text).toBe("你好，接着说");
-    emit("run_done", { id: "mob_1" }, "2"); // 旧 seq 的 run_done 重放 → 不收口
+    emit("run_done", { id: "mob_1" }, "5"); // 已见 seq 的 run_done 重放 → 不收口
     expect(chat.messages.value[1].done).toBe(false);
     emit("run_done", { id: "mob_1" }, "7");
     expect(chat.messages.value[1].done).toBe(true);
@@ -137,6 +138,53 @@ describe("useChat", () => {
     emit("final_reply_chunk", { kind: "final_reply_chunk", text: "旧纪元", surface: "mobile" }, "500");
     emit("final_reply_chunk", { kind: "final_reply_chunk", text: "新纪元", surface: "mobile" }, "1"); // 重启后 seq 从 1 重新计数
     expect(chat.messages.value[1].text).toBe("旧纪元新纪元"); // 新纪元首帧不被旧 seenSeq 吞掉
+  });
+
+  it("重启聋窗（泛化）：新纪元首帧 seq 非必为 1——任意后跳且非重复帧序都让位重计", async () => {
+    const { chat, emit } = mkChat();
+    await chat.send("重启重连场景");
+    emit("final_reply_chunk", { kind: "final_reply_chunk", text: "旧纪元", surface: "mobile" }, "500");
+    // 服务端重启 + 重连时已带上部分新纪元帧：首见新纪元帧 seq=3（非 1，且从未见过）
+    emit("final_reply_chunk", { kind: "final_reply_chunk", text: "新纪元", surface: "mobile" }, "3");
+    expect(chat.messages.value[1].text).toBe("旧纪元新纪元"); // 不被旧水位 500 吞掉
+    emit("final_reply_chunk", { kind: "final_reply_chunk", text: "新纪元", surface: "mobile" }, "3"); // 同 seq 重放 → 丢弃
+    expect(chat.messages.value[1].text).toBe("旧纪元新纪元");
+  });
+
+  it("newChat 清 myRunId：旧轮迟到的 run_done 不收口新气泡（send 在途窗口）", async () => {
+    const { chat, emit } = mkChat();
+    await chat.send("第一轮"); // run_id=mob_1，该轮已收口
+    chat.newChat();
+    const pending = chat.send("第二轮"); // 不 await：fetch 返回前 myRunId 尚未更新（旧值窗口）
+    emit("run_done", { id: "mob_1" }); // 第一轮的迟到收口——myRunId 未清时会误收口新气泡
+    expect(chat.messages.value[1].done).toBe(false);
+    await pending;
+    emit("final_reply_chunk", { kind: "final_reply_chunk", text: "新气泡", surface: "mobile" });
+    expect(chat.messages.value[1].text).toBe("新气泡"); // 气泡仍活着收流
+    emit("run_done", { id: "mob_2" }); // 自己的轮结束才收口
+    expect(chat.messages.value[1].done).toBe(true);
+  });
+
+  it("loadHistory：过滤 tool 轮、剥 user 轮面板前缀、重建为已收口消息（busy 清零）", async () => {
+    const { chat, emit } = mkChat();
+    await chat.send("进行中的一轮"); // pending 气泡等 run_done → busy
+    expect(chat.busy.value).toBe(true);
+    chat.loadHistory([
+      { role: "user", text: "【快捷 面板】帮我看看天气" }, // 面板场景 user 轮：落史时拼了 surface 标记前缀
+      { role: "assistant", text: "" }, // 工具调用占位轮（无文本）：不回显
+      { role: "tool", text: '{"temp": 30}' }, // 工具轨迹轮：UI 不展示
+      { role: "assistant", text: "今天 30 度" },
+      { role: "user", text: "普通问题【不是前缀" }, // 普通轮含【】不被误剥
+      { role: "assistant", text: "普通回答" },
+    ]);
+    expect(chat.messages.value.map((m) => [m.role, m.text])).toEqual([
+      ["user", "帮我看看天气"],
+      ["assistant", "今天 30 度"],
+      ["user", "普通问题【不是前缀"],
+      ["assistant", "普通回答"],
+    ]);
+    expect(chat.messages.value.every((m) => m.done)).toBe(true);
+    expect(chat.busy.value).toBe(false); // busy 由 messages 派生：全 done 即清零
   });
 
   it("默认 url 工厂读 lastSeq：手动重连 start 时 URL 带上 last_event_id 断点", async () => {
