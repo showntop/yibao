@@ -659,7 +659,11 @@
   //   output_tokens}）前端累加 → 顶栏右侧「N tok · $X.XXXX」；newChat/resumeSession
   //   清零（恢复历史不补，接受降级）。运行 pill 的累计 token 段共用这本账。 ----
   var sessionUsage = { tok: 0, cost: 0 };
-  function fmtTok(n) { return n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(n); }
+  function fmtTok(n) {
+    if (!isFinite(n)) return "0";
+    if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
+    return n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(n);
+  }
   function addUsage(u) {
     if (!u) return;
     // 与 setStatusDone 同款守御：坏值静默略过该段，绝不上抛（initCbs try/catch 会吞掉后续终态处理）
@@ -708,6 +712,8 @@
   function startTicker(prefix) {
     stopTicker();
     tickStart = Date.now();
+    setStatus(prefix + " 运行中…");      // footer 状态行别停在「提交中…」撒谎
+    $("rp-stop").disabled = false;      // invoke 已受理（streaming）：pill 的 Stop 此刻起可点
     showRunPill(prefix + " · 0s");
     ticker = setInterval(function () {
       showRunPill(prefix + " · " + Math.floor((Date.now() - tickStart) / 1000) + "s");
@@ -1520,6 +1526,7 @@
     $("new-chat").disabled = true;
     setStatus("提交中…");
     showRunPill("提交中…");   // C3：sending 期间 pill 已可见（秒表待 invoke 返回后起跑）
+    $("rp-stop").disabled = true;   // 会话 id 未回填前 Stop 是死点击，invoke 受理后 startTicker 解锁
 
     // 用户气泡不直接画：等 runner 的 user_msg 事件（带 CC uuid，⏪ 回滚锚点）来画；
     // 事件长时间不到（老 SDK / 启动失败）则 1.5s 后兜底画无 ⏪ 气泡。事件到达会清掉本 timer；
@@ -1567,6 +1574,7 @@
     if (!currentSession) { setStatus("没有活动会话可中断", true); return; }
     var sid = currentSession;
     $("stop").disabled = true;
+    $("rp-stop").disabled = true;   // 与 #stop 同步防连点；终态 onSessionEnded 收 pill，下次 startTicker 解锁
     setStatus("中断 " + sid + "…");
     window.yibao.invoke("coding.stop", { id: sid }).then(function () {
       setStatus("已请求中断 " + sid);
@@ -1574,6 +1582,7 @@
     }).catch(function (e) {
       setStatus("中断失败：" + emsg(e), true);
       $("stop").disabled = false;
+      $("rp-stop").disabled = false;
     });
   }
 
@@ -1822,6 +1831,7 @@
     $("stop").disabled = false;
     setStatus("Codex 接续启动中…");
     showRunPill("Codex 接续启动中…");
+    $("rp-stop").disabled = true;   // 同 send：invoke 受理后 startTicker 解锁
 
     currentBubble = null;
     hideErrBar();   // handoff 也是新 turn 入口：与 send 对齐清掉旧错误条（老 SDK 不回放 user_msg 时靠这里）
