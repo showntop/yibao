@@ -348,6 +348,20 @@ async def handle_panel_action(msg: dict, agent: AgentLoop, write_msg: WriteMsg, 
 # ---------- 浏览器扩展桥（127.0.0.1 微 HTTP → zimeiti quiet 直调）----------
 
 
+def _lan_ip() -> str:
+    """内网 IPv4（配对 URL 用）：UDP connect 到 RFC5737 地址做路由选择，不实际发包。"""
+    import socket
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("192.0.2.1", 1))
+        return s.getsockname()[0]
+    except OSError:
+        return ""
+    finally:
+        s.close()
+
+
 def _ensure_http_token(settings: dict, key: str) -> str:
     """HTTP 面共享 token（http.token=扩展桥 / http.mobile_token=手机伴生端）：
     空则生成并持久化（save_settings 只落已知键，两键均已在默认表）。"""
@@ -424,9 +438,12 @@ async def _start_http_api(agent: AgentLoop, settings: dict, tap, deps) -> "objec
     try:
         from .http_api import build_app, run_server
 
+        # token 兜底生成后传"现取闭包"：桌面重置 token（settings_set）后无需重启面
+        _ensure_http_token(settings, "http.token")
+        _ensure_http_token(settings, "http.mobile_token")
         app = build_app(
-            bridge_token=_ensure_http_token(settings, "http.token"),
-            mobile_token=_ensure_http_token(settings, "http.mobile_token"),
+            get_bridge_token=lambda: str(settings.get("http.token") or ""),
+            get_mobile_token=lambda: str(settings.get("http.mobile_token") or ""),
             tap=tap,
             deps=deps,
         )
@@ -1507,6 +1524,10 @@ async def serve_async(
                 write_msg({"type": "mem_edited", "id": mid, "ok": False, "error": str(e)})
         elif rtype == "settings_get":
             write_msg({"type": "settings", "values": {**settings, "watch.status": watch_service.status()}})
+        elif rtype == "http_pair_info":
+            # 配对信息（手机设置页扫码/手输 URL 用）：内网 IP + 实际监听口/绑定地址
+            write_msg({"type": "http_pair_info", "lan_ip": _lan_ip(),
+                       "port": http_port(), "bind": str(settings.get("http.bind") or "127.0.0.1")})
         elif rtype == "settings_set":
             vals = msg.get("values")
             if isinstance(vals, dict):

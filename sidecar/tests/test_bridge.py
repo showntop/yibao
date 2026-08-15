@@ -82,7 +82,7 @@ def _mkdeps(invoker, events):
 
 
 def _mkclient(invoker, events):
-    app = build_app(bridge_token="btok", mobile_token="mtok",
+    app = build_app(get_bridge_token=lambda: "btok", get_mobile_token=lambda: "mtok",
                     tap=EventTap(lambda m: None), deps=_mkdeps(invoker, events))
     return TestClient(TestServer(app))
 

@@ -2460,3 +2460,27 @@ def test_mobile_interrupt_does_not_kill_desktop_while_mobile_queued(tmp_path):
             await asyncio.wait_for(serve_task, 5)
 
     asyncio.run(main())
+
+
+def test_http_pair_info_ipc(tmp_path):
+    """http_pair_info IPC：回 lan_ip/port/bind（桌面设置页配对 URL 用）。
+    monkeypatch load_settings 隔离真实 settings.json（本机 http.bind 可能非默认值）。"""
+    async def main():
+        import yibao_brain.server as S
+
+        out = []
+        orig_load = S.load_settings
+        S.load_settings = lambda: {"http.token": "btok", "http.mobile_token": "mtok"}
+        try:
+            serve_task = asyncio.ensure_future(serve_async(
+                make_reader([{"id": 1, "type": "http_pair_info"}]),
+                lambda m: out.append(m), use_real=False, db_path=str(tmp_path / "p.db"),
+                provider=FakeProvider(text="x")))
+            await asyncio.wait_for(serve_task, 5)
+            msg = next(m for m in out if m.get("type") == "http_pair_info")
+            assert msg["port"] == 19527 and msg["bind"] == "127.0.0.1"
+            assert isinstance(msg["lan_ip"], str)  # 环境相关（可能空串），只断言类型与格式
+        finally:
+            S.load_settings = orig_load
+
+    asyncio.run(main())

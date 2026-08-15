@@ -193,8 +193,9 @@ def _cors_headers(allow: str) -> dict:
     }
 
 
-def build_app(*, bridge_token: str, mobile_token: str, tap: EventTap,
+def build_app(*, get_bridge_token: Callable[[], str], get_mobile_token: Callable[[], str], tap: EventTap,
               limiter: RateLimiter | None = None, deps: MobileDeps | None = None) -> web.Application:
+    """token 走获取闭包而非启动快照：auth 每次请求现取——桌面重置 token 即时生效。"""
     limiter = limiter or RateLimiter()
     deps = deps or MobileDeps()
 
@@ -224,7 +225,7 @@ def build_app(*, bridge_token: str, mobile_token: str, tap: EventTap,
 
         mobile = request.path.startswith("/v1/")
         token = request.headers.get("x-yibao-token") or request.query.get("token") or ""
-        expected = mobile_token if mobile else bridge_token
+        expected = (get_mobile_token() if mobile else get_bridge_token())
         if not hmac.compare_digest(token.encode(), expected.encode()):
             limiter.record_fail()
             return web.json_response({"ok": False, "error": "token 不对"}, status=401)

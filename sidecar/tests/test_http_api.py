@@ -123,7 +123,7 @@ def test_rate_limiter_lock_expires():
 
 
 def _mkapp():
-    return build_app(bridge_token="btok", mobile_token="mtok", tap=EventTap(lambda m: None))
+    return build_app(get_bridge_token=lambda: "btok", get_mobile_token=lambda: "mtok", tap=EventTap(lambda m: None))
 
 
 def test_health_with_bridge_token():
@@ -173,7 +173,7 @@ def test_v1_chat_and_interrupt_routes():
             return True
 
         deps = MobileDeps(submit_run=submit_run, interrupt=interrupt)
-        app = build_app(bridge_token="btok", mobile_token="mtok",
+        app = build_app(get_bridge_token=lambda: "btok", get_mobile_token=lambda: "mtok",
                         tap=EventTap(lambda m: None), deps=deps)
         client = TestClient(TestServer(app))
         await client.start_server()
@@ -197,7 +197,7 @@ def test_auth_lockout_after_5_fails():
     async def main():
         from yibao_brain.http_api import RateLimiter
 
-        app = build_app(bridge_token="btok", mobile_token="mtok",
+        app = build_app(get_bridge_token=lambda: "btok", get_mobile_token=lambda: "mtok",
                         tap=EventTap(lambda m: None), limiter=RateLimiter(fails=5, window=60, lock=60))
         client = TestClient(TestServer(app))
         await client.start_server()
@@ -216,7 +216,7 @@ def test_auth_lockout_after_5_fails():
 def test_v1_events_streams_frames_and_replays():
     async def main():
         tap = EventTap(lambda m: None)
-        app = build_app(bridge_token="btok", mobile_token="mtok", tap=tap)
+        app = build_app(get_bridge_token=lambda: "btok", get_mobile_token=lambda: "mtok", tap=tap)
         client = TestClient(TestServer(app))
         await client.start_server()
         try:
@@ -262,7 +262,7 @@ def test_v1_confirm_and_state_routes():
                     "pending": [{"id": "pa_1", "skill_id": "danger", "summary": "rm -rf", "risk": 3, "created_at": 1}]}
 
         deps = MobileDeps(confirm=confirm, state=state)
-        app = build_app(bridge_token="btok", mobile_token="mtok",
+        app = build_app(get_bridge_token=lambda: "btok", get_mobile_token=lambda: "mtok",
                         tap=EventTap(lambda m: None), deps=deps)
         client = TestClient(TestServer(app))
         await client.start_server()
@@ -287,7 +287,7 @@ def test_v1_confirm_and_state_routes():
 
 def test_v1_events_requires_token():
     async def main():
-        app = build_app(bridge_token="btok", mobile_token="mtok", tap=EventTap(lambda m: None))
+        app = build_app(get_bridge_token=lambda: "btok", get_mobile_token=lambda: "mtok", tap=EventTap(lambda m: None))
         client = TestClient(TestServer(app))
         await client.start_server()
         try:
@@ -308,7 +308,7 @@ def test_v1_push_register_route():
             saved.append((rid, platform))
 
         deps = MobileDeps(register_push=register_push)
-        app = build_app(bridge_token="btok", mobile_token="mtok",
+        app = build_app(get_bridge_token=lambda: "btok", get_mobile_token=lambda: "mtok",
                         tap=EventTap(lambda m: None), deps=deps)
         client = TestClient(TestServer(app))
         await client.start_server()
@@ -328,7 +328,7 @@ def test_v1_push_register_route():
 
 def test_cors_preflight_204_without_token():
     async def main():
-        app = build_app(bridge_token="btok", mobile_token="mtok", tap=EventTap(lambda m: None))
+        app = build_app(get_bridge_token=lambda: "btok", get_mobile_token=lambda: "mtok", tap=EventTap(lambda m: None))
         client = TestClient(TestServer(app))
         await client.start_server()
         try:
@@ -347,7 +347,7 @@ def test_cors_preflight_204_without_token():
 
 def test_cors_reflects_on_auth_failure_and_allows_localhost_any_port():
     async def main():
-        app = build_app(bridge_token="btok", mobile_token="mtok", tap=EventTap(lambda m: None))
+        app = build_app(get_bridge_token=lambda: "btok", get_mobile_token=lambda: "mtok", tap=EventTap(lambda m: None))
         client = TestClient(TestServer(app))
         await client.start_server()
         try:
@@ -362,7 +362,7 @@ def test_cors_reflects_on_auth_failure_and_allows_localhost_any_port():
 
 def test_cors_foreign_origin_gets_nothing():
     async def main():
-        app = build_app(bridge_token="btok", mobile_token="mtok", tap=EventTap(lambda m: None))
+        app = build_app(get_bridge_token=lambda: "btok", get_mobile_token=lambda: "mtok", tap=EventTap(lambda m: None))
         client = TestClient(TestServer(app))
         await client.start_server()
         try:
@@ -380,7 +380,7 @@ def test_cors_reflects_on_sse_stream():
     反射必须走 on_response_prepare（头部写出前触发），手机 EventSource 才能过 CORS。"""
     async def main():
         tap = EventTap(lambda m: None)
-        app = build_app(bridge_token="btok", mobile_token="mtok", tap=tap)
+        app = build_app(get_bridge_token=lambda: "btok", get_mobile_token=lambda: "mtok", tap=tap)
         client = TestClient(TestServer(app))
         await client.start_server()
         try:
@@ -412,3 +412,26 @@ def test_cors_allows_private_lan_origin():
     assert _cors_allow("http://8.8.8.8:5173") is None  # 公网 IP 不放行
     assert _cors_allow("https://evil.com") is None
     assert _cors_allow("http://not-an-ip.example.com:5173") is None  # 非私网主机名不放行
+
+
+def test_token_hot_reload():
+    """token 热生效：build_app 收 token 获取闭包而非快照——桌面重置 token 后，
+    auth 中间件每次请求现取，新 token 立即生效、旧 token 立即失效。"""
+    async def main():
+        toks = {"b": "btok", "m": "mtok"}
+        app = build_app(get_bridge_token=lambda: toks["b"], get_mobile_token=lambda: toks["m"],
+                        tap=EventTap(lambda m: None))
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            r = await client.get("/v1/health", headers={"X-Yibao-Token": "mtok"})
+            assert r.status == 200
+            toks["m"] = "newtok"  # 桌面重置 token → 立即生效
+            r = await client.get("/v1/health", headers={"X-Yibao-Token": "mtok"})
+            assert r.status == 401
+            r = await client.get("/v1/health", headers={"X-Yibao-Token": "newtok"})
+            assert r.status == 200
+        finally:
+            await client.close()
+
+    asyncio.run(main())
