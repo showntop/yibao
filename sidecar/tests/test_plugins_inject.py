@@ -75,6 +75,31 @@ def test_path_traversal_not_matched(tmp_path):
     assert _inline_vendor(html, child) == html
 
 
+def test_script_close_tag_escaped_case_insensitive(tmp_path):
+    """闭合标签转义大小写不敏感（HTML tokenizer 不认大小写）：</SCRIPT 同样转义。"""
+    child = _make_plugin(tmp_path, {"y.js": 'var s="</SCRIPT>";\n'}, "<script><!--inject:vendor/y.js--></script>")
+    out = _inline_vendor((child / "panel" / "chat.html").read_text(encoding="utf-8"), child)
+    assert 'var s="<\\/SCRIPT>";' in out
+    assert out.lower().count("</script>") == 1
+
+
+def test_html_comment_open_escaped(tmp_path):
+    """vendor 内容里字面 <!-- 转义为 <\\!--（防 tokenizer 进 escaped 状态使 </script> 失效，double-escape 陷阱）。"""
+    child = _make_plugin(tmp_path, {"z.js": 'var a="<!--", b="x";\n'}, "<script><!--inject:vendor/z.js--></script>")
+    out = _inline_vendor((child / "panel" / "chat.html").read_text(encoding="utf-8"), child)
+    assert 'var a="<\\!--", b="x";' in out
+
+
+def test_non_utf8_vendor_keeps_placeholder(tmp_path, caplog):
+    """vendor 文件非 UTF-8：保留占位 + 告警，不抛异常（与缺失文件同路径）。"""
+    child = _make_plugin(tmp_path, {}, "<script><!--inject:vendor/bin.js--></script>")
+    (child / "panel" / "vendor" / "bin.js").write_bytes(b"\xff\xfe\x00bad")
+    with caplog.at_level(logging.WARNING, logger="yibao_brain.plugins"):
+        out = _inline_vendor("<script><!--inject:vendor/bin.js--></script>", child)
+    assert out == "<script><!--inject:vendor/bin.js--></script>"
+    assert "vendor/bin.js" in caplog.text
+
+
 # ---------- _load_panels 集成 ----------
 
 

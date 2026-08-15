@@ -390,10 +390,13 @@ def _inline_vendor(text: str, child: Path) -> str:
         name = m.group(1)
         try:
             content = (child / "panel" / "vendor" / name).read_text(encoding="utf-8")
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             logger.warning(f"[yibao] 插件目录 {child.name} 面板 vendor 文件缺失（保留占位）：vendor/{name}")
             return m.group(0)
-        return content.replace("</script", "<\\/script")
+        # 防提前闭合宿主 script 标签（大小写不敏感、保原样大小写）；`<!--` 会把 HTML tokenizer
+        # 切进 escaped 状态使后续 </script> 失效，一并转义（`\!`/`\/` 在 JS 里语义等价）
+        content = re.sub(r"</script", lambda m: "<\\/" + m.group(0)[2:], content, flags=re.I)
+        return content.replace("<!--", "<\\!--")
 
     return _INJECT_VENDOR.sub(_replace, text)
 
