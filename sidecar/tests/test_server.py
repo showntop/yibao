@@ -1,5 +1,6 @@
 import asyncio
 import json
+import queue
 import threading
 import time
 from datetime import datetime, timedelta
@@ -2403,6 +2404,59 @@ def test_mobile_chat_does_not_consume_invoke_context(tmp_path):
             S.load_settings = orig_load
             os.environ.pop("YIBAO_HTTP_PORT", None)
             inbox.put(None)  # 结束 stdin 读线程
+            await asyncio.wait_for(serve_task, 5)
+
+    asyncio.run(main())
+
+
+def test_mobile_interrupt_does_not_kill_desktop_while_mobile_queued(tmp_path):
+    """spec §14：pet 慢流式在跑、mobile chat 跨 surface 排队中——此刻手机 interrupt
+    应返回 False 且 pet 轮不死（旧行为会连环杀：preempt 顶掉 pet + 排队的 mobile 秒跳）。"""
+    inbox = queue.Queue()
+    inbox.put({"id": 10, "type": "run", "surface": "pet", "text": "长任务"})
+
+    def _reader():
+        return inbox.get()  # 阻塞读：测试全程可控，结束时放 None 收尾（= inbox.get 本身）
+
+    async def main():
+        import os
+
+        os.environ["YIBAO_HTTP_PORT"] = "19867"
+        out = []
+        import yibao_brain.server as S
+
+        orig_load = S.load_settings
+        S.load_settings = lambda: {"http.token": "btok", "http.mobile_token": "mtok"}
+        try:
+            serve_task = asyncio.ensure_future(S.serve_async(
+                _reader, lambda m: out.append(m), use_real=False,
+                db_path=str(tmp_path / "q.db"),
+                provider=FakeProvider(chunks=["桌", "面", "回", "复"], delay=0.3),
+                http_enabled=True))
+            await asyncio.sleep(0.4)
+            import aiohttp
+
+            async with aiohttp.ClientSession() as sess:
+                # pet 在跑（0.3s/chunk × 4 ≈ 1.2s 窗口），手机 chat 跨 surface 排队
+                r = await sess.post("http://127.0.0.1:19867/v1/chat",
+                                    headers={"X-Yibao-Token": "mtok"}, json={"text": "手机消息"})
+                assert r.status == 200
+                ir = await sess.post("http://127.0.0.1:19867/v1/interrupt",
+                                     headers={"X-Yibao-Token": "mtok"}, json={})
+                assert (await ir.json()) == {"ok": True, "interrupted": False}  # 排队中不误杀
+            # 等桌面轮自然跑完：run_done id=10 到达且 final_reply 完整
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline:
+                if any(m.get("type") == "run_done" and m.get("id") == 10 for m in out):
+                    break
+                await asyncio.sleep(0.05)
+            assert any(m.get("type") == "run_done" and m.get("id") == 10 for m in out), "桌面轮被误杀或未完成"
+            assert any(m.get("type") == "event" and m.get("surface") == "pet"
+                       and m.get("event", {}).get("kind") == "final_reply" for m in out), "桌面回复被截断"
+        finally:
+            S.load_settings = orig_load
+            os.environ.pop("YIBAO_HTTP_PORT", None)
+            inbox.put(None)
             await asyncio.wait_for(serve_task, 5)
 
     asyncio.run(main())

@@ -325,3 +325,76 @@ def test_v1_push_register_route():
 
     asyncio.run(main())
 
+
+def test_cors_preflight_204_without_token():
+    async def main():
+        app = build_app(bridge_token="btok", mobile_token="mtok", tap=EventTap(lambda m: None))
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            r = await client.options("/v1/chat", headers={
+                "Origin": "capacitor://localhost",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type, x-yibao-token"})
+            assert r.status == 204  # 预检无自定义 token 头，不能被 auth 拦
+            assert r.headers["Access-Control-Allow-Origin"] == "capacitor://localhost"
+            assert "x-yibao-token" in r.headers["Access-Control-Allow-Headers"].lower()
+        finally:
+            await client.close()
+
+    asyncio.run(main())
+
+
+def test_cors_reflects_on_auth_failure_and_allows_localhost_any_port():
+    async def main():
+        app = build_app(bridge_token="btok", mobile_token="mtok", tap=EventTap(lambda m: None))
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            r = await client.get("/v1/health", headers={"Origin": "http://localhost:5173", "X-Yibao-Token": "bad"})
+            assert r.status == 401
+            assert r.headers["Access-Control-Allow-Origin"] == "http://localhost:5173"  # 401 也要带（客户端要能读到状态码）
+        finally:
+            await client.close()
+
+    asyncio.run(main())
+
+
+def test_cors_foreign_origin_gets_nothing():
+    async def main():
+        app = build_app(bridge_token="btok", mobile_token="mtok", tap=EventTap(lambda m: None))
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            r = await client.get("/v1/health", headers={"Origin": "http://evil.com", "X-Yibao-Token": "mtok"})
+            assert r.status == 200
+            assert "Access-Control-Allow-Origin" not in r.headers
+        finally:
+            await client.close()
+
+    asyncio.run(main())
+
+
+def test_cors_reflects_on_sse_stream():
+    """SSE 流式响应：handler 内 prepare 后头部即落网线，事后中间件 update 是 no-op——
+    反射必须走 on_response_prepare（头部写出前触发），手机 EventSource 才能过 CORS。"""
+    async def main():
+        tap = EventTap(lambda m: None)
+        app = build_app(bridge_token="btok", mobile_token="mtok", tap=tap)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            resp = await client.get("/v1/events", params={"token": "mtok"},
+                                    headers={"Origin": "capacitor://localhost"})
+            assert resp.status == 200
+            assert resp.headers["Access-Control-Allow-Origin"] == "capacitor://localhost"
+            assert resp.headers["Vary"] == "Origin"
+            tap.publish("chunk", {"text": "hi"})
+            line = await asyncio.wait_for(resp.content.readline(), 2)
+            assert line == b"id: 1\n"  # 读到首帧即证明流可用
+            resp.close()
+        finally:
+            await client.close()
+
+    asyncio.run(main())
+

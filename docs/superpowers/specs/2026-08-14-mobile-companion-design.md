@@ -111,7 +111,7 @@ data: {"run_id":"...","text":"部分回复"}
 - 新顶层工程 `mobile/`：Vite + Vue3 + TS + Capacitor；路由/状态沿用桌面 app 的模式；iOS 出 TestFlight/自签安装，安卓出 APK 侧载
 - 依赖：`@capacitor/app`（深链/生命周期）、`@capacitor/preferences`（存 host/token）、极光官方 Capacitor 插件（P4 初验证质量，是已知风险点）；SSE 用浏览器原生 EventSource（自动重连+Last-Event-ID 内建）
 - 页面：
-  - **配对**：首次进入填服务器地址+token；主路径是扫桌面设置页二维码 → 系统相机识别 `yibao://pair?host=…&token=…` → 深链打开 App 自动填充 → 测试连接（/v1/health）
+  - **配对**：首次进入填服务器地址+token；主路径是扫桌面设置页二维码 → 系统相机识别 `yibao://pair?host=…&token=…` → 深链打开 App 自动填充 → 测试连接（/v1/health）；App.vue appUrlOpen 已接线（浏览器 no-op）
   - **对话**：消息列表 + 流式气泡（chunk 拼接）+ 输入栏 + 打断按钮；conversation_id 续会话
   - **审批**：待批列表（/v1/state）+ 批/拒 + remember 勾选；推送深链直达
   - **设置**：连接状态、token 重置入口（提示去桌面操作）、推送开关、手动粘贴存素材兜底
@@ -184,8 +184,8 @@ data: {"run_id":"...","text":"部分回复"}
 ## 13. 分阶段交付
 
 - **P1 服务端**：aiohttp 迁移（含桥）+ /v1 API + SSE + 审批 meta + 测试——curl 全可验
-- **P2 通道**：VPS/Caddy/frp 搭建，手机浏览器外网验证 SSE
-- **P3 App 骨架**：Capacitor 工程 + 配对 + 对话流式（局域网真机）
+- **P2 通道**：~~VPS/Caddy/frp 搭建，手机浏览器外网验证 SSE~~ **已封存（2026-08-15）**：工作 Mac 受公司管控禁装一切内网穿透工具。VPS 侧成果保留（域名/证书/openresty 反代已通），待个人电脑接手时换 frp 复用
+- **P3 App 骨架**：Capacitor 工程 + 配对 + 对话流式（开发期用桌面浏览器直连 `http://127.0.0.1:19527` 验证；真机联调随联网方案回来后补）
 - **P4 推送审批**：极光接入 + 深链 + 审批页（外网真机）
 - **P5 收尾**：分享模板 + 桌面设置页（token 区块+二维码）+ 全量真机验收
 
@@ -195,6 +195,6 @@ data: {"run_id":"...","text":"部分回复"}
 - conversation 的历史消息拉取（App 重开后回显旧对话）——v1 靠 seq 补发+state，是否加历史端点待 P3 实做时定
 - 多设备同时 SSE 在环（手机+平板）行为符合预期（广播），未做设备定向——记录，不实现
 - token 热重载失效：auth 中间件持有启动时的 token 快照，P5 重置 UI 落地前须改为读 settings 或重置即重启
-- iOS WKWebView CORS 大概率要补响应头（P3 计划风险项）
-- 跨 surface 排队窗口内手机 interrupt 连环杀（P3 客户端落地前收紧为 cancel 属主判）
+- iOS WKWebView CORS 大概率要补响应头（P3 计划风险项）（P3 已解决：Task 1 CORS）
+- 跨 surface 排队窗口内手机 interrupt 连环杀（P3 客户端落地前收紧为 cancel 属主判）（P3 已解决：Task 2 running_surface）
 - `_register_push` 落盘缺测试（P4 消费 push.devices 前补）

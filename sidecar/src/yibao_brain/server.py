@@ -563,7 +563,8 @@ async def serve_async(
     # surface：最近一次受理请求的窗口（pet=主窗 / 面板 id，dispatch 受理即写入）。
     # 同 surface 新请求抢占；跨 surface 不抢占，排队等对方说完
     # （子 agent 在面板里干活不该被主窗一句话顶掉）。
-    run_state: dict = {"task": None, "cancel": None, "preempt_gen": 0, "surface": None}
+    run_state: dict = {"task": None, "cancel": None, "preempt_gen": 0, "surface": None,
+                       "running_surface": None}  # running_surface=实际在跑的（排队结束才写）；surface=最近受理的
     # 并发的 L0 只读面板调用（不占槽位）：跟踪起来，stdin 关闭时一起收尾
     readonly_tasks: set[asyncio.Task] = set()
 
@@ -1083,12 +1084,18 @@ async def serve_async(
                 "kind": "notice", "text": "另一个窗口还在说，等它说完就轮到你…"}})
 
     def _schedule_run(surface: str, rid, start) -> None:
-        """受理尾巴（run/voice_start/手机 chat 共用）：同 surface 抢占 + 跨 surface 链式排队。"""
+        """受理尾巴（run/voice_start/手机 chat 共用）：同 surface 抢占 + 跨 surface 链式排队。
+        running_surface 在真正开跑时才写——手机 interrupt 按它判域，排队窗口不误杀桌面轮。"""
         _preempt_if_same_surface(surface)
         prev = run_state["task"]
         run_state["surface"] = surface  # 受理即记录：下次 dispatch 判断同/跨 surface 无调度竞态
+
+        async def _marked(cancel, s=start, sf=surface):
+            run_state["running_surface"] = sf
+            await s(cancel)
+
         run_state["task"] = asyncio.ensure_future(
-            _chain_start(prev, start, run_state["preempt_gen"]))
+            _chain_start(prev, _marked, run_state["preempt_gen"]))
 
     _MOB_SEQ = itertools.count(1)
 
@@ -1102,8 +1109,14 @@ async def serve_async(
         return {"ok": True, "run_id": rid, "conversation_id": conversation_id}
 
     def _interrupt_mobile() -> bool:
-        """只打断 mobile surface 的 run。壳 interrupt 是「全都停」；手机不该误伤桌面对话。"""
-        if run_state["surface"] == "mobile" and run_state["cancel"] is not None:
+        """只打断真正在跑的 mobile 轮（running_surface；排队中 surface 已翻但没开跑）。
+        task 判活对齐 _mobile_state：消掉「上轮收尾后陈旧的 running_surface=mobile」
+        误报 True + 平白推进 preempt_gen 顶掉排队桌面链的跳窗口。壳 interrupt 是
+        「全都停」；手机不该误伤桌面对话。"""
+        task = run_state["task"]
+        if (run_state.get("running_surface") == "mobile"
+                and task is not None and not task.done()
+                and run_state["cancel"] is not None):
             _preempt_current()
             return True
         return False
@@ -1288,8 +1301,13 @@ async def serve_async(
             start = lambda c, m=msg, s=surface, ci=conversation_id: handle_panel_action(
                 m, agent, write_msg, run_text=lambda text, rid, c=c, s=s, ci=ci: _stream_agent(text, rid, c, s, ci)
             )
+
+            async def _marked_panel(cancel, s=start, sf=surface):
+                run_state["running_surface"] = sf
+                await s(cancel)
+
             run_state["task"] = asyncio.ensure_future(
-                _chain_start(prev, start, run_state["preempt_gen"])
+                _chain_start(prev, _marked_panel, run_state["preempt_gen"])
             )
         elif rtype == "interrupt":
             # 用户主动打断：无条件停一切。interrupt 消息不带 surface（壳上只有一个打断入口），
