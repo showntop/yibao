@@ -670,6 +670,7 @@
   var sending = false;         // send 按钮 re-entry 保护（仅覆盖 invoke 同步窗）
   var streaming = false;       // 流式进行中（invoke 返回 → done/error）；为 true 时锁定「新对话」
   var discardedSessions = {};  // 被「新对话」抛弃的 session_id → true 集合；防陈旧流块污染新对话
+  var pendingTurnEnded = false; // 终态事件先于 invoke 返回（runner 秒败）的竞态标记：onSessionEnded 在 sending 窗口置真，.then 据此跳过 streaming/ticker（防永久卡死）
   var curMode = "acceptEdits"; // acceptEdits=自动改文件；plan=只读规划
   var pendingUserEcho = null;  // send() 后等 user_msg 回流画用户气泡的 1.5s 兜底 timer（事件到达则清，防双份）
   var fallbackUserBubble = null; // 兜底 timer 画出的无锚用户气泡 {el, text}；迟到的 user_msg 文本匹配时原地升级挂 ⏪（防双份）
@@ -769,6 +770,11 @@
     var log = $("log");
     // 距底 < 60px 视为贴底（容忍亚像素与 padding 误差）
     atBottom = (log.scrollHeight - log.scrollTop - log.clientHeight) < 60;
+  });
+  // markdown 气泡里的链接：sandbox iframe 无导航出口，点开只会把面板替换成外部页（钓鱼视觉面）——
+  // 一律拦下（选中复制 URL 仍可用）。
+  $("log").addEventListener("click", function (e) {
+    if (e.target.closest && e.target.closest("a")) e.preventDefault();
   });
 
   // ============================================================
@@ -892,7 +898,8 @@
     if (mdAvailable() && (final || raw.length <= MD_PLAIN_LIMIT)) {
       try {
         html = window.DOMPurify.sanitize(
-          window.marked.parse(raw, { gfm: true, breaks: true }));
+          window.marked.parse(raw, { gfm: true, breaks: true }),
+          { FORBID_ATTR: ["style"] });   // 收掉模型输出里原始 HTML 的 style 属性面
       } catch (e) { html = null; }  // 解析/消毒异常 → 纯文本兜底，绝不上抛
     }
     if (html != null) {
@@ -1522,6 +1529,7 @@
   }
 
   function onSessionEnded() {
+    if (sending) pendingTurnEnded = true;  // invoke 未返回就收到终态（秒败）：.then 里别再置 streaming
     stopTicker();
     hideRunPill();   // C3：运行 pill 只在 streaming/sending 期间可见
     // 多轮保持：不清 currentSession —— 下次 send 走 coding.send 接续同一 CC 会话；
@@ -1533,6 +1541,7 @@
     $("new-chat").disabled = !currentSession;
     // handoff 在流式中被禁用；会话终态后放开（仍受 streaming guard 在 handoff() 里兜底）
     $("handoff").disabled = false;
+    var histBtn = $("history"); if (histBtn) histBtn.disabled = false;  // 与 handoff 同闸（send 入口禁用过）
   }
 
   // ============================================================
@@ -1564,8 +1573,11 @@
     if (!prompt) { setStatus("请输入任务描述", true); $("prompt").focus(); return; }
 
     sending = true;
+    pendingTurnEnded = false;   // 新 turn 开窗：终态若抢在 invoke 返回前到达，onSessionEnded 会把它置真
     $("send").disabled = true;
     $("new-chat").disabled = true;
+    $("handoff").disabled = true;  // invoke 飞行窗口内禁开 handoff（防双重 start）
+    var histBtn = $("history"); if (histBtn) histBtn.disabled = true;
     setStatus("提交中…");
     showRunPill("提交中…");   // C3：sending 期间 pill 已可见（秒表待 invoke 返回后起跑）
     $("rp-stop").disabled = true;   // 会话 id 未回填前 Stop 是死点击，invoke 受理后 startTicker 解锁
@@ -1594,14 +1606,22 @@
       var sid = r && r.session_id;
       if (!sid) throw new Error("未返回 session_id");
       currentSession = sid;       // start 回填新 id；send 路径下 sid 与原 id 一致（保留不动）
-      streaming = true;
       $("prompt").value = "";
+      if (pendingTurnEnded) {
+        // 终态事件先于 invoke 返回（runner 秒败）：onSessionEnded 已解锁 UI，
+        // 别再置 streaming/起跑秒表（否则死会话上 pill 永挂、发送键永禁）。
+        pendingTurnEnded = false;
+        return;
+      }
+      streaming = true;
       $("stop").disabled = false;
       startTicker("会话 " + sid + (isStart ? " 启动" : " 接续"));
     }).catch(function (e) {
       appendError(verb + "失败：" + emsg(e));
       setStatus(verb + "失败：" + emsg(e), true);
       hideRunPill();  // invoke 未受理：没到 streaming，onSessionEnded 不会走，pill 在此收
+      $("handoff").disabled = false;  // 入口禁用过，失败路径手动复位（onSessionEnded 不会走）
+      var hb = $("history"); if (hb) hb.disabled = false;
     }).finally(function () {
       sending = false;
       // 发送键解锁挪到 onSessionEnded（done/stopped/error）——
@@ -1637,6 +1657,7 @@
     currentSession = null;
     currentBubble = null;
     lastToolCard = null;   // #log 清空后旧卡已 detach，防 tool_result 落进不可见节点
+    if (pendingUserEcho) { clearTimeout(pendingUserEcho); pendingUserEcho = null; }  // 防 1.5s 兜底 timer 把旧 prompt 画成幻影气泡落进新会话
     fallbackUserBubble = null;  // 兜底气泡随 #log 清空 detach，清引用防迟到 user_msg 升级陈旧节点
     hideErrBar();          // 清屏：turn 级错误条一并消失
     stopTicker();
@@ -1869,6 +1890,7 @@
     if (!cwd) { setStatus("内部错误：cwd 丢失", true); return; }
 
     sending = true;
+    pendingTurnEnded = false;   // 同 send：终态抢跑时 onSessionEnded 置真，.then 跳过秒表
     streaming = true;
     $("send").disabled = true;
     $("new-chat").disabled = true;
@@ -1889,6 +1911,11 @@
       var csid = r && r.session_id;
       if (!csid) throw new Error("未返回 session_id");
       currentSession = csid;
+      if (pendingTurnEnded) {
+        // 终态先于 invoke 返回：onSessionEnded 已收场（streaming 已 false、UI 已解锁），别起跑秒表
+        pendingTurnEnded = false;
+        return;
+      }
       startTicker("Codex 接续会话 " + csid);   // 与 send 对齐：运行态走 pill 秒表（C3）
     }).catch(function (e) {
       appendError("Codex 接续启动失败：" + emsg(e));
@@ -1952,6 +1979,7 @@
       delete discardedSessions[sid]; // 恢复的目标会话必须出黑名单——否则它自己的流全被「陈旧会话」过滤器吞掉，面板锁死
       currentBubble = null;
       lastToolCard = null;   // #log 清空后旧卡已 detach，防 tool_result 落进不可见节点（同 newChat）
+      if (pendingUserEcho) { clearTimeout(pendingUserEcho); pendingUserEcho = null; }  // 同 newChat：防兜底 timer 画幻影气泡
       fallbackUserBubble = null;  // 同 newChat：清兜底气泡引用，防迟到 user_msg 升级陈旧节点
       hideErrBar();          // 同 newChat：清屏后旧 turn 错误条一并消失
       stopTicker();
@@ -2055,6 +2083,10 @@
   });
   // capture 注册在本元素最前：菜单打开时 Enter/↑↓/Esc 在此消费（preventDefault），
   // 下方发送处理器经 e.defaultPrevented 守卫跳过——同元素监听 stopPropagation 挡不住。
+  // IME 组字兜底（WebKit bug 165004：compositionend 先于确认 Enter 的 keydown，其 isComposing=false，
+  // 单靠 e.isComposing 会穿透）——compositionend 时间戳 50ms 窗口，发送与 @ 菜单两处 Enter 共用。
+  var lastCompEnd = 0;
+  $("prompt").addEventListener("compositionend", function () { lastCompEnd = Date.now(); });
   $("prompt").addEventListener("keydown", function (e) {
     if (!atState.open) return;
     if (e.key === "Escape") { closeAt(); e.stopPropagation(); }
@@ -2066,17 +2098,15 @@
       atState.idx = (atState.idx + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
       items[atState.idx].classList.add("sel");
     } else if (e.key === "Enter" && atState.items.length) {
+      // IME 组字选词的 Enter 不触发插文件（同发送路径的 WebKit compositionend 时序兜底）
+      if (e.isComposing || Date.now() - lastCompEnd < 50) return;
       e.preventDefault(); e.stopPropagation();
       atInsert(atState.items[atState.idx].rel);
     }
   }, true);
 
   // D1 快捷键与提示行一致：↵ 发送 / ⇧↵ 换行（⌘/Ctrl+↵ 保留为发送别名）。
-  // IME 组字（中文输入）中的 Enter 只是上屏，绝不触发发送。
-  // 注意 WebKit bug 165004：compositionend 先于确认 Enter 的 keydown 派发，该 keydown 的
-  // isComposing=false，单靠 e.isComposing 守卫会穿透——补 compositionend 时间戳兜底（50ms 窗口）。
-  var lastCompEnd = 0;
-  $("prompt").addEventListener("compositionend", function () { lastCompEnd = Date.now(); });
+  // IME 组字（中文输入）中的 Enter 只是上屏，绝不触发发送（isComposing + lastCompEnd 双重守卫见上）。
   $("prompt").addEventListener("keydown", function (e) {
     if (e.defaultPrevented) return;  // @ 补全菜单已消费本次 Enter（注册在前的 capture 处理器）
     if (e.key !== "Enter" || e.shiftKey || e.isComposing || Date.now() - lastCompEnd < 50) return;

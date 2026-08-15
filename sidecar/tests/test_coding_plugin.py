@@ -1049,6 +1049,48 @@ def test_decide_skill_resolves_pending():
         _runner_mod._PERM.pop("perm_1", None)
 
 
+def test_release_pending_permissions_scoped_by_sid():
+    """放行只命中目标会话：其他会话的挂起等待不动；已裁决（allow 非 None）的不覆盖。"""
+    ev_a, ev_b = _threading.Event(), _threading.Event()
+    _runner_mod._PERM["perm_sa_1"] = {"event": ev_a, "allow": None}
+    _runner_mod._PERM["perm_sb_1"] = {"event": ev_b, "allow": None}
+    try:
+        assert _runner_mod.release_pending_permissions("sa") == 1
+        assert ev_a.is_set() and _runner_mod._PERM["perm_sa_1"]["allow"] is False
+        assert not ev_b.is_set() and _runner_mod._PERM["perm_sb_1"]["allow"] is None
+        # 幂等：再放行同一会话 0（allow 已非 None）
+        assert _runner_mod.release_pending_permissions("sa") == 0
+    finally:
+        _runner_mod._PERM.pop("perm_sa_1", None)
+        _runner_mod._PERM.pop("perm_sb_1", None)
+
+
+def test_stop_releases_pending_permission_waits():
+    """停止会话即放行挂起的权限等待（deny 收场），不再等 60s 超时（终审 Minor#6）。"""
+    import time as _time
+    from claude_agent_sdk import PermissionResultDeny
+
+    async def _flow():
+        events = []
+        cb = _runner_mod.make_permission_callback("s9", events.append, timeout_s=30.0)
+        waiter = asyncio.create_task(cb("Bash", {"command": "rm -rf /"}))
+        while not events:                       # 等 permission_request 发出
+            await asyncio.sleep(0.005)
+        t0 = _time.monotonic()
+        db = _FakeDB(); db.rows["s9"] = {"id": "s9", "status": "running"}
+        reg = type("R", (), {"s": {"s9": {"cancelled": False}}})()
+        _stop_session(db, reg, "s9")            # 停止 → 应放行权限等待
+        res = await waiter
+        return res, events, _time.monotonic() - t0
+
+    res, events, dt = _run(_flow())
+    assert isinstance(res, PermissionResultDeny)
+    assert res.message == "用户拒绝"
+    assert dt < 5.0                             # 立即放行，不等 30s 超时
+    assert events[-1] == {"kind": "permission_done", "rid": events[0]["rid"], "allow": False}
+    assert events[0]["rid"] not in _runner_mod._PERM
+
+
 def test_stream_passes_can_use_tool_to_runner():
     """_stream 调 runner.run 时挂 can_use_tool 回调（权限审批桥进流式；Task 1 已扩 run 参数）。"""
     db = _FakeDB(); db.rows["s11"] = {"id": "s11", "status": "running"}

@@ -258,6 +258,8 @@ def _stop_session(db, registry, sid: str) -> bool:
             entry.cancelled = True
         except Exception:
             pass
+    # 放行挂起的权限等待（deny 收场）：否则 cancel 要等权限 60s 超时才被消费，停止最长延迟 60s
+    _runner.release_pending_permissions(sid)
     return True
 
 
