@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import logging
 import re
 import sys
 import time
@@ -17,6 +18,8 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from .ipc import ActionResult, RiskLevel
 from .plugindb import PluginDb
@@ -372,6 +375,29 @@ def panel_payload(result) -> dict | None:
     return {"panel": result.panel, "title": title, "schema": panel, "data": result.data, **decl}
 
 
+# vendor 占位注释：<!--inject:vendor/xxx.js-->（文件名白名单字符且必须 .js 结尾，无 / 天然防路径穿越）
+_INJECT_VENDOR = re.compile(r"<!--inject:vendor/([A-Za-z0-9_.-]+\.js)-->")
+
+
+def _inline_vendor(text: str, child: Path) -> str:
+    """面板 html 的 vendor 占位内联（面板 CSP 只许 inline script，第三方库经此注入）。
+
+    `<!--inject:vendor/xxx.js-->` 替换为 `<插件根>/panel/vendor/xxx.js` 的文本内容；
+    内容里字面 `</script` 一律转义为 `<\\/script`，防提前闭合宿主 script 标签；
+    文件缺失时保留占位注释并告警，不炸面板加载；无占位符的 html 原样透传。
+    """
+    def _replace(m: re.Match) -> str:
+        name = m.group(1)
+        try:
+            content = (child / "panel" / "vendor" / name).read_text(encoding="utf-8")
+        except OSError:
+            logger.warning(f"[yibao] 插件目录 {child.name} 面板 vendor 文件缺失（保留占位）：vendor/{name}")
+            return m.group(0)
+        return content.replace("</script", "<\\/script")
+
+    return _INJECT_VENDOR.sub(_replace, text)
+
+
 def _load_panels(child: Path, pid: str, manifest: dict, registry: SkillRegistry) -> None:
     """解析 manifest [[panel]]：schema/widget 读 JSON、webview 读 HTML 文本存注册表；未知类型记错误跳过。
     显示名 = 插件 name · 面板 label（label 缺省用面板 name）。
@@ -386,7 +412,7 @@ def _load_panels(child: Path, pid: str, manifest: dict, registry: SkillRegistry)
             continue
         _PANEL_TITLES[ref] = f"{manifest.get('name') or pid} · {p.get('label') or name}"
         try:
-            text = (child / p["src"]).read_text(encoding="utf-8")
+            text = _inline_vendor((child / p["src"]).read_text(encoding="utf-8"), child)
             parsed = {"type": "webview", "html": text} if ptype == "webview" else json.loads(text)
         except Exception as e:
             print(f"[yibao] 插件 {pid} panel {ref} 读取失败（已跳过）：{e}", file=sys.stderr)
