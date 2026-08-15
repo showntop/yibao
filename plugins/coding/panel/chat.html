@@ -10,8 +10,10 @@
      default-src 'none' 屏蔽一切外部脚本，故不依赖任何 CDN 资源）。
      Edit 推 old/new → 着色 diff + 头行 +x/-y 统计；Write 仅推 new → 全文按新增着色；
      MultiEdit 的 new 为 edits JSON → 逐段 old_string→new_string diff（解析失败退回原文本）；
-     runner 未推内容 → 仅显示"修改：path"说明。工具调用卡片折叠展示 input 的 JSON
-     （Read/Bash/Grep 等的参数）。
+     runner 未推内容 → 仅显示"修改：path"说明。工具调用卡默认折叠单行（R3 B1：
+     chevron + 图标 + 工具名 + 意图摘要 + 结果计数），点头行展开 input JSON 详情；
+     长输出 >8 行折叠为「… +N lines」单行（B2）；错误不上消息流，走底部 turn 级
+     错误条（B3）；工具失败只把对应卡标红 ✗，不新增卡片（B4）。
      AI 气泡 markdown 基座（R3）：marked(GFM) → DOMPurify 消毒 → hljs 高亮，vendor 三库
      经 sidecar 占位内联（head 内三个 script 占位注释，见 vendor/README.md）；
      注入缺失/异常自动降级为纯文本，不抛异常。 -->
@@ -222,6 +224,19 @@
   .card-head .mini:hover { background: var(--accent-soft); color: var(--accent-deep); }
   .card.fileedit .card-head .ic { color: var(--accent-deep); }
   .card.tooluse .card-head .ic { color: var(--muted); }
+  /* 工具卡单行头（B1）：chevron + 图标 + 工具名 + 意图摘要 + 结果计数；整行点击展开详情 */
+  .card.tooluse .card-head { cursor: pointer; user-select: none; }
+  .card.tooluse .card-head:hover { background: #e9edf3; }
+  .card-head .chev { flex: none; width: 11px; color: var(--faint); font-size: 10px; }
+  .card-head .intent {
+    flex: 1; min-width: 0; font: var(--mono); color: var(--muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .card-head .tally { flex: none; font: var(--mono); font-size: 11px; color: var(--faint); }
+  /* B4：工具失败标红（卡级 err 态 + 单行尾 ✗，不新增卡片） */
+  .card.tooluse.err { border-color: var(--red-bar); }
+  .card.tooluse.err .card-head .ic { color: var(--red); }
+  .card.tooluse.err .card-head .tally { color: var(--red); font-weight: 600; }
   .card-body { padding: 0; background: var(--card); }
   .card-body.collapsed { display: none; }
   .card-body.open { display: block; }
@@ -260,7 +275,8 @@
     color: var(--faint); margin-right: 6px;
   }
 
-  /* 工具输出（tool_result 事件）：折叠 details，挂最近一张工具卡下；无卡则独立暗块 */
+  /* 工具输出（tool_result 事件）：挂最近一张工具卡下（无卡则独立暗块）。
+     B2：≤8 行直接可见（.plain 无 summary），>8 行 details 默认收起、summary 显示「… +N lines」；err 红态 */
   .tool-result {
     max-width: 86%; margin-top: 6px; padding: 6px 11px 8px;
     border-top: 1px dashed var(--border); font-size: 12px;
@@ -276,8 +292,32 @@
     color: var(--muted); background: var(--surface-2);
     max-height: 240px; overflow-y: auto;
   }
+  .tool-result.plain > pre { margin-top: 2px; }
   .tool-result.err > summary, .tool-result.err > pre { color: var(--red); }
   .tool-result.err > pre { background: var(--red-bg); }
+
+  /* turn 级错误条（B3）：底部固定红底细条——左摘要单行截断 + 右「详情」展开/收起全文；
+     协议 XML/堆栈只进详情区，摘要只显示人话首行；新 turn 开始（send/user_msg）消失 */
+  #errbar {
+    flex: none; padding: 6px 12px; background: var(--red-bg);
+    border-top: 1px solid var(--red-bar); font-size: 12px;
+  }
+  #errbar .err-row { display: flex; align-items: center; gap: 8px; }
+  #errbar .err-summary {
+    flex: 1; min-width: 0; color: var(--red);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  #errbar .err-toggle {
+    flex: none; border: 1px solid var(--red-bar); background: transparent; color: var(--red);
+    font-size: 11px; padding: 1px 10px; border-radius: 6px; cursor: pointer; transition: all .15s ease;
+  }
+  #errbar .err-toggle:hover { background: rgba(182,85,74,0.12); }
+  #errbar .err-detail {
+    margin-top: 6px; max-height: 160px; overflow-y: auto; padding: 6px 9px;
+    border-radius: 8px; background: rgba(255,255,255,0.55);
+    font: var(--mono); font-size: 11.5px; color: var(--red);
+    white-space: pre-wrap; word-break: break-word;
+  }
 
   /* 权限审批卡（permission_request 事件）：警示色描边 + 拒绝/允许按钮 + 超时提示；裁决后 ok/no 着色锁定 */
   .perm-card { border-color: var(--warn, #b45309); padding: 10px 13px; }
@@ -479,6 +519,15 @@
 </header>
 
 <main id="log"></main>
+
+<!-- turn 级错误条（B3）：错误不上消息流——底部固定红条，摘要 + 「详情」展开全文；新 turn 开始自动消失 -->
+<div id="errbar" class="hidden">
+  <div class="err-row">
+    <span id="err-summary" class="err-summary"></span>
+    <button id="err-toggle" type="button" class="err-toggle">详情</button>
+  </div>
+  <pre id="err-detail" class="err-detail hidden"></pre>
+</div>
 
 <footer>
   <div class="prompt-wrap">
@@ -780,18 +829,30 @@
     scrollIfAtBottom();
   }
 
+  // ---- turn 级错误条（B3）：错误不上消息流——底部固定红底细条（左摘要单行截断 +
+  //   右「详情」展开/收起全文）；协议 XML/堆栈只进详情区，摘要只显示人话首行。
+  //   新 turn 开始（send / user_msg 回流）或清屏（新对话 / 恢复历史）时消失。 ----
   function appendError(text) {
-    var row = document.createElement("div");
-    row.className = "row ai";
-    var b = document.createElement("div");
-    b.className = "bubble";
-    b.style.color = "var(--red)";
-    b.style.background = "var(--red-bg)";
-    b.style.borderColor = "#f5d5d0";
-    b.textContent = "✗ " + text;
-    row.appendChild(b);
-    $("log").appendChild(row);
-    scrollIfAtBottom();
+    $("err-summary").textContent = "✗ " + humanFirstLine(text);
+    var detail = $("err-detail");
+    detail.textContent = text || "";
+    detail.classList.add("hidden");
+    $("err-toggle").textContent = "详情";
+    $("errbar").classList.remove("hidden");
+  }
+  function hideErrBar() { $("errbar").classList.add("hidden"); }
+
+  // 人话首行：跳过空行 / 协议 XML 行（< 开头）/ 堆栈帧（at …、File "…"、Traceback），
+  // 全都不是人话时给兜底文案（错误全文仍在详情区可见）
+  function humanFirstLine(text) {
+    var lines = String(text || "").split("\n");
+    for (var i = 0; i < lines.length; i++) {
+      var ln = lines[i].trim();
+      if (!ln || ln.charAt(0) === "<") continue;
+      if (/^(at\s|File\s"|Traceback)/.test(ln)) continue;
+      return ln;
+    }
+    return "执行出错（点「详情」查看全文）";
   }
 
   // ---- 文件改动卡片（默认展开：头行 ✎ path +x -y tool + 着色 LCS diff 体） ----
@@ -962,27 +1023,74 @@
     body.appendChild(frag);
   }
 
-  // ---- 工具调用卡片（折叠/展开） ----
+  // ---- 工具调用卡片（B1：默认折叠单行 = chevron + 图标 + 工具名 + 意图摘要 + 结果计数；
+  //   点击头行展开/折叠 input JSON 详情，populate 逻辑保留） ----
+  // 工具图标：emoji/字符与现有 ✎/🔐 风格一致；未列出的工具默认 ⚙
+  var TOOL_ICONS = {
+    Bash: "❯", Read: "📄", Write: "✎", Edit: "✎", MultiEdit: "✎",
+    Grep: "🔍", Glob: "📂", WebFetch: "🌐", WebSearch: "🔎",
+    Task: "🤖", TodoWrite: "☰"
+  };
+  function toolIcon(tool) { return TOOL_ICONS[tool] || "⚙"; }
+
+  // 意图摘要：从 input 提炼单行意图（换行压平、超 60 字截断；拿不到返回空串）
+  function summarizeTool(tool, input) {
+    if (!input || typeof input !== "object") return "";
+    var s = "";
+    if (tool === "Bash") s = input.command || "";
+    else if (tool === "Read" || tool === "Glob") s = input.file_path || input.pattern || input.path || "";
+    else if (tool === "Grep") s = input.pattern ? "\"" + input.pattern + "\"" : "";
+    else if (tool === "Edit" || tool === "Write" || tool === "MultiEdit") s = input.file_path || "";
+    else if (tool === "WebFetch") s = input.url || "";
+    else if (tool === "WebSearch") s = input.query || "";
+    else if (tool === "Task") s = input.description || "";
+    else {
+      for (var k in input) {           // 其它工具：首个字符串参数
+        if (typeof input[k] === "string") { s = input[k]; break; }
+      }
+    }
+    s = String(s).replace(/\s+/g, " ").trim();
+    return s.length > 60 ? s.slice(0, 59) + "…" : s;
+  }
+
   function appendToolUse(ev) {
     var tool = ev.tool || "(未知工具)";
     var input = ev.input || null;
     var card = document.createElement("div");
     card.className = "card tooluse";
+    card.dataset.tool = tool;  // tool_result 到达时按工具名提炼结果计数
+
     var head = document.createElement("div");
     head.className = "card-head";
-    head.innerHTML =
-      '<span class="ic">⚙</span>' +
-      '<span class="lbl">工具</span>' +
-      '<span class="path">' + esc(tool) + '</span>' +
-      '<span class="spacer"></span>' +
-      '<button type="button" class="mini toggle">展开</button>';
+    head.title = "点击展开参数详情";
+    var chev = document.createElement("span");
+    chev.className = "chev";
+    chev.textContent = "▸";
+    var ic = document.createElement("span");
+    ic.className = "ic";
+    ic.textContent = toolIcon(tool);
+    var lbl = document.createElement("span");
+    lbl.className = "lbl";
+    lbl.textContent = tool;
+    var intent = document.createElement("span");
+    intent.className = "intent";
+    intent.textContent = summarizeTool(tool, input);
+    var tally = document.createElement("span");
+    tally.className = "tally";
+    card._tallyEl = tally;     // tool_result 直接写计数/✗（免 querySelector）
+    head.appendChild(chev);
+    head.appendChild(ic);
+    head.appendChild(lbl);
+    head.appendChild(intent);
+    head.appendChild(tally);
+
     var body = document.createElement("div");
     body.className = "card-body collapsed";
-    head.querySelector(".toggle").addEventListener("click", function () {
+    head.addEventListener("click", function () {
       var willOpen = body.classList.contains("collapsed");
       body.classList.toggle("collapsed");
       body.classList.toggle("open", willOpen);
-      head.querySelector(".toggle").textContent = willOpen ? "收起" : "展开";
+      chev.textContent = willOpen ? "▾" : "▸";
       if (willOpen && !body.dataset.populated) {
         body.dataset.populated = "1";
         populateToolUseBody(body, tool, input);
@@ -1031,11 +1139,60 @@
     scrollIfAtBottom();
   }
 
-  // 工具输出：挂到最近一张工具卡下（无卡则独立暗块），截断显示
+  // 结果计数（B1）：Grep→matches 数（非空行）；Read/Bash→行数；其余工具拿不到 → 不加
+  function resultTally(tool, text) {
+    if (!text) return "";
+    var lines = text.split("\n");
+    if (lines.length && lines[lines.length - 1] === "") lines.pop();
+    if (tool === "Grep") {
+      var n = 0;
+      for (var i = 0; i < lines.length; i++) if (lines[i].trim()) n++;
+      return n ? n + " matches" : "";
+    }
+    if (tool === "Read" || tool === "Bash") {
+      return lines.length ? lines.length + " lines" : "";
+    }
+    return "";
+  }
+
+  // 工具失败标红（B4）：对应卡加 err 态 + 单行尾 ✗，不新增卡片
+  function markToolCardError(card) {
+    card.classList.add("err");
+    if (card._tallyEl) card._tallyEl.textContent = "✗";
+  }
+
+  // 工具输出：挂到最近一张工具卡下（无卡则独立暗块）。
+  // B2：≤8 行直接可见；>8 行默认折叠为「… +N lines」单行，点击展开全文。
+  // B4：is_error → 对应卡标红 ✗（结果体照常挂卡下，红态）；无卡 → 退化进 turn 级错误条（B3）。
   function appendToolResult(ev) {
-    var d = document.createElement("details");
-    d.className = "tool-result" + (ev.is_error ? " err" : "");
-    d.innerHTML = "<summary>结果" + (ev.is_error ? "（错误）" : "") + "</summary><pre>" + esc(ev.text || "") + "</pre>";
+    var text = ev.text || "";
+    if (ev.is_error) {
+      if (!lastToolCard) { appendError(text || "工具执行失败"); return; }
+      markToolCardError(lastToolCard);
+    } else if (lastToolCard) {
+      var tally = resultTally(lastToolCard.dataset.tool, text);
+      if (tally && lastToolCard._tallyEl) lastToolCard._tallyEl.textContent = tally;
+    }
+    var lines = text.split("\n");
+    if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+    var d, pre;
+    if (lines.length <= 8) {
+      d = document.createElement("div");   // 短输出：直接可见，无折叠壳
+      pre = document.createElement("pre");
+      pre.textContent = text;
+      d.appendChild(pre);
+      d.className = "tool-result plain";
+    } else {
+      d = document.createElement("details");  // 长输出：默认收起，summary 显示隐藏行数
+      var sum = document.createElement("summary");
+      sum.textContent = "… +" + lines.length + " lines";
+      pre = document.createElement("pre");
+      pre.textContent = text;
+      d.appendChild(sum);
+      d.appendChild(pre);
+      d.className = "tool-result";
+    }
+    if (ev.is_error) d.className += " err";
     if (lastToolCard) lastToolCard.appendChild(d);
     else $("log").appendChild(d);
     scrollIfAtBottom();
@@ -1100,6 +1257,7 @@
       case "user_msg":
         // runner 回流的用户消息（replay-user-messages）：画带 uuid 的用户气泡（⏪ 回滚锚点）。
         // send() 不再直接画气泡，由本事件画；事件到达清掉 1.5s 兜底 timer（防双份）。
+        hideErrBar();  // 新 turn 开始：turn 级错误条（B3）消失
         if (pendingUserEcho) { clearTimeout(pendingUserEcho); pendingUserEcho = null; }
         if (currentBubble) finalizeBubble(currentBubble);  // 切断前终渲（长消息护栏下的气泡不留纯文本）
         currentBubble = null;  // 用户气泡切断 assistant 流
@@ -1242,6 +1400,7 @@
       fallbackUserBubble = { el: appendUser(prompt), text: prompt };
     }, 1500);
     currentBubble = null;  // 用户气泡不属于 assistant 流
+    hideErrBar();        // 新 turn 开始：turn 级错误条（B3）消失
 
     // 多轮路由：currentSession 为空 → coding.start 新建；否则 → coding.send 接续同一会话。
     // 这是本次多轮修复的核心：第二条起走 send(resume)，被驱动的 CC 才能拿到历史上下文。
@@ -1296,6 +1455,7 @@
     currentBubble = null;
     lastToolCard = null;   // #log 清空后旧卡已 detach，防 tool_result 落进不可见节点
     fallbackUserBubble = null;  // 兜底气泡随 #log 清空 detach，清引用防迟到 user_msg 升级陈旧节点
+    hideErrBar();          // 清屏：turn 级错误条一并消失
     streaming = false;
     sending = false;
     $("log").innerHTML = "";
@@ -1600,6 +1760,7 @@
       currentBubble = null;
       lastToolCard = null;   // #log 清空后旧卡已 detach，防 tool_result 落进不可见节点（同 newChat）
       fallbackUserBubble = null;  // 同 newChat：清兜底气泡引用，防迟到 user_msg 升级陈旧节点
+      hideErrBar();          // 同 newChat：清屏后旧 turn 错误条一并消失
       streaming = false;
       $("log").innerHTML = "";
       (r.messages || []).forEach(function (m) {
@@ -1637,6 +1798,13 @@
   $("cwd-pick").addEventListener("click", pickCwd);
   $("history").addEventListener("click", openHistory);
   $("history-close").addEventListener("click", closeHistory);
+  // turn 级错误条「详情」：展开/收起错误全文（摘要行常驻单行）
+  $("err-toggle").addEventListener("click", function () {
+    var d = $("err-detail");
+    var willOpen = d.classList.contains("hidden");
+    d.classList.toggle("hidden", !willOpen);
+    this.textContent = willOpen ? "收起" : "详情";
+  });
   $("history-overlay").addEventListener("click", function (e) {
     if (e.target === this) closeHistory();  // 点空白处收起（picker 内点击不冒泡到 overlay 的 target 判定）
   });
@@ -1743,6 +1911,7 @@
       appendTextToBubble(b, "我打开项目看一下 main.rs 的结构…");
       appendFileEdit({ tool: "Read", path: "src/main.rs" });
       appendToolUse({ tool: "Bash", input: { command: "wc -l src/main.rs", description: "统计行数" } });
+      appendToolResult({ text: "152 src/main.rs" });
       var b2 = appendAssistantBubble();
       appendTextToBubble(b2, "入口在 src/main.rs:12 的 fn main()。需要我加点日志吗？");
       b2.classList.add("done");
