@@ -9,6 +9,17 @@ export interface Msg {
   interrupted?: boolean;
 }
 
+function uuid(): string {
+  // crypto.randomUUID 仅安全上下文（HTTPS/localhost）存在；手机浏览器走
+  // http://<内网IP> 访问时没有它，降级 getRandomValues（非安全上下文也可用）
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40; // version 4
+  b[8] = (b[8] & 0x3f) | 0x80; // variant 10xx
+  const h = [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
 export function useChat(
   conn: ConnConfig,
   url: () => string = () => buildEventsUrl(conn),
@@ -16,7 +27,7 @@ export function useChat(
   fetchImpl: typeof fetch = fetch,
 ) {
   const messages: Ref<Msg[]> = ref([]);
-  const conversationId = ref(crypto.randomUUID());
+  const conversationId = ref(uuid());
   const error = ref("");
   const stream = useEventStream(url, makeES);
   const busy = computed(() => messages.value.some((m) => m.role === "assistant" && !m.done));
@@ -90,7 +101,7 @@ export function useChat(
 
   function newChat(): void {
     messages.value = [];
-    conversationId.value = crypto.randomUUID();
+    conversationId.value = uuid();
     error.value = "";
   }
 

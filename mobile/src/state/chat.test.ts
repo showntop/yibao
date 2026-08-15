@@ -78,3 +78,21 @@ describe("useChat", () => {
     expect(chat.error.value).toBe("另一个窗口还在说，等它说完…");
   });
 });
+
+describe("uuid（非安全上下文降级）", () => {
+  it("getRandomValues 路径生成合法 UUID v4", async () => {
+    // 动态 import 拿模块内 uuid 不可直达（未导出）——经由 useChat 间接验证：
+    // 屏蔽 randomUUID 模拟手机 http 内网访问，构造 useChat 不应抛错且 id 形如 UUID
+    const orig = crypto.randomUUID;
+    (crypto as any).randomUUID = undefined;
+    try {
+      const { useChat } = await import("./chat");
+      const fakeES = { addEventListener: () => {}, close: () => {}, onopen: null, onerror: null };
+      const c = useChat({ host: "http://x", token: "t" }, () => "u", () => fakeES as never);
+      expect(c.conversationId.value).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+      c.stream.stop();
+    } finally {
+      (crypto as any).randomUUID = orig;
+    }
+  });
+});
