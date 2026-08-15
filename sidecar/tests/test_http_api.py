@@ -299,6 +299,80 @@ def test_v1_events_requires_token():
     asyncio.run(main())
 
 
+def test_v1_conversations_and_history_routes():
+    """/v1/conversations 与 /v1/history（mobile M1）：fake deps 形状断言 +
+    未接线 503（与 v1_state 同模式）。"""
+    async def main():
+        seen = []
+
+        def conversations():
+            return {"ok": True, "items": [{"id": "c1", "preview": "你好呀", "turns": 4}]}
+
+        def history(cid):
+            seen.append(cid)
+            return {"ok": True, "items": [{"role": "user", "text": "hi"},
+                                          {"role": "assistant", "text": "hello"}]}
+
+        deps = MobileDeps(conversations=conversations, history=history)
+        app = build_app(get_bridge_token=lambda: "btok", get_mobile_token=lambda: "mtok",
+                        tap=EventTap(lambda m: None), deps=deps)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            r = await client.get("/v1/conversations", headers={"X-Yibao-Token": "mtok"})
+            assert r.status == 200
+            assert await r.json() == {"ok": True,
+                                      "items": [{"id": "c1", "preview": "你好呀", "turns": 4}]}
+            r = await client.get("/v1/history", params={"conversation_id": "c1"},
+                                 headers={"X-Yibao-Token": "mtok"})
+            assert r.status == 200
+            assert await r.json() == {"ok": True, "items": [{"role": "user", "text": "hi"},
+                                                            {"role": "assistant", "text": "hello"}]}
+            assert seen == ["c1"]
+            # 无 conversation_id 参数 → 空串透传（deps 侧取 default 桶）
+            r = await client.get("/v1/history", headers={"X-Yibao-Token": "mtok"})
+            assert r.status == 200
+            assert seen == ["c1", ""]
+        finally:
+            await client.close()
+
+        # 未接线 → 503（与 v1_state 一致）
+        client2 = TestClient(TestServer(_mkapp()))
+        await client2.start_server()
+        try:
+            r = await client2.get("/v1/conversations", headers={"X-Yibao-Token": "mtok"})
+            assert r.status == 503
+            r = await client2.get("/v1/history", headers={"X-Yibao-Token": "mtok"})
+            assert r.status == 503
+        finally:
+            await client2.close()
+
+    asyncio.run(main())
+
+
+def test_v1_events_last_event_id_query_fallback():
+    """last_event_id query 兜底（mobile M1）：手动重连的 EventSource 新建时带不上
+    header，query 是唯一通道——与 Last-Event-ID header 等效。"""
+    async def main():
+        tap = EventTap(lambda m: None)
+        app = build_app(get_bridge_token=lambda: "btok", get_mobile_token=lambda: "mtok", tap=tap)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            tap.publish("chunk", {"text": "帧一"})
+            tap.publish("chunk", {"text": "帧二"})
+            resp = await client.get("/v1/events",
+                                    params={"token": "mtok", "last_event_id": "1"})
+            assert resp.status == 200
+            line = await asyncio.wait_for(resp.content.readline(), 2)
+            assert line == b"id: 2\n"  # 从 seq=1 之后补发：query 兜底生效
+            resp.close()
+        finally:
+            await client.close()
+
+    asyncio.run(main())
+
+
 def test_v1_push_register_route():
     """推送设备登记路由测试"""
     async def main():

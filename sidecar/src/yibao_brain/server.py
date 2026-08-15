@@ -489,6 +489,23 @@ async def _start_http_api(agent: AgentLoop, settings: dict, tap, deps) -> "objec
         return None
 
 
+def _conversations_payload(history) -> dict:
+    """/v1/conversations 载荷（mobile M1）：桶摘要列表。
+    history 未启用（agent.history=None，测试态/无 history_file）→ 空列表，不 503。"""
+    if history is None:
+        return {"ok": True, "items": []}
+    return {"ok": True, "items": history.conversations()}
+
+
+def _history_payload(history, conversation_id: str) -> dict:
+    """/v1/history 载荷（mobile M1）：单桶消息平铺成 {role, text}；
+    conversation_id 缺省 → default 桶。history 未启用 → 空列表。"""
+    if history is None:
+        return {"ok": True, "items": []}
+    return {"ok": True, "items": [{"role": m.get("role"), "text": m.get("content")}
+                                  for m in history.messages(conversation_id or None)]}
+
+
 async def _readonly_no_run(text: str, rid) -> None:
     """L0 只读直调永远不会走 agent 路径（direct=true 才并发）；防御性兜底。"""
     raise RuntimeError("只读直调不应进入 agent 路径")
@@ -1262,6 +1279,9 @@ async def serve_async(
         _http_deps.confirm = _confirm_mobile
         _http_deps.state = _mobile_state
         _http_deps.register_push = _register_push
+        # 会话只读面（mobile M1）：/v1/conversations、/v1/history 直读 agent.history
+        _http_deps.conversations = lambda: _conversations_payload(agent.history)
+        _http_deps.history = lambda cid: _history_payload(agent.history, cid)
         bridge_server = await _start_http_api(agent, settings, tap, _http_deps)
 
     while True:

@@ -224,6 +224,22 @@ def test_arun_panel_surface_tagged(tmp_path):
     assert {"role": "user", "content": "【zimeiti 面板】写初稿"} in msgs
 
 
+def test_conversations_summaries(tmp_path):
+    """/v1/conversations 桶摘要（mobile M1）：id/preview/turns——
+    preview=末条 assistant 文本前 50 字，turns=该桶消息数。"""
+    history = ConversationHistory(tmp_path / "h.json")
+    long_reply = "这是一段超过五十个字符的很长很长很长很长很长的回答文本" * 2
+    history.record_turn("你好", long_reply, "c1")
+    history.record_turn("在吗", "在的", "c2")
+    history.record_turn("追问", "继续说")  # 无 cid → default 桶
+    items = {i["id"]: i for i in history.conversations()}
+    assert set(items) == {"c1", "c2", "default"}
+    assert items["c1"]["preview"] == long_reply[:50]  # 截到前 50 字
+    assert items["c1"]["turns"] == 2
+    assert items["c2"] == {"id": "c2", "preview": "在的", "turns": 2}
+    assert items["default"] == {"id": "default", "preview": "继续说", "turns": 2}
+
+
 def test_conversation_isolation_between_buckets(tmp_path):
     """M3 会话隔离闭环：不同 conversation_id 的历史互不可见，同会话跨 run 保持上下文。
     这就是「小窗不该知道你在另一会话问过 MySQL」的保证。"""

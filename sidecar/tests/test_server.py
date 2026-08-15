@@ -108,6 +108,36 @@ def test_serve_async_streams_events_and_run_done(tmp_path):
     assert out[-1] == {"type": "run_done", "id": 1}
 
 
+def test_mobile_history_endpoint_payloads_from_real_bucket(tmp_path):
+    """（mobile M1）/v1/conversations+/v1/history 的 serve_async 接线读 agent.history：
+    build_loop 带 history_file、FakeProvider 真跑一轮 → 两个 payload 闭包产出端点形状。
+    serve_async 测试态（use_real=False 默认无 history、HTTP 面关）走不通端到端，
+    路由层由 test_http_api fake deps 覆盖——此处测「真 history 桶 → payload」这一段。"""
+    from yibao_brain.server import _conversations_payload, _history_payload
+
+    agent = build_loop(make_reader([]), use_real=False, db_path=str(tmp_path / "a.db"),
+                       provider=FakeProvider(text="你好呀，我是译宝"),
+                       history_file=str(tmp_path / "h.json"))
+
+    async def one_turn():
+        async for _ in agent.arun("你好", conversation_id="c1"):
+            pass
+
+    _run_async(one_turn())
+    # 会话列表：跑过一轮的 c1 桶（user+assistant 共 2 条，preview=末条 assistant 文本）
+    assert _conversations_payload(agent.history) == {
+        "ok": True, "items": [{"id": "c1", "preview": "你好呀，我是译宝", "turns": 2}]}
+    # 单会话回显：role/text 平铺
+    assert _history_payload(agent.history, "c1")["items"] == [
+        {"role": "user", "text": "你好"},
+        {"role": "assistant", "text": "你好呀，我是译宝"}]
+    # 无 conversation_id → default 桶（本例无记录 → 空）
+    assert _history_payload(agent.history, "")["items"] == []
+    # history 未启用（None）→ 空列表而非 503（端点已接线）
+    assert _conversations_payload(None) == {"ok": True, "items": []}
+    assert _history_payload(None, "c1") == {"ok": True, "items": []}
+
+
 def test_serve_async_interrupt_stops_run(tmp_path):
     # 慢流式 provider：interrupt 在首 chunk 之前命中 cancel
     provider = FakeProvider(chunks=["A", "B", "C", "D"], delay=0.02)

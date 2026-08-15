@@ -98,6 +98,17 @@ class ConversationHistory:
             out.append(m)
         return out
 
+    def conversations(self) -> list[dict]:
+        """桶摘要列表（mobile /v1/conversations）：{id, preview, turns}。
+        preview=末条 assistant 文本前 50 字（无 assistant 轮 → 空串）；turns=该桶消息数。
+        注意桶内仅最近 10 轮（max_turns 裁剪）——摘要反映的是「最近上下文」非完整存档。"""
+        out: list[dict] = []
+        for cid, msgs in self._buckets.items():
+            preview = next((m.get("content") or "" for m in reversed(msgs)
+                            if m.get("role") == "assistant"), "")
+            out.append({"id": cid, "preview": preview[:50], "turns": len(msgs)})
+        return out
+
     def record_messages(self, msgs: list[dict], conversation_id: str | None = None) -> None:
         """记录一轮完整轨迹到指定会话桶：user + (assistant tool_calls + tool 结果)* + assistant 终复。
 

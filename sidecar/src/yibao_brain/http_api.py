@@ -141,6 +141,8 @@ class MobileDeps:
       interrupt:     () -> bool（是否真的打断）
       confirm:       (id: str, approved: bool, remember: bool) -> bool（False=已处理/未知）
       register_push: (registration_id: str, platform: str) -> None
+      conversations:  () -> dict（含 items:[{id, preview, turns}] 桶摘要）
+      history:        (conversation_id: str) -> dict（含 items:[{role, text}]；空 id=default 桶）
     """
 
     save: Callable | None = None
@@ -149,6 +151,8 @@ class MobileDeps:
     interrupt: Callable | None = None
     confirm: Callable | None = None
     register_push: Callable | None = None
+    conversations: Callable | None = None
+    history: Callable | None = None
 
 
 _VERSION = "1"
@@ -279,6 +283,18 @@ def build_app(*, get_bridge_token: Callable[[], str], get_mobile_token: Callable
             return web.json_response({"ok": False, "error": "not wired"}, status=503)
         return web.json_response({"ok": True, **deps.state()})
 
+    async def v1_conversations(request):
+        """会话列表（mobile M1）：{id, preview, turns} 桶摘要。"""
+        if deps.conversations is None:
+            return web.json_response({"ok": False, "error": "not wired"}, status=503)
+        return web.json_response(deps.conversations())
+
+    async def v1_history(request):
+        """单会话消息回显（mobile M1）：无 conversation_id 参数 → default 桶。"""
+        if deps.history is None:
+            return web.json_response({"ok": False, "error": "not wired"}, status=503)
+        return web.json_response(deps.history(request.query.get("conversation_id") or ""))
+
     async def v1_push_register(request):
         """推送设备登记：同 registration_id 覆盖，防重复堆积"""
         if deps.register_push is None:
@@ -300,7 +316,9 @@ def build_app(*, get_bridge_token: Callable[[], str], get_mobile_token: Callable
         })
         await resp.prepare(request)
         try:
-            last = request.headers.get("Last-Event-ID")
+            # 手动重连的 EventSource 新建时带不上 header → last_event_id query 兜底
+            # （mobile M1：与 Last-Event-ID header 等效，header 优先）
+            last = request.headers.get("Last-Event-ID") or request.query.get("last_event_id")
             try:
                 last_seq = int(last) if last else 0
             except ValueError:
@@ -340,6 +358,8 @@ def build_app(*, get_bridge_token: Callable[[], str], get_mobile_token: Callable
     app.router.add_get("/v1/events", v1_events)
     app.router.add_post("/v1/confirm", v1_confirm)
     app.router.add_get("/v1/state", v1_state)
+    app.router.add_get("/v1/conversations", v1_conversations)
+    app.router.add_get("/v1/history", v1_history)
     app.router.add_post("/v1/push/register", v1_push_register)
     return app
 
