@@ -419,7 +419,7 @@ async def _enrich_later(agent: AgentLoop, material_id: str | None) -> None:
         print(f"[yibao] 素材后台精整失败（已跳过）：{e}", file=sys.stderr)
 
 
-async def _start_http_api(agent: AgentLoop, write_msg: WriteMsg, settings: dict, tap, deps) -> "object | None":
+async def _start_http_api(agent: AgentLoop, settings: dict, tap, deps) -> "object | None":
     """起 aiohttp HTTP 面（扩展桥 + 移动 API）；失败 → stderr + None（不拖垮大脑）。"""
     try:
         from .http_api import build_app, run_server
@@ -1195,7 +1195,7 @@ async def serve_async(
         _http_deps.confirm = _confirm_mobile
         _http_deps.state = _mobile_state
         _http_deps.register_push = _register_push
-        bridge_server = await _start_http_api(agent, write_msg, settings, tap, _http_deps)
+        bridge_server = await _start_http_api(agent, settings, tap, _http_deps)
 
     while True:
         msg = await queue.get()

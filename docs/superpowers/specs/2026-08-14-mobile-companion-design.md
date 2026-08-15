@@ -194,3 +194,7 @@ data: {"run_id":"...","text":"部分回复"}
 - 桌面设置页需新增 `http.public_url` 配置项（二维码内容用它；不填提示仅局域网调试）
 - conversation 的历史消息拉取（App 重开后回显旧对话）——v1 靠 seq 补发+state，是否加历史端点待 P3 实做时定
 - 多设备同时 SSE 在环（手机+平板）行为符合预期（广播），未做设备定向——记录，不实现
+- token 热重载失效：auth 中间件持有启动时的 token 快照，P5 重置 UI 落地前须改为读 settings 或重置即重启
+- iOS WKWebView CORS 大概率要补响应头（P3 计划风险项）
+- 跨 surface 排队窗口内手机 interrupt 连环杀（P3 客户端落地前收紧为 cancel 属主判）
+- `_register_push` 落盘缺测试（P4 消费 push.devices 前补）

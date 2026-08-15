@@ -1,5 +1,6 @@
 import asyncio
 import json
+import threading
 import time
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -2112,24 +2113,23 @@ def test_serve_async_snip_capture_silent_without_host(tmp_path):
     assert any(m.get("type") == "pong" for m in out)
 
 
-_HELD = {"done": False, "reader": None}
+_HELD_DONE = threading.Event()  # 挂起态 reader 的放行闸：done 置位 → 读线程返回 None 结束
 
 
 def _held_reader():
-    _HELD["done"] = False
+    _HELD_DONE.clear()
 
     def _r():
         import time as _t
-        while not _HELD["done"]:
+        while not _HELD_DONE.is_set():
             _t.sleep(0.01)
         return None
 
-    _HELD["reader"] = _r
     return _r, None
 
 
 def _held_reader_done():
-    _HELD["done"] = True
+    _HELD_DONE.set()
 
 
 def test_mobile_submit_run_uses_mobile_surface(tmp_path):
