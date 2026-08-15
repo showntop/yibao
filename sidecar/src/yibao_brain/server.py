@@ -348,10 +348,43 @@ async def handle_panel_action(msg: dict, agent: AgentLoop, write_msg: WriteMsg, 
 # ---------- 浏览器扩展桥（127.0.0.1 微 HTTP → zimeiti quiet 直调）----------
 
 
-def _lan_ip() -> str:
-    """内网 IPv4（配对 URL 用）：UDP connect 到 RFC5737 地址做路由选择，不实际发包。"""
-    import socket
+def _pick_en_ip(ifconfig_out: str) -> str:
+    """从 ifconfig 输出挑物理网卡（en*）的第一个私网 IPv4；纯函数便于测试。
+    跳过 169.254（自配链路本地）。为什么不用 UDP connect 挑默认路由：公司 VPN
+    （utun）常接管默认路由，挑出来的是 VPN 隧道地址，手机根本够不着。"""
+    import ipaddress
+    import re
 
+    cur = ""
+    for ln in ifconfig_out.splitlines():
+        m = re.match(r"^(\w+):", ln)
+        if m:
+            cur = m.group(1)
+            continue
+        m = re.match(r"\s+inet (\d+\.\d+\.\d+\.\d+)", ln)
+        if m and cur.startswith("en"):
+            ip = m.group(1)
+            try:
+                if ipaddress.ip_address(ip).is_private and not ip.startswith("169.254."):
+                    return ip
+            except ValueError:
+                continue
+    return ""
+
+
+def _lan_ip() -> str:
+    """内网 IPv4（配对 URL 用）：优先物理网卡（en* = WiFi/以太网）的私网地址；
+    找不到（无 WiFi 之类）再退 UDP connect 路由选择（可能命中 utun，聊胜于无）。"""
+    import socket
+    import subprocess
+
+    try:
+        out = subprocess.run(["ifconfig"], capture_output=True, text=True, timeout=2).stdout
+    except Exception:
+        out = ""
+    ip = _pick_en_ip(out)
+    if ip:
+        return ip
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         s.connect(("192.0.2.1", 1))

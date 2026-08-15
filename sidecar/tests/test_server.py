@@ -2487,3 +2487,20 @@ def test_http_pair_info_ipc(tmp_path):
             os.environ.pop("YIBAO_HTTP_PORT", None)  # 防上游用例失败泄漏端口，覆盖默认 19527 断言
 
     asyncio.run(main())
+
+
+def test_pick_en_ip_prefers_physical_over_utun():
+    """_lan_ip 的网卡挑选：物理网卡（en*）私网地址优先，跳过 VPN（utun）与链路本地。"""
+    from yibao_brain.server import _pick_en_ip
+
+    sample = """lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
+\tinet 127.0.0.1 netmask 0xff000000
+utun4: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1380
+\tinet 192.168.255.10 --> 192.168.255.9 netmask 0xfffffff8
+en5: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+\tinet 169.254.1.7 netmask 0xffff0000
+en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+\tinet 192.168.31.52 netmask 0xffffff00 broadcast 192.168.31.255
+"""
+    assert _pick_en_ip(sample) == "192.168.31.52"  # 跳过 lo/utun/169.254，取 en0
+    assert _pick_en_ip("") == ""
