@@ -8,7 +8,10 @@ export const router = createRouter({
     { path: "/", redirect: "/chat" },
     { path: "/pairing", component: () => import("./views/Pairing.vue") },
     { path: "/chat", component: () => import("./views/Chat.vue") },
+    // M2 底部导航四页：feed 与 approvals 平级；settings 收尾（T3 充实记忆库）
+    { path: "/feed", component: () => import("./views/Feed.vue") },
     { path: "/approvals", component: () => import("./views/Approvals.vue") },
+    { path: "/settings", component: () => import("./views/Settings.vue") },
   ],
 });
 

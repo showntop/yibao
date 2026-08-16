@@ -4,6 +4,7 @@ import { useRouter } from "vue-router";
 import { loadConn } from "../api/connection";
 import { buildEventsUrl, useEventStream } from "../api/events";
 import { useApprovals, type PendingConfirm } from "../state/approvals";
+import { usePendingBadge } from "../state/pending-badge";
 
 const router = useRouter();
 // shallowRef：onMounted 里赋值要触发重渲染
@@ -14,12 +15,15 @@ const stream = shallowRef<ReturnType<typeof useEventStream> | null>(null);
 const remembers = ref<Record<string, boolean>>({});
 // gone 提示位：decide 返回 gone 时亮一条（该审批已在桌面处理）
 const goneNote = ref("");
+// 待批角标（M2）：本页也挂帧 +1/全量同步——审批处理完 TabBar 数字当场收敛
+let badgeSync: (() => Promise<void>) | null = null;
 
 onMounted(async () => {
   const conn = await loadConn();
   if (!conn) return router.replace("/pairing");
   stream.value = useEventStream(() => buildEventsUrl(conn));
   approvals.value = useApprovals(conn, stream.value);
+  badgeSync = usePendingBadge(stream.value, conn).sync;
   stream.value.start(); // 先挂 handler 再连接：start 后到达的 confirmation_needed 才不漏
   void approvals.value.refresh();
 });
@@ -29,6 +33,7 @@ async function onDecide(p: PendingConfirm, approved: boolean) {
   if (!approvals.value) return;
   const res = await approvals.value.decide(p.id, approved, !!remembers.value[p.id]);
   if (res === "gone") goneNote.value = "该审批已在桌面处理，列表已刷新";
+  void badgeSync?.(); // 角标按服务端事实重收敛（处理完归零）
 }
 </script>
 
@@ -73,7 +78,8 @@ async function onDecide(p: PendingConfirm, approved: boolean) {
 </template>
 
 <style scoped>
-.approvals { display: flex; flex-direction: column; height: 100dvh; }
+.approvals { display: flex; flex-direction: column; height: 100dvh;
+  padding-bottom: calc(52px + env(safe-area-inset-bottom)); /* TabBar 让位 */ }
 .head { display: flex; justify-content: space-between; align-items: center; padding: 0 12px; }
 .title { font-size: 16px; font-weight: 600; }
 .count { font-size: 13px; opacity: 0.6; }

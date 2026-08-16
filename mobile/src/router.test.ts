@@ -7,4 +7,11 @@ describe("router", () => {
     expect(paths).toContain("/pairing");
     expect(paths).toContain("/chat");
   });
+
+  it("M2 底部导航四页齐备：/feed 与 /approvals 平级，/settings 收尾", () => {
+    const paths = router.getRoutes().map((r) => r.path);
+    expect(paths).toContain("/feed");
+    expect(paths).toContain("/approvals");
+    expect(paths).toContain("/settings");
+  });
 });

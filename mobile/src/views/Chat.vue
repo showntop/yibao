@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from "vue";
 import { useRouter } from "vue-router";
 import { loadConn, clearConn } from "../api/connection";
 import { useChat } from "../state/chat";
+import { usePendingBadge } from "../state/pending-badge";
 import { useSessions } from "../state/sessions";
 import ConnBar from "../components/ConnBar.vue";
 import MessageBody from "../components/MessageBody.vue";
@@ -34,7 +35,9 @@ onMounted(async () => {
   if (!conn) return router.replace("/pairing");
   chat.value = useChat(conn); // 构造即 start，无需再显式连
   sessions.value = useSessions(conn);
-  void chat.value.syncPendingCount(); // 从审批页返回也会重跑（onMounted 每次进页触发）
+  // 待批角标上移（M2）：构造即拉 /v1/state 计数 + 挂 confirmation_needed 帧——
+  // 从审批页返回也会重跑（onMounted 每次进页触发），TabBar 审批项读同一枚 ref
+  usePendingBadge(chat.value.stream, conn);
 });
 onUnmounted(() => {
   window.clearTimeout(retryTimer);
@@ -76,10 +79,7 @@ async function rePair() {
     <header class="head">
       <ConnBar :state="chat.stream.state.value" />
       <div class="actions">
-        <!-- 待批角标：有待批才显示，点进审批页处理 -->
-        <router-link v-if="chat.pendingCount.value > 0" class="badge" to="/approvals">
-          ⏳ {{ chat.pendingCount.value }}
-        </router-link>
+        <!-- 待批角标已移到 TabBar 审批项（M2）；头部只留会话操作 -->
         <button class="ghost" @click="openDrawer">历史</button>
         <button class="ghost" @click="chat.newChat()">新对话</button>
         <button class="ghost" @click="rePair">重新配对</button>
@@ -136,11 +136,11 @@ async function rePair() {
 </template>
 
 <style scoped>
-.chat { display: flex; flex-direction: column; height: 100dvh; }
+.chat { display: flex; flex-direction: column; height: 100dvh;
+  padding-bottom: calc(52px + env(safe-area-inset-bottom)); /* TabBar 让位 */ }
 .head { display: flex; justify-content: space-between; align-items: center; }
 .ghost { background: none; border: none; color: #2f6fed; font-size: 14px; }
 .actions { display: flex; gap: 4px; align-items: center; }
-.badge { font-size: 13px; color: #b25000; background: rgba(255, 159, 10, 0.15); border-radius: 10px; padding: 3px 8px; text-decoration: none; }
 .list { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 .msg { max-width: 82%; padding: 10px 12px; border-radius: 14px; font-size: 15px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
 .msg.user { align-self: flex-end; background: #2f6fed; color: #fff; }
@@ -148,7 +148,7 @@ async function rePair() {
 .cursor { animation: blink 1s infinite; }
 .stopped { font-size: 12px; opacity: 0.6; }
 .err { color: #ff453a; font-size: 13px; }
-.inputbar { display: flex; gap: 8px; padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); }
+.inputbar { display: flex; gap: 8px; padding: 10px 12px; /* 安全区让位由 .chat 底 padding 统一承担 */ }
 .inputbar input { flex: 1; padding: 10px 12px; border-radius: 12px; border: 1px solid #ccc; background: transparent; color: inherit; font-size: 15px; }
 .stop, .send { padding: 10px 14px; border-radius: 12px; border: none; }
 .stop { background: #ff453a; color: #fff; }
