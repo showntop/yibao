@@ -2111,6 +2111,7 @@
       $("new-chat").disabled = false;
       $("send").disabled = false;
       setStatus("已恢复会话 " + sid + "，发消息将在同一上下文继续");
+      reportState("idle");   // takeover：恢复后补报，父侧 session 标志随 !!currentSession 刷新（非 takeover 自拒）
       $("prompt").focus();
     }).catch(function (e) {
       setStatus("恢复失败：" + emsg(e), true);
