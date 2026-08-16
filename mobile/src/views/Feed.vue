@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, shallowRef } from "vue";
+import { onMounted, onUnmounted, ref, shallowRef } from "vue";
 import { useRouter } from "vue-router";
 import { loadConn } from "../api/connection";
 import { useFeed } from "../state/feed";
@@ -21,6 +21,13 @@ onMounted(async () => {
   reminders.value = useReminders(conn);
   void feed.value.refresh();
   void reminders.value.refresh();
+});
+
+// 卸载清理（M2 评审移交）：确认态的 3s 超时句柄离页即清——不留悬挂定时器持有
+// 已卸载组件的闭包（泄漏），页重建后也不该有旧定时器回来动 confirming
+onUnmounted(() => {
+  for (const t of Object.values(confirming.value)) window.clearTimeout(t);
+  confirming.value = {};
 });
 
 // ts 为 unix 秒：今天只显时分，跨天补「M月D日」前缀（Feed 是回看流，精确到分足够）
@@ -68,7 +75,7 @@ function refreshAll(): void {
         <p v-if="!feed" class="empty">加载中…</p>
         <template v-else>
           <p v-if="feed.stats.value" class="statline">
-            今日完成 {{ feed.stats.value.done_24h ?? 0 }} · 进行中 {{ feed.running.value.length }} · 待提醒
+            24 小时完成 {{ feed.stats.value.done_24h ?? 0 }} · 进行中 {{ feed.running.value.length }} · 待提醒
             {{ feed.stats.value.pending_reminders ?? 0 }}
           </p>
           <p v-if="feed.items.value.length === 0" class="empty">还没有动态——译宝忙起来就有了</p>

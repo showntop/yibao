@@ -44,6 +44,11 @@ export function useChat(
   // 当前 pending 气泡对应的 run_id（send 响应取回）：桌面轮结束广播的 run_done id 不同，不误收口
   let myRunId = "";
 
+  // 历史浏览模式（M2 评审移交）：loadHistory 重建历史消息后置位——切走前在途轮的
+  // final_reply 迟到会覆写末条历史消息（帧无 run_id 可比对，surface 过滤拦不住），
+  // 期间 final_reply/run_done 帧全丢弃；本会话首个新 send 清位，恢复帧的正常消费。
+  let historyMode = false;
+
   // 帧去重（M1 seq 补帧）：seq 单调（服务端环形缓冲，容量 256）；重连补帧会重放已见过的
   // 帧，已见 seq 的整帧丢弃（chunk 重放会导致文本重复拼接、run_done 重放会误收口）。
   // seq 后跳（小于水位且非已见帧序）= 服务端 seq 回卷（重启新纪元，首帧不必是 1）→
@@ -77,6 +82,7 @@ export function useChat(
   });
   stream.on("final_reply", (d, seq) => {
     if (!fresh(seq) || !mine(d)) return;
+    if (historyMode) return; // 历史浏览中：旧轮迟到的 final_reply 不覆写历史消息
     const last = messages.value[messages.value.length - 1];
     if (last && last.role === "assistant") last.text = d.text ?? last.text;
   });
@@ -87,6 +93,7 @@ export function useChat(
   });
   stream.on("run_done", (d: { id?: string }, seq) => {
     if (!fresh(seq)) return;
+    if (historyMode) return; // 历史浏览中：旧轮收尾帧不碰重建后的消息
     if (d.id !== myRunId) return; // 桌面/其他轮的 run_done 与我无关
     myRunId = "";
     const last = messages.value[messages.value.length - 1];
@@ -106,6 +113,7 @@ export function useChat(
   async function send(text: string): Promise<void> {
     const t = text.trim();
     if (!t || busy.value) return;
+    historyMode = false; // 本会话首个新 send：退出历史浏览模式，帧恢复正常消费
     error.value = "";
     messages.value.push({ role: "user", text: t, done: true }, { role: "assistant", text: "", done: false });
     try {
@@ -158,6 +166,7 @@ export function useChat(
         done: true, // 历史轮均已收口；busy 由 messages 派生，全 done 即清零
       }));
     myRunId = ""; // 切了会话：旧轮的 run_done 不再属于当前（重建后的）气泡
+    historyMode = true; // 历史浏览开始：旧轮迟到帧不得覆写重建后的消息
     error.value = "";
   }
 

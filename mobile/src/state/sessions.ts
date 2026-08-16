@@ -20,18 +20,27 @@ export interface HistoryItem {
 export function useSessions(conn: ConnConfig, fetchImpl: typeof fetch = fetch) {
   const list: Ref<SessionItem[]> = ref([]);
   const loading = ref(false);
+  // 错误态（M2 评审移交）：首拉失败不能只留「还没有历史会话」的空态文案——
+  // 「没数据」与「没拉到」要分开；有数据后的失败保留旧列表（抽屉非关键路径）。
+  const error = ref("");
 
   async function refresh(): Promise<void> {
     loading.value = true;
+    error.value = "";
     try {
       const r = await fetchImpl(`${conn.host}/v1/conversations`, {
         headers: { "X-Yibao-Token": conn.token },
       });
-      if (!r.ok) return; // 非 200（含 503 未接线）：保留旧列表
+      if (!r.ok) {
+        // 非 200（含 503 未接线）：亮错误态，保留旧列表
+        error.value = `拉取会话列表失败（${r.status}）`;
+        return;
+      }
       const body = (await r.json()) as { items?: SessionItem[] };
       list.value = body.items ?? [];
     } catch {
-      // 断线/超时：保留旧列表（抽屉非关键路径，不弹错打扰）
+      // 断线/超时：保留旧列表（抽屉非关键路径，不弹错打扰），错误位供空列表时提示
+      error.value = "拉取会话列表失败（网络错误）";
     } finally {
       loading.value = false;
     }
@@ -52,5 +61,5 @@ export function useSessions(conn: ConnConfig, fetchImpl: typeof fetch = fetch) {
     }
   }
 
-  return { list, loading, refresh, open };
+  return { list, loading, error, refresh, open };
 }

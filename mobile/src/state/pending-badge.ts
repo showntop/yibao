@@ -24,20 +24,38 @@ async function pull(conn: ConnConfig, fetchImpl: typeof fetch): Promise<void> {
   } catch { /* 拉取失败不动计数：角标宁可滞后不误清 */ }
 }
 
+// debounce 状态放模块级：usePendingBadge 每次页面挂载都会重挂帧监听（Chat/Approvals
+// 各自的事件流），重放帧触发的校准必须收敛到「最新一次挂载」的拉取闭包上。
+const DEBOUNCE_MS = 300;
+let syncTimer: ReturnType<typeof setTimeout> | undefined;
+let latestSync: (() => void) | null = null;
+
 /**
- * 挂角标（任何持有事件流的页面调用）：confirmation_needed 帧 +1 只做「有新增」
- * 提示（广播帧无 surface 信封，桌面发起的手机也要看到）；真实数目以 /v1/state
- * 全量为准——构造即拉一次，从审批页返回/切页时由 sync 收敛。
+ * 挂角标（任何持有事件流的页面调用）：confirmation_needed 帧只当「有变化」提示——
+ * 广播帧无 surface 信封且断线重连/Tab 重挂载会 replay 环形缓冲里的历史帧，本地 +1
+ * 必虚增（M1 遗留语义被 TabBar 放大，M2 评审 Important）。改为 300ms debounce 合并
+ * 多帧只拉一次 /v1/state：计数恒为服务端事实，重放多少帧都只多拉一次。
+ * 构造即全量拉一次；sync() 供审批处理完当场收敛（并吸收未到点的 debounce）。
  */
 export function usePendingBadge(
   stream: StreamLike,
   conn: ConnConfig,
   fetchImpl: typeof fetch = fetch,
 ): { count: Ref<number>; sync: () => Promise<void> } {
+  const sync = () => {
+    // 手动 sync 即时拉取即是最新的服务端事实，pending 中的 debounce 已无意义
+    if (syncTimer !== undefined) clearTimeout(syncTimer);
+    syncTimer = undefined;
+    return pull(conn, fetchImpl);
+  };
+  latestSync = sync;
   stream.on("confirmation_needed", () => {
-    pendingCount.value += 1;
+    if (syncTimer !== undefined) clearTimeout(syncTimer); // 尾沿 debounce：窗口内多帧只留最后一拉
+    syncTimer = setTimeout(() => {
+      syncTimer = undefined;
+      latestSync?.(); // 用最新挂载的闭包（conn/fetchImpl 以最后进页的为准）
+    }, DEBOUNCE_MS);
   });
-  const sync = () => pull(conn, fetchImpl);
-  void sync(); // 构造时拉一次（run_done 等帧不动计数，只靠帧 +1 与 sync 收敛）
+  void sync(); // 构造时拉一次（run_done 等帧不动计数，只靠帧提示的 debounce 与 sync 收敛）
   return { count: pendingCount, sync };
 }

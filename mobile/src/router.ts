@@ -12,6 +12,8 @@ export const router = createRouter({
     { path: "/feed", component: () => import("./views/Feed.vue") },
     { path: "/approvals", component: () => import("./views/Approvals.vue") },
     { path: "/settings", component: () => import("./views/Settings.vue") },
+    // 记忆库子页（M2 T3）：Settings 入口进，非 Tab 项；TabBar 常驻可随时切走
+    { path: "/memories", component: () => import("./views/Memories.vue") },
   ],
 });
 

@@ -2,6 +2,8 @@
 
 局域网内的手机浏览器伴侣面：语音翻译会话、多会话历史、远程审批。Vite + Vue 3，dev 端口 **5173**（strictPort），`vite-plugin-mkcert` 出 **HTTPS**（安全上下文 + PWA 加主屏的前提）。
 
+要求 **Node ≥ 22.19**（依赖链下限；`node -v` 自查，低了 pnpm install 会报 engine 警告或起不来）。
+
 ```bash
 pnpm install
 pnpm dev     # 首跑会生成/复用本地 CA（见下节），随后监听 https://<Mac内网IP>:5173

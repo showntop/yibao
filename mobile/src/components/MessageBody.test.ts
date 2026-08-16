@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mount } from "@vue/test-utils";
+import { marked } from "marked";
 import MessageBody from "./MessageBody.vue";
 
 // jsdom 无剪贴板：注入 fake（点击复制路径要调 navigator.clipboard.writeText）
@@ -66,5 +67,15 @@ describe("MessageBody", () => {
     const code = w.element.querySelector("pre code") as HTMLElement;
     expect(code.className).toBe("language-js"); // 只留字母数字连字符下划线
     expect(code.className).toMatch(/^[\w-]*$/);
+  });
+
+  // 回归护栏：组件用局部 new Marked() 定制 code 渲染器（带复制钮），
+  // marked.use() 才会污染全局单例——钉死「渲染过消息后全局 marked 仍是默认形状」，
+  // 防将来有人顺手改成 marked.use() 把同包其他使用者一并改掉。
+  it("marked 全局未受染：组件渲染后全局单例的 code 仍是默认形状（无 copy-btn）", () => {
+    mount(MessageBody, { props: { text: "```js\nx=1\n```" } });
+    const g = marked.parse("```js\nx=1\n```", { async: false }) as string;
+    expect(g).not.toContain("copy-btn");
+    expect(g).toContain('<code class="language-js">');
   });
 });

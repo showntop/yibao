@@ -49,6 +49,28 @@ describe("useSessions", () => {
     expect(s2.list.value).toEqual(CONV_ITEMS);
   });
 
+  it("refresh 首败：错误态落地（与空态分开），成功后清位", async () => {
+    // 首拉就失败（列表尚空）：不能只留「还没有历史会话」的空态文案——要能区分「没数据」与「没拉到」
+    const bad = mkFetch({ "http://x/v1/conversations": { status: 500, body: { ok: false } } });
+    const s = useSessions({ host: "http://x", token: "t" } as ConnConfig, bad.fetchImpl);
+    await s.refresh();
+    expect(s.error.value).not.toBe("");
+    expect(s.list.value).toEqual([]);
+    // 恢复后：列表落地且错误位清零
+    const ok = mkFetch({ "http://x/v1/conversations": { body: { ok: true, items: CONV_ITEMS } } });
+    const s2 = useSessions({ host: "http://x", token: "t" } as ConnConfig, ok.fetchImpl);
+    await s2.refresh();
+    expect(s2.error.value).toBe("");
+    expect(s2.list.value).toEqual(CONV_ITEMS);
+  });
+
+  it("refresh 网络错也落错误态（非静默吞掉）", async () => {
+    const broken = vi.fn(async () => { throw new Error("net down"); });
+    const s = useSessions({ host: "http://x", token: "t" } as ConnConfig, broken as unknown as typeof fetch);
+    await s.refresh();
+    expect(s.error.value).not.toBe("");
+  });
+
   it("open(cid)：GET /v1/history?conversation_id=… 返回 items（含 tool 轮，清洗交 loadHistory）", async () => {
     const { fetchImpl, calls } = mkFetch({
       "http://x/v1/history": { body: { ok: true, items: [

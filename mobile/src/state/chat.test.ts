@@ -156,6 +156,31 @@ describe("useChat", () => {
     expect(chat.busy.value).toBe(false); // busy 由 messages 派生：全 done 即清零
   });
 
+  it("historyMode：loadHistory 后旧轮迟到的 final_reply/run_done 不覆写历史", async () => {
+    const { chat, emit } = mkChat();
+    await chat.send("切走前的在途轮"); // mob_1，final_reply 尚未到达
+    emit("final_reply_chunk", { kind: "final_reply_chunk", text: "半截", surface: "mobile" });
+    chat.loadHistory([{ role: "user", text: "历史问题" }, { role: "assistant", text: "历史回答" }]);
+    // 切会话后旧轮收尾帧迟到：final_reply 会覆写末条历史消息、run_done 误收口——historyMode 期间全丢弃
+    emit("final_reply", { kind: "final_reply", text: "旧轮的完整回答", surface: "mobile" });
+    emit("run_done", { id: "mob_1" });
+    expect(chat.messages.value.map((m) => m.text)).toEqual(["历史问题", "历史回答"]);
+    expect(chat.messages.value.every((m) => m.done)).toBe(true);
+  });
+
+  it("historyMode：新 send 清位，此后帧恢复正常消费（历史消息原样）", async () => {
+    const { chat, emit } = mkChat();
+    chat.loadHistory([{ role: "user", text: "历史问题" }, { role: "assistant", text: "历史回答" }]);
+    await chat.send("接着历史聊");
+    emit("final_reply_chunk", { kind: "final_reply_chunk", text: "新答", surface: "mobile" });
+    emit("final_reply", { kind: "final_reply", text: "新答完整", surface: "mobile" });
+    emit("run_done", { id: "mob_1" });
+    expect(chat.messages.value).toHaveLength(4); // 历史 2 条 + 新问新答
+    expect(chat.messages.value[3].text).toBe("新答完整");
+    expect(chat.messages.value[3].done).toBe(true);
+    expect(chat.messages.value[1].text).toBe("历史回答"); // 历史消息未被旧帧碰过
+  });
+
   it("默认 url 工厂读 lastSeq：手动重连 start 时 URL 带上 last_event_id 断点", async () => {
     const listeners = new Map<string, (e: { data: string; lastEventId: string }) => void>();
     const es: EventSourceLike = {

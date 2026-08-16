@@ -22,7 +22,7 @@ function maskToken(t: string): string {
   <div class="settings">
     <header class="head"><span class="title">设置</span></header>
     <main class="list">
-      <!-- 连接信息（本任务占位框架；T3 充实） -->
+      <!-- 连接信息：排查用（host + token 打码） -->
       <section class="card">
         <h2>连接</h2>
         <p v-if="conn" class="row"><span class="k">大脑地址</span><span class="v">{{ conn.host }}</span></p>
@@ -30,10 +30,10 @@ function maskToken(t: string): string {
         <p v-else class="row">加载中…</p>
       </section>
 
-      <!-- 记忆库入口：M2 只做占位（disabled），T3 落列表页 -->
+      <!-- 记忆库入口（M2 T3）：只读浏览，桌面记忆管理才是编辑面 -->
       <section class="card">
         <h2>数据</h2>
-        <button class="entry" disabled>📖 记忆库（即将上线）</button>
+        <button class="entry" @click="router.push('/memories')">📖 记忆库 ›</button>
       </section>
 
       <section class="card">
@@ -60,6 +60,5 @@ function maskToken(t: string): string {
 .mono { font-family: ui-monospace, monospace; }
 .entry { border: none; border-radius: 10px; padding: 11px 12px; font-size: 14px; text-align: left;
   background: rgba(47, 111, 237, 0.1); color: inherit; }
-.entry:disabled { opacity: 0.45; }
 .note { margin: 0; font-size: 12px; color: #8e8e93; line-height: 1.5; }
 </style>

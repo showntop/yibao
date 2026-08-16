@@ -50,9 +50,12 @@ function openDrawer(): void {
   void sessions.value?.refresh();
 }
 
-// 点选会话：拉历史 → 重建消息 → 切 conversationId（后续 send 落到该桶）
+// 点选会话：拉历史 → 重建消息 → 切 conversationId（后续 send 落到该桶）。
+// busy 中拒绝（M2 评审移交）：当前轮在途时切桶，loadHistory 重建会撕掉 pending
+// 气泡、旧轮收尾帧又会被 historyMode 吞掉——这一轮就永远收不了口。等它说完再切。
 async function pickSession(cid: string): Promise<void> {
   if (!chat.value || !sessions.value) return;
+  if (chat.value.busy.value) return;
   const items = await sessions.value.open(cid);
   chat.value.loadHistory(items);
   chat.value.conversationId.value = cid;
@@ -115,13 +118,17 @@ async function rePair() {
         </header>
         <div class="d-list">
           <p v-if="sessionList.length === 0" class="d-empty">
-            {{ sessions?.loading.value ? "正在拉取…" : "还没有历史会话" }}
+            <!-- 三态分开：拉取中 / 首拉失败（错误态来自 sessions.error）/ 真没数据 -->
+            {{ sessions?.loading.value
+              ? "正在拉取…"
+              : sessions?.error.value || "还没有历史会话" }}
           </p>
           <button
             v-for="s in sessionList"
             :key="s.id"
             class="d-item"
             :class="{ cur: s.id === chat.conversationId.value }"
+            :disabled="chat.busy.value"
             @click="pickSession(s.id)"
           >
             <span class="d-preview">{{ s.preview || "（无内容）" }}</span>
@@ -165,6 +172,7 @@ async function rePair() {
 .d-item { display: flex; flex-direction: column; gap: 4px; align-items: stretch; text-align: left; padding: 10px 12px;
   border: none; border-radius: 12px; background: rgba(128, 128, 128, 0.08); }
 .d-item.cur { background: rgba(47, 111, 237, 0.14); }
+.d-item:disabled { opacity: 0.45; } /* busy 中拒绝切会话：视觉同步降权，不留死点 */
 .d-preview { font-size: 14px; line-height: 1.4; overflow: hidden; display: -webkit-box;
   -webkit-box-orient: vertical; -webkit-line-clamp: 2; } /* 两行截断 */
 .d-turns { font-size: 11px; color: #999; }
