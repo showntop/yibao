@@ -350,6 +350,91 @@ def test_v1_conversations_and_history_routes():
     asyncio.run(main())
 
 
+def test_v1_feed_reminders_memories_routes():
+    """/v1/feed、/v1/reminders(+/cancel)、/v1/memories（mobile M2）：fake deps 形状断言 +
+    未接线 503 + cancel 失败 500（与 v1_state 同模式）。"""
+    async def main():
+        limits = []
+
+        def feed(limit):
+            limits.append(limit)
+            return {"items": [{"id": 2, "kind": "task", "text": "任务B", "status": "new"},
+                              {"id": 1, "kind": "event", "text": "事件A", "status": "new"}],
+                    "stats": {"pending_reminders": 1, "running_tasks": 0, "done_24h": 2,
+                              "unread": 2, "ignored": 0},
+                    "running_tasks": []}
+
+        async def reminders_list():
+            return {"ok": True, "items": [{"id": "r1", "text": "喝水", "when": "每天 09:00"}]}
+
+        cancelled = []
+
+        async def reminders_cancel(rid):
+            cancelled.append(rid)
+            if rid == "nope":
+                return {"ok": False, "error": "没找到待触发的提醒：nope"}
+            return {"ok": True}
+
+        async def memories():
+            return {"ok": True, "items": [{"id": "u:0", "text": "用户喜欢茶", "ns": "", "label": "译宝",
+                                           "created_at": ""}]}
+
+        deps = MobileDeps(feed=feed, reminders_list=reminders_list,
+                          reminders_cancel=reminders_cancel, memories=memories)
+        app = build_app(get_bridge_token=lambda: "btok", get_mobile_token=lambda: "mtok",
+                        tap=EventTap(lambda m: None), deps=deps)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            # feed：limit 透传 + 缺省 60；载荷与桌面 feed IPC 完全同形（外层多 ok）
+            r = await client.get("/v1/feed", params={"limit": "30"}, headers={"X-Yibao-Token": "mtok"})
+            assert r.status == 200
+            body = await r.json()
+            assert body["ok"] is True
+            assert body["items"][0]["kind"] == "task" and body["items"][0]["id"] == 2  # 倒序（新→旧）
+            assert body["stats"]["pending_reminders"] == 1
+            assert body["running_tasks"] == []
+            r = await client.get("/v1/feed", headers={"X-Yibao-Token": "mtok"})
+            assert r.status == 200
+            assert limits == [30, 60]  # 显式 30 与缺省 60 都透传闭包
+            # reminders：直连返回 rows 映射后的 items
+            r = await client.get("/v1/reminders", headers={"X-Yibao-Token": "mtok"})
+            assert r.status == 200
+            assert await r.json() == {"ok": True, "items": [{"id": "r1", "text": "喝水",
+                                                             "when": "每天 09:00"}]}
+            # cancel：成功 200；失败 500 带 error；id 空 400
+            r = await client.post("/v1/reminders/cancel", headers={"X-Yibao-Token": "mtok"},
+                                  json={"id": "r1"})
+            assert r.status == 200 and (await r.json()) == {"ok": True}
+            r = await client.post("/v1/reminders/cancel", headers={"X-Yibao-Token": "mtok"},
+                                  json={"id": "nope"})
+            assert r.status == 500
+            assert (await r.json())["error"] == "没找到待触发的提醒：nope"
+            r = await client.post("/v1/reminders/cancel", headers={"X-Yibao-Token": "mtok"},
+                                  json={"id": "  "})
+            assert r.status == 400
+            assert cancelled == ["r1", "nope"]  # 空 id 在路由层拦下，不进闭包
+            # memories：_mem_list 现成形状
+            r = await client.get("/v1/memories", headers={"X-Yibao-Token": "mtok"})
+            assert r.status == 200
+            assert (await r.json())["items"][0]["text"] == "用户喜欢茶"
+        finally:
+            await client.close()
+
+        # 未接线 → 503（与 v1_state 一致）
+        client2 = TestClient(TestServer(_mkapp()))
+        await client2.start_server()
+        try:
+            for method, path in (("get", "/v1/feed"), ("get", "/v1/reminders"),
+                                 ("post", "/v1/reminders/cancel"), ("get", "/v1/memories")):
+                r = await getattr(client2, method)(path, headers={"X-Yibao-Token": "mtok"})
+                assert r.status == 503, path
+        finally:
+            await client2.close()
+
+    asyncio.run(main())
+
+
 def test_v1_events_last_event_id_query_fallback():
     """last_event_id query 兜底（mobile M1）：手动重连的 EventSource 新建时带不上
     header，query 是唯一通道——与 Last-Event-ID header 等效。"""

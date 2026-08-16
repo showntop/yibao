@@ -2636,3 +2636,161 @@ en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
 """
     assert _pick_en_ip(sample) == "192.168.31.52"  # 跳过 lo/utun/169.254，取 en0
     assert _pick_en_ip("") == ""
+
+
+# ---------- （mobile M2）/v1/feed + /v1/reminders + /v1/memories ----------
+
+
+class _DirectInvoker:
+    """直调闭包最小 invoker：propose/decide/execute 全记录，decide 与结果可换。"""
+
+    def __init__(self, decision=None, result=None):
+        from yibao_brain.ipc import Action, ActionResult
+        from yibao_brain.safety import Decision
+
+        self._Action, self._ActionResult, self._Decision = Action, ActionResult, Decision
+        self.decision = decision or self._Decision.AUTO
+        self.result = result or self._ActionResult(success=True, data={})
+        self.calls = []
+
+    def propose(self, call):
+        self.calls.append(("propose", call.skill_id, dict(call.params)))
+        return self._Action(id=call.id, skill_id=call.skill_id)
+
+    def decide(self, action):
+        self.calls.append(("decide", action.skill_id))
+        return self.decision
+
+    def execute(self, action, params):
+        self.calls.append(("execute", action.skill_id, dict(params)))
+        return self.result
+
+
+def test_reminders_payloads_direct_call_and_degradation(monkeypatch):
+    """（mobile M2）/v1/reminders 载荷真形状：直连（_bridge_save 同款 propose/decide/execute）
+    list rows→items；白名单缺席/执行失败/被拦 → list 降级空列表不炸、cancel 带 error 供路由转 500。"""
+    import yibao_brain.plugins as plugins
+    from yibao_brain.ipc import ActionResult
+    from yibao_brain.plugins import ApiMethod
+    from yibao_brain.safety import Decision
+    from yibao_brain.server import _reminders_cancel_payload, _reminders_list_payload
+
+    def _seed_api(name, handler):
+        monkeypatch.setitem(plugins._API, name, ApiMethod(
+            name=name, handler=handler, direct=True, intent=None, risk=None,
+            plugin_id="reminders"))
+
+    agent = SimpleNamespace(invoker=_DirectInvoker())
+
+    # 未种白名单（插件缺席）→ list 空列表不 500、cancel 带可读 error。
+    # 显式摘除：同进程上游用例可能已 load_plugins 灌入真白名单，不能依赖全局缺省
+    monkeypatch.delitem(plugins._API, "reminders.list", raising=False)
+    monkeypatch.delitem(plugins._API, "reminders.cancel", raising=False)
+    assert _run_async(_reminders_list_payload(agent)) == {"ok": True, "items": []}
+    out = _run_async(_reminders_cancel_payload(agent, "r9"))
+    assert out["ok"] is False and "不可用" in out["error"]
+
+    # list：直调成功 → rows 映射 items；走的是 reminders.list handler
+    _seed_api("reminders.list", "reminders.list")
+    agent.invoker = _DirectInvoker(result=ActionResult(success=True, data={
+        "rows": [{"id": "r1", "text": "喝水", "when": "每天 09:00"}]}))
+    payload = _run_async(_reminders_list_payload(agent))
+    assert payload == {"ok": True, "items": [{"id": "r1", "text": "喝水", "when": "每天 09:00"}]}
+    assert agent.invoker.calls[0] == ("propose", "reminders.list", {})
+
+    # list：执行失败（如存储缺席）→ 降级空列表，不抛
+    agent.invoker = _DirectInvoker(result=ActionResult(success=False, error="底座未提供提醒存储"))
+    assert _run_async(_reminders_list_payload(agent)) == {"ok": True, "items": []}
+
+    # cancel：成功 → {"ok": True}；参数 id 透传 handler
+    _seed_api("reminders.cancel", "reminders.cancel")
+    agent.invoker = _DirectInvoker(result=ActionResult(success=True, data={"id": "r1"}))
+    assert _run_async(_reminders_cancel_payload(agent, "r1")) == {"ok": True}
+    assert agent.invoker.calls == [("propose", "reminders.cancel", {"id": "r1"}),
+                                   ("decide", "reminders.cancel"),
+                                   ("execute", "reminders.cancel", {"id": "r1"})]
+
+    # cancel：没找到（执行失败）→ {"ok": False, "error"}（路由层转 500）
+    agent.invoker = _DirectInvoker(result=ActionResult(success=False, error="没找到待触发的提醒：rX"))
+    out = _run_async(_reminders_cancel_payload(agent, "rX"))
+    assert out == {"ok": False, "error": "没找到待触发的提醒：rX"}
+
+    # cancel：策略非 AUTO（浏览场景无确认通道）→ 拒绝执行，error 带原因
+    agent.invoker = _DirectInvoker(decision=Decision.CONFIRM)
+    out = _run_async(_reminders_cancel_payload(agent, "r1"))
+    assert out["ok"] is False and "确认" in out["error"]
+    assert ("execute", "reminders.cancel", {"id": "r1"}) not in agent.invoker.calls
+
+
+def test_mobile_feed_endpoint_same_shape_as_ipc(tmp_path):
+    """（mobile M2）/v1/feed 与桌面 feed IPC 完全同形：_seed_feed 预写两条 → HTTP 拉流
+    与 stdio feed 消息 items/stats/running_tasks 逐键一致（组装收敛在 _mobile_feed）；
+    reminders 测试态未装插件 → 空列表不 500；memories → 空桶形状（FakeMemory 无记录）。"""
+    import os
+    import queue as _q
+
+    os.environ["YIBAO_HTTP_PORT"] = "19867"  # 19863-19866 已被上游用例占用
+    _seed_feed(tmp_path / "m2.db", [
+        ("task", "任务A完成", {"task": {"id": "a"}}),
+        ("event", "事件B", {}),
+    ])
+    import yibao_brain.server as S
+
+    orig_load = S.load_settings
+    S.load_settings = lambda: {"http.token": "btok", "http.mobile_token": "mtok"}
+    inbox = _q.Queue()
+
+    async def main():
+        out = []
+        serve_task = asyncio.ensure_future(S.serve_async(
+            inbox.get, lambda m: out.append(m), use_real=False,
+            db_path=str(tmp_path / "m2.db"), provider=FakeProvider(), http_enabled=True))
+        try:
+            import aiohttp
+
+            async with aiohttp.ClientSession() as sess:
+                # 等服务起（轮询 /v1/health，固定 sleep 在机器慢时会假红）
+                for _ in range(50):
+                    try:
+                        async with sess.get("http://127.0.0.1:19867/v1/health",
+                                            headers={"X-Yibao-Token": "mtok"}) as r:
+                            if r.status == 200:
+                                break
+                    except aiohttp.ClientConnectorError:
+                        pass
+                    await asyncio.sleep(0.1)
+                else:
+                    raise AssertionError("HTTP 面未在 5s 内就绪")
+                async with sess.get("http://127.0.0.1:19867/v1/feed",
+                                    headers={"X-Yibao-Token": "mtok"}) as r:
+                    assert r.status == 200
+                    feed_body = await r.json()
+                async with sess.get("http://127.0.0.1:19867/v1/reminders",
+                                    headers={"X-Yibao-Token": "mtok"}) as r:
+                    assert r.status == 200
+                    reminders_body = await r.json()
+                async with sess.get("http://127.0.0.1:19867/v1/memories",
+                                    headers={"X-Yibao-Token": "mtok"}) as r:
+                    assert r.status == 200
+                    memories_body = await r.json()
+            inbox.put({"type": "feed"})  # 桌面 IPC 同源对照
+            for _ in range(200):
+                if any(m.get("type") == "feed" for m in out):
+                    break
+                await asyncio.sleep(0.05)
+        finally:
+            S.load_settings = orig_load
+            os.environ.pop("YIBAO_HTTP_PORT", None)
+            inbox.put(None)
+            await asyncio.wait_for(serve_task, 5)
+
+        ipc = next(m for m in out if m.get("type") == "feed")
+        assert feed_body["ok"] is True
+        assert feed_body["items"] == ipc["items"]  # 与桌面 feed IPC 完全同形
+        assert feed_body["stats"] == ipc["stats"]
+        assert feed_body["running_tasks"] == ipc["running_tasks"]
+        assert feed_body["stats"]["unread"] == 2 and len(feed_body["items"]) == 2
+        assert reminders_body == {"ok": True, "items": []}  # 插件缺席 → 空列表不 500
+        assert memories_body == {"ok": True, "items": []}
+
+    asyncio.run(main())

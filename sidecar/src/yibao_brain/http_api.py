@@ -143,6 +143,10 @@ class MobileDeps:
       register_push: (registration_id: str, platform: str) -> None
       conversations:  () -> dict（含 items:[{id, preview, turns}] 桶摘要）
       history:        (conversation_id: str) -> dict（含 items:[{role, text}]；空 id=default 桶）
+      feed:           (limit: int) -> dict（含 items/stats/running_tasks，与桌面 feed IPC 同形；mobile M2）
+      reminders_list: async () -> dict（含 items；插件缺席/异常 → 空列表不 500；mobile M2）
+      reminders_cancel: async (id: str) -> dict（含 ok/error；失败由路由转 500；mobile M2）
+      memories:       async () -> dict（含 items；mobile M2）
     """
 
     save: Callable | None = None
@@ -153,6 +157,10 @@ class MobileDeps:
     register_push: Callable | None = None
     conversations: Callable | None = None
     history: Callable | None = None
+    feed: Callable | None = None
+    reminders_list: Callable | None = None
+    reminders_cancel: Callable | None = None
+    memories: Callable | None = None
 
 
 _VERSION = "1"
@@ -295,6 +303,41 @@ def build_app(*, get_bridge_token: Callable[[], str], get_mobile_token: Callable
             return web.json_response({"ok": False, "error": "not wired"}, status=503)
         return web.json_response(deps.history(request.query.get("conversation_id") or ""))
 
+    async def v1_feed(request):
+        """动态流（mobile M2）：与桌面 feed IPC 完全同形（items 倒序），外层多 ok。"""
+        if deps.feed is None:
+            return web.json_response({"ok": False, "error": "not wired"}, status=503)
+        try:
+            limit = int(request.query.get("limit") or 60)
+        except (TypeError, ValueError):
+            limit = 60
+        return web.json_response({"ok": True, **deps.feed(limit)})
+
+    async def v1_reminders(request):
+        """待办提醒（mobile M2）：reminders.list 直连；空/异常 → 空列表不 500。"""
+        if deps.reminders_list is None:
+            return web.json_response({"ok": False, "error": "not wired"}, status=503)
+        return web.json_response(await deps.reminders_list())
+
+    async def v1_reminders_cancel(request):
+        """取消提醒（mobile M2）：reminders.cancel 直连；失败 500 带 error。"""
+        if deps.reminders_cancel is None:
+            return web.json_response({"ok": False, "error": "not wired"}, status=503)
+        body = await request.json()
+        rid = str(body.get("id") or "").strip()
+        if not rid:
+            return web.json_response({"ok": False, "error": "id 为空"}, status=400)
+        out = await deps.reminders_cancel(rid)
+        if not out.get("ok"):
+            return web.json_response({"ok": False, "error": out.get("error") or "取消失败"}, status=500)
+        return web.json_response({"ok": True})
+
+    async def v1_memories(request):
+        """记忆库（mobile M2）：_mem_list 现成（底座+插件命名空间分组）。"""
+        if deps.memories is None:
+            return web.json_response({"ok": False, "error": "not wired"}, status=503)
+        return web.json_response(await deps.memories())
+
     async def v1_push_register(request):
         """推送设备登记：同 registration_id 覆盖，防重复堆积"""
         if deps.register_push is None:
@@ -360,6 +403,10 @@ def build_app(*, get_bridge_token: Callable[[], str], get_mobile_token: Callable
     app.router.add_get("/v1/state", v1_state)
     app.router.add_get("/v1/conversations", v1_conversations)
     app.router.add_get("/v1/history", v1_history)
+    app.router.add_get("/v1/feed", v1_feed)
+    app.router.add_get("/v1/reminders", v1_reminders)
+    app.router.add_post("/v1/reminders/cancel", v1_reminders_cancel)
+    app.router.add_get("/v1/memories", v1_memories)
     app.router.add_post("/v1/push/register", v1_push_register)
     return app
 

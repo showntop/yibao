@@ -506,6 +506,48 @@ def _history_payload(history, conversation_id: str) -> dict:
                                   for m in history.messages(conversation_id or None)]}
 
 
+async def _reminders_call(agent: AgentLoop, api_name: str, params: dict) -> dict:
+    """reminders 直连核心（mobile M2，_bridge_save 同款）：get_api → propose →
+    api.risk 只许收紧 → decide==AUTO → 线程池执行。浏览场景无确认通道，非 AUTO 即拒。
+    返回 {"ok", "data"?/"error"?}——降级策略（list 空列表 / cancel 带 error）由调用方定。"""
+    api = get_api(api_name)
+    if api is None or not api.direct:
+        return {"ok": False, "error": f"方法不可用：{api_name}"}
+    action = agent.invoker.propose(ToolCall(id=f"pa_mob_{next(_BRIDGE_SEQ)}", skill_id=api.handler, params=params))
+    if api.risk is not None:
+        action.risk = max(action.risk, api.risk)
+    if agent.invoker.decide(action) != Decision.AUTO:
+        return {"ok": False, "error": "策略要求确认或禁止（手机浏览场景无确认通道），未执行"}
+    result = await _offload(agent.invoker.execute, action, params)
+    if not result.success:
+        return {"ok": False, "error": result.error or "执行失败"}
+    return {"ok": True, "data": result.data or {}}
+
+
+async def _reminders_list_payload(agent: AgentLoop) -> dict:
+    """/v1/reminders 载荷（mobile M2）：reminders.list 直连，rows → items。
+    插件缺席/策略拦/执行失败/异常 → 空列表不 500（浏览宁空勿炸）。"""
+    try:
+        out = await _reminders_call(agent, "reminders.list", {})
+        rows = out.get("data", {}).get("rows") if out.get("ok") else None
+        return {"ok": True, "items": rows or []}
+    except Exception as e:
+        print(f"[yibao] 提醒列出失败（已降级空列表）：{e}", file=sys.stderr)
+        return {"ok": True, "items": []}
+
+
+async def _reminders_cancel_payload(agent: AgentLoop, rid: str) -> dict:
+    """/v1/reminders/cancel 载荷（mobile M2）：reminders.cancel 直连。
+    成功 {"ok": True}；失败/异常 {"ok": False, "error"}（路由层转 500）。"""
+    try:
+        out = await _reminders_call(agent, "reminders.cancel", {"id": rid})
+        if not out.get("ok"):
+            return {"ok": False, "error": out.get("error") or "取消失败"}
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": f"取消提醒失败：{e}"}
+
+
 async def _readonly_no_run(text: str, rid) -> None:
     """L0 只读直调永远不会走 agent 路径（direct=true 才并发）；防御性兜底。"""
     raise RuntimeError("只读直调不应进入 agent 路径")
@@ -1216,6 +1258,14 @@ async def serve_async(
         running = {"surface": run_state["surface"]} if (task is not None and not task.done()) else None
         return {"running": running, "pending": [{"id": cid, **meta} for cid, meta in confirm_meta.items()]}
 
+    def _mobile_feed(limit: int = 60) -> dict:
+        """/v1/feed 载荷（mobile M2）：与桌面 feed IPC 完全同形（items 倒序 + 问候统计 +
+        进行中任务）。组装收敛在此，dispatch 的 feed 分支与手机端点共用一份。"""
+        running_tasks = _running_tasks()
+        return {"items": feed.recent(limit=limit),
+                "stats": _feed_stats(running_tasks),
+                "running_tasks": running_tasks}
+
     def _register_push(registration_id: str, platform: str) -> None:
         """推送设备登记（P4 极光发送消费）。同 registration_id 覆盖，防重复堆积。"""
         devices = [d for d in (settings.get("push.devices") or [])
@@ -1282,6 +1332,15 @@ async def serve_async(
         # 会话只读面（mobile M1）：/v1/conversations、/v1/history 直读 agent.history
         _http_deps.conversations = lambda: _conversations_payload(agent.history)
         _http_deps.history = lambda cid: _history_payload(agent.history, cid)
+
+        # 信息浏览面（mobile M2）：feed 与桌面 IPC 同源；reminders 插件直连；memories 复用 _mem_list
+        async def _mem_payload() -> dict:
+            return {"ok": True, "items": await _mem_list()}
+
+        _http_deps.feed = _mobile_feed
+        _http_deps.reminders_list = lambda: _reminders_list_payload(agent)
+        _http_deps.reminders_cancel = lambda rid: _reminders_cancel_payload(agent, rid)
+        _http_deps.memories = _mem_payload
         bridge_server = await _start_http_api(agent, settings, tap, _http_deps)
 
     while True:
@@ -1411,18 +1470,12 @@ async def serve_async(
                 _confirm_done.append(cid)
             write_msg({"type": "confirm_batched", "ok": True})
         elif rtype == "feed":
-            # 主屏查询：动态列表（倒序）+ 问候统计
+            # 主屏查询：动态列表（倒序）+ 问候统计（组装在 _mobile_feed，与手机 /v1/feed 同源）
             try:
                 limit = int(msg.get("limit") or 60)
             except (TypeError, ValueError):
                 limit = 60
-            running_tasks = _running_tasks()
-            write_msg({
-                "type": "feed",
-                "items": feed.recent(limit=limit),
-                "stats": _feed_stats(running_tasks),
-                "running_tasks": running_tasks,
-            })
+            write_msg({"type": "feed", **_mobile_feed(limit)})
         elif rtype == "distill_now":
             # 设置页「立即提炼昨日」：master/distill 任一关闭直接拒绝（零出站）；运行可长达 60s，挪线程池
             if distiller is None or not (settings.get("perception.master") and settings.get("perception.distill")):
