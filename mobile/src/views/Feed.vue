@@ -17,6 +17,7 @@ const confirming = ref<Record<string, number>>({});
 onMounted(async () => {
   const conn = await loadConn();
   if (!conn) return router.replace("/pairing");
+  // useFeed 默认开 30s 轮询（M3 进行中区块靠它近实时）；卸载侧 stop
   feed.value = useFeed(conn);
   reminders.value = useReminders(conn);
   void feed.value.refresh();
@@ -24,8 +25,10 @@ onMounted(async () => {
 });
 
 // 卸载清理（M2 评审移交）：确认态的 3s 超时句柄离页即清——不留悬挂定时器持有
-// 已卸载组件的闭包（泄漏），页重建后也不该有旧定时器回来动 confirming
+// 已卸载组件的闭包（泄漏），页重建后也不该有旧定时器回来动 confirming；
+// M3 增：feed 轮询 interval 一并停（跨页存留即泄漏，且会持续打 /v1/feed）
 onUnmounted(() => {
+  feed.value?.stop();
   for (const t of Object.values(confirming.value)) window.clearTimeout(t);
   confirming.value = {};
 });
@@ -38,6 +41,8 @@ function fmtTime(ts: number): string {
 }
 
 const KIND_LABEL: Record<string, string> = { task: "任务", reminder: "提醒", event: "事件" };
+// 进行中 kind 徽章（服务端只有 agent/script 两类：agents 库任务与后台盯命令）
+const RUN_KIND_LABEL: Record<string, string> = { agent: "智能体", script: "脚本" };
 
 // 取消按钮：首点进确认态（文案变「确认取消？」），3s 内复点才真取消——
 // 不弹窗、不引左滑库（YAGNI），误触成本两步刚好
@@ -74,6 +79,18 @@ function refreshAll(): void {
       <template v-if="tab === 'feed'">
         <p v-if="!feed" class="empty">加载中…</p>
         <template v-else>
+          <!-- 进行中区块（M3）：running_tasks 实时卡——kind 徽章 + label + prompt 单行截断；
+               30s 轮询驱动，任务完成后条目消失并进下方动态流；空时整体隐藏 -->
+          <div v-if="feed.running.value.length" class="running">
+            <p class="r-head">进行中 · {{ feed.running.value.length }}</p>
+            <div v-for="t in feed.running.value" :key="t.id" class="r-item">
+              <span class="r-badge" :class="`k-${t.kind}`">{{ RUN_KIND_LABEL[t.kind] ?? "任务" }}</span>
+              <div class="r-body">
+                <p class="r-label">{{ t.label }}</p>
+                <p v-if="t.prompt" class="r-prompt">{{ t.prompt }}</p>
+              </div>
+            </div>
+          </div>
           <p v-if="feed.stats.value" class="statline">
             24 小时完成 {{ feed.stats.value.done_24h ?? 0 }} · 进行中 {{ feed.running.value.length }} · 待提醒
             {{ feed.stats.value.pending_reminders ?? 0 }}
@@ -126,6 +143,22 @@ function refreshAll(): void {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
 .list { flex: 1; overflow-y: auto; padding: 8px 12px 12px; display: flex; flex-direction: column; gap: 8px; }
 .statline { font-size: 12px; color: #8e8e93; margin: 0 0 4px; }
+/* 进行中区块（M3）：橙色调「活着的」容器 + 呼吸点；条目 = kind 徽章 + label + prompt 截断 */
+.running { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 12px;
+  background: rgba(255, 159, 10, 0.08); border-left: 3px solid #ff9f0a; }
+.r-head { margin: 0; font-size: 12px; color: #b25000; font-weight: 600; }
+.r-head::before { content: "●"; margin-right: 4px; font-size: 8px;
+  animation: breath 1.6s ease-in-out infinite; }
+.r-item { display: flex; gap: 8px; align-items: flex-start; }
+.r-badge { flex-shrink: 0; font-size: 11px; padding: 2px 7px; border-radius: 7px; margin-top: 1px;
+  background: rgba(128, 128, 128, 0.16); }
+.r-badge.k-agent { background: rgba(47, 111, 237, 0.16); }
+.r-badge.k-script { background: rgba(52, 199, 89, 0.18); }
+.r-body { flex: 1; min-width: 0; }
+.r-label { margin: 0; font-size: 13px; font-weight: 500; }
+.r-prompt { margin: 1px 0 0; font-size: 11px; color: #8e8e93; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; } /* 单行截断：prompt 可能是整段长命令 */
+@keyframes breath { 50% { opacity: 0.25; } }
 .empty { text-align: center; opacity: 0.55; padding: 40px 0; }
 .err { color: #ff453a; font-size: 13px; }
 /* kind 三色轻着色：左侧彩条 + 同色淡底（轻，不抢正文） */

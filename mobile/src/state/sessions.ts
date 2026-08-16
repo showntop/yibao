@@ -46,18 +46,20 @@ export function useSessions(conn: ConnConfig, fetchImpl: typeof fetch = fetch) {
     }
   }
 
-  // 取某会话的历史轮；cid 为空 = 服务端默认桶。失败返回空数组（调用方按空历史回显）
-  async function open(cid: string): Promise<HistoryItem[]> {
+  // 取某会话的历史轮；cid 为空 = 服务端默认桶。失败（非 200/断线）返回 null——
+  // 与「真·空桶 []」分开（M3）：空历史可静默重建，失败若冒充空会清掉当前消息，
+  // 调用方（pickSession）据此亮错误保留现场，不切换。
+  async function open(cid: string): Promise<HistoryItem[] | null> {
     try {
       const r = await fetchImpl(
         `${conn.host}/v1/history?conversation_id=${encodeURIComponent(cid)}`,
         { headers: { "X-Yibao-Token": conn.token } },
       );
-      if (!r.ok) return [];
+      if (!r.ok) return null;
       const body = (await r.json()) as { items?: HistoryItem[] };
       return body.items ?? [];
     } catch {
-      return [];
+      return null;
     }
   }
 

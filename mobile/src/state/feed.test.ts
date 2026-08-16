@@ -1,6 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { useFeed } from "./feed";
 import type { ConnConfig } from "../api/connection";
+
+afterEach(() => vi.useRealTimers()); // fake timers 用例自还原，不外溢到后续用例
 
 // 服务端真实形状（feed.py recent() 逐字段透传，_mobile_feed 不改字段——curl 实机为
 // 旧版进程未接线，以源码为准，报告已记录）：
@@ -48,5 +50,34 @@ describe("useFeed", () => {
     const g = useFeed({ host: "http://x", token: "t" } as ConnConfig, r500 as never);
     await g.refresh();
     expect(g.items.value).toHaveLength(0); // 首拉失败：空但不抛、stats/running 留空
+  });
+
+  it("30s 轮询（M3）：auto 默认开，每 30s 触发一次 refresh，stop 后不再触发", async () => {
+    vi.useFakeTimers();
+    const fetchImpl = vi.fn(
+      async () => new Response(JSON.stringify({ ok: true, items: [], stats: {}, running_tasks: [] }), { status: 200 }),
+    );
+    const f = useFeed({ host: "http://x", token: "t" } as ConnConfig, fetchImpl as never);
+    expect(fetchImpl).not.toHaveBeenCalled(); // 构造只挂 interval，不立即拉（页面自会首拉）
+    vi.advanceTimersByTime(30_000);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(30_000);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    f.stop(); // 离页清 interval：之后时间流逝不再发请求
+    vi.advanceTimersByTime(120_000);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("轮询开关：auto: false 不起 interval（手动 refresh/手动 start 仍可用）", async () => {
+    vi.useFakeTimers();
+    const fetchImpl = vi.fn(
+      async () => new Response(JSON.stringify({ ok: true, items: [], stats: {}, running_tasks: [] }), { status: 200 }),
+    );
+    const f = useFeed({ host: "http://x", token: "t" } as ConnConfig, fetchImpl as never, { auto: false });
+    vi.advanceTimersByTime(90_000);
+    expect(fetchImpl).not.toHaveBeenCalled(); // 关了就不轮询
+    f.start(); // 手动补开：下一轮 30s 到点恢复
+    vi.advanceTimersByTime(30_000);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 });

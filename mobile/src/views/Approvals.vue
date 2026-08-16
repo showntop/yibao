@@ -15,7 +15,8 @@ const stream = shallowRef<ReturnType<typeof useEventStream> | null>(null);
 const remembers = ref<Record<string, boolean>>({});
 // gone 提示位：decide 返回 gone 时亮一条（该审批已在桌面处理）
 const goneNote = ref("");
-// 待批角标（M2）：本页也挂帧 +1/全量同步——审批处理完 TabBar 数字当场收敛
+// 待批角标（M2）：本页也挂帧——帧语义已是 debounce sync（confirmation_needed 只当
+// 「有变化」提示，300ms 合并后拉一次 /v1/state，重放帧不虚增）；审批处理完 sync 当场收敛
 let badgeSync: (() => Promise<void>) | null = null;
 
 onMounted(async () => {

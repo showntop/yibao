@@ -34,8 +34,15 @@ export interface RunningTask {
 /**
  * 动态流（mobile M2，只读）：拉一次 /v1/feed。失败静默——Feed 是增强面，
  * 断线/非 200 保留旧列表不弹错（空态文案由页面兜）。
+ * M3 增 30s 轮询（auto 默认开）：running_tasks（进行中区块）靠它近实时——
+ * 完成态转动态流有服务端事件可推，但本页无事件流连接，轮询是零新端点的最省方案。
+ * start/stop 供页面挂卸载钩子：interval 不清会跨页存留（泄漏）。
  */
-export function useFeed(conn: ConnConfig, fetchImpl: typeof fetch = fetch) {
+export function useFeed(
+  conn: ConnConfig,
+  fetchImpl: typeof fetch = fetch,
+  opts: { auto?: boolean } = {},
+) {
   const items: Ref<FeedItem[]> = ref([]);
   const stats: Ref<FeedStats | null> = ref(null);
   const running: Ref<RunningTask[]> = ref([]);
@@ -53,5 +60,18 @@ export function useFeed(conn: ConnConfig, fetchImpl: typeof fetch = fetch) {
     } catch { /* 断线/超时：保留旧值 */ }
   }
 
-  return { items, stats, running, refresh };
+  const POLL_MS = 30_000;
+  let timer: ReturnType<typeof setInterval> | undefined;
+
+  function stop(): void {
+    if (timer !== undefined) clearInterval(timer);
+    timer = undefined;
+  }
+  function start(): void {
+    stop(); // 重复 start 不叠 interval
+    timer = setInterval(() => void refresh(), POLL_MS);
+  }
+  if (opts.auto !== false) start();
+
+  return { items, stats, running, refresh, start, stop };
 }

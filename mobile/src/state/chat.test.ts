@@ -120,9 +120,26 @@ describe("useChat", () => {
     expect(chat.messages.value[1].text).toBe("旧纪元新纪元");
   });
 
+  it("newChat busy 拒绝：在途轮不动返回 false，收口后返回 true 并清空换 id", async () => {
+    const { chat, emit } = mkChat();
+    await chat.send("长任务");
+    expect(chat.busy.value).toBe(true);
+    const idBefore = chat.conversationId.value;
+    // busy 中拒绝（最小方案，不自动 interrupt）：清空会撕掉 pending 气泡、旧轮收口
+    // 帧又没人认领——这一轮永远收不了口；由 UI 提示用户等完或自己点 ⏹
+    expect(chat.newChat()).toBe(false);
+    expect(chat.messages.value).toHaveLength(2); // 消息原样保留
+    expect(chat.conversationId.value).toBe(idBefore); // 会话 id 不换
+    emit("run_done", { id: "mob_1" }); // 收口后不再 busy
+    expect(chat.newChat()).toBe(true);
+    expect(chat.messages.value).toHaveLength(0);
+    expect(chat.conversationId.value).not.toBe(idBefore);
+  });
+
   it("newChat 清 myRunId：旧轮迟到的 run_done 不收口新气泡（send 在途窗口）", async () => {
     const { chat, emit } = mkChat();
-    await chat.send("第一轮"); // run_id=mob_1，该轮已收口
+    await chat.send("第一轮"); // run_id=mob_1
+    emit("run_done", { id: "mob_1" }); // 第一轮收口（M3 起 busy 中 newChat 被拒，先收口再开新）
     chat.newChat();
     const pending = chat.send("第二轮"); // 不 await：fetch 返回前 myRunId 尚未更新（旧值窗口）
     emit("run_done", { id: "mob_1" }); // 第一轮的迟到收口——myRunId 未清时会误收口新气泡

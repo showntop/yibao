@@ -143,11 +143,16 @@ export function useChat(
     } catch { /* 状态由 interrupted/run_done 帧收敛 */ }
   }
 
-  function newChat(): void {
+  // 新开对话：busy 时拒绝（最小方案，不自动 interrupt）——清空会撕掉 pending 气泡、
+  // 旧轮收口帧从此无人认领，这一轮永远收不了口。返回 false 交 UI 提示
+  // 「先等当前回复完成或点 ⏹」；成功清空返回 true。
+  function newChat(): boolean {
+    if (busy.value) return false;
     messages.value = [];
     conversationId.value = uuid();
     error.value = "";
     myRunId = ""; // 旧轮 run_done 迟到不得收口新气泡（send 在途窗口内 myRunId 还是旧值）
+    return true;
   }
 
   // 历史回显（M1 会话抽屉）：把 /v1/history 的轮重建为已收口消息。服务端直读 LLM

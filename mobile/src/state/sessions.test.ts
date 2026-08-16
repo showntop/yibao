@@ -86,15 +86,23 @@ describe("useSessions", () => {
     expect(calls[0].headers["X-Yibao-Token"]).toBe("t");
   });
 
-  it("open 无 conversation_id → 服务端默认桶（query 仍带空值不误伤）；失败返回空数组", async () => {
+  it("open 无 conversation_id → 服务端默认桶（query 仍带空值不误伤）", async () => {
     const { fetchImpl, calls } = mkFetch({
-      "http://x/v1/history": { status: 500, body: { ok: false } },
+      "http://x/v1/history": { body: { ok: true, items: [] } },
     });
     const s = useSessions({ host: "http://x", token: "t" } as ConnConfig, fetchImpl);
-    await expect(s.open("")).resolves.toEqual([]);
+    await expect(s.open("")).resolves.toEqual([]); // 真·空桶：空数组
     expect(calls[0].url).toBe("http://x/v1/history?conversation_id=");
+  });
+
+  it("open 失败返回 null（M3）：没拉到不冒充空历史，pickSession 据此亮错误不切换", async () => {
+    // 非 200：与「真空桶 []」区分开——空历史会静默清掉当前消息，失败则保留现场等重试
+    const bad = mkFetch({ "http://x/v1/history": { status: 500, body: { ok: false } } });
+    const s = useSessions({ host: "http://x", token: "t" } as ConnConfig, bad.fetchImpl);
+    await expect(s.open("c-1")).resolves.toBeNull();
+    // 断线/超时同样返回 null
     const broken = vi.fn(async () => { throw new Error("net down"); });
     const s2 = useSessions({ host: "http://x", token: "t" } as ConnConfig, broken as unknown as typeof fetch);
-    await expect(s2.open("c-1")).resolves.toEqual([]);
+    await expect(s2.open("c-1")).resolves.toBeNull();
   });
 });

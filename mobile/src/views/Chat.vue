@@ -41,25 +41,45 @@ onMounted(async () => {
 });
 onUnmounted(() => {
   window.clearTimeout(retryTimer);
+  window.clearTimeout(newChatTimer);
   chat.value?.stream.stop();
 });
 
-// 打开会话抽屉：每次都重新拉列表（服务端桶随时在变，列表很便宜）
+// 打开会话抽屉：每次都重新拉列表（服务端桶随时在变，列表很便宜）；上次的拉取失败提示一并清
 function openDrawer(): void {
   drawerOpen.value = true;
+  pickErr.value = "";
   void sessions.value?.refresh();
 }
 
 // 点选会话：拉历史 → 重建消息 → 切 conversationId（后续 send 落到该桶）。
 // busy 中拒绝（M2 评审移交）：当前轮在途时切桶，loadHistory 重建会撕掉 pending
 // 气泡、旧轮收尾帧又会被 historyMode 吞掉——这一轮就永远收不了口。等它说完再切。
+// 拉取失败（open 返 null）不切换：错误提示不冒充空历史（M3），保留现场等重试。
+const pickErr = ref("");
 async function pickSession(cid: string): Promise<void> {
   if (!chat.value || !sessions.value) return;
   if (chat.value.busy.value) return;
   const items = await sessions.value.open(cid);
+  if (items === null) {
+    pickErr.value = "历史拉取失败，稍后再试";
+    return;
+  }
   chat.value.loadHistory(items);
   chat.value.conversationId.value = cid;
   drawerOpen.value = false;
+}
+
+// 新对话 busy 提示（M3）：newChat 被拒（在途轮）时亮一条说明，3s 自清——
+// 不自动 interrupt（打断是用户的决定，⏹ 就在手边）
+const newChatNote = ref("");
+let newChatTimer: number | undefined;
+function onNewChat(): void {
+  if (!chat.value) return;
+  if (chat.value.newChat()) return;
+  newChatNote.value = "先等当前回复完成或点 ⏹";
+  window.clearTimeout(newChatTimer);
+  newChatTimer = window.setTimeout(() => (newChatNote.value = ""), 3000);
 }
 
 async function onSend() {
@@ -84,10 +104,12 @@ async function rePair() {
       <div class="actions">
         <!-- 待批角标已移到 TabBar 审批项（M2）；头部只留会话操作 -->
         <button class="ghost" @click="openDrawer">历史</button>
-        <button class="ghost" @click="chat.newChat()">新对话</button>
+        <button class="ghost" :class="{ dim: chat.busy.value }" @click="onNewChat">新对话</button>
         <button class="ghost" @click="rePair">重新配对</button>
       </div>
     </header>
+    <!-- busy 中点「新对话」的拒因说明（3s 自清）；不打断、也不静默吞掉点击 -->
+    <p v-if="newChatNote" class="head-note">{{ newChatNote }}</p>
     <main class="list">
       <!-- 消息用 div：assistant done 走 Markdown（块级元素），p 内嵌块级不合规范 -->
       <div v-for="(m, i) in chat.messages.value" :key="i" class="msg" :class="m.role">
@@ -117,6 +139,7 @@ async function rePair() {
           <button class="ghost" @click="drawerOpen = false">关闭</button>
         </header>
         <div class="d-list">
+          <p v-if="pickErr" class="d-err">{{ pickErr }}</p>
           <p v-if="sessionList.length === 0" class="d-empty">
             <!-- 三态分开：拉取中 / 首拉失败（错误态来自 sessions.error）/ 真没数据 -->
             {{ sessions?.loading.value
@@ -147,6 +170,8 @@ async function rePair() {
   padding-bottom: calc(52px + env(safe-area-inset-bottom)); /* TabBar 让位 */ }
 .head { display: flex; justify-content: space-between; align-items: center; }
 .ghost { background: none; border: none; color: #2f6fed; font-size: 14px; }
+.ghost.dim { opacity: 0.45; } /* busy 中新对话降权：与抽屉项同款视觉暗示 */
+.head-note { margin: 0; padding: 0 12px 4px; font-size: 12px; color: #b25000; }
 .actions { display: flex; gap: 4px; align-items: center; }
 .list { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 .msg { max-width: 82%; padding: 10px 12px; border-radius: 14px; font-size: 15px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
@@ -169,6 +194,7 @@ async function rePair() {
 .d-head h2 { font-size: 16px; margin: 0; }
 .d-list { flex: 1; overflow-y: auto; padding: 4px 8px; display: flex; flex-direction: column; gap: 6px; }
 .d-empty { color: #888; font-size: 14px; padding: 16px 8px; }
+.d-err { color: #ff453a; font-size: 13px; margin: 0; padding: 4px 8px; }
 .d-item { display: flex; flex-direction: column; gap: 4px; align-items: stretch; text-align: left; padding: 10px 12px;
   border: none; border-radius: 12px; background: rgba(128, 128, 128, 0.08); }
 .d-item.cur { background: rgba(47, 111, 237, 0.14); }
