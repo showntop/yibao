@@ -20,7 +20,7 @@
      顶栏右侧会话级成本聚合「N tok · $X.XXXX」（done 事件 usage 累加，C4）；
      完成行保留耗时/token/cost 明细，灰小字一行（C5）。
      输入区三段式（R3 D1，对标 opencode 底栏）：① 输入框（2px 左竖条 accent）→ ② 上下文行
-     （cwd 药丸+📁+权限模式 pill+@ 提示）→ ③ 快捷键行（键白动作灰；↵ 发送 / ⇧↵ 换行 / @ 文件 /
+     （cwd chip+权限模式 pill+@ 提示）→ ③ 快捷键行（键白动作灰；↵ 发送 / ⇧↵ 换行 / @ 文件 /
      esc 停止，IME 组字 Enter 不上屏误发）；顶栏收窄为 标题+成本聚合+历史/新对话（D4）；
      消息带宽屏限 760px 居中、气泡/卡 max-width 85%、meta 灰小字 11px（D3 排版 token）。
      AI 气泡 markdown 基座（R3）：marked(GFM) → DOMPurify 消毒 → hljs 高亮，vendor 三库
@@ -74,7 +74,7 @@
   .hidden { display: none !important; }
 
   /* ---- 顶栏（D4 收窄，高约 40px）：左标题「编码对话」+ 右成本聚合 + 历史/新对话 ghost；
-     cwd 药丸 / 📁 / 权限模式 pill 已迁入 footer 上下文行（D1） ---- */
+     cwd chip / 权限模式 pill 在 footer 上下文行（D1） ---- */
   header {
     flex: none; display: flex; align-items: center; gap: 8px;
     padding: 5px 14px; min-height: 40px; border-bottom: 1px solid var(--line);
@@ -347,7 +347,7 @@
 
   /* ---- 底栏三段式（D1，对标 opencode 底栏；三段合计 ≤110px 紧凑） ----
      ① 输入框：2px 左竖条 accent（focus 时 accent-deep），圆角 --r-md
-     ② 上下文行：cwd 药丸（顶栏迁入，📁 picker/手输不变）+ 权限模式 pill + @ 提示灰小字
+     ② 上下文行：cwd chip（📁+目录名，点击弹浮层手输/选目录）+ 权限模式 pill + @ 提示灰小字
      ③ 快捷键行：键白动作灰（kbd 白底小圆角描边 + --faint 动作词）；#status 灰小字融入本行
         左侧不独占一行；操作钮收敛右侧：#send accent 实心主钮 / #stop ghost / #handoff ghost 小钮 */
   footer {
@@ -371,27 +371,32 @@
   .at-item { padding: 6px 10px; font-family: var(--mono-family); font-size: 12px; cursor: pointer; }
   .at-item.sel { background: var(--surface-2); }
   .at-empty { padding: 8px; opacity: .6; font-size: 12px; }
-  /* 段②：上下文行——cwd 药丸（小圆角底板 + mono 小字；change/persist、pickCwd 逻辑不动） */
-  .ctx-row { display: flex; align-items: center; gap: 6px; }
-  #cwd {
-    flex: 1 1 auto; min-width: 90px;
-    border: 1px solid transparent; border-radius: var(--r-sm);
-    padding: 2px 10px 2px 24px; font: var(--mono); font-size: 11.5px;
-    background: var(--surface-2) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7d91' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'/></svg>") no-repeat 8px 50%;
-    color: var(--text); outline: none; cursor: text;
-    transition: border-color .15s ease, background-color .15s ease;
-    overflow: hidden; text-overflow: ellipsis;
+  /* 段②：上下文行——cwd chip（📁+目录名 pill，点击弹浮层改路径）+ 权限模式 pill + @ 提示。
+     cwd 真值存 hidden #cwd，send/handoff/@ 补全等全部 JS 读取路径不变 */
+  .ctx-row { position: relative; display: flex; align-items: center; gap: 6px; }
+  .cwd-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 220px; }
+  .cwd-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono-family); font-size: 11px; }
+  .cwd-chip.empty span { color: var(--faint); font-family: var(--sans); }
+  /* cwd 浮层：锚定上下文行向上展开（同 .at-menu 的 bottom:100% 定位模式） */
+  .cwd-pop {
+    position: absolute; bottom: calc(100% + 4px); left: 0; z-index: 30;
+    width: min(360px, 100%);
+    background: var(--card); border: 1px solid var(--border); border-radius: var(--r-md);
+    box-shadow: var(--shadow-card); padding: 6px;
   }
-  #cwd:hover { background-color: var(--surface-2h); }
-  #cwd:focus { border-color: var(--accent); background-color: var(--card); }
-  #cwd::placeholder { color: var(--faint); font-family: var(--sans); }
-  /* 📁 文件夹选择器按钮（cwd 药丸旁；picker 是补充，药丸仍可手输） */
-  #cwd-pick {
-    flex: none; border: 1px solid transparent; background: transparent;
-    color: var(--muted); font-size: 12px; line-height: 1.2; padding: 2px 6px; border-radius: 7px;
-    cursor: pointer; transition: all .15s ease;
+  .cwd-pop-row { display: flex; align-items: center; gap: 6px; }
+  #cwd-input {
+    flex: 1 1 auto; min-width: 0; border: 1px solid var(--border); border-radius: var(--r-sm);
+    padding: 4px 8px; font: var(--mono); font-size: 12px;
+    background: var(--surface-2); color: var(--text); outline: none;
   }
-  #cwd-pick:hover { background: var(--surface-2); color: var(--accent-deep); border-color: var(--border); }
+  #cwd-input:focus { border-color: var(--accent); background: var(--card); }
+  #cwd-input::placeholder { color: var(--faint); font-family: var(--sans); }
+  .cwd-pop button {
+    flex: none; border: 1px solid var(--border-strong); background: var(--surface-2);
+    color: var(--muted); font-size: 12px; padding: 3px 8px; border-radius: var(--r-sm); cursor: pointer;
+  }
+  .cwd-pop button:hover { border-color: var(--accent); color: var(--accent-deep); }
   .at-hint { flex: none; margin-left: auto; font-size: 11px; color: var(--faint); white-space: nowrap; }
   /* 段③：快捷键行（键白动作灰） */
   .keys-row { display: flex; align-items: center; gap: 8px; }
@@ -577,7 +582,7 @@
 <!-- 桥缺失时可见，提示这是设计预览 -->
 <div id="bridge-warn" class="hidden">设计预览：未检测到译宝桥（window.yibao），起停/流式回显不可用。</div>
 
-<!-- D4 收窄：cwd 药丸/📁/模式 pill 迁入 footer 上下文行，handoff 迁入快捷键行；
+<!-- D4 收窄：cwd chip/模式 pill 在 footer 上下文行，handoff 在快捷键行；
      顶栏只留 标题 + 成本聚合 + 历史/新对话 ghost -->
 <header>
   <span class="title">编码对话</span>
@@ -608,19 +613,27 @@
 </div>
 
 <!-- D1 三段式（对标 opencode 底栏）：① 输入框 → ② 上下文行 → ③ 快捷键行（键白动作灰）。
-     所有 id 不变，JS 行为（cwd persist / pickCwd / mode pill / @ 补全锚定）不受影响 -->
+     cwd 已收敛为 chip+浮层（真值存 hidden #cwd，全部 JS 读取路径不变），其余 id 不动 -->
 <footer>
   <!-- 段①：输入框（2px 左竖条 accent）；.prompt-wrap 是 @ 补全菜单的定位锚（向上展开） -->
   <div class="prompt-wrap">
     <textarea id="prompt" placeholder="输入消息，@ 引用文件…" rows="1"></textarea>
     <div id="at-menu" class="at-menu" hidden></div>
   </div>
-  <!-- 段②：上下文行——cwd 药丸（顶栏迁入）+ 📁 选目录 + 权限模式 pill + @ 提示 -->
+  <!-- 段②：上下文行——cwd chip（点击弹浮层改路径）+ 权限模式 pill + @ 提示 -->
   <div class="ctx-row">
-    <input id="cwd" type="text" spellcheck="false" placeholder="项目路径（如 /Users/.../myapp）">
-    <button id="cwd-pick" type="button" title="选择项目文件夹（也可直接在药丸里输入路径）">📁</button>
+    <input id="cwd" type="hidden">
+    <button id="cwd-chip" type="button" class="pill cwd-chip empty" title="项目目录（点击选择）">📁 <span id="cwd-chip-label">选择项目目录</span></button>
     <button id="mode-pill" type="button" class="pill" title="点击切换权限模式">自动改文件</button>
     <span class="at-hint">@ 引用文件</span>
+    <!-- cwd 浮层：手输路径 + 📁 选目录；Enter/确定 提交，Esc/点外部取消 -->
+    <div id="cwd-pop" class="cwd-pop" hidden>
+      <div class="cwd-pop-row">
+        <input id="cwd-input" type="text" spellcheck="false" placeholder="项目路径（如 /Users/.../myapp）">
+        <button id="cwd-browse" type="button" title="选择项目文件夹">📁</button>
+        <button id="cwd-ok" type="button">确定</button>
+      </div>
+    </div>
   </div>
   <!-- 段③：快捷键行——左 #status 灰小字（不独占一行），中 kbd 提示，右操作钮
        （#handoff ghost 小钮 / #stop ghost 运行态才有意义 / #send accent 实心主钮） -->
@@ -1569,7 +1582,7 @@
     }
     var cwd = $("cwd").value.trim();
     var prompt = $("prompt").value.trim();
-    if (!cwd) { setStatus("请先填写项目路径（cwd）", true); $("cwd").focus(); return; }
+    if (!cwd) { setStatus("请先选择项目目录", true); openCwdPop(); return; }
     if (!prompt) { setStatus("请输入任务描述", true); $("prompt").focus(); return; }
 
     sending = true;
@@ -1682,7 +1695,7 @@
     if (!hasBridge) { setStatus("未连译宝桥（设计预览模式）", true); return; }
     if (streaming) { setStatus("当前会话运行中，请先中断再接续", true); return; }
     var cwd = $("cwd").value.trim();
-    if (!cwd) { setStatus("请先填写项目路径（cwd）", true); $("cwd").focus(); return; }
+    if (!cwd) { setStatus("请先选择项目目录", true); openCwdPop(); return; }
 
     closeHandoffPicker();
     setStatus("读取 Codex 会话列表…");
@@ -1992,7 +2005,7 @@
         else { var b = appendAssistantBubble(); appendTextToBubble(b, m.text); finalizeBubble(b); b.classList.add("done"); }
       });
       if ((r.messages || []).length) appendMarker("—— 以上为历史，继续聊 ↓ ——", false);
-      if (r.cwd) $("cwd").value = r.cwd;
+      if (r.cwd) setCwd(r.cwd);
       $("history-overlay").hidden = true;
       $("new-chat").disabled = false;
       $("send").disabled = false;
@@ -2004,12 +2017,31 @@
     });
   }
 
+  // ---- cwd chip + 浮层：真值存 hidden #cwd（send/handoff/@ 补全读取路径不变）；
+  //      chip 只显示目录名，点击弹浮层手输（Enter/确定 提交，Esc/点外部取消）或 📁 选目录 ----
+  function setCwd(v) {
+    $("cwd").value = v;
+    var base = (v || "").split("/").filter(Boolean).pop() || "";
+    $("cwd-chip-label").textContent = base || "选择项目目录";
+    $("cwd-chip").classList.toggle("empty", !base);
+    $("cwd-chip").title = v ? ("项目目录：" + v + "（点击修改）") : "项目目录（点击选择）";
+  }
+  function openCwdPop() {
+    $("cwd-input").value = $("cwd").value;
+    $("cwd-pop").hidden = false;
+    $("cwd-input").focus();
+    $("cwd-input").select();
+  }
+  function closeCwdPop(commit) {
+    if (commit) setCwd($("cwd-input").value.trim());
+    $("cwd-pop").hidden = true;
+  }
   // 📁 文件夹选择器：native:pick_folder 走 WebviewPanel 白名单旁路直调 Tauri（不经 sidecar）。
-  // 桥 resolve 的就是结果本体（路径字符串；取消为 null）——回填 cwd 药丸，手输仍可用。
+  // 桥 resolve 的就是结果本体（路径字符串；取消为 null）——回填 cwd 并关浮层。
   function pickCwd() {
     if (!hasBridge) { setStatus("未连译宝桥（设计预览模式）", true); return; }
     window.yibao.invoke("native:pick_folder", {}).then(function (r) {
-      if (r) { $("cwd").value = r; }
+      if (r) { setCwd(r); $("cwd-pop").hidden = true; }
     }).catch(function () {
       setStatus("选择文件夹失败", true);
     });
@@ -2020,7 +2052,18 @@
   $("rp-stop").addEventListener("click", stop);   // 运行 pill 的红 Stop 复用同一中断逻辑（C3）
   $("new-chat").addEventListener("click", newChat);
   $("handoff").addEventListener("click", handoff);
-  $("cwd-pick").addEventListener("click", pickCwd);
+  $("cwd-chip").addEventListener("click", function (e) {
+    e.stopPropagation();   // 防冒泡到 document 的「点外部关闭」
+    if ($("cwd-pop").hidden) openCwdPop(); else closeCwdPop(false);
+  });
+  $("cwd-browse").addEventListener("click", pickCwd);
+  $("cwd-ok").addEventListener("click", function () { closeCwdPop(true); });
+  $("cwd-input").addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); closeCwdPop(true); }
+    else if (e.key === "Escape") { e.stopPropagation(); closeCwdPop(false); }  // 防误触全局 esc 停止
+  });
+  $("cwd-pop").addEventListener("click", function (e) { e.stopPropagation(); });
+  document.addEventListener("click", function () { if (!$("cwd-pop").hidden) closeCwdPop(false); });
   $("history").addEventListener("click", openHistory);
   $("history-close").addEventListener("click", closeHistory);
   // turn 级错误条「详情」：展开/收起错误全文（摘要行常驻单行）
@@ -2127,7 +2170,7 @@
     window.yibao.invoke("coding.list", {}).then(function (r) {
       var rows = (r && r.sessions) || [];
       if (rows.length && rows[0].cwd && !$("cwd").value) {
-        $("cwd").value = rows[0].cwd;
+        setCwd(rows[0].cwd);
       }
     }).catch(function () { /* 静默：首次使用无会话 */ });
   }
