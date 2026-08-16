@@ -513,7 +513,9 @@ async def _reminders_call(agent: AgentLoop, api_name: str, params: dict) -> dict
     api = get_api(api_name)
     if api is None or not api.direct:
         return {"ok": False, "error": f"方法不可用：{api_name}"}
-    action = agent.invoker.propose(ToolCall(id=f"pa_mob_{next(_BRIDGE_SEQ)}", skill_id=api.handler, params=params))
+    rid = f"pa_mob_{next(_BRIDGE_SEQ)}"
+    action = agent.invoker.propose(ToolCall(id=rid, skill_id=api.handler, params=params))
+    action.id = rid  # propose 不透传 ToolCall.id（Action 另起 act_ 号）——回填 pa_mob_ 前缀，壳侧审计可区分手机发起（与 _bridge_save 同协议）
     if api.risk is not None:
         action.risk = max(action.risk, api.risk)
     if agent.invoker.decide(action) != Decision.AUTO:
