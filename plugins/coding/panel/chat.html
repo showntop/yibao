@@ -4,7 +4,11 @@
      能力调用全部经 window.yibao.invoke（postMessage 桥 → api.toml 白名单 + 风险闸门）；
      流式回显经 window.yibao.onInit（每条 panel_data 推一次，data = {session_id, event:{kind,...}}，
      按事件 kind ACCUMULATE 到 #log，不能用 data 整体替换）。
-     桥 JS 由父侧注入（提供 window.yibao.invoke/onInit），本文件不自带。
+     桥 JS 由父侧注入（提供 window.yibao.invoke/onInit/onMessage/emitEvent），本文件不自带。
+     接管模式（P1 takeover）：PanelApp 窗口打开本面板时 init 载荷带 takeover=true → body.takeover
+     隐藏自带输入框/发送钮（保留其余全部控件），父侧 InputBar 文本经 onMessage("takeover-input")
+     直送 send()（busy 排队、本轮结束自动发；中断/新对话清空队列），运行状态经
+     emitEvent("takeover-state") 上报父侧（驱动 avatar + 译宝大脑上下文）。
 
      文件改动 diff：内建行级 LCS 着色，卡片默认展开（共享 webview 注入的 CSP
      default-src 'none' 屏蔽一切外部脚本，故不依赖任何 CDN 资源）。
@@ -416,6 +420,14 @@
   }
   /* 窄面板优先保住状态行与操作钮：快捷键提示让位（裁切→整组隐藏） */
   @media (max-width: 480px) { .keys { display: none; } }
+
+  /* 接管模式（P1 takeover，body.takeover）：PanelApp 工作台条 InputBar 接管文本输入——
+     隐藏段①输入框整段（@ 内联菜单随之不触发）与 #send 主钮；「↵发送/⇧↵换行」提示一并隐藏
+     （@ 文件 / esc 停止提示保留）；cwd chip / 权限 pill / handoff / stop / #status 等其余控件不动。
+     footer 因此变矮：layoutRunPill 每次按 footer.offsetHeight 现算 bottom，无需特判 */
+  body.takeover .prompt-wrap { display: none; }
+  body.takeover #send { display: none; }
+  body.takeover .keys .send-hint { display: none; }
   /* #handoff 顶栏迁入本行：ghost 小钮 */
   #handoff {
     flex: none; border: 1px solid transparent; background: transparent;
@@ -613,7 +625,8 @@
 </div>
 
 <!-- D1 三段式（对标 opencode 底栏）：① 输入框 → ② 上下文行 → ③ 快捷键行（键白动作灰）。
-     cwd 已收敛为 chip+浮层（真值存 hidden #cwd，全部 JS 读取路径不变），其余 id 不动 -->
+     cwd 已收敛为 chip+浮层（真值存 hidden #cwd，全部 JS 读取路径不变），其余 id 不动。
+     接管模式（body.takeover）：段①整段与 #send 隐藏（工作台条 InputBar 接管输入），其余控件保留 -->
 <footer>
   <!-- 段①：输入框（2px 左竖条 accent）；.prompt-wrap 是 @ 补全菜单的定位锚（向上展开） -->
   <div class="prompt-wrap">
@@ -640,8 +653,8 @@
   <div class="keys-row">
     <span id="status"></span>
     <span class="keys">
-      <span><kbd>↵</kbd>发送</span>
-      <span><kbd>⇧↵</kbd>换行</span>
+      <span class="send-hint"><kbd>↵</kbd>发送</span>
+      <span class="send-hint"><kbd>⇧↵</kbd>换行</span>
       <span><kbd>@</kbd>文件</span>
       <span><kbd>esc</kbd>停止</span>
     </span>
@@ -687,6 +700,58 @@
   var curMode = "acceptEdits"; // acceptEdits=自动改文件；plan=只读规划
   var pendingUserEcho = null;  // send() 后等 user_msg 回流画用户气泡的 1.5s 兜底 timer（事件到达则清，防双份）
   var fallbackUserBubble = null; // 兜底 timer 画出的无锚用户气泡 {el, text}；迟到的 user_msg 文本匹配时原地升级挂 ⏪（防双份）
+
+  // ============================================================
+  //   接管模式（P1 takeover）：PanelApp 窗口打开本面板时，底部工作台条 InputBar 接管文本输入。
+  //   init 载荷 takeover=true → body.takeover（CSS 隐藏自带输入框/发送钮）；父侧文本经
+  //   yibao.onMessage("takeover-input") 直送 send()（busy 排队，本轮结束自动发）；
+  //   运行状态经 yibao.emitEvent("takeover-state") 上报父侧（无回包）。
+  //   非 takeover surface（大窗插件页/peek/设计预览）不下发 takeover 标志，本段全部不触发。
+  // ============================================================
+  var takeoverMode = false;    // 接管中：init 载荷 takeover 标志置位（undefined 视为 false）
+  var takeoverQueue = [];      // 接管输入队列：busy（sending/streaming）时到的 takeover-input 排队
+
+  // takeover 标志随每条 panel_data 的 init 载荷重提——幂等：态不变不动 DOM；
+  // 退出接管时排队输入一并作废（父侧输入条已交还译宝大脑，滞留队列会在非接管态被意外发出）
+  function setTakeover(on) {
+    on = !!on;
+    if (on === takeoverMode) return;
+    takeoverMode = on;
+    document.body.classList.toggle("takeover", on);
+    if (!on) takeoverQueue.length = 0;
+  }
+
+  // 状态上报（iframe → 父，无回包）：state ∈ sending/streaming/waiting/idle；session = 有无活动会话
+  function reportState(st) {
+    if (!takeoverMode || !hasBridge) return;
+    window.yibao.emitEvent("takeover-state", { state: st, session: !!currentSession });
+  }
+
+  // 队列泄放：busy 或空队列自拒。秒败竞态（终态抢在 invoke 返回前，onSessionEnded 时 sending 仍真）
+  // 与 invoke 失败（onSessionEnded 不走）两个路径由 send()/startHandoffSession 的 .finally 兜底再泄
+  function drainTakeoverQueue() {
+    if (!takeoverQueue.length || sending || streaming) return;
+    $("prompt").value = takeoverQueue.shift();
+    send();   // cwd/prompt 空校验走 send 原有路径（校验拒发时本条已出队，不补发）
+  }
+
+  // 父侧推送（yibao.onMessage）：必须按 msg.type 判别——init/invoke 响应之外的任意 host 消息
+  // 都会落进来（孤儿 invoke 响应理论上也在），非接管词汇静默忽略
+  function onHostMessage(msg) {
+    if (!msg || !msg.type) return;
+    if (msg.type === "takeover-input") {
+      // busy 则排队（Codex Queue 式），本轮结束后自动发；否则填值直送 send()（cwd/prompt 校验不变）
+      if (sending || streaming) {
+        takeoverQueue.push(msg.text == null ? "" : String(msg.text));
+        setStatus("已排队，本轮结束后自动发送");
+        return;
+      }
+      $("prompt").value = msg.text == null ? "" : String(msg.text);
+      send();
+    } else if (msg.type === "takeover-stop") {
+      if (streaming || sending) stop();   // 等价点 iframe 内 stop 钮（stop() 自判 currentSession）
+    }
+  }
 
   // ============================================================
   //   工具函数
@@ -1491,6 +1556,7 @@
         if (currentBubble) finalizeBubble(currentBubble);
         currentBubble = null;
         appendPermission(ev);
+        reportState("waiting");   // takeover：等审批
         break;
       case "permission_done": {
         var card = document.getElementById("perm-" + ev.rid);
@@ -1502,6 +1568,7 @@
             ? "✓ 已允许" + (verb && verb !== "允许" ? " " + verb : "")
             : "✗ 已拒绝";
         }
+        reportState("streaming");   // takeover：审批已裁决，回到流式
         break;
       }
       case "rewind_ok":
@@ -1515,7 +1582,7 @@
         }
         appendMarker(ev.text || "已中断", true);
         setStatus(ev.text || "已中断"); // 纯文本覆盖秒表行——spinner 一并清掉（绕过按钮的 stopped 也不留残影）
-        onSessionEnded();
+        onSessionEnded("stopped");
         break;
       case "done":
         if (currentBubble) {
@@ -1527,13 +1594,13 @@
         currentBubble = null;
         addUsage(ev.usage);   // C4：会话级成本聚合（顶栏 + pill 累计 token 共用）
         setStatusDone(ev.usage);
-        onSessionEnded();
+        onSessionEnded("done");
         break;
       case "error":
         if (currentBubble) { finalizeBubble(currentBubble); currentBubble = null; }
         appendError(ev.text || "未知错误");
         setStatus("✗ " + (ev.text || "未知错误"), true);  // 清掉秒表 spinner，状态行落到错误终态
-        onSessionEnded();
+        onSessionEnded("error");
         break;
       default:
         // 未知 kind 静默忽略（前向兼容）
@@ -1541,7 +1608,9 @@
     }
   }
 
-  function onSessionEnded() {
+  // reason = 终态来源（stopped/done/error）：takeover 队列据此分流——stopped（用户主动中断）
+  // 清空不自动发；done/error 正常收尾泄放队列自动发下一条
+  function onSessionEnded(reason) {
     if (sending) pendingTurnEnded = true;  // invoke 未返回就收到终态（秒败）：.then 里别再置 streaming
     stopTicker();
     hideRunPill();   // C3：运行 pill 只在 streaming/sending 期间可见
@@ -1555,6 +1624,9 @@
     // handoff 在流式中被禁用；会话终态后放开（仍受 streaming guard 在 handoff() 里兜底）
     $("handoff").disabled = false;
     var histBtn = $("history"); if (histBtn) histBtn.disabled = false;  // 与 handoff 同闸（send 入口禁用过）
+    reportState("idle");   // takeover：终态上报；若随即泄放队列，紧随的 send() 会重报 sending
+    if (reason === "stopped") takeoverQueue.length = 0;  // 中断即放弃排队意图
+    else drainTakeoverQueue();
   }
 
   // ============================================================
@@ -1586,6 +1658,7 @@
     if (!prompt) { setStatus("请输入任务描述", true); $("prompt").focus(); return; }
 
     sending = true;
+    reportState("sending");   // takeover：进入提交窗口
     pendingTurnEnded = false;   // 新 turn 开窗：终态若抢在 invoke 返回前到达，onSessionEnded 会把它置真
     $("send").disabled = true;
     $("new-chat").disabled = true;
@@ -1627,9 +1700,11 @@
         return;
       }
       streaming = true;
+      reportState("streaming");   // takeover：invoke 已受理，进入流式
       $("stop").disabled = false;
       startTicker("会话 " + sid + (isStart ? " 启动" : " 接续"));
     }).catch(function (e) {
+      reportState("idle");   // takeover：invoke 未受理即失败，状态回落
       appendError(verb + "失败：" + emsg(e));
       setStatus(verb + "失败：" + emsg(e), true);
       hideRunPill();  // invoke 未受理：没到 streaming，onSessionEnded 不会走，pill 在此收
@@ -1641,6 +1716,7 @@
       // invoke 返回只代表「已受理」，流式期间禁止再发（防同会话双 runner）
       if (!streaming) $("send").disabled = false;
       $("new-chat").disabled = !currentSession || streaming;
+      drainTakeoverQueue();  // takeover 兜底：invoke 失败/秒败竞态时 onSessionEnded 泄放不了队列（sending 刚解锁）；正常流式中 guard 自拒
     });
   }
 
@@ -1683,6 +1759,8 @@
     $("send").disabled = false;
     $("new-chat").disabled = true;
     setStatus("新对话");
+    takeoverQueue.length = 0;   // takeover：排队输入随旧会话一并作废
+    reportState("idle");
   }
 
   // ============================================================
@@ -1903,8 +1981,10 @@
     if (!cwd) { setStatus("内部错误：cwd 丢失", true); return; }
 
     sending = true;
+    reportState("sending");   // takeover：handoff 也是新 turn 入口
     pendingTurnEnded = false;   // 同 send：终态抢跑时 onSessionEnded 置真，.then 跳过秒表
     streaming = true;
+    reportState("streaming");   // takeover：handoff 同步置流式（invoke 受理前即上报）
     $("send").disabled = true;
     $("new-chat").disabled = true;
     $("handoff").disabled = true;
@@ -1931,6 +2011,7 @@
       }
       startTicker("Codex 接续会话 " + csid);   // 与 send 对齐：运行态走 pill 秒表（C3）
     }).catch(function (e) {
+      reportState("idle");   // takeover：接续启动失败，状态回落
       appendError("Codex 接续启动失败：" + emsg(e));
       setStatus("Codex 接续启动失败：" + emsg(e), true);
       hideRunPill();
@@ -1942,6 +2023,7 @@
       sending = false;
       $("new-chat").disabled = !currentSession || streaming;
       $("handoff").disabled = streaming;
+      drainTakeoverQueue();  // takeover 兜底：同 send().finally（失败/秒败路径泄放队列）
     });
   }
 
@@ -2176,10 +2258,18 @@
   }
 
   // ============================================================
-  //   注册 onInit（每条 panel_data 触发一次）
+  //   注册 onInit（每条 panel_data 触发一次）+ onMessage（父侧接管推送）
   // ============================================================
   if (hasBridge) {
-    window.yibao.onInit(handleInitData);
+    // init 回调第二参是完整载荷：takeover 标志随每条 panel_data 重提（旧桥只传 data →
+    // undefined 视为 false；setTakeover 幂等，态不变不动 DOM）
+    window.yibao.onInit(function (data, msg) {
+      setTakeover(msg && msg.takeover);
+      handleInitData(data);
+    });
+    // 父→iframe 任意消息（takeover-input/takeover-stop）：按 msg.type 判别，非接管词汇忽略。
+    // 旧桥无 onMessage 时跳过（也不会有父侧推送）
+    if (window.yibao.onMessage) window.yibao.onMessage(onHostMessage);
     prefillCwd();
   }
 
