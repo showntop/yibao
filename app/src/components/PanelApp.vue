@@ -119,10 +119,18 @@ function computeFocus(cur: typeof current.value): PanelFocus | null {
 
 /** 面板内容统一入口：赋值 + 重算焦点 + 上报大脑 + 会话分流 surface 随插件切换。 */
 function setCurrent(v: typeof current.value) {
+  const wasCoding = isCoding.value;
   current.value = v;
   focus.value = computeFocus(v);
   if (focus.value) setSurface(`panel:${focus.value.plugin}`);
   void reportPanelContext(focus.value).catch(() => {});
+  if (!wasCoding && isCoding.value) {
+    // 接管回执：翻进 coding 的瞬间推一次（pushMsg 自带 openLayer）；submit 不 pushMsg 用户行，历史不双写
+    pushMsg("hint", "编码智能体已接管输入条，直接对它说任务；关闭或切走面板即交还");
+  } else if (wasCoding && !isCoding.value && state.value === "work") {
+    // 切走/关闭：WebviewPanel :key 重建、事件自然断流，无需清理；仅 avatar 停在接管 work 时复位
+    state.value = "idle";
+  }
 }
 
 function onEvent(e: BrainEvent) {
@@ -270,6 +278,11 @@ const barRef = ref<HTMLElement | null>(null);
 
 function submit(text: string) {
   errorText.value = "";
+  // 接管：coding 面板期间文本直送 iframe 编码会话——不 pushMsg、不 runInput，防历史双写
+  if (isCoding.value) {
+    webviewRef.value?.postToIframe({ type: "takeover-input", text });
+    return;
+  }
   pushMsg("user", text); // 输入立刻有落点（浮层时间线）
   void runInput(text).catch((err) => {
     errorText.value = "发送失败：" + String(err);
@@ -277,6 +290,7 @@ function submit(text: string) {
 }
 
 function onMic() {
+  if (isCoding.value) return; // 接管期语音不发起（InputBar takeover 不屏蔽 onMic，接线处保证互斥）
   void voiceStart().catch((err) => {
     errorText.value = "语音失败：" + String(err);
   });
@@ -284,6 +298,11 @@ function onMic() {
 
 function onInterrupt() {
   if (!busy.value) return;
+  // 接管：打断语义归编码会话，不调 brain interrupt（InputBar takeover 已屏蔽 stopping，此处双保险）
+  if (isCoding.value) {
+    webviewRef.value?.postToIframe({ type: "takeover-stop" });
+    return;
+  }
   void interrupt().catch(() => {});
 }
 
@@ -323,7 +342,51 @@ async function pullCache() {
 // webview 面板 html（空串 → 走 schema 面板/占位）
 const webviewHtml = computed(() => current.value?.webview?.html ?? "");
 
+// ---- coding 接管（P1）：coding 面板打开时 InputBar 直送 iframe 编码会话，不进译宝大脑 ----
+const webviewRef = ref();
+const inputBarRef = ref();
+const isCoding = computed(
+  () => !!current.value && current.value.panel === "coding:chat" && !!webviewHtml.value,
+);
+
+// takeover-state → 中文状态文案（上报大脑上下文的 item.title 用）
+const CODING_STATE_LABEL: Record<string, string> = {
+  sending: "提交中",
+  streaming: "运行中",
+  waiting: "等待审批",
+  idle: "空闲",
+};
+
+/** iframe 面板事件：takeover-state 驱动团子 avatar + 上报大脑上下文；insert-draft 回输 InputBar 草稿。 */
+function onPanelEvent(name: string, payload: any) {
+  if (name === "takeover-state") {
+    const st = typeof payload?.state === "string" ? payload.state : "idle";
+    // 状态打架取舍：takeover 期间 submit 不进大脑，大脑的 state 迁移基本不会发生；若大脑正在
+    // 说话/思考时用户打开 coding 面板，这里以 coding 状态为准（非 idle 一律 work），不加额外锁
+    state.value = st === "idle" ? "idle" : "work";
+    void reportPanelContext({
+      plugin: "coding",
+      panel: "chat",
+      item: {
+        id: payload?.session ? "session" : "coding",
+        title: `编码对话（${CODING_STATE_LABEL[st] ?? st}）`,
+        status: st,
+      },
+    }).catch(() => {});
+  } else if (name === "insert-draft") {
+    inputBarRef.value?.insertText(payload?.text ?? "");
+  }
+}
+
+/** esc 转发：coding 运行中按 esc → 中断编码会话（PanelApp 现有无 esc 监听，不抢浮层等既有语义）。 */
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === "Escape" && isCoding.value && state.value !== "idle") {
+    webviewRef.value?.postToIframe({ type: "takeover-stop" });
+  }
+}
+
 onMounted(async () => {
+  document.addEventListener("keydown", onKeydown); // coding 接管期 esc 转发
   unlisten = await onBrainEvent(onEvent);
   unlistenApprovals = onPendingConfirms((items) => {
     pendingConfirms.value = items.filter((item) => item.surface?.startsWith("panel"));
@@ -341,6 +404,7 @@ onMounted(async () => {
   });
 });
 onUnmounted(() => {
+  document.removeEventListener("keydown", onKeydown);
   unlisten?.();
   unlistenFocus?.();
   unlistenApprovals?.();
@@ -381,9 +445,12 @@ onUnmounted(() => {
       <WebviewPanel
         v-if="current && webviewHtml"
         :key="current.panel"
+        ref="webviewRef"
         :panel="current.panel"
         :html="webviewHtml"
         :data="current.data"
+        :takeover="isCoding"
+        @panel-event="onPanelEvent"
       />
       <SchemaPanel
         v-else-if="current"
@@ -441,7 +508,17 @@ onUnmounted(() => {
           </svg>
         </button>
         <span v-if="chipText" class="chip" :title="chipText">{{ chipText }}</span>
-        <InputBar class="bench-input" :busy="busy" :listening="state === 'listen'" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
+        <InputBar
+          class="bench-input"
+          ref="inputBarRef"
+          :busy="busy"
+          :listening="state === 'listen'"
+          :takeover="isCoding"
+          :placeholder="isCoding ? '编码智能体接管中，直接说任务…' : undefined"
+          @submit="submit"
+          @mic="onMic"
+          @interrupt="onInterrupt"
+        />
       </div>
     </div>
   </div>
