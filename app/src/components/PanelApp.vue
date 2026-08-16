@@ -127,9 +127,11 @@ function setCurrent(v: typeof current.value) {
   if (!wasCoding && isCoding.value) {
     // 接管回执：翻进 coding 的瞬间推一次（pushMsg 自带 openLayer）；submit 不 pushMsg 用户行，历史不双写
     pushMsg("hint", "编码智能体已接管输入条，直接对它说任务；关闭或切走面板即交还");
-  } else if (wasCoding && !isCoding.value && state.value === "work") {
-    // 切走/关闭：WebviewPanel :key 重建、事件自然断流，无需清理；仅 avatar 停在接管 work 时复位
-    state.value = "idle";
+  } else if (wasCoding && !isCoding.value) {
+    // 切走/关闭：WebviewPanel :key 重建、事件自然断流，无需清理；codingBusy 一并复位，
+    // avatar 仅停在接管 work 时复位
+    codingBusy.value = false;
+    if (state.value === "work") state.value = "idle";
   }
 }
 
@@ -348,6 +350,9 @@ const inputBarRef = ref();
 const isCoding = computed(
   () => !!current.value && current.value.panel === "coding:chat" && !!webviewHtml.value,
 );
+// coding 运行闸：只由 iframe 的 takeover-state 维护，与 state 解耦——大脑事件（final_reply/
+// interrupted/error 把 state 打回 idle）不再让 esc 转发静默失效
+const codingBusy = ref(false);
 
 // takeover-state → 中文状态文案（上报大脑上下文的 item.title 用）
 const CODING_STATE_LABEL: Record<string, string> = {
@@ -361,8 +366,11 @@ const CODING_STATE_LABEL: Record<string, string> = {
 function onPanelEvent(name: string, payload: any) {
   if (name === "takeover-state") {
     const st = typeof payload?.state === "string" ? payload.state : "idle";
+    // esc 转发闸只认 codingBusy：大脑事件把 state 打回 idle 也不影响中断转发
+    codingBusy.value = st !== "idle";
     // 状态打架取舍：takeover 期间 submit 不进大脑，大脑的 state 迁移基本不会发生；若大脑正在
-    // 说话/思考时用户打开 coding 面板，这里以 coding 状态为准（非 idle 一律 work），不加额外锁
+    // 说话/思考时用户打开 coding 面板，这里以 coding 状态为准（非 idle 一律 work），不加额外锁；
+    // avatar 仍走共享 state，大脑事件盖掉 coding 的 work 属装饰性漂移，接受（esc 已不看它）
     state.value = st === "idle" ? "idle" : "work";
     void reportPanelContext({
       plugin: "coding",
@@ -380,7 +388,7 @@ function onPanelEvent(name: string, payload: any) {
 
 /** esc 转发：coding 运行中按 esc → 中断编码会话（PanelApp 现有无 esc 监听，不抢浮层等既有语义）。 */
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === "Escape" && isCoding.value && state.value !== "idle") {
+  if (e.key === "Escape" && isCoding.value && codingBusy.value) {
     webviewRef.value?.postToIframe({ type: "takeover-stop" });
   }
 }
