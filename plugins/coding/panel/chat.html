@@ -8,7 +8,9 @@
      接管模式（P1 takeover）：PanelApp 窗口打开本面板时 init 载荷带 takeover=true → body.takeover
      隐藏自带输入框/发送钮（保留其余全部控件），父侧 InputBar 文本经 onMessage("takeover-input")
      直送 send()（busy 排队、本轮结束自动发；中断/新对话清空队列），运行状态经
-     emitEvent("takeover-state") 上报父侧（驱动 avatar + 译宝大脑上下文）。
+     emitEvent("takeover-state") 上报父侧（驱动 avatar + 译宝大脑上下文）；
+     「@ 引用文件」按钮浮层选中后经 emitEvent("insert-draft") 回输父侧 InputBar 草稿
+     （非 takeover 模式插本框 #prompt）。
 
      文件改动 diff：内建行级 LCS 着色，卡片默认展开（共享 webview 注入的 CSP
      default-src 'none' 屏蔽一切外部脚本，故不依赖任何 CDN 资源）。
@@ -24,7 +26,7 @@
      顶栏右侧会话级成本聚合「N tok · $X.XXXX」（done 事件 usage 累加，C4）；
      完成行保留耗时/token/cost 明细，灰小字一行（C5）。
      输入区三段式（R3 D1，对标 opencode 底栏）：① 输入框（2px 左竖条 accent）→ ② 上下文行
-     （cwd chip+权限模式 pill+@ 提示）→ ③ 快捷键行（键白动作灰；↵ 发送 / ⇧↵ 换行 / @ 文件 /
+     （cwd chip+权限模式 pill+@ 引用按钮）→ ③ 快捷键行（键白动作灰；↵ 发送 / ⇧↵ 换行 / @ 文件 /
      esc 停止，IME 组字 Enter 不上屏误发）；顶栏收窄为 标题+成本聚合+历史/新对话（D4）；
      消息带宽屏限 760px 居中、气泡/卡 max-width 85%、meta 灰小字 11px（D3 排版 token）。
      AI 气泡 markdown 基座（R3）：marked(GFM) → DOMPurify 消毒 → hljs 高亮，vendor 三库
@@ -351,7 +353,7 @@
 
   /* ---- 底栏三段式（D1，对标 opencode 底栏；三段合计 ≤110px 紧凑） ----
      ① 输入框：2px 左竖条 accent（focus 时 accent-deep），圆角 --r-md
-     ② 上下文行：cwd chip（📁+目录名，点击弹浮层手输/选目录）+ 权限模式 pill + @ 提示灰小字
+     ② 上下文行：cwd chip（📁+目录名，点击弹浮层手输/选目录）+ 权限模式 pill + @ 引用按钮（点开搜索浮层）
      ③ 快捷键行：键白动作灰（kbd 白底小圆角描边 + --faint 动作词）；#status 灰小字融入本行
         左侧不独占一行；操作钮收敛右侧：#send accent 实心主钮 / #stop ghost / #handoff ghost 小钮 */
   footer {
@@ -375,7 +377,7 @@
   .at-item { padding: 6px 10px; font-family: var(--mono-family); font-size: 12px; cursor: pointer; }
   .at-item.sel { background: var(--surface-2); }
   .at-empty { padding: 8px; opacity: .6; font-size: 12px; }
-  /* 段②：上下文行——cwd chip（📁+目录名 pill，点击弹浮层改路径）+ 权限模式 pill + @ 提示。
+  /* 段②：上下文行——cwd chip（📁+目录名 pill，点击弹浮层改路径）+ 权限模式 pill + @ 引用按钮。
      cwd 真值存 hidden #cwd，send/handoff/@ 补全等全部 JS 读取路径不变 */
   .ctx-row { position: relative; display: flex; align-items: center; gap: 6px; }
   .cwd-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 220px; }
@@ -389,19 +391,30 @@
     box-shadow: var(--shadow-card); padding: 6px;
   }
   .cwd-pop-row { display: flex; align-items: center; gap: 6px; }
-  #cwd-input {
+  #cwd-input, #at-input {
     flex: 1 1 auto; min-width: 0; border: 1px solid var(--border); border-radius: var(--r-sm);
     padding: 4px 8px; font: var(--mono); font-size: 12px;
     background: var(--surface-2); color: var(--text); outline: none;
   }
-  #cwd-input:focus { border-color: var(--accent); background: var(--card); }
-  #cwd-input::placeholder { color: var(--faint); font-family: var(--sans); }
+  #cwd-input:focus, #at-input:focus { border-color: var(--accent); background: var(--card); }
+  #cwd-input::placeholder, #at-input::placeholder { color: var(--faint); font-family: var(--sans); }
   .cwd-pop button {
     flex: none; border: 1px solid var(--border-strong); background: var(--surface-2);
     color: var(--muted); font-size: 12px; padding: 3px 8px; border-radius: var(--r-sm); cursor: pointer;
   }
   .cwd-pop button:hover { border-color: var(--accent); color: var(--accent-deep); }
-  .at-hint { flex: none; margin-left: auto; font-size: 11px; color: var(--faint); white-space: nowrap; }
+  /* @ 引用按钮：pill 小钮（hover accent 同 .pill 体系），margin-left:auto 顶到行右 */
+  .at-btn { margin-left: auto; white-space: nowrap; }
+  /* @ 文件引用浮层：复用 cwd-pop 定位模式（锚 ctx-row 向上展开）；按钮在行右故 right:0 防裁切。
+     结果行复用 .at-item/.at-empty（与内联 @ 菜单同款） */
+  .at-pop {
+    position: absolute; bottom: calc(100% + 4px); right: 0; z-index: 30;
+    width: min(360px, 100%);
+    background: var(--card); border: 1px solid var(--border); border-radius: var(--r-md);
+    box-shadow: var(--shadow-card); padding: 6px;
+  }
+  #at-input { width: 100%; }
+  .at-pop-list { margin-top: 6px; max-height: 200px; overflow: auto; }
   /* 段③：快捷键行（键白动作灰） */
   .keys-row { display: flex; align-items: center; gap: 8px; }
   #status {
@@ -633,12 +646,12 @@
     <textarea id="prompt" placeholder="输入消息，@ 引用文件…" rows="1"></textarea>
     <div id="at-menu" class="at-menu" hidden></div>
   </div>
-  <!-- 段②：上下文行——cwd chip（点击弹浮层改路径）+ 权限模式 pill + @ 提示 -->
+  <!-- 段②：上下文行——cwd chip（点击弹浮层改路径）+ 权限模式 pill + @ 引用按钮（点开搜索浮层） -->
   <div class="ctx-row">
     <input id="cwd" type="hidden">
     <button id="cwd-chip" type="button" class="pill cwd-chip empty" title="项目目录（点击选择）">📁 <span id="cwd-chip-label">选择项目目录</span></button>
     <button id="mode-pill" type="button" class="pill" title="点击切换权限模式">自动改文件</button>
-    <span class="at-hint">@ 引用文件</span>
+    <button id="at-btn" type="button" class="pill at-btn" title="引用项目文件到输入框">@ 引用文件</button>
     <!-- cwd 浮层：手输路径 + 📁 选目录；Enter/确定 提交，Esc/点外部取消 -->
     <div id="cwd-pop" class="cwd-pop" hidden>
       <div class="cwd-pop-row">
@@ -646,6 +659,12 @@
         <button id="cwd-browse" type="button" title="选择项目文件夹">📁</button>
         <button id="cwd-ok" type="button">确定</button>
       </div>
+    </div>
+    <!-- @ 文件引用浮层：搜索 input + 结果列表；↑↓ 导航 / Enter 选中 / Esc / 点外部关闭。
+         takeover 态选中经桥 insert-draft 回输父侧 InputBar 草稿，非 takeover 插本框 #prompt -->
+    <div id="at-pop" class="at-pop" hidden>
+      <input id="at-input" type="text" spellcheck="false" placeholder="输入文件名模糊搜索…">
+      <div id="at-list" class="at-pop-list"></div>
     </div>
   </div>
   <!-- 段③：快捷键行——左 #status 灰小字（不独占一行），中 kbd 提示，右操作钮
@@ -2145,7 +2164,10 @@
     else if (e.key === "Escape") { e.stopPropagation(); closeCwdPop(false); }  // 防误触全局 esc 停止
   });
   $("cwd-pop").addEventListener("click", function (e) { e.stopPropagation(); });
-  document.addEventListener("click", function () { if (!$("cwd-pop").hidden) closeCwdPop(false); });
+  document.addEventListener("click", function () {
+    if (!$("cwd-pop").hidden) closeCwdPop(false);
+    if (!$("at-pop").hidden) closeAtPop();
+  });
   $("history").addEventListener("click", openHistory);
   $("history-close").addEventListener("click", closeHistory);
   // turn 级错误条「详情」：展开/收起错误全文（摘要行常驻单行）
@@ -2229,6 +2251,90 @@
       atInsert(atState.items[atState.idx].rel);
     }
   }, true);
+
+  // ---- @ 引用按钮 + 搜索浮层（P1 takeover T5）：两种模式通用。
+  //      takeover：选中经 yibao.emitEvent("insert-draft") 回输父侧 InputBar 草稿（InputBar.insertText 追加+持久化）；
+  //      非 takeover：直接写 #prompt 光标处并聚焦（atInsert 耦合 atState 起锚点服务于内联菜单，此处不复用）。
+  //      与上方内联 @ 菜单（atState 段）互不影响：内联只在 #prompt 可输入时触发（takeover 下其 display:none 天然不触发）----
+  var atPop = { items: [], idx: 0, seq: 0, timer: 0 };  // seq 防乱序：慢响应到达时已过期则丢弃
+  function openAtPop() {
+    var cwd = $("cwd").value.trim();
+    if (!cwd) { setStatus("请先选择项目目录", true); openCwdPop(); return; }
+    if (!$("cwd-pop").hidden) closeCwdPop(false);   // 防两浮层堆叠
+    $("at-pop").hidden = false;
+    $("at-input").value = "";
+    $("at-input").focus();
+    atPopQuery();   // 空 q 列出全部文件（上限见 sidecar），开浮层即有可选项
+  }
+  function closeAtPop() {
+    $("at-pop").hidden = true;
+    if (atPop.timer) { clearTimeout(atPop.timer); atPop.timer = 0; }
+    atPop.seq++;    // 作废在途响应
+  }
+  function atPopQuery() {
+    if (!hasBridge || $("at-pop").hidden) return;
+    var cwd = $("cwd").value.trim();
+    if (!cwd) return;
+    var seq = ++atPop.seq;
+    window.yibao.invoke("coding.files", { cwd: cwd, q: $("at-input").value.trim() }).then(function (r) {
+      if (seq !== atPop.seq || $("at-pop").hidden) return;   // 过期响应/浮层已关，丢弃
+      atPop.items = (r && r.files) || [];
+      atPop.idx = 0;
+      var list = $("at-list");
+      list.innerHTML = "";
+      if (!atPop.items.length) { list.innerHTML = "<div class=\"at-empty\">无匹配</div>"; return; }
+      atPop.items.slice(0, 12).forEach(function (f, i) {
+        var d = document.createElement("div");
+        d.className = "at-item" + (i === 0 ? " sel" : "");
+        d.textContent = f.rel;
+        d.addEventListener("mousedown", function (e) { e.preventDefault(); atPopPick(f.rel); });
+        list.appendChild(d);
+      });
+    }).catch(function () { /* 查询失败保留旧列表 */ });
+  }
+  function atPopPick(rel) {
+    closeAtPop();
+    if (takeoverMode) {
+      window.yibao.emitEvent("insert-draft", { text: "@" + rel + " " });
+      setStatus("已插入输入条草稿：@" + rel);
+    } else {
+      var ta = $("prompt");
+      var pos = ta.selectionStart == null ? ta.value.length : ta.selectionStart;
+      var end = ta.selectionEnd == null ? pos : ta.selectionEnd;
+      ta.value = ta.value.slice(0, pos) + "@" + rel + " " + ta.value.slice(end);
+      ta.focus();
+      var np = pos + rel.length + 2;   // 光标挪到插入文本之后
+      ta.setSelectionRange(np, np);
+    }
+  }
+
+  $("at-btn").addEventListener("click", function (e) {
+    e.stopPropagation();   // 防冒泡到 document 的「点外部关闭」
+    if (!hasBridge) { setStatus("未连译宝桥（设计预览模式）", true); return; }
+    if ($("at-pop").hidden) openAtPop(); else closeAtPop();
+  });
+  $("at-pop").addEventListener("click", function (e) { e.stopPropagation(); });
+  $("at-input").addEventListener("input", function () {
+    if (atPop.timer) clearTimeout(atPop.timer);
+    atPop.timer = setTimeout(atPopQuery, 200);   // 防抖，与内联 at 的逐键查询区分（浮层查询量更大）
+  });
+  $("at-input").addEventListener("compositionend", function () { lastCompEnd = Date.now(); });
+  $("at-input").addEventListener("keydown", function (e) {
+    if (e.key === "Escape") { e.stopPropagation(); closeAtPop(); }  // 防误触全局 esc 停止
+    else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      var items = $("at-list").querySelectorAll(".at-item");
+      if (!items.length) return;
+      items[atPop.idx].classList.remove("sel");
+      atPop.idx = (atPop.idx + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+      items[atPop.idx].classList.add("sel");
+    } else if (e.key === "Enter") {
+      // IME 组字选词的 Enter 不选中（同发送/内联 @ 的 isComposing + lastCompEnd 50ms 双重守卫）
+      if (e.isComposing || Date.now() - lastCompEnd < 50) return;
+      e.preventDefault();
+      if (atPop.items.length && atPop.idx < atPop.items.length) atPopPick(atPop.items[atPop.idx].rel);
+    }
+  });
 
   // D1 快捷键与提示行一致：↵ 发送 / ⇧↵ 换行（⌘/Ctrl+↵ 保留为发送别名）。
   // IME 组字（中文输入）中的 Enter 只是上屏，绝不触发发送（isComposing + lastCompEnd 双重守卫见上）。
