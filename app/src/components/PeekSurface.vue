@@ -6,6 +6,7 @@ import { computed, onMounted, onBeforeUnmount, ref } from "vue";
 import SchemaPanel from "./SchemaPanel.vue";
 import WebviewPanel from "./WebviewPanel.vue";
 import YbIcon from "./YbIcon.vue";
+import { onBrainEvent, type BrainEvent } from "../lib/brain";
 
 const props = withDefaults(
   defineProps<{
@@ -22,6 +23,17 @@ const emit = defineEmits<{ close: [] }>();
 
 const rootEl = ref<HTMLElement | null>(null);
 const isWebview = computed(() => !!props.webview?.html);
+
+// 面板数据本地镜像：props.data 是开窗快照；panel_data 流式增量（同面板）浅合并进来，
+// WebviewPanel watch(data) 自动 postInit 推给 iframe（对齐 PanelApp 合并范式；纯接收，不发信）
+const mergedData = ref<Record<string, unknown>>({ ...props.data });
+let unlisten: (() => void) | null = null;
+
+function onEvent(e: BrainEvent) {
+  if (e.kind !== "panel_data") return;
+  if (props.panel !== (e.payload?.panel ?? "")) return;
+  mergedData.value = { ...mergedData.value, ...(e.payload?.data ?? {}) };
+}
 
 function prefersReducedMotion(): boolean {
   return window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
@@ -65,11 +77,17 @@ function onKeydown(e: KeyboardEvent) {
   if (e.key === "Escape") void close();
 }
 
-onMounted(() => {
+onMounted(async () => {
   window.addEventListener("keydown", onKeydown);
+  try {
+    unlisten = await onBrainEvent(onEvent);
+  } catch { /* 非 Tauri 环境（单测/纯网页）：无订阅也只是退回快照态 */ }
   void growIn();
 });
-onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", onKeydown);
+  unlisten?.();
+});
 </script>
 
 <template>
@@ -82,8 +100,8 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
         <button type="button" class="peek-close" aria-label="收起" @click="close"><YbIcon name="x" :size="14" /></button>
       </header>
       <div class="peek-body">
-        <WebviewPanel v-if="isWebview" :panel="panel" :html="webview!.html!" :data="data" />
-        <SchemaPanel v-else :panel="panel" :schema="schema" :data="data" />
+        <WebviewPanel v-if="isWebview" :panel="panel" :html="webview!.html!" :data="mergedData" />
+        <SchemaPanel v-else :panel="panel" :schema="schema" :data="mergedData" />
       </div>
     </section>
   </div>
