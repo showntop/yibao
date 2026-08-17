@@ -42,6 +42,7 @@ import {
   canRememberSkill,
   rememberLabelForSkill,
 } from "../lib/brain";
+import { formatContextPrefix, type InputContext } from "../lib/at-mention";
 
 // chat：提交/点动态 → 切对话页；draft 非空时带给对话页预填
 // unread：未读动态数同步给父（Home.vue sidebar 徽标用）
@@ -460,8 +461,8 @@ function tierClass(it: FeedItem): string {
 }
 
 // ---- 常驻输入条：提交后切对话页看回复 ----
-function submit(text: string) {
-  void runInput(text, "pet").catch(() => {});
+function submit(text: string, contexts: InputContext[] = []) {
+  void runInput(formatContextPrefix(contexts) + text, "pet").catch(() => {});
   emit("chat");
 }
 

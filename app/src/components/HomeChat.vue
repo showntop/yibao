@@ -26,6 +26,7 @@ import {
   type BrainStatusMsg,
 } from "../lib/brain";
 import { procLabel, procSkip, procResultSuffix, procDetail } from "../lib/proc";
+import { formatContextPrefix, type InputContext } from "../lib/at-mention";
 import type { RunMetrics } from "../lib/brain";
 import { sessionStore } from "../state/store";
 import { newId } from "../state/domains/conversation";
@@ -123,7 +124,6 @@ function syncBubble(b: BubbleMsg): BubbleMsg {
 
 /** 技能/场景快速呼出 chip（动态：预设场景 + list_plugins） */
 type SkillChip = { key: string; label: string; icon: "clock" | "doc" | "sparkle" | "chat" | "plug"; draft: string };
-type InputContext = { kind: "attachment" | "reference"; label: string };
 
 /** 告警气泡：⚠️ 前缀改行首 alert 图标渲染（文案纯净，图标走 YbIcon） */
 function pushWarn(text: string) {
@@ -629,9 +629,7 @@ function onStatus(m: BrainStatusMsg) {
 }
 
 async function submit(text: string, contexts: InputContext[] = []) {
-  const contextPrefix = contexts.length
-    ? `${contexts.map((context) => `【${context.kind === "attachment" ? "附件" : "引用"}：${context.label}】`).join("\n")}\n\n`
-    : "";
+  const contextPrefix = formatContextPrefix(contexts);
   const messageText = `${contextPrefix}${text}`;
   // 无会话时确保存在（首启直接输入）：M3 下 run 必须带会话 id，否则消息不落库。
   // 大窗走 ensure_active_conversation；小窗走 ensure_pet_conversation（固定会话，两窗互不干扰）。

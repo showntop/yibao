@@ -396,6 +396,13 @@
   .at-item { padding: 6px 10px; font-family: var(--mono-family); font-size: 12px; cursor: pointer; }
   .at-item.sel { background: var(--surface-2); }
   .at-empty { padding: 8px; opacity: .6; font-size: 12px; }
+  /* @ 引用 chips 行（输入框内 textarea 上方）：选中文件成 chip，× 删除，发送时组装进 prompt */
+  .at-refs { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 2px 6px; }
+  .at-ref { display: inline-flex; align-items: center; gap: 4px; max-width: 200px; padding: 2px 8px;
+            border-radius: var(--r-pill); background: var(--accent-soft); color: var(--accent-deep);
+            font-size: 11px; font-family: var(--mono-family); }
+  .at-ref span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .at-ref button { border: none; background: transparent; color: inherit; cursor: pointer; padding: 0; font-size: 12px; line-height: 1; }
   /* 段②：上下文行——cwd chip（📁+目录名 pill，点击弹浮层改路径）+ 权限模式 pill
      + 引擎 chip #agent-chip（v2 双驱动：点击开引擎 picker——无会话选新会话引擎 / 有会话选继续引擎（跨引擎=发送时交接摘要移植，.sw 虚线待定态）/ codex 不可用灰显禁选）
      + @ 引用按钮。
@@ -712,8 +719,10 @@
      cwd 已收敛为 chip+浮层（真值存 hidden #cwd，全部 JS 读取路径不变），其余 id 不动。
      接管模式（body.takeover）：段①整段与 #send 隐藏（工作台条 InputBar 接管输入），其余控件保留 -->
 <footer>
-  <!-- 段①：输入框（2px 左竖条 accent）；.prompt-wrap 是 @ 补全菜单的定位锚（向上展开） -->
+  <!-- 段①：输入框（2px 左竖条 accent）；.prompt-wrap 是 @ 补全菜单的定位锚（向上展开）；
+       #at-refs 是 @ 引用 chips 行（选中文件成 chip，× 删除，发送时组装进 prompt） -->
   <div class="prompt-wrap">
+    <div id="at-refs" class="at-refs" hidden></div>
     <textarea id="prompt" placeholder="输入消息，@ 引用文件…" rows="1"></textarea>
     <div id="at-menu" class="at-menu" hidden></div>
   </div>
@@ -825,7 +834,10 @@
   // 与 invoke 失败（onSessionEnded 不走）两个路径由 send()/startHandoffSession 的 .finally 兜底再泄
   function drainTakeoverQueue() {
     if (!takeoverQueue.length || sending || streaming) return;
-    $("prompt").value = takeoverQueue.shift();
+    var item = takeoverQueue.shift();
+    $("prompt").value = typeof item === "string" ? item : item.text;   // 兼容旧字符串条目
+    atRefs = (item && item.refs) || [];
+    renderAtRefs();
     send();   // cwd/prompt 空校验走 send 原有路径（校验拒发时本条已出队，不补发）
   }
 
@@ -834,13 +846,17 @@
   function onHostMessage(msg) {
     if (!msg || !msg.type) return;
     if (msg.type === "takeover-input") {
-      // busy 则排队（Codex Queue 式），本轮结束后自动发；否则填值直送 send()（cwd/prompt 校验不变）
+      // busy 则排队（Codex Queue 式），本轮结束后自动发；否则填值直送 send()（cwd/prompt 校验不变）。
+      // msg.refs（父侧 InputBar 的 @ 文件 chips 路径数组）回填 atRefs，send() 组装进 prompt。
+      var refs = (msg.refs && msg.refs.length) ? msg.refs.map(String) : [];
       if (sending || streaming) {
-        takeoverQueue.push(msg.text == null ? "" : String(msg.text));
+        takeoverQueue.push({ text: msg.text == null ? "" : String(msg.text), refs: refs });
         setStatus("已排队，本轮结束后自动发送");
         return;
       }
       $("prompt").value = msg.text == null ? "" : String(msg.text);
+      atRefs = refs;
+      renderAtRefs();
       send();
     } else if (msg.type === "takeover-stop") {
       if (streaming || sending) stop();   // 等价点 iframe 内 stop 钮（stop() 自判 currentSession）
@@ -1887,6 +1903,10 @@
       return;
     }
 
+    // @ 引用 chips 组装进 prompt：ov.refs（handoff/takeover 转发）优先，否则本框 chips 行（atRefs）
+    var refsLive = (ov && ov.refs) || atRefs;
+    var fullPrompt = prompt + composeRefs(refsLive);
+
     sending = true;
     reportState("sending");   // takeover：进入提交窗口
     pendingTurnEnded = false;   // 新 turn 开窗：终态若抢在 invoke 返回前到达，onSessionEnded 会把它置真
@@ -1905,7 +1925,7 @@
     fallbackUserBubble = null;   // 清掉上一轮可能残留的兜底引用，防跨轮误升级
     pendingUserEcho = setTimeout(function () {
       pendingUserEcho = null;
-      fallbackUserBubble = { el: appendUser(prompt), text: prompt };
+      fallbackUserBubble = { el: appendUser(fullPrompt), text: fullPrompt };
     }, 1500);
     currentBubble = null;  // 用户气泡不属于 assistant 流
     hideErrBar();        // 新 turn 开始：turn 级错误条（B3）消失
@@ -1917,8 +1937,8 @@
     // 双驱动（v2）：新会话带引擎选择（缺省 "claude-code"，CC 路径零回归）；续聊由服务端按会话行 agent 选驱动；
     // ov（交接开新会话）的 agent 优先于 curAgent
     var startAgent = (ov && ov.agent) ? normAgent(ov.agent) : curAgent;
-    var params = isStart ? { cwd: cwd, prompt: prompt, mode: curMode, agent: startAgent }
-                         : { id: currentSession, prompt: prompt, mode: curMode };
+    var params = isStart ? { cwd: cwd, prompt: fullPrompt, mode: curMode, agent: startAgent }
+                         : { id: currentSession, prompt: fullPrompt, mode: curMode };
     var verb = isStart ? "启动" : "接续";
 
     window.yibao.invoke(method, params).then(function (r) {
@@ -1928,6 +1948,7 @@
       if (isStart) curSessAgent = startAgent;   // 新会话引擎落定：chip 转入引擎徽标态
       renderAgentChip();
       $("prompt").value = "";
+      atRefs = []; renderAtRefs();   // @ chips 随发送一并消费（失败路径不清，可重试）
       if (pendingTurnEnded) {
         // 终态事件先于 invoke 返回（runner 秒败）：onSessionEnded 已解锁 UI，
         // 别再置 streaming/起跑秒表（否则死会话上 pill 永挂、发送键永禁）。
@@ -2024,6 +2045,7 @@
     streaming = false;
     sending = false;
     $("log").innerHTML = "";
+    atRefs = []; renderAtRefs();   // @ chips 随会话一并清
     $("stop").disabled = true;
     $("send").disabled = false;
     $("new-chat").disabled = true;
@@ -2576,6 +2598,7 @@
       resetUsage();          // C4：恢复历史不补旧账，清零重计（接受降级）
       streaming = false;
       $("log").innerHTML = "";
+      atRefs = []; renderAtRefs();   // @ chips 随会话切换一并清
       msgs.forEach(function (m) {
         if (m.role === "user") appendUser(m.text, m.uuid || "");
         else { var b = appendAssistantBubble(); appendTextToBubble(b, m.text); finalizeBubble(b); b.classList.add("done"); }
@@ -2674,6 +2697,39 @@
     if (e.target === this) closeHistory();  // 点空白处收起（picker 内点击不冒泡到 overlay 的 target 判定）
   });
   // ---- @ 补全：输入 @ 起模糊搜项目文件，↑↓ 选择，Enter 插入，Esc 关闭 ----
+  // ---- @ 引用 chips（非 takeover 自有输入框）：选中文件成 chip 进输入框内 chips 行（不再插纯文本），
+  //      × 删除；发送时组装进 prompt（"@path" 列表，见 send() composeRefs）。takeover 态 chips 由
+  //      父侧 InputBar 自管，经 takeover-input 的 refs 数组到达（onHostMessage 回填 atRefs）----
+  var atRefs = [];
+  function renderAtRefs() {
+    var box = $("at-refs");
+    box.innerHTML = "";
+    box.hidden = !atRefs.length;
+    atRefs.forEach(function (rel, i) {
+      var chip = document.createElement("span");
+      chip.className = "at-ref";
+      chip.title = rel;   // 全路径悬停可见
+      var name = document.createElement("span");
+      name.textContent = rel.split("/").pop();
+      chip.appendChild(name);
+      var x = document.createElement("button");
+      x.type = "button"; x.textContent = "×"; x.title = "移除引用";
+      x.addEventListener("click", function () { atRefs.splice(i, 1); renderAtRefs(); });
+      chip.appendChild(x);
+      box.appendChild(chip);
+    });
+  }
+  function addAtRef(rel) {
+    if (atRefs.indexOf(rel) >= 0) return;   // 去重：同文件重复引用无意义
+    atRefs.push(rel);
+    renderAtRefs();
+  }
+  function composeRefs(refs) {
+    return refs && refs.length
+      ? "\n\n引用文件：\n" + refs.map(function (r) { return "@" + r; }).join("\n")
+      : "";
+  }
+
   var atState = { open: false, items: [], idx: 0, query: "", start: -1 };
   function closeAt() { atState.open = false; $("at-menu").hidden = true; }
   function openAt() { atState.open = true; $("at-menu").hidden = false; }
@@ -2701,8 +2757,9 @@
 
   function atInsert(rel) {
     var ta = $("prompt");
-    var v = ta.value;
-    ta.value = v.slice(0, atState.start) + "@" + rel + " " + v.slice(ta.selectionStart);
+    // 删掉触发菜单的 @query 片段，文件以 chip 形式上 chips 行（不再插 "@rel " 纯文本）
+    ta.value = ta.value.slice(0, atState.start) + ta.value.slice(ta.selectionStart);
+    addAtRef(rel);
     ta.focus();
     closeAt();
   }
@@ -2788,13 +2845,9 @@
       window.yibao.emitEvent("insert-draft", { text: "@" + rel + " " });
       setStatus("已插入输入条草稿：@" + rel);
     } else {
-      var ta = $("prompt");
-      var pos = ta.selectionStart == null ? ta.value.length : ta.selectionStart;
-      var end = ta.selectionEnd == null ? pos : ta.selectionEnd;
-      ta.value = ta.value.slice(0, pos) + "@" + rel + " " + ta.value.slice(end);
-      ta.focus();
-      var np = pos + rel.length + 2;   // 光标挪到插入文本之后
-      ta.setSelectionRange(np, np);
+      addAtRef(rel);   // chip 化：进输入框内 chips 行（不再插纯文本）
+      setStatus("已引用 @" + rel);
+      $("prompt").focus();
     }
   }
 

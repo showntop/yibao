@@ -21,6 +21,7 @@ import {
   type BrainEvent,
   type PanelFocus,
 } from "../lib/brain";
+import { formatContextPrefix, type InputContext } from "../lib/at-mention";
 import { procLabel, procSkip, procResultSuffix } from "../lib/proc";
 import { sessionStore } from "../state/store";
 import type { Attention, Presentation } from "../lib/surface-policy";
@@ -507,10 +508,11 @@ async function onAction(a: { method: string; params: Record<string, unknown> }) 
 // 工作台条交互：提交走同一 runInput（focus 已在大脑上下文里）；mic/长按团子 = 语音
 const barRef = ref<HTMLElement | null>(null);
 
-function submit(text: string) {
+function submit(text: string, contexts: InputContext[] = []) {
   errorText.value = "";
-  pushMsg("user", text); // 输入立刻有落点（浮层时间线）
-  void runInput(text, surface.value).catch((err) => {
+  const t = formatContextPrefix(contexts) + text;   // @ 文件/附件 chips 前缀进文本
+  pushMsg("user", t); // 输入立刻有落点（浮层时间线）
+  void runInput(t, surface.value).catch((err) => {
     errorText.value = "发送失败：" + String(err);
   });
 }
