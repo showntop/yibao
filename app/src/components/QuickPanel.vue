@@ -5,6 +5,7 @@ import { computed, onMounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import InputBar from "./InputBar.vue";
 import { getDockListOnce } from "../lib/brain";
+import type { InputContext } from "../lib/at-mention";
 
 const props = withDefaults(
   defineProps<{
@@ -18,7 +19,7 @@ const props = withDefaults(
   { petY: 100, showDock: true },
 );
 const emit = defineEmits<{
-  (e: "submit", text: string): void;
+  (e: "submit", text: string, contexts?: InputContext[]): void;
   (e: "launch", p: { id: string; name: string }): void;
   (e: "mic"): void;
   (e: "interrupt"): void;
@@ -96,7 +97,7 @@ onMounted(() => void reloadDock());
       <InputBar
         :busy="props.busy"
         :listening="props.listening"
-        @submit="(t) => emit('submit', t)"
+        @submit="(t, ctx) => emit('submit', t, ctx)"
         @mic="() => emit('mic')"
         @interrupt="() => emit('interrupt')"
       />

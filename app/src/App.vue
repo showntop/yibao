@@ -40,6 +40,7 @@ import {
   canRememberSkill,
   rememberLabelForSkill,
 } from "./lib/brain";
+import { formatContextPrefix, type InputContext } from "./lib/at-mention";
 import {
   openPanel,
   setInteractiveFull,
@@ -372,10 +373,10 @@ function setPetHover(on: boolean) {
 }
 
 /** 快捷面板提交：收起面板 → 直接 submit，回复默认走气泡（不展开对话窗）。 */
-function onQuickSubmit(text: string) {
+function onQuickSubmit(text: string, contexts: InputContext[] = []) {
   quick.value = false;
   syncHotRects();
-  void submit(text);
+  void submit(text, contexts);
 }
 
 /** 快捷面板点插件/更多：收起面板 → 展开到插件页并启动；id 空 = 展开对话（待批准/更多）。 */
@@ -842,8 +843,9 @@ function onPerms(p: BrainPermissions) {
   }
 }
 
-async function submit(text: string) {
-  bubbles.value.push({ role: "user", text });
+async function submit(text: string, contexts: InputContext[] = []) {
+  const fullText = formatContextPrefix(contexts) + text;   // @ 文件/附件 chips 前缀进文本（气泡与大脑同源）
+  bubbles.value.push({ role: "user", text: fullText });
   surfaceAnchor.clear();
   clearExplicit();
   state.value = "think";
@@ -852,7 +854,7 @@ async function submit(text: string) {
     bubbles.value.push({ role: "sys", text: `已附带区域截图 ${snipCtx.value.width}×${snipCtx.value.height}`, icon: "doc" });
     snipCtx.value = null;
     try {
-      await visionQuery(text);
+      await visionQuery(fullText);
     } catch (err) {
       pushWarn("发送失败：" + String(err));
       state.value = "idle";
@@ -860,15 +862,15 @@ async function submit(text: string) {
     return;
   }
   // 划词上下文：气泡只显示用户打的字，给大脑的消息自包含拼好（大脑看不到前台选中）
-  let msg = text;
+  let msg = fullText;
   if (selectionCtx.value) {
-    msg = `用户在前台应用选中了一段文字：\n「${selectionCtx.value}」\n\n用户的指示：${text}`;
+    msg = `用户在前台应用选中了一段文字：\n「${selectionCtx.value}」\n\n用户的指示：${fullText}`;
     bubbles.value.push({ role: "sys", text: `已附带选中文字 ${selectionCtx.value.length} 字`, icon: "doc" });
     selectionCtx.value = null;
   }
   try {
     await ensurePetConversation(); // 兜底：首启未取到会话时先建（否则消息不落库）
-    const wanted = matchExplicitOpen(text, allPlugins.value);
+    const wanted = matchExplicitOpen(text, allPlugins.value);   // 插件名匹配用原始文本（不含前缀）
     if (wanted) markExplicit(wanted);
     await runInput(msg, "pet", petConvId.value);
   } catch (err) {

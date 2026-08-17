@@ -28,6 +28,7 @@ import {
   rememberLabelForSkill,
 } from "../lib/brain";
 import { procLabel, procSkip, procResultSuffix } from "../lib/proc";
+import { fileRefPaths, formatContextPrefix, type InputContext } from "../lib/at-mention";
 
 // 当前面板：kind="panel" 事件整体替换刷新（webview 非空 → webview 面板，否则 schema 面板）
 const current = ref<{
@@ -287,15 +288,17 @@ async function onAction(a: { method: string; params: Record<string, unknown> }) 
 // 工作台条交互：提交走同一 runInput（focus 已在大脑上下文里）；mic/长按团子 = 语音
 const barRef = ref<HTMLElement | null>(null);
 
-function submit(text: string) {
+function submit(text: string, contexts: InputContext[] = []) {
   errorText.value = "";
-  // 接管：coding 面板期间文本直送 iframe 编码会话——不 pushMsg、不 runInput，防历史双写
+  // 接管：coding 面板期间文本直送 iframe 编码会话——不 pushMsg、不 runInput，防历史双写；
+  // @ 文件 chips 的相对路径随 refs 转发，iframe 侧组装进 prompt（composeRefs）
   if (isCoding.value) {
-    webviewRef.value?.postToIframe({ type: "takeover-input", text });
+    webviewRef.value?.postToIframe({ type: "takeover-input", text, refs: fileRefPaths(contexts) });
     return;
   }
-  pushMsg("user", text); // 输入立刻有落点（浮层时间线）
-  void runInput(text).catch((err) => {
+  const t = formatContextPrefix(contexts) + text;
+  pushMsg("user", t); // 输入立刻有落点（浮层时间线）
+  void runInput(t).catch((err) => {
     errorText.value = "发送失败：" + String(err);
   });
 }

@@ -116,6 +116,14 @@ handler = "coding.attach_codex"
 direct = true
 quiet = true
 
+# 主输入条 @ 引用：取最近会话 cwd 用（quiet 别名——coding.list 本体带 panel="coding:chat" 事件，
+# 主输入条/非 coding 场景调用会把插件页顶成 coding 面板；照 last_sessions/history 的 quiet 别名先例）
+[[method]]
+name = "sessions"
+handler = "coding.list"
+direct = true
+quiet = true
+
 # 引擎 chip 跨引擎切换：会话库任意会话的交接 Brief（quiet 不发 panel 事件——chip 流程内调用，不开面板）
 [[method]]
 name = "session_brief"

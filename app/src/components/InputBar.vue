@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, nextTick } from "vue";
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from "vue";
 import YbIcon from "./YbIcon.vue";
 import { sessionStore } from "../state/store";
+import { panelAction, onBrainEvent, type BrainEvent } from "../lib/brain";
+import { parseAtTrigger, stripAtTrigger, type InputContext } from "../lib/at-mention";
 
 // busy = 生成/播报中（可打断）；listening = 录音中（麦克风切声波态，点击=取消录音）
 // draft = 外部预填草稿（主屏 Feed 点击带上下文来）；变化即填入并聚焦
@@ -17,7 +19,6 @@ const props = withDefaults(
   }>(),
   { placeholder: "对译宝说点什么…（shift+回车换行）", takeover: false },
 );
-type InputContext = { kind: "attachment" | "reference"; label: string };
 const emit = defineEmits<{
   (e: "submit", text: string, contexts: InputContext[]): void;
   (e: "mic"): void;
@@ -46,14 +47,131 @@ function persistDraft(v: string) {
     if (id) sessionStore.conversation.setDraft(id, v);
   }, 300);
 }
+let unmounted = false;
 onMounted(() => {
   const id = sessionStore.conversation.getActiveConversationId();
   if (id) {
     const saved = sessionStore.conversation.getUIState(id).draft;
     if (saved) text.value = saved;
   }
+  // @ 文件搜索的回包通道（pa_<rid> 关联）；注册慢于卸载则立即退订，防监听泄漏
+  void onBrainEvent(onBrainEv).then((un) => { if (unmounted) un(); else unlistenBrain = un; });
+});
+onBeforeUnmount(() => {
+  unmounted = true;
+  unlistenBrain?.();
+  for (const p of pendingCalls.values()) clearTimeout(p.timer);
+  pendingCalls.clear();
 });
 watch(text, (v) => persistDraft(v));
+
+// ---- @ 文件引用（chips 化）：输入 @ 触发文件搜索浮层，选中成 file chip 进 pendingContexts。
+//      搜索通道 = panelAction + onBrainEvent 关联 pa_<rid>（WebviewPanel 既有模式）；
+//      搜索根 = sticky 上次 @ 目录（localStorage）→ 缺省最近 coding 会话 cwd（quiet 别名
+//      coding.sessions——coding.list 本体带 panel 事件，会把插件页顶成 coding 面板）→ 空态提示 ----
+const AT_ROOT_KEY = "yibao.atRoot";
+const atOpen = ref(false);
+const atItems = ref<{ rel: string }[]>([]);
+const atIdx = ref(0);
+const atRoot = ref("");
+let atRootResolved = false; // 负缓存：无 coding 会话时避免逐键重查（组件重挂/选中写 sticky 后重置）
+let atStart = -1;
+let atCaret = 0;
+let atSeq = 0; // 防乱序：逐键查询的慢响应到达时已过期则丢弃
+
+let ridBase = Math.floor(Math.random() * 1e9);
+const pendingCalls = new Map<number, { resolve: (data: unknown) => void; timer: ReturnType<typeof setTimeout> }>();
+let unlistenBrain: (() => void) | null = null;
+
+function callSkill(method: string, params: Record<string, unknown>): Promise<unknown> {
+  return new Promise((resolve) => {
+    const rid = (ridBase = (ridBase + 1) % 2 ** 31);
+    const timer = setTimeout(() => { pendingCalls.delete(rid); resolve(null); }, 8000);
+    pendingCalls.set(rid, { resolve, timer });
+    panelAction(method, params, rid).catch(() => {
+      const p = pendingCalls.get(rid);
+      if (p) { clearTimeout(p.timer); pendingCalls.delete(rid); }
+      resolve(null);
+    });
+  });
+}
+
+function onBrainEv(e: BrainEvent) {
+  const aid = e.action?.id ?? "";
+  if (!aid) return;
+  if (e.kind !== "action_result" && e.kind !== "error") return;
+  for (const [rid, p] of [...pendingCalls]) {
+    if (aid === `pa_${rid}`) {
+      pendingCalls.delete(rid);
+      clearTimeout(p.timer);
+      // error（白名单外/DENY/skill 异常）同样立即结算为 null——不挂满 8s 超时再误导「无匹配」
+      p.resolve(e.kind === "action_result" && e.result?.success ? (e.result.data ?? null) : null);
+    }
+  }
+}
+
+async function ensureAtRoot(): Promise<string> {
+  if (atRootResolved) return atRoot.value;
+  const sticky = localStorage.getItem(AT_ROOT_KEY) || "";
+  if (sticky) { atRoot.value = sticky; atRootResolved = true; return sticky; }
+  const data = (await callSkill("coding.sessions", {})) as { sessions?: { cwd?: string }[] } | null;
+  atRoot.value = data?.sessions?.[0]?.cwd ?? "";
+  atRootResolved = true;
+  return atRoot.value;
+}
+
+async function atQuery(q: string) {
+  const seq = ++atSeq;
+  const cwd = await ensureAtRoot();
+  if (seq !== atSeq) return;
+  if (!cwd) { atItems.value = []; atIdx.value = 0; atOpen.value = true; return; } // 空态提示
+  const data = (await callSkill("coding.files", { cwd, q })) as { files?: { rel: string }[] } | null;
+  if (seq !== atSeq) return;
+  atItems.value = (data?.files ?? []).slice(0, 12);
+  atIdx.value = 0;
+  atOpen.value = true;
+}
+
+function closeAt() {
+  atOpen.value = false;
+  atSeq++; // 作废在途响应
+}
+
+function pickAt(f: { rel: string }) {
+  text.value = stripAtTrigger(text.value, atCaret, atStart); // 移除触发片段，文件成 chip
+  // 去重：同文件重复引用无意义（与 chat.html addAtRef 同约定）
+  if (!pendingContexts.value.some((c) => c.kind === "file" && c.path === f.rel)) {
+    pendingContexts.value.push({ kind: "file", label: f.rel.split("/").pop() || f.rel, path: f.rel });
+  }
+  if (atRoot.value) localStorage.setItem(AT_ROOT_KEY, atRoot.value); // sticky 记忆搜索根
+  closeAt();
+  nextTick(() => { autoGrow(); inputRef.value?.focus(); });
+}
+
+function onTextInput() {
+  autoGrow();
+  const el = inputRef.value;
+  const caret = el?.selectionStart ?? text.value.length;
+  const t = parseAtTrigger(text.value, caret);
+  if (!t) { if (atOpen.value) closeAt(); return; }
+  atStart = t.start;
+  atCaret = caret;
+  void atQuery(t.query);
+}
+
+function onAtKeydown(e: KeyboardEvent) {
+  if (!atOpen.value) return;
+  if (e.key === "Escape") { closeAt(); e.stopPropagation(); return; }
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    if (!atItems.value.length) return;
+    atIdx.value = (atIdx.value + (e.key === "ArrowDown" ? 1 : -1) + atItems.value.length) % atItems.value.length;
+  }
+}
+
+function kindLabel(c: InputContext) {
+  return c.kind === "attachment" ? "附件" : c.kind === "file" ? "文件" : "引用";
+}
 
 watch(
   () => props.draft,
@@ -69,6 +187,7 @@ watch(
 function send() {
   const t = text.value.trim();
   if (t) {
+    closeAt();   // @ 浮层随发送收敛（Enter 已被浮层拦截，这里管发送钮路径）
     // AI 正在生成/播报（stopping）时发送 = 先打断再发新消息（不必手动"停止"）
     if (stopping.value) emit("interrupt");
     emit("submit", t, pendingContexts.value.slice());
@@ -138,6 +257,12 @@ function onCompEnd() {
 
 function onEnter(e: KeyboardEvent) {
   if (e.isComposing || imeComposing.value || Date.now() - lastCompEnd < 50) return;
+  // @ 浮层打开时 Enter = 选中候选（无候选则关浮层），不发送
+  if (atOpen.value) {
+    if (atItems.value.length) pickAt(atItems.value[atIdx.value]);
+    else closeAt();
+    return;
+  }
   send();
 }
 
@@ -180,20 +305,38 @@ defineExpose({ focus: () => inputRef.value?.focus(), insertText });
     </div>
     <div v-if="pendingContexts.length" class="context-list" aria-label="待发送的附件和引用">
       <span v-for="(context, index) in pendingContexts" :key="`${context.kind}-${context.label}-${index}`" class="context-chip">
-        {{ context.kind === "attachment" ? "附件" : "引用" }} · {{ context.label }}
+        {{ kindLabel(context) }} · {{ context.label }}
         <button type="button" aria-label="移除内容" @click="removeContext(index)">×</button>
       </span>
     </div>
-    <textarea
-      ref="inputRef"
-      v-model="text"
-      rows="1"
-      :placeholder="placeholder"
-      @keydown.enter.exact.prevent="onEnter"
-      @compositionstart="onCompStart"
-      @compositionend="onCompEnd"
-      @input="autoGrow"
-    ></textarea>
+    <!-- @ 文件引用浮层：锚定输入区向上展开；↑↓ 导航 / Enter 选中 / Esc 关闭 -->
+    <div class="text-wrap">
+      <div v-if="atOpen" class="at-menu" role="listbox" aria-label="文件引用候选">
+        <div v-if="!atItems.length" class="at-empty">
+          {{ atRoot ? "无匹配" : "请先在 coding 面板选择项目目录" }}
+        </div>
+        <div
+          v-for="(f, i) in atItems"
+          :key="f.rel"
+          class="at-item"
+          :class="{ sel: i === atIdx }"
+          role="option"
+          :aria-selected="i === atIdx"
+          @mousedown.prevent="pickAt(f)"
+        >{{ f.rel }}</div>
+      </div>
+      <textarea
+        ref="inputRef"
+        v-model="text"
+        rows="1"
+        :placeholder="placeholder"
+        @keydown.enter.exact.prevent="onEnter"
+        @keydown="onAtKeydown"
+        @compositionstart="onCompStart"
+        @compositionend="onCompEnd"
+        @input="onTextInput"
+      ></textarea>
+    </div>
     <button
       type="button"
       class="mic"
@@ -262,6 +405,48 @@ defineExpose({ focus: () => inputRef.value?.focus(), insertText });
    * outline 明确从 border-box 外侧绘制且跟随 border-radius，无 inset 风险。 */
   outline: 2px solid var(--yb-accent-soft);
   outline-offset: 1px;
+}
+/* 输入区容器：@ 引用浮层的定位锚（向上展开） */
+.text-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+.at-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 5px;
+  border: 1px solid var(--yb-surface-border);
+  border-radius: var(--yb-radius-md);
+  background: var(--yb-glass);
+  -webkit-backdrop-filter: var(--yb-blur);
+  backdrop-filter: var(--yb-blur);
+  box-shadow: var(--yb-shadow-soft);
+  z-index: 25;
+}
+.at-item {
+  padding: 6px 8px;
+  border-radius: var(--yb-radius-sm);
+  font-size: 12px;
+  color: var(--yb-text);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.at-item.sel {
+  background: var(--yb-row-hover);
+}
+.at-empty {
+  padding: 7px 9px;
+  font-size: 11px;
+  color: var(--yb-text-faint);
 }
 textarea {
   flex: 1;
