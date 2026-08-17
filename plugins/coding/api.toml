@@ -115,3 +115,10 @@ name = "attach_codex"
 handler = "coding.attach_codex"
 direct = true
 quiet = true
+
+# 引擎 chip 跨引擎切换：会话库任意会话的交接 Brief（quiet 不发 panel 事件——chip 流程内调用，不开面板）
+[[method]]
+name = "session_brief"
+handler = "coding.session_brief"
+direct = true
+quiet = true

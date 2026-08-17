@@ -755,6 +755,73 @@ class HandoffBriefSkill(Skill):
         })
 
 
+class SessionBriefSkill(Skill):
+    """针对会话库里的任一会话生成交接 Brief（引擎 chip 跨引擎切换：摘要移植到另一引擎）。
+
+    与 handoff_brief（读 codex rollout 文件，单向 Codex→CC）不同：本 skill 读插件 messages 表
+    （CC/Codex 会话双向通用），源引擎取 sessions 行 agent，目标引擎由 target 参数给出
+    （缺省取源的另一端）。LLM 未声明/生成失败时退化为最近消息原文节选——前端恒有可用
+    交接上下文，不被 LLM 故障挡路。L0 只读。
+    """
+
+    id = "coding.session_brief"
+    label = "生成会话交接 Brief"
+    description = (
+        "针对会话库里的任一会话生成「交接 Brief」（任务/已完成/卡点/下一步），"
+        "供另一个 coding 引擎接续上下文（chip 跨引擎切换用，双向通用）。"
+        "返回 {brief, session_id}；LLM 失败时 brief 为最近消息原文节选。"
+        "【需要】id（会话 id）。【可选】target（目标引擎 codex/claude-code，缺省取源引擎的另一端）。"
+    )
+    default_risk = RiskLevel.L0_READONLY
+
+    def openai_schema(self) -> dict:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.id,
+                "description": self.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string", "description": "会话 id"},
+                        "target": {"type": "string", "description": "目标引擎 codex/claude-code（缺省取源的另一端）"},
+                    },
+                    "required": ["id"],
+                },
+            },
+        }
+
+    def run(self, params: dict, ctx: Any) -> ActionResult:
+        sid = str(params.get("id") or "").strip()
+        if not sid:
+            return ActionResult(success=False, error="缺少会话 id")
+        rows = ctx.db.query("sessions", where={"id": sid})
+        if not rows:
+            return ActionResult(success=False, error=f"会话不存在：{sid}")
+        row = rows[0]
+        src = "Codex" if str(row.get("agent") or "") == "codex" else "Claude Code"
+        target = str(params.get("target") or "").strip()
+        dst = ("Codex" if target == "codex" else "Claude Code") if target \
+            else ("Claude Code" if src == "Codex" else "Codex")
+        # 同 HistorySkill 的取尾窗口：seq DESC LIMIT 40 再反转回正序
+        msgs = ctx.db.query("messages", where={"session_id": sid}, order="seq DESC", limit=40)
+        msgs.reverse()
+        turns = [{"role": m["role"], "text": m["text"]} for m in msgs]
+        brief = None
+        if getattr(ctx, "llm", None) is not None and turns:
+            cwd = str(row.get("cwd") or "")
+            try:
+                git = _codex.git_summary(cwd) if cwd else ""
+            except Exception:
+                git = ""   # git 摘要失败不挡路（非 git 目录等），brief 仍有对话内容
+            brief = _build_brief(ctx.llm, turns, git, src, dst)
+        if not brief:
+            # 兜底：LLM 未配置/失败/空历史 → 原文节选，前端恒有交接上下文可用
+            excerpt = "\n".join(f"{t['role']}: {str(t['text'])[:500]}" for t in turns[-10:]) or "（无历史消息）"
+            brief = f"（摘要生成失败，以下为最近对话节选）\n{excerpt}"
+        return ActionResult(success=True, data={"brief": brief, "session_id": sid})
+
+
 class HistorySkill(Skill):
     """读某个 coding 会话的信息与最近消息（历史抽屉恢复旧会话用）。
 
@@ -1416,4 +1483,4 @@ def make_tools(ctx: Any) -> list[Skill]:
     return [StartSkill(), SendSkill(), StopSkill(), ListSkill(), AttachSkill(),
             WallDataSkill(), HandoffListSkill(), HandoffBriefSkill(), HistorySkill(), ModeSkill(),
             RewindSkill(), DecideSkill(), FilesSkill(), LastSessionsSkill(), AttachCcSkill(),
-            DriversSkill(), AttachCodexSkill()]
+            DriversSkill(), AttachCodexSkill(), SessionBriefSkill()]
