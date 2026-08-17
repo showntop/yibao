@@ -298,6 +298,7 @@ class DeclarativeTool(Skill):
 _PANELS: dict[str, dict] = {}
 _PANEL_TITLES: dict[str, str] = {}
 _PLUGIN_INFO: dict[str, dict] = {}
+_PLUGIN_DIRS: dict[str, Path] = {}  # pid → 插件根目录(module 面板 payload 算 url/mtime 用)
 
 
 def get_plugin_summaries() -> dict[str, dict]:
@@ -314,7 +315,7 @@ def get_mem_namespaces() -> dict[str, str]:
 
 
 def get_panel(ref: str) -> dict | None:
-    """按「plugin_id:name」查面板。schema 面板为 JSON dict；webview 面板为 {"type": "webview", "html": …}。"""
+    """按「plugin_id:name」查面板。schema 面板为 JSON dict;webview 面板为 {"type": "webview", "html": …};module 面板为 {"type": "module", "entry": …}。"""
     return _PANELS.get(ref)
 
 
@@ -359,17 +360,31 @@ def _surface_decl_from(panel) -> dict:
 
 
 def panel_payload(result) -> dict | None:
-    """result.panel 非空时构造 panel 事件 payload（loop 与 panel_action 共用）。
+    """result.panel 非空时构造 panel 事件 payload(loop 与 panel_action 共用)。
 
-    schema 面板：{panel, title, schema, data}；webview 面板：{panel, title, schema: None, webview: {html}, data}
-    （html 随事件发出，前端 iframe srcdoc 渲染；schema 面板 payload 其余形状保持不变）。
-    面板声明过 surfaces/min_width 时顶层同步带上（宿主裁决回落依据）。
+    schema 面板:{panel, title, schema, data};webview 面板:{..., webview: {html}, data};
+    module 面板(R4):{..., webview: {url, v}, data}——url 指 yibao-plugin:// 协议,v 为入口文件
+    mtime(热加载版本号:文件变 → v 变 → 前端 iframe 重载,sidecar 不重启)。
+    面板声明过 surfaces/min_width 时顶层同步带上(宿主裁决回落依据)。
     """
     if not result.panel:
         return None
     title = get_panel_title(result.panel)
     panel = get_panel(result.panel)
     decl = _surface_decl_from(panel)
+    if isinstance(panel, dict) and panel.get("type") == "module":
+        pid = result.panel.split(":", 1)[0]
+        entry = str(panel.get("entry") or "")
+        v = 0
+        root = _PLUGIN_DIRS.get(pid)
+        if root is not None and entry:
+            try:
+                v = int((root / entry).stat().st_mtime)
+            except OSError:
+                v = 0
+        return {"panel": result.panel, "title": title, "schema": None,
+                "webview": {"url": f"yibao-plugin://{pid}/{entry}", "v": v},
+                "data": result.data, **decl}
     if isinstance(panel, dict) and panel.get("type") == "webview" and "html" in panel:
         return {"panel": result.panel, "title": title, "schema": None, "webview": {"html": panel["html"]}, "data": result.data, **decl}
     return {"panel": result.panel, "title": title, "schema": panel, "data": result.data, **decl}
@@ -403,6 +418,7 @@ def _inline_vendor(text: str, child: Path) -> str:
 
 def _load_panels(child: Path, pid: str, manifest: dict, registry: SkillRegistry) -> None:
     """解析 manifest [[panel]]：schema/widget 读 JSON、webview 读 HTML 文本存注册表；未知类型记错误跳过。
+    module(R4 插件运行时)不读文件全文,只登记入口相对路径(内容经 yibao-plugin:// 协议按需下发)。
     显示名 = 插件 name · 面板 label（label 缺省用面板 name）。
     widget（OS 感 §4.2 主屏一瞥卡）：须带 method（本插件 L0 只读 tool 供数据，须已注册）；
     可选 open（主屏点击跳转的 api.toml 方法，缺省则卡片不可点击）。校验失败整个 widget 跳过。"""
@@ -410,16 +426,29 @@ def _load_panels(child: Path, pid: str, manifest: dict, registry: SkillRegistry)
         name = p.get("name") or "main"
         ref = f"{pid}:{name}"
         ptype = p.get("type", "schema")
-        if ptype not in ("schema", "webview", "widget"):
+        if ptype not in ("schema", "webview", "widget", "module"):
             print(f"[yibao] 插件 {pid} panel {ref} 类型 {ptype!r} 暂不支持（已跳过）", file=sys.stderr)
             continue
         _PANEL_TITLES[ref] = f"{manifest.get('name') or pid} · {p.get('label') or name}"
-        try:
-            text = _inline_vendor((child / p["src"]).read_text(encoding="utf-8"), child)
-            parsed = {"type": "webview", "html": text} if ptype == "webview" else json.loads(text)
-        except Exception as e:
-            print(f"[yibao] 插件 {pid} panel {ref} 读取失败（已跳过）：{e}", file=sys.stderr)
-            continue
+        _PLUGIN_DIRS[pid] = child
+        if ptype == "module":
+            # module 面板(R4 插件运行时):不读文件全文,只登记入口相对路径;
+            # 内容经 yibao-plugin:// 协议按需下发。dist 未构建也先登记(dev 先声明后构建)。
+            entry = str(p.get("src") or "")
+            if not entry:
+                _PANEL_TITLES.pop(ref, None)
+                print(f"[yibao] 插件 {pid} panel {ref} 缺 src(已跳过)", file=sys.stderr)
+                continue
+            if not (child / entry).is_file():
+                print(f"[yibao] 插件 {pid} panel {ref} 入口文件暂缺(已登记,构建后生效):{entry}", file=sys.stderr)
+            parsed = {"type": "module", "entry": entry}
+        else:
+            try:
+                text = _inline_vendor((child / p["src"]).read_text(encoding="utf-8"), child)
+                parsed = {"type": "webview", "html": text} if ptype == "webview" else json.loads(text)
+            except Exception as e:
+                print(f"[yibao] 插件 {pid} panel {ref} 读取失败（已跳过）：{e}", file=sys.stderr)
+                continue
         if ptype == "widget":
             try:
                 method = str(p["method"])  # 缺 method → KeyError → 跳过
