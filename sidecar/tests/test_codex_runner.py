@@ -508,8 +508,9 @@ def test_report_final_done_without_cost_segment():
     codingmod._report_final(emitted.append, "s1", "修 bug", "done",
                             {"duration_ms": 2000, "cost_usd": None, "input_tokens": 10,
                              "output_tokens": 5})
-    assert emitted[0]["kind"] == "reminder"
-    assert "$" not in emitted[0]["text"] and "15 tok" in emitted[0]["text"]
+    reminders = [e for e in emitted if e.get("kind") == "reminder"]   # coding_sessions 刷新信号在前，按 kind 取
+    assert len(reminders) == 1
+    assert "$" not in reminders[0]["text"] and "15 tok" in reminders[0]["text"]
 
 
 # ---------- coding.drivers ----------

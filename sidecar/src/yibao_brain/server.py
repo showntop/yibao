@@ -20,6 +20,7 @@ from .audit import AuditLog
 from .background import (
     _DOCK_MAX,
     _consume_invoke_context,
+    _describe_image_attachments,
     _describe_screen,
     _dispatch_reminder,
     _distiller_loop,
@@ -1462,9 +1463,19 @@ async def serve_async(
                 ctx_text = _consume_invoke_context(invoke_ctx)
                 if ctx_text:
                     text = f"[屏幕上下文] {ctx_text}\n\n{text}"
-                start = lambda c, t=text, r=rid, s=surface, ci=conversation_id: _drive_run(t, r, c, s, ci)
+
+                async def _start(c, t=text, r=rid, s=surface, ci=conversation_id):
+                    # 附件图片（粘贴截图落盘 chip）：【附件：path】指向图片 → vision 描述注入，
+                    # 主模型不必多模态；未配置/无图/失败一律静默。挪进调度任务里做——
+                    # 串行 vision HTTP 堵的是本 run，不是主消息循环（审批/其他 run 不被卡）
+                    if _wvision is not None and "【" in t:
+                        att_desc = await _offload(_describe_image_attachments, t, _wvision)
+                        if att_desc:
+                            t = f"[附件图片内容]\n{att_desc}\n\n{t}"
+                    await _drive_run(t, r, c, s, ci)
+
                 print(f"[yibao] run 受理 rid={rid} surface={surface} conv={conversation_id}：{text[:30]!r}", file=sys.stderr)
-                _schedule_run(surface, rid, start)
+                _schedule_run(surface, rid, _start)
             elif voice is not None:
                 rid = msg.get("id")
                 cont = bool(msg.get("continuous"))
