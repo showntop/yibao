@@ -25,60 +25,20 @@ const emit = defineEmits<{
 
 const iframeEl = ref<HTMLIFrameElement | null>(null);
 
-// 注入 iframe 的桥 JS：提供 window.yibao.invoke()/onInit()/emitEvent()/onMessage()。必须出现在插件自有脚本之前，
-// 否则插件脚本执行时 window.yibao 尚未定义——故注入到 <head> 之后（无 <head> 则放最前）。
-// 注：本字符串里不能出现字面 "</scr" + "ipt>"（会被 Vue SFC 解析器当成脚本块结束）。
-const BRIDGE_JS = `
-(function () {
-  var seq = 0;
-  var pending = new Map();
-  var initCbs = [];
-  var msgCbs = [];
-  window.yibao = {
-    invoke: function (method, params) {
-      return new Promise(function (resolve, reject) {
-        var id = ++seq;
-        pending.set(id, { resolve: resolve, reject: reject });
-        parent.postMessage({ src: "yibao-webview", id: id, method: method, params: params || {} }, "*");
-      });
-    },
-    onInit: function (cb) { initCbs.push(cb); },
-    // 事件上报（iframe → 父，无 id 无回包）：父侧 emit("panel-event", name, payload)
-    emitEvent: function (name, payload) {
-      parent.postMessage({ src: "yibao-webview", event: name, payload: payload }, "*");
-    },
-    // 收 host 任意消息（init 与 invoke 响应之外的，如 {type:"takeover-input", text}）
-    onMessage: function (cb) { msgCbs.push(cb); }
-  };
-  window.addEventListener("message", function (ev) {
-    var d = ev.data;
-    if (!d || d.src !== "yibao-host") return;
-    if (d.type === "init") {
-      initCbs.forEach(function (cb) { try { cb(d.data, d); } catch (e) { console.error(e); } });
-      return;
-    }
-    var p = pending.get(d.id);
-    if (p) {
-      pending.delete(d.id);
-      if (d.ok) p.resolve(d.result);
-      else p.reject(new Error(d.error || "调用失败"));
-      return;
-    }
-    msgCbs.forEach(function (cb) { try { cb(d); } catch (e) { console.error(e); } });
-  });
-})();
-`;
+// 注入 iframe 的桥 JS(?raw 读 app/src/shared/bridge.js,与 Rust 协议层 include_bytes! 同一文件)。
+// 必须出现在插件自有脚本之前——注入到 <head> 之后(无 <head> 则放最前),见 srcdoc computed。
+import bridgeJs from "../shared/bridge.js?raw";
 
 const SCRIPT_OPEN = "<scr" + "ipt>";
 const SCRIPT_CLOSE = "</scr" + "ipt>";
 
 // CSP 沙箱兜底（gen 面板等动态 HTML）：禁一切网络/外链，只放行内联脚本样式与 data: 图片字体。
-// 与 BRIDGE_JS 同位置注入（<head> 之后），对插件面板同样生效——插件面板本就要求无网络。
+// 与桥 JS 同位置注入（<head> 之后），对插件面板同样生效——插件面板本就要求无网络。
 const CSP_META = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:">`;
 
 /** 插件 HTML + 桥 JS 合成 srcdoc（桥注入到插件脚本之前；无 <head> 时整体放最前）。 */
 const srcdoc = computed(() => {
-  const tag = CSP_META + SCRIPT_OPEN + BRIDGE_JS + SCRIPT_CLOSE;
+  const tag = CSP_META + SCRIPT_OPEN + bridgeJs + SCRIPT_CLOSE;
   const headAt = props.html.toLowerCase().indexOf("<head>");
   return headAt >= 0
     ? props.html.slice(0, headAt + 6) + tag + props.html.slice(headAt + 6)
