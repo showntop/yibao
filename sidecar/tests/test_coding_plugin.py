@@ -1339,14 +1339,15 @@ def test_stream_reports_done_reminder_with_cost():
     ev = finals[0]
     assert ev["kind"] == "reminder"
     assert "编码任务完成" in ev["text"] and "$0.0312" in ev["text"] and "12s" in ev["text"]
-    assert ev["task"] == {"id": "s40", "status": "完成", "label": "修一下登录页的样式问题",
+    assert ev["task"] == {"id": "s40", "status": "done", "label": "修一下登录页的样式问题",
                           "prompt": "修一下登录页的样式问题", "plugin": "coding"}
     assert ev["plugin"] == "coding"
     assert db.updates[-1][1]["status"] == "done"
 
 
 def test_stream_reports_failed_reminder():
-    """error → failed：kind=reminder，status=失败。"""
+    """error → failed：kind=reminder，task.status=failed（英文键，对齐 Feed 徽章映射），
+    中文「失败」只留在用户可读的 text。"""
     db = _FakeDB(); db.rows["s41"] = {"id": "s41", "status": "running"}
     emitted = []
 
@@ -1359,7 +1360,7 @@ def test_stream_reports_failed_reminder():
                  emit_event=emitted.append, cancel=_threading.Event()))
     finals = [e for e in emitted if e.get("task")]
     assert len(finals) == 1 and finals[0]["kind"] == "reminder"
-    assert "失败" in finals[0]["text"] and finals[0]["task"]["status"] == "失败"
+    assert "失败" in finals[0]["text"] and finals[0]["task"]["status"] == "failed"
     assert db.updates[-1][1]["status"] == "failed"
 
 
@@ -1371,7 +1372,7 @@ def test_stream_reports_stopped_as_event_not_reminder():
                  emit_event=emitted.append, cancel=_threading.Event()))
     finals = [e for e in emitted if e.get("task")]
     assert len(finals) == 1 and finals[0]["kind"] == "event"
-    assert finals[0]["task"]["status"] == "已停止"
+    assert finals[0]["task"]["status"] == "stopped"
     assert not any(e.get("kind") == "reminder" and e.get("task") for e in emitted)
     assert db.updates[-1][1]["status"] == "stopped"
 

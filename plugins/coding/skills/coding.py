@@ -257,12 +257,13 @@ def _usage_suffix(usage) -> str:
 def _report_final(emit_event, sid: str, prompt: str, final: str, usage) -> None:
     """会话终态汇报（P2 督导）：done/failed → reminder（宠物气泡 + Feed 任务卡）；
     stopped → event（仅 Feed 任务卡，不弹气泡防打扰）。task meta 供 Feed 任务卡与
-    后续点击路由（plugin:"coding"）；done 的 text 带成本摘要（usage 不落库，只此一播）。"""
+    后续点击路由（plugin:"coding"）；status 发英文键（done/failed/stopped——HomeFeed
+    徽章/图标/tag CSS 只认英文，对齐 agents 先例），中文文案在 text；done 的 text
+    带成本摘要（usage 不落库，只此一播）。"""
     if emit_event is None:
         return
     try:
         label = prompt[:30]
-        status_text = {"done": "完成", "failed": "失败", "stopped": "已停止"}.get(final, final)
         if final == "done":
             kind, text = "reminder", f"✅ 编码任务完成：{label}{_usage_suffix(usage)}"
         elif final == "failed":
@@ -270,7 +271,7 @@ def _report_final(emit_event, sid: str, prompt: str, final: str, usage) -> None:
         else:
             kind, text = "event", f"⏹ 编码任务已停止：{label}"
         emit_event({"kind": kind, "text": text,
-                    "task": {"id": sid, "status": status_text, "label": label,
+                    "task": {"id": sid, "status": final, "label": label,
                              "prompt": prompt, "plugin": "coding"},
                     "plugin": "coding"})
     except Exception as e:  # 汇报是增强面：失败只 print，绝不拖垮收尾
