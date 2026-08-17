@@ -87,3 +87,17 @@ name = "files"
 handler = "coding.files"
 direct = true
 quiet = true
+
+# 统一接续 popover：跨源上次会话检测（只读；quiet 不发 panel 事件——popover 内调用，不开面板）
+[[method]]
+name = "last_sessions"
+handler = "coding.last_sessions"
+direct = true
+quiet = true
+
+# 统一接续 popover：DB 外 cc 会话导入续聊（幂等；quiet 不发 panel 事件——popover 内调用，不开面板）
+[[method]]
+name = "attach_cc"
+handler = "coding.attach_cc"
+direct = true
+quiet = true

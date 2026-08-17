@@ -16,11 +16,14 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 import os
+import re
 import sys
 import threading
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -50,12 +53,13 @@ _runner = _sibling("_runner")
 ClaudeCodeRunner = _runner.ClaudeCodeRunner   # 生产默认 runner factory
 _PERM = _runner._PERM                         # can_use_tool 裁决注册表（rid → {event, allow}；DecideSkill 消费）
 
-# codex_reader / _brief 也是同目录兄弟模块（非包内），经 _sibling 加载（同 _runner）。
+# codex_reader / _brief / _cc_reader 也是同目录兄弟模块（非包内），经 _sibling 加载（同 _runner）。
 # _build_brief / _codex_sessions_root 做模块级间接：测试 monkeypatch 这两个属性即可
 # 隔离真实文件系统与 LLM，不污染 yibao_plugin_coding__brief / codex_reader 模块本身。
 _codex = _sibling("_codex_reader")
 _brief_mod = _sibling("_brief")
 _build_brief = _brief_mod.build_brief
+_cc_reader = _sibling("_cc_reader")   # _text_of/_MAX_LINE_KB 复用；测试 monkeypatch HOME 改道
 
 
 def _codex_sessions_root() -> str:
@@ -922,8 +926,230 @@ class FilesSkill(Skill):
         return ActionResult(success=True, data={"files": out})
 
 
+# ---------- 统一接续 popover（C1）：跨源上次会话检测 + DB 外 cc 会话导入 ----------
+
+
+def _cc_projects_base() -> Path:
+    """CC transcript 根目录 ~/.claude/projects（测试 monkeypatch HOME 改道 tmp，同 _cc_reader）。"""
+    return Path(os.path.expanduser("~/.claude/projects"))
+
+
+def _cc_project_dir(cwd: str) -> Path:
+    """cwd → CC 项目目录 ~/.claude/projects/<slug>。
+
+    slug 规则：非字母数字/连字符一律转 -（实测 /Users/denny/.codex → -Users-denny--codex，
+    即 / 与 . 都转 -）。对不上就当无记录（上游 None 兜底，不报错）。
+    """
+    return _cc_projects_base() / re.sub(r"[^A-Za-z0-9-]", "-", cwd)
+
+
+def _iso_ts(value) -> int | None:
+    """ISO 8601 时间串（CC/codex transcript 行 timestamp）→ unix 秒；解析失败 None。"""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return int(datetime.fromisoformat(value).timestamp())
+    except (ValueError, OSError, OverflowError):
+        return None
+
+
+def _cc_transcript_rows(path: Path) -> list[dict]:
+    """解析 CC transcript → [{role, text, uuid, ts}]（有文本的 user/assistant 行，时间正序）。
+
+    防御语义同 _cc_reader.read_transcript：坏行跳过、任何失败 → []（检测/导入都以空降级，绝不抛）。
+    """
+    rows: list[dict] = []
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line[: _cc_reader._MAX_LINE_KB * 1024])
+                except json.JSONDecodeError:
+                    continue
+                role = row.get("type")
+                if role not in ("user", "assistant"):
+                    continue
+                text = _cc_reader._text_of(row.get("message"))
+                if not text:
+                    continue
+                rows.append({"role": role, "text": text,
+                             "uuid": str(row.get("uuid") or ""),
+                             "ts": _iso_ts(row.get("timestamp"))})
+    except Exception:
+        return []
+    return rows
+
+
+def _cc_latest_session(cwd: str) -> dict | None:
+    """~/.claude/projects/<slug>/ 顶层 mtime 最新 .jsonl → cc 上次会话卡数据。
+
+    只扫 slug 目录顶层（不递归）：<uuid>/subagents/ 与 tool-results/ 天然排除。
+    无记录/任何失败 → None（前端不显示该卡）。
+    """
+    try:
+        files = [p for p in _cc_project_dir(cwd).glob("*.jsonl") if p.is_file()]
+        if not files:
+            return None
+        latest = max(files, key=lambda p: p.stat().st_mtime)
+        rows = _cc_transcript_rows(latest)
+        first_user = next((r["text"] for r in rows if r["role"] == "user"), "")
+        return {"cc_session_id": latest.stem,
+                "ts": int(latest.stat().st_mtime),
+                "summary": first_user[:60],
+                "message_count": len(rows)}
+    except Exception:
+        return None
+
+
+def _codex_latest_session(cwd: str) -> dict | None:
+    """~/.codex/sessions 按 cwd 过滤的最新一条 → codex 上次会话卡数据。
+
+    复用 handoff_list 同款扫描（_codex.list_sessions：日期树混存，读首行 session_meta.cwd
+    过滤，已按 timestamp 倒序），取 [0]；session_id 形态与 handoff_brief 入参对齐。
+    """
+    try:
+        sessions = _codex.list_sessions(cwd, root=_codex_sessions_root())
+    except Exception:
+        return None
+    if not sessions:
+        return None
+    latest = sessions[0]
+    ts = _iso_ts(latest.get("timestamp"))
+    if ts is None:
+        try:
+            ts = int(os.path.getmtime(latest.get("path") or ""))
+        except Exception:
+            ts = 0
+    return {"session_id": str(latest.get("session_id") or ""),
+            "ts": ts,
+            "summary": str(latest.get("first_line") or "")}
+
+
+def _find_cc_transcript(cc_session_id: str, cwd: str) -> Path | None:
+    """定位 cc transcript 文件：先 cwd slug 目录精确命中，再全 projects 顶层 glob 兜底
+    （都不递归——subagents/ 在 <uuid>/ 下深度 ≥2，天然排除）。找不到 → None。"""
+    if not cc_session_id or not re.fullmatch(r"[A-Za-z0-9_-]+", cc_session_id):
+        return None  # 白名单挡 ../ 路径逃逸与 / 分段（同 _cc_reader.read_transcript）
+    direct = _cc_project_dir(cwd) / f"{cc_session_id}.jsonl"
+    if direct.is_file():
+        return direct
+    hits = sorted(p for p in _cc_projects_base().glob(f"*/{cc_session_id}.jsonl") if p.is_file())
+    return hits[-1] if hits else None
+
+
+def attach_cc_session(db, *, cc_session_id: str, cwd: str) -> str | None:
+    """DB 外 cc 会话导入落库（幂等），返回译宝 session_id；找不到 transcript 返回 None。
+
+    幂等：cc_session_id 已在 sessions 表 → 直接返回既有 id，不重复导入。
+    sessions 行：agent="cc"、source="import"、status="done"；created_at/finished_at 取
+    transcript 内容时间（首/末消息行 timestamp），兜底文件 mtime。messages 表写整段
+    transcript（seq 1..n；user 行带 CC uuid 作 rewind 锚点，对齐 _stream._persist 先例）。
+    导入的会话 send 时走既有 resume 链路（SendSkill 读库 cc_session_id → SDK resume），无需特殊处理。
+    """
+    rows = db.query("sessions", where={"cc_session_id": cc_session_id})
+    if rows:
+        return str(rows[0]["id"])
+    path = _find_cc_transcript(cc_session_id, cwd)
+    if path is None:
+        return None
+    messages = _cc_transcript_rows(path)
+    mtime = int(path.stat().st_mtime)
+    times = [m["ts"] for m in messages if m["ts"] is not None]
+    first_user = next((m["text"] for m in messages if m["role"] == "user"), "")
+    sid = uuid.uuid4().hex[:12]
+    db.insert("sessions", {
+        "id": sid, "agent": "cc", "cwd": cwd,
+        "prompt": first_user[:200] or "（导入的 Claude Code 会话）",
+        "status": "done",
+        "created_at": min(times) if times else mtime,
+        "finished_at": max(times) if times else mtime,
+        "cc_session_id": cc_session_id, "source": "import", "mode": "acceptEdits",
+    })
+    for i, m in enumerate(messages, start=1):
+        try:
+            db.insert("messages", {
+                "session_id": sid, "role": m["role"], "text": m["text"],
+                "ts": m["ts"] if m["ts"] is not None else mtime, "seq": i,
+                "uuid": m["uuid"] if m["role"] == "user" else "",
+            })
+        except Exception as e:  # 单行落库失败不拖垮整段导入（仿 _stream._persist 隔离）
+            print(f"[yibao/coding] attach_cc transcript 落库失败（跳过）：{e}", file=sys.stderr)
+    return sid
+
+
+class LastSessionsSkill(Skill):
+    """统一接续 popover 区 1「上次会话」：跨源检测（cc + codex 每源最新一条，源不存在 → null）。"""
+    id = "coding.last_sessions"
+    label = "上次会话检测"
+    description = (
+        "检测指定项目目录的上次编码会话（跨源，每源最新一条）："
+        "cc 读 ~/.claude/projects/<slug>/ mtime 最新 transcript（含译宝 DB 外会话），"
+        "codex 读 ~/.codex/sessions 按 cwd 过滤最新。"
+        "返回 {cc: {cc_session_id, ts, summary, message_count}|null, codex: {session_id, ts, summary}|null}。"
+        "【需要】cwd（项目目录）。"
+    )
+    default_risk = RiskLevel.L0_READONLY
+
+    def openai_schema(self) -> dict:
+        return {"type": "function", "function": {"name": self.id, "description": self.description,
+                "parameters": {"type": "object",
+                    "properties": {"cwd": {"type": "string", "description": "项目目录"}},
+                    "required": ["cwd"]}}}
+
+    def run(self, params: dict, ctx: Any) -> ActionResult:
+        cwd = os.path.expanduser(str(params.get("cwd") or "").strip())
+        if not cwd:
+            return ActionResult(success=False, error="缺少工作目录 cwd")
+        return ActionResult(success=True, data={
+            "cc": _cc_latest_session(cwd),
+            "codex": _codex_latest_session(cwd),
+        })
+
+
+class AttachCcSkill(Skill):
+    """把译宝 DB 外的 Claude Code 会话导入 DB（统一接续 popover 的 cc 卡「继续」前置）。
+
+    导入后前端走现有 resumeSession（coding.history 读本 DB id 的 messages 表）；
+    发新消息时 SendSkill 拿库里的 cc_session_id 走 SDK resume 原生续，上下文完整。
+    """
+    id = "coding.attach_cc"
+    label = "导入 cc 会话"
+    description = (
+        "把指定 Claude Code 会话（译宝 DB 外）导入 coding 会话库：读本地 transcript 落 "
+        "sessions/messages 表，返回译宝 session_id，之后按普通会话恢复/续聊（SDK 原生 resume "
+        "cc_session_id）。幂等：cc_session_id 已在库直接返回既有 session_id。"
+        "【需要】cc_session_id（Claude Code 会话 id）、cwd（项目目录）。"
+    )
+    default_risk = RiskLevel.L0_READONLY  # 只写本插件 DB（无文件/系统副作用），导入幂等
+
+    def openai_schema(self) -> dict:
+        return {"type": "function", "function": {"name": self.id, "description": self.description,
+                "parameters": {"type": "object",
+                    "properties": {"cc_session_id": {"type": "string", "description": "Claude Code 会话 id"},
+                                   "cwd": {"type": "string", "description": "项目目录"}},
+                    "required": ["cc_session_id", "cwd"]}}}
+
+    def run(self, params: dict, ctx: Any) -> ActionResult:
+        cc = str(params.get("cc_session_id") or "").strip()
+        if not cc:
+            return ActionResult(success=False, error="缺少 cc_session_id")
+        cwd = os.path.expanduser(str(params.get("cwd") or "").strip())
+        if not cwd:
+            return ActionResult(success=False, error="缺少工作目录 cwd")
+        try:
+            sid = attach_cc_session(ctx.db, cc_session_id=cc, cwd=cwd)
+        except Exception as e:
+            return ActionResult(success=False, error=f"导入失败：{type(e).__name__}: {e}")
+        if sid is None:
+            return ActionResult(success=False, error=f"未找到 Claude Code 会话 transcript：{cc}")
+        return ActionResult(success=True, data={"session_id": sid})
+
+
 def make_tools(ctx: Any) -> list[Skill]:
     """插件加载器入口（_load_code_tools 遍历 skills/*.py 调本函数）。"""
     return [StartSkill(), SendSkill(), StopSkill(), ListSkill(), AttachSkill(),
             WallDataSkill(), HandoffListSkill(), HandoffBriefSkill(), HistorySkill(), ModeSkill(),
-            RewindSkill(), DecideSkill(), FilesSkill()]
+            RewindSkill(), DecideSkill(), FilesSkill(), LastSessionsSkill(), AttachCcSkill()]
