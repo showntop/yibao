@@ -94,3 +94,25 @@ def test_dispatcher_below_threshold_delivers_normally():
         assert messages and messages[-1]["event"]["level"] == "bubble"
 
     asyncio.run(run())
+
+
+def test_dispatcher_skips_feed_for_confirmation_and_action_result():
+    """confirmation_needed/action_result 是确认条入出队信号：跳过 feed.add（不刷屏不计
+    unread）但仍广播 brain-event；reminder/带 task meta 的 event 不受影响照常落 Feed。"""
+    async def run():
+        feed, messages = _Feed(), []
+        dispatcher = ProactiveDispatcher(
+            settings={"proactive.level": "full"}, feed=feed, write_msg=messages.append,
+        )
+        await dispatcher.dispatch({"kind": "confirmation_needed",
+                                   "action": {"id": "a1", "skill_id": "coding.exec"}})
+        await dispatcher.dispatch({"kind": "action_result",
+                                   "action": {"id": "a1"}, "result": {"success": True}})
+        assert feed.items == []                       # 审批双事件不落 Feed
+        assert [m["event"]["kind"] for m in messages] == ["confirmation_needed", "action_result"]
+        # 任务汇报类照常落 Feed（不在跳过清单）
+        await dispatcher.dispatch({"kind": "event", "text": "任务已停止",
+                                   "task": {"id": "s1", "status": "stopped"}})
+        assert feed.items[-1][0] == "task" and feed.items[-1][1] == "任务已停止"
+
+    asyncio.run(run())

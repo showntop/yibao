@@ -21,6 +21,28 @@ handler = "coding.list"
 direct = true
 panel = "coding:chat"
 
+# 任务卡/会话墙「接管」：打开 coding:chat 面板并恢复该会话（data 透传 {session_id, attach:true} → 面板 init 自动 resume）
+[[method]]
+name = "coding.attach"
+handler = "coding.attach"
+direct = true
+panel = "coding:chat"
+
+# 会话墙：多会话总览（schema list 面板；插件页子入口 open="wall_data" 直调打开）
+[[method]]
+name = "coding.wall_data"
+handler = "coding.wall_data"
+direct = true
+panel = "coding:wall"
+
+# 会话墙行内「停止」：同 handler 复用 coding.stop，refresh 回刷会话墙拿最新卡片
+# （仿 zimeiti.hot_add 同 handler 多入口先例；不给 coding.stop 本体加 refresh——chat 面板里停止不该把用户甩到会话墙）
+[[method]]
+name = "coding.wall_stop"
+handler = "coding.stop"
+direct = true
+refresh = "coding.wall_data"
+
 [[method]]
 name = "coding.handoff_list"
 handler = "coding.handoff_list"
@@ -63,5 +85,19 @@ quiet = true
 [[method]]
 name = "files"
 handler = "coding.files"
+direct = true
+quiet = true
+
+# 统一接续 popover：跨源上次会话检测（只读；quiet 不发 panel 事件——popover 内调用，不开面板）
+[[method]]
+name = "last_sessions"
+handler = "coding.last_sessions"
+direct = true
+quiet = true
+
+# 统一接续 popover：DB 外 cc 会话导入续聊（幂等；quiet 不发 panel 事件——popover 内调用，不开面板）
+[[method]]
+name = "attach_cc"
+handler = "coding.attach_cc"
 direct = true
 quiet = true

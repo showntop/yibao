@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "type": "list",
+  "bind": {"items": "$data.rows"},
+  "empty": {"title": "还没有编码会话", "hint": "对译宝说「帮我改点什么」就能开一个"},
+  "item": {
+    "title": "$item.title",
+    "subtitle": "$item.subtitle",
+    "actions": [
+      {"label": "接管", "method": "coding.attach", "params": {"session_id": "$item.id"}},
+      {"label": "停止", "method": "coding.wall_stop", "params": {"id": "$item.id"}}
+    ]
+  }
+}

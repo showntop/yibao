@@ -5,7 +5,18 @@ import { sessionStore } from "../state/store";
 
 // busy = 生成/播报中（可打断）；listening = 录音中（麦克风切声波态，点击=取消录音）
 // draft = 外部预填草稿（主屏 Feed 点击带上下文来）；变化即填入并聚焦
-const props = defineProps<{ busy?: boolean; listening?: boolean; draft?: string }>();
+// takeover = 编码智能体接管（coding 面板打开）：文本直送编码会话、不经过译宝大脑，
+//            主按钮不显示停止态、发送不触发 brain interrupt（打断语义归编码会话）
+const props = withDefaults(
+  defineProps<{
+    busy?: boolean;
+    listening?: boolean;
+    draft?: string;
+    placeholder?: string;
+    takeover?: boolean;
+  }>(),
+  { placeholder: "对译宝说点什么…（shift+回车换行）", takeover: false },
+);
 type InputContext = { kind: "attachment" | "reference"; label: string };
 const emit = defineEmits<{
   (e: "submit", text: string, contexts: InputContext[]): void;
@@ -96,8 +107,9 @@ function onMic() {
   else emit("mic");
 }
 
-/** 右端主按钮：生成/播报中=打断、其余=发送（无内容置灰）；聆听时取消录音归麦克风，主按钮仍是发送。 */
-const stopping = computed(() => props.busy && !props.listening);
+/** 右端主按钮：生成/播报中=打断、其余=发送（无内容置灰）；聆听时取消录音归麦克风，主按钮仍是发送。
+ * takeover（编码接管）时不进入停止态——busy 是译宝大脑的状态，接管期间发送不应打断它。 */
+const stopping = computed(() => props.busy && !props.listening && !props.takeover);
 
 function onMain() {
   // 生成/播报中：有输入文字 → 打断并发送新消息；无文字 → 仅打断
@@ -109,8 +121,37 @@ function onMain() {
   }
 }
 
-// 全局唤起等外部焦点请求（反射键唤起后输入就绪）
-defineExpose({ focus: () => inputRef.value?.focus() });
+// IME 组字守卫（WebKit bug 165004：compositionend 先于确认 Enter 的 keydown 派发，
+// 该 keydown 的 isComposing 已为 false，单靠 e.isComposing 会穿透误发——
+// 记 compositionend 时间戳，50ms 窗口内的 Enter 一并拦截。参考 plugins/coding/panel/chat.html）
+const imeComposing = ref(false);
+let lastCompEnd = 0;
+
+function onCompStart() {
+  imeComposing.value = true;
+}
+
+function onCompEnd() {
+  imeComposing.value = false;
+  lastCompEnd = Date.now();
+}
+
+function onEnter(e: KeyboardEvent) {
+  if (e.isComposing || imeComposing.value || Date.now() - lastCompEnd < 50) return;
+  send();
+}
+
+/** 外部注入文本（编码会话引用、快捷指令等）：追加到末尾，与已有文字间补一个空格 */
+function insertText(t: string) {
+  const cur = text.value;
+  text.value = cur && !/\s$/.test(cur) ? `${cur} ${t}` : cur + t;
+  persistDraft(text.value);
+  nextTick(() => autoGrow()); // 等 v-model 生效后量高
+  inputRef.value?.focus();
+}
+
+// 全局唤起等外部焦点请求（反射键唤起后输入就绪）；insertText 供接管方注入文本
+defineExpose({ focus: () => inputRef.value?.focus(), insertText });
 </script>
 
 <template>
@@ -147,8 +188,10 @@ defineExpose({ focus: () => inputRef.value?.focus() });
       ref="inputRef"
       v-model="text"
       rows="1"
-      placeholder="对译宝说点什么…（shift+回车换行）"
-      @keydown.enter.exact.prevent="send"
+      :placeholder="placeholder"
+      @keydown.enter.exact.prevent="onEnter"
+      @compositionstart="onCompStart"
+      @compositionend="onCompEnd"
       @input="autoGrow"
     ></textarea>
     <button

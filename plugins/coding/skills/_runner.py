@@ -27,11 +27,71 @@ def release_pending_permissions(sid: str) -> int:
     return n
 
 
-def make_permission_callback(sid: str, on_event, *, timeout_s: float = 60.0):
-    """can_use_tool 回调桥：向面板发 permission_request，等 coding.decide 裁决（超时默认 deny）。
-    请求发送失败 → deny；等待被取消/中断 → deny（fail-closed）；注册表清理与
-    permission_done 事件在任何结局下都保证执行（emit 自身异常不再穿透回 SDK）。
-    返回 SDK 期望的 async callable。"""
+def _summarize_tool_input(tool_name, input) -> str:
+    """审批摘要：Bash→command；文件工具→file_path/path；其余→json。单行截 80 字。"""
+    d = input if isinstance(input, dict) else {}
+    text = d.get("command") or d.get("file_path") or d.get("path") or json.dumps(d, ensure_ascii=False)
+    return str(text).replace("\n", " ").strip()[:80]
+
+
+def _public_params(input) -> dict:
+    """确认卡展示的公开参数（前端只读与决策有关的字段）：command/file_path/path 取其一，截 200 字。"""
+    d = input if isinstance(input, dict) else {}
+    for k in ("command", "file_path", "path"):
+        if d.get(k):
+            return {k: str(d[k])[:200]}
+    return {}
+
+
+def _emit_perm_confirmation(emit_event, rid: str, tool_name, input) -> None:
+    """L2 确认体系入队：confirmation_needed（actions 攒批载荷，格式对齐 loop.py 攒批事件；
+    action.id=rid，confirm_batched 按 rid 路由兑现）。emit 异常吞掉——面板
+    permission_request 通道仍在，审批链不受影响。"""
+    if emit_event is None:
+        return
+    label = str(tool_name)
+    action = {
+        "id": rid,
+        "skill_id": "coding",
+        "label": label,
+        "description": _summarize_tool_input(tool_name, input) or label,
+        "params": _public_params(input),
+        "risk": 1,
+        "surface": "panel:coding",
+    }
+    try:
+        emit_event({"kind": "confirmation_needed",
+                    "text": f"编码会话等待审批：{label}",
+                    "actions": [action], "action": action, "confirmation_id": rid})
+    except Exception:
+        pass
+
+
+def _emit_perm_outcome(emit_event, rid: str, tool_name, outcome: str) -> None:
+    """裁决结局广播 action_result：前端确认条/收件箱按 action.id 出队（brain.ts 约定）。
+    outcome ∈ allow/deny/timeout；stop 放行（release_pending_permissions，deny 收场）时
+    由等待方 _cb 走到这里，同样补出队。emit 异常吞掉（出队失败只留卡片，不伤审批链）。"""
+    if emit_event is None:
+        return
+    text = {"allow": "已允许", "deny": "已拒绝", "timeout": "超时未批准"}[outcome]
+    try:
+        emit_event({"kind": "action_result",
+                    "text": f"编码审批{text}：{tool_name}",
+                    "action": {"id": rid, "skill_id": "coding", "label": str(tool_name)},
+                    "result": {"success": outcome == "allow",
+                               "error": "" if outcome == "allow" else text}})
+    except Exception:
+        pass
+
+
+def make_permission_callback(sid: str, on_event, *, timeout_s: float = 60.0, emit_event=None):
+    """can_use_tool 回调桥：向面板发 permission_request，并（emit_event 非 None 时）发
+    L2 confirmation_needed 统一进确认体系；等 _PERM[rid] 被任一通道兑现——
+    server confirm_batched 按 "perm_" 前缀路由直写 _PERM，coding.decide 备用，
+    双通道幂等先到先得；超时默认 deny。
+    请求发送失败 → deny；等待被取消/中断 → deny（fail-closed）；注册表清理、
+    permission_done 与 action_result 出队事件在任何结局下都保证执行
+    （emit 自身异常不再穿透回 SDK）。返回 SDK 期望的 async callable。"""
     async def _cb(tool_name, input, context=None):
         rid = f"perm_{sid}_{next(_perm_seq)}"
         entry = {"event": threading.Event(), "allow": None}
@@ -43,19 +103,19 @@ def make_permission_callback(sid: str, on_event, *, timeout_s: float = 60.0):
             print(f"[yibao/coding] 权限请求事件发送失败（deny）：{e}", file=sys.stderr)
             _PERM.pop(rid, None)
             return _deny(f"请求发送失败：{e}")
+        _emit_perm_confirmation(emit_event, rid, tool_name, input)
         try:
             got = await asyncio.to_thread(entry["event"].wait, timeout_s)
         except BaseException:  # 取消/中断穿透（含 CancelledError，BaseException 系）：按拒绝收场（fail-closed），清理照做
             got = False
         allow = entry["allow"] if got else None
         _PERM.pop(rid, None)
+        outcome = "allow" if allow is True else ("deny" if allow is False else "timeout")
         try:
-            if allow is True:
-                on_event({"kind": "permission_done", "rid": rid, "allow": True})
-                return _allow()
-            on_event({"kind": "permission_done", "rid": rid, "allow": False})
+            on_event({"kind": "permission_done", "rid": rid, "allow": allow is True})
         except Exception:
             pass  # 面板流已断：deny 照返，不再多错
+        _emit_perm_outcome(emit_event, rid, tool_name, outcome)
         if allow is True:
             return _allow()
         return _deny("用户拒绝" if allow is False else "超时未批准")

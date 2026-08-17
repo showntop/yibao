@@ -401,13 +401,15 @@ def test_send_skill_openai_schema_shape():
 
 
 def test_make_tools_includes_send():
-    """make_tools 返回 Start/Send/Stop/List + HandoffList/HandoffBrief/History/Mode/Rewind/Decide/Files 十一件。"""
+    """make_tools 返回 Start/Send/Stop/List/Attach/WallData + HandoffList/HandoffBrief/History/Mode/Rewind/Decide/Files
+    + LastSessions/AttachCc 十五件。"""
     tools = codingmod.make_tools(type("C", (), {"db": None, "emit_event": None})())
     ids = [t.id for t in tools]
     assert "coding.send" in ids
-    assert ids == ["coding.start", "coding.send", "coding.stop", "coding.list",
-                   "coding.handoff_list", "coding.handoff_brief", "coding.history",
-                   "coding.mode", "coding.rewind", "coding.decide", "coding.files"]
+    assert ids == ["coding.start", "coding.send", "coding.stop", "coding.list", "coding.attach",
+                   "coding.wall_data", "coding.handoff_list", "coding.handoff_brief", "coding.history",
+                   "coding.mode", "coding.rewind", "coding.decide", "coding.files",
+                   "coding.last_sessions", "coding.attach_cc"]
 
 
 def test_start_skill_does_not_pass_resume(monkeypatch):
@@ -1123,3 +1125,621 @@ def test_files_fuzzy_match_and_excludes(tmp_path):
 def test_files_caps_results_and_bad_cwd(tmp_path):
     r = FilesSkill().run({"cwd": str(tmp_path / "ghost"), "q": ""}, _ctx())
     assert r.success and r.data["files"] == []
+
+
+# ---------- P2 B1：审批统一进 L2 确认体系（confirmation_needed + action_result 出队）----------
+from coding import ListSkill  # noqa: E402
+
+
+def test_can_use_tool_emits_confirmation_and_action_result():
+    """confirmation 通道：permission_request 照发（面板只读镜像）+ confirmation_needed
+    （L2 攒批载荷，字段与前端 brain.ts 入队条件逐字对齐）+ 裁决后 action_result 出队；
+    等 _PERM[rid].event 语义不变。"""
+    from claude_agent_sdk import PermissionResultAllow
+
+    async def _flow():
+        events, emitted = [], []
+        cb = _runner_mod.make_permission_callback("s30", events.append, timeout_s=5.0,
+                                                  emit_event=emitted.append)
+
+        async def _decide():
+            while not events:               # 等 permission_request 发出
+                await asyncio.sleep(0.005)
+            r = DecideSkill().run({"rid": events[0]["rid"], "allow": True}, _Ctx(_FakeDB()))
+            assert r.success, r.error
+
+        decider = asyncio.create_task(_decide())
+        res = await cb("Bash", {"command": "npm test"})
+        await decider
+        return res, events, emitted
+
+    res, events, emitted = _run(_flow())
+    assert isinstance(res, PermissionResultAllow)
+    assert [e["kind"] for e in events] == ["permission_request", "permission_done"]
+    rid = events[0]["rid"]
+    # confirmation_needed：actions 攒批格式（对齐 loop 攒批事件）+ 单条 action 兼容字段
+    cn = [e for e in emitted if e["kind"] == "confirmation_needed"]
+    assert len(cn) == 1
+    assert cn[0]["confirmation_id"] == rid and cn[0]["action"]["id"] == rid
+    a = cn[0]["actions"][0]
+    assert a["id"] == rid and a["skill_id"] == "coding" and a["label"] == "Bash"
+    assert a["description"] == "npm test" and a["params"] == {"command": "npm test"}
+    assert a["surface"] == "panel:coding" and a["risk"] == 1
+    # 出队：action_result 带 action.id（前端 brain.ts 按 action.id 出队）
+    ar = [e for e in emitted if e["kind"] == "action_result"]
+    assert len(ar) == 1 and ar[0]["action"]["id"] == rid
+    assert ar[0]["result"]["success"] is True
+    assert rid not in _runner_mod._PERM                      # 裁决后注册表清理
+
+
+def test_can_use_tool_outcome_deny_and_timeout_action_result():
+    """deny/超时两种结局都补 action_result 出队（success=False，error 标注原因）。"""
+    from claude_agent_sdk import PermissionResultDeny
+
+    async def _deny_flow():
+        events, emitted = [], []
+        cb = _runner_mod.make_permission_callback("s31", events.append, timeout_s=5.0,
+                                                  emit_event=emitted.append)
+
+        async def _decide():
+            while not events:
+                await asyncio.sleep(0.005)
+            DecideSkill().run({"rid": events[0]["rid"], "allow": False}, _Ctx(_FakeDB()))
+
+        d = asyncio.create_task(_decide())
+        res = await cb("Bash", {"command": "rm -rf /tmp/x"})
+        await d
+        return res, emitted
+
+    res, emitted = _run(_deny_flow())
+    assert isinstance(res, PermissionResultDeny) and res.message == "用户拒绝"
+    ar = [e for e in emitted if e["kind"] == "action_result"]
+    assert len(ar) == 1 and ar[0]["result"]["success"] is False
+    assert "已拒绝" in ar[0]["result"]["error"]
+
+    # 超时：无裁决 → deny("超时未批准") + action_result 标注超时
+    emitted2 = []
+    cb2 = _runner_mod.make_permission_callback("s32", lambda e: None, timeout_s=0.05,
+                                               emit_event=emitted2.append)
+    res2 = _run(cb2("Bash", {"command": "sleep 99"}))
+    assert isinstance(res2, PermissionResultDeny) and res2.message == "超时未批准"
+    ar2 = [e for e in emitted2 if e["kind"] == "action_result"]
+    assert len(ar2) == 1 and ar2[0]["result"]["success"] is False
+    assert "超时" in ar2[0]["result"]["error"]
+
+
+def test_stop_release_emits_action_result_dequeue():
+    """stop 放行挂起审批（deny 收场）：等待方同样补 action_result 出队（release 只 set，
+    出队由 _cb 结局逻辑统一发，与 permission_done 同路径）。"""
+    from claude_agent_sdk import PermissionResultDeny
+
+    async def _flow():
+        events, emitted = [], []
+        cb = _runner_mod.make_permission_callback("s33", events.append, timeout_s=30.0,
+                                                  emit_event=emitted.append)
+        waiter = asyncio.create_task(cb("Bash", {"command": "rm -rf /"}))
+        while not events:                       # 等 permission_request 发出
+            await asyncio.sleep(0.005)
+        db = _FakeDB(); db.rows["s33"] = {"id": "s33", "status": "running"}
+        reg = type("R", (), {"s": {"s33": {"cancelled": False}}})()
+        _stop_session(db, reg, "s33")           # 停止 → 放行权限等待
+        res = await waiter
+        return res, emitted
+
+    res, emitted = _run(_flow())
+    assert isinstance(res, PermissionResultDeny)
+    ar = [e for e in emitted if e["kind"] == "action_result"]
+    assert len(ar) == 1 and ar[0]["result"]["success"] is False
+
+
+def test_perm_confirmation_desc_truncated_80_and_file_path():
+    """desc 摘要截 80 字；文件工具取 file_path 作摘要/公开参数。"""
+    emitted = []
+    cb = _runner_mod.make_permission_callback("s34", lambda e: None, timeout_s=0.01,
+                                              emit_event=emitted.append)
+    _run(cb("Bash", {"command": "x" * 200}))
+    a = emitted[0]["actions"][0]
+    assert len(a["description"]) == 80
+
+    emitted2 = []
+    cb2 = _runner_mod.make_permission_callback("s34", lambda e: None, timeout_s=0.01,
+                                               emit_event=emitted2.append)
+    _run(cb2("Edit", {"file_path": "/tmp/a/b.ts", "old_string": "1", "new_string": "2"}))
+    a2 = emitted2[0]["actions"][0]
+    assert a2["description"] == "/tmp/a/b.ts" and a2["params"] == {"file_path": "/tmp/a/b.ts"}
+
+
+def test_can_use_tool_confirm_batched_channel_resolves():
+    """双通道之二：不走 coding.decide，直接写 _PERM（模拟 server confirm_batched 的
+    perm_ 路由）同样兑现；先到先得。"""
+    from claude_agent_sdk import PermissionResultAllow
+
+    async def _flow():
+        events = []
+        cb = _runner_mod.make_permission_callback("s35", events.append, timeout_s=5.0)
+
+        async def _confirm():
+            while not events:
+                await asyncio.sleep(0.005)
+            rid = events[0]["rid"]
+            entry = _runner_mod._PERM[rid]
+            entry["allow"] = True                 # server._fulfill_coding_perm 同款直写
+            entry["event"].set()
+
+        c = asyncio.create_task(_confirm())
+        res = await cb("Bash", {"command": "ls"})
+        await c
+        return res
+
+    assert isinstance(_run(_flow()), PermissionResultAllow)
+
+
+# ---------- P2 B1：coding.list live 字段 / coding.start background ----------
+
+def test_list_skill_live_states():
+    """live：waiting（_PERM 挂起，优先）> running（_SESSIONS entry）> idle；已裁决不算 waiting。"""
+    db = _FakeDB()
+    db.rows["a"] = {"id": "a", "status": "done", "created_at": 1}
+    db.rows["b"] = {"id": "b", "status": "running", "created_at": 2}
+    db.rows["c"] = {"id": "c", "status": "running", "created_at": 3}
+    _runner_mod._PERM["perm_c_7"] = {"event": _threading.Event(), "allow": None}
+    codingmod._SESSIONS["b"] = {"cancel": _threading.Event()}
+    codingmod._SESSIONS["c"] = {"cancel": _threading.Event()}
+    try:
+        res = ListSkill().run({}, _Ctx(db))
+        live = {s["id"]: s["live"] for s in res.data["sessions"]}
+        assert live == {"a": "idle", "b": "running", "c": "waiting"}
+        # 已裁决（allow 非 None）不再算 waiting → 回落 running
+        _runner_mod._PERM["perm_c_7"]["allow"] = True
+        res2 = ListSkill().run({}, _Ctx(db))
+        live2 = {s["id"]: s["live"] for s in res2.data["sessions"]}
+        assert live2["c"] == "running"
+    finally:
+        _runner_mod._PERM.pop("perm_c_7", None)
+        codingmod._SESSIONS.pop("b", None)
+        codingmod._SESSIONS.pop("c", None)
+
+
+def test_start_skill_background_param(monkeypatch):
+    """background=true → data.panel=None（不开面板，静默执行）；缺省 → coding:chat 照开。"""
+    db = _FakeDB()
+    monkeypatch.setattr(codingmod, "_spawn_stream", lambda *a, **k: None)
+    r = StartSkill().run({"cwd": "/tmp", "prompt": "后台改 X", "background": True}, _Ctx(db))
+    assert r.success and r.data["panel"] is None
+    assert "后台" in r.data["human"]
+    r2 = StartSkill().run({"cwd": "/tmp", "prompt": "普通任务"}, _Ctx(db))
+    assert r2.success and r2.data["panel"] == "coding:chat"
+    props = StartSkill().openai_schema()["function"]["parameters"]["properties"]
+    assert props["background"]["type"] == "boolean"
+
+
+# ---------- P2 B1：会话终态汇报（reminder/event + task meta）----------
+
+def test_usage_suffix():
+    assert codingmod._usage_suffix(None) == ""
+    assert codingmod._usage_suffix({}) == ""
+    assert codingmod._usage_suffix({"duration_ms": 12300}) == "（耗时 12s）"
+    assert codingmod._usage_suffix({"cost_usd": 0.0312, "input_tokens": 10,
+                                    "output_tokens": 5}) == "（$0.0312 · 15 tok）"
+
+
+def test_stream_reports_done_reminder_with_cost():
+    """done → kind=reminder（宠物气泡+Feed 任务卡），text 带成本，task meta 完整。"""
+    db = _FakeDB(); db.rows["s40"] = {"id": "s40", "status": "running"}
+    emitted = []
+
+    class _DoneRunner:
+        async def run(self, prompt, cwd, *, on_event, cancel_event, **k):
+            on_event({"kind": "done", "usage": {"duration_ms": 12300, "cost_usd": 0.0312,
+                                                "input_tokens": 1000, "output_tokens": 540}})
+            return "cc-x"
+
+    _run(_stream(db, "s40", "/tmp/p", "修一下登录页的样式问题", _DoneRunner(),
+                 emit_event=emitted.append, cancel=_threading.Event()))
+    finals = [e for e in emitted if e.get("task")]
+    assert len(finals) == 1
+    ev = finals[0]
+    assert ev["kind"] == "reminder"
+    assert "编码任务完成" in ev["text"] and "$0.0312" in ev["text"] and "12s" in ev["text"]
+    assert ev["task"] == {"id": "s40", "status": "done", "label": "修一下登录页的样式问题",
+                          "prompt": "修一下登录页的样式问题", "plugin": "coding"}
+    assert ev["plugin"] == "coding"
+    assert db.updates[-1][1]["status"] == "done"
+
+
+def test_stream_reports_failed_reminder():
+    """error → failed：kind=reminder，task.status=failed（英文键，对齐 Feed 徽章映射），
+    中文「失败」只留在用户可读的 text。"""
+    db = _FakeDB(); db.rows["s41"] = {"id": "s41", "status": "running"}
+    emitted = []
+
+    class _ErrRunner:
+        async def run(self, prompt, cwd, *, on_event, cancel_event, **k):
+            on_event({"kind": "error", "text": "boom"})
+            return None
+
+    _run(_stream(db, "s41", "/tmp/p", "做个功能", _ErrRunner(),
+                 emit_event=emitted.append, cancel=_threading.Event()))
+    finals = [e for e in emitted if e.get("task")]
+    assert len(finals) == 1 and finals[0]["kind"] == "reminder"
+    assert "失败" in finals[0]["text"] and finals[0]["task"]["status"] == "failed"
+    assert db.updates[-1][1]["status"] == "failed"
+
+
+def test_stream_reports_stopped_as_event_not_reminder():
+    """stopped（用户主动停）→ kind=event（仅 Feed 任务卡），不发 reminder 气泡。"""
+    db = _FakeDB(); db.rows["s42"] = {"id": "s42", "status": "stopped"}  # 用户已主动停
+    emitted = []
+    _run(_stream(db, "s42", "/tmp/p", "长跑任务", _FakeRunner(cc_sid=None),
+                 emit_event=emitted.append, cancel=_threading.Event()))
+    finals = [e for e in emitted if e.get("task")]
+    assert len(finals) == 1 and finals[0]["kind"] == "event"
+    assert finals[0]["task"]["status"] == "stopped"
+    assert not any(e.get("kind") == "reminder" and e.get("task") for e in emitted)
+    assert db.updates[-1][1]["status"] == "stopped"
+
+
+def test_stream_no_report_when_emit_event_none():
+    """emit_event=None（测试/未注入）→ 终态汇报静默跳过，落库不受影响。"""
+    db = _FakeDB(); db.rows["s43"] = {"id": "s43", "status": "running"}
+    _run(_stream(db, "s43", "/tmp/p", "hi", _FakeRunner(cc_sid="cc-1"),
+                 emit_event=None, cancel=_threading.Event()))
+    assert db.updates[-1][1]["status"] == "done"
+
+
+# ---------- P2 B3：coding.attach 接管（任务卡点击 → 打开面板恢复会话）----------
+from coding import AttachSkill  # noqa: E402
+
+
+def test_attach_returns_session_and_attach_flag():
+    """attach 成功：data 带 {session_id, attach:True}（逐字对齐 chat.html init 判别）；
+    任何终态/运行态会话都可接管（恢复/围观由面板侧处理）。"""
+    db = _FakeDB()
+    db.rows["s-att"] = {"id": "s-att", "status": "done"}
+    res = AttachSkill().run({"session_id": "s-att"}, _Ctx(db))
+    assert res.success, res.error
+    assert res.data["session_id"] == "s-att"
+    assert res.data["attach"] is True
+    db2 = _FakeDB()
+    db2.rows["s-run"] = {"id": "s-run", "status": "running"}
+    res2 = AttachSkill().run({"session_id": "s-run"}, _Ctx(db2))
+    assert res2.success and res2.data["attach"] is True
+
+
+def test_attach_rejects_unknown_session_and_missing_param():
+    """会话不存在 → 明确错误（面板不开）；缺 session_id → 同样拒绝。"""
+    db = _FakeDB()
+    res = AttachSkill().run({"session_id": "no-such"}, _Ctx(db))
+    assert not res.success and "不存在" in (res.error or "")
+    res2 = AttachSkill().run({}, _Ctx(db))
+    assert not res2.success and "session_id" in (res2.error or "")
+
+
+def test_attach_is_l0_readonly():
+    """attach 只校验存在 + 开面板，不改状态 → L0（直调不弹确认，任务卡点击零摩擦）。"""
+    assert AttachSkill.default_risk == RiskLevel.L0_READONLY
+
+
+def test_attach_skill_openai_schema_shape():
+    schema = AttachSkill().openai_schema()
+    assert schema["function"]["name"] == "coding.attach"
+    props = schema["function"]["parameters"]["properties"]
+    assert set(props.keys()) == {"session_id"}
+    assert schema["function"]["parameters"]["required"] == ["session_id"]
+
+
+# ---------- P2 B4：会话墙 coding.wall_data（coding:wall 面板数据源）----------
+import time  # noqa: E402
+from coding import WallDataSkill  # noqa: E402
+
+
+def test_wall_data_shape_sort_and_panel_ref():
+    """rows 按 created_at DESC；每行 {id, live, title, subtitle}；result.panel=coding:wall
+    （coding.wall_stop 的 refresh 通道走 invoker 直执行，panel_payload 只认 result.panel）。"""
+    db = _FakeDB()
+    db.rows["a"] = {"id": "a", "status": "done", "created_at": 1,
+                    "cwd": "/tmp/proj-alpha", "prompt": "修一下登录页的样式问题，顺便看看按钮对齐和字体"}
+    db.rows["b"] = {"id": "b", "status": "done", "created_at": 2,
+                    "cwd": "/tmp/proj-beta/", "prompt": "短任务"}
+    db.rows["c"] = {"id": "c", "status": "done", "created_at": 3,
+                    "cwd": "", "prompt": ""}
+    res = WallDataSkill().run({}, _Ctx(db))
+    assert res.success and res.panel == "coding:wall"
+    rows = res.data["rows"]
+    assert [r["id"] for r in rows] == ["c", "b", "a"]            # created_at DESC
+    assert all(set(r.keys()) == {"id", "live", "title", "subtitle"} for r in rows)
+    # title = 「{cwd basename} · {prompt 前 20 字}」；basename 容忍尾部斜杠；prompt 截 20 字（23 字原文 → 断在「齐」）
+    assert rows[2]["title"] == "proj-alpha · 修一下登录页的样式问题，顺便看看按钮对齐"
+    assert rows[1]["title"] == "proj-beta · 短任务"
+    assert rows[0]["title"] == "?"                                # cwd/prompt 皆空 → 退化 basename 占位
+
+
+def test_wall_data_live_text_and_rel_time():
+    """subtitle = 「{live 文案} · {相对时间}」：等待审批/运行中/空闲（waiting>running>idle 同 list）。"""
+    now = int(time.time())
+    db = _FakeDB()
+    db.rows["a"] = {"id": "a", "status": "done", "created_at": now - 5,
+                    "cwd": "/tmp/p", "prompt": "x"}
+    db.rows["b"] = {"id": "b", "status": "running", "created_at": now - 7200,
+                    "cwd": "/tmp/p", "prompt": "x"}
+    db.rows["c"] = {"id": "c", "status": "running", "created_at": now - 3 * 86400,
+                    "cwd": "/tmp/p", "prompt": "x"}
+    _runner_mod._PERM["perm_c_1"] = {"event": _threading.Event(), "allow": None}
+    codingmod._SESSIONS["b"] = {"cancel": _threading.Event()}
+    codingmod._SESSIONS["c"] = {"cancel": _threading.Event()}
+    try:
+        rows = {r["id"]: r for r in WallDataSkill().run({}, _Ctx(db)).data["rows"]}
+        assert rows["a"]["live"] == "idle" and rows["a"]["subtitle"] == "空闲 · 刚刚"
+        assert rows["b"]["live"] == "running" and rows["b"]["subtitle"] == "运行中 · 2 小时前"
+        assert rows["c"]["live"] == "waiting" and rows["c"]["subtitle"] == "等待审批 · 3 天前"
+    finally:
+        _runner_mod._PERM.pop("perm_c_1", None)
+        codingmod._SESSIONS.pop("b", None)
+        codingmod._SESSIONS.pop("c", None)
+
+
+def test_wall_data_empty():
+    """空态：无会话 → rows=[]（面板空态文案在 wall.schema.json 的 empty 声明，见下）。"""
+    res = WallDataSkill().run({}, _Ctx(_FakeDB()))
+    assert res.success and res.data["rows"] == []
+
+
+def test_wall_data_is_l0_readonly():
+    """会话墙取数只读 → L0（直调/refresh 均不弹确认）。"""
+    assert WallDataSkill.default_risk == RiskLevel.L0_READONLY
+
+
+def test_rel_time():
+    now = 1_000_000
+    assert codingmod._rel_time(now, now - 5) == "刚刚"
+    assert codingmod._rel_time(now, now - 599) == "9 分钟前"
+    assert codingmod._rel_time(now, now - 7200) == "2 小时前"
+    assert codingmod._rel_time(now, now - 3 * 86400) == "3 天前"
+    assert codingmod._rel_time(now, now + 10) == "刚刚"            # 时钟回拨负值兜 0
+
+
+def test_wall_schema_json_matches_api_and_manifest():
+    """wall.schema.json ↔ api.toml ↔ manifest.toml 三方契约锁定：
+    schema 行行动作指向白名单方法（接管=coding.attach 恒显；停止=coding.wall_stop——
+    schema list 不支持按行条件显隐，v1 两动作同显，idle 停止由 coding.stop 提示兜底）；
+    wall_stop refresh 回刷 wall_data；manifest 声明 coding:wall 面板 + open 插件页入口。"""
+    import json
+    import tomllib
+    coding_dir = os.path.join(os.path.dirname(__file__), "..", "..", "plugins", "coding")
+    schema = json.loads((open(os.path.join(coding_dir, "panel", "wall.schema.json"),
+                              encoding="utf-8")).read())
+    assert schema["type"] == "list" and schema["bind"]["items"] == "$data.rows"
+    assert schema["empty"]["title"] == "还没有编码会话"
+    actions = {a["label"]: a for a in schema["item"]["actions"]}
+    assert actions["接管"]["method"] == "coding.attach"
+    assert actions["接管"]["params"] == {"session_id": "$item.id"}
+    assert actions["停止"]["method"] == "coding.wall_stop"
+    assert actions["停止"]["params"] == {"id": "$item.id"}
+
+    api = tomllib.loads(open(os.path.join(coding_dir, "api.toml"), encoding="utf-8").read())
+    methods = {m["name"]: m for m in api["method"]}
+    assert methods["coding.wall_data"]["handler"] == "coding.wall_data"
+    assert methods["coding.wall_data"]["panel"] == "coding:wall"
+    assert methods["coding.wall_data"]["direct"] is True
+    assert methods["coding.wall_stop"]["handler"] == "coding.stop"
+    assert methods["coding.wall_stop"]["refresh"] == "coding.wall_data"
+    assert "panel" not in methods["coding.wall_stop"]          # refresh 通道自带 panel，不双发
+
+    manifest = tomllib.loads(open(os.path.join(coding_dir, "manifest.toml"),
+                                  encoding="utf-8").read())
+    panels = {p["name"]: p for p in manifest["panel"]}
+    assert panels["wall"]["type"] == "schema"
+    assert panels["wall"]["src"] == "panel/wall.schema.json"
+    assert panels["wall"]["open"] == "wall_data"               # 插件页子入口直调 coding.wall_data
+
+
+# ---------- P1 C1：统一接续 popover —— coding.last_sessions / coding.attach_cc ----------
+import json as _json  # noqa: E402
+from datetime import datetime as _dt  # noqa: E402
+from coding import LastSessionsSkill, AttachCcSkill  # noqa: E402
+
+_C1_CWD = "/tmp/proj"            # slug = -tmp-proj（re.sub(r"[^A-Za-z0-9-]", "-", cwd)）
+_C1_SLUG = "-tmp-proj"
+
+
+def _c1_write_cc(home, rel, lines, mtime=None, slug=_C1_SLUG):
+    """在 home/.claude/projects/<slug>/<rel> 造 CC transcript（rel 可带子目录）；返回路径。"""
+    p = os.path.join(home, ".claude", "projects", slug, rel)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, "w") as f:
+        f.write("\n".join(_json.dumps(x) for x in lines) + "\n")
+    if mtime is not None:
+        os.utime(p, (mtime, mtime))
+    return p
+
+
+def _c1_write_codex(root, rel, cwd, sid, ts, turns):
+    """在 root 下造一个 Codex JSONL session（同 test_coding_handoff._write_session 形态）。"""
+    p = os.path.join(root, rel)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    lines = [_json.dumps({"type": "session_meta",
+                          "payload": {"session_id": sid, "cwd": cwd, "timestamp": ts}})]
+    for role, text in turns:
+        lines.append(_json.dumps({"type": "response_item",
+                                  "payload": {"role": role, "content": text}}))
+    with open(p, "w") as f:
+        f.write("\n".join(lines) + "\n")
+    return p
+
+
+_C1_CC_LINES = [
+    {"type": "user", "uuid": "u1", "timestamp": "2026-08-10T10:00:00Z",
+     "message": {"content": "第一句话"}},
+    {"type": "assistant", "uuid": "a1", "timestamp": "2026-08-10T10:01:00Z",
+     "message": {"content": [{"type": "text", "text": "回答一"}]}},
+    {"type": "system", "message": {"content": "忽略我"}},
+    {"type": "user", "uuid": "u2", "timestamp": "2026-08-10T10:02:00Z",
+     "message": {"content": [{"type": "text", "text": "第二句话"}]}},
+]
+
+
+def test_last_sessions_dual_source(tmp_path, monkeypatch):
+    """双源命中：cc 取 slug 目录 mtime 最新；codex 取同 cwd timestamp 最新。"""
+    home = str(tmp_path)
+    long_first = "甲" * 70   # >60 字，验 summary 截 60
+    _c1_write_cc(home, "cc-old.jsonl", [
+        {"type": "user", "message": {"content": "旧的"}}], mtime=1000)
+    _c1_write_cc(home, "cc-new.jsonl", [
+        {"type": "user", "uuid": "u1", "timestamp": "2026-08-10T10:00:00Z",
+         "message": {"content": long_first}},
+        {"type": "assistant", "uuid": "a1", "timestamp": "2026-08-10T10:01:00Z",
+         "message": {"content": "答"}},
+    ], mtime=2000)
+    root = str(tmp_path / "codex_sessions")
+    _c1_write_codex(root, "2026/08/05/x.jsonl", _C1_CWD, "cx-old", "2026-08-05T10:00:00Z",
+                    [("user", "旧 codex")])
+    _c1_write_codex(root, "2026/08/09/y.jsonl", _C1_CWD, "cx-new", "2026-08-09T10:00:00Z",
+                    [("user", "新 codex 任务")])
+    _c1_write_codex(root, "2026/08/10/z.jsonl", "/tmp/other", "cx-other", "2026-08-10T10:00:00Z",
+                    [("user", "别的项目")])
+    monkeypatch.setenv("HOME", home)
+    monkeypatch.setattr(codingmod, "_codex_sessions_root", lambda: root)
+    res = LastSessionsSkill().run({"cwd": _C1_CWD}, _Ctx(_FakeDB()))
+    assert res.success
+    cc = res.data["cc"]
+    assert cc["cc_session_id"] == "cc-new"          # mtime 最新，而非 cc-old
+    assert cc["ts"] == 2000
+    assert cc["summary"] == long_first[:60]         # 首条 user 截 60 字
+    assert cc["message_count"] == 2                 # user+assistant 各 1（system 不计）
+    codex = res.data["codex"]
+    assert codex["session_id"] == "cx-new"          # timestamp 最新；别的项目已过滤
+    assert codex["ts"] == int(_dt.fromisoformat("2026-08-09T10:00:00+00:00").timestamp())
+    assert codex["summary"] == "新 codex 任务"
+
+
+def test_last_sessions_cc_only_and_empty(tmp_path, monkeypatch):
+    """单源：只有 cc → codex 为 None；全空：两源都 None（不报错）。"""
+    home = str(tmp_path)
+    root = str(tmp_path / "codex_sessions")
+    monkeypatch.setenv("HOME", home)
+    monkeypatch.setattr(codingmod, "_codex_sessions_root", lambda: root)
+    _c1_write_cc(home, "cc-1.jsonl", _C1_CC_LINES, mtime=1500)
+    res = LastSessionsSkill().run({"cwd": _C1_CWD}, _Ctx(_FakeDB()))
+    assert res.data["cc"]["cc_session_id"] == "cc-1"
+    assert res.data["cc"]["message_count"] == 3     # 2 user + 1 assistant
+    assert res.data["cc"]["summary"] == "第一句话"
+    assert res.data["codex"] is None
+    # 全空：另一个无记录的 cwd
+    res2 = LastSessionsSkill().run({"cwd": "/tmp/nowhere"}, _Ctx(_FakeDB()))
+    assert res2.success and res2.data == {"cc": None, "codex": None}
+
+
+def test_last_sessions_excludes_subagents_and_tool_results(tmp_path, monkeypatch):
+    """slug 排除：<uuid>/subagents/ 与 tool-results/ 下的 .jsonl 不参与最新判定。"""
+    home = str(tmp_path)
+    monkeypatch.setenv("HOME", home)
+    monkeypatch.setattr(codingmod, "_codex_sessions_root", lambda: str(tmp_path / "none"))
+    _c1_write_cc(home, "cc-main.jsonl", _C1_CC_LINES, mtime=1000)
+    # 嵌套文件 mtime 更新也必须被排除
+    _c1_write_cc(home, "11112222/subagents/agent-x.jsonl", [
+        {"type": "user", "message": {"content": "子代理"}}], mtime=9999)
+    _c1_write_cc(home, "11112222/tool-results/r.jsonl", [
+        {"type": "user", "message": {"content": "工具结果"}}], mtime=8888)
+    res = LastSessionsSkill().run({"cwd": _C1_CWD}, _Ctx(_FakeDB()))
+    assert res.data["cc"]["cc_session_id"] == "cc-main"
+    assert res.data["cc"]["summary"] == "第一句话"
+
+
+def test_last_sessions_missing_cwd_errors():
+    res = LastSessionsSkill().run({}, _Ctx(_FakeDB()))
+    assert not res.success and "cwd" in res.error
+
+
+def test_attach_cc_imports_transcript(tmp_path, monkeypatch):
+    """导入落库：sessions 行字段（agent=cc/source=import/status=done/时间取内容时间）
+    + messages 写整段 transcript（seq 1..n，user 带 uuid）；二次调用幂等返回同 id。"""
+    home = str(tmp_path)
+    _c1_write_cc(home, "cc-imp.jsonl", _C1_CC_LINES, mtime=5000)
+    monkeypatch.setenv("HOME", home)
+    db = _FakeDB()
+    res = AttachCcSkill().run({"cc_session_id": "cc-imp", "cwd": _C1_CWD}, _Ctx(db))
+    assert res.success
+    sid = res.data["session_id"]
+    row = db.rows[sid]
+    assert row["agent"] == "cc" and row["source"] == "import" and row["status"] == "done"
+    assert row["cc_session_id"] == "cc-imp" and row["cwd"] == _C1_CWD
+    assert row["created_at"] == int(_dt.fromisoformat("2026-08-10T10:00:00+00:00").timestamp())
+    assert row["finished_at"] == int(_dt.fromisoformat("2026-08-10T10:02:00+00:00").timestamp())
+    assert row["prompt"] == "第一句话"
+    msgs = db._tables["messages"]
+    assert [m["seq"] for m in msgs] == [1, 2, 3]
+    assert [m["role"] for m in msgs] == ["user", "assistant", "user"]
+    assert [m["text"] for m in msgs] == ["第一句话", "回答一", "第二句话"]
+    assert [m["uuid"] for m in msgs] == ["u1", "", "u2"]   # user 带 uuid（rewind 锚点）
+    assert all(m["session_id"] == sid for m in msgs)
+    # 幂等：再导一次 → 同 id，不重复插
+    res2 = AttachCcSkill().run({"cc_session_id": "cc-imp", "cwd": _C1_CWD}, _Ctx(db))
+    assert res2.success and res2.data["session_id"] == sid
+    assert len(db.rows) == 1 and len(db._tables["messages"]) == 3
+
+
+def test_attach_cc_idempotent_with_existing_db_row(tmp_path, monkeypatch):
+    """cc_session_id 已在库（如译宝自己跑过的会话）→ 直接返回既有 id，不读 transcript。"""
+    monkeypatch.setenv("HOME", str(tmp_path))   # 无 transcript 也应命中幂等分支
+    db = _FakeDB()
+    db.rows["s-have"] = {"id": "s-have", "cc_session_id": "cc-1", "status": "done"}
+    res = AttachCcSkill().run({"cc_session_id": "cc-1", "cwd": _C1_CWD}, _Ctx(db))
+    assert res.success and res.data["session_id"] == "s-have"
+    assert len(db.rows) == 1
+
+
+def test_attach_cc_missing_transcript_and_bad_params(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    db = _FakeDB()
+    res = AttachCcSkill().run({"cc_session_id": "ghost", "cwd": _C1_CWD}, _Ctx(db))
+    assert not res.success and "ghost" in res.error
+    res2 = AttachCcSkill().run({"cc_session_id": "../escape", "cwd": _C1_CWD}, _Ctx(db))
+    assert not res2.success                       # 白名单挡路径逃逸（同 _cc_reader）
+    res3 = AttachCcSkill().run({"cwd": _C1_CWD}, _Ctx(db))
+    assert not res3.success and "cc_session_id" in res3.error
+    res4 = AttachCcSkill().run({"cc_session_id": "x"}, _Ctx(db))
+    assert not res4.success and "cwd" in res4.error
+
+
+def test_attach_cc_finds_transcript_outside_cwd_slug(tmp_path, monkeypatch):
+    """cwd slug 目录没有时，全 projects 顶层 glob 兜底（仍排除 subagents 嵌套层）。"""
+    home = str(tmp_path)
+    _c1_write_cc(home, "cc-else.jsonl", _C1_CC_LINES, slug="-tmp-otherproj")
+    monkeypatch.setenv("HOME", home)
+    db = _FakeDB()
+    res = AttachCcSkill().run({"cc_session_id": "cc-else", "cwd": _C1_CWD}, _Ctx(db))
+    assert res.success
+    assert db.rows[res.data["session_id"]]["cc_session_id"] == "cc-else"
+
+
+def test_send_on_imported_session_resumes_cc_natively(tmp_path, monkeypatch):
+    """resume 链路核实：导入的会话走 coding.send 时，既有链路拿库里 cc_session_id
+    透传 _spawn_stream(resume_session_id=cc) → SDK ClaudeAgentOptions(resume=…) 原生续。"""
+    home = str(tmp_path)
+    _c1_write_cc(home, "cc-r.jsonl", _C1_CC_LINES)
+    monkeypatch.setenv("HOME", home)
+    db = _FakeDB()
+    sid = AttachCcSkill().run({"cc_session_id": "cc-r", "cwd": _C1_CWD}, _Ctx(db)).data["session_id"]
+    captured = {}
+    monkeypatch.setattr(
+        codingmod, "_spawn_stream",
+        lambda *a, **k: captured.update({"args": a, "kwargs": k}))
+    res = SendSkill().run({"id": sid, "prompt": "继续干"}, _Ctx(db))
+    assert res.success
+    assert captured["kwargs"].get("resume_session_id") == "cc-r"   # SDK resume 原生续
+    # history 按 DB id 读回导入的 transcript（resumeSession 链路）
+    h = HistorySkill().run({"id": sid}, _Ctx(db))
+    assert h.success and [m["text"] for m in h.data["messages"]] == ["第一句话", "回答一", "第二句话"]
+
+
+def test_api_toml_registers_last_sessions_and_attach_cc():
+    """api.toml 契约锁定：两方法 direct + quiet（popover 内调用，不发 panel 事件）、无 panel 字段。"""
+    import tomllib
+    api_path = os.path.join(os.path.dirname(__file__), "..", "..", "plugins", "coding", "api.toml")
+    api = tomllib.loads(open(api_path, encoding="utf-8").read())
+    methods = {m["name"]: m for m in api["method"]}
+    for name in ("last_sessions", "attach_cc"):
+        m = methods[name]
+        assert m["handler"] == f"coding.{name}"
+        assert m["direct"] is True and m["quiet"] is True
+        assert "panel" not in m

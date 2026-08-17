@@ -13,6 +13,8 @@ export interface ListSchema {
   type: "list";
   bind?: { items?: string };
   item?: { title?: string; subtitle?: string; actions?: ActionDecl[] };
+  /** 空态文案（可选）：列表无条目时的主句/引导句；缺省用内置默认 */
+  empty?: { title?: string; hint?: string };
   /** 返回导航（可选）：左上角「‹ label」链接，本质是一个 action */
   back?: ActionDecl;
 }

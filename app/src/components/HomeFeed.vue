@@ -361,20 +361,24 @@ function openTasks() {
   void panelAction("agents.task_list", {}, undefined, "panel:agents").catch(() => {});
 }
 
+/** 乐观置已读（失败回滚）：openInChat 与 coding 任务卡 attach 共用。 */
+async function markReadOptimistic(it: FeedItem) {
+  if (it.read !== 0) return;
+  const prevUnread = stats.value.unread;
+  it.read = 1; // 乐观置已读
+  if (stats.value.unread > 0) stats.value = { ...stats.value, unread: stats.value.unread - 1 };
+  try {
+    await markFeedRead(it.id);
+  } catch {
+    // 失败回滚
+    it.read = 0;
+    stats.value = { ...stats.value, unread: prevUnread };
+  }
+}
+
 /** 点动态 → 乐观置已读 + 带自包含上下文草稿切对话页（大脑看不到 Feed，上下文随草稿走）。 */
 async function openInChat(it: FeedItem) {
-  if (it.read === 0) {
-    const prevUnread = stats.value.unread;
-    it.read = 1; // 乐观置已读
-    if (stats.value.unread > 0) stats.value = { ...stats.value, unread: stats.value.unread - 1 };
-    try {
-      await markFeedRead(it.id);
-    } catch {
-      // 失败回滚
-      it.read = 0;
-      stats.value = { ...stats.value, unread: prevUnread };
-    }
-  }
+  await markReadOptimistic(it);
   const oneLine = it.text.replace(/\s+/g, " ").trim();
   const truncated = oneLine.length > 60 ? oneLine.slice(0, 60) + "…" : oneLine;
   const prompt = typeof it.meta?.prompt === "string" && it.meta.prompt ? it.meta.prompt : "";
@@ -382,6 +386,32 @@ async function openInChat(it: FeedItem) {
     ? `关于任务「${prompt.length > 40 ? prompt.slice(0, 40) + "…" : prompt}」：`
     : `关于「${truncated}」：`;
   emit("chat", draft);
+}
+
+// ---- coding 任务卡点击路由（B3）：attach 打开 coding:chat 面板并恢复该会话 ----
+// 直调失败/会话不存在的回执经 onBrainEvent 按 skill_id 认领（面板没开成必须看得见，点了没反应是最差反馈）
+const actionErr = ref("");
+
+/** coding 任务卡 → coding.attach{session_id}（L0 直调）：面板窗/peek 由宿主既有表面裁决呈现，
+ *  data={session_id, attach:true} 透传进面板 init，chat.html 自动 resumeSession。 */
+async function openCodingSession(it: FeedItem, sid: string) {
+  actionErr.value = "";
+  await markReadOptimistic(it);
+  try {
+    await panelAction("coding.attach", { session_id: sid }, undefined, "panel:coding");
+  } catch (err) {
+    actionErr.value = "打开编码会话失败：" + String(err);
+  }
+}
+
+/** 时间线行点击路由：meta.plugin==="coding" 且带会话 id → attach 接管；其余原行为（带草稿切对话页）。 */
+function onItemClick(it: FeedItem) {
+  const sid = it.meta?.plugin === "coding" && typeof it.meta?.id === "string" ? it.meta.id : "";
+  if (sid) {
+    void openCodingSession(it, sid);
+    return;
+  }
+  void openInChat(it);
 }
 
 // ---- 处置态：跟进/忽略，乐观改 it.status + 失败回滚 ----
@@ -468,6 +498,13 @@ onMounted(async () => {
     const agentChanged = e.kind === "action_result"
       && !!e.action?.skill_id?.startsWith("agents.");
     if (e.kind === "reminder" || agentChanged) scheduleFeedRefresh();
+    // coding.attach 失败回执认领：直调失败走 action_result(success=false)，闸门/异常走 error 事件
+    if (e.action?.skill_id === "coding.attach") {
+      if (e.kind === "error") actionErr.value = e.text ?? "打开编码会话失败";
+      else if (e.kind === "action_result" && e.result && !e.result.success) {
+        actionErr.value = e.result.error ?? "打开编码会话失败";
+      }
+    }
   });
 
   // 回顾：开窗触发 recap_check——大脑侧按 recap_last_day 去重，重复 fire 无害。
@@ -627,6 +664,9 @@ onUnmounted(() => {
           <button v-if="unreadCount > 0" class="link-btn" @click="markAllRead">全部标为已读</button>
         </div>
 
+        <!-- coding 任务卡 attach 失败回执（会话已清理/直调失败）：细条亮出，下次点击自动清 -->
+        <div v-if="actionErr" class="tl-err"><YbIcon name="alert" :size="13" />{{ actionErr }}</div>
+
         <div class="tl-scroll">
           <template v-if="groups.length">
             <div v-for="g in groups" :key="g.key" class="tl-group">
@@ -636,7 +676,7 @@ onUnmounted(() => {
                 :key="it.id"
                 class="tl-row"
                 :class="[tierClass(it), { unread: it.read === 0, [`st-${it.status}`]: it.status !== 'none' }]"
-                @click="openInChat(it)"
+                @click="onItemClick(it)"
               >
                 <span class="tl-ic" :class="`ic-${kindIcon(it)}`">
                   <YbIcon :name="kindIcon(it)" :size="13" />
@@ -978,6 +1018,19 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: var(--yb-space-3);
   padding-bottom: var(--yb-space-3);
+}
+/* coding 任务卡 attach 失败回执细条（同 PanelApp .error-bar 语言） */
+.tl-err {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--yb-space-1);
+  margin-bottom: var(--yb-space-2);
+  padding: 6px var(--yb-space-3);
+  border-radius: var(--yb-radius-sm);
+  background: var(--yb-danger-soft);
+  color: var(--yb-danger);
+  font-size: var(--yb-fs-md);
 }
 /* macOS Segmented Control：凹槽底 + 白滑块 */
 .segmented {

@@ -28,6 +28,8 @@ export interface BrainAction {
   risk?: number;
   /** 过程展示短标签（sidecar 从技能 label 填，回退 skill_id） */
   label?: string;
+  /** 发起面板（coding 审批经广播通道时顶层 surface 为空，action 自带） */
+  surface?: string;
 }
 
 export interface BrainResult {
@@ -610,6 +612,9 @@ export interface PendingConfirm {
 
 /** 当前确认链支持：普通技能按 skill；后台命令按 command + cwd 精确记忆。 */
 export function canRememberSkill(skill: string): boolean {
+  // coding 审批不经 invoker.apply_verdict（裁决走 confirmation_needed 直兑 future），
+  // remember 勾了也不生效——复选框对 coding 隐藏，防误导（P2 审批统一 L2）
+  if (skill === "coding") return false;
   return Boolean(skill);
 }
 
@@ -668,7 +673,8 @@ if ("__TAURI_INTERNALS__" in window) void listen<BrainEvent>("brain-event", (ev)
         desc: a.description ?? "",
         params: a.params,
         risk: a.risk,
-        surface: e.surface,
+        // coding 审批经 ProactiveDispatcher 广播时顶层 surface 为 null，action 自带 surface 优先
+        surface: a.surface ?? e.surface,
       }));
     if (fresh.length) {
       _pc = [..._pc, ...fresh];

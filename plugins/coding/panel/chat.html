@@ -4,7 +4,15 @@
      能力调用全部经 window.yibao.invoke（postMessage 桥 → api.toml 白名单 + 风险闸门）；
      流式回显经 window.yibao.onInit（每条 panel_data 推一次，data = {session_id, event:{kind,...}}，
      按事件 kind ACCUMULATE 到 #log，不能用 data 整体替换）。
-     桥 JS 由父侧注入（提供 window.yibao.invoke/onInit），本文件不自带。
+     attach 接管（B3）：coding.attach 的 panel 载荷 data = {session_id, attach:true}（无 event），
+     handleInitData 见到自动 resumeSession（任务卡/会话墙「接管」点击路由）。
+     桥 JS 由父侧注入（提供 window.yibao.invoke/onInit/onMessage/emitEvent），本文件不自带。
+     接管模式（P1 takeover）：PanelApp 窗口打开本面板时 init 载荷带 takeover=true → body.takeover
+     隐藏自带输入框/发送钮（保留其余全部控件），父侧 InputBar 文本经 onMessage("takeover-input")
+     直送 send()（busy 排队、本轮结束自动发；中断/新对话清空队列），运行状态经
+     emitEvent("takeover-state") 上报父侧（驱动 avatar + 译宝大脑上下文）；
+     「@ 引用文件」按钮浮层选中后经 emitEvent("insert-draft") 回输父侧 InputBar 草稿
+     （非 takeover 模式插本框 #prompt）。
 
      文件改动 diff：内建行级 LCS 着色，卡片默认展开（共享 webview 注入的 CSP
      default-src 'none' 屏蔽一切外部脚本，故不依赖任何 CDN 资源）。
@@ -14,15 +22,21 @@
      chevron + 图标 + 工具名 + 意图摘要 + 结果计数），点头行展开 input JSON 详情；
      长输出 >8 行折叠为「… +N lines」单行（B2）；错误不上消息流，走底部 turn 级
      错误条（B3）；工具失败只把对应卡标红 ✗，不新增卡片（B4）。
-     审批与状态（R3 C 项）：审批卡主按钮按工具动态动词（Bash→运行命令、Edit/Write→保存修改…），
+     审批与状态（R3 C 项 + P2 只读化）：审批卡为只读镜像——裁决统一走 L2 确认体系
+     （PanelApp 顶部确认条 / HomeFeed 收件箱），卡面只提示去向，不再渲染按钮（全模式）；
      等待中琥珀脉冲边框、裁决后收敛为灰小字单行记录（C1/C2）；运行状态为底部居中悬浮 pill
      （spinner + 秒表 + 累计 token + 红 Stop，与 #errbar 垂直堆叠，不占消息流，C3）；
      顶栏右侧会话级成本聚合「N tok · $X.XXXX」（done 事件 usage 累加，C4）；
      完成行保留耗时/token/cost 明细，灰小字一行（C5）。
      输入区三段式（R3 D1，对标 opencode 底栏）：① 输入框（2px 左竖条 accent）→ ② 上下文行
-     （cwd chip+权限模式 pill+@ 提示）→ ③ 快捷键行（键白动作灰；↵ 发送 / ⇧↵ 换行 / @ 文件 /
-     esc 停止，IME 组字 Enter 不上屏误发）；顶栏收窄为 标题+成本聚合+历史/新对话（D4）；
+     （cwd chip+权限模式 pill+@ 引用按钮）→ ③ 快捷键行（键白动作灰；↵ 发送 / ⇧↵ 换行 / @ 文件 /
+     esc 停止，IME 组字 Enter 不上屏误发）；顶栏收窄为 标题+成本聚合+接续/新对话（D4）；
      消息带宽屏限 760px 居中、气泡/卡 max-width 85%、meta 灰小字 11px（D3 排版 token）。
+     接续 popover（v1 接续模型统一：原历史抽屉改造，keys-row 的「Codex 接续」钮并入，
+     历史/接续两钮 2→1）：区 1「上次会话」打开时 coding.last_sessions{cwd} 跨源实时检测
+     （无缓存）——CC 卡 [继续] = coding.attach_cc 导入后 resumeSession（原生 resume）；
+     Codex 卡 [交接给 CC] = 现有 handoff_brief 流程（交接=生成摘要交给 Claude Code，
+     非完整搬移）；区 2「译宝历史」= coding.list → resumeSession；两区皆空 → 新项目空态。
      AI 气泡 markdown 基座（R3）：marked(GFM) → DOMPurify 消毒 → hljs 高亮，vendor 三库
      经 sidecar 占位内联（head 内三个 script 占位注释，见 vendor/README.md）；
      注入缺失/异常自动降级为纯文本，不抛异常。 -->
@@ -73,7 +87,7 @@
   }
   .hidden { display: none !important; }
 
-  /* ---- 顶栏（D4 收窄，高约 40px）：左标题「编码对话」+ 右成本聚合 + 历史/新对话 ghost；
+  /* ---- 顶栏（D4 收窄，高约 40px）：左标题「编码对话」+ 右成本聚合 + 接续/新对话 ghost；
      cwd chip / 权限模式 pill 在 footer 上下文行（D1） ---- */
   header {
     flex: none; display: flex; align-items: center; gap: 8px;
@@ -302,8 +316,9 @@
     white-space: pre-wrap; word-break: break-word;
   }
 
-  /* 权限审批卡（C1/C2）：等待中 = 琥珀脉冲边框 + 动态动词绿主钮/灰次钮通栏双排；
-     permission_done 后收敛为灰小字单行记录（.perm-done，按钮区整段移除）。
+  /* 权限审批卡（C1/C2 + P2 只读化）：等待中 = 琥珀脉冲边框 + 只读提示（无按钮——
+     裁决统一走 L2 确认体系：PanelApp 顶部确认条 / HomeFeed 收件箱，全模式单点不脑裂）；
+     permission_done 后收敛为灰小字单行记录（.perm-done）。
      脉冲用 ::before 叠层只动 opacity（transform/opacity 性能约束），60s 超时后端默认拒绝逻辑不动 */
   .perm-card { position: relative; border-color: var(--amber); background: var(--amber-bg); padding: 10px 13px; }
   .perm-card::before {
@@ -318,16 +333,7 @@
     padding: 6px 9px; border-radius: 8px; background: var(--card);
     font-family: ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-word;
   }
-  .perm-actions { display: flex; gap: 8px; margin: 8px 0 4px; }
-  .perm-actions button {
-    flex: 1; border: 1px solid transparent; border-radius: 8px; padding: 7px 12px;
-    cursor: pointer; font-size: 12.5px; font-weight: 600; transition: all .15s ease;
-  }
-  .perm-ok { background: var(--green); color: #fff; }
-  .perm-ok:hover { filter: brightness(0.92); }
-  .perm-no { background: transparent; color: var(--muted); border-color: var(--border-strong); }
-  .perm-no:hover { background: var(--surface-2); color: var(--text); }
-  .perm-state { font-size: 11px; color: var(--amber); }
+  .perm-state { font-size: 11px; color: var(--amber); margin-top: 6px; }
   /* 裁决后收敛：灰小字单行「✓ 已允许 运行命令」/「✗ 已拒绝」，内容宽度自适应；
      D3 消息带居中后贴带左缘（margin-left = 带宽外余量），不随 #log>.card 整宽居中 */
   #log > .card.perm-card.perm-done {
@@ -347,9 +353,10 @@
 
   /* ---- 底栏三段式（D1，对标 opencode 底栏；三段合计 ≤110px 紧凑） ----
      ① 输入框：2px 左竖条 accent（focus 时 accent-deep），圆角 --r-md
-     ② 上下文行：cwd chip（📁+目录名，点击弹浮层手输/选目录）+ 权限模式 pill + @ 提示灰小字
+     ② 上下文行：cwd chip（📁+目录名，点击弹浮层手输/选目录）+ 权限模式 pill + @ 引用按钮（点开搜索浮层）
      ③ 快捷键行：键白动作灰（kbd 白底小圆角描边 + --faint 动作词）；#status 灰小字融入本行
-        左侧不独占一行；操作钮收敛右侧：#send accent 实心主钮 / #stop ghost / #handoff ghost 小钮 */
+        左侧不独占一行；操作钮收敛右侧：#send accent 实心主钮 / #stop ghost
+        （「Codex 接续」钮已并入顶栏「接续」popover） */
   footer {
     flex: none; border-top: 1px solid var(--line); background: var(--card);
     padding: 8px 12px 5px; display: flex; flex-direction: column; gap: 4px;
@@ -371,7 +378,7 @@
   .at-item { padding: 6px 10px; font-family: var(--mono-family); font-size: 12px; cursor: pointer; }
   .at-item.sel { background: var(--surface-2); }
   .at-empty { padding: 8px; opacity: .6; font-size: 12px; }
-  /* 段②：上下文行——cwd chip（📁+目录名 pill，点击弹浮层改路径）+ 权限模式 pill + @ 提示。
+  /* 段②：上下文行——cwd chip（📁+目录名 pill，点击弹浮层改路径）+ 权限模式 pill + @ 引用按钮。
      cwd 真值存 hidden #cwd，send/handoff/@ 补全等全部 JS 读取路径不变 */
   .ctx-row { position: relative; display: flex; align-items: center; gap: 6px; }
   .cwd-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 220px; }
@@ -385,19 +392,30 @@
     box-shadow: var(--shadow-card); padding: 6px;
   }
   .cwd-pop-row { display: flex; align-items: center; gap: 6px; }
-  #cwd-input {
+  #cwd-input, #at-input {
     flex: 1 1 auto; min-width: 0; border: 1px solid var(--border); border-radius: var(--r-sm);
     padding: 4px 8px; font: var(--mono); font-size: 12px;
     background: var(--surface-2); color: var(--text); outline: none;
   }
-  #cwd-input:focus { border-color: var(--accent); background: var(--card); }
-  #cwd-input::placeholder { color: var(--faint); font-family: var(--sans); }
+  #cwd-input:focus, #at-input:focus { border-color: var(--accent); background: var(--card); }
+  #cwd-input::placeholder, #at-input::placeholder { color: var(--faint); font-family: var(--sans); }
   .cwd-pop button {
     flex: none; border: 1px solid var(--border-strong); background: var(--surface-2);
     color: var(--muted); font-size: 12px; padding: 3px 8px; border-radius: var(--r-sm); cursor: pointer;
   }
   .cwd-pop button:hover { border-color: var(--accent); color: var(--accent-deep); }
-  .at-hint { flex: none; margin-left: auto; font-size: 11px; color: var(--faint); white-space: nowrap; }
+  /* @ 引用按钮：pill 小钮（hover accent 同 .pill 体系），margin-left:auto 顶到行右 */
+  .at-btn { margin-left: auto; white-space: nowrap; }
+  /* @ 文件引用浮层：复用 cwd-pop 定位模式（锚 ctx-row 向上展开）；按钮在行右故 right:0 防裁切。
+     结果行复用 .at-item/.at-empty（与内联 @ 菜单同款） */
+  .at-pop {
+    position: absolute; bottom: calc(100% + 4px); right: 0; z-index: 30;
+    width: min(360px, 100%);
+    background: var(--card); border: 1px solid var(--border); border-radius: var(--r-md);
+    box-shadow: var(--shadow-card); padding: 6px;
+  }
+  #at-input { width: 100%; }
+  .at-pop-list { margin-top: 6px; max-height: 200px; overflow: auto; }
   /* 段③：快捷键行（键白动作灰） */
   .keys-row { display: flex; align-items: center; gap: 8px; }
   #status {
@@ -416,14 +434,15 @@
   }
   /* 窄面板优先保住状态行与操作钮：快捷键提示让位（裁切→整组隐藏） */
   @media (max-width: 480px) { .keys { display: none; } }
-  /* #handoff 顶栏迁入本行：ghost 小钮 */
-  #handoff {
-    flex: none; border: 1px solid transparent; background: transparent;
-    color: var(--muted); font-size: 11.5px; padding: 3px 9px; border-radius: 7px;
-    cursor: pointer; font-weight: 500; transition: all .15s ease; white-space: nowrap;
-  }
-  #handoff:hover { background: var(--surface-2); color: var(--accent-deep); border-color: var(--border); }
-  #handoff:disabled { opacity: .5; cursor: default; }
+
+  /* 接管模式（P1 takeover，body.takeover）：PanelApp 工作台条 InputBar 接管文本输入——
+     隐藏段①输入框整段（@ 内联菜单随之不触发）与 #send 主钮；「↵发送/⇧↵换行」提示一并隐藏
+     （@ 文件 / esc 停止提示保留）；cwd chip / 权限 pill / stop / #status 等其余控件不动。
+     footer 因此变矮：layoutRunPill 每次按 footer.offsetHeight 现算 bottom，无需特判 */
+  body.takeover .prompt-wrap { display: none; }
+  body.takeover #send { display: none; }
+  body.takeover .keys .send-hint { display: none; }
+  body.takeover .keys .at-kbd-hint { display: none; }  /* takeover：@ 走 ctx-row 的「@ 引用文件」按钮，内联输入提示无对象 */
   /* spinner：10px 边框圆 + 旋转（状态行 / 运行 pill 共用） */
   .spin {
     display: inline-block; width: 10px; height: 10px; margin-right: 6px;
@@ -475,15 +494,17 @@
   .pill:hover { border-color: var(--accent); color: var(--accent-deep); }
   .pill.plan { border-color: var(--accent); color: var(--accent-deep); background: var(--accent-soft); }
 
-  /* ---- Codex session 选择器 + 历史抽屉（fixed 浮层；iframe srcdoc 里 absolute 含块不可靠） ---- */
+  /* ---- Codex session 选择器 + 接续 popover（fixed 浮层；iframe srcdoc 里 absolute 含块不可靠） ---- */
   #handoff-backdrop, #history-overlay { position: fixed; inset: 0; z-index: 40; }
   #handoff-picker, #history-picker {
-    position: fixed; z-index: 50; width: min(420px, 92vw); max-height: 320px; overflow-y: auto;
+    position: fixed; z-index: 50; width: min(420px, 92vw); overflow-y: auto;
     background: var(--card); border: 1px solid var(--border); border-radius: var(--r-md);
     box-shadow: var(--shadow-pop); padding: 6px;
   }
-  /* 历史抽屉静态定位：header（40px）下方靠右（handoff picker 由 JS 贴按钮定位） */
-  #history-picker { top: 46px; right: 12px; }
+  /* 两浮层同款静态定位：header（40px）下方靠右（handoff picker 原贴 #handoff 钮的 JS 定位
+     已随按钮移除退役）；接续 popover 两区内容多，限高放宽 */
+  #handoff-picker { top: 46px; right: 12px; max-height: 320px; }
+  #history-picker { top: 46px; right: 12px; max-height: min(560px, calc(100vh - 60px)); }
   #handoff-picker .pick-item, #history-picker .hrow {
     padding: 8px 10px; border-radius: 8px; cursor: pointer; transition: background .12s ease;
     display: flex; flex-direction: column; gap: 2px;
@@ -501,7 +522,7 @@
   }
   #handoff-picker .pick-close:hover, #history-picker .pick-close:hover { background: var(--surface-2); color: var(--text); border-color: var(--border-strong); }
 
-  /* 历史抽屉专有：hrow 是 <button>（需重置默认样式）；.hc 目录名 / .hs 状态 / .mempty 空态 */
+  /* 接续 popover 专有：hrow 是 <button>（需重置默认样式）；.hc 目录名 / .hs 状态 / .mempty 空态 */
   #history-picker .hrow { border: 0; background: none; width: 100%; text-align: left; font: inherit; color: inherit; }
   #history-picker .hrow .hc { font-size: 11px; color: var(--muted); }
   #history-picker .hrow .hs { font-size: 10.5px; color: var(--muted); font-family: var(--mono-family); }
@@ -510,6 +531,38 @@
   #history-picker .hrow .hs.failed { color: var(--red); }
   #history-picker .hrow .hs.stopped { color: var(--amber-deep); }
   #history-picker .mempty { padding: 18px 12px; text-align: center; color: var(--muted); font-size: 12px; }
+  /* 区标题（区 1「上次会话」/ 区 2「译宝历史」共用） */
+  #history-picker .sec-title { padding: 8px 10px 2px; font-size: 11px; font-weight: 600; color: var(--faint); }
+  /* 区 1 上次会话卡：来源徽标 + 相对时间 + 摘要（+ 消息数 / 交接注明）+ 右下操作钮 */
+  #history-picker .last-card {
+    margin: 3px 4px 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 3px;
+    border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2);
+  }
+  #history-picker .last-card .lc-head { display: flex; align-items: center; gap: 6px; }
+  #history-picker .last-card .lc-badge {
+    flex: none; font-size: 10px; font-weight: 700; line-height: 15px; padding: 0 6px;
+    border-radius: 4px; background: var(--accent-soft); color: var(--accent-deep);
+    border: 1px solid var(--accent-line);
+  }
+  #history-picker .last-card .lc-badge.codex { background: var(--card); color: var(--muted); border-color: var(--border-strong); }
+  #history-picker .last-card .lc-time { font-size: 11px; color: var(--muted); font-family: var(--mono-family); }
+  #history-picker .last-card .lc-sum {
+    font-size: 12.5px; color: var(--text);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  #history-picker .last-card .lc-meta { font-size: 10.5px; color: var(--faint); font-family: var(--mono-family); }
+  #history-picker .last-card .lc-note { font-size: 11px; color: var(--faint); font-style: italic; }
+  #history-picker .last-card .lc-act {
+    align-self: flex-end; margin-top: 3px; border-radius: 7px; padding: 3px 12px;
+    font-size: 11.5px; font-weight: 600; cursor: pointer; transition: all .15s ease;
+    border: 1px solid var(--accent); background: var(--accent); color: #fff;
+  }
+  #history-picker .last-card .lc-act:hover { background: var(--accent-deep); }
+  #history-picker .last-card .lc-act.ghost {
+    background: transparent; color: var(--accent-deep); border-color: var(--border-strong); font-weight: 500;
+  }
+  #history-picker .last-card .lc-act.ghost:hover { background: var(--surface-2h); }
+  #history-picker .last-card .lc-act:disabled { opacity: .5; cursor: default; }
 
   /* ---- 交接卡：session 起点（区别于普通文件改动/工具卡片，整宽 + sky 强调色左边条） ---- */
   .card.handoff {
@@ -582,13 +635,13 @@
 <!-- 桥缺失时可见，提示这是设计预览 -->
 <div id="bridge-warn" class="hidden">设计预览：未检测到译宝桥（window.yibao），起停/流式回显不可用。</div>
 
-<!-- D4 收窄：cwd chip/模式 pill 在 footer 上下文行，handoff 在快捷键行；
-     顶栏只留 标题 + 成本聚合 + 历史/新对话 ghost -->
+<!-- D4 收窄：cwd chip/模式 pill 在 footer 上下文行；
+     顶栏只留 标题 + 成本聚合 + 接续/新对话 ghost -->
 <header>
   <span class="title">编码对话</span>
   <span class="spacer"></span>
   <span id="cost" title="本会话累计 token 与成本（done 事件累加；新对话/恢复历史后清零重计）"></span>
-  <button id="history" type="button" title="历史会话：列出本会话记录，点击恢复后继续在同一上下文聊">历史</button>
+  <button id="history" type="button" title="接续：上次会话（Claude Code 继续 / Codex 交接）+ 译宝历史，恢复后继续在同一上下文聊">接续</button>
   <button id="new-chat" type="button" title="清空当前对话，开新会话（下次发送走 coding.start）" disabled>新对话</button>
 </header>
 
@@ -613,19 +666,20 @@
 </div>
 
 <!-- D1 三段式（对标 opencode 底栏）：① 输入框 → ② 上下文行 → ③ 快捷键行（键白动作灰）。
-     cwd 已收敛为 chip+浮层（真值存 hidden #cwd，全部 JS 读取路径不变），其余 id 不动 -->
+     cwd 已收敛为 chip+浮层（真值存 hidden #cwd，全部 JS 读取路径不变），其余 id 不动。
+     接管模式（body.takeover）：段①整段与 #send 隐藏（工作台条 InputBar 接管输入），其余控件保留 -->
 <footer>
   <!-- 段①：输入框（2px 左竖条 accent）；.prompt-wrap 是 @ 补全菜单的定位锚（向上展开） -->
   <div class="prompt-wrap">
     <textarea id="prompt" placeholder="输入消息，@ 引用文件…" rows="1"></textarea>
     <div id="at-menu" class="at-menu" hidden></div>
   </div>
-  <!-- 段②：上下文行——cwd chip（点击弹浮层改路径）+ 权限模式 pill + @ 提示 -->
+  <!-- 段②：上下文行——cwd chip（点击弹浮层改路径）+ 权限模式 pill + @ 引用按钮（点开搜索浮层） -->
   <div class="ctx-row">
     <input id="cwd" type="hidden">
     <button id="cwd-chip" type="button" class="pill cwd-chip empty" title="项目目录（点击选择）">📁 <span id="cwd-chip-label">选择项目目录</span></button>
     <button id="mode-pill" type="button" class="pill" title="点击切换权限模式">自动改文件</button>
-    <span class="at-hint">@ 引用文件</span>
+    <button id="at-btn" type="button" class="pill at-btn" title="引用项目文件到输入框">@ 引用文件</button>
     <!-- cwd 浮层：手输路径 + 📁 选目录；Enter/确定 提交，Esc/点外部取消 -->
     <div id="cwd-pop" class="cwd-pop" hidden>
       <div class="cwd-pop-row">
@@ -634,24 +688,31 @@
         <button id="cwd-ok" type="button">确定</button>
       </div>
     </div>
+    <!-- @ 文件引用浮层：搜索 input + 结果列表；↑↓ 导航 / Enter 选中 / Esc / 点外部关闭。
+         takeover 态选中经桥 insert-draft 回输父侧 InputBar 草稿，非 takeover 插本框 #prompt -->
+    <div id="at-pop" class="at-pop" hidden>
+      <input id="at-input" type="text" spellcheck="false" placeholder="输入文件名模糊搜索…">
+      <div id="at-list" class="at-pop-list"></div>
+    </div>
   </div>
   <!-- 段③：快捷键行——左 #status 灰小字（不独占一行），中 kbd 提示，右操作钮
-       （#handoff ghost 小钮 / #stop ghost 运行态才有意义 / #send accent 实心主钮） -->
+       （#stop ghost 运行态才有意义 / #send accent 实心主钮；「Codex 接续」钮已并入顶栏「接续」popover） -->
   <div class="keys-row">
     <span id="status"></span>
     <span class="keys">
-      <span><kbd>↵</kbd>发送</span>
-      <span><kbd>⇧↵</kbd>换行</span>
-      <span><kbd>@</kbd>文件</span>
+      <span class="send-hint"><kbd>↵</kbd>发送</span>
+      <span class="send-hint"><kbd>⇧↵</kbd>换行</span>
+      <span class="at-kbd-hint"><kbd>@</kbd>文件</span>
       <span><kbd>esc</kbd>停止</span>
     </span>
-    <button id="handoff" type="button" title="从 Codex 会话接续：读取该项目下的 Codex 会话，生成交接 brief 后用 Claude Code 接续">↩ Codex 接续</button>
-    <button id="stop" class="act ghost" disabled>中断</button>
+    <!-- 中断 默认隐藏：仅运行期由 syncActionRow 现身（sending 禁用/streaming 启用） -->
+    <button id="stop" class="act ghost hidden" disabled>中断</button>
     <button id="send" class="act">发送</button>
   </div>
 </footer>
 
-<!-- 历史抽屉：列会话（coding.list）→ 点击恢复（coding.history 读回 + 接着聊）。结构同款 handoff picker -->
+<!-- 接续 popover（v1 接续模型统一，原历史抽屉改造）：区 1「上次会话」跨源实时检测（CC 卡 attach 导入续 /
+     Codex 卡 handoff 交接）+ 区 2「译宝历史」（coding.list → resumeSession）+ 空态。结构同款 handoff picker -->
 <div id="history-overlay" hidden>
   <div id="history-picker">
     <div id="history-body"></div>
@@ -687,6 +748,60 @@
   var curMode = "acceptEdits"; // acceptEdits=自动改文件；plan=只读规划
   var pendingUserEcho = null;  // send() 后等 user_msg 回流画用户气泡的 1.5s 兜底 timer（事件到达则清，防双份）
   var fallbackUserBubble = null; // 兜底 timer 画出的无锚用户气泡 {el, text}；迟到的 user_msg 文本匹配时原地升级挂 ⏪（防双份）
+  var resuming = false;      // attach 自动恢复进行中（resumeSession 异步；防 init 数据重复触发重入）
+  var pendingResume = null;  // 恢复期间又到的 attach 目标 sid（只留最新一条；当前恢复完成后接续，防丢意图）
+
+  // ============================================================
+  //   接管模式（P1 takeover）：PanelApp 窗口打开本面板时，底部工作台条 InputBar 接管文本输入。
+  //   init 载荷 takeover=true → body.takeover（CSS 隐藏自带输入框/发送钮）；父侧文本经
+  //   yibao.onMessage("takeover-input") 直送 send()（busy 排队，本轮结束自动发）；
+  //   运行状态经 yibao.emitEvent("takeover-state") 上报父侧（无回包）。
+  //   非 takeover surface（大窗插件页/peek/设计预览）不下发 takeover 标志，本段全部不触发。
+  // ============================================================
+  var takeoverMode = false;    // 接管中：init 载荷 takeover 标志置位（undefined 视为 false）
+  var takeoverQueue = [];      // 接管输入队列：busy（sending/streaming）时到的 takeover-input 排队
+
+  // takeover 标志随每条 panel_data 的 init 载荷重提——幂等：态不变不动 DOM；
+  // 退出接管时排队输入一并作废（父侧输入条已交还译宝大脑，滞留队列会在非接管态被意外发出）
+  function setTakeover(on) {
+    on = !!on;
+    if (on === takeoverMode) return;
+    takeoverMode = on;
+    document.body.classList.toggle("takeover", on);
+    if (!on) takeoverQueue.length = 0;
+  }
+
+  // 状态上报（iframe → 父，无回包）：state ∈ sending/streaming/waiting/idle；session = 有无活动会话
+  function reportState(st) {
+    if (!takeoverMode || !hasBridge) return;
+    window.yibao.emitEvent("takeover-state", { state: st, session: !!currentSession });
+  }
+
+  // 队列泄放：busy 或空队列自拒。秒败竞态（终态抢在 invoke 返回前，onSessionEnded 时 sending 仍真）
+  // 与 invoke 失败（onSessionEnded 不走）两个路径由 send()/startHandoffSession 的 .finally 兜底再泄
+  function drainTakeoverQueue() {
+    if (!takeoverQueue.length || sending || streaming) return;
+    $("prompt").value = takeoverQueue.shift();
+    send();   // cwd/prompt 空校验走 send 原有路径（校验拒发时本条已出队，不补发）
+  }
+
+  // 父侧推送（yibao.onMessage）：必须按 msg.type 判别——init/invoke 响应之外的任意 host 消息
+  // 都会落进来（孤儿 invoke 响应理论上也在），非接管词汇静默忽略
+  function onHostMessage(msg) {
+    if (!msg || !msg.type) return;
+    if (msg.type === "takeover-input") {
+      // busy 则排队（Codex Queue 式），本轮结束后自动发；否则填值直送 send()（cwd/prompt 校验不变）
+      if (sending || streaming) {
+        takeoverQueue.push(msg.text == null ? "" : String(msg.text));
+        setStatus("已排队，本轮结束后自动发送");
+        return;
+      }
+      $("prompt").value = msg.text == null ? "" : String(msg.text);
+      send();
+    } else if (msg.type === "takeover-stop") {
+      if (streaming || sending) stop();   // 等价点 iframe 内 stop 钮（stop() 自判 currentSession）
+    }
+  }
 
   // ============================================================
   //   工具函数
@@ -1372,8 +1487,8 @@
     scrollIfAtBottom();
   }
 
-  // ---- 权限审批卡（C1/C2）----
-  // 主按钮动态动词：按工具映射，默认「允许」；裁决记录复用此文案（「✓ 已允许 运行命令」）
+  // ---- 权限审批卡（C1/C2 + P2 只读化）----
+  // 工具动词映射：permission_done 收敛单行复用（「✓ 已允许 运行命令」），默认「允许」
   var PERM_VERBS = {
     Bash: "运行命令",
     Edit: "保存修改", MultiEdit: "保存修改", Write: "保存修改",
@@ -1382,7 +1497,8 @@
   };
   function permVerb(tool) { return PERM_VERBS[tool] || "允许"; }
 
-  // 审批卡：标题（工具名+需要许可）+ 参数摘要 + 灰「拒绝」/绿动词主钮通栏双排；
+  // 审批卡（只读镜像，全模式）：标题（工具名+需要许可）+ 参数摘要 + 去向提示，无按钮——
+  // 裁决统一走 L2 确认体系（PanelApp 顶部确认条 / HomeFeed 收件箱），卡片仅作审批存在的可见记录；
   // 等待中琥珀脉冲边框（.perm-card::before），60s 无裁决后端默认拒绝（逻辑不动）
   function appendPermission(ev) {
     var card = document.createElement("div");
@@ -1393,22 +1509,11 @@
     var inputStr = "";
     try { inputStr = JSON.stringify(ev.input || {}); } catch (e) { inputStr = String(ev.input); }
     if (inputStr.length > 300) inputStr = inputStr.slice(0, 300) + "…";
-    card.innerHTML = "<div class=\"perm-head\">🔐 「" + esc(ev.tool) + "」需要你的许可</div>" +
+    card.innerHTML = "<div class=\"perm-head\">🔐 「" + esc(ev.tool) + "」需要许可</div>" +
       "<pre class=\"perm-input\">" + esc(inputStr) + "</pre>" +
-      "<div class=\"perm-actions\"><button type=\"button\" class=\"perm-no\">拒绝</button>" +
-      "<button type=\"button\" class=\"perm-ok\"></button></div>" +
-      "<div class=\"perm-state\">等待你的裁决 · 60s 无操作将默认拒绝</div>";
-    card.querySelector(".perm-ok").textContent = verb;  // 动态动词经 textContent 注入（非拼接 HTML）
-    card.querySelector(".perm-ok").addEventListener("click", function () { decidePerm(ev.rid, true); });
-    card.querySelector(".perm-no").addEventListener("click", function () { decidePerm(ev.rid, false); });
+      "<div class=\"perm-state\">⏳ 等待审批…在顶部确认条或主屏收件箱处理</div>";
     $("log").appendChild(card);
     scrollIfAtBottom();
-  }
-
-  function decidePerm(rid, allow) {
-    window.yibao.invoke("coding.decide", { rid: rid, allow: allow }).catch(function (e) {
-      setStatus("裁决失败：" + emsg(e), true);
-    });
   }
 
   // 完成状态行（C5）：耗时 + token + 成本明细保留，灰小字一行（#status 本色即是）
@@ -1432,6 +1537,16 @@
   //   关键：append 到 #log / 当前气泡，绝不用 data 替换 #log。
   // ============================================================
   function handleInitData(data) {
+    // attach 接管（B3）：任务卡/会话墙点「接管」→ coding.attach 的 panel 载荷 {session_id, attach:true}。
+    // 只认纯 attach 载荷（无 event 字段）——流式 panel_data 经 PanelApp 合并进同一 data 对象后
+    // attach 残标仍在，无此判别会把后台会话的流误当接管指令抢面板。
+    // 防重入：init 每条 data 都触发本函数；恢复期间同 sid 重复到达由 requestResume 归并，
+    // currentSession 已是目标（恢复完成/重复 panel 事件补拉）直接跳过。
+    if (data && data.attach === true && !data.event) {
+      var attachSid = data.session_id;
+      if (attachSid && attachSid !== currentSession) requestResume(attachSid);
+      return;   // attach 载荷无流式事件，处理完即走
+    }
     if (!data || !data.event) return;
     var sid = data.session_id;
     // 过滤陈旧/异会话流：
@@ -1491,17 +1606,19 @@
         if (currentBubble) finalizeBubble(currentBubble);
         currentBubble = null;
         appendPermission(ev);
+        reportState("waiting");   // takeover：等审批
         break;
       case "permission_done": {
         var card = document.getElementById("perm-" + ev.rid);
         if (card) {
-          // C2 收敛：撤琥珀脉冲、按钮区整段移除（textContent 覆盖），变灰小字单行记录
+          // C2 收敛：撤琥珀脉冲、卡面内容整段覆盖（textContent），变灰小字单行记录
           card.classList.add("perm-done");
           var verb = card.dataset.verb;
           card.textContent = ev.allow
             ? "✓ 已允许" + (verb && verb !== "允许" ? " " + verb : "")
             : "✗ 已拒绝";
         }
+        reportState("streaming");   // takeover：审批已裁决，回到流式
         break;
       }
       case "rewind_ok":
@@ -1515,7 +1632,7 @@
         }
         appendMarker(ev.text || "已中断", true);
         setStatus(ev.text || "已中断"); // 纯文本覆盖秒表行——spinner 一并清掉（绕过按钮的 stopped 也不留残影）
-        onSessionEnded();
+        onSessionEnded("stopped");
         break;
       case "done":
         if (currentBubble) {
@@ -1527,13 +1644,13 @@
         currentBubble = null;
         addUsage(ev.usage);   // C4：会话级成本聚合（顶栏 + pill 累计 token 共用）
         setStatusDone(ev.usage);
-        onSessionEnded();
+        onSessionEnded("done");
         break;
       case "error":
         if (currentBubble) { finalizeBubble(currentBubble); currentBubble = null; }
         appendError(ev.text || "未知错误");
         setStatus("✗ " + (ev.text || "未知错误"), true);  // 清掉秒表 spinner，状态行落到错误终态
-        onSessionEnded();
+        onSessionEnded("error");
         break;
       default:
         // 未知 kind 静默忽略（前向兼容）
@@ -1541,20 +1658,31 @@
     }
   }
 
-  function onSessionEnded() {
+  // reason = 终态来源（stopped/done/error）：takeover 队列据此分流——stopped（用户主动中断）
+  // 清空不自动发；done/error 正常收尾泄放队列自动发下一条
+  // ---- 操作钮可见性梳理（633f257）：中断 仅运行期可见（sending 中可见但禁用，streaming 启用，
+  //      空闲隐藏）。「Codex 接续」入口已收敛进顶栏「接续」popover（区 1 Codex 卡），
+  //      keys-row 不再探测（probeHandoff/handoffCache 退役） ----
+  function syncActionRow() {
+    $("stop").classList.toggle("hidden", !(sending || streaming));
+  }
+
+  function onSessionEnded(reason) {
     if (sending) pendingTurnEnded = true;  // invoke 未返回就收到终态（秒败）：.then 里别再置 streaming
     stopTicker();
     hideRunPill();   // C3：运行 pill 只在 streaming/sending 期间可见
     // 多轮保持：不清 currentSession —— 下次 send 走 coding.send 接续同一 CC 会话；
     // 仅靠「新对话」按钮显式重置。
     streaming = false;
+    syncActionRow();   // 终态：中断隐藏
     $("stop").disabled = true;
     $("send").disabled = false;
     // 有活动会话才允许「新对话」（首次进入 / 已重置后无可重置对象）
     $("new-chat").disabled = !currentSession;
-    // handoff 在流式中被禁用；会话终态后放开（仍受 streaming guard 在 handoff() 里兜底）
-    $("handoff").disabled = false;
-    var histBtn = $("history"); if (histBtn) histBtn.disabled = false;  // 与 handoff 同闸（send 入口禁用过）
+    var histBtn = $("history"); if (histBtn) histBtn.disabled = false;  // 与 send 入口同闸（send 禁用过）
+    reportState("idle");   // takeover：终态上报；若随即泄放队列，紧随的 send() 会重报 sending
+    if (reason === "stopped") takeoverQueue.length = 0;  // 中断即放弃排队意图
+    else drainTakeoverQueue();
   }
 
   // ============================================================
@@ -1586,14 +1714,15 @@
     if (!prompt) { setStatus("请输入任务描述", true); $("prompt").focus(); return; }
 
     sending = true;
+    reportState("sending");   // takeover：进入提交窗口
     pendingTurnEnded = false;   // 新 turn 开窗：终态若抢在 invoke 返回前到达，onSessionEnded 会把它置真
     $("send").disabled = true;
     $("new-chat").disabled = true;
-    $("handoff").disabled = true;  // invoke 飞行窗口内禁开 handoff（防双重 start）
     var histBtn = $("history"); if (histBtn) histBtn.disabled = true;
     setStatus("提交中…");
     showRunPill("提交中…");   // C3：sending 期间 pill 已可见（秒表待 invoke 返回后起跑）
     $("rp-stop").disabled = true;   // 会话 id 未回填前 Stop 是死点击，invoke 受理后 startTicker 解锁
+    syncActionRow();   // 提交窗口：中断现身（禁用态）
 
     // 用户气泡不直接画：等 runner 的 user_msg 事件（带 CC uuid，⏪ 回滚锚点）来画；
     // 事件长时间不到（老 SDK / 启动失败）则 1.5s 后兜底画无 ⏪ 气泡。事件到达会清掉本 timer；
@@ -1627,20 +1756,25 @@
         return;
       }
       streaming = true;
+      reportState("streaming");   // takeover：invoke 已受理，进入流式
       $("stop").disabled = false;
+      syncActionRow();   // 流式开始：中断启用
       startTicker("会话 " + sid + (isStart ? " 启动" : " 接续"));
     }).catch(function (e) {
+      reportState("idle");   // takeover：invoke 未受理即失败，状态回落
       appendError(verb + "失败：" + emsg(e));
       setStatus(verb + "失败：" + emsg(e), true);
       hideRunPill();  // invoke 未受理：没到 streaming，onSessionEnded 不会走，pill 在此收
-      $("handoff").disabled = false;  // 入口禁用过，失败路径手动复位（onSessionEnded 不会走）
+      syncActionRow();   // 秒败：sending 仍真故中断暂留禁用态，紧随的 finally 收敛隐藏
       var hb = $("history"); if (hb) hb.disabled = false;
     }).finally(function () {
       sending = false;
+      syncActionRow();   // 提交窗关闭：成功路径中断保持可见启用，秒败路径收回隐藏
       // 发送键解锁挪到 onSessionEnded（done/stopped/error）——
       // invoke 返回只代表「已受理」，流式期间禁止再发（防同会话双 runner）
       if (!streaming) $("send").disabled = false;
       $("new-chat").disabled = !currentSession || streaming;
+      drainTakeoverQueue();  // takeover 兜底：invoke 失败/秒败竞态时 onSessionEnded 泄放不了队列（sending 刚解锁）；正常流式中 guard 自拒
     });
   }
 
@@ -1668,6 +1802,7 @@
     // handleInitData 会据此丢弃任何迟到的旧块，避免污染新对话。
     if (currentSession) discardedSessions[currentSession] = true;
     currentSession = null;
+    syncActionRow();   // 回到无会话空闲态：中断收敛隐藏
     currentBubble = null;
     lastToolCard = null;   // #log 清空后旧卡已 detach，防 tool_result 落进不可见节点
     if (pendingUserEcho) { clearTimeout(pendingUserEcho); pendingUserEcho = null; }  // 防 1.5s 兜底 timer 把旧 prompt 画成幻影气泡落进新会话
@@ -1683,11 +1818,14 @@
     $("send").disabled = false;
     $("new-chat").disabled = true;
     setStatus("新对话");
+    takeoverQueue.length = 0;   // takeover：排队输入随旧会话一并作废
+    reportState("idle");
   }
 
   // ============================================================
   //   从 Codex 接续：handoff_list → picker / 直进 → handoff_brief →
   //   可编辑交接卡 → 封存 + coding.start（source=codex:<sid>）
+  //   入口：顶栏「接续」popover 区 1 的 Codex 卡 [交接给 CC]（原 keys-row 接续钮已并入）。
   //   关键：交接卡是 #log 里的 chat-flow 元素（非 modal），封存后作为可见的
   //   session 起点；brief 作为 coding.start 的 prompt，source 标记来源。
   // ============================================================
@@ -1754,16 +1892,8 @@
 
     document.body.appendChild(backdrop);
     document.body.appendChild(picker);
-
-    // 定位：右对齐按钮右边（防溢出左移）。D1 后 #handoff 在 footer 快捷键行（贴视口底），
-    // 下方空间不足时翻到按钮上方展开，防 picker 跌出视口。
-    var rect = $("handoff").getBoundingClientRect();
-    var ph = picker.offsetHeight;
-    var below = window.innerHeight - rect.bottom;
-    picker.style.top = (below >= ph + 12 ? rect.bottom + 6 : Math.max(8, rect.top - ph - 6)) + "px";
-    var rightOffset = window.innerWidth - rect.right;
-    var maxRight = window.innerWidth - 14 - picker.offsetWidth;
-    picker.style.right = Math.max(14, Math.min(rightOffset, maxRight)) + "px";
+    // 定位：CSS 静态（#handoff-picker = header 下方靠右，同接续 popover）——
+    // 入口已并入「接续」popover，原贴 #handoff 钮的 JS 定位随按钮移除退役
   }
 
   function closeHandoffPicker() {
@@ -1781,6 +1911,28 @@
     function pad(n) { return n < 10 ? "0" + n : "" + n; }
     return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) +
            " " + pad(d.getHours()) + ":" + pad(d.getMinutes());
+  }
+
+  // 时间戳归一（接续 popover 区 1 卡用）：epoch 秒/毫秒数字、ISO 字符串兼容 → Date（非法返回 null）
+  function toDate(ts) {
+    if (ts == null) return null;
+    var d = (typeof ts === "number") ? new Date(ts < 1e12 ? ts * 1000 : ts) : new Date(ts);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  // 相对时间：<1min「刚刚」/ <1h「N 分钟前」/ <1d「N 小时前」/ <7d「N 天前」/ 更早给绝对日期
+  function relTime(ts) {
+    var d = toDate(ts);
+    if (!d) return "";
+    var m = Math.floor(Math.max(0, Date.now() - d.getTime()) / 60000);
+    if (m < 1) return "刚刚";
+    if (m < 60) return m + " 分钟前";
+    var h = Math.floor(m / 60);
+    if (h < 24) return h + " 小时前";
+    var days = Math.floor(h / 24);
+    if (days < 7) return days + " 天前";
+    function pad(n) { return n < 10 ? "0" + n : "" + n; }
+    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
   }
 
   function shortSid(sid) {
@@ -1903,12 +2055,14 @@
     if (!cwd) { setStatus("内部错误：cwd 丢失", true); return; }
 
     sending = true;
+    reportState("sending");   // takeover：handoff 也是新 turn 入口
     pendingTurnEnded = false;   // 同 send：终态抢跑时 onSessionEnded 置真，.then 跳过秒表
     streaming = true;
+    reportState("streaming");   // takeover：handoff 同步置流式（invoke 受理前即上报）
     $("send").disabled = true;
     $("new-chat").disabled = true;
-    $("handoff").disabled = true;
     $("stop").disabled = false;
+    syncActionRow();   // handoff 启动：中断现身启用
     setStatus("Codex 接续启动中…");
     showRunPill("Codex 接续启动中…");
     $("rp-stop").disabled = true;   // 同 send：invoke 受理后 startTicker 解锁
@@ -1924,6 +2078,7 @@
       var csid = r && r.session_id;
       if (!csid) throw new Error("未返回 session_id");
       currentSession = csid;
+      syncActionRow();   // 会话已回填：中断按运行态保持可见
       if (pendingTurnEnded) {
         // 终态先于 invoke 返回：onSessionEnded 已收场（streaming 已 false、UI 已解锁），别起跑秒表
         pendingTurnEnded = false;
@@ -1931,53 +2086,48 @@
       }
       startTicker("Codex 接续会话 " + csid);   // 与 send 对齐：运行态走 pill 秒表（C3）
     }).catch(function (e) {
+      reportState("idle");   // takeover：接续启动失败，状态回落
       appendError("Codex 接续启动失败：" + emsg(e));
       setStatus("Codex 接续启动失败：" + emsg(e), true);
       hideRunPill();
       streaming = false;
+      syncActionRow();   // 接续启动失败：中断收回隐藏
       $("stop").disabled = true;
       $("send").disabled = false;
-      $("handoff").disabled = false;
     }).finally(function () {
       sending = false;
       $("new-chat").disabled = !currentSession || streaming;
-      $("handoff").disabled = streaming;
+      drainTakeoverQueue();  // takeover 兜底：同 send().finally（失败/秒败路径泄放队列）
     });
   }
 
   // ============================================================
-  //   历史抽屉：列会话（coding.list）→ 点击恢复（coding.history 读回 + 接着聊）
-  //   恢复 = 清 log 渲染历史消息 + 分隔线；下一条发送走 coding.send
+  //   接续 popover（v1 接续模型统一，原历史抽屉改造；顶栏「历史」→「接续」两钮 2→1）：
+  //   区 1「上次会话」= 打开时 coding.last_sessions{cwd} 跨源实时检测（无缓存，每次新查）——
+  //     CC 卡 [继续] → coding.attach_cc 导入（幂等）→ resumeSession（原生 resume，上下文完整）；
+  //     Codex 卡 [交接给 CC] → 现有 handoff() 流程（交接=生成摘要交给 Claude Code，非完整搬移）；
+  //   区 2「译宝历史」= coding.list → resumeSession（原历史抽屉逻辑不变）；
+  //   两区皆空 → 新项目空态。恢复 = 清 log 渲染历史消息 + 分隔线；下一条发送走 coding.send
   //   （currentSession 已指回旧 sid）→ 同一 CC 上下文续聊。
   // ============================================================
   function openHistory() {
     if (!hasBridge) return;
-    if (streaming) { setStatus("当前会话运行中，请先中断再恢复历史会话", true); return; }
+    if (streaming) { setStatus("当前会话运行中，请先中断再恢复/接续会话", true); return; }
+    var cwd = $("cwd").value.trim();
+    if (!cwd) { setStatus("请先选择项目目录", true); openCwdPop(); return; }
     closeHandoffPicker();  // 两个浮层不共存
     var ov = $("history-overlay");
     ov.hidden = false;
-    var body = $("history-body");
-    body.innerHTML = "<div class=\"mempty\">加载中…</div>";
-    window.yibao.invoke("coding.list", {}).then(function (r) {
-      var rows = (r && r.sessions) || [];
-      if (!rows.length) { body.innerHTML = "<div class=\"mempty\">还没有会话</div>"; return; }
-      body.innerHTML = "";
-      rows.forEach(function (row) {
-        var b = document.createElement("button");
-        b.className = "hrow";
-        var when = row.created_at ? new Date(row.created_at * 1000) : null;
-        var time = when ? (when.getMonth() + 1) + "/" + when.getDate() + " " + String(when.getHours()).padStart(2, "0") + ":" + String(when.getMinutes()).padStart(2, "0") : "";
-        var cwdShort = (row.cwd || "").split("/").filter(Boolean).pop() || row.cwd || "";
-        var first = String(row.prompt || "").split("\n")[0].slice(0, 42);
-        b.innerHTML = "<span class=\"ht\">" + esc(time) + "</span>" +
-          "<span class=\"hc\">" + esc(cwdShort) + "</span>" +
-          "<span class=\"hp\">" + esc(first) + "</span>" +
-          "<span class=\"hs " + esc(row.status || "") + "\">" + esc(row.status || "") + "</span>";
-        b.addEventListener("click", function () { resumeSession(row.id); });
-        body.appendChild(b);
-      });
-    }).catch(function (e) {
-      body.innerHTML = "<div class=\"mempty\">加载失败：" + esc(emsg(e)) + "</div>";
+    $("history-body").innerHTML = "<div class=\"mempty\">加载中…</div>";
+    // 两路并发：区 1 跨源检测失败（方法缺失/扫描异常）静默降级为无区 1，不拖垮区 2
+    var lastP = window.yibao.invoke("coding.last_sessions", { cwd: cwd })
+      .catch(function () { return null; });
+    var listP = window.yibao.invoke("coding.list", {}).then(function (r) {
+      return { rows: (r && r.sessions) || [] };
+    }).catch(function (e) { return { rows: [], err: e }; });
+    Promise.all([lastP, listP]).then(function (rs) {
+      if (ov.hidden) return;   // 响应到达时 popover 已关，丢弃
+      renderResumePopover(rs[0], rs[1]);
     });
   }
 
@@ -1985,11 +2135,148 @@
     $("history-overlay").hidden = true;
   }
 
+  // popover 主体渲染：last = last_sessions 结果（{cc, codex} 或 null）；listR = {rows, err}
+  function renderResumePopover(last, listR) {
+    var body = $("history-body");
+    var cwd = $("cwd").value.trim();
+    var cc = last && last.cc;
+    var codex = last && last.codex;
+    var rows = listR.rows || [];
+    body.innerHTML = "";
+
+    // 区 1「上次会话」：跨源每源最新一条，按各自存在性显示
+    if (cc || codex) {
+      body.appendChild(secTitle("上次会话"));
+      if (cc) {
+        body.appendChild(lastCard({
+          badge: "CC",
+          ts: cc.ts,
+          summary: cc.summary,
+          meta: cc.message_count != null ? (Number(cc.message_count) || 0) + " 条消息" : "",
+          actText: "继续",
+          onAct: function (btn) { attachCc(btn, cc.cc_session_id, cwd); }
+        }));
+      }
+      if (codex) {
+        body.appendChild(lastCard({
+          badge: "Codex", badgeCls: "codex",
+          ts: codex.ts,
+          summary: codex.summary,
+          note: "交接 = 生成摘要交给 Claude Code，非完整搬移",
+          actText: "交接给 CC", ghost: true,
+          onAct: function () { closeHistory(); handoff(); }
+        }));
+      }
+    }
+
+    // 区 2「译宝历史」：coding.list → resumeSession（原历史抽屉渲染逻辑）
+    if (rows.length) {
+      body.appendChild(secTitle("译宝历史"));
+      rows.forEach(function (row) { body.appendChild(historyRow(row)); });
+    } else if (listR.err && (cc || codex)) {
+      var listErr = document.createElement("div");
+      listErr.className = "mempty";
+      listErr.textContent = "译宝历史加载失败：" + emsg(listR.err);
+      body.appendChild(listErr);
+    }
+
+    // 空态（两区皆空）：新项目
+    if (!cc && !codex && !rows.length) {
+      var empty = document.createElement("div");
+      empty.className = "mempty";
+      empty.textContent = listR.err
+        ? "加载失败：" + emsg(listR.err)
+        : "新项目——直接输入任务开始（Claude Code）";
+      body.appendChild(empty);
+    }
+  }
+
+  function secTitle(text) {
+    var d = document.createElement("div");
+    d.className = "sec-title";
+    d.textContent = text;
+    return d;
+  }
+
+  // 区 1 上次会话卡：来源徽标 + 相对时间 + 摘要（+ 消息数 / 交接注明）+ 右下操作钮
+  function lastCard(o) {
+    var card = document.createElement("div");
+    card.className = "last-card";
+    var head = document.createElement("div");
+    head.className = "lc-head";
+    var badge = document.createElement("span");
+    badge.className = "lc-badge" + (o.badgeCls ? " " + o.badgeCls : "");
+    badge.textContent = o.badge;
+    var time = document.createElement("span");
+    time.className = "lc-time";
+    time.textContent = relTime(o.ts) || "(未知时间)";
+    head.appendChild(badge);
+    head.appendChild(time);
+    card.appendChild(head);
+    var sum = document.createElement("div");
+    sum.className = "lc-sum";
+    sum.textContent = o.summary || "(无摘要)";
+    card.appendChild(sum);
+    if (o.meta) {
+      var meta = document.createElement("div");
+      meta.className = "lc-meta";
+      meta.textContent = o.meta;
+      card.appendChild(meta);
+    }
+    if (o.note) {
+      var note = document.createElement("div");
+      note.className = "lc-note";
+      note.textContent = o.note;
+      card.appendChild(note);
+    }
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "lc-act" + (o.ghost ? " ghost" : "");
+    btn.textContent = o.actText;
+    btn.addEventListener("click", function () { o.onAct(btn); });
+    card.appendChild(btn);
+    return card;
+  }
+
+  // CC 卡 [继续]：attach_cc 把 transcript 导入会话库（幂等）→ 拿 session_id 走现有 resumeSession
+  function attachCc(btn, ccSid, cwd) {
+    if (!ccSid) return;
+    btn.disabled = true;
+    setStatus("导入 Claude Code 会话…");
+    window.yibao.invoke("coding.attach_cc", { cc_session_id: ccSid, cwd: cwd }).then(function (r) {
+      var sid = r && r.session_id;
+      if (!sid) throw new Error("attach_cc 未返回 session_id");
+      return resumeSession(sid);   // 恒 resolve（内部 catch 亮状态行）；popover 由其关闭
+    }).catch(function (e) {
+      btn.disabled = false;
+      setStatus("导入 Claude Code 会话失败：" + emsg(e), true);
+    });
+  }
+
+  // 区 2 历史行（原历史抽屉渲染逻辑，未动）
+  function historyRow(row) {
+    var b = document.createElement("button");
+    b.className = "hrow";
+    var when = row.created_at ? new Date(row.created_at * 1000) : null;
+    var time = when ? (when.getMonth() + 1) + "/" + when.getDate() + " " + String(when.getHours()).padStart(2, "0") + ":" + String(when.getMinutes()).padStart(2, "0") : "";
+    var cwdShort = (row.cwd || "").split("/").filter(Boolean).pop() || row.cwd || "";
+    var first = String(row.prompt || "").split("\n")[0].slice(0, 42);
+    b.innerHTML = "<span class=\"ht\">" + esc(time) + "</span>" +
+      "<span class=\"hc\">" + esc(cwdShort) + "</span>" +
+      "<span class=\"hp\">" + esc(first) + "</span>" +
+      "<span class=\"hs " + esc(row.status || "") + "\">" + esc(row.status || "") + "</span>";
+    b.addEventListener("click", function () { resumeSession(row.id); });
+    return b;
+  }
+
   function resumeSession(sid) {
-    window.yibao.invoke("coding.history", { id: sid }).then(function (r) {
+    // 返回 promise 链：attach 自动恢复路径（handleInitData）靠它挂 .finally 清 resuming 防重入标志；
+    // 链尾自带 .catch（失败只亮状态行），恒 resolve，调用方无需再兜。
+    return window.yibao.invoke("coding.history", { id: sid }).then(function (r) {
       if (currentSession) discardedSessions[currentSession] = true;
       currentSession = sid;
       delete discardedSessions[sid]; // 恢复的目标会话必须出黑名单——否则它自己的流全被「陈旧会话」过滤器吞掉，面板锁死
+      syncActionRow();   // 接管/恢复会话：中断按运行态判定
       currentBubble = null;
       lastToolCard = null;   // #log 清空后旧卡已 detach，防 tool_result 落进不可见节点（同 newChat）
       if (pendingUserEcho) { clearTimeout(pendingUserEcho); pendingUserEcho = null; }  // 同 newChat：防兜底 timer 画幻影气泡
@@ -2010,10 +2297,24 @@
       $("new-chat").disabled = false;
       $("send").disabled = false;
       setStatus("已恢复会话 " + sid + "，发消息将在同一上下文继续");
+      reportState("idle");   // takeover：恢复后补报，父侧 session 标志随 !!currentSession 刷新（非 takeover 自拒）
       $("prompt").focus();
     }).catch(function (e) {
       setStatus("恢复失败：" + emsg(e), true);
       $("history-overlay").hidden = true;
+    });
+  }
+
+  // attach 自动恢复入口（handleInitData 专用）：防重入 + 意图不丢。
+  // 恢复进行中又收到 attach（连点两张任务卡）→ 只留最新目标 pendingResume，当前恢复完成接续；
+  // 同 sid 重复到达归并进同一次（完成后 next === currentSession 自然丢弃）。
+  function requestResume(sid) {
+    if (resuming) { pendingResume = sid; return; }
+    resuming = true;
+    resumeSession(sid).finally(function () {
+      resuming = false;
+      var next = pendingResume; pendingResume = null;
+      if (next && next !== currentSession) requestResume(next);
     });
   }
 
@@ -2051,7 +2352,6 @@
   $("stop").addEventListener("click", stop);
   $("rp-stop").addEventListener("click", stop);   // 运行 pill 的红 Stop 复用同一中断逻辑（C3）
   $("new-chat").addEventListener("click", newChat);
-  $("handoff").addEventListener("click", handoff);
   $("cwd-chip").addEventListener("click", function (e) {
     e.stopPropagation();   // 防冒泡到 document 的「点外部关闭」
     if ($("cwd-pop").hidden) openCwdPop(); else closeCwdPop(false);
@@ -2063,7 +2363,10 @@
     else if (e.key === "Escape") { e.stopPropagation(); closeCwdPop(false); }  // 防误触全局 esc 停止
   });
   $("cwd-pop").addEventListener("click", function (e) { e.stopPropagation(); });
-  document.addEventListener("click", function () { if (!$("cwd-pop").hidden) closeCwdPop(false); });
+  document.addEventListener("click", function () {
+    if (!$("cwd-pop").hidden) closeCwdPop(false);
+    if (!$("at-pop").hidden) closeAtPop();
+  });
   $("history").addEventListener("click", openHistory);
   $("history-close").addEventListener("click", closeHistory);
   // turn 级错误条「详情」：展开/收起错误全文（摘要行常驻单行）
@@ -2148,6 +2451,90 @@
     }
   }, true);
 
+  // ---- @ 引用按钮 + 搜索浮层（P1 takeover T5）：两种模式通用。
+  //      takeover：选中经 yibao.emitEvent("insert-draft") 回输父侧 InputBar 草稿（InputBar.insertText 追加+持久化）；
+  //      非 takeover：直接写 #prompt 光标处并聚焦（atInsert 耦合 atState 起锚点服务于内联菜单，此处不复用）。
+  //      与上方内联 @ 菜单（atState 段）互不影响：内联只在 #prompt 可输入时触发（takeover 下其 display:none 天然不触发）----
+  var atPop = { items: [], idx: 0, seq: 0, timer: 0 };  // seq 防乱序：慢响应到达时已过期则丢弃
+  function openAtPop() {
+    var cwd = $("cwd").value.trim();
+    if (!cwd) { setStatus("请先选择项目目录", true); openCwdPop(); return; }
+    if (!$("cwd-pop").hidden) closeCwdPop(false);   // 防两浮层堆叠
+    $("at-pop").hidden = false;
+    $("at-input").value = "";
+    $("at-input").focus();
+    atPopQuery();   // 空 q 列出全部文件（上限见 sidecar），开浮层即有可选项
+  }
+  function closeAtPop() {
+    $("at-pop").hidden = true;
+    if (atPop.timer) { clearTimeout(atPop.timer); atPop.timer = 0; }
+    atPop.seq++;    // 作废在途响应
+  }
+  function atPopQuery() {
+    if (!hasBridge || $("at-pop").hidden) return;
+    var cwd = $("cwd").value.trim();
+    if (!cwd) return;
+    var seq = ++atPop.seq;
+    window.yibao.invoke("coding.files", { cwd: cwd, q: $("at-input").value.trim() }).then(function (r) {
+      if (seq !== atPop.seq || $("at-pop").hidden) return;   // 过期响应/浮层已关，丢弃
+      atPop.items = (r && r.files) || [];
+      atPop.idx = 0;
+      var list = $("at-list");
+      list.innerHTML = "";
+      if (!atPop.items.length) { list.innerHTML = "<div class=\"at-empty\">无匹配</div>"; return; }
+      atPop.items.slice(0, 12).forEach(function (f, i) {
+        var d = document.createElement("div");
+        d.className = "at-item" + (i === 0 ? " sel" : "");
+        d.textContent = f.rel;
+        d.addEventListener("mousedown", function (e) { e.preventDefault(); atPopPick(f.rel); });
+        list.appendChild(d);
+      });
+    }).catch(function () { /* 查询失败保留旧列表 */ });
+  }
+  function atPopPick(rel) {
+    closeAtPop();
+    if (takeoverMode) {
+      window.yibao.emitEvent("insert-draft", { text: "@" + rel + " " });
+      setStatus("已插入输入条草稿：@" + rel);
+    } else {
+      var ta = $("prompt");
+      var pos = ta.selectionStart == null ? ta.value.length : ta.selectionStart;
+      var end = ta.selectionEnd == null ? pos : ta.selectionEnd;
+      ta.value = ta.value.slice(0, pos) + "@" + rel + " " + ta.value.slice(end);
+      ta.focus();
+      var np = pos + rel.length + 2;   // 光标挪到插入文本之后
+      ta.setSelectionRange(np, np);
+    }
+  }
+
+  $("at-btn").addEventListener("click", function (e) {
+    e.stopPropagation();   // 防冒泡到 document 的「点外部关闭」
+    if (!hasBridge) { setStatus("未连译宝桥（设计预览模式）", true); return; }
+    if ($("at-pop").hidden) openAtPop(); else closeAtPop();
+  });
+  $("at-pop").addEventListener("click", function (e) { e.stopPropagation(); });
+  $("at-input").addEventListener("input", function () {
+    if (atPop.timer) clearTimeout(atPop.timer);
+    atPop.timer = setTimeout(atPopQuery, 200);   // 防抖，与内联 at 的逐键查询区分（浮层查询量更大）
+  });
+  $("at-input").addEventListener("compositionend", function () { lastCompEnd = Date.now(); });
+  $("at-input").addEventListener("keydown", function (e) {
+    if (e.key === "Escape") { e.stopPropagation(); closeAtPop(); }  // 防误触全局 esc 停止
+    else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      var items = $("at-list").querySelectorAll(".at-item");
+      if (!items.length) return;
+      items[atPop.idx].classList.remove("sel");
+      atPop.idx = (atPop.idx + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+      items[atPop.idx].classList.add("sel");
+    } else if (e.key === "Enter") {
+      // IME 组字选词的 Enter 不选中（同发送/内联 @ 的 isComposing + lastCompEnd 50ms 双重守卫）
+      if (e.isComposing || Date.now() - lastCompEnd < 50) return;
+      e.preventDefault();
+      if (atPop.items.length && atPop.idx < atPop.items.length) atPopPick(atPop.items[atPop.idx].rel);
+    }
+  });
+
   // D1 快捷键与提示行一致：↵ 发送 / ⇧↵ 换行（⌘/Ctrl+↵ 保留为发送别名）。
   // IME 组字（中文输入）中的 Enter 只是上屏，绝不触发发送（isComposing + lastCompEnd 双重守卫见上）。
   $("prompt").addEventListener("keydown", function (e) {
@@ -2157,9 +2544,13 @@
     send();
   });
   // esc 停止：运行/提交中且有活动会话时 = 点 Stop（复用同一中断逻辑）。
+  // 浮层优先：接续 popover / handoff picker 打开时 Esc 先关浮层，不触发停止；
   // @ 菜单打开时 prompt 的 capture 处理器已 stopPropagation，这里不会误触发。
   document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape" && currentSession && (streaming || sending)) stop();
+    if (e.key !== "Escape") return;
+    if (!$("history-overlay").hidden) { closeHistory(); return; }
+    if (document.getElementById("handoff-picker")) { closeHandoffPicker(); return; }
+    if (currentSession && (streaming || sending)) stop();
   });
 
   // ============================================================
@@ -2176,10 +2567,19 @@
   }
 
   // ============================================================
-  //   注册 onInit（每条 panel_data 触发一次）
+  //   注册 onInit（每条 panel_data 触发一次）+ onMessage（父侧接管推送）
   // ============================================================
   if (hasBridge) {
-    window.yibao.onInit(handleInitData);
+    // init 回调第二参是完整载荷：takeover 标志随每条 panel_data 重提（旧桥只传 data →
+    // undefined 视为 false；setTakeover 幂等，态不变不动 DOM）
+    window.yibao.onInit(function (data, msg) {
+      setTakeover(msg && msg.takeover);
+      handleInitData(data);
+    });
+    // 父→iframe 任意消息（takeover-input/takeover-stop）：按 msg.type 判别，非接管词汇忽略。
+    // 旧桥无 onMessage 时跳过（也不会有父侧推送）
+    if (window.yibao.onMessage) window.yibao.onMessage(onHostMessage);
+    syncActionRow();   // 初始：中断默认 hidden，运行态变化后现身（无桥预览保持隐藏）
     prefillCwd();
   }
 

@@ -3,8 +3,10 @@
 // iframe 内无 Tauri IPC；能力调用全部走 postMessage 桥 → panelAction → sidecar api.toml 白名单裁决。
 // 桥协议：
 //   iframe → 父：{src:"yibao-webview", id, method, params}   请求调方法
+//   iframe → 父：{src:"yibao-webview", event, payload}       事件上报（无 id 无回包，父侧 emit "panel-event"）
 //   父 → iframe：{src:"yibao-host", id, ok, result|error}    回包
-//   父 → iframe：{src:"yibao-host", type:"init", data}       面板事件 data（iframe 加载完成 & data 变更时推）
+//   父 → iframe：{src:"yibao-host", type:"init", data, takeover}  面板事件 data（iframe 加载完成 & data 变更时推）；takeover 标志随 init 下发
+//   父 → iframe：{src:"yibao-host", ...任意消息}              postToIframe（如 {type:"takeover-input", text}，iframe 经 yibao.onMessage 收）
 // 父侧只做命名空间粗筛（method 须以当前面板插件 id 开头）+ event.source 校验；L2 确认条由 PanelApp 闭环。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
@@ -14,11 +16,16 @@ const props = defineProps<{
   panel: string; // 面板引用（plugin_id:name），推导可调方法的命名空间前缀
   html: string; // 插件 webview HTML（桥 JS 由本组件注入）
   data: Record<string, unknown>; // panel 事件注入的数据（init 推给 iframe）
+  takeover?: boolean; // 接管标志：随 init 载荷下发给 iframe（默认 false，不下传则 iframe 保留自带输入框）
+}>();
+
+const emit = defineEmits<{
+  (e: "panel-event", name: string, payload: any): void; // iframe 经 yibao.emitEvent 上报的事件
 }>();
 
 const iframeEl = ref<HTMLIFrameElement | null>(null);
 
-// 注入 iframe 的桥 JS：提供 window.yibao.invoke()/onInit()。必须出现在插件自有脚本之前，
+// 注入 iframe 的桥 JS：提供 window.yibao.invoke()/onInit()/emitEvent()/onMessage()。必须出现在插件自有脚本之前，
 // 否则插件脚本执行时 window.yibao 尚未定义——故注入到 <head> 之后（无 <head> 则放最前）。
 // 注：本字符串里不能出现字面 "</scr" + "ipt>"（会被 Vue SFC 解析器当成脚本块结束）。
 const BRIDGE_JS = `
@@ -26,6 +33,7 @@ const BRIDGE_JS = `
   var seq = 0;
   var pending = new Map();
   var initCbs = [];
+  var msgCbs = [];
   window.yibao = {
     invoke: function (method, params) {
       return new Promise(function (resolve, reject) {
@@ -34,20 +42,29 @@ const BRIDGE_JS = `
         parent.postMessage({ src: "yibao-webview", id: id, method: method, params: params || {} }, "*");
       });
     },
-    onInit: function (cb) { initCbs.push(cb); }
+    onInit: function (cb) { initCbs.push(cb); },
+    // 事件上报（iframe → 父，无 id 无回包）：父侧 emit("panel-event", name, payload)
+    emitEvent: function (name, payload) {
+      parent.postMessage({ src: "yibao-webview", event: name, payload: payload }, "*");
+    },
+    // 收 host 任意消息（init 与 invoke 响应之外的，如 {type:"takeover-input", text}）
+    onMessage: function (cb) { msgCbs.push(cb); }
   };
   window.addEventListener("message", function (ev) {
     var d = ev.data;
     if (!d || d.src !== "yibao-host") return;
     if (d.type === "init") {
-      initCbs.forEach(function (cb) { try { cb(d.data); } catch (e) { console.error(e); } });
+      initCbs.forEach(function (cb) { try { cb(d.data, d); } catch (e) { console.error(e); } });
       return;
     }
     var p = pending.get(d.id);
-    if (!p) return;
-    pending.delete(d.id);
-    if (d.ok) p.resolve(d.result);
-    else p.reject(new Error(d.error || "调用失败"));
+    if (p) {
+      pending.delete(d.id);
+      if (d.ok) p.resolve(d.result);
+      else p.reject(new Error(d.error || "调用失败"));
+      return;
+    }
+    msgCbs.forEach(function (cb) { try { cb(d); } catch (e) { console.error(e); } });
   });
 })();
 `;
@@ -99,7 +116,12 @@ function settle(bid: number, result?: unknown, error?: Error) {
 function onMessage(ev: MessageEvent) {
   const iframe = iframeEl.value;
   if (!iframe || ev.source !== iframe.contentWindow) return; // 只收本 iframe 的消息
-  const d = ev.data as { src?: string; id?: unknown; method?: unknown; params?: unknown };
+  const d = ev.data as { src?: string; id?: unknown; event?: unknown; payload?: unknown; method?: unknown; params?: unknown };
+  // 事件分流（无 id 无回包）：yibao.emitEvent 上报，转成组件 panel-event 抛给父组件
+  if (d && d.src === "yibao-webview" && typeof d.event === "string") {
+    emit("panel-event", d.event, d.payload);
+    return;
+  }
   if (!d || d.src !== "yibao-webview" || typeof d.id !== "number") return;
   const bid = d.id;
   const method = typeof d.method === "string" ? d.method : "";
@@ -151,11 +173,18 @@ function onEvent(e: BrainEvent) {
   }
 }
 
-/** 把面板事件 data 推给 iframe（加载完成时 + data 变更时；同面板重发不重建 iframe）。 */
+/** 把面板事件 data 推给 iframe（加载完成时 + data 变更时；同面板重发不重建 iframe）。takeover 标志随 init 下发。 */
 function postInit() {
-  replyToIframe({ type: "init", data: props.data });
+  replyToIframe({ type: "init", data: props.data, takeover: props.takeover ?? false });
 }
 watch(() => props.data, postInit);
+
+/** 父 → iframe 任意消息（如 {type:"takeover-input", text}）：iframe 经 yibao.onMessage 收。去 Proxy 范式同 replyToIframe。 */
+function postToIframe(msg: Record<string, unknown>) {
+  const plain = JSON.parse(JSON.stringify(msg)) as Record<string, unknown>;
+  iframeEl.value?.contentWindow?.postMessage({ src: "yibao-host", ...plain }, "*");
+}
+defineExpose({ postToIframe });
 
 let unlisten: (() => void) | null = null;
 onMounted(async () => {
