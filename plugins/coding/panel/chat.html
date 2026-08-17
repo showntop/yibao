@@ -11,8 +11,9 @@
      隐藏自带输入框/发送钮（保留其余全部控件），父侧 InputBar 文本经 onMessage("takeover-input")
      直送 send()（busy 排队、本轮结束自动发；中断/新对话清空队列），运行状态经
      emitEvent("takeover-state") 上报父侧（驱动 avatar + 译宝大脑上下文）；
-     「@ 引用文件」按钮浮层选中后经 emitEvent("insert-draft") 回输父侧 InputBar 草稿
-     （非 takeover 模式插本框 #prompt）。
+     父侧 InputBar 的 @ 文件 chips 经 takeover-input 的 refs 数组回填 atRefs，随 send() 组装进 prompt；
+     面板自带输入框（非 takeover）打字 @ 弹内联搜索，选中成 chip 进 #at-refs 行
+     （旧「@ 引用文件」按钮浮层已退役——打字 @ 在两侧输入框全覆盖）。
 
      文件改动 diff：内建行级 LCS 着色，卡片默认展开（共享 webview 注入的 CSP
      default-src 'none' 屏蔽一切外部脚本，故不依赖任何 CDN 资源）。
@@ -419,30 +420,18 @@
     box-shadow: var(--shadow-card); padding: 6px;
   }
   .cwd-pop-row { display: flex; align-items: center; gap: 6px; }
-  #cwd-input, #at-input {
+  #cwd-input {
     flex: 1 1 auto; min-width: 0; border: 1px solid var(--border); border-radius: var(--r-sm);
     padding: 4px 8px; font: var(--mono); font-size: 12px;
     background: var(--surface-2); color: var(--text); outline: none;
   }
-  #cwd-input:focus, #at-input:focus { border-color: var(--accent); background: var(--card); }
-  #cwd-input::placeholder, #at-input::placeholder { color: var(--faint); font-family: var(--sans); }
+  #cwd-input:focus { border-color: var(--accent); background: var(--card); }
+  #cwd-input::placeholder { color: var(--faint); font-family: var(--sans); }
   .cwd-pop button {
     flex: none; border: 1px solid var(--border-strong); background: var(--surface-2);
     color: var(--muted); font-size: 12px; padding: 3px 8px; border-radius: var(--r-sm); cursor: pointer;
   }
   .cwd-pop button:hover { border-color: var(--accent); color: var(--accent-deep); }
-  /* @ 引用按钮：pill 小钮（hover accent 同 .pill 体系），margin-left:auto 顶到行右 */
-  .at-btn { margin-left: auto; white-space: nowrap; }
-  /* @ 文件引用浮层：复用 cwd-pop 定位模式（锚 ctx-row 向上展开）；按钮在行右故 right:0 防裁切。
-     结果行复用 .at-item/.at-empty（与内联 @ 菜单同款） */
-  .at-pop {
-    position: absolute; bottom: calc(100% + 4px); right: 0; z-index: 30;
-    width: min(360px, 100%);
-    background: var(--card); border: 1px solid var(--border); border-radius: var(--r-md);
-    box-shadow: var(--shadow-card); padding: 6px;
-  }
-  #at-input { width: 100%; }
-  .at-pop-list { margin-top: 6px; max-height: 200px; overflow: auto; }
   /* 段③：快捷键行（键白动作灰） */
   .keys-row { display: flex; align-items: center; gap: 8px; }
   #status {
@@ -726,13 +715,13 @@
     <textarea id="prompt" placeholder="输入消息，@ 引用文件…" rows="1"></textarea>
     <div id="at-menu" class="at-menu" hidden></div>
   </div>
-  <!-- 段②：上下文行——cwd chip（点击弹浮层改路径）+ 权限模式 pill + 引擎 chip（v2 双驱动）+ @ 引用按钮（点开搜索浮层） -->
+  <!-- 段②：上下文行——cwd chip（点击弹浮层改路径）+ 权限模式 pill + 引擎 chip（v2 双驱动，点击开 picker）。
+       （「@ 引用文件」按钮已退役：输入框打字 @ 即弹搜索，面板内联与主输入条 InputBar 全覆盖） -->
   <div class="ctx-row">
     <input id="cwd" type="hidden">
     <button id="cwd-chip" type="button" class="pill cwd-chip empty" title="项目目录（点击选择）">📁 <span id="cwd-chip-label">选择项目目录</span></button>
     <button id="mode-pill" type="button" class="pill" title="点击切换权限模式">自动改文件</button>
-    <button id="agent-chip" type="button" class="pill" title="引擎（点击切换；若该引擎有可续会话会打开接续视图）">CC</button>
-    <button id="at-btn" type="button" class="pill at-btn" title="引用项目文件到输入框">@ 引用文件</button>
+    <button id="agent-chip" type="button" class="pill" title="引擎（点击选择）">CC</button>
     <!-- cwd 浮层：手输路径 + 📁 选目录；Enter/确定 提交，Esc/点外部取消 -->
     <div id="cwd-pop" class="cwd-pop" hidden>
       <div class="cwd-pop-row">
@@ -740,12 +729,6 @@
         <button id="cwd-browse" type="button" title="选择项目文件夹">📁</button>
         <button id="cwd-ok" type="button">确定</button>
       </div>
-    </div>
-    <!-- @ 文件引用浮层：搜索 input + 结果列表；↑↓ 导航 / Enter 选中 / Esc / 点外部关闭。
-         takeover 态选中经桥 insert-draft 回输父侧 InputBar 草稿，非 takeover 插本框 #prompt -->
-    <div id="at-pop" class="at-pop" hidden>
-      <input id="at-input" type="text" spellcheck="false" placeholder="输入文件名模糊搜索…">
-      <div id="at-list" class="at-pop-list"></div>
     </div>
   </div>
   <!-- 段③：快捷键行——左 #status 灰小字（不独占一行），中 kbd 提示，右操作钮
@@ -2679,7 +2662,6 @@
   $("cwd-pop").addEventListener("click", function (e) { e.stopPropagation(); });
   document.addEventListener("click", function () {
     if (!$("cwd-pop").hidden) closeCwdPop(false);
-    if (!$("at-pop").hidden) closeAtPop();
   });
   $("history").addEventListener("click", openHistory);
   $("history-close").addEventListener("click", closeHistory);
@@ -2799,86 +2781,6 @@
       atInsert(atState.items[atState.idx].rel);
     }
   }, true);
-
-  // ---- @ 引用按钮 + 搜索浮层（P1 takeover T5）：两种模式通用。
-  //      takeover：选中经 yibao.emitEvent("insert-draft") 回输父侧 InputBar 草稿（InputBar.insertText 追加+持久化）；
-  //      非 takeover：直接写 #prompt 光标处并聚焦（atInsert 耦合 atState 起锚点服务于内联菜单，此处不复用）。
-  //      与上方内联 @ 菜单（atState 段）互不影响：内联只在 #prompt 可输入时触发（takeover 下其 display:none 天然不触发）----
-  var atPop = { items: [], idx: 0, seq: 0, timer: 0 };  // seq 防乱序：慢响应到达时已过期则丢弃
-  function openAtPop() {
-    var cwd = $("cwd").value.trim();
-    if (!cwd) { setStatus("请先选择项目目录", true); openCwdPop(); return; }
-    if (!$("cwd-pop").hidden) closeCwdPop(false);   // 防两浮层堆叠
-    $("at-pop").hidden = false;
-    $("at-input").value = "";
-    $("at-input").focus();
-    atPopQuery();   // 空 q 列出全部文件（上限见 sidecar），开浮层即有可选项
-  }
-  function closeAtPop() {
-    $("at-pop").hidden = true;
-    if (atPop.timer) { clearTimeout(atPop.timer); atPop.timer = 0; }
-    atPop.seq++;    // 作废在途响应
-  }
-  function atPopQuery() {
-    if (!hasBridge || $("at-pop").hidden) return;
-    var cwd = $("cwd").value.trim();
-    if (!cwd) return;
-    var seq = ++atPop.seq;
-    window.yibao.invoke("coding.files", { cwd: cwd, q: $("at-input").value.trim() }).then(function (r) {
-      if (seq !== atPop.seq || $("at-pop").hidden) return;   // 过期响应/浮层已关，丢弃
-      atPop.items = (r && r.files) || [];
-      atPop.idx = 0;
-      var list = $("at-list");
-      list.innerHTML = "";
-      if (!atPop.items.length) { list.innerHTML = "<div class=\"at-empty\">无匹配</div>"; return; }
-      atPop.items.slice(0, 12).forEach(function (f, i) {
-        var d = document.createElement("div");
-        d.className = "at-item" + (i === 0 ? " sel" : "");
-        d.textContent = f.rel;
-        d.addEventListener("mousedown", function (e) { e.preventDefault(); atPopPick(f.rel); });
-        list.appendChild(d);
-      });
-    }).catch(function () { /* 查询失败保留旧列表 */ });
-  }
-  function atPopPick(rel) {
-    closeAtPop();
-    if (takeoverMode) {
-      window.yibao.emitEvent("insert-draft", { text: "@" + rel + " " });
-      setStatus("已插入输入条草稿：@" + rel);
-    } else {
-      addAtRef(rel);   // chip 化：进输入框内 chips 行（不再插纯文本）
-      setStatus("已引用 @" + rel);
-      $("prompt").focus();
-    }
-  }
-
-  $("at-btn").addEventListener("click", function (e) {
-    e.stopPropagation();   // 防冒泡到 document 的「点外部关闭」
-    if (!hasBridge) { setStatus("未连译宝桥（设计预览模式）", true); return; }
-    if ($("at-pop").hidden) openAtPop(); else closeAtPop();
-  });
-  $("at-pop").addEventListener("click", function (e) { e.stopPropagation(); });
-  $("at-input").addEventListener("input", function () {
-    if (atPop.timer) clearTimeout(atPop.timer);
-    atPop.timer = setTimeout(atPopQuery, 200);   // 防抖，与内联 at 的逐键查询区分（浮层查询量更大）
-  });
-  $("at-input").addEventListener("compositionend", function () { lastCompEnd = Date.now(); });
-  $("at-input").addEventListener("keydown", function (e) {
-    if (e.key === "Escape") { e.stopPropagation(); closeAtPop(); }  // 防误触全局 esc 停止
-    else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      e.preventDefault();
-      var items = $("at-list").querySelectorAll(".at-item");
-      if (!items.length) return;
-      items[atPop.idx].classList.remove("sel");
-      atPop.idx = (atPop.idx + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
-      items[atPop.idx].classList.add("sel");
-    } else if (e.key === "Enter") {
-      // IME 组字选词的 Enter 不选中（同发送/内联 @ 的 isComposing + lastCompEnd 50ms 双重守卫）
-      if (e.isComposing || Date.now() - lastCompEnd < 50) return;
-      e.preventDefault();
-      if (atPop.items.length && atPop.idx < atPop.items.length) atPopPick(atPop.items[atPop.idx].rel);
-    }
-  });
 
   // D1 快捷键与提示行一致：↵ 发送 / ⇧↵ 换行（⌘/Ctrl+↵ 保留为发送别名）。
   // IME 组字（中文输入）中的 Enter 只是上屏，绝不触发发送（isComposing + lastCompEnd 双重守卫见上）。
