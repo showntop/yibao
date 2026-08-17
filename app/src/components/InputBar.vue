@@ -204,6 +204,18 @@ function openAdd(kind: InputContext["kind"]) {
     fileRef.value?.click();
     return;
   }
+  if (kind === "file") {
+    // 项目文件：往输入框补一个 @ 触发内联浮层（与手打 @ 同一路径；程序赋值不发 input 事件，手动触发解析）
+    const cur = text.value;
+    text.value = cur && !/\s$/.test(cur) ? `${cur} @` : `${cur}@`;
+    nextTick(() => {
+      const el = inputRef.value;
+      el?.focus();
+      el?.setSelectionRange(text.value.length, text.value.length);
+      onTextInput();
+    });
+    return;
+  }
   if (!pendingContexts.value.some((item) => item.kind === "reference")) {
     pendingContexts.value.push({ kind: "reference", label: "当前会话" });
   }
@@ -281,6 +293,14 @@ defineExpose({ focus: () => inputRef.value?.focus(), insertText });
 
 <template>
   <form class="bar" @submit.prevent="send">
+    <!-- chips 行：附件/引用/@ 文件独立一行置于输入行上方（不与文本输入挤同一行） -->
+    <div v-if="pendingContexts.length" class="context-list" aria-label="待发送的附件和引用">
+      <span v-for="(context, index) in pendingContexts" :key="`${context.kind}-${context.label}-${index}`" class="context-chip">
+        {{ kindLabel(context) }} · {{ context.label }}
+        <button type="button" aria-label="移除内容" @click="removeContext(index)">×</button>
+      </span>
+    </div>
+    <div class="bar-row">
     <div class="add-wrap">
       <button
         type="button"
@@ -297,17 +317,14 @@ defineExpose({ focus: () => inputRef.value?.focus(), insertText });
         <button type="button" role="menuitem" @click="openAdd('attachment')">
           <strong>附件</strong><small>文件或图片</small>
         </button>
+        <button type="button" role="menuitem" @click="openAdd('file')">
+          <strong>项目文件</strong><small>@ 搜索引用（也可直接打 @）</small>
+        </button>
         <button type="button" role="menuitem" @click="openAdd('reference')">
           <strong>引用</strong><small>当前会话上下文</small>
         </button>
       </div>
       <input ref="fileRef" class="file-input" type="file" @change="onFileChange" />
-    </div>
-    <div v-if="pendingContexts.length" class="context-list" aria-label="待发送的附件和引用">
-      <span v-for="(context, index) in pendingContexts" :key="`${context.kind}-${context.label}-${index}`" class="context-chip">
-        {{ kindLabel(context) }} · {{ context.label }}
-        <button type="button" aria-label="移除内容" @click="removeContext(index)">×</button>
-      </span>
     </div>
     <!-- @ 文件引用浮层：锚定输入区向上展开；↑↓ 导航 / Enter 选中 / Esc 关闭 -->
     <div class="text-wrap">
@@ -373,6 +390,7 @@ defineExpose({ focus: () => inputRef.value?.focus(), insertText });
         </svg>
       </Transition>
     </button>
+    </div>
   </form>
 </template>
 
@@ -380,8 +398,8 @@ defineExpose({ focus: () => inputRef.value?.focus(), insertText });
 .bar {
   position: relative;
   display: flex;
-  gap: 5px;
-  align-items: center;
+  flex-direction: column;                 /* chips 行在上、输入行在下（无 chips 时视觉与单行一致） */
+  align-items: stretch;
   min-height: 46px;
   padding: 5px 5px 5px 7px;
   border-radius: 24px;                        /* 更高的对话胶囊 */
@@ -394,6 +412,11 @@ defineExpose({ focus: () => inputRef.value?.focus(), insertText });
     0 1px 2px rgba(0, 0, 0, 0.04),
     0 6px 18px rgba(var(--yb-c-slate-rgb), 0.10);
   transition: all var(--yb-dur-fast) var(--yb-ease-out);
+}
+.bar-row {
+  display: flex;
+  gap: 5px;
+  align-items: center;
 }
 .bar:focus-within {
   border-color: var(--yb-accent);
@@ -553,10 +576,9 @@ textarea::-webkit-scrollbar-thumb {
 .context-list {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;                    /* 多 chip 换行，独立一行不再与文本输入抢宽度 */
   gap: 4px;
-  min-width: 0;
-  max-width: 42%;
-  overflow: hidden;
+  padding: 2px 4px 6px;
 }
 .context-chip {
   display: inline-flex;
