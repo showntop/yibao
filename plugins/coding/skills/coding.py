@@ -972,8 +972,12 @@ def _cc_transcript_rows(path: Path) -> list[dict]:
                 role = row.get("type")
                 if role not in ("user", "assistant"):
                     continue
+                if row.get("isMeta"):  # 机器行（local-command-caveat 等）非用户内容，摘要/导入/计数一律跳过
+                    continue
                 text = _cc_reader._text_of(row.get("message"))
                 if not text:
+                    continue
+                if text.startswith(("<local-command", "<command-")):  # 本地命令回声块（无 isMeta 标记的）
                     continue
                 rows.append({"role": role, "text": text,
                              "uuid": str(row.get("uuid") or ""),
