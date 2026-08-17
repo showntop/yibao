@@ -2730,7 +2730,7 @@
       : "";
   }
 
-  var atState = { open: false, items: [], idx: 0, query: "", start: -1 };
+  var atState = { open: false, items: [], idx: 0, query: "", start: -1, caret: 0 };  // caret=触发时光标位（atInsert 切删用它，不用 live 光标——菜单开着挪光标再 Enter 会切错）
   function closeAt() { atState.open = false; $("at-menu").hidden = true; }
   function openAt() { atState.open = true; $("at-menu").hidden = false; }
 
@@ -2757,8 +2757,8 @@
 
   function atInsert(rel) {
     var ta = $("prompt");
-    // 删掉触发菜单的 @query 片段，文件以 chip 形式上 chips 行（不再插 "@rel " 纯文本）
-    ta.value = ta.value.slice(0, atState.start) + ta.value.slice(ta.selectionStart);
+    // 删掉触发菜单的 @query 片段（start..caret 用触发时缓存位，不用 live 光标），文件以 chip 形式上 chips 行
+    ta.value = ta.value.slice(0, atState.start) + ta.value.slice(atState.caret);
     addAtRef(rel);
     ta.focus();
     closeAt();
@@ -2771,6 +2771,7 @@
     var m = before.match(/@([\w\-./]*)$/);
     if (m) {
       atState.start = pos - m[0].length;
+      atState.caret = pos;
       atState.query = m[1];
       atQuery();
     } else if (atState.open) closeAt();

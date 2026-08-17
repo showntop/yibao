@@ -47,16 +47,18 @@ function persistDraft(v: string) {
     if (id) sessionStore.conversation.setDraft(id, v);
   }, 300);
 }
+let unmounted = false;
 onMounted(() => {
   const id = sessionStore.conversation.getActiveConversationId();
   if (id) {
     const saved = sessionStore.conversation.getUIState(id).draft;
     if (saved) text.value = saved;
   }
-  // @ 文件搜索的回包通道（pa_<rid> 关联）
-  void onBrainEvent(onBrainEv).then((un) => { unlistenBrain = un; });
+  // @ 文件搜索的回包通道（pa_<rid> 关联）；注册慢于卸载则立即退订，防监听泄漏
+  void onBrainEvent(onBrainEv).then((un) => { if (unmounted) un(); else unlistenBrain = un; });
 });
 onBeforeUnmount(() => {
+  unmounted = true;
   unlistenBrain?.();
   for (const p of pendingCalls.values()) clearTimeout(p.timer);
   pendingCalls.clear();
@@ -65,12 +67,14 @@ watch(text, (v) => persistDraft(v));
 
 // ---- @ 文件引用（chips 化）：输入 @ 触发文件搜索浮层，选中成 file chip 进 pendingContexts。
 //      搜索通道 = panelAction + onBrainEvent 关联 pa_<rid>（WebviewPanel 既有模式）；
-//      搜索根 = sticky 上次 @ 目录（localStorage）→ 缺省最近 coding 会话 cwd → 空态提示 ----
+//      搜索根 = sticky 上次 @ 目录（localStorage）→ 缺省最近 coding 会话 cwd（quiet 别名
+//      coding.sessions——coding.list 本体带 panel 事件，会把插件页顶成 coding 面板）→ 空态提示 ----
 const AT_ROOT_KEY = "yibao.atRoot";
 const atOpen = ref(false);
 const atItems = ref<{ rel: string }[]>([]);
 const atIdx = ref(0);
 const atRoot = ref("");
+let atRootResolved = false; // 负缓存：无 coding 会话时避免逐键重查（组件重挂/选中写 sticky 后重置）
 let atStart = -1;
 let atCaret = 0;
 let atSeq = 0; // 防乱序：逐键查询的慢响应到达时已过期则丢弃
@@ -93,23 +97,26 @@ function callSkill(method: string, params: Record<string, unknown>): Promise<unk
 }
 
 function onBrainEv(e: BrainEvent) {
-  if (e.kind !== "action_result") return;
   const aid = e.action?.id ?? "";
+  if (!aid) return;
+  if (e.kind !== "action_result" && e.kind !== "error") return;
   for (const [rid, p] of [...pendingCalls]) {
     if (aid === `pa_${rid}`) {
       pendingCalls.delete(rid);
       clearTimeout(p.timer);
-      p.resolve(e.result?.success ? (e.result.data ?? null) : null);
+      // error（白名单外/DENY/skill 异常）同样立即结算为 null——不挂满 8s 超时再误导「无匹配」
+      p.resolve(e.kind === "action_result" && e.result?.success ? (e.result.data ?? null) : null);
     }
   }
 }
 
 async function ensureAtRoot(): Promise<string> {
-  if (atRoot.value) return atRoot.value;
+  if (atRootResolved) return atRoot.value;
   const sticky = localStorage.getItem(AT_ROOT_KEY) || "";
-  if (sticky) { atRoot.value = sticky; return sticky; }
-  const data = (await callSkill("coding.list", {})) as { sessions?: { cwd?: string }[] } | null;
+  if (sticky) { atRoot.value = sticky; atRootResolved = true; return sticky; }
+  const data = (await callSkill("coding.sessions", {})) as { sessions?: { cwd?: string }[] } | null;
   atRoot.value = data?.sessions?.[0]?.cwd ?? "";
+  atRootResolved = true;
   return atRoot.value;
 }
 
@@ -132,7 +139,10 @@ function closeAt() {
 
 function pickAt(f: { rel: string }) {
   text.value = stripAtTrigger(text.value, atCaret, atStart); // 移除触发片段，文件成 chip
-  pendingContexts.value.push({ kind: "file", label: f.rel.split("/").pop() || f.rel, path: f.rel });
+  // 去重：同文件重复引用无意义（与 chat.html addAtRef 同约定）
+  if (!pendingContexts.value.some((c) => c.kind === "file" && c.path === f.rel)) {
+    pendingContexts.value.push({ kind: "file", label: f.rel.split("/").pop() || f.rel, path: f.rel });
+  }
   if (atRoot.value) localStorage.setItem(AT_ROOT_KEY, atRoot.value); // sticky 记忆搜索根
   closeAt();
   nextTick(() => { autoGrow(); inputRef.value?.focus(); });
@@ -177,6 +187,7 @@ watch(
 function send() {
   const t = text.value.trim();
   if (t) {
+    closeAt();   // @ 浮层随发送收敛（Enter 已被浮层拦截，这里管发送钮路径）
     // AI 正在生成/播报（stopping）时发送 = 先打断再发新消息（不必手动"停止"）
     if (stopping.value) emit("interrupt");
     emit("submit", t, pendingContexts.value.slice());
