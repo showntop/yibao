@@ -30,8 +30,13 @@
      完成行保留耗时/token/cost 明细，灰小字一行（C5）。
      输入区三段式（R3 D1，对标 opencode 底栏）：① 输入框（2px 左竖条 accent）→ ② 上下文行
      （cwd chip+权限模式 pill+@ 引用按钮）→ ③ 快捷键行（键白动作灰；↵ 发送 / ⇧↵ 换行 / @ 文件 /
-     esc 停止，IME 组字 Enter 不上屏误发）；顶栏收窄为 标题+成本聚合+历史/新对话（D4）；
+     esc 停止，IME 组字 Enter 不上屏误发）；顶栏收窄为 标题+成本聚合+接续/新对话（D4）；
      消息带宽屏限 760px 居中、气泡/卡 max-width 85%、meta 灰小字 11px（D3 排版 token）。
+     接续 popover（v1 接续模型统一：原历史抽屉改造，keys-row 的「Codex 接续」钮并入，
+     历史/接续两钮 2→1）：区 1「上次会话」打开时 coding.last_sessions{cwd} 跨源实时检测
+     （无缓存）——CC 卡 [继续] = coding.attach_cc 导入后 resumeSession（原生 resume）；
+     Codex 卡 [交接给 CC] = 现有 handoff_brief 流程（交接=生成摘要交给 Claude Code，
+     非完整搬移）；区 2「译宝历史」= coding.list → resumeSession；两区皆空 → 新项目空态。
      AI 气泡 markdown 基座（R3）：marked(GFM) → DOMPurify 消毒 → hljs 高亮，vendor 三库
      经 sidecar 占位内联（head 内三个 script 占位注释，见 vendor/README.md）；
      注入缺失/异常自动降级为纯文本，不抛异常。 -->
@@ -82,7 +87,7 @@
   }
   .hidden { display: none !important; }
 
-  /* ---- 顶栏（D4 收窄，高约 40px）：左标题「编码对话」+ 右成本聚合 + 历史/新对话 ghost；
+  /* ---- 顶栏（D4 收窄，高约 40px）：左标题「编码对话」+ 右成本聚合 + 接续/新对话 ghost；
      cwd chip / 权限模式 pill 在 footer 上下文行（D1） ---- */
   header {
     flex: none; display: flex; align-items: center; gap: 8px;
@@ -350,7 +355,8 @@
      ① 输入框：2px 左竖条 accent（focus 时 accent-deep），圆角 --r-md
      ② 上下文行：cwd chip（📁+目录名，点击弹浮层手输/选目录）+ 权限模式 pill + @ 引用按钮（点开搜索浮层）
      ③ 快捷键行：键白动作灰（kbd 白底小圆角描边 + --faint 动作词）；#status 灰小字融入本行
-        左侧不独占一行；操作钮收敛右侧：#send accent 实心主钮 / #stop ghost / #handoff ghost 小钮 */
+        左侧不独占一行；操作钮收敛右侧：#send accent 实心主钮 / #stop ghost
+        （「Codex 接续」钮已并入顶栏「接续」popover） */
   footer {
     flex: none; border-top: 1px solid var(--line); background: var(--card);
     padding: 8px 12px 5px; display: flex; flex-direction: column; gap: 4px;
@@ -431,20 +437,12 @@
 
   /* 接管模式（P1 takeover，body.takeover）：PanelApp 工作台条 InputBar 接管文本输入——
      隐藏段①输入框整段（@ 内联菜单随之不触发）与 #send 主钮；「↵发送/⇧↵换行」提示一并隐藏
-     （@ 文件 / esc 停止提示保留）；cwd chip / 权限 pill / handoff / stop / #status 等其余控件不动。
+     （@ 文件 / esc 停止提示保留）；cwd chip / 权限 pill / stop / #status 等其余控件不动。
      footer 因此变矮：layoutRunPill 每次按 footer.offsetHeight 现算 bottom，无需特判 */
   body.takeover .prompt-wrap { display: none; }
   body.takeover #send { display: none; }
   body.takeover .keys .send-hint { display: none; }
   body.takeover .keys .at-kbd-hint { display: none; }  /* takeover：@ 走 ctx-row 的「@ 引用文件」按钮，内联输入提示无对象 */
-  /* #handoff 顶栏迁入本行：ghost 小钮 */
-  #handoff {
-    flex: none; border: 1px solid transparent; background: transparent;
-    color: var(--muted); font-size: 11.5px; padding: 3px 9px; border-radius: 7px;
-    cursor: pointer; font-weight: 500; transition: all .15s ease; white-space: nowrap;
-  }
-  #handoff:hover { background: var(--surface-2); color: var(--accent-deep); border-color: var(--border); }
-  #handoff:disabled { opacity: .5; cursor: default; }
   /* spinner：10px 边框圆 + 旋转（状态行 / 运行 pill 共用） */
   .spin {
     display: inline-block; width: 10px; height: 10px; margin-right: 6px;
@@ -496,15 +494,17 @@
   .pill:hover { border-color: var(--accent); color: var(--accent-deep); }
   .pill.plan { border-color: var(--accent); color: var(--accent-deep); background: var(--accent-soft); }
 
-  /* ---- Codex session 选择器 + 历史抽屉（fixed 浮层；iframe srcdoc 里 absolute 含块不可靠） ---- */
+  /* ---- Codex session 选择器 + 接续 popover（fixed 浮层；iframe srcdoc 里 absolute 含块不可靠） ---- */
   #handoff-backdrop, #history-overlay { position: fixed; inset: 0; z-index: 40; }
   #handoff-picker, #history-picker {
-    position: fixed; z-index: 50; width: min(420px, 92vw); max-height: 320px; overflow-y: auto;
+    position: fixed; z-index: 50; width: min(420px, 92vw); overflow-y: auto;
     background: var(--card); border: 1px solid var(--border); border-radius: var(--r-md);
     box-shadow: var(--shadow-pop); padding: 6px;
   }
-  /* 历史抽屉静态定位：header（40px）下方靠右（handoff picker 由 JS 贴按钮定位） */
-  #history-picker { top: 46px; right: 12px; }
+  /* 两浮层同款静态定位：header（40px）下方靠右（handoff picker 原贴 #handoff 钮的 JS 定位
+     已随按钮移除退役）；接续 popover 两区内容多，限高放宽 */
+  #handoff-picker { top: 46px; right: 12px; max-height: 320px; }
+  #history-picker { top: 46px; right: 12px; max-height: min(560px, calc(100vh - 60px)); }
   #handoff-picker .pick-item, #history-picker .hrow {
     padding: 8px 10px; border-radius: 8px; cursor: pointer; transition: background .12s ease;
     display: flex; flex-direction: column; gap: 2px;
@@ -522,7 +522,7 @@
   }
   #handoff-picker .pick-close:hover, #history-picker .pick-close:hover { background: var(--surface-2); color: var(--text); border-color: var(--border-strong); }
 
-  /* 历史抽屉专有：hrow 是 <button>（需重置默认样式）；.hc 目录名 / .hs 状态 / .mempty 空态 */
+  /* 接续 popover 专有：hrow 是 <button>（需重置默认样式）；.hc 目录名 / .hs 状态 / .mempty 空态 */
   #history-picker .hrow { border: 0; background: none; width: 100%; text-align: left; font: inherit; color: inherit; }
   #history-picker .hrow .hc { font-size: 11px; color: var(--muted); }
   #history-picker .hrow .hs { font-size: 10.5px; color: var(--muted); font-family: var(--mono-family); }
@@ -531,6 +531,38 @@
   #history-picker .hrow .hs.failed { color: var(--red); }
   #history-picker .hrow .hs.stopped { color: var(--amber-deep); }
   #history-picker .mempty { padding: 18px 12px; text-align: center; color: var(--muted); font-size: 12px; }
+  /* 区标题（区 1「上次会话」/ 区 2「译宝历史」共用） */
+  #history-picker .sec-title { padding: 8px 10px 2px; font-size: 11px; font-weight: 600; color: var(--faint); }
+  /* 区 1 上次会话卡：来源徽标 + 相对时间 + 摘要（+ 消息数 / 交接注明）+ 右下操作钮 */
+  #history-picker .last-card {
+    margin: 3px 4px 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 3px;
+    border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2);
+  }
+  #history-picker .last-card .lc-head { display: flex; align-items: center; gap: 6px; }
+  #history-picker .last-card .lc-badge {
+    flex: none; font-size: 10px; font-weight: 700; line-height: 15px; padding: 0 6px;
+    border-radius: 4px; background: var(--accent-soft); color: var(--accent-deep);
+    border: 1px solid var(--accent-line);
+  }
+  #history-picker .last-card .lc-badge.codex { background: var(--card); color: var(--muted); border-color: var(--border-strong); }
+  #history-picker .last-card .lc-time { font-size: 11px; color: var(--muted); font-family: var(--mono-family); }
+  #history-picker .last-card .lc-sum {
+    font-size: 12.5px; color: var(--text);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  #history-picker .last-card .lc-meta { font-size: 10.5px; color: var(--faint); font-family: var(--mono-family); }
+  #history-picker .last-card .lc-note { font-size: 11px; color: var(--faint); font-style: italic; }
+  #history-picker .last-card .lc-act {
+    align-self: flex-end; margin-top: 3px; border-radius: 7px; padding: 3px 12px;
+    font-size: 11.5px; font-weight: 600; cursor: pointer; transition: all .15s ease;
+    border: 1px solid var(--accent); background: var(--accent); color: #fff;
+  }
+  #history-picker .last-card .lc-act:hover { background: var(--accent-deep); }
+  #history-picker .last-card .lc-act.ghost {
+    background: transparent; color: var(--accent-deep); border-color: var(--border-strong); font-weight: 500;
+  }
+  #history-picker .last-card .lc-act.ghost:hover { background: var(--surface-2h); }
+  #history-picker .last-card .lc-act:disabled { opacity: .5; cursor: default; }
 
   /* ---- 交接卡：session 起点（区别于普通文件改动/工具卡片，整宽 + sky 强调色左边条） ---- */
   .card.handoff {
@@ -603,13 +635,13 @@
 <!-- 桥缺失时可见，提示这是设计预览 -->
 <div id="bridge-warn" class="hidden">设计预览：未检测到译宝桥（window.yibao），起停/流式回显不可用。</div>
 
-<!-- D4 收窄：cwd chip/模式 pill 在 footer 上下文行，handoff 在快捷键行；
-     顶栏只留 标题 + 成本聚合 + 历史/新对话 ghost -->
+<!-- D4 收窄：cwd chip/模式 pill 在 footer 上下文行；
+     顶栏只留 标题 + 成本聚合 + 接续/新对话 ghost -->
 <header>
   <span class="title">编码对话</span>
   <span class="spacer"></span>
   <span id="cost" title="本会话累计 token 与成本（done 事件累加；新对话/恢复历史后清零重计）"></span>
-  <button id="history" type="button" title="历史会话：列出本会话记录，点击恢复后继续在同一上下文聊">历史</button>
+  <button id="history" type="button" title="接续：上次会话（Claude Code 继续 / Codex 交接）+ 译宝历史，恢复后继续在同一上下文聊">接续</button>
   <button id="new-chat" type="button" title="清空当前对话，开新会话（下次发送走 coding.start）" disabled>新对话</button>
 </header>
 
@@ -664,7 +696,7 @@
     </div>
   </div>
   <!-- 段③：快捷键行——左 #status 灰小字（不独占一行），中 kbd 提示，右操作钮
-       （#handoff ghost 小钮 / #stop ghost 运行态才有意义 / #send accent 实心主钮） -->
+       （#stop ghost 运行态才有意义 / #send accent 实心主钮；「Codex 接续」钮已并入顶栏「接续」popover） -->
   <div class="keys-row">
     <span id="status"></span>
     <span class="keys">
@@ -673,15 +705,14 @@
       <span class="at-kbd-hint"><kbd>@</kbd>文件</span>
       <span><kbd>esc</kbd>停止</span>
     </span>
-    <!-- handoff/中断 默认隐藏：handoff 仅「无会话+该项目有 Codex 会话」由 probeHandoff 现身；
-         中断 仅运行期由 syncActionRow 现身（sending 禁用/streaming 启用） -->
-    <button id="handoff" type="button" class="hidden" title="从 Codex 会话接续：读取该项目下的 Codex 会话，生成交接 brief 后用 Claude Code 接续">↩ Codex 接续</button>
+    <!-- 中断 默认隐藏：仅运行期由 syncActionRow 现身（sending 禁用/streaming 启用） -->
     <button id="stop" class="act ghost hidden" disabled>中断</button>
     <button id="send" class="act">发送</button>
   </div>
 </footer>
 
-<!-- 历史抽屉：列会话（coding.list）→ 点击恢复（coding.history 读回 + 接着聊）。结构同款 handoff picker -->
+<!-- 接续 popover（v1 接续模型统一，原历史抽屉改造）：区 1「上次会话」跨源实时检测（CC 卡 attach 导入续 /
+     Codex 卡 handoff 交接）+ 区 2「译宝历史」（coding.list → resumeSession）+ 空态。结构同款 handoff picker -->
 <div id="history-overlay" hidden>
   <div id="history-picker">
     <div id="history-body"></div>
@@ -1629,23 +1660,11 @@
 
   // reason = 终态来源（stopped/done/error）：takeover 队列据此分流——stopped（用户主动中断）
   // 清空不自动发；done/error 正常收尾泄放队列自动发下一条
-  // ---- 操作钮可见性梳理：中断 仅运行期可见（sending 中可见但禁用，streaming 启用，空闲隐藏）；
-  //      Codex 接续 是入口级功能，仅「无活动会话 + 该项目确有 Codex 会话」可见。
-  //      handoffCache 按 cwd 缓存探测结果（handoff_list 是 quiet 方法；换目录/新对话/初次进入才重探） ----
-  var handoffCache = {};
+  // ---- 操作钮可见性梳理（633f257）：中断 仅运行期可见（sending 中可见但禁用，streaming 启用，
+  //      空闲隐藏）。「Codex 接续」入口已收敛进顶栏「接续」popover（区 1 Codex 卡），
+  //      keys-row 不再探测（probeHandoff/handoffCache 退役） ----
   function syncActionRow() {
     $("stop").classList.toggle("hidden", !(sending || streaming));
-    var cwd = $("cwd").value.trim();
-    var showHandoff = hasBridge && !currentSession && !!cwd && handoffCache[cwd] === true;
-    $("handoff").classList.toggle("hidden", !showHandoff);
-  }
-  function probeHandoff() {
-    var cwd = $("cwd").value.trim();
-    if (!hasBridge || currentSession || !cwd || handoffCache[cwd] !== undefined) { syncActionRow(); return; }
-    window.yibao.invoke("coding.handoff_list", { cwd: cwd }).then(function (r) {
-      handoffCache[cwd] = !!(r && r.sessions && r.sessions.length);
-      syncActionRow();   // 响应到达时若已开新会话/换目录，syncActionRow 按最新状态判定，不会误现身
-    }).catch(function () { handoffCache[cwd] = false; syncActionRow(); });
   }
 
   function onSessionEnded(reason) {
@@ -1655,14 +1674,12 @@
     // 多轮保持：不清 currentSession —— 下次 send 走 coding.send 接续同一 CC 会话；
     // 仅靠「新对话」按钮显式重置。
     streaming = false;
-    syncActionRow();   // 终态：中断隐藏；若仍无会话（罕见）Codex 接续按缓存回补
+    syncActionRow();   // 终态：中断隐藏
     $("stop").disabled = true;
     $("send").disabled = false;
     // 有活动会话才允许「新对话」（首次进入 / 已重置后无可重置对象）
     $("new-chat").disabled = !currentSession;
-    // handoff 在流式中被禁用；会话终态后放开（仍受 streaming guard 在 handoff() 里兜底）
-    $("handoff").disabled = false;
-    var histBtn = $("history"); if (histBtn) histBtn.disabled = false;  // 与 handoff 同闸（send 入口禁用过）
+    var histBtn = $("history"); if (histBtn) histBtn.disabled = false;  // 与 send 入口同闸（send 禁用过）
     reportState("idle");   // takeover：终态上报；若随即泄放队列，紧随的 send() 会重报 sending
     if (reason === "stopped") takeoverQueue.length = 0;  // 中断即放弃排队意图
     else drainTakeoverQueue();
@@ -1701,12 +1718,11 @@
     pendingTurnEnded = false;   // 新 turn 开窗：终态若抢在 invoke 返回前到达，onSessionEnded 会把它置真
     $("send").disabled = true;
     $("new-chat").disabled = true;
-    $("handoff").disabled = true;  // invoke 飞行窗口内禁开 handoff（防双重 start）
     var histBtn = $("history"); if (histBtn) histBtn.disabled = true;
     setStatus("提交中…");
     showRunPill("提交中…");   // C3：sending 期间 pill 已可见（秒表待 invoke 返回后起跑）
     $("rp-stop").disabled = true;   // 会话 id 未回填前 Stop 是死点击，invoke 受理后 startTicker 解锁
-    syncActionRow();   // 提交窗口：中断现身（禁用态）；Codex 接续随 currentSession 即将回填而隐去
+    syncActionRow();   // 提交窗口：中断现身（禁用态）
 
     // 用户气泡不直接画：等 runner 的 user_msg 事件（带 CC uuid，⏪ 回滚锚点）来画；
     // 事件长时间不到（老 SDK / 启动失败）则 1.5s 后兜底画无 ⏪ 气泡。事件到达会清掉本 timer；
@@ -1742,7 +1758,7 @@
       streaming = true;
       reportState("streaming");   // takeover：invoke 已受理，进入流式
       $("stop").disabled = false;
-      syncActionRow();   // 流式开始：中断启用；会话已回填，Codex 接续隐去
+      syncActionRow();   // 流式开始：中断启用
       startTicker("会话 " + sid + (isStart ? " 启动" : " 接续"));
     }).catch(function (e) {
       reportState("idle");   // takeover：invoke 未受理即失败，状态回落
@@ -1750,7 +1766,6 @@
       setStatus(verb + "失败：" + emsg(e), true);
       hideRunPill();  // invoke 未受理：没到 streaming，onSessionEnded 不会走，pill 在此收
       syncActionRow();   // 秒败：sending 仍真故中断暂留禁用态，紧随的 finally 收敛隐藏
-      $("handoff").disabled = false;  // 入口禁用过，失败路径手动复位（onSessionEnded 不会走）
       var hb = $("history"); if (hb) hb.disabled = false;
     }).finally(function () {
       sending = false;
@@ -1787,7 +1802,7 @@
     // handleInitData 会据此丢弃任何迟到的旧块，避免污染新对话。
     if (currentSession) discardedSessions[currentSession] = true;
     currentSession = null;
-    probeHandoff();   // 回到无会话态：探测该项目有无 Codex 会话，决定接续钮可见性
+    syncActionRow();   // 回到无会话空闲态：中断收敛隐藏
     currentBubble = null;
     lastToolCard = null;   // #log 清空后旧卡已 detach，防 tool_result 落进不可见节点
     if (pendingUserEcho) { clearTimeout(pendingUserEcho); pendingUserEcho = null; }  // 防 1.5s 兜底 timer 把旧 prompt 画成幻影气泡落进新会话
@@ -1810,6 +1825,7 @@
   // ============================================================
   //   从 Codex 接续：handoff_list → picker / 直进 → handoff_brief →
   //   可编辑交接卡 → 封存 + coding.start（source=codex:<sid>）
+  //   入口：顶栏「接续」popover 区 1 的 Codex 卡 [交接给 CC]（原 keys-row 接续钮已并入）。
   //   关键：交接卡是 #log 里的 chat-flow 元素（非 modal），封存后作为可见的
   //   session 起点；brief 作为 coding.start 的 prompt，source 标记来源。
   // ============================================================
@@ -1876,16 +1892,8 @@
 
     document.body.appendChild(backdrop);
     document.body.appendChild(picker);
-
-    // 定位：右对齐按钮右边（防溢出左移）。D1 后 #handoff 在 footer 快捷键行（贴视口底），
-    // 下方空间不足时翻到按钮上方展开，防 picker 跌出视口。
-    var rect = $("handoff").getBoundingClientRect();
-    var ph = picker.offsetHeight;
-    var below = window.innerHeight - rect.bottom;
-    picker.style.top = (below >= ph + 12 ? rect.bottom + 6 : Math.max(8, rect.top - ph - 6)) + "px";
-    var rightOffset = window.innerWidth - rect.right;
-    var maxRight = window.innerWidth - 14 - picker.offsetWidth;
-    picker.style.right = Math.max(14, Math.min(rightOffset, maxRight)) + "px";
+    // 定位：CSS 静态（#handoff-picker = header 下方靠右，同接续 popover）——
+    // 入口已并入「接续」popover，原贴 #handoff 钮的 JS 定位随按钮移除退役
   }
 
   function closeHandoffPicker() {
@@ -1903,6 +1911,28 @@
     function pad(n) { return n < 10 ? "0" + n : "" + n; }
     return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) +
            " " + pad(d.getHours()) + ":" + pad(d.getMinutes());
+  }
+
+  // 时间戳归一（接续 popover 区 1 卡用）：epoch 秒/毫秒数字、ISO 字符串兼容 → Date（非法返回 null）
+  function toDate(ts) {
+    if (ts == null) return null;
+    var d = (typeof ts === "number") ? new Date(ts < 1e12 ? ts * 1000 : ts) : new Date(ts);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  // 相对时间：<1min「刚刚」/ <1h「N 分钟前」/ <1d「N 小时前」/ <7d「N 天前」/ 更早给绝对日期
+  function relTime(ts) {
+    var d = toDate(ts);
+    if (!d) return "";
+    var m = Math.floor(Math.max(0, Date.now() - d.getTime()) / 60000);
+    if (m < 1) return "刚刚";
+    if (m < 60) return m + " 分钟前";
+    var h = Math.floor(m / 60);
+    if (h < 24) return h + " 小时前";
+    var days = Math.floor(h / 24);
+    if (days < 7) return days + " 天前";
+    function pad(n) { return n < 10 ? "0" + n : "" + n; }
+    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
   }
 
   function shortSid(sid) {
@@ -2031,9 +2061,8 @@
     reportState("streaming");   // takeover：handoff 同步置流式（invoke 受理前即上报）
     $("send").disabled = true;
     $("new-chat").disabled = true;
-    $("handoff").disabled = true;
     $("stop").disabled = false;
-    syncActionRow();   // handoff 启动：中断现身启用；接续钮即将随会话回填隐去
+    syncActionRow();   // handoff 启动：中断现身启用
     setStatus("Codex 接续启动中…");
     showRunPill("Codex 接续启动中…");
     $("rp-stop").disabled = true;   // 同 send：invoke 受理后 startTicker 解锁
@@ -2049,7 +2078,7 @@
       var csid = r && r.session_id;
       if (!csid) throw new Error("未返回 session_id");
       currentSession = csid;
-      syncActionRow();   // 会话回填：Codex 接续隐去
+      syncActionRow();   // 会话已回填：中断按运行态保持可见
       if (pendingTurnEnded) {
         // 终态先于 invoke 返回：onSessionEnded 已收场（streaming 已 false、UI 已解锁），别起跑秒表
         pendingTurnEnded = false;
@@ -2065,53 +2094,179 @@
       syncActionRow();   // 接续启动失败：中断收回隐藏
       $("stop").disabled = true;
       $("send").disabled = false;
-      $("handoff").disabled = false;
     }).finally(function () {
       sending = false;
       $("new-chat").disabled = !currentSession || streaming;
-      $("handoff").disabled = streaming;
       drainTakeoverQueue();  // takeover 兜底：同 send().finally（失败/秒败路径泄放队列）
     });
   }
 
   // ============================================================
-  //   历史抽屉：列会话（coding.list）→ 点击恢复（coding.history 读回 + 接着聊）
-  //   恢复 = 清 log 渲染历史消息 + 分隔线；下一条发送走 coding.send
+  //   接续 popover（v1 接续模型统一，原历史抽屉改造；顶栏「历史」→「接续」两钮 2→1）：
+  //   区 1「上次会话」= 打开时 coding.last_sessions{cwd} 跨源实时检测（无缓存，每次新查）——
+  //     CC 卡 [继续] → coding.attach_cc 导入（幂等）→ resumeSession（原生 resume，上下文完整）；
+  //     Codex 卡 [交接给 CC] → 现有 handoff() 流程（交接=生成摘要交给 Claude Code，非完整搬移）；
+  //   区 2「译宝历史」= coding.list → resumeSession（原历史抽屉逻辑不变）；
+  //   两区皆空 → 新项目空态。恢复 = 清 log 渲染历史消息 + 分隔线；下一条发送走 coding.send
   //   （currentSession 已指回旧 sid）→ 同一 CC 上下文续聊。
   // ============================================================
   function openHistory() {
     if (!hasBridge) return;
-    if (streaming) { setStatus("当前会话运行中，请先中断再恢复历史会话", true); return; }
+    if (streaming) { setStatus("当前会话运行中，请先中断再恢复/接续会话", true); return; }
+    var cwd = $("cwd").value.trim();
+    if (!cwd) { setStatus("请先选择项目目录", true); openCwdPop(); return; }
     closeHandoffPicker();  // 两个浮层不共存
     var ov = $("history-overlay");
     ov.hidden = false;
-    var body = $("history-body");
-    body.innerHTML = "<div class=\"mempty\">加载中…</div>";
-    window.yibao.invoke("coding.list", {}).then(function (r) {
-      var rows = (r && r.sessions) || [];
-      if (!rows.length) { body.innerHTML = "<div class=\"mempty\">还没有会话</div>"; return; }
-      body.innerHTML = "";
-      rows.forEach(function (row) {
-        var b = document.createElement("button");
-        b.className = "hrow";
-        var when = row.created_at ? new Date(row.created_at * 1000) : null;
-        var time = when ? (when.getMonth() + 1) + "/" + when.getDate() + " " + String(when.getHours()).padStart(2, "0") + ":" + String(when.getMinutes()).padStart(2, "0") : "";
-        var cwdShort = (row.cwd || "").split("/").filter(Boolean).pop() || row.cwd || "";
-        var first = String(row.prompt || "").split("\n")[0].slice(0, 42);
-        b.innerHTML = "<span class=\"ht\">" + esc(time) + "</span>" +
-          "<span class=\"hc\">" + esc(cwdShort) + "</span>" +
-          "<span class=\"hp\">" + esc(first) + "</span>" +
-          "<span class=\"hs " + esc(row.status || "") + "\">" + esc(row.status || "") + "</span>";
-        b.addEventListener("click", function () { resumeSession(row.id); });
-        body.appendChild(b);
-      });
-    }).catch(function (e) {
-      body.innerHTML = "<div class=\"mempty\">加载失败：" + esc(emsg(e)) + "</div>";
+    $("history-body").innerHTML = "<div class=\"mempty\">加载中…</div>";
+    // 两路并发：区 1 跨源检测失败（方法缺失/扫描异常）静默降级为无区 1，不拖垮区 2
+    var lastP = window.yibao.invoke("coding.last_sessions", { cwd: cwd })
+      .catch(function () { return null; });
+    var listP = window.yibao.invoke("coding.list", {}).then(function (r) {
+      return { rows: (r && r.sessions) || [] };
+    }).catch(function (e) { return { rows: [], err: e }; });
+    Promise.all([lastP, listP]).then(function (rs) {
+      if (ov.hidden) return;   // 响应到达时 popover 已关，丢弃
+      renderResumePopover(rs[0], rs[1]);
     });
   }
 
   function closeHistory() {
     $("history-overlay").hidden = true;
+  }
+
+  // popover 主体渲染：last = last_sessions 结果（{cc, codex} 或 null）；listR = {rows, err}
+  function renderResumePopover(last, listR) {
+    var body = $("history-body");
+    var cwd = $("cwd").value.trim();
+    var cc = last && last.cc;
+    var codex = last && last.codex;
+    var rows = listR.rows || [];
+    body.innerHTML = "";
+
+    // 区 1「上次会话」：跨源每源最新一条，按各自存在性显示
+    if (cc || codex) {
+      body.appendChild(secTitle("上次会话"));
+      if (cc) {
+        body.appendChild(lastCard({
+          badge: "CC",
+          ts: cc.ts,
+          summary: cc.summary,
+          meta: cc.message_count != null ? (Number(cc.message_count) || 0) + " 条消息" : "",
+          actText: "继续",
+          onAct: function (btn) { attachCc(btn, cc.cc_session_id, cwd); }
+        }));
+      }
+      if (codex) {
+        body.appendChild(lastCard({
+          badge: "Codex", badgeCls: "codex",
+          ts: codex.ts,
+          summary: codex.summary,
+          note: "交接 = 生成摘要交给 Claude Code，非完整搬移",
+          actText: "交接给 CC", ghost: true,
+          onAct: function () { closeHistory(); handoff(); }
+        }));
+      }
+    }
+
+    // 区 2「译宝历史」：coding.list → resumeSession（原历史抽屉渲染逻辑）
+    if (rows.length) {
+      body.appendChild(secTitle("译宝历史"));
+      rows.forEach(function (row) { body.appendChild(historyRow(row)); });
+    } else if (listR.err && (cc || codex)) {
+      var listErr = document.createElement("div");
+      listErr.className = "mempty";
+      listErr.textContent = "译宝历史加载失败：" + emsg(listR.err);
+      body.appendChild(listErr);
+    }
+
+    // 空态（两区皆空）：新项目
+    if (!cc && !codex && !rows.length) {
+      var empty = document.createElement("div");
+      empty.className = "mempty";
+      empty.textContent = listR.err
+        ? "加载失败：" + emsg(listR.err)
+        : "新项目——直接输入任务开始（Claude Code）";
+      body.appendChild(empty);
+    }
+  }
+
+  function secTitle(text) {
+    var d = document.createElement("div");
+    d.className = "sec-title";
+    d.textContent = text;
+    return d;
+  }
+
+  // 区 1 上次会话卡：来源徽标 + 相对时间 + 摘要（+ 消息数 / 交接注明）+ 右下操作钮
+  function lastCard(o) {
+    var card = document.createElement("div");
+    card.className = "last-card";
+    var head = document.createElement("div");
+    head.className = "lc-head";
+    var badge = document.createElement("span");
+    badge.className = "lc-badge" + (o.badgeCls ? " " + o.badgeCls : "");
+    badge.textContent = o.badge;
+    var time = document.createElement("span");
+    time.className = "lc-time";
+    time.textContent = relTime(o.ts) || "(未知时间)";
+    head.appendChild(badge);
+    head.appendChild(time);
+    card.appendChild(head);
+    var sum = document.createElement("div");
+    sum.className = "lc-sum";
+    sum.textContent = o.summary || "(无摘要)";
+    card.appendChild(sum);
+    if (o.meta) {
+      var meta = document.createElement("div");
+      meta.className = "lc-meta";
+      meta.textContent = o.meta;
+      card.appendChild(meta);
+    }
+    if (o.note) {
+      var note = document.createElement("div");
+      note.className = "lc-note";
+      note.textContent = o.note;
+      card.appendChild(note);
+    }
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "lc-act" + (o.ghost ? " ghost" : "");
+    btn.textContent = o.actText;
+    btn.addEventListener("click", function () { o.onAct(btn); });
+    card.appendChild(btn);
+    return card;
+  }
+
+  // CC 卡 [继续]：attach_cc 把 transcript 导入会话库（幂等）→ 拿 session_id 走现有 resumeSession
+  function attachCc(btn, ccSid, cwd) {
+    if (!ccSid) return;
+    btn.disabled = true;
+    setStatus("导入 Claude Code 会话…");
+    window.yibao.invoke("coding.attach_cc", { cc_session_id: ccSid, cwd: cwd }).then(function (r) {
+      var sid = r && r.session_id;
+      if (!sid) throw new Error("attach_cc 未返回 session_id");
+      return resumeSession(sid);   // 恒 resolve（内部 catch 亮状态行）；popover 由其关闭
+    }).catch(function (e) {
+      btn.disabled = false;
+      setStatus("导入 Claude Code 会话失败：" + emsg(e), true);
+    });
+  }
+
+  // 区 2 历史行（原历史抽屉渲染逻辑，未动）
+  function historyRow(row) {
+    var b = document.createElement("button");
+    b.className = "hrow";
+    var when = row.created_at ? new Date(row.created_at * 1000) : null;
+    var time = when ? (when.getMonth() + 1) + "/" + when.getDate() + " " + String(when.getHours()).padStart(2, "0") + ":" + String(when.getMinutes()).padStart(2, "0") : "";
+    var cwdShort = (row.cwd || "").split("/").filter(Boolean).pop() || row.cwd || "";
+    var first = String(row.prompt || "").split("\n")[0].slice(0, 42);
+    b.innerHTML = "<span class=\"ht\">" + esc(time) + "</span>" +
+      "<span class=\"hc\">" + esc(cwdShort) + "</span>" +
+      "<span class=\"hp\">" + esc(first) + "</span>" +
+      "<span class=\"hs " + esc(row.status || "") + "\">" + esc(row.status || "") + "</span>";
+    b.addEventListener("click", function () { resumeSession(row.id); });
+    return b;
   }
 
   function resumeSession(sid) {
@@ -2121,7 +2276,7 @@
       if (currentSession) discardedSessions[currentSession] = true;
       currentSession = sid;
       delete discardedSessions[sid]; // 恢复的目标会话必须出黑名单——否则它自己的流全被「陈旧会话」过滤器吞掉，面板锁死
-      syncActionRow();   // 接管/恢复会话：Codex 接续隐去，中断按运行态判定
+      syncActionRow();   // 接管/恢复会话：中断按运行态判定
       currentBubble = null;
       lastToolCard = null;   // #log 清空后旧卡已 detach，防 tool_result 落进不可见节点（同 newChat）
       if (pendingUserEcho) { clearTimeout(pendingUserEcho); pendingUserEcho = null; }  // 同 newChat：防兜底 timer 画幻影气泡
@@ -2171,7 +2326,6 @@
     $("cwd-chip-label").textContent = base || "选择项目目录";
     $("cwd-chip").classList.toggle("empty", !base);
     $("cwd-chip").title = v ? ("项目目录：" + v + "（点击修改）") : "项目目录（点击选择）";
-    probeHandoff();   // cwd 变化：换项目重探 Codex 会话（缓存命中即仅同步可见性）
   }
   function openCwdPop() {
     $("cwd-input").value = $("cwd").value;
@@ -2198,7 +2352,6 @@
   $("stop").addEventListener("click", stop);
   $("rp-stop").addEventListener("click", stop);   // 运行 pill 的红 Stop 复用同一中断逻辑（C3）
   $("new-chat").addEventListener("click", newChat);
-  $("handoff").addEventListener("click", handoff);
   $("cwd-chip").addEventListener("click", function (e) {
     e.stopPropagation();   // 防冒泡到 document 的「点外部关闭」
     if ($("cwd-pop").hidden) openCwdPop(); else closeCwdPop(false);
@@ -2391,9 +2544,13 @@
     send();
   });
   // esc 停止：运行/提交中且有活动会话时 = 点 Stop（复用同一中断逻辑）。
+  // 浮层优先：接续 popover / handoff picker 打开时 Esc 先关浮层，不触发停止；
   // @ 菜单打开时 prompt 的 capture 处理器已 stopPropagation，这里不会误触发。
   document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape" && currentSession && (streaming || sending)) stop();
+    if (e.key !== "Escape") return;
+    if (!$("history-overlay").hidden) { closeHistory(); return; }
+    if (document.getElementById("handoff-picker")) { closeHandoffPicker(); return; }
+    if (currentSession && (streaming || sending)) stop();
   });
 
   // ============================================================
@@ -2406,7 +2563,6 @@
       if (rows.length && rows[0].cwd && !$("cwd").value) {
         setCwd(rows[0].cwd);
       }
-      probeHandoff();   // 初次进入：cwd 已有值（未走 setCwd）时也要探测接续钮可见性
     }).catch(function () { /* 静默：首次使用无会话 */ });
   }
 
@@ -2423,7 +2579,7 @@
     // 父→iframe 任意消息（takeover-input/takeover-stop）：按 msg.type 判别，非接管词汇忽略。
     // 旧桥无 onMessage 时跳过（也不会有父侧推送）
     if (window.yibao.onMessage) window.yibao.onMessage(onHostMessage);
-    syncActionRow();   // 初始：两钮默认 hidden，探测/状态变化后按需现身（无桥预览保持隐藏）
+    syncActionRow();   // 初始：中断默认 hidden，运行态变化后现身（无桥预览保持隐藏）
     prefillCwd();
   }
 
