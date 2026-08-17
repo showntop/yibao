@@ -1575,6 +1575,7 @@
     // 防重入：init 每条 data 都触发本函数；恢复期间同 sid 重复到达由 requestResume 归并，
     // currentSession 已是目标（恢复完成/重复 panel 事件补拉）直接跳过。
     if (data && data.attach === true && !data.event) {
+      if (data.agent) { curSessAgent = normAgent(data.agent); renderAgentChip(); }  // 跨引擎接管：徽标即时正确，不等首条流事件
       var attachSid = data.session_id;
       if (attachSid && attachSid !== currentSession) requestResume(attachSid);
       return;   // attach 载荷无流式事件，处理完即走
