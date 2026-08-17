@@ -436,6 +436,7 @@
   body.takeover .prompt-wrap { display: none; }
   body.takeover #send { display: none; }
   body.takeover .keys .send-hint { display: none; }
+  body.takeover .keys .at-kbd-hint { display: none; }  /* takeover：@ 走 ctx-row 的「@ 引用文件」按钮，内联输入提示无对象 */
   /* #handoff 顶栏迁入本行：ghost 小钮 */
   #handoff {
     flex: none; border: 1px solid transparent; background: transparent;
@@ -669,11 +670,13 @@
     <span class="keys">
       <span class="send-hint"><kbd>↵</kbd>发送</span>
       <span class="send-hint"><kbd>⇧↵</kbd>换行</span>
-      <span><kbd>@</kbd>文件</span>
+      <span class="at-kbd-hint"><kbd>@</kbd>文件</span>
       <span><kbd>esc</kbd>停止</span>
     </span>
-    <button id="handoff" type="button" title="从 Codex 会话接续：读取该项目下的 Codex 会话，生成交接 brief 后用 Claude Code 接续">↩ Codex 接续</button>
-    <button id="stop" class="act ghost" disabled>中断</button>
+    <!-- handoff/中断 默认隐藏：handoff 仅「无会话+该项目有 Codex 会话」由 probeHandoff 现身；
+         中断 仅运行期由 syncActionRow 现身（sending 禁用/streaming 启用） -->
+    <button id="handoff" type="button" class="hidden" title="从 Codex 会话接续：读取该项目下的 Codex 会话，生成交接 brief 后用 Claude Code 接续">↩ Codex 接续</button>
+    <button id="stop" class="act ghost hidden" disabled>中断</button>
     <button id="send" class="act">发送</button>
   </div>
 </footer>
@@ -1626,6 +1629,25 @@
 
   // reason = 终态来源（stopped/done/error）：takeover 队列据此分流——stopped（用户主动中断）
   // 清空不自动发；done/error 正常收尾泄放队列自动发下一条
+  // ---- 操作钮可见性梳理：中断 仅运行期可见（sending 中可见但禁用，streaming 启用，空闲隐藏）；
+  //      Codex 接续 是入口级功能，仅「无活动会话 + 该项目确有 Codex 会话」可见。
+  //      handoffCache 按 cwd 缓存探测结果（handoff_list 是 quiet 方法；换目录/新对话/初次进入才重探） ----
+  var handoffCache = {};
+  function syncActionRow() {
+    $("stop").classList.toggle("hidden", !(sending || streaming));
+    var cwd = $("cwd").value.trim();
+    var showHandoff = hasBridge && !currentSession && !!cwd && handoffCache[cwd] === true;
+    $("handoff").classList.toggle("hidden", !showHandoff);
+  }
+  function probeHandoff() {
+    var cwd = $("cwd").value.trim();
+    if (!hasBridge || currentSession || !cwd || handoffCache[cwd] !== undefined) { syncActionRow(); return; }
+    window.yibao.invoke("coding.handoff_list", { cwd: cwd }).then(function (r) {
+      handoffCache[cwd] = !!(r && r.sessions && r.sessions.length);
+      syncActionRow();   // 响应到达时若已开新会话/换目录，syncActionRow 按最新状态判定，不会误现身
+    }).catch(function () { handoffCache[cwd] = false; syncActionRow(); });
+  }
+
   function onSessionEnded(reason) {
     if (sending) pendingTurnEnded = true;  // invoke 未返回就收到终态（秒败）：.then 里别再置 streaming
     stopTicker();
@@ -1633,6 +1655,7 @@
     // 多轮保持：不清 currentSession —— 下次 send 走 coding.send 接续同一 CC 会话；
     // 仅靠「新对话」按钮显式重置。
     streaming = false;
+    syncActionRow();   // 终态：中断隐藏；若仍无会话（罕见）Codex 接续按缓存回补
     $("stop").disabled = true;
     $("send").disabled = false;
     // 有活动会话才允许「新对话」（首次进入 / 已重置后无可重置对象）
@@ -1683,6 +1706,7 @@
     setStatus("提交中…");
     showRunPill("提交中…");   // C3：sending 期间 pill 已可见（秒表待 invoke 返回后起跑）
     $("rp-stop").disabled = true;   // 会话 id 未回填前 Stop 是死点击，invoke 受理后 startTicker 解锁
+    syncActionRow();   // 提交窗口：中断现身（禁用态）；Codex 接续随 currentSession 即将回填而隐去
 
     // 用户气泡不直接画：等 runner 的 user_msg 事件（带 CC uuid，⏪ 回滚锚点）来画；
     // 事件长时间不到（老 SDK / 启动失败）则 1.5s 后兜底画无 ⏪ 气泡。事件到达会清掉本 timer；
@@ -1718,16 +1742,19 @@
       streaming = true;
       reportState("streaming");   // takeover：invoke 已受理，进入流式
       $("stop").disabled = false;
+      syncActionRow();   // 流式开始：中断启用；会话已回填，Codex 接续隐去
       startTicker("会话 " + sid + (isStart ? " 启动" : " 接续"));
     }).catch(function (e) {
       reportState("idle");   // takeover：invoke 未受理即失败，状态回落
       appendError(verb + "失败：" + emsg(e));
       setStatus(verb + "失败：" + emsg(e), true);
       hideRunPill();  // invoke 未受理：没到 streaming，onSessionEnded 不会走，pill 在此收
+      syncActionRow();   // 秒败：sending 仍真故中断暂留禁用态，紧随的 finally 收敛隐藏
       $("handoff").disabled = false;  // 入口禁用过，失败路径手动复位（onSessionEnded 不会走）
       var hb = $("history"); if (hb) hb.disabled = false;
     }).finally(function () {
       sending = false;
+      syncActionRow();   // 提交窗关闭：成功路径中断保持可见启用，秒败路径收回隐藏
       // 发送键解锁挪到 onSessionEnded（done/stopped/error）——
       // invoke 返回只代表「已受理」，流式期间禁止再发（防同会话双 runner）
       if (!streaming) $("send").disabled = false;
@@ -1760,6 +1787,7 @@
     // handleInitData 会据此丢弃任何迟到的旧块，避免污染新对话。
     if (currentSession) discardedSessions[currentSession] = true;
     currentSession = null;
+    probeHandoff();   // 回到无会话态：探测该项目有无 Codex 会话，决定接续钮可见性
     currentBubble = null;
     lastToolCard = null;   // #log 清空后旧卡已 detach，防 tool_result 落进不可见节点
     if (pendingUserEcho) { clearTimeout(pendingUserEcho); pendingUserEcho = null; }  // 防 1.5s 兜底 timer 把旧 prompt 画成幻影气泡落进新会话
@@ -2005,6 +2033,7 @@
     $("new-chat").disabled = true;
     $("handoff").disabled = true;
     $("stop").disabled = false;
+    syncActionRow();   // handoff 启动：中断现身启用；接续钮即将随会话回填隐去
     setStatus("Codex 接续启动中…");
     showRunPill("Codex 接续启动中…");
     $("rp-stop").disabled = true;   // 同 send：invoke 受理后 startTicker 解锁
@@ -2020,6 +2049,7 @@
       var csid = r && r.session_id;
       if (!csid) throw new Error("未返回 session_id");
       currentSession = csid;
+      syncActionRow();   // 会话回填：Codex 接续隐去
       if (pendingTurnEnded) {
         // 终态先于 invoke 返回：onSessionEnded 已收场（streaming 已 false、UI 已解锁），别起跑秒表
         pendingTurnEnded = false;
@@ -2032,6 +2062,7 @@
       setStatus("Codex 接续启动失败：" + emsg(e), true);
       hideRunPill();
       streaming = false;
+      syncActionRow();   // 接续启动失败：中断收回隐藏
       $("stop").disabled = true;
       $("send").disabled = false;
       $("handoff").disabled = false;
@@ -2090,6 +2121,7 @@
       if (currentSession) discardedSessions[currentSession] = true;
       currentSession = sid;
       delete discardedSessions[sid]; // 恢复的目标会话必须出黑名单——否则它自己的流全被「陈旧会话」过滤器吞掉，面板锁死
+      syncActionRow();   // 接管/恢复会话：Codex 接续隐去，中断按运行态判定
       currentBubble = null;
       lastToolCard = null;   // #log 清空后旧卡已 detach，防 tool_result 落进不可见节点（同 newChat）
       if (pendingUserEcho) { clearTimeout(pendingUserEcho); pendingUserEcho = null; }  // 同 newChat：防兜底 timer 画幻影气泡
@@ -2139,6 +2171,7 @@
     $("cwd-chip-label").textContent = base || "选择项目目录";
     $("cwd-chip").classList.toggle("empty", !base);
     $("cwd-chip").title = v ? ("项目目录：" + v + "（点击修改）") : "项目目录（点击选择）";
+    probeHandoff();   // cwd 变化：换项目重探 Codex 会话（缓存命中即仅同步可见性）
   }
   function openCwdPop() {
     $("cwd-input").value = $("cwd").value;
@@ -2373,6 +2406,7 @@
       if (rows.length && rows[0].cwd && !$("cwd").value) {
         setCwd(rows[0].cwd);
       }
+      probeHandoff();   // 初次进入：cwd 已有值（未走 setCwd）时也要探测接续钮可见性
     }).catch(function () { /* 静默：首次使用无会话 */ });
   }
 
@@ -2389,6 +2423,7 @@
     // 父→iframe 任意消息（takeover-input/takeover-stop）：按 msg.type 判别，非接管词汇忽略。
     // 旧桥无 onMessage 时跳过（也不会有父侧推送）
     if (window.yibao.onMessage) window.yibao.onMessage(onHostMessage);
+    syncActionRow();   // 初始：两钮默认 hidden，探测/状态变化后按需现身（无桥预览保持隐藏）
     prefillCwd();
   }
 
