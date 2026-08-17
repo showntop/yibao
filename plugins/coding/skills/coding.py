@@ -510,6 +510,42 @@ class ListSkill(Skill):
         return ActionResult(success=True, data={"sessions": sessions, "panel": "coding:chat"})
 
 
+class AttachSkill(Skill):
+    """打开 coding 面板并恢复指定会话（任务卡/会话墙「接管」点击路由）。
+
+    只校验会话存在，真正的恢复在面板侧：api.toml 声明 panel="coding:chat"，
+    直调成功后 panel_payload 把 data 原样透传进面板 init 数据（{session_id, attach: true}），
+    chat.html 的 handleInitData 见 attach 标志自动 resumeSession（P1 接管链路自然生效）。
+    """
+    id = "coding.attach"
+    label = "接管编码会话"
+    description = (
+        "打开 coding 面板并恢复指定会话的上下文（点击 Feed 任务卡/会话墙「接管」的路由）。"
+        "【需要】session_id（coding.start 返回的会话 id）。"
+    )
+    default_risk = RiskLevel.L0_READONLY  # 只校验存在 + 打开面板，不改任何状态
+
+    def openai_schema(self) -> dict:
+        return {"type": "function", "function": {"name": self.id, "description": self.description,
+                "parameters": {"type": "object",
+                    "properties": {"session_id": {"type": "string", "description": "会话 id（coding.start 返回的 session_id）"}},
+                    "required": ["session_id"]}}}
+
+    def run(self, params: dict, ctx: Any) -> ActionResult:
+        sid = str(params.get("session_id") or "").strip()
+        if not sid:
+            return ActionResult(success=False, error="缺少会话 session_id")
+        rows = ctx.db.query("sessions", where={"id": sid})
+        if not rows:
+            return ActionResult(success=False, error=f"会话不存在：{sid}")
+        # attach 标志逐字对齐 chat.html handleInitData 的判别（data.attach === true）
+        return ActionResult(success=True, data={
+            "session_id": sid,
+            "attach": True,
+            "human": f"已打开编码会话 {sid}",
+        })
+
+
 class HandoffListSkill(Skill):
     """列指定项目下 Codex 的会话（跨 agent 交接入口；只读）。
 
@@ -830,6 +866,6 @@ class FilesSkill(Skill):
 
 def make_tools(ctx: Any) -> list[Skill]:
     """插件加载器入口（_load_code_tools 遍历 skills/*.py 调本函数）。"""
-    return [StartSkill(), SendSkill(), StopSkill(), ListSkill(),
+    return [StartSkill(), SendSkill(), StopSkill(), ListSkill(), AttachSkill(),
             HandoffListSkill(), HandoffBriefSkill(), HistorySkill(), ModeSkill(),
             RewindSkill(), DecideSkill(), FilesSkill()]

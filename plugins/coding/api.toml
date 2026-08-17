@@ -21,6 +21,13 @@ handler = "coding.list"
 direct = true
 panel = "coding:chat"
 
+# 任务卡/会话墙「接管」：打开 coding:chat 面板并恢复该会话（data 透传 {session_id, attach:true} → 面板 init 自动 resume）
+[[method]]
+name = "coding.attach"
+handler = "coding.attach"
+direct = true
+panel = "coding:chat"
+
 [[method]]
 name = "coding.handoff_list"
 handler = "coding.handoff_list"

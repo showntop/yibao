@@ -401,11 +401,11 @@ def test_send_skill_openai_schema_shape():
 
 
 def test_make_tools_includes_send():
-    """make_tools 返回 Start/Send/Stop/List + HandoffList/HandoffBrief/History/Mode/Rewind/Decide/Files 十一件。"""
+    """make_tools 返回 Start/Send/Stop/List/Attach + HandoffList/HandoffBrief/History/Mode/Rewind/Decide/Files 十二件。"""
     tools = codingmod.make_tools(type("C", (), {"db": None, "emit_event": None})())
     ids = [t.id for t in tools]
     assert "coding.send" in ids
-    assert ids == ["coding.start", "coding.send", "coding.stop", "coding.list",
+    assert ids == ["coding.start", "coding.send", "coding.stop", "coding.list", "coding.attach",
                    "coding.handoff_list", "coding.handoff_brief", "coding.history",
                    "coding.mode", "coding.rewind", "coding.decide", "coding.files"]
 
@@ -1382,3 +1382,44 @@ def test_stream_no_report_when_emit_event_none():
     _run(_stream(db, "s43", "/tmp/p", "hi", _FakeRunner(cc_sid="cc-1"),
                  emit_event=None, cancel=_threading.Event()))
     assert db.updates[-1][1]["status"] == "done"
+
+
+# ---------- P2 B3：coding.attach 接管（任务卡点击 → 打开面板恢复会话）----------
+from coding import AttachSkill  # noqa: E402
+
+
+def test_attach_returns_session_and_attach_flag():
+    """attach 成功：data 带 {session_id, attach:True}（逐字对齐 chat.html init 判别）；
+    任何终态/运行态会话都可接管（恢复/围观由面板侧处理）。"""
+    db = _FakeDB()
+    db.rows["s-att"] = {"id": "s-att", "status": "done"}
+    res = AttachSkill().run({"session_id": "s-att"}, _Ctx(db))
+    assert res.success, res.error
+    assert res.data["session_id"] == "s-att"
+    assert res.data["attach"] is True
+    db2 = _FakeDB()
+    db2.rows["s-run"] = {"id": "s-run", "status": "running"}
+    res2 = AttachSkill().run({"session_id": "s-run"}, _Ctx(db2))
+    assert res2.success and res2.data["attach"] is True
+
+
+def test_attach_rejects_unknown_session_and_missing_param():
+    """会话不存在 → 明确错误（面板不开）；缺 session_id → 同样拒绝。"""
+    db = _FakeDB()
+    res = AttachSkill().run({"session_id": "no-such"}, _Ctx(db))
+    assert not res.success and "不存在" in (res.error or "")
+    res2 = AttachSkill().run({}, _Ctx(db))
+    assert not res2.success and "session_id" in (res2.error or "")
+
+
+def test_attach_is_l0_readonly():
+    """attach 只校验存在 + 开面板，不改状态 → L0（直调不弹确认，任务卡点击零摩擦）。"""
+    assert AttachSkill.default_risk == RiskLevel.L0_READONLY
+
+
+def test_attach_skill_openai_schema_shape():
+    schema = AttachSkill().openai_schema()
+    assert schema["function"]["name"] == "coding.attach"
+    props = schema["function"]["parameters"]["properties"]
+    assert set(props.keys()) == {"session_id"}
+    assert schema["function"]["parameters"]["required"] == ["session_id"]

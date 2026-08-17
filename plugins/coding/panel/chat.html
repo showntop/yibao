@@ -4,6 +4,8 @@
      能力调用全部经 window.yibao.invoke（postMessage 桥 → api.toml 白名单 + 风险闸门）；
      流式回显经 window.yibao.onInit（每条 panel_data 推一次，data = {session_id, event:{kind,...}}，
      按事件 kind ACCUMULATE 到 #log，不能用 data 整体替换）。
+     attach 接管（B3）：coding.attach 的 panel 载荷 data = {session_id, attach:true}（无 event），
+     handleInitData 见到自动 resumeSession（任务卡/会话墙「接管」点击路由）。
      桥 JS 由父侧注入（提供 window.yibao.invoke/onInit/onMessage/emitEvent），本文件不自带。
      接管模式（P1 takeover）：PanelApp 窗口打开本面板时 init 载荷带 takeover=true → body.takeover
      隐藏自带输入框/发送钮（保留其余全部控件），父侧 InputBar 文本经 onMessage("takeover-input")
@@ -712,6 +714,8 @@
   var curMode = "acceptEdits"; // acceptEdits=自动改文件；plan=只读规划
   var pendingUserEcho = null;  // send() 后等 user_msg 回流画用户气泡的 1.5s 兜底 timer（事件到达则清，防双份）
   var fallbackUserBubble = null; // 兜底 timer 画出的无锚用户气泡 {el, text}；迟到的 user_msg 文本匹配时原地升级挂 ⏪（防双份）
+  var resuming = false;      // attach 自动恢复进行中（resumeSession 异步；防 init 数据重复触发重入）
+  var pendingResume = null;  // 恢复期间又到的 attach 目标 sid（只留最新一条；当前恢复完成后接续，防丢意图）
 
   // ============================================================
   //   接管模式（P1 takeover）：PanelApp 窗口打开本面板时，底部工作台条 InputBar 接管文本输入。
@@ -1499,6 +1503,16 @@
   //   关键：append 到 #log / 当前气泡，绝不用 data 替换 #log。
   // ============================================================
   function handleInitData(data) {
+    // attach 接管（B3）：任务卡/会话墙点「接管」→ coding.attach 的 panel 载荷 {session_id, attach:true}。
+    // 只认纯 attach 载荷（无 event 字段）——流式 panel_data 经 PanelApp 合并进同一 data 对象后
+    // attach 残标仍在，无此判别会把后台会话的流误当接管指令抢面板。
+    // 防重入：init 每条 data 都触发本函数；恢复期间同 sid 重复到达由 requestResume 归并，
+    // currentSession 已是目标（恢复完成/重复 panel 事件补拉）直接跳过。
+    if (data && data.attach === true && !data.event) {
+      var attachSid = data.session_id;
+      if (attachSid && attachSid !== currentSession) requestResume(attachSid);
+      return;   // attach 载荷无流式事件，处理完即走
+    }
     if (!data || !data.event) return;
     var sid = data.session_id;
     // 过滤陈旧/异会话流：
@@ -2070,7 +2084,9 @@
   }
 
   function resumeSession(sid) {
-    window.yibao.invoke("coding.history", { id: sid }).then(function (r) {
+    // 返回 promise 链：attach 自动恢复路径（handleInitData）靠它挂 .finally 清 resuming 防重入标志；
+    // 链尾自带 .catch（失败只亮状态行），恒 resolve，调用方无需再兜。
+    return window.yibao.invoke("coding.history", { id: sid }).then(function (r) {
       if (currentSession) discardedSessions[currentSession] = true;
       currentSession = sid;
       delete discardedSessions[sid]; // 恢复的目标会话必须出黑名单——否则它自己的流全被「陈旧会话」过滤器吞掉，面板锁死
@@ -2099,6 +2115,19 @@
     }).catch(function (e) {
       setStatus("恢复失败：" + emsg(e), true);
       $("history-overlay").hidden = true;
+    });
+  }
+
+  // attach 自动恢复入口（handleInitData 专用）：防重入 + 意图不丢。
+  // 恢复进行中又收到 attach（连点两张任务卡）→ 只留最新目标 pendingResume，当前恢复完成接续；
+  // 同 sid 重复到达归并进同一次（完成后 next === currentSession 自然丢弃）。
+  function requestResume(sid) {
+    if (resuming) { pendingResume = sid; return; }
+    resuming = true;
+    resumeSession(sid).finally(function () {
+      resuming = false;
+      var next = pendingResume; pendingResume = null;
+      if (next && next !== currentSession) requestResume(next);
     });
   }
 
