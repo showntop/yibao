@@ -610,6 +610,9 @@ export interface PendingConfirm {
 
 /** 当前确认链支持：普通技能按 skill；后台命令按 command + cwd 精确记忆。 */
 export function canRememberSkill(skill: string): boolean {
+  // coding 审批不经 invoker.apply_verdict（裁决走 confirmation_needed 直兑 future），
+  // remember 勾了也不生效——复选框对 coding 隐藏，防误导（P2 审批统一 L2）
+  if (skill === "coding") return false;
   return Boolean(skill);
 }
 

@@ -20,7 +20,8 @@
      chevron + 图标 + 工具名 + 意图摘要 + 结果计数），点头行展开 input JSON 详情；
      长输出 >8 行折叠为「… +N lines」单行（B2）；错误不上消息流，走底部 turn 级
      错误条（B3）；工具失败只把对应卡标红 ✗，不新增卡片（B4）。
-     审批与状态（R3 C 项）：审批卡主按钮按工具动态动词（Bash→运行命令、Edit/Write→保存修改…），
+     审批与状态（R3 C 项 + P2 只读化）：审批卡为只读镜像——裁决统一走 L2 确认体系
+     （PanelApp 顶部确认条 / HomeFeed 收件箱），卡面只提示去向，不再渲染按钮（全模式）；
      等待中琥珀脉冲边框、裁决后收敛为灰小字单行记录（C1/C2）；运行状态为底部居中悬浮 pill
      （spinner + 秒表 + 累计 token + 红 Stop，与 #errbar 垂直堆叠，不占消息流，C3）；
      顶栏右侧会话级成本聚合「N tok · $X.XXXX」（done 事件 usage 累加，C4）；
@@ -308,8 +309,9 @@
     white-space: pre-wrap; word-break: break-word;
   }
 
-  /* 权限审批卡（C1/C2）：等待中 = 琥珀脉冲边框 + 动态动词绿主钮/灰次钮通栏双排；
-     permission_done 后收敛为灰小字单行记录（.perm-done，按钮区整段移除）。
+  /* 权限审批卡（C1/C2 + P2 只读化）：等待中 = 琥珀脉冲边框 + 只读提示（无按钮——
+     裁决统一走 L2 确认体系：PanelApp 顶部确认条 / HomeFeed 收件箱，全模式单点不脑裂）；
+     permission_done 后收敛为灰小字单行记录（.perm-done）。
      脉冲用 ::before 叠层只动 opacity（transform/opacity 性能约束），60s 超时后端默认拒绝逻辑不动 */
   .perm-card { position: relative; border-color: var(--amber); background: var(--amber-bg); padding: 10px 13px; }
   .perm-card::before {
@@ -324,16 +326,7 @@
     padding: 6px 9px; border-radius: 8px; background: var(--card);
     font-family: ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-word;
   }
-  .perm-actions { display: flex; gap: 8px; margin: 8px 0 4px; }
-  .perm-actions button {
-    flex: 1; border: 1px solid transparent; border-radius: 8px; padding: 7px 12px;
-    cursor: pointer; font-size: 12.5px; font-weight: 600; transition: all .15s ease;
-  }
-  .perm-ok { background: var(--green); color: #fff; }
-  .perm-ok:hover { filter: brightness(0.92); }
-  .perm-no { background: transparent; color: var(--muted); border-color: var(--border-strong); }
-  .perm-no:hover { background: var(--surface-2); color: var(--text); }
-  .perm-state { font-size: 11px; color: var(--amber); }
+  .perm-state { font-size: 11px; color: var(--amber); margin-top: 6px; }
   /* 裁决后收敛：灰小字单行「✓ 已允许 运行命令」/「✗ 已拒绝」，内容宽度自适应；
      D3 消息带居中后贴带左缘（margin-left = 带宽外余量），不随 #log>.card 整宽居中 */
   #log > .card.perm-card.perm-done {
@@ -1456,8 +1449,8 @@
     scrollIfAtBottom();
   }
 
-  // ---- 权限审批卡（C1/C2）----
-  // 主按钮动态动词：按工具映射，默认「允许」；裁决记录复用此文案（「✓ 已允许 运行命令」）
+  // ---- 权限审批卡（C1/C2 + P2 只读化）----
+  // 工具动词映射：permission_done 收敛单行复用（「✓ 已允许 运行命令」），默认「允许」
   var PERM_VERBS = {
     Bash: "运行命令",
     Edit: "保存修改", MultiEdit: "保存修改", Write: "保存修改",
@@ -1466,7 +1459,8 @@
   };
   function permVerb(tool) { return PERM_VERBS[tool] || "允许"; }
 
-  // 审批卡：标题（工具名+需要许可）+ 参数摘要 + 灰「拒绝」/绿动词主钮通栏双排；
+  // 审批卡（只读镜像，全模式）：标题（工具名+需要许可）+ 参数摘要 + 去向提示，无按钮——
+  // 裁决统一走 L2 确认体系（PanelApp 顶部确认条 / HomeFeed 收件箱），卡片仅作审批存在的可见记录；
   // 等待中琥珀脉冲边框（.perm-card::before），60s 无裁决后端默认拒绝（逻辑不动）
   function appendPermission(ev) {
     var card = document.createElement("div");
@@ -1477,22 +1471,11 @@
     var inputStr = "";
     try { inputStr = JSON.stringify(ev.input || {}); } catch (e) { inputStr = String(ev.input); }
     if (inputStr.length > 300) inputStr = inputStr.slice(0, 300) + "…";
-    card.innerHTML = "<div class=\"perm-head\">🔐 「" + esc(ev.tool) + "」需要你的许可</div>" +
+    card.innerHTML = "<div class=\"perm-head\">🔐 「" + esc(ev.tool) + "」需要许可</div>" +
       "<pre class=\"perm-input\">" + esc(inputStr) + "</pre>" +
-      "<div class=\"perm-actions\"><button type=\"button\" class=\"perm-no\">拒绝</button>" +
-      "<button type=\"button\" class=\"perm-ok\"></button></div>" +
-      "<div class=\"perm-state\">等待你的裁决 · 60s 无操作将默认拒绝</div>";
-    card.querySelector(".perm-ok").textContent = verb;  // 动态动词经 textContent 注入（非拼接 HTML）
-    card.querySelector(".perm-ok").addEventListener("click", function () { decidePerm(ev.rid, true); });
-    card.querySelector(".perm-no").addEventListener("click", function () { decidePerm(ev.rid, false); });
+      "<div class=\"perm-state\">⏳ 等待审批…在顶部确认条或主屏收件箱处理</div>";
     $("log").appendChild(card);
     scrollIfAtBottom();
-  }
-
-  function decidePerm(rid, allow) {
-    window.yibao.invoke("coding.decide", { rid: rid, allow: allow }).catch(function (e) {
-      setStatus("裁决失败：" + emsg(e), true);
-    });
   }
 
   // 完成状态行（C5）：耗时 + token + 成本明细保留，灰小字一行（#status 本色即是）
@@ -1580,7 +1563,7 @@
       case "permission_done": {
         var card = document.getElementById("perm-" + ev.rid);
         if (card) {
-          // C2 收敛：撤琥珀脉冲、按钮区整段移除（textContent 覆盖），变灰小字单行记录
+          // C2 收敛：撤琥珀脉冲、卡面内容整段覆盖（textContent），变灰小字单行记录
           card.classList.add("perm-done");
           var verb = card.dataset.verb;
           card.textContent = ev.allow
