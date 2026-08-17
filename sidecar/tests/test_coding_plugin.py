@@ -1123,3 +1123,151 @@ def test_files_fuzzy_match_and_excludes(tmp_path):
 def test_files_caps_results_and_bad_cwd(tmp_path):
     r = FilesSkill().run({"cwd": str(tmp_path / "ghost"), "q": ""}, _ctx())
     assert r.success and r.data["files"] == []
+
+
+# ---------- P2 B1：审批统一进 L2 确认体系（confirmation_needed + action_result 出队）----------
+from coding import ListSkill  # noqa: E402
+
+
+def test_can_use_tool_emits_confirmation_and_action_result():
+    """confirmation 通道：permission_request 照发（面板只读镜像）+ confirmation_needed
+    （L2 攒批载荷，字段与前端 brain.ts 入队条件逐字对齐）+ 裁决后 action_result 出队；
+    等 _PERM[rid].event 语义不变。"""
+    from claude_agent_sdk import PermissionResultAllow
+
+    async def _flow():
+        events, emitted = [], []
+        cb = _runner_mod.make_permission_callback("s30", events.append, timeout_s=5.0,
+                                                  emit_event=emitted.append)
+
+        async def _decide():
+            while not events:               # 等 permission_request 发出
+                await asyncio.sleep(0.005)
+            r = DecideSkill().run({"rid": events[0]["rid"], "allow": True}, _Ctx(_FakeDB()))
+            assert r.success, r.error
+
+        decider = asyncio.create_task(_decide())
+        res = await cb("Bash", {"command": "npm test"})
+        await decider
+        return res, events, emitted
+
+    res, events, emitted = _run(_flow())
+    assert isinstance(res, PermissionResultAllow)
+    assert [e["kind"] for e in events] == ["permission_request", "permission_done"]
+    rid = events[0]["rid"]
+    # confirmation_needed：actions 攒批格式（对齐 loop 攒批事件）+ 单条 action 兼容字段
+    cn = [e for e in emitted if e["kind"] == "confirmation_needed"]
+    assert len(cn) == 1
+    assert cn[0]["confirmation_id"] == rid and cn[0]["action"]["id"] == rid
+    a = cn[0]["actions"][0]
+    assert a["id"] == rid and a["skill_id"] == "coding" and a["label"] == "Bash"
+    assert a["description"] == "npm test" and a["params"] == {"command": "npm test"}
+    assert a["surface"] == "panel:coding" and a["risk"] == 1
+    # 出队：action_result 带 action.id（前端 brain.ts 按 action.id 出队）
+    ar = [e for e in emitted if e["kind"] == "action_result"]
+    assert len(ar) == 1 and ar[0]["action"]["id"] == rid
+    assert ar[0]["result"]["success"] is True
+    assert rid not in _runner_mod._PERM                      # 裁决后注册表清理
+
+
+def test_can_use_tool_outcome_deny_and_timeout_action_result():
+    """deny/超时两种结局都补 action_result 出队（success=False，error 标注原因）。"""
+    from claude_agent_sdk import PermissionResultDeny
+
+    async def _deny_flow():
+        events, emitted = [], []
+        cb = _runner_mod.make_permission_callback("s31", events.append, timeout_s=5.0,
+                                                  emit_event=emitted.append)
+
+        async def _decide():
+            while not events:
+                await asyncio.sleep(0.005)
+            DecideSkill().run({"rid": events[0]["rid"], "allow": False}, _Ctx(_FakeDB()))
+
+        d = asyncio.create_task(_decide())
+        res = await cb("Bash", {"command": "rm -rf /tmp/x"})
+        await d
+        return res, emitted
+
+    res, emitted = _run(_deny_flow())
+    assert isinstance(res, PermissionResultDeny) and res.message == "用户拒绝"
+    ar = [e for e in emitted if e["kind"] == "action_result"]
+    assert len(ar) == 1 and ar[0]["result"]["success"] is False
+    assert "已拒绝" in ar[0]["result"]["error"]
+
+    # 超时：无裁决 → deny("超时未批准") + action_result 标注超时
+    emitted2 = []
+    cb2 = _runner_mod.make_permission_callback("s32", lambda e: None, timeout_s=0.05,
+                                               emit_event=emitted2.append)
+    res2 = _run(cb2("Bash", {"command": "sleep 99"}))
+    assert isinstance(res2, PermissionResultDeny) and res2.message == "超时未批准"
+    ar2 = [e for e in emitted2 if e["kind"] == "action_result"]
+    assert len(ar2) == 1 and ar2[0]["result"]["success"] is False
+    assert "超时" in ar2[0]["result"]["error"]
+
+
+def test_stop_release_emits_action_result_dequeue():
+    """stop 放行挂起审批（deny 收场）：等待方同样补 action_result 出队（release 只 set，
+    出队由 _cb 结局逻辑统一发，与 permission_done 同路径）。"""
+    from claude_agent_sdk import PermissionResultDeny
+
+    async def _flow():
+        events, emitted = [], []
+        cb = _runner_mod.make_permission_callback("s33", events.append, timeout_s=30.0,
+                                                  emit_event=emitted.append)
+        waiter = asyncio.create_task(cb("Bash", {"command": "rm -rf /"}))
+        while not events:                       # 等 permission_request 发出
+            await asyncio.sleep(0.005)
+        db = _FakeDB(); db.rows["s33"] = {"id": "s33", "status": "running"}
+        reg = type("R", (), {"s": {"s33": {"cancelled": False}}})()
+        _stop_session(db, reg, "s33")           # 停止 → 放行权限等待
+        res = await waiter
+        return res, emitted
+
+    res, emitted = _run(_flow())
+    assert isinstance(res, PermissionResultDeny)
+    ar = [e for e in emitted if e["kind"] == "action_result"]
+    assert len(ar) == 1 and ar[0]["result"]["success"] is False
+
+
+def test_perm_confirmation_desc_truncated_80_and_file_path():
+    """desc 摘要截 80 字；文件工具取 file_path 作摘要/公开参数。"""
+    emitted = []
+    cb = _runner_mod.make_permission_callback("s34", lambda e: None, timeout_s=0.01,
+                                              emit_event=emitted.append)
+    _run(cb("Bash", {"command": "x" * 200}))
+    a = emitted[0]["actions"][0]
+    assert len(a["description"]) == 80
+
+    emitted2 = []
+    cb2 = _runner_mod.make_permission_callback("s34", lambda e: None, timeout_s=0.01,
+                                               emit_event=emitted2.append)
+    _run(cb2("Edit", {"file_path": "/tmp/a/b.ts", "old_string": "1", "new_string": "2"}))
+    a2 = emitted2[0]["actions"][0]
+    assert a2["description"] == "/tmp/a/b.ts" and a2["params"] == {"file_path": "/tmp/a/b.ts"}
+
+
+def test_can_use_tool_confirm_batched_channel_resolves():
+    """双通道之二：不走 coding.decide，直接写 _PERM（模拟 server confirm_batched 的
+    perm_ 路由）同样兑现；先到先得。"""
+    from claude_agent_sdk import PermissionResultAllow
+
+    async def _flow():
+        events = []
+        cb = _runner_mod.make_permission_callback("s35", events.append, timeout_s=5.0)
+
+        async def _confirm():
+            while not events:
+                await asyncio.sleep(0.005)
+            rid = events[0]["rid"]
+            entry = _runner_mod._PERM[rid]
+            entry["allow"] = True                 # server._fulfill_coding_perm 同款直写
+            entry["event"].set()
+
+        c = asyncio.create_task(_confirm())
+        res = await cb("Bash", {"command": "ls"})
+        await c
+        return res
+
+    assert isinstance(_run(_flow()), PermissionResultAllow)
+

@@ -2794,3 +2794,62 @@ def test_mobile_feed_endpoint_same_shape_as_ipc(tmp_path):
         assert memories_body == {"ok": True, "items": []}
 
     asyncio.run(main())
+
+
+# ---------- P2 B1：coding 审批统一进 L2 确认体系（perm_ 路由 + running_tasks）----------
+
+
+def _fake_coding_runner_module(monkeypatch, perms):
+    """挂一个假的 yibao_plugin_coding__runner 模块单例（生产由 coding 插件 _sibling 加载），
+    供 server._fulfill_coding_perm 路由 _PERM；monkeypatch teardown 自动还原。"""
+    import sys
+    import types
+    mod = types.ModuleType("yibao_plugin_coding__runner")
+    mod._PERM = perms
+    monkeypatch.setitem(sys.modules, "yibao_plugin_coding__runner", mod)
+    return mod
+
+
+def test_fulfill_coding_perm_routes_and_idempotent(monkeypatch):
+    """perm_ cid 直写插件 _PERM（allow + event.set）；与 coding.decide 双通道幂等——
+    先到（allow 已非 None）不被后到覆盖；未知 cid / 插件未加载 → False。"""
+    import sys
+    import threading as _th
+    from yibao_brain import server as S
+
+    ev = _th.Event()
+    perms = {"perm_abc_1": {"event": ev, "allow": None}}
+    _fake_coding_runner_module(monkeypatch, perms)
+    assert S._fulfill_coding_perm("perm_abc_1", True) is True
+    assert perms["perm_abc_1"]["allow"] is True and ev.is_set()
+    # 双通道幂等：后到不覆盖先到
+    assert S._fulfill_coding_perm("perm_abc_1", False) is True
+    assert perms["perm_abc_1"]["allow"] is True
+    # 未知 cid / 无 _PERM 注册表
+    assert S._fulfill_coding_perm("perm_ghost_9", True) is False
+    monkeypatch.delitem(sys.modules, "yibao_plugin_coding__runner", raising=False)
+    assert S._fulfill_coding_perm("perm_abc_1", True) is False
+
+
+def test_serve_confirm_batch_routes_coding_perm(tmp_path, monkeypatch):
+    """confirm_batch 全链路：items 里 perm_ 前缀的 cid 路由插件 _PERM 兑现，
+    不落 pending_confirms/early_answers；回执 confirm_batched 照常。"""
+    import threading as _th
+
+    ev = _th.Event()
+    perms = {"perm_s1_1": {"event": ev, "allow": None}}
+    _fake_coding_runner_module(monkeypatch, perms)
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([{"type": "confirm_batch",
+                          "items": [{"id": "perm_s1_1", "approved": True}]}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+        )
+    )
+    assert perms["perm_s1_1"]["allow"] is True and ev.is_set()
+    assert any(m.get("type") == "confirm_batched" and m.get("ok") for m in out)
+

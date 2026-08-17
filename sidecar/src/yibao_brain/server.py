@@ -280,6 +280,29 @@ async def _emit_refresh_panel(agent: AgentLoop, emit, refresh_tool: str) -> None
         emit(Event(kind="panel", payload=payload))
 
 
+def _fulfill_coding_perm(cid: str, approved: bool) -> bool:
+    """coding 插件 can_use_tool 审批兑现：cid 以 "perm_" 开头的确认路由进插件 _PERM 注册表
+    （写 allow + set 等待事件）。与 coding.decide 双通道幂等——先到先得，后到不覆盖；
+    插件未加载 / 请求已超时清理 → False（无害，等待方 60s 超时 deny 兜底）。
+
+    coding 审批不经 batch_confirmer 的 future：runner 线程在 threading.Event 上等，
+    注册表挂在 _sibling 加载的模块单例 sys.modules["yibao_plugin_coding__runner"] 上。
+    """
+    mod = sys.modules.get("yibao_plugin_coding__runner")
+    perm = getattr(mod, "_PERM", None)
+    if not isinstance(perm, dict):
+        return False
+    entry = perm.get(cid)
+    if not isinstance(entry, dict):
+        return False
+    if entry.get("allow") is None:
+        entry["allow"] = bool(approved)
+    event = entry.get("event")
+    if event is not None:
+        event.set()
+    return True
+
+
 async def handle_panel_action(msg: dict, agent: AgentLoop, write_msg: WriteMsg, *, run_text) -> None:
     """处理壳侧 panel_action（v2 §7）：api.toml 白名单内的面板方法。
 
@@ -1245,6 +1268,11 @@ async def serve_async(
         （持有 token 的客户端可无限灌条目），故满员后按未知处理 → False（404）。"""
         if cid in _confirm_done:
             return False
+        if cid.startswith("perm_"):
+            # coding 工具审批：与壳 confirm_batch 同路由（双通道幂等），不占 future/早到缓存
+            _fulfill_coding_perm(cid, approved)
+            _confirm_done.append(cid)
+            return True
         fut = pending_confirms.get(cid)
         if fut is not None and not fut.done():
             fut.set_result((approved, remember))
@@ -1461,6 +1489,12 @@ async def serve_async(
                     continue
                 approved = bool(item.get("approved", False))
                 remember = bool(item.get("remember", False))
+                if cid.startswith("perm_"):
+                    # coding 工具审批：双通道幂等兑现（另一通道 coding.decide 备用），
+                    # 不占 pending_confirms/early_answers（runner 不经 batch_confirmer）
+                    _fulfill_coding_perm(cid, approved)
+                    _confirm_done.append(cid)
+                    continue
                 fut = pending_confirms.get(cid)
                 if fut is not None and not fut.done():
                     fut.set_result((approved, remember))
