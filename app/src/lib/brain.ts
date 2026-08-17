@@ -28,6 +28,8 @@ export interface BrainAction {
   risk?: number;
   /** 过程展示短标签（sidecar 从技能 label 填，回退 skill_id） */
   label?: string;
+  /** 发起面板（coding 审批经广播通道时顶层 surface 为空，action 自带） */
+  surface?: string;
 }
 
 export interface BrainResult {
@@ -671,7 +673,8 @@ if ("__TAURI_INTERNALS__" in window) void listen<BrainEvent>("brain-event", (ev)
         desc: a.description ?? "",
         params: a.params,
         risk: a.risk,
-        surface: e.surface,
+        // coding 审批经 ProactiveDispatcher 广播时顶层 surface 为 null，action 自带 surface 优先
+        surface: a.surface ?? e.surface,
       }));
     if (fresh.length) {
       _pc = [..._pc, ...fresh];
