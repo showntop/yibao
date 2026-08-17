@@ -41,10 +41,12 @@
      双驱动（v2 Codex 驱动）：ctx-row 权限模式 pill 旁加引擎 chip #agent-chip（pill 样式体系）——
      无活动会话时可点：切换引擎（curAgent，只影响下一个新会话；默认值 = 当前 cwd 最近会话的
      agent，sessions 表天然 per-cwd 记忆）+ 若该引擎在本项目有可续会话则弹引擎过滤的会话 popover；
-     有会话时 chip 只读，显示当前会话引擎徽标（curSessAgent：send() 新会话回填时记录，
-     attach/resume 后由 handleInitData 按流式 data.agent 服务端值同步）。打开面板时
-     coding.drivers 探测：codex 不可用 → chip 灰显禁用 + title「未检测到 codex CLI」，
-     curAgent 落 codex 时强制回 claude-code。send() 的 coding.start 参数带 agent。
+     有会话时 chip 显示当前会话引擎徽标（curSessAgent：send() 新会话回填时记录，
+     attach/resume 后由 handleInitData 按流式 data.agent 服务端值同步）——视觉只读但仍是
+     「切换/接续」入口：点击打开另一引擎的过滤接续视图。打开面板时
+     coding.drivers 探测：codex 不可用 → 无会话态 chip 灰显禁用 + title「未检测到 codex CLI」，
+     curAgent 落 codex 时强制回 claude-code；有会话态目标引擎是 codex 且不可用 → 点击提示不弹层。
+     send() 的 coding.start 参数带 agent。
      Codex 会话降级点：无审批卡（headless approval 恒 never，L2 确认条天然不触发）、
      无 ⏪ 回滚锚（codex 不回放带 uuid 的 user_msg）、done usage 无 cost_usd（成本段容缺
      不显示，只 token/耗时——addUsage/renderCost/setStatusDone 三处守御）。
@@ -390,7 +392,7 @@
   .at-item.sel { background: var(--surface-2); }
   .at-empty { padding: 8px; opacity: .6; font-size: 12px; }
   /* 段②：上下文行——cwd chip（📁+目录名 pill，点击弹浮层改路径）+ 权限模式 pill
-     + 引擎 chip #agent-chip（v2 双驱动：无会话可点切换 CC⇄Codex / 有会话只读徽标 / codex 不可用灰显禁用）
+     + 引擎 chip #agent-chip（v2 双驱动：无会话可点切换 CC⇄Codex / 有会话引擎徽标（点击=接续另一引擎）/ codex 不可用灰显禁用）
      + @ 引用按钮。
      cwd 真值存 hidden #cwd，send/handoff/@ 补全等全部 JS 读取路径不变 */
   .ctx-row { position: relative; display: flex; align-items: center; gap: 6px; }
@@ -509,7 +511,8 @@
   .pill:disabled { opacity: .45; cursor: not-allowed; }
   .pill:disabled:hover { border-color: var(--border-strong); color: var(--muted); }
   /* 引擎 chip（v2 双驱动）：无会话时可点切换 CC⇄Codex（pill 基础交互）；
-     有会话时只读徽标（.ro：无 hover 反馈、点击不响应）；codex 不可用 → disabled 灰显 + title 原因 */
+     有会话时只读徽标配色（.ro：无 hover 反馈——视觉不变，但点击仍可打开另一引擎的接续视图）；
+     codex 不可用 → 无会话态 disabled 灰显 + title 原因 */
   #agent-chip.ro { cursor: default; }
   #agent-chip.ro:hover { border-color: var(--border-strong); color: var(--muted); }
 
@@ -1725,14 +1728,16 @@
   // ============================================================
   //   引擎 chip（v2 双驱动：CC ⇄ Codex）
   //   无活动会话：可点切换 curAgent（只影响下一个新会话；send() 的 coding.start 带 agent 参数）；
-  //   有活动会话：只读徽标，显示当前会话引擎 curSessAgent（send 新会话回填时落定，
-  //   attach/resume 后由 handleInitData 按流式 data.agent 服务端值同步）。
+  //   有活动会话：徽标显示当前会话引擎 curSessAgent（send 新会话回填时落定，
+  //   attach/resume 后由 handleInitData 按流式 data.agent 服务端值同步）——.ro 视觉只读样式
+  //   保留，但 chip 任何状态下都是「切换/接续」入口：点击打开另一引擎的过滤接续视图。
   //   打开面板 coding.drivers 探测（与 prefillCwd 并发，两者完成各自重渲染，约束互收）：
-  //   codex 不可用 → chip 灰显禁用 + title 原因；curAgent 落 codex 时强制回 claude-code。
+  //   codex 不可用 → 无会话态 chip 灰显禁用 + title 原因，curAgent 落 codex 时强制回 claude-code；
+  //   有会话态目标引擎是 codex 且不可用 → 点击处拦截提示，不弹层。
   //   默认引擎 = 当前 cwd 最近会话的 agent（prefillCwd 处 coding.list 行取，sessions 表天然记忆）。
   // ============================================================
   var curAgent = "claude-code";     // 新会话引擎选择（chip 可点态的真值；缺省 CC，零回归底线）
-  var curSessAgent = "claude-code"; // 当前活动会话的引擎（有会话时 chip 只读显示它）
+  var curSessAgent = "claude-code"; // 当前活动会话的引擎（有会话时 chip 徽标显示它）
   var codexAvailable = null;        // coding.drivers 探测结果：true/false；null=未探测或探测失败（按可用呈现，不影响 CC 路径）
 
   function normAgent(a) { return a === "codex" ? "codex" : "claude-code"; }  // "cc" 等历史值一律归 CC
@@ -1740,24 +1745,33 @@
 
   function renderAgentChip() {
     var chip = $("agent-chip");
-    var ro = !!currentSession;              // 有会话：只读徽标显示当前会话引擎
+    var ro = !!currentSession;              // 有会话：徽标显示当前会话引擎（视觉只读，仍可点=接续另一引擎）
     var shown = ro ? curSessAgent : curAgent;
-    // codex 不可用 → 可点态整颗灰显禁用（无可切换对象）+ title 原因；只读徽标态不用 disabled，避免徽标变灰
+    // codex 不可用 → 可点态整颗灰显禁用（无可切换对象）+ title 原因；徽标态不用 disabled
+    // （避免徽标变灰；目标引擎是 codex 的拦截放点击处理器里提示）
     var unavailable = !ro && codexAvailable === false;
     chip.textContent = agentLabel(shown);
     chip.classList.toggle("ro", ro);
     chip.disabled = unavailable;
     chip.title = ro
-      ? "当前会话引擎：" + agentLabel(shown) + "（会话内只读）"
+      ? "当前会话引擎：" + agentLabel(shown) + "（点击切换/接续到另一引擎的会话）"
       : unavailable
         ? "未检测到 codex CLI"
         : "引擎：" + agentLabel(shown) + "（点击切换；若该引擎在本项目有可续会话，会打开接续视图）";
   }
 
-  // chip 点击 = 切换 + 接续：先翻转引擎，再探测该引擎在本项目有无可续会话——
-  // 有才弹「该引擎过滤视图」的会话 popover，无则状态行提示已切换，不打扰
+  // chip 点击 = 切换/接续入口，分两态：
+  //   无会话——翻转 curAgent，再探测该引擎在本项目有无可续会话，有才弹「该引擎过滤视图」；
+  //   有会话——打开「另一引擎」的过滤接续视图（当前引擎徽标不动；视图里选会话即 resumeSession 跳转；
+  //   目标是 codex 且不可用 → 状态行提示不弹层）。streaming 中 openHistory 自有拦截。
   $("agent-chip").addEventListener("click", function () {
-    if (currentSession) return;             // 只读徽标态不响应（codex 不可用时 disabled 天然拦截）
+    if (currentSession) {
+      var other = curSessAgent === "codex" ? "claude-code" : "codex";
+      if (other === "codex" && codexAvailable === false) { setStatus("未检测到 codex CLI", true); return; }
+      openHistory({ filterAgent: other, onlyIfContent: true,
+                    emptyHint: "没有 " + agentLabel(other) + " 的可续会话" });
+      return;
+    }
     curAgent = curAgent === "codex" ? "claude-code" : "codex";
     renderAgentChip();
     openHistory({ filterAgent: curAgent, onlyIfContent: true });
@@ -1844,7 +1858,7 @@
       var sid = r && r.session_id;
       if (!sid) throw new Error("未返回 session_id");
       currentSession = sid;       // start 回填新 id；send 路径下 sid 与原 id 一致（保留不动）
-      if (isStart) curSessAgent = curAgent;   // 新会话引擎落定：chip 转入只读徽标态
+      if (isStart) curSessAgent = curAgent;   // 新会话引擎落定：chip 转入引擎徽标态
       renderAgentChip();
       $("prompt").value = "";
       if (pendingTurnEnded) {
@@ -1900,7 +1914,7 @@
     // handleInitData 会据此丢弃任何迟到的旧块，避免污染新对话。
     if (currentSession) discardedSessions[currentSession] = true;
     currentSession = null;
-    renderAgentChip();   // 回到无会话态：引擎 chip 恢复可点切换（curAgent 保持，仅影响下一个新会话）
+    renderAgentChip();   // 回到无会话态：引擎 chip 恢复「翻转 curAgent 切换引擎」语义（curAgent 保持，仅影响下一个新会话）
     syncActionRow();   // 回到无会话空闲态：中断收敛隐藏
     currentBubble = null;
     lastToolCard = null;   // #log 清空后旧卡已 detach，防 tool_result 落进不可见节点
@@ -2177,7 +2191,7 @@
       var csid = r && r.session_id;
       if (!csid) throw new Error("未返回 session_id");
       currentSession = csid;
-      curSessAgent = "claude-code";   // handoff 落的是 CC 会话（coding.start 缺省引擎）：chip 只读徽标显示 CC
+      curSessAgent = "claude-code";   // handoff 落的是 CC 会话（coding.start 缺省引擎）：chip 徽标显示 CC
       renderAgentChip();
       syncActionRow();   // 会话已回填：中断按运行态保持可见
       if (pendingTurnEnded) {
@@ -2214,7 +2228,9 @@
   //   两区皆空 → 新项目空态。恢复 = 清 log 渲染历史消息 + 分隔线；下一条发送走 coding.send
   //   （currentSession 已指回旧 sid）→ 同一 CC 上下文续聊。
   //   opts.filterAgent：chip 切换通道按引擎过滤两区（区 1 只显对应源卡、区 2 只列该引擎会话）；
-  //   opts.onlyIfContent：无可续内容时不弹层，状态行提示（chip 通道专用）
+  //   opts.onlyIfContent：无可续内容时不弹层，状态行提示（chip 通道专用）；
+  //   opts.emptyHint：onlyIfContent 空态提示语——缺省「已切换到 X…」（无会话 chip 通道），
+  //   有会话 chip 通道传「没有 X 的可续会话」
   // ============================================================
   function openHistory(opts) {
     opts = opts || {};
@@ -2234,7 +2250,8 @@
       // chip 切换+接续通道：先取数再决定——有该引擎可续会话才弹过滤视图
       Promise.all([lastP, listP]).then(function (rs) {
         if (!hasEngineContent(rs[0], rs[1], opts.filterAgent, cwd)) {
-          setStatus("已切换到 " + agentLabel(opts.filterAgent) + "，新项目直接输入任务开始");
+          setStatus(opts.emptyHint ||
+            "已切换到 " + agentLabel(opts.filterAgent) + "，新项目直接输入任务开始");
           return;
         }
         ov.hidden = false;
@@ -2436,7 +2453,7 @@
   }
 
   // agent 可选（v2 双驱动）：调用方已知目标会话引擎时传入（历史行 row.agent / attach_codex "codex" /
-  // attach_cc "claude-code"）→ chip 只读徽标立即落定；不传（attach 自动恢复）则由 handleInitData
+  // attach_cc "claude-code"）→ chip 徽标立即落定；不传（attach 自动恢复）则由 handleInitData
   // 按流式 data.agent 服务端值同步。
   function resumeSession(sid, agent) {
     // 返回 promise 链：attach 自动恢复路径（handleInitData）靠它挂 .finally 清 resuming 防重入标志；
