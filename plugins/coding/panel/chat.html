@@ -47,9 +47,11 @@
      coding.drivers 探测：codex 不可用 → 无会话态 chip 灰显禁用 + title「未检测到 codex CLI」，
      curAgent 落 codex 时强制回 claude-code；有会话态目标引擎是 codex 且不可用 → 点击提示不弹层。
      send() 的 coding.start 参数带 agent。
-     自动回放（验收改版）：打开面板时 prefillCwd 命中当前 cwd 最近会话 → autoReplay 走
-     requestResume 只读回放其消息列表（coding.history 不建 runner，发首条消息才真正接续）；
-     活体会话（running/waiting）/ codex 不可用 / attach 接管竞态时跳过。
+     自动回放（验收改版）：打开面板时 prefillCwd → autoReplay 把当前 cwd 最近一条非空会话
+     只读回放进对话框（requestResume + skipIfEmpty，coding.history 不建 runner，发首条消息才
+     真正接续）；活体会话（running/waiting）/ codex 不可用 / attach 接管抢占时让位，
+     空会话（failed 无消息落库）顺延下一条候选。切换项目（commitCwd：cwd 浮层/📁 选目录）
+     = newChat 清空当前会话 + 拉列表刷新 chip + 自动回放新项目。
      Codex 会话降级点：无审批卡（headless approval 恒 never，L2 确认条天然不触发）、
      无 ⏪ 回滚锚（codex 不回放带 uuid 的 user_msg）、done usage 无 cost_usd（成本段容缺
      不显示，只 token/耗时——addUsage/renderCost/setStatusDone 三处守御）。
@@ -2458,10 +2460,14 @@
   // agent 可选（v2 双驱动）：调用方已知目标会话引擎时传入（历史行 row.agent / attach_codex "codex" /
   // attach_cc "claude-code"）→ chip 徽标立即落定；不传（attach 自动恢复）则由 handleInitData
   // 按流式 data.agent 服务端值同步。
-  function resumeSession(sid, agent) {
+  // opts.skipIfEmpty（自动回放专用）：历史为空则不接管面板状态、返回 0，让调用方顺延下一条候选；
+  // 正常恢复返回消息数（>0），catch 兜底 undefined（恒 resolve，调用方无需再兜）。
+  function resumeSession(sid, agent, opts) {
     // 返回 promise 链：attach 自动恢复路径（handleInitData）靠它挂 .finally 清 resuming 防重入标志；
     // 链尾自带 .catch（失败只亮状态行），恒 resolve，调用方无需再兜。
     return window.yibao.invoke("coding.history", { id: sid }).then(function (r) {
+      var msgs = r.messages || [];
+      if (opts && opts.skipIfEmpty && !msgs.length) return 0;   // 空会话（如 failed 无消息落库）不接管，顺延
       if (currentSession) discardedSessions[currentSession] = true;
       currentSession = sid;
       if (agent) curSessAgent = normAgent(agent);   // 恢复目标会话引擎以调用方/服务端所给为准
@@ -2478,11 +2484,11 @@
       resetUsage();          // C4：恢复历史不补旧账，清零重计（接受降级）
       streaming = false;
       $("log").innerHTML = "";
-      (r.messages || []).forEach(function (m) {
+      msgs.forEach(function (m) {
         if (m.role === "user") appendUser(m.text, m.uuid || "");
         else { var b = appendAssistantBubble(); appendTextToBubble(b, m.text); finalizeBubble(b); b.classList.add("done"); }
       });
-      if ((r.messages || []).length) appendMarker("—— 以上为历史，继续聊 ↓ ——", false);
+      if (msgs.length) appendMarker("—— 以上为历史，继续聊 ↓ ——", false);
       if (r.cwd) setCwd(r.cwd);
       $("history-overlay").hidden = true;
       $("new-chat").disabled = false;
@@ -2490,6 +2496,7 @@
       setStatus("已恢复会话 " + sid + "，发消息将在同一上下文继续");
       reportState("idle");   // takeover：恢复后补报，父侧 session 标志随 !!currentSession 刷新（非 takeover 自拒）
       $("prompt").focus();
+      return msgs.length;
     }).catch(function (e) {
       setStatus("恢复失败：" + emsg(e), true);
       $("history-overlay").hidden = true;
@@ -2499,10 +2506,11 @@
   // attach 自动恢复入口（handleInitData）+ 自动回放（autoReplay）共用：防重入 + 意图不丢。
   // 恢复进行中又收到恢复请求（连点两张任务卡 / 接管与自动回放竞态）→ 只留最新目标 pendingResume，
   // 当前恢复完成接续；同 sid 重复到达归并进同一次（完成后 next.sid === currentSession 自然丢弃）。
-  function requestResume(sid, agent) {
-    if (resuming) { pendingResume = { sid: sid, agent: agent }; return; }
+  // 返回链：resolve 值 = resumeSession 的消息数；被并入 pendingResume 时立即 resolve -1（调用方据此停止顺延）。
+  function requestResume(sid, agent, opts) {
+    if (resuming) { pendingResume = { sid: sid, agent: agent }; return Promise.resolve(-1); }
     resuming = true;
-    resumeSession(sid, agent).finally(function () {
+    return resumeSession(sid, agent, opts).finally(function () {
       resuming = false;
       var next = pendingResume; pendingResume = null;
       if (next && next.sid !== currentSession) requestResume(next.sid, next.agent);
@@ -2525,15 +2533,15 @@
     $("cwd-input").select();
   }
   function closeCwdPop(commit) {
-    if (commit) setCwd($("cwd-input").value.trim());
+    if (commit) commitCwd($("cwd-input").value);   // 换目录 = 清空当前会话 + 重载新项目（见 commitCwd）
     $("cwd-pop").hidden = true;
   }
   // 📁 文件夹选择器：native:pick_folder 走 WebviewPanel 白名单旁路直调 Tauri（不经 sidecar）。
-  // 桥 resolve 的就是结果本体（路径字符串；取消为 null）——回填 cwd 并关浮层。
+  // 桥 resolve 的就是结果本体（路径字符串；取消为 null）——经 commitCwd 提交（换目录 = 清空+重载）并关浮层。
   function pickCwd() {
     if (!hasBridge) { setStatus("未连译宝桥（设计预览模式）", true); return; }
     window.yibao.invoke("native:pick_folder", {}).then(function (r) {
-      if (r) { setCwd(r); $("cwd-pop").hidden = true; }
+      if (r) { commitCwd(r); $("cwd-pop").hidden = true; }
     }).catch(function () {
       setStatus("选择文件夹失败", true);
     });
@@ -2746,9 +2754,7 @@
 
   // ============================================================
   //   初次进入：预填 cwd（从最近一次会话取，没填过就留空）
-  //   + 默认引擎（v2 双驱动）：当前 cwd 最近会话的 agent（list 按时间倒序，首个 cwd 命中行即最近；
-  //   "codex"→codex，其余（"claude-code"/"cc"）→claude-code；codex 不可用探测结论到达后强制回 CC）
-  //   + 自动回放：把该最近会话的消息列表只读回放进对话框（见 autoReplay）
+  //   + 刷新 chip 默认引擎 + 自动回放该 cwd 最近一条非空会话（refreshCwdState/autoReplay）
   // ============================================================
   function prefillCwd() {
     if (!hasBridge) return;
@@ -2758,31 +2764,60 @@
         setCwd(rows[0].cwd);
       }
       var cwd = $("cwd").value.trim();
-      if (!cwd) return;
-      for (var i = 0; i < rows.length; i++) {
-        if (rows[i] && rows[i].cwd === cwd) {
-          var a = normAgent(rows[i].agent);
-          curAgent = (a === "codex" && codexAvailable === false) ? "claude-code" : a;
-          renderAgentChip();
-          autoReplay(rows[i]);
-          break;
-        }
-      }
+      if (cwd) refreshCwdState(rows, cwd, true);
     }).catch(function () { /* 静默：首次使用无会话 */ });
   }
 
-  // 自动回放（验收改版）：打开面板时把当前 cwd 最近一次会话的消息列表回放进对话框。
+  // chip 默认引擎 = 该 cwd 最近会话的 agent（list 按时间倒序，首个 cwd 命中行即最近；
+  // "codex"→codex，其余→claude-code；codex 不可用探测结论到达后强制回 CC）；
+  // replay=true 时顺带自动回放（初次进入/切换项目共用）。
+  function refreshCwdState(rows, cwd, replay) {
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i] && rows[i].cwd === cwd) {
+        var a = normAgent(rows[i].agent);
+        curAgent = (a === "codex" && codexAvailable === false) ? "claude-code" : a;
+        renderAgentChip();
+        break;
+      }
+    }
+    if (replay) autoReplay(rows, cwd);
+  }
+
+  // 自动回放（验收改版）：把当前 cwd 最近一条非空会话的消息列表回放进对话框。
   // resumeSession 走 coding.history（只读，不建 runner），发送第一条消息时才真正接续引擎会话。
-  // 跳过：活体会话（running/waiting 发送会被拒，留给任务卡/会话墙「接管」）；
-  //       codex 已探测不可用的 codex 会话（回放后发送必败，chip 已回退 CC）；
-  //       面板已有会话/恢复进行中（attach 接管竞态——autoReplay 走 requestResume，
-  //       若接管指令在回放期间到达会被排队为 pendingResume，回放完成后接管自然胜出）。
-  function autoReplay(row) {
-    if (!row || !row.id) return;
+  // 候选过滤：活体会话（running/waiting 发送会被拒，留给任务卡/会话墙「接管」）、
+  //           codex 已探测不可用；空会话（failed 无消息落库等）经 skipIfEmpty 顺延下一条。
+  // 让位：attach 接管/手动接续抢占（currentSession/resuming 变化或 n=-1）即停。
+  function autoReplay(rows, cwd) {
     if (currentSession || resuming) return;
-    if (row.live === "running" || row.live === "waiting") return;
-    if (normAgent(row.agent) === "codex" && codexAvailable === false) return;
-    requestResume(row.id, row.agent);
+    var cands = [];
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      if (!row || !row.id || row.cwd !== cwd) continue;
+      if (row.live === "running" || row.live === "waiting") continue;
+      if (normAgent(row.agent) === "codex" && codexAvailable === false) continue;
+      cands.push(row);
+    }
+    (function tryNext(i) {
+      if (i >= cands.length || currentSession || resuming) return;
+      requestResume(cands[i].id, cands[i].agent, { skipIfEmpty: true }).then(function (n) {
+        if (n === 0) tryNext(i + 1);
+      });
+    })(0);
+  }
+
+  // 用户主动切换项目（cwd 浮层确认 / 📁 选目录共用入口）：换目录 = 换上下文——
+  // 当前会话按「新对话」清理（旧 session 进 discarded 防迟到流污染新项目的回放），
+  // 再拉列表刷新 chip 默认引擎 + 自动回放新项目最近会话。运行/发送中拒绝切换（防流被截断）。
+  function commitCwd(v) {
+    v = (v || "").trim();
+    if (!v || v === $("cwd").value.trim()) return;
+    if (streaming || sending) { setStatus("会话进行中，先停止再切换项目目录", true); return; }
+    setCwd(v);
+    newChat();
+    window.yibao.invoke("coding.list", {}).then(function (r) {
+      refreshCwdState((r && r.sessions) || [], v, true);
+    }).catch(function () { /* 静默 */ });
   }
 
   // ============================================================
