@@ -872,6 +872,33 @@ async fn pick_folder(window: tauri::Window) -> Result<Option<String>, String> {
         .map(|p| p.to_string_lossy().into_owned()))
 }
 
+/// 粘贴图片/附件落盘（输入条 chips 化）：base64 → runtime_root()/attachments/<毫秒>-<rand>.<ext>，
+/// 返回绝对路径。InputBar paste 直调；coding iframe 经 WebviewPanel `native:` 白名单旁路。
+/// 同步命令即可：纯内存解码 + 一次小文件写，无对话框无主线程阻塞（对照 pick_folder 必须 async 的注释）。
+#[tauri::command]
+fn save_attachment(data: String, ext: String) -> Result<String, String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data.trim())
+        .map_err(|e| format!("附件 base64 解码失败：{e}"))?;
+    if bytes.len() > 20 * 1024 * 1024 {
+        return Err("附件过大（>20MB）".into());
+    }
+    // ext 白名单化：只留 ASCII 字母数字，防路径注入；空则按 png
+    let ext: String = ext.chars().filter(|c| c.is_ascii_alphanumeric()).take(8).collect();
+    let ext = if ext.is_empty() { "png".to_string() } else { ext };
+    let dir = runtime_root().join("attachments");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("建附件目录失败：{e}"))?;
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let rand: String = uuid::Uuid::new_v4().simple().to_string().chars().take(6).collect();
+    let path = dir.join(format!("att-{millis}-{rand}.{ext}"));
+    std::fs::write(&path, bytes).map_err(|e| format!("写附件失败：{e}"))?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
 /// 看门狗：每 5s 发 ping；运行中 >15s 无 pong 视为疑似僵死。
 /// 两轮确认：第一轮只补发 ping 并标记 warned，下一轮仍无 pong 才 kill（由桥任务 Terminated 统一重启）——
 /// macOS App Nap/休眠会把整个壳挂起，苏醒后 last_pong 时间跳变，单轮判断会误杀健康大脑。
@@ -2357,7 +2384,8 @@ pub fn run() {
             open_home_window,
             close_home_window,
             set_pet_expanded,
-            pick_folder
+            pick_folder,
+            save_attachment
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

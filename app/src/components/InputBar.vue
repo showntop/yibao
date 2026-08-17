@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from "vue";
+import { invoke } from "@tauri-apps/api/core";
 import YbIcon from "./YbIcon.vue";
 import { sessionStore } from "../state/store";
 import { panelAction, onBrainEvent, type BrainEvent } from "../lib/brain";
@@ -222,10 +223,59 @@ function openAdd(kind: InputContext["kind"]) {
 }
 
 function onFileChange(event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0];
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
   if (!file) return;
-  pendingContexts.value.push({ kind: "attachment", label: file.name });
-  (event.target as HTMLInputElement).value = "";
+  void attachFile(file);
+}
+
+/** File → dataURL（FileReader 内部流式，大文件不用 btoa 手动分块） */
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result || ""));
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(file);
+  });
+}
+
+/** 附件落盘（save_attachment → data_dir/attachments/）：成功 → chip 带真实路径（AI 可按路径读文件）；
+ *  失败退回 label-only（旧行为），不阻断输入。图片附带内存预览 dataURL（chip 缩略图）。 */
+async function attachFile(file: File, label?: string) {
+  try {
+    const dataUrl = await fileToDataUrl(file);
+    const ext = file.name.includes(".")
+      ? file.name.split(".").pop()!
+      : (file.type.split("/")[1] || "png");
+    const path = await invoke<string>("save_attachment", {
+      data: dataUrl.slice(dataUrl.indexOf(",") + 1),
+      ext,
+    });
+    pendingContexts.value.push({
+      kind: "attachment",
+      label: label ?? file.name,
+      path,
+      ...(file.type.startsWith("image/") ? { preview: dataUrl } : {}),
+    });
+  } catch {
+    pendingContexts.value.push({ kind: "attachment", label: label ?? file.name });
+  }
+}
+
+/** 粘贴截图：剪贴板图片 → 落盘成 chip（阻止进文本）；非图片内容走默认文本粘贴 */
+function onPaste(e: ClipboardEvent) {
+  const items = e.clipboardData?.items;
+  if (!items) return;
+  for (const item of items) {
+    if (item.type.startsWith("image/")) {
+      const file = item.getAsFile();
+      if (!file) continue;
+      e.preventDefault();
+      const ts = new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+      void attachFile(file, `截图 ${ts}`);
+    }
+  }
 }
 
 function removeContext(index: number) {
@@ -296,6 +346,7 @@ defineExpose({ focus: () => inputRef.value?.focus(), insertText });
     <!-- chips 行：附件/引用/@ 文件独立一行置于输入行上方（不与文本输入挤同一行） -->
     <div v-if="pendingContexts.length" class="context-list" aria-label="待发送的附件和引用">
       <span v-for="(context, index) in pendingContexts" :key="`${context.kind}-${context.label}-${index}`" class="context-chip">
+        <img v-if="context.preview" :src="context.preview" class="chip-thumb" alt="" />
         {{ kindLabel(context) }} · {{ context.label }}
         <button type="button" aria-label="移除内容" @click="removeContext(index)">×</button>
       </span>
@@ -352,6 +403,7 @@ defineExpose({ focus: () => inputRef.value?.focus(), insertText });
         @compositionstart="onCompStart"
         @compositionend="onCompEnd"
         @input="onTextInput"
+        @paste="onPaste"
       ></textarea>
     </div>
     <button
@@ -601,6 +653,13 @@ textarea::-webkit-scrollbar-thumb {
   color: inherit;
   cursor: pointer;
   line-height: 1;
+}
+.chip-thumb {
+  width: 18px;
+  height: 18px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex: none;
 }
 .mic,
 .main {

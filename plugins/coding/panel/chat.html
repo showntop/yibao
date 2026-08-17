@@ -2712,6 +2712,35 @@
       : "";
   }
 
+  // 粘贴截图（非 takeover 自有输入框；takeover 态粘贴归父侧 InputBar）：剪贴板图片经
+  // native:save_attachment 落盘（data_dir/attachments/，20MB 上限见 Rust 侧）→ 绝对路径成 @ chip，
+  // 随 send() composeRefs 进 prompt——CC 可按路径直接读图。非图片内容走默认文本粘贴。
+  function attachImage(file) {
+    var rd = new FileReader();
+    rd.onload = function () {
+      var url = String(rd.result || "");
+      var ext = (file.type && file.type.split("/")[1]) || "png";
+      window.yibao.invoke("native:save_attachment", { data: url.slice(url.indexOf(",") + 1), ext: ext })
+        .then(function (p) {
+          if (p) { addAtRef(String(p)); setStatus("已引用截图（" + String(p).split("/").pop() + "）"); }
+        })
+        .catch(function (e) { setStatus("截图保存失败：" + emsg(e), true); });
+    };
+    rd.readAsDataURL(file);
+  }
+  $("prompt").addEventListener("paste", function (e) {
+    var items = e.clipboardData && e.clipboardData.items;
+    if (!items || !hasBridge) return;
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].type && items[i].type.indexOf("image/") === 0) {
+        var file = items[i].getAsFile();
+        if (!file) continue;
+        e.preventDefault();   // 图片成 chip，不进文本
+        attachImage(file);
+      }
+    }
+  });
+
   var atState = { open: false, items: [], idx: 0, query: "", start: -1, caret: 0 };  // caret=触发时光标位（atInsert 切删用它，不用 live 光标——菜单开着挪光标再 Enter 会切错）
   function closeAt() { atState.open = false; $("at-menu").hidden = true; }
   function openAt() { atState.open = true; $("at-menu").hidden = false; }
