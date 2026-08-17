@@ -1029,6 +1029,43 @@ def _cc_transcript_rows(path: Path) -> list[dict]:
     return rows
 
 
+# codex rollout 里 CLI 注入的机器条目（环境上下文/指令/插件推荐/中断标记等），非用户对话
+# 内容——对齐 attach_cc 的 isMeta/本地命令回声过滤精神，导入/摘要一律跳过（实测 91 份 rollout 归纳）
+_CODEX_META_PREFIXES = ("<environment_context", "<user_instructions", "<recommended_plugins",
+                        "<in-app-browser-context", "<codex_internal_context", "<turn_aborted")
+
+
+def _codex_transcript_rows(path: str) -> list[dict]:
+    """解析 codex rollout → [{role, text, ts}]（user/assistant 对话行，时间正序）。
+
+    只取 type=response_item 且 payload.role ∈ _codex._DIALOG_ROLES 的行（session_meta/
+    turn_context/event_msg/reasoning/function_call/developer 指令注入天然排除）；文本提取
+    复用 _codex._text（content 兼容字符串与块列表），ts 取行顶层 timestamp。防御语义同
+    _cc_transcript_rows：坏行跳过、任何失败 → []（导入以空降级，绝不抛）。
+    """
+    rows: list[dict] = []
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    o = json.loads(line[: _cc_reader._MAX_LINE_KB * 1024])
+                except json.JSONDecodeError:
+                    continue
+                pl = o.get("payload") or {}
+                if o.get("type") != "response_item" or pl.get("role") not in _codex._DIALOG_ROLES:
+                    continue
+                text = _codex._text(pl.get("content"))
+                if not text or text.startswith(_CODEX_META_PREFIXES):  # 机器条目（见上常量）
+                    continue
+                rows.append({"role": pl["role"], "text": text, "ts": _iso_ts(o.get("timestamp"))})
+    except Exception:
+        return []
+    return rows
+
+
 def _cc_latest_session(cwd: str) -> dict | None:
     """~/.claude/projects/<slug>/ 顶层 mtime 最新 .jsonl → cc 上次会话卡数据。
 
@@ -1276,17 +1313,48 @@ def _find_codex_session(thread_id: str) -> dict | None:
     return None
 
 
+def _import_codex_messages(db, sid: str, path: str, *, fallback_ts: int) -> None:
+    """rollout 对话行落 messages 表（seq 1..n；ts 缺则 fallback_ts 兜底；codex 无 uuid 锚点留 ""）。
+
+    单行落库失败不拖垮整段导入（仿 attach_cc/_stream._persist 隔离）。
+    """
+    for i, m in enumerate(_codex_transcript_rows(path), start=1):
+        try:
+            db.insert("messages", {
+                "session_id": sid, "role": m["role"], "text": m["text"],
+                "ts": m["ts"] if m["ts"] is not None else fallback_ts,
+                "seq": i, "uuid": "",
+            })
+        except Exception as e:  # 单行落库失败不拖垮整段导入（仿 _stream._persist 隔离）
+            print(f"[yibao/coding] attach_codex rollout 落库失败（跳过）：{e}", file=sys.stderr)
+
+
 def attach_codex_session(db, *, thread_id: str) -> str | None:
     """codex 原生续导入落库（幂等），返回译宝 session_id；找不到 rollout 返回 None。
 
-    幂等：cc_session_id（=thread_id）已在 sessions 表 → 直接返回既有 id，不重复导入。
+    幂等：cc_session_id（=thread_id）已在 sessions 表 → 直接返回既有 id，不重复导入；
+    但既有行 messages 为空（v2 初期 attach 只建 sessions 空行）→ 补导 rollout 消息。
     sessions 行：agent="codex"、source="native"、status="done"；cwd 取 rollout session_meta，
     prompt=首条 user 摘要截 60；created_at/finished_at 取 session_meta timestamp，兜底文件 mtime。
-    导入后 send 走既有 resume 链路（SendSkill 按 agent=codex → codex exec resume thread_id）。
+    messages 表写整段 rollout 对话（seq 1..n、role user/assistant、ts 有则带），
+    resumeSession 经 coding.history 读回完整对话；导入后 send 走既有 resume 链路
+    （SendSkill 按 agent=codex → codex exec resume thread_id）。
     """
     rows = db.query("sessions", where={"cc_session_id": thread_id})
     if rows:
-        return str(rows[0]["id"])
+        sid = str(rows[0]["id"])
+        try:
+            has_msgs = bool(db.query("messages", where={"session_id": sid}, limit=1))
+        except Exception:
+            has_msgs = True   # 查询失败不冒险重插（保持幂等直返语义）
+        if not has_msgs:
+            meta = _find_codex_session(thread_id)
+            if meta is not None:   # rollout 已删 → 无源可补，静默直返
+                fb = rows[0].get("created_at")
+                if not isinstance(fb, int):
+                    fb = _iso_ts(meta.get("timestamp")) or int(time.time())
+                _import_codex_messages(db, sid, meta["path"], fallback_ts=fb)
+        return sid
     meta = _find_codex_session(thread_id)
     if meta is None:
         return None
@@ -1303,22 +1371,24 @@ def attach_codex_session(db, *, thread_id: str) -> str | None:
         "status": "done", "created_at": ts, "finished_at": ts,
         "cc_session_id": thread_id, "source": "native", "mode": "acceptEdits",
     })
+    _import_codex_messages(db, sid, meta["path"], fallback_ts=ts)
     return sid
 
 
 class AttachCodexSkill(Skill):
     """codex 会话原生续导入（接续 popover codex 卡「原生续」前置）。
 
-    建 DB 行（agent="codex" + cc_session_id=thread_id）后前端走现有 resumeSession；
-    发新消息时 SendSkill 按 agent=codex 走 codex exec resume 原生续，上下文完整。幂等按 cc_session_id。
+    建 DB 行（agent="codex" + cc_session_id=thread_id）并导入 rollout 对话消息进 messages 表，
+    前端走现有 resumeSession（coding.history 读回完整对话）；发新消息时 SendSkill 按 agent=codex
+    走 codex exec resume 原生续，上下文完整。幂等按 cc_session_id；既有空消息行补导。
     """
     id = "coding.attach_codex"
     label = "导入 codex 会话"
     description = (
-        "把指定 Codex 会话（thread_id）登记进 coding 会话库：读 ~/.codex/sessions 的 rollout "
-        "session_meta 落 sessions 行（agent=codex），返回译宝 session_id，之后按普通会话恢复/续聊"
-        "（codex exec resume 原生续）。幂等：thread_id 已在库直接返回既有 session_id。"
-        "【需要】session_id（Codex thread_id）。"
+        "把指定 Codex 会话（thread_id）导入 coding 会话库：读 ~/.codex/sessions 的 rollout，"
+        "落 sessions 行（agent=codex）+ 对话消息进 messages 表，返回译宝 session_id，之后按普通会话"
+        "恢复/续聊（codex exec resume 原生续）。幂等：thread_id 已在库直接返回既有 session_id"
+        "（既有行 messages 为空时补导）。【需要】session_id（Codex thread_id）。"
     )
     default_risk = RiskLevel.L0_READONLY  # 只写本插件 DB（无文件/系统副作用），导入幂等
 

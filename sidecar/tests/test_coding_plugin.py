@@ -1763,3 +1763,141 @@ def test_api_toml_registers_last_sessions_and_attach_cc():
         assert m["handler"] == f"coding.{name}"
         assert m["direct"] is True and m["quiet"] is True
         assert "panel" not in m
+
+
+# ---------- attach_codex 导入 rollout 消息（验收修：原生续恢复完整对话 + 空行补导）----------
+from coding import AttachCodexSkill  # noqa: E402
+
+_D2_CWD = "/tmp/proj"
+
+
+def _d2_msg(role, text, ts=None):
+    """response_item 对话行（content 块列表形态，对齐真 rollout；ts 为行顶层 timestamp）。"""
+    o = {"type": "response_item",
+         "payload": {"type": "message", "role": role,
+                     "content": [{"type": "input_text" if role == "user" else "output_text",
+                                  "text": text}]}}
+    if ts:
+        o["timestamp"] = ts
+    return o
+
+
+def _d2_write_rollout(root, rel, sid, cwd, ts, lines):
+    """在 root 下造 codex rollout：session_meta 首行 + lines（dict 序列化 / str 原样写，可造坏行）。"""
+    p = os.path.join(root, rel)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    out = [_json.dumps({"type": "session_meta",
+                        "payload": {"session_id": sid, "cwd": cwd, "timestamp": ts}})]
+    out += [x if isinstance(x, str) else _json.dumps(x) for x in lines]
+    with open(p, "w") as f:
+        f.write("\n".join(out) + "\n")
+    return p
+
+
+# 对话 3 条 + 无 ts 兜底 1 条，机器条目 5 种（developer 指令/environment_context/event_msg 回声/
+# turn_context/turn_aborted 标记）应全部跳过——前 4 种按类型/角色天然排除，末种按前缀过滤
+_D2_LINES = [
+    _d2_msg("developer", "<permissions instructions> 机器指令", "2026-08-16T09:59:00Z"),
+    _d2_msg("user", "<environment_context>\n  <cwd>/tmp/proj</cwd>\n</environment_context>",
+            "2026-08-16T09:59:30Z"),
+    _d2_msg("user", "第一句", "2026-08-16T10:00:00Z"),
+    _d2_msg("assistant", "回答一", "2026-08-16T10:01:00Z"),
+    {"type": "event_msg", "payload": {"type": "user_message", "message": "回声"}},
+    {"type": "turn_context", "payload": {"cwd": _D2_CWD}},
+    _d2_msg("user", "<turn_aborted>\nThe user interrupted", "2026-08-16T10:01:30Z"),
+    _d2_msg("user", "第二句", "2026-08-16T10:02:00Z"),
+    _d2_msg("assistant", "无时间戳的尾句"),
+]
+_D2_TEXTS = ["第一句", "回答一", "第二句", "无时间戳的尾句"]
+
+
+def test_attach_codex_imports_rollout_messages(tmp_path, monkeypatch):
+    """导入落库：messages 写整段 rollout 对话（seq 1..n、role/ts 取行 timestamp，缺则会话 ts 兜底、
+    uuid 留空）；机器条目全跳过；coding.history 读回完整对话（原生续对话框不再为空）。"""
+    root = str(tmp_path / "codex_sessions")
+    _d2_write_rollout(root, "2026/08/16/r.jsonl", "t-msg", _D2_CWD,
+                      "2026-08-16T10:00:00Z", _D2_LINES)
+    monkeypatch.setattr(codingmod, "_codex_sessions_root", lambda: root)
+    db = _FakeDB()
+    res = AttachCodexSkill().run({"session_id": "t-msg"}, _Ctx(db))
+    assert res.success
+    sid = res.data["session_id"]
+    row = db.rows[sid]
+    assert row["agent"] == "codex" and row["source"] == "native" and row["status"] == "done"
+    msgs = db._tables["messages"]
+    assert [m["seq"] for m in msgs] == [1, 2, 3, 4]
+    assert [m["role"] for m in msgs] == ["user", "assistant", "user", "assistant"]
+    assert [m["text"] for m in msgs] == _D2_TEXTS
+    assert [m["ts"] for m in msgs[:3]] == [
+        int(_dt.fromisoformat("2026-08-16T10:00:00+00:00").timestamp()),
+        int(_dt.fromisoformat("2026-08-16T10:01:00+00:00").timestamp()),
+        int(_dt.fromisoformat("2026-08-16T10:02:00+00:00").timestamp())]
+    assert msgs[3]["ts"] == row["created_at"]              # 无行 timestamp → 会话 ts 兜底
+    assert all(m["session_id"] == sid and m["uuid"] == "" for m in msgs)
+    # resumeSession 链路核实：coding.history 读本 DB id 的 messages 表
+    h = HistorySkill().run({"id": sid}, _Ctx(db))
+    assert h.success and [m["text"] for m in h.data["messages"]] == _D2_TEXTS
+
+
+def test_attach_codex_idempotent_keeps_messages(tmp_path, monkeypatch):
+    """幂等不重复：二次 attach 同 id 返回，messages 不重复插（messages 非空 → 直返）。"""
+    root = str(tmp_path / "codex_sessions")
+    _d2_write_rollout(root, "r.jsonl", "t-idem", _D2_CWD, "2026-08-16T10:00:00Z", _D2_LINES)
+    monkeypatch.setattr(codingmod, "_codex_sessions_root", lambda: root)
+    db = _FakeDB()
+    sid = AttachCodexSkill().run({"session_id": "t-idem"}, _Ctx(db)).data["session_id"]
+    assert len(db._tables["messages"]) == 4
+    res2 = AttachCodexSkill().run({"session_id": "t-idem"}, _Ctx(db))
+    assert res2.success and res2.data["session_id"] == sid
+    assert len(db.rows) == 1 and len(db._tables["messages"]) == 4
+
+
+def test_attach_codex_backfills_empty_session_row(tmp_path, monkeypatch):
+    """空行补导：v2 初期 attach 产生的 sessions 空行（messages 为空）→ attach 时补导 rollout
+    消息（复用既有 sid 不新建行）；补齐后再 attach 幂等直返不再补。"""
+    root = str(tmp_path / "codex_sessions")
+    _d2_write_rollout(root, "r.jsonl", "t-old", _D2_CWD, "2026-08-16T10:00:00Z", _D2_LINES)
+    monkeypatch.setattr(codingmod, "_codex_sessions_root", lambda: root)
+    db = _FakeDB()
+    db.rows["s-old"] = {"id": "s-old", "agent": "codex", "cc_session_id": "t-old",
+                        "status": "done", "created_at": 1234}
+    res = AttachCodexSkill().run({"session_id": "t-old"}, _Ctx(db))
+    assert res.success and res.data["session_id"] == "s-old"
+    assert len(db.rows) == 1                                 # 不新建 sessions 行
+    msgs = db._tables["messages"]
+    assert [m["text"] for m in msgs] == _D2_TEXTS
+    assert all(m["session_id"] == "s-old" for m in msgs)
+    assert msgs[3]["ts"] == 1234                             # 兜底 ts 取既有行 created_at
+    res2 = AttachCodexSkill().run({"session_id": "t-old"}, _Ctx(db))
+    assert res2.data["session_id"] == "s-old" and len(db._tables["messages"]) == 4
+
+
+def test_attach_codex_backfill_rollout_gone_is_silent(tmp_path, monkeypatch):
+    """空行补导降级：rollout 已删 → 无源可补，幂等直返既有 id 不报错。"""
+    monkeypatch.setattr(codingmod, "_codex_sessions_root", lambda: str(tmp_path / "none"))
+    db = _FakeDB()
+    db.rows["s-old"] = {"id": "s-old", "agent": "codex", "cc_session_id": "t-gone",
+                        "status": "done", "created_at": 1234}
+    res = AttachCodexSkill().run({"session_id": "t-gone"}, _Ctx(db))
+    assert res.success and res.data["session_id"] == "s-old"
+    assert db._tables.get("messages", []) == []
+
+
+def test_attach_codex_bad_rollout_degrades(tmp_path, monkeypatch):
+    """坏 rollout 降级：meta 后的坏行跳过、能解析的对话仍导入；首行 meta 本身坏 → 未找到报错。"""
+    root = str(tmp_path / "codex_sessions")
+    _d2_write_rollout(root, "r.jsonl", "t-bad", _D2_CWD, "2026-08-16T10:00:00Z", [
+        "{not json",                                          # 坏行跳过
+        _d2_msg("user", "好行", "2026-08-16T10:00:00Z"),
+        _json.dumps({"type": "response_item"})[:20],          # 截断坏行跳过
+        _d2_msg("assistant", "也好", "2026-08-16T10:01:00Z"),
+    ])
+    monkeypatch.setattr(codingmod, "_codex_sessions_root", lambda: root)
+    db = _FakeDB()
+    res = AttachCodexSkill().run({"session_id": "t-bad"}, _Ctx(db))
+    assert res.success
+    assert [m["text"] for m in db._tables["messages"]] == ["好行", "也好"]
+    with open(os.path.join(root, "broken.jsonl"), "w") as f:  # 首行即坏 → 扫描找不到
+        f.write("{ totally broken\n")
+    res2 = AttachCodexSkill().run({"session_id": "t-x"}, _Ctx(db))
+    assert not res2.success and "t-x" in res2.error
