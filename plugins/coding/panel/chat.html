@@ -47,6 +47,9 @@
      coding.drivers 探测：codex 不可用 → 无会话态 chip 灰显禁用 + title「未检测到 codex CLI」，
      curAgent 落 codex 时强制回 claude-code；有会话态目标引擎是 codex 且不可用 → 点击提示不弹层。
      send() 的 coding.start 参数带 agent。
+     自动回放（验收改版）：打开面板时 prefillCwd 命中当前 cwd 最近会话 → autoReplay 走
+     requestResume 只读回放其消息列表（coding.history 不建 runner，发首条消息才真正接续）；
+     活体会话（running/waiting）/ codex 不可用 / attach 接管竞态时跳过。
      Codex 会话降级点：无审批卡（headless approval 恒 never，L2 确认条天然不触发）、
      无 ⏪ 回滚锚（codex 不回放带 uuid 的 user_msg）、done usage 无 cost_usd（成本段容缺
      不显示，只 token/耗时——addUsage/renderCost/setStatusDone 三处守御）。
@@ -780,8 +783,8 @@
   var curMode = "acceptEdits"; // acceptEdits=自动改文件；plan=只读规划
   var pendingUserEcho = null;  // send() 后等 user_msg 回流画用户气泡的 1.5s 兜底 timer（事件到达则清，防双份）
   var fallbackUserBubble = null; // 兜底 timer 画出的无锚用户气泡 {el, text}；迟到的 user_msg 文本匹配时原地升级挂 ⏪（防双份）
-  var resuming = false;      // attach 自动恢复进行中（resumeSession 异步；防 init 数据重复触发重入）
-  var pendingResume = null;  // 恢复期间又到的 attach 目标 sid（只留最新一条；当前恢复完成后接续，防丢意图）
+  var resuming = false;      // 恢复进行中（resumeSession 异步；attach 接管/自动回放共用，防 init 数据重复触发重入）
+  var pendingResume = null;  // 恢复期间又到的恢复目标 {sid, agent}（只留最新一条；当前恢复完成后接续，防丢意图）
 
   // ============================================================
   //   接管模式（P1 takeover）：PanelApp 窗口打开本面板时，底部工作台条 InputBar 接管文本输入。
@@ -2493,16 +2496,16 @@
     });
   }
 
-  // attach 自动恢复入口（handleInitData 专用）：防重入 + 意图不丢。
-  // 恢复进行中又收到 attach（连点两张任务卡）→ 只留最新目标 pendingResume，当前恢复完成接续；
-  // 同 sid 重复到达归并进同一次（完成后 next === currentSession 自然丢弃）。
-  function requestResume(sid) {
-    if (resuming) { pendingResume = sid; return; }
+  // attach 自动恢复入口（handleInitData）+ 自动回放（autoReplay）共用：防重入 + 意图不丢。
+  // 恢复进行中又收到恢复请求（连点两张任务卡 / 接管与自动回放竞态）→ 只留最新目标 pendingResume，
+  // 当前恢复完成接续；同 sid 重复到达归并进同一次（完成后 next.sid === currentSession 自然丢弃）。
+  function requestResume(sid, agent) {
+    if (resuming) { pendingResume = { sid: sid, agent: agent }; return; }
     resuming = true;
-    resumeSession(sid).finally(function () {
+    resumeSession(sid, agent).finally(function () {
       resuming = false;
       var next = pendingResume; pendingResume = null;
-      if (next && next !== currentSession) requestResume(next);
+      if (next && next.sid !== currentSession) requestResume(next.sid, next.agent);
     });
   }
 
@@ -2745,6 +2748,7 @@
   //   初次进入：预填 cwd（从最近一次会话取，没填过就留空）
   //   + 默认引擎（v2 双驱动）：当前 cwd 最近会话的 agent（list 按时间倒序，首个 cwd 命中行即最近；
   //   "codex"→codex，其余（"claude-code"/"cc"）→claude-code；codex 不可用探测结论到达后强制回 CC）
+  //   + 自动回放：把该最近会话的消息列表只读回放进对话框（见 autoReplay）
   // ============================================================
   function prefillCwd() {
     if (!hasBridge) return;
@@ -2760,10 +2764,25 @@
           var a = normAgent(rows[i].agent);
           curAgent = (a === "codex" && codexAvailable === false) ? "claude-code" : a;
           renderAgentChip();
+          autoReplay(rows[i]);
           break;
         }
       }
     }).catch(function () { /* 静默：首次使用无会话 */ });
+  }
+
+  // 自动回放（验收改版）：打开面板时把当前 cwd 最近一次会话的消息列表回放进对话框。
+  // resumeSession 走 coding.history（只读，不建 runner），发送第一条消息时才真正接续引擎会话。
+  // 跳过：活体会话（running/waiting 发送会被拒，留给任务卡/会话墙「接管」）；
+  //       codex 已探测不可用的 codex 会话（回放后发送必败，chip 已回退 CC）；
+  //       面板已有会话/恢复进行中（attach 接管竞态——autoReplay 走 requestResume，
+  //       若接管指令在回放期间到达会被排队为 pendingResume，回放完成后接管自然胜出）。
+  function autoReplay(row) {
+    if (!row || !row.id) return;
+    if (currentSession || resuming) return;
+    if (row.live === "running" || row.live === "waiting") return;
+    if (normAgent(row.agent) === "codex" && codexAvailable === false) return;
+    requestResume(row.id, row.agent);
   }
 
   // ============================================================
