@@ -53,6 +53,10 @@ describe("formatContextPrefix", () => {
     ];
     expect(formatContextPrefix(ctx)).toBe("【附件：a.png】\n【引用：当前会话】\n\n");
   });
+  it("attachment 有 path 落路径（粘贴截图落盘后 AI 可按路径读图）", () => {
+    expect(formatContextPrefix([{ kind: "attachment", label: "截图 x.png", path: "/tmp/att-1.png" }]))
+      .toBe("【附件：/tmp/att-1.png】\n\n");
+  });
   it("file 落全路径（path 优先于 label）", () => {
     expect(formatContextPrefix([{ kind: "file", label: "main.rs", path: "src/main.rs" }]))
       .toBe("【文件：src/main.rs】\n\n");

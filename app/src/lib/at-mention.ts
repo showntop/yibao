@@ -22,19 +22,22 @@ export function stripAtTrigger(text: string, caret: number, start: number): stri
   return text.slice(0, s) + text.slice(c);
 }
 
-/** 输入条待发送上下文：attachment=本地文件附件，reference=当前会话引用，file=@ 项目文件（path=相对搜索根路径）。 */
+/** 输入条待发送上下文：attachment=本地文件/粘贴图片（path=落盘绝对路径，preview=内存预览 dataURL），
+ *  reference=当前会话引用，file=@ 项目文件（path=相对搜索根路径）。 */
 export interface InputContext {
   kind: "attachment" | "reference" | "file";
   label: string;
   path?: string;
+  preview?: string;
 }
 
-/** contexts → 发送文本前缀（每行一条【kind：label】；file 落全路径，AI 能据此定位文件）。 */
+/** contexts → 发送文本前缀（每行一条【kind：label】；file/attachment 有 path 落路径，AI 能据此定位文件）。 */
 export function formatContextPrefix(contexts: InputContext[]): string {
   if (!contexts.length) return "";
   const lines = contexts.map((c) => {
     if (c.kind === "file") return `【文件：${c.path ?? c.label}】`;
-    return `【${c.kind === "attachment" ? "附件" : "引用"}：${c.label}】`;
+    if (c.kind === "attachment") return `【附件：${c.path ?? c.label}】`;
+    return `【引用：${c.label}】`;
   });
   return lines.join("\n") + "\n\n";
 }
