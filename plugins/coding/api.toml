@@ -101,3 +101,17 @@ name = "attach_cc"
 handler = "coding.attach_cc"
 direct = true
 quiet = true
+
+# ctx-row 引擎 chip：可用引擎探测（quiet 不发 panel 事件——chip 初始化直调，不开面板）
+[[method]]
+name = "drivers"
+handler = "coding.drivers"
+direct = true
+quiet = true
+
+# 接续 popover codex 卡「原生续」：codex thread_id 登记入库（幂等；quiet 不发 panel 事件）
+[[method]]
+name = "attach_codex"
+handler = "coding.attach_codex"
+direct = true
+quiet = true

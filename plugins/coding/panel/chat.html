@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<!-- 编码对话面板（webview）：项目选择 + Claude Code 流式回显 + 文件改动 diff + 起停。
+<!-- 编码对话面板（webview）：项目选择 + Claude Code / Codex 双驱动流式回显 + 文件改动 diff + 起停。
      运行在 iframe sandbox + srcdoc 里，无 Tauri IPC、无原生网络。
      能力调用全部经 window.yibao.invoke（postMessage 桥 → api.toml 白名单 + 风险闸门）；
-     流式回显经 window.yibao.onInit（每条 panel_data 推一次，data = {session_id, event:{kind,...}}，
-     按事件 kind ACCUMULATE 到 #log，不能用 data 整体替换）。
+     流式回显经 window.yibao.onInit（每条 panel_data 推一次，data = {session_id, agent, event:{kind,...}}，
+     按事件 kind ACCUMULATE 到 #log，不能用 data 整体替换；agent 为平级引擎键，见下方双驱动段）。
      attach 接管（B3）：coding.attach 的 panel 载荷 data = {session_id, attach:true}（无 event），
      handleInitData 见到自动 resumeSession（任务卡/会话墙「接管」点击路由）。
      桥 JS 由父侧注入（提供 window.yibao.invoke/onInit/onMessage/emitEvent），本文件不自带。
@@ -35,8 +35,19 @@
      接续 popover（v1 接续模型统一：原历史抽屉改造，keys-row 的「Codex 接续」钮并入，
      历史/接续两钮 2→1）：区 1「上次会话」打开时 coding.last_sessions{cwd} 跨源实时检测
      （无缓存）——CC 卡 [继续] = coding.attach_cc 导入后 resumeSession（原生 resume）；
-     Codex 卡 [交接给 CC] = 现有 handoff_brief 流程（交接=生成摘要交给 Claude Code，
-     非完整搬移）；区 2「译宝历史」= coding.list → resumeSession；两区皆空 → 新项目空态。
+     Codex 卡双钮 [原生续] = coding.attach_codex 后 resumeSession（v2，原生 codex exec resume）
+     / [交接给 CC] = 现有 handoff_brief 流程（交接=生成摘要交给 Claude Code，非完整搬移）；
+     区 2「译宝历史」= coding.list → resumeSession（行带引擎徽标）；两区皆空 → 新项目空态。
+     双驱动（v2 Codex 驱动）：ctx-row 权限模式 pill 旁加引擎 chip #agent-chip（pill 样式体系）——
+     无活动会话时可点切换 CC⇄Codex（curAgent 全局态，只影响下一个新会话；默认值 = 当前 cwd
+     最近会话的 agent，prefillCwd 的 coding.list 行里取，sessions 表天然 per-cwd 记忆）；
+     有会话时 chip 只读，显示当前会话引擎徽标（curSessAgent：send() 新会话回填时记录，
+     attach/resume 后由 handleInitData 按流式 data.agent 服务端值同步）。打开面板时
+     coding.drivers 探测：codex 不可用 → chip 灰显禁用 + title「未检测到 codex CLI」，
+     curAgent 落 codex 时强制回 claude-code。send() 的 coding.start 参数带 agent。
+     Codex 会话降级点：无审批卡（headless approval 恒 never，L2 确认条天然不触发）、
+     无 ⏪ 回滚锚（codex 不回放带 uuid 的 user_msg）、done usage 无 cost_usd（成本段容缺
+     不显示，只 token/耗时——addUsage/renderCost/setStatusDone 三处守御）。
      AI 气泡 markdown 基座（R3）：marked(GFM) → DOMPurify 消毒 → hljs 高亮，vendor 三库
      经 sidecar 占位内联（head 内三个 script 占位注释，见 vendor/README.md）；
      注入缺失/异常自动降级为纯文本，不抛异常。 -->
@@ -353,7 +364,7 @@
 
   /* ---- 底栏三段式（D1，对标 opencode 底栏；三段合计 ≤110px 紧凑） ----
      ① 输入框：2px 左竖条 accent（focus 时 accent-deep），圆角 --r-md
-     ② 上下文行：cwd chip（📁+目录名，点击弹浮层手输/选目录）+ 权限模式 pill + @ 引用按钮（点开搜索浮层）
+     ② 上下文行：cwd chip（📁+目录名，点击弹浮层手输/选目录）+ 权限模式 pill + 引擎 chip（v2 双驱动）+ @ 引用按钮（点开搜索浮层）
      ③ 快捷键行：键白动作灰（kbd 白底小圆角描边 + --faint 动作词）；#status 灰小字融入本行
         左侧不独占一行；操作钮收敛右侧：#send accent 实心主钮 / #stop ghost
         （「Codex 接续」钮已并入顶栏「接续」popover） */
@@ -378,7 +389,9 @@
   .at-item { padding: 6px 10px; font-family: var(--mono-family); font-size: 12px; cursor: pointer; }
   .at-item.sel { background: var(--surface-2); }
   .at-empty { padding: 8px; opacity: .6; font-size: 12px; }
-  /* 段②：上下文行——cwd chip（📁+目录名 pill，点击弹浮层改路径）+ 权限模式 pill + @ 引用按钮。
+  /* 段②：上下文行——cwd chip（📁+目录名 pill，点击弹浮层改路径）+ 权限模式 pill
+     + 引擎 chip #agent-chip（v2 双驱动：无会话可点切换 CC⇄Codex / 有会话只读徽标 / codex 不可用灰显禁用）
+     + @ 引用按钮。
      cwd 真值存 hidden #cwd，send/handoff/@ 补全等全部 JS 读取路径不变 */
   .ctx-row { position: relative; display: flex; align-items: center; gap: 6px; }
   .cwd-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 220px; }
@@ -493,6 +506,12 @@
   }
   .pill:hover { border-color: var(--accent); color: var(--accent-deep); }
   .pill.plan { border-color: var(--accent); color: var(--accent-deep); background: var(--accent-soft); }
+  .pill:disabled { opacity: .45; cursor: not-allowed; }
+  .pill:disabled:hover { border-color: var(--border-strong); color: var(--muted); }
+  /* 引擎 chip（v2 双驱动）：无会话时可点切换 CC⇄Codex（pill 基础交互）；
+     有会话时只读徽标（.ro：无 hover 反馈、点击不响应）；codex 不可用 → disabled 灰显 + title 原因 */
+  #agent-chip.ro { cursor: default; }
+  #agent-chip.ro:hover { border-color: var(--border-strong); color: var(--muted); }
 
   /* ---- Codex session 选择器 + 接续 popover（fixed 浮层；iframe srcdoc 里 absolute 含块不可靠） ---- */
   #handoff-backdrop, #history-overlay { position: fixed; inset: 0; z-index: 40; }
@@ -552,8 +571,10 @@
   }
   #history-picker .last-card .lc-meta { font-size: 10.5px; color: var(--faint); font-family: var(--mono-family); }
   #history-picker .last-card .lc-note { font-size: 11px; color: var(--faint); font-style: italic; }
+  /* 右下操作钮组（v2：codex 卡双钮 [原生续]+[交接给 CC]；单钮卡同壳） */
+  #history-picker .last-card .lc-acts { display: flex; gap: 6px; align-self: flex-end; margin-top: 3px; }
   #history-picker .last-card .lc-act {
-    align-self: flex-end; margin-top: 3px; border-radius: 7px; padding: 3px 12px;
+    border-radius: 7px; padding: 3px 12px;
     font-size: 11.5px; font-weight: 600; cursor: pointer; transition: all .15s ease;
     border: 1px solid var(--accent); background: var(--accent); color: #fff;
   }
@@ -563,6 +584,13 @@
   }
   #history-picker .last-card .lc-act.ghost:hover { background: var(--surface-2h); }
   #history-picker .last-card .lc-act:disabled { opacity: .5; cursor: default; }
+  /* 译宝历史行引擎徽标（v2 双驱动）：hrow 时间行内联小字徽标，配色对齐 lc-badge 体系 */
+  #history-picker .hrow .hb {
+    display: inline-block; margin-right: 5px; padding: 0 4px; line-height: 14px;
+    font-size: 9.5px; font-weight: 700; border-radius: 3px; vertical-align: 1px;
+    background: var(--accent-soft); color: var(--accent-deep); border: 1px solid var(--accent-line);
+  }
+  #history-picker .hrow .hb.codex { background: var(--card); color: var(--muted); border-color: var(--border-strong); }
 
   /* ---- 交接卡：session 起点（区别于普通文件改动/工具卡片，整宽 + sky 强调色左边条） ---- */
   .card.handoff {
@@ -641,7 +669,7 @@
   <span class="title">编码对话</span>
   <span class="spacer"></span>
   <span id="cost" title="本会话累计 token 与成本（done 事件累加；新对话/恢复历史后清零重计）"></span>
-  <button id="history" type="button" title="接续：上次会话（Claude Code 继续 / Codex 交接）+ 译宝历史，恢复后继续在同一上下文聊">接续</button>
+  <button id="history" type="button" title="接续：上次会话（CC 继续 / Codex 原生续或交接）+ 译宝历史，恢复后继续在同一上下文聊">接续</button>
   <button id="new-chat" type="button" title="清空当前对话，开新会话（下次发送走 coding.start）" disabled>新对话</button>
 </header>
 
@@ -674,11 +702,12 @@
     <textarea id="prompt" placeholder="输入消息，@ 引用文件…" rows="1"></textarea>
     <div id="at-menu" class="at-menu" hidden></div>
   </div>
-  <!-- 段②：上下文行——cwd chip（点击弹浮层改路径）+ 权限模式 pill + @ 引用按钮（点开搜索浮层） -->
+  <!-- 段②：上下文行——cwd chip（点击弹浮层改路径）+ 权限模式 pill + 引擎 chip（v2 双驱动）+ @ 引用按钮（点开搜索浮层） -->
   <div class="ctx-row">
     <input id="cwd" type="hidden">
     <button id="cwd-chip" type="button" class="pill cwd-chip empty" title="项目目录（点击选择）">📁 <span id="cwd-chip-label">选择项目目录</span></button>
     <button id="mode-pill" type="button" class="pill" title="点击切换权限模式">自动改文件</button>
+    <button id="agent-chip" type="button" class="pill" title="引擎：新会话使用的驱动（点击切换，仅影响下一个新会话）">CC</button>
     <button id="at-btn" type="button" class="pill at-btn" title="引用项目文件到输入框">@ 引用文件</button>
     <!-- cwd 浮层：手输路径 + 📁 选目录；Enter/确定 提交，Esc/点外部取消 -->
     <div id="cwd-pop" class="cwd-pop" hidden>
@@ -826,8 +855,10 @@
 
   // ---- 会话成本聚合（C4）：done 事件 usage（{duration_ms, cost_usd, input_tokens,
   //   output_tokens}）前端累加 → 顶栏右侧「N tok · $X.XXXX」；newChat/resumeSession
-  //   清零（恢复历史不补，接受降级）。运行 pill 的累计 token 段共用这本账。 ----
-  var sessionUsage = { tok: 0, cost: 0 };
+  //   清零（恢复历史不补，接受降级）。运行 pill 的累计 token 段共用这本账。
+  //   v2 双驱动容缺：codex 的 cost_usd 为 null——hasCost 跟踪是否见过成本，
+  //   未见则顶栏只显示 token 段（不渲染误导性的 $0.0000）。 ----
+  var sessionUsage = { tok: 0, cost: 0, hasCost: false };
   function fmtTok(n) {
     if (!isFinite(n)) return "0";
     if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
@@ -838,15 +869,16 @@
     // 与 setStatusDone 同款守御：坏值静默略过该段，绝不上抛（initCbs try/catch 会吞掉后续终态处理）
     sessionUsage.tok += (Number(u.input_tokens) || 0) + (Number(u.output_tokens) || 0);
     var cost = Number(u.cost_usd);
-    if (u.cost_usd != null && isFinite(cost)) sessionUsage.cost += cost;
+    if (u.cost_usd != null && isFinite(cost)) { sessionUsage.cost += cost; sessionUsage.hasCost = true; }
     renderCost();
   }
   function renderCost() {
     var el = $("cost");
-    if (!sessionUsage.tok && !sessionUsage.cost) { el.textContent = ""; return; }
-    el.textContent = fmtTok(sessionUsage.tok) + " tok · $" + sessionUsage.cost.toFixed(4);
+    if (!sessionUsage.tok && !sessionUsage.hasCost) { el.textContent = ""; return; }
+    el.textContent = fmtTok(sessionUsage.tok) + " tok" +
+      (sessionUsage.hasCost ? " · $" + sessionUsage.cost.toFixed(4) : "");
   }
-  function resetUsage() { sessionUsage.tok = 0; sessionUsage.cost = 0; renderCost(); }
+  function resetUsage() { sessionUsage.tok = 0; sessionUsage.cost = 0; sessionUsage.hasCost = false; renderCost(); }
 
   // ---- 运行状态悬浮 pill（C3）：spinner + 已耗时秒表 + 会话累计 token + 红 Stop。
   //   fixed 底部居中，bottom 按 footer + #errbar（可见时）高度计算，垂直堆叠不重叠；
@@ -1543,6 +1575,7 @@
     // 防重入：init 每条 data 都触发本函数；恢复期间同 sid 重复到达由 requestResume 归并，
     // currentSession 已是目标（恢复完成/重复 panel 事件补拉）直接跳过。
     if (data && data.attach === true && !data.event) {
+      if (data.agent) { curSessAgent = normAgent(data.agent); renderAgentChip(); }  // 跨引擎接管：徽标即时正确，不等首条流事件
       var attachSid = data.session_id;
       if (attachSid && attachSid !== currentSession) requestResume(attachSid);
       return;   // attach 载荷无流式事件，处理完即走
@@ -1555,6 +1588,10 @@
     //   3) currentSession 未设置（invoke 未返回 / 已重置）→ 放行，覆盖首条流式块早于 invoke 返回的竞态。
     if (sid != null && discardedSessions[sid]) return;
     if (currentSession != null && sid != null && sid !== currentSession) return;
+
+    // 双驱动徽标（v2）：流式 data 带平级 agent 键——attach/resume/接管来的会话引擎以服务端为准，
+    // 过上面滤后此处只会命中当前会话自己的流
+    if (data.agent) { curSessAgent = normAgent(data.agent); renderAgentChip(); }
 
     var ev = data.event;
     switch (ev.kind) {
@@ -1686,6 +1723,61 @@
   }
 
   // ============================================================
+  //   引擎 chip（v2 双驱动：CC ⇄ Codex）
+  //   无活动会话：可点切换 curAgent（只影响下一个新会话；send() 的 coding.start 带 agent 参数）；
+  //   有活动会话：只读徽标，显示当前会话引擎 curSessAgent（send 新会话回填时落定，
+  //   attach/resume 后由 handleInitData 按流式 data.agent 服务端值同步）。
+  //   打开面板 coding.drivers 探测（与 prefillCwd 并发，两者完成各自重渲染，约束互收）：
+  //   codex 不可用 → chip 灰显禁用 + title 原因；curAgent 落 codex 时强制回 claude-code。
+  //   默认引擎 = 当前 cwd 最近会话的 agent（prefillCwd 处 coding.list 行取，sessions 表天然记忆）。
+  // ============================================================
+  var curAgent = "claude-code";     // 新会话引擎选择（chip 可点态的真值；缺省 CC，零回归底线）
+  var curSessAgent = "claude-code"; // 当前活动会话的引擎（有会话时 chip 只读显示它）
+  var codexAvailable = null;        // coding.drivers 探测结果：true/false；null=未探测或探测失败（按可用呈现，不影响 CC 路径）
+
+  function normAgent(a) { return a === "codex" ? "codex" : "claude-code"; }  // "cc" 等历史值一律归 CC
+  function agentLabel(a) { return a === "codex" ? "Codex" : "CC"; }
+
+  function renderAgentChip() {
+    var chip = $("agent-chip");
+    var ro = !!currentSession;              // 有会话：只读徽标显示当前会话引擎
+    var shown = ro ? curSessAgent : curAgent;
+    // codex 不可用 → 可点态整颗灰显禁用（无可切换对象）+ title 原因；只读徽标态不用 disabled，避免徽标变灰
+    var unavailable = !ro && codexAvailable === false;
+    chip.textContent = agentLabel(shown);
+    chip.classList.toggle("ro", ro);
+    chip.disabled = unavailable;
+    chip.title = ro
+      ? "当前会话引擎：" + agentLabel(shown) + "（会话内只读）"
+      : unavailable
+        ? "未检测到 codex CLI"
+        : "引擎：" + agentLabel(shown) + "（点击切换，仅影响下一个新会话）";
+  }
+
+  $("agent-chip").addEventListener("click", function () {
+    if (currentSession) return;             // 只读徽标态不响应（codex 不可用时 disabled 天然拦截）
+    curAgent = curAgent === "codex" ? "claude-code" : "codex";
+    renderAgentChip();
+  });
+  renderAgentChip();   // 初始渲染（无会话/CC/探测前）
+
+  // L0 quiet 探测；桥 resolve result.data 本体 → r.drivers（与 coding.list 的 r.sessions 同形态）。
+  // 失败（老 sidecar 无此方法）保持 null 按可用呈现——D1/D2 同批落地，不会影响 CC 路径。
+  function probeDrivers() {
+    if (!hasBridge) return;
+    window.yibao.invoke("coding.drivers", {}).then(function (r) {
+      var list = (r && r.drivers) || [];
+      codexAvailable = false;               // 应答里查无 codex 项同样视为不可用
+      for (var i = 0; i < list.length; i++) {
+        if (list[i] && list[i].id === "codex") { codexAvailable = !!list[i].available; break; }
+      }
+      // curAgent 落 codex 但不可用 → 强制回 claude-code（灰显禁用态下不给选）
+      if (!codexAvailable && curAgent === "codex") curAgent = "claude-code";
+      renderAgentChip();
+    }).catch(function () { /* 探测失败静默：保持 null，chip 按可用呈现 */ });
+  }
+
+  // ============================================================
   //   发送 / 中断
   // ============================================================
   // 权限模式 pill：两态切换；有活动会话时同步通知后端（落库 + 运行中 runner 下条消息生效）
@@ -1740,7 +1832,8 @@
     // 这是本次多轮修复的核心：第二条起走 send(resume)，被驱动的 CC 才能拿到历史上下文。
     var isStart = !currentSession;
     var method = isStart ? "coding.start" : "coding.send";
-    var params = isStart ? { cwd: cwd, prompt: prompt, mode: curMode }
+    // 双驱动（v2）：新会话带引擎选择（缺省 "claude-code"，CC 路径零回归）；续聊由服务端按会话行 agent 选驱动
+    var params = isStart ? { cwd: cwd, prompt: prompt, mode: curMode, agent: curAgent }
                          : { id: currentSession, prompt: prompt, mode: curMode };
     var verb = isStart ? "启动" : "接续";
 
@@ -1748,6 +1841,8 @@
       var sid = r && r.session_id;
       if (!sid) throw new Error("未返回 session_id");
       currentSession = sid;       // start 回填新 id；send 路径下 sid 与原 id 一致（保留不动）
+      if (isStart) curSessAgent = curAgent;   // 新会话引擎落定：chip 转入只读徽标态
+      renderAgentChip();
       $("prompt").value = "";
       if (pendingTurnEnded) {
         // 终态事件先于 invoke 返回（runner 秒败）：onSessionEnded 已解锁 UI，
@@ -1802,6 +1897,7 @@
     // handleInitData 会据此丢弃任何迟到的旧块，避免污染新对话。
     if (currentSession) discardedSessions[currentSession] = true;
     currentSession = null;
+    renderAgentChip();   // 回到无会话态：引擎 chip 恢复可点切换（curAgent 保持，仅影响下一个新会话）
     syncActionRow();   // 回到无会话空闲态：中断收敛隐藏
     currentBubble = null;
     lastToolCard = null;   // #log 清空后旧卡已 detach，防 tool_result 落进不可见节点
@@ -2078,6 +2174,8 @@
       var csid = r && r.session_id;
       if (!csid) throw new Error("未返回 session_id");
       currentSession = csid;
+      curSessAgent = "claude-code";   // handoff 落的是 CC 会话（coding.start 缺省引擎）：chip 只读徽标显示 CC
+      renderAgentChip();
       syncActionRow();   // 会话已回填：中断按运行态保持可见
       if (pendingTurnEnded) {
         // 终态先于 invoke 返回：onSessionEnded 已收场（streaming 已 false、UI 已解锁），别起跑秒表
@@ -2105,8 +2203,10 @@
   //   接续 popover（v1 接续模型统一，原历史抽屉改造；顶栏「历史」→「接续」两钮 2→1）：
   //   区 1「上次会话」= 打开时 coding.last_sessions{cwd} 跨源实时检测（无缓存，每次新查）——
   //     CC 卡 [继续] → coding.attach_cc 导入（幂等）→ resumeSession（原生 resume，上下文完整）；
-  //     Codex 卡 [交接给 CC] → 现有 handoff() 流程（交接=生成摘要交给 Claude Code，非完整搬移）；
-  //   区 2「译宝历史」= coding.list → resumeSession（原历史抽屉逻辑不变）；
+  //     Codex 卡双钮（v2）：[原生续] → coding.attach_codex{session_id}（codex thread_id 建/取 DB 行，
+  //       幂等）→ resumeSession（原生 codex exec resume，上下文连续）；
+  //       [交接给 CC] → 现有 handoff() 流程（交接=生成摘要交给 Claude Code，非完整搬移）；
+  //   区 2「译宝历史」= coding.list → resumeSession（行带引擎徽标：codex→Codex，其余→CC）；
   //   两区皆空 → 新项目空态。恢复 = 清 log 渲染历史消息 + 分隔线；下一条发送走 coding.send
   //   （currentSession 已指回旧 sid）→ 同一 CC 上下文续聊。
   // ============================================================
@@ -2163,8 +2263,11 @@
           ts: codex.ts,
           summary: codex.summary,
           note: "交接 = 生成摘要交给 Claude Code，非完整搬移",
-          actText: "交接给 CC", ghost: true,
-          onAct: function () { closeHistory(); handoff(); }
+          acts: [
+            // 主钮 [原生续]：codex exec resume（attach_codex 建/取 DB 行 → resumeSession）
+            { text: "原生续", onAct: function (btn) { attachCodex(btn, codex.session_id); } },
+            { text: "交接给 CC", ghost: true, onAct: function () { closeHistory(); handoff(); } }
+          ]
         }));
       }
     }
@@ -2198,7 +2301,7 @@
     return d;
   }
 
-  // 区 1 上次会话卡：来源徽标 + 相对时间 + 摘要（+ 消息数 / 交接注明）+ 右下操作钮
+  // 区 1 上次会话卡：来源徽标 + 相对时间 + 摘要（+ 消息数 / 交接注明）+ 右下操作钮组
   function lastCard(o) {
     var card = document.createElement("div");
     card.className = "last-card";
@@ -2229,12 +2332,19 @@
       note.textContent = o.note;
       card.appendChild(note);
     }
-    var btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "lc-act" + (o.ghost ? " ghost" : "");
-    btn.textContent = o.actText;
-    btn.addEventListener("click", function () { o.onAct(btn); });
-    card.appendChild(btn);
+    // 操作钮组：acts=[{text, ghost, onAct}]（v2 codex 卡双钮）；旧单钮 actText/onAct/ghost 形参兼容
+    var acts = o.acts || [{ text: o.actText, ghost: o.ghost, onAct: o.onAct }];
+    var btnRow = document.createElement("div");
+    btnRow.className = "lc-acts";
+    acts.forEach(function (a) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "lc-act" + (a.ghost ? " ghost" : "");
+      btn.textContent = a.text;
+      btn.addEventListener("click", function () { a.onAct(btn); });
+      btnRow.appendChild(btn);
+    });
+    card.appendChild(btnRow);
     return card;
   }
 
@@ -2246,14 +2356,30 @@
     window.yibao.invoke("coding.attach_cc", { cc_session_id: ccSid, cwd: cwd }).then(function (r) {
       var sid = r && r.session_id;
       if (!sid) throw new Error("attach_cc 未返回 session_id");
-      return resumeSession(sid);   // 恒 resolve（内部 catch 亮状态行）；popover 由其关闭
+      return resumeSession(sid, "claude-code");   // 恒 resolve（内部 catch 亮状态行）；popover 由其关闭
     }).catch(function (e) {
       btn.disabled = false;
       setStatus("导入 Claude Code 会话失败：" + emsg(e), true);
     });
   }
 
-  // 区 2 历史行（原历史抽屉渲染逻辑，未动）
+  // Codex 卡 [原生续]（v2）：attach_codex 用 codex thread_id 建/取 DB 行（幂等，agent="codex"）
+  // → 返回的 session_id 走现有 resumeSession（引擎徽标随 "codex" 落定；之后 send 续聊由服务端按行 agent 选 codex 驱动）
+  function attachCodex(btn, codexSid) {
+    if (!codexSid) return;
+    btn.disabled = true;
+    setStatus("恢复 Codex 会话…");
+    window.yibao.invoke("coding.attach_codex", { session_id: codexSid }).then(function (r) {
+      var sid = r && r.session_id;
+      if (!sid) throw new Error("attach_codex 未返回 session_id");
+      return resumeSession(sid, "codex");   // 恒 resolve（内部 catch 亮状态行）；popover 由其关闭
+    }).catch(function (e) {
+      btn.disabled = false;
+      setStatus("恢复 Codex 会话失败：" + emsg(e), true);
+    });
+  }
+
+  // 区 2 历史行（原历史抽屉渲染逻辑 + v2 引擎徽标：行 agent 字段 "codex"→Codex，其余（含 "cc"）→CC）
   function historyRow(row) {
     var b = document.createElement("button");
     b.className = "hrow";
@@ -2261,20 +2387,26 @@
     var time = when ? (when.getMonth() + 1) + "/" + when.getDate() + " " + String(when.getHours()).padStart(2, "0") + ":" + String(when.getMinutes()).padStart(2, "0") : "";
     var cwdShort = (row.cwd || "").split("/").filter(Boolean).pop() || row.cwd || "";
     var first = String(row.prompt || "").split("\n")[0].slice(0, 42);
-    b.innerHTML = "<span class=\"ht\">" + esc(time) + "</span>" +
+    var isCodex = row.agent === "codex";
+    b.innerHTML = "<span class=\"ht\"><span class=\"hb" + (isCodex ? " codex" : "") + "\">" + (isCodex ? "Codex" : "CC") + "</span>" + esc(time) + "</span>" +
       "<span class=\"hc\">" + esc(cwdShort) + "</span>" +
       "<span class=\"hp\">" + esc(first) + "</span>" +
       "<span class=\"hs " + esc(row.status || "") + "\">" + esc(row.status || "") + "</span>";
-    b.addEventListener("click", function () { resumeSession(row.id); });
+    b.addEventListener("click", function () { resumeSession(row.id, row.agent); });
     return b;
   }
 
-  function resumeSession(sid) {
+  // agent 可选（v2 双驱动）：调用方已知目标会话引擎时传入（历史行 row.agent / attach_codex "codex" /
+  // attach_cc "claude-code"）→ chip 只读徽标立即落定；不传（attach 自动恢复）则由 handleInitData
+  // 按流式 data.agent 服务端值同步。
+  function resumeSession(sid, agent) {
     // 返回 promise 链：attach 自动恢复路径（handleInitData）靠它挂 .finally 清 resuming 防重入标志；
     // 链尾自带 .catch（失败只亮状态行），恒 resolve，调用方无需再兜。
     return window.yibao.invoke("coding.history", { id: sid }).then(function (r) {
       if (currentSession) discardedSessions[currentSession] = true;
       currentSession = sid;
+      if (agent) curSessAgent = normAgent(agent);   // 恢复目标会话引擎以调用方/服务端所给为准
+      renderAgentChip();
       delete discardedSessions[sid]; // 恢复的目标会话必须出黑名单——否则它自己的流全被「陈旧会话」过滤器吞掉，面板锁死
       syncActionRow();   // 接管/恢复会话：中断按运行态判定
       currentBubble = null;
@@ -2555,6 +2687,8 @@
 
   // ============================================================
   //   初次进入：预填 cwd（从最近一次会话取，没填过就留空）
+  //   + 默认引擎（v2 双驱动）：当前 cwd 最近会话的 agent（list 按时间倒序，首个 cwd 命中行即最近；
+  //   "codex"→codex，其余（"claude-code"/"cc"）→claude-code；codex 不可用探测结论到达后强制回 CC）
   // ============================================================
   function prefillCwd() {
     if (!hasBridge) return;
@@ -2562,6 +2696,16 @@
       var rows = (r && r.sessions) || [];
       if (rows.length && rows[0].cwd && !$("cwd").value) {
         setCwd(rows[0].cwd);
+      }
+      var cwd = $("cwd").value.trim();
+      if (!cwd) return;
+      for (var i = 0; i < rows.length; i++) {
+        if (rows[i] && rows[i].cwd === cwd) {
+          var a = normAgent(rows[i].agent);
+          curAgent = (a === "codex" && codexAvailable === false) ? "claude-code" : a;
+          renderAgentChip();
+          break;
+        }
       }
     }).catch(function () { /* 静默：首次使用无会话 */ });
   }
@@ -2581,6 +2725,7 @@
     if (window.yibao.onMessage) window.yibao.onMessage(onHostMessage);
     syncActionRow();   // 初始：中断默认 hidden，运行态变化后现身（无桥预览保持隐藏）
     prefillCwd();
+    probeDrivers();    // v2 双驱动：探测 codex 可用性（与 prefillCwd 并发，各自完成各自重渲染 chip）
   }
 
   // ============================================================

@@ -310,14 +310,16 @@ def test_stream_stores_cc_session_id_on_done():
     assert last["cc_session_id"] == "cc-sess-abc"
 
 
-def test_stream_stores_empty_cc_session_id_when_runner_returns_none():
-    """runner 返回 None（取消/失败）时，cc_session_id 落 ""。"""
-    db = _FakeDB(); db.rows["s2"] = {"id": "s2", "status": "running"}
+def test_stream_preserves_cc_session_id_when_runner_returns_none():
+    """runner 返回 None（取消/失败）时，不更新 cc_session_id 列——老行既有 thread_id/session_id
+    不被抹成 ""（codex 静默失败后后续 send 仍能 resume；CC 拿不到 session_id 也原样不写）。"""
+    db = _FakeDB(); db.rows["s2"] = {"id": "s2", "status": "running", "cc_session_id": "cc-old-9"}
     runner = _FakeRunner(cc_sid=None)
     cancel = _threading.Event()
     _run(_stream(db, "s2", "/tmp/p", "hi", runner, emit_event=None, cancel=cancel))
     last = db.updates[-1][1]
-    assert last["cc_session_id"] == ""
+    assert "cc_session_id" not in last                        # 终态 update 不触该列
+    assert db.rows["s2"]["cc_session_id"] == "cc-old-9"       # 老值保留
 
 
 def test_stream_preserves_stopped_and_still_records_cc_session_id():
@@ -402,14 +404,15 @@ def test_send_skill_openai_schema_shape():
 
 def test_make_tools_includes_send():
     """make_tools 返回 Start/Send/Stop/List/Attach/WallData + HandoffList/HandoffBrief/History/Mode/Rewind/Decide/Files
-    + LastSessions/AttachCc 十五件。"""
+    + LastSessions/AttachCc + Drivers/AttachCodex 十七件。"""
     tools = codingmod.make_tools(type("C", (), {"db": None, "emit_event": None})())
     ids = [t.id for t in tools]
     assert "coding.send" in ids
     assert ids == ["coding.start", "coding.send", "coding.stop", "coding.list", "coding.attach",
                    "coding.wall_data", "coding.handoff_list", "coding.handoff_brief", "coding.history",
                    "coding.mode", "coding.rewind", "coding.decide", "coding.files",
-                   "coding.last_sessions", "coding.attach_cc"]
+                   "coding.last_sessions", "coding.attach_cc",
+                   "coding.drivers", "coding.attach_codex"]
 
 
 def test_start_skill_does_not_pass_resume(monkeypatch):
@@ -1406,6 +1409,19 @@ def test_attach_returns_session_and_attach_flag():
     assert res2.success and res2.data["attach"] is True
 
 
+def test_attach_payload_carries_agent():
+    """data.agent = 库行 agent（跨引擎接管徽标立即正确，不等首条流事件）；
+    老行缺 agent 列 → 缺省 claude-code（同 _stream/_runner_for 缺省）。"""
+    db = _FakeDB()
+    db.rows["s-cx"] = {"id": "s-cx", "status": "done", "agent": "codex"}
+    res = AttachSkill().run({"session_id": "s-cx"}, _Ctx(db))
+    assert res.success and res.data["agent"] == "codex"
+    db2 = _FakeDB()
+    db2.rows["s-old"] = {"id": "s-old", "status": "done"}    # 老行无 agent 列
+    res2 = AttachSkill().run({"session_id": "s-old"}, _Ctx(db2))
+    assert res2.success and res2.data["agent"] == "claude-code"
+
+
 def test_attach_rejects_unknown_session_and_missing_param():
     """会话不存在 → 明确错误（面板不开）；缺 session_id → 同样拒绝。"""
     db = _FakeDB()
@@ -1455,7 +1471,8 @@ def test_wall_data_shape_sort_and_panel_ref():
 
 
 def test_wall_data_live_text_and_rel_time():
-    """subtitle = 「{live 文案} · {相对时间}」：等待审批/运行中/空闲（waiting>running>idle 同 list）。"""
+    """subtitle = 「{引擎} · {live 文案} · {相对时间}」：引擎前缀 Codex/CC（无 agent 老行按 CC）；
+    live 文案 等待审批/运行中/空闲（waiting>running>idle 同 list）。"""
     now = int(time.time())
     db = _FakeDB()
     db.rows["a"] = {"id": "a", "status": "done", "created_at": now - 5,
@@ -1464,14 +1481,17 @@ def test_wall_data_live_text_and_rel_time():
                     "cwd": "/tmp/p", "prompt": "x"}
     db.rows["c"] = {"id": "c", "status": "running", "created_at": now - 3 * 86400,
                     "cwd": "/tmp/p", "prompt": "x"}
+    db.rows["d"] = {"id": "d", "status": "done", "created_at": now - 60,
+                    "cwd": "/tmp/p", "prompt": "x", "agent": "codex"}
     _runner_mod._PERM["perm_c_1"] = {"event": _threading.Event(), "allow": None}
     codingmod._SESSIONS["b"] = {"cancel": _threading.Event()}
     codingmod._SESSIONS["c"] = {"cancel": _threading.Event()}
     try:
         rows = {r["id"]: r for r in WallDataSkill().run({}, _Ctx(db)).data["rows"]}
-        assert rows["a"]["live"] == "idle" and rows["a"]["subtitle"] == "空闲 · 刚刚"
-        assert rows["b"]["live"] == "running" and rows["b"]["subtitle"] == "运行中 · 2 小时前"
-        assert rows["c"]["live"] == "waiting" and rows["c"]["subtitle"] == "等待审批 · 3 天前"
+        assert rows["a"]["live"] == "idle" and rows["a"]["subtitle"] == "CC · 空闲 · 刚刚"
+        assert rows["b"]["live"] == "running" and rows["b"]["subtitle"] == "CC · 运行中 · 2 小时前"
+        assert rows["c"]["live"] == "waiting" and rows["c"]["subtitle"] == "CC · 等待审批 · 3 天前"
+        assert rows["d"]["subtitle"] == "Codex · 空闲 · 1 分钟前"
     finally:
         _runner_mod._PERM.pop("perm_c_1", None)
         codingmod._SESSIONS.pop("b", None)
