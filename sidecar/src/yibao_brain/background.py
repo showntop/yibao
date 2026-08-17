@@ -216,8 +216,11 @@ def _describe_image_attachments(text: str, client) -> str | None:
         try:
             if not os.path.isfile(path) or os.path.getsize(path) > _IMG_MAX_BYTES:
                 continue
+            ext = os.path.splitext(path)[1].lower()
+            mime = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
+                    ".webp": "image/webp", ".bmp": "image/bmp"}.get(ext, "image/png")
             with open(path, "rb") as f:
-                b64 = "data:image/png;base64," + base64.b64encode(f.read()).decode()
+                b64 = f"data:{mime};base64," + base64.b64encode(f.read()).decode()
             desc = answer_image_query(client, b64, "用一两句话描述这张图片的关键内容（用户把它作为聊天附件）")
             if desc:
                 lines.append(f"{path}：{desc}")

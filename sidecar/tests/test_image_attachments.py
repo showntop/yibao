@@ -43,6 +43,14 @@ def test_non_image_and_missing_skipped(tmp_path, monkeypatch):
     assert out is None and seen == []   # 非图片 + 不存在：一次 vision 都不调
 
 
+def test_file_marker_with_real_image_described(tmp_path, monkeypatch):
+    """【文件：path】标记指向真实图片 → 同样走 vision 描述（不只【附件：】）。"""
+    img = _mk_file(tmp_path, "ui.jpg")
+    _fake_answer(monkeypatch, "设计稿")
+    out = _describe_image_attachments(f"参考这个【文件：{img}】", object())
+    assert out is not None and "设计稿" in out
+
+
 def test_multiple_images_and_cap(tmp_path, monkeypatch):
     paths = [_mk_file(tmp_path, f"{i}.png") for i in range(5)]
     seen = []

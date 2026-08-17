@@ -151,6 +151,8 @@ def _spawn_stream(db, sid: str, cwd: str, prompt: str, runner, emit_event,
                 db.update("sessions", sid, {"status": "failed", "finished_at": int(time.time())})
             except Exception:
                 pass
+            # 崩在 _stream 之外（不经 _report_final）→ 补发生命周期事件，否则墙卡「运行中」不刷新
+            _emit_sessions_changed(emit_event, sid, "failed")
         finally:
             loop.close()
             _SESSIONS.pop(sid, None)
@@ -504,6 +506,8 @@ class StopSkill(Skill):
         if rows[0].get("status") not in ("running",):
             return ActionResult(success=False, error=f"会话已结束（{rows[0].get('status')}），无需停止")
         ok = _stop_session(ctx.db, _SESSIONS, sid)
+        # 此次广播时 _SESSIONS 条目可能尚未 pop（runner 线程退出才清）→ 墙的首次重查仍显示
+        # 「运行中」，由随后 _report_final 的第二次事件纠正（双事件自洽，不判重）
         _emit_sessions_changed(getattr(ctx, "emit_event", None), sid, "stopped")
         if not ok:
             # 无 live runner（陈旧 running，如底座重启 mid-run）：db 已落 stopped——

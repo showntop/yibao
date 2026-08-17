@@ -383,7 +383,7 @@ function scheduleWallRefresh() {
   if (wallTimer) clearTimeout(wallTimer);
   wallTimer = setTimeout(() => {
     wallTimer = null;
-    if (current.value?.panel !== "coding:wall") return;   // 防抖窗口内切走则不查
+    if (viewingList.value || current.value?.panel !== "coding:wall") return;   // 防抖窗口内切走/返回列表则不查
     void panelAction("coding.wall_data", {}, undefined, surface.value).catch(() => {});
   }, 400);
 }
@@ -393,8 +393,9 @@ function onEvent(e: BrainEvent) {
   if (e.kind !== "panel" && e.kind !== "panel_data" && e.surface === "pet") return;
   switch (e.kind) {
     case "coding_sessions":
-      // 会话墙实时刷新：仅墙开着才重查（重查会 emit panel 事件——墙没开时查会把用户当前面板顶掉）
-      if (current.value?.panel === "coding:wall") scheduleWallRefresh();
+      // 会话墙实时刷新：仅墙正在展示才重查（重查会 emit panel 事件——backToList 后 current
+      // 粘性保留（再进秒开），不看 panel 会误判「墙开着」而把用户从插件列表拽回墙）
+      if (!viewingList.value && current.value?.panel === "coding:wall") scheduleWallRefresh();
       break;
     case "panel_data":
       // 流式增量：同面板才合并；只动 data（webview/schema/title 不动 → srcdoc 不变 → iframe 不重载）
