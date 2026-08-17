@@ -39,8 +39,8 @@
      / [交接给 CC] = 现有 handoff_brief 流程（交接=生成摘要交给 Claude Code，非完整搬移）；
      区 2「译宝历史」= coding.list → resumeSession（行带引擎徽标）；两区皆空 → 新项目空态。
      双驱动（v2 Codex 驱动）：ctx-row 权限模式 pill 旁加引擎 chip #agent-chip（pill 样式体系）——
-     无活动会话时可点切换 CC⇄Codex（curAgent 全局态，只影响下一个新会话；默认值 = 当前 cwd
-     最近会话的 agent，prefillCwd 的 coding.list 行里取，sessions 表天然 per-cwd 记忆）；
+     无活动会话时可点：切换引擎（curAgent，只影响下一个新会话；默认值 = 当前 cwd 最近会话的
+     agent，sessions 表天然 per-cwd 记忆）+ 若该引擎在本项目有可续会话则弹引擎过滤的会话 popover；
      有会话时 chip 只读，显示当前会话引擎徽标（curSessAgent：send() 新会话回填时记录，
      attach/resume 后由 handleInitData 按流式 data.agent 服务端值同步）。打开面板时
      coding.drivers 探测：codex 不可用 → chip 灰显禁用 + title「未检测到 codex CLI」，
@@ -669,7 +669,7 @@
   <span class="title">编码对话</span>
   <span class="spacer"></span>
   <span id="cost" title="本会话累计 token 与成本（done 事件累加；新对话/恢复历史后清零重计）"></span>
-  <button id="history" type="button" title="接续：上次会话（CC 继续 / Codex 原生续或交接）+ 译宝历史，恢复后继续在同一上下文聊">接续</button>
+  <button id="history" type="button" title="会话：上次会话（CC 继续 / Codex 原生续或交接）+ 本项目译宝历史，恢复后继续在同一上下文聊">会话</button>
   <button id="new-chat" type="button" title="清空当前对话，开新会话（下次发送走 coding.start）" disabled>新对话</button>
 </header>
 
@@ -707,7 +707,7 @@
     <input id="cwd" type="hidden">
     <button id="cwd-chip" type="button" class="pill cwd-chip empty" title="项目目录（点击选择）">📁 <span id="cwd-chip-label">选择项目目录</span></button>
     <button id="mode-pill" type="button" class="pill" title="点击切换权限模式">自动改文件</button>
-    <button id="agent-chip" type="button" class="pill" title="引擎：新会话使用的驱动（点击切换，仅影响下一个新会话）">CC</button>
+    <button id="agent-chip" type="button" class="pill" title="引擎（点击切换；若该引擎有可续会话会打开接续视图）">CC</button>
     <button id="at-btn" type="button" class="pill at-btn" title="引用项目文件到输入框">@ 引用文件</button>
     <!-- cwd 浮层：手输路径 + 📁 选目录；Enter/确定 提交，Esc/点外部取消 -->
     <div id="cwd-pop" class="cwd-pop" hidden>
@@ -1751,13 +1751,16 @@
       ? "当前会话引擎：" + agentLabel(shown) + "（会话内只读）"
       : unavailable
         ? "未检测到 codex CLI"
-        : "引擎：" + agentLabel(shown) + "（点击切换，仅影响下一个新会话）";
+        : "引擎：" + agentLabel(shown) + "（点击切换；若该引擎在本项目有可续会话，会打开接续视图）";
   }
 
+  // chip 点击 = 切换 + 接续：先翻转引擎，再探测该引擎在本项目有无可续会话——
+  // 有才弹「该引擎过滤视图」的会话 popover，无则状态行提示已切换，不打扰
   $("agent-chip").addEventListener("click", function () {
     if (currentSession) return;             // 只读徽标态不响应（codex 不可用时 disabled 天然拦截）
     curAgent = curAgent === "codex" ? "claude-code" : "codex";
     renderAgentChip();
+    openHistory({ filterAgent: curAgent, onlyIfContent: true });
   });
   renderAgentChip();   // 初始渲染（无会话/CC/探测前）
 
@@ -2210,40 +2213,70 @@
   //     全局总览归会话墙，popover 只承接本项目接续；
   //   两区皆空 → 新项目空态。恢复 = 清 log 渲染历史消息 + 分隔线；下一条发送走 coding.send
   //   （currentSession 已指回旧 sid）→ 同一 CC 上下文续聊。
+  //   opts.filterAgent：chip 切换通道按引擎过滤两区（区 1 只显对应源卡、区 2 只列该引擎会话）；
+  //   opts.onlyIfContent：无可续内容时不弹层，状态行提示（chip 通道专用）
   // ============================================================
-  function openHistory() {
+  function openHistory(opts) {
+    opts = opts || {};
     if (!hasBridge) return;
     if (streaming) { setStatus("当前会话运行中，请先中断再恢复/接续会话", true); return; }
     var cwd = $("cwd").value.trim();
     if (!cwd) { setStatus("请先选择项目目录", true); openCwdPop(); return; }
     closeHandoffPicker();  // 两个浮层不共存
     var ov = $("history-overlay");
-    ov.hidden = false;
-    $("history-body").innerHTML = "<div class=\"mempty\">加载中…</div>";
     // 两路并发：区 1 跨源检测失败（方法缺失/扫描异常）静默降级为无区 1，不拖垮区 2
     var lastP = window.yibao.invoke("coding.last_sessions", { cwd: cwd })
       .catch(function () { return null; });
     var listP = window.yibao.invoke("coding.list", {}).then(function (r) {
       return { rows: (r && r.sessions) || [] };
     }).catch(function (e) { return { rows: [], err: e }; });
+    if (opts.onlyIfContent) {
+      // chip 切换+接续通道：先取数再决定——有该引擎可续会话才弹过滤视图
+      Promise.all([lastP, listP]).then(function (rs) {
+        if (!hasEngineContent(rs[0], rs[1], opts.filterAgent, cwd)) {
+          setStatus("已切换到 " + agentLabel(opts.filterAgent) + "，新项目直接输入任务开始");
+          return;
+        }
+        ov.hidden = false;
+        renderResumePopover(rs[0], rs[1], opts.filterAgent);
+      });
+      return;
+    }
+    // 顶栏「会话」通道：立即弹层（先加载态）
+    ov.hidden = false;
+    $("history-body").innerHTML = "<div class=\"mempty\">加载中…</div>";
     Promise.all([lastP, listP]).then(function (rs) {
       if (ov.hidden) return;   // 响应到达时 popover 已关，丢弃
-      renderResumePopover(rs[0], rs[1]);
+      renderResumePopover(rs[0], rs[1], null);
     });
+  }
+
+  // 该引擎在本项目的可续内容探测：区 1 对应源卡 或 区 2 该引擎会话，任一即弹
+  function hasEngineContent(last, listR, filterAgent, cwd) {
+    if (filterAgent === "codex" ? (last && last.codex) : (last && last.cc)) return true;
+    var rows = (listR && listR.rows) || [];
+    for (var i = 0; i < rows.length; i++) {
+      if (normCwd(rows[i].cwd) === normCwd(cwd) && normAgent(rows[i].agent) === filterAgent) return true;
+    }
+    return false;
   }
 
   function closeHistory() {
     $("history-overlay").hidden = true;
   }
 
-  // popover 主体渲染：last = last_sessions 结果（{cc, codex} 或 null）；listR = {rows, err}
-  function renderResumePopover(last, listR) {
+  // popover 主体渲染：last = last_sessions 结果（{cc, codex} 或 null）；listR = {rows, err}；
+  // filterAgent = chip 通道的引擎过滤（null=顶栏「会话」全量双源视图）
+  function renderResumePopover(last, listR, filterAgent) {
     var body = $("history-body");
     var cwd = $("cwd").value.trim();
     var cc = last && last.cc;
     var codex = last && last.codex;
+    if (filterAgent === "codex") cc = null;            // chip 过滤视图：只显对应源卡
+    else if (filterAgent === "claude-code") codex = null;
     var rows = (listR.rows || []).filter(function (row) {
-      return normCwd(row.cwd) === normCwd(cwd);   // 只显示本项目会话；跨项目总览归会话墙
+      if (normCwd(row.cwd) !== normCwd(cwd)) return false;   // 只显示本项目会话；跨项目总览归会话墙
+      return !filterAgent || normAgent(row.agent) === filterAgent;   // chip 过滤视图：只列该引擎
     });
     body.innerHTML = "";
 
@@ -2275,9 +2308,9 @@
       }
     }
 
-    // 区 2「译宝历史（本项目）」：coding.list 已按 cwd 过滤 → resumeSession（原历史抽屉渲染逻辑）
+    // 区 2「译宝历史（本项目）」：coding.list 已按 cwd(+引擎) 过滤 → resumeSession（原历史抽屉渲染逻辑）
     if (rows.length) {
-      body.appendChild(secTitle("译宝历史（本项目）"));
+      body.appendChild(secTitle(filterAgent ? "译宝历史（本项目 · " + agentLabel(filterAgent) + "）" : "译宝历史（本项目）"));
       rows.forEach(function (row) { body.appendChild(historyRow(row)); });
     } else if (listR.err && (cc || codex)) {
       var listErr = document.createElement("div");
@@ -2292,7 +2325,7 @@
       empty.className = "mempty";
       empty.textContent = listR.err
         ? "加载失败：" + emsg(listR.err)
-        : "新项目——直接输入任务开始（Claude Code）";
+        : "新项目——直接输入任务开始（" + agentLabel(filterAgent || curAgent) + "）";
       body.appendChild(empty);
     }
   }
