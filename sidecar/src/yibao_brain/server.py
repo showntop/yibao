@@ -844,6 +844,37 @@ async def serve_async(
                     })
             except Exception as e:
                 print(f"[yibao] 后台命令查询失败（已降级）：{e}", file=sys.stderr)
+        # coding 插件运行中会话（P2 督导）：sessions 表 status=running 为准——_SESSIONS
+        # 仅存于流式期间、重启即丢，陈旧 running 由 coding.stop 的陈旧兜底补发 stopped，
+        # 这里照列让用户在主屏可见可停（与 agents 段同策略：只读表，不碰插件内存态）。
+        cdb_file = os.path.join(plugin_data_dir("coding"), "data.db")
+        if os.path.exists(cdb_file):
+            try:
+                from .plugindb import PluginDb
+
+                cdb = PluginDb("coding")
+                try:
+                    crows = cdb.query(
+                        "sessions", where={"status": "running"},
+                        order="created_at DESC", limit=limit,
+                    )
+                finally:
+                    cdb.close()
+            except Exception as e:
+                print(f"[yibao] coding 会话查询失败（已降级）：{e}", file=sys.stderr)
+                crows = []
+            for row in crows:
+                sid = str(row.get("id") or "")
+                if not sid:
+                    continue
+                out.append({
+                    "id": sid,
+                    "kind": "coding",
+                    "label": "编码会话",
+                    "prompt": str(row.get("prompt") or ""),
+                    "status": "running",
+                    "created_at": int(row.get("created_at") or 0),
+                })
         return sorted(out, key=lambda item: item.get("created_at", 0), reverse=True)[:limit]
 
     def _feed_stats(running_tasks: list[dict] | None = None) -> dict:

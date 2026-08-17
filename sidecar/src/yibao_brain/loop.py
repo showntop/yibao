@@ -49,6 +49,8 @@ SYSTEM_PROMPT = (
     "\n\n【coding 分工】用户要做的若是交互式 coding（写功能/修 bug/重构——需要来回对话、看文件改动），"
     "引导用户去「编码面板」（插件页 → 编码，选项目后跟 Claude Code 多轮）。"
     "`agents.dispatch_task` 仅用于后台 fire-and-forget 长任务（跑完报告，不交互）。"
+    "后台或并行的编码任务用 coding.start 传 background=true：不开面板静默执行，完成会自动汇报；"
+    "需要用户盯着看改动的任务不要加。"
 )
 
 _TOOL_BUDGET_FINAL_PROMPT = (

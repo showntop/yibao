@@ -150,8 +150,9 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
     permission_mode：透传 runner.run（acceptEdits/plan）。
     session_entry：_SESSIONS[sid] live entry 透传 runner.run——coding.mode 写入
     mode_pending 后，runner 每条消息前消费并 client.set_permission_mode（运行中切模式）。
-    can_use_tool：每轮新建权限回调桥（make_permission_callback(sid, on_event)）——SDK 触发
-    权限询问时发 permission_request 进面板流并阻塞等 coding.decide 裁决（超时默认 deny）。
+    can_use_tool：每轮新建权限回调桥（make_permission_callback(sid, on_event, emit_event=…)）——
+    SDK 触发权限询问时发 permission_request 进面板流 + confirmation_needed 进 L2 确认体系，
+    阻塞等 confirm_batched 路由 / coding.decide 备用通道裁决（双通道幂等，超时默认 deny）。
     """
     state = {"error": False}
     cc_sid: str | None = None   # runner.run 返回值（ResultMessage.session_id）；None=取消/失败
@@ -182,6 +183,7 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
             _persist("assistant", str(ev.get("text") or ""))
         elif kind == "done":
             _persist("marker", "完成")
+            state["usage"] = ev.get("usage") if isinstance(ev.get("usage"), dict) else {}
         elif kind == "stopped":
             _persist("marker", str(ev.get("text") or "已中断"))
         if emit_event is not None:
@@ -197,7 +199,8 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
         cc_sid = await runner.run(prompt, cwd, on_event=on_event, cancel_event=_AsyncShield(cancel),
                                   resume_session_id=resume_session_id,
                                   permission_mode=permission_mode,
-                                  can_use_tool=_runner.make_permission_callback(sid, on_event),
+                                  can_use_tool=_runner.make_permission_callback(
+                                      sid, on_event, emit_event=emit_event),
                                   session_entry=_SESSIONS.get(sid))
     except Exception as e:  # runner 内部应已吞异常→error 事件；框架级异常兜底
         print(f"[yibao/coding] session {sid} runner 框架异常：{type(e).__name__}: {e}",
@@ -230,6 +233,48 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
     except Exception as e:
         print(f"[yibao/coding] session {sid} 落最终状态失败：{type(e).__name__}: {e}",
               file=sys.stderr)
+    _report_final(emit_event, sid, prompt, final, state.get("usage"))
+
+
+def _usage_suffix(usage) -> str:
+    """done 事件 usage → 成本摘要（如「（耗时 12s · $0.0312 · 1540 tok）」）；无数据 → ""。"""
+    if not isinstance(usage, dict) or not usage:
+        return ""
+    parts: list[str] = []
+    ms = usage.get("duration_ms")
+    if isinstance(ms, (int, float)) and ms > 0:
+        parts.append(f"耗时 {ms / 1000:.0f}s")
+    cost = usage.get("cost_usd")
+    if isinstance(cost, (int, float)) and cost > 0:
+        parts.append(f"${cost:.4f}")
+    tokens = sum(int(usage[k]) for k in ("input_tokens", "output_tokens")
+                 if isinstance(usage.get(k), (int, float)))
+    if tokens:
+        parts.append(f"{tokens} tok")
+    return f"（{' · '.join(parts)}）" if parts else ""
+
+
+def _report_final(emit_event, sid: str, prompt: str, final: str, usage) -> None:
+    """会话终态汇报（P2 督导）：done/failed → reminder（宠物气泡 + Feed 任务卡）；
+    stopped → event（仅 Feed 任务卡，不弹气泡防打扰）。task meta 供 Feed 任务卡与
+    后续点击路由（plugin:"coding"）；done 的 text 带成本摘要（usage 不落库，只此一播）。"""
+    if emit_event is None:
+        return
+    try:
+        label = prompt[:30]
+        status_text = {"done": "完成", "failed": "失败", "stopped": "已停止"}.get(final, final)
+        if final == "done":
+            kind, text = "reminder", f"✅ 编码任务完成：{label}{_usage_suffix(usage)}"
+        elif final == "failed":
+            kind, text = "reminder", f"❌ 编码任务失败：{label}"
+        else:
+            kind, text = "event", f"⏹ 编码任务已停止：{label}"
+        emit_event({"kind": kind, "text": text,
+                    "task": {"id": sid, "status": status_text, "label": label,
+                             "prompt": prompt, "plugin": "coding"},
+                    "plugin": "coding"})
+    except Exception as e:  # 汇报是增强面：失败只 print，绝不拖垮收尾
+        print(f"[yibao/coding] session {sid} 终态汇报失败（跳过）：{e}", file=sys.stderr)
 
 
 def _stop_session(db, registry, sid: str) -> bool:
@@ -286,6 +331,7 @@ class StartSkill(Skill):
                         "prompt": {"type": "string", "description": "任务描述"},
                         "agent": {"type": "string", "description": "智能体（v1 固定 claude-code）"},
                         "source": {"type": "string", "description": "会话来源（可选）：用户直起留空；交接路径传 'codex:<sid>'"},
+                        "background": {"type": "boolean", "description": "后台执行（可选）：true 时不打开编码面板，静默执行，完成后任务卡汇报；适合后台/并行编码任务"},
                     },
                     "required": ["cwd", "prompt"],
                 },
@@ -305,6 +351,7 @@ class StartSkill(Skill):
         agent = str(params.get("agent") or "claude-code").strip() or "claude-code"
         source = str(params.get("source") or "").strip()
         mode = str(params.get("mode") or "acceptEdits").strip() or "acceptEdits"
+        background = bool(params.get("background"))
         sid = start_session(ctx.db, agent=agent, cwd=cwd, prompt=prompt, source=source, mode=mode)
         # 生产默认 runner；测试经 monkeypatch _spawn_stream 不真起线程
         # resume_session_id 不传 → None → 全新 CC 会话（首条消息）
@@ -312,8 +359,10 @@ class StartSkill(Skill):
                       permission_mode=mode)
         return ActionResult(success=True, data={
             "session_id": sid,
-            "panel": "coding:chat",
-            "human": f"已开始编码会话 {sid}，面板实时回显",
+            # background=true → panel=None（loop 判空不开面板），静默执行靠终态任务卡汇报
+            "panel": None if background else "coding:chat",
+            "human": (f"已开始后台编码会话 {sid}，完成会汇报" if background
+                      else f"已开始编码会话 {sid}，面板实时回显"),
         })
 
 
@@ -428,10 +477,21 @@ class StopSkill(Skill):
         })
 
 
+def _live_state(sid: str) -> str:
+    """会话活体状态：waiting（_PERM 有该 sid 挂起审批）> running（_SESSIONS 有 live entry）> idle。"""
+    prefix = f"perm_{sid}_"
+    for rid, entry in list(_PERM.items()):
+        if rid.startswith(prefix) and entry.get("allow") is None:
+            return "waiting"
+    if sid in _SESSIONS:
+        return "running"
+    return "idle"
+
+
 class ListSkill(Skill):
     id = "coding.list"
     label = "编码会话列表"
-    description = "列出 coding 会话（按创建时间倒序）。"
+    description = "列出 coding 会话（按创建时间倒序；每行带 live 活体状态：waiting/running/idle）。"
     default_risk = RiskLevel.L0_READONLY
 
     def openai_schema(self) -> dict:
@@ -446,7 +506,8 @@ class ListSkill(Skill):
 
     def run(self, params: dict, ctx: Any) -> ActionResult:
         rows = ctx.db.query("sessions", order="created_at DESC")
-        return ActionResult(success=True, data={"sessions": rows, "panel": "coding:chat"})
+        sessions = [{**dict(row), "live": _live_state(str(row.get("id") or ""))} for row in rows]
+        return ActionResult(success=True, data={"sessions": sessions, "panel": "coding:chat"})
 
 
 class HandoffListSkill(Skill):

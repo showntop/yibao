@@ -1271,3 +1271,114 @@ def test_can_use_tool_confirm_batched_channel_resolves():
 
     assert isinstance(_run(_flow()), PermissionResultAllow)
 
+
+# ---------- P2 B1：coding.list live 字段 / coding.start background ----------
+
+def test_list_skill_live_states():
+    """live：waiting（_PERM 挂起，优先）> running（_SESSIONS entry）> idle；已裁决不算 waiting。"""
+    db = _FakeDB()
+    db.rows["a"] = {"id": "a", "status": "done", "created_at": 1}
+    db.rows["b"] = {"id": "b", "status": "running", "created_at": 2}
+    db.rows["c"] = {"id": "c", "status": "running", "created_at": 3}
+    _runner_mod._PERM["perm_c_7"] = {"event": _threading.Event(), "allow": None}
+    codingmod._SESSIONS["b"] = {"cancel": _threading.Event()}
+    codingmod._SESSIONS["c"] = {"cancel": _threading.Event()}
+    try:
+        res = ListSkill().run({}, _Ctx(db))
+        live = {s["id"]: s["live"] for s in res.data["sessions"]}
+        assert live == {"a": "idle", "b": "running", "c": "waiting"}
+        # 已裁决（allow 非 None）不再算 waiting → 回落 running
+        _runner_mod._PERM["perm_c_7"]["allow"] = True
+        res2 = ListSkill().run({}, _Ctx(db))
+        live2 = {s["id"]: s["live"] for s in res2.data["sessions"]}
+        assert live2["c"] == "running"
+    finally:
+        _runner_mod._PERM.pop("perm_c_7", None)
+        codingmod._SESSIONS.pop("b", None)
+        codingmod._SESSIONS.pop("c", None)
+
+
+def test_start_skill_background_param(monkeypatch):
+    """background=true → data.panel=None（不开面板，静默执行）；缺省 → coding:chat 照开。"""
+    db = _FakeDB()
+    monkeypatch.setattr(codingmod, "_spawn_stream", lambda *a, **k: None)
+    r = StartSkill().run({"cwd": "/tmp", "prompt": "后台改 X", "background": True}, _Ctx(db))
+    assert r.success and r.data["panel"] is None
+    assert "后台" in r.data["human"]
+    r2 = StartSkill().run({"cwd": "/tmp", "prompt": "普通任务"}, _Ctx(db))
+    assert r2.success and r2.data["panel"] == "coding:chat"
+    props = StartSkill().openai_schema()["function"]["parameters"]["properties"]
+    assert props["background"]["type"] == "boolean"
+
+
+# ---------- P2 B1：会话终态汇报（reminder/event + task meta）----------
+
+def test_usage_suffix():
+    assert codingmod._usage_suffix(None) == ""
+    assert codingmod._usage_suffix({}) == ""
+    assert codingmod._usage_suffix({"duration_ms": 12300}) == "（耗时 12s）"
+    assert codingmod._usage_suffix({"cost_usd": 0.0312, "input_tokens": 10,
+                                    "output_tokens": 5}) == "（$0.0312 · 15 tok）"
+
+
+def test_stream_reports_done_reminder_with_cost():
+    """done → kind=reminder（宠物气泡+Feed 任务卡），text 带成本，task meta 完整。"""
+    db = _FakeDB(); db.rows["s40"] = {"id": "s40", "status": "running"}
+    emitted = []
+
+    class _DoneRunner:
+        async def run(self, prompt, cwd, *, on_event, cancel_event, **k):
+            on_event({"kind": "done", "usage": {"duration_ms": 12300, "cost_usd": 0.0312,
+                                                "input_tokens": 1000, "output_tokens": 540}})
+            return "cc-x"
+
+    _run(_stream(db, "s40", "/tmp/p", "修一下登录页的样式问题", _DoneRunner(),
+                 emit_event=emitted.append, cancel=_threading.Event()))
+    finals = [e for e in emitted if e.get("task")]
+    assert len(finals) == 1
+    ev = finals[0]
+    assert ev["kind"] == "reminder"
+    assert "编码任务完成" in ev["text"] and "$0.0312" in ev["text"] and "12s" in ev["text"]
+    assert ev["task"] == {"id": "s40", "status": "完成", "label": "修一下登录页的样式问题",
+                          "prompt": "修一下登录页的样式问题", "plugin": "coding"}
+    assert ev["plugin"] == "coding"
+    assert db.updates[-1][1]["status"] == "done"
+
+
+def test_stream_reports_failed_reminder():
+    """error → failed：kind=reminder，status=失败。"""
+    db = _FakeDB(); db.rows["s41"] = {"id": "s41", "status": "running"}
+    emitted = []
+
+    class _ErrRunner:
+        async def run(self, prompt, cwd, *, on_event, cancel_event, **k):
+            on_event({"kind": "error", "text": "boom"})
+            return None
+
+    _run(_stream(db, "s41", "/tmp/p", "做个功能", _ErrRunner(),
+                 emit_event=emitted.append, cancel=_threading.Event()))
+    finals = [e for e in emitted if e.get("task")]
+    assert len(finals) == 1 and finals[0]["kind"] == "reminder"
+    assert "失败" in finals[0]["text"] and finals[0]["task"]["status"] == "失败"
+    assert db.updates[-1][1]["status"] == "failed"
+
+
+def test_stream_reports_stopped_as_event_not_reminder():
+    """stopped（用户主动停）→ kind=event（仅 Feed 任务卡），不发 reminder 气泡。"""
+    db = _FakeDB(); db.rows["s42"] = {"id": "s42", "status": "stopped"}  # 用户已主动停
+    emitted = []
+    _run(_stream(db, "s42", "/tmp/p", "长跑任务", _FakeRunner(cc_sid=None),
+                 emit_event=emitted.append, cancel=_threading.Event()))
+    finals = [e for e in emitted if e.get("task")]
+    assert len(finals) == 1 and finals[0]["kind"] == "event"
+    assert finals[0]["task"]["status"] == "已停止"
+    assert not any(e.get("kind") == "reminder" and e.get("task") for e in emitted)
+    assert db.updates[-1][1]["status"] == "stopped"
+
+
+def test_stream_no_report_when_emit_event_none():
+    """emit_event=None（测试/未注入）→ 终态汇报静默跳过，落库不受影响。"""
+    db = _FakeDB(); db.rows["s43"] = {"id": "s43", "status": "running"}
+    _run(_stream(db, "s43", "/tmp/p", "hi", _FakeRunner(cc_sid="cc-1"),
+                 emit_event=None, cancel=_threading.Event()))
+    assert db.updates[-1][1]["status"] == "done"

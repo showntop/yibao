@@ -2853,3 +2853,36 @@ def test_serve_confirm_batch_routes_coding_perm(tmp_path, monkeypatch):
     assert perms["perm_s1_1"]["allow"] is True and ev.is_set()
     assert any(m.get("type") == "confirm_batched" and m.get("ok") for m in out)
 
+
+def test_serve_feed_includes_running_coding_session(tmp_path, monkeypatch):
+    """_running_tasks 追加 coding 运行中会话：sessions 表 running 行列出，done 不列。"""
+    import sqlite3
+
+    monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path))
+    cdir = tmp_path / "plugins" / "coding"
+    cdir.mkdir(parents=True)
+    conn = sqlite3.connect(str(cdir / "data.db"))
+    conn.execute("CREATE TABLE sessions (id TEXT PRIMARY KEY, prompt TEXT, status TEXT,"
+                 " created_at INTEGER)")
+    conn.execute("INSERT INTO sessions VALUES ('cs1', '改登录 bug', 'running', 1700000000)")
+    conn.execute("INSERT INTO sessions VALUES ('cs2', '旧会话', 'done', 1700000001)")
+    conn.commit()
+    conn.close()
+
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([{"type": "feed"}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+        )
+    )
+    feed = [m for m in out if m["type"] == "feed"][0]
+    coding_tasks = [t for t in feed["running_tasks"] if t["kind"] == "coding"]
+    assert len(coding_tasks) == 1
+    assert coding_tasks[0]["id"] == "cs1"
+    assert coding_tasks[0]["label"] == "编码会话"
+    assert coding_tasks[0]["prompt"] == "改登录 bug"
+    assert coding_tasks[0]["status"] == "running"
