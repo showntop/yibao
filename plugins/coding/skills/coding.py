@@ -15,10 +15,13 @@ ctx.emit_event 本身线程安全（proactive_dispatcher → call_soon_threadsaf
 from __future__ import annotations
 
 import asyncio
+import glob
 import importlib.util
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -50,8 +53,21 @@ def _sibling(stem: str):
 
 
 _runner = _sibling("_runner")
-ClaudeCodeRunner = _runner.ClaudeCodeRunner   # 生产默认 runner factory
+ClaudeCodeRunner = _runner.ClaudeCodeRunner   # 生产默认 runner factory（claude-code/cc）
+_codex_runner = _sibling("_codex_runner")
+CodexCliRunner = _codex_runner.CodexCliRunner  # codex CLI 子进程 runner factory
 _PERM = _runner._PERM                         # can_use_tool 裁决注册表（rid → {event, allow}；DecideSkill 消费）
+
+
+def _runner_for(agent: str):
+    """agent id → runner 实例：claude-code/cc → ClaudeCodeRunner；codex → CodexCliRunner；
+    未知 → ValueError（调用方转 ActionResult 清晰文案）。"""
+    a = str(agent or "claude-code").strip() or "claude-code"
+    if a in ("claude-code", "cc"):
+        return ClaudeCodeRunner()
+    if a == "codex":
+        return CodexCliRunner()
+    raise ValueError(f"未知智能体：{a}（仅支持 claude-code / codex）")
 
 # codex_reader / _brief / _cc_reader 也是同目录兄弟模块（非包内），经 _sibling 加载（同 _runner）。
 # _build_brief / _codex_sessions_root 做模块级间接：测试 monkeypatch 这两个属性即可
@@ -103,14 +119,17 @@ class _AsyncShield:
 
 def _spawn_stream(db, sid: str, cwd: str, prompt: str, runner, emit_event,
                   resume_session_id: str | None = None,
-                  permission_mode: str = "acceptEdits") -> None:
+                  permission_mode: str = "acceptEdits",
+                  agent: str = "claude-code") -> None:
     """起 daemon 线程跑 runner（线程内自带 asyncio loop）。
 
     emit_event 已线程安全（proactive_dispatcher.emit → call_soon_threadsafe），
     daemon 线程直调即可。db 经参数链一路传到 _stream（落最终状态用）。
     resume_session_id：非 None 时透传 runner.run，续上同一 CC 会话历史（多轮）；
         None（StartSkill 路径）→ 全新会话。
-    permission_mode：透传 runner.run（acceptEdits/plan），进 SDK options。
+    permission_mode：透传 runner.run（acceptEdits/plan），进 SDK options / codex sandbox。
+    agent：会话引擎 id（claude-code/cc/codex），透传 _stream → panel_data data 平级键
+        （chat.html 实时更新引擎徽标）。
     _SESSIONS[sid] entry 同时是运行中切模式的通道（coding.mode 写 mode_pending，
     runner 每条消息前消费 → client.set_permission_mode）。
     """
@@ -124,7 +143,7 @@ def _spawn_stream(db, sid: str, cwd: str, prompt: str, runner, emit_event,
             loop.run_until_complete(
                 _stream(db, sid, cwd, prompt, runner, emit_event, cancel,
                         resume_session_id=resume_session_id,
-                        permission_mode=permission_mode))
+                        permission_mode=permission_mode, agent=agent))
         except Exception as e:  # 兜底：流式线程任何意外都不许炸出来
             print(f"[yibao/coding] session {sid} stream 线程崩：{type(e).__name__}: {e}",
                   file=sys.stderr)
@@ -141,7 +160,8 @@ def _spawn_stream(db, sid: str, cwd: str, prompt: str, runner, emit_event,
 
 async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cancel,
                   resume_session_id: str | None = None,
-                  permission_mode: str = "acceptEdits") -> None:
+                  permission_mode: str = "acceptEdits",
+                  agent: str = "claude-code") -> None:
     """跑 runner；每条事件转 panel_data 推面板 + 落 messages 表；结束按 cancel/error/done 落最终状态。
 
     transcript 落库：user_msg（带 CC uuid，rewind 锚点）/ text_delta / done·stopped 终态 marker，
@@ -150,8 +170,11 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
     落库 try/except 隔离——transcript 丢失绝不许炸断流式。
     落最终状态前先查当前 status——用户主动 stop 时 _stop_session 已先写 stopped，
     这里保留 stopped 不被 done/failed 覆盖（race-safe，仿 agents._common._wait:66-73）。
-    resume_session_id：非 None 时透传 runner.run，续上同一 CC 会话历史（多轮）。
+    resume_session_id：非 None 时透传 runner.run，续上同一会话历史（多轮；CC=SDK resume，
+    codex=exec resume thread_id）。
     permission_mode：透传 runner.run（acceptEdits/plan）。
+    agent：会话引擎 id，panel_data data 加平级 "agent" 键（data={session_id, agent, event}，
+    chat.html 按此实时更新引擎徽标）。
     session_entry：_SESSIONS[sid] live entry 透传 runner.run——coding.mode 写入
     mode_pending 后，runner 每条消息前消费并 client.set_permission_mode（运行中切模式）。
     can_use_tool：每轮新建权限回调桥（make_permission_callback(sid, on_event, emit_event=…)）——
@@ -195,7 +218,7 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
             # e.payload?.panel / e.payload?.data，shell proactive→Rust→PanelApp 不再加包装。
             emit_event({"kind": "panel_data",
                         "payload": {"panel": "coding:chat",
-                                    "data": {"session_id": sid, "event": ev}}})
+                                    "data": {"session_id": sid, "agent": agent, "event": ev}}})
         if ev.get("kind") == "error":
             state["error"] = True
 
@@ -317,7 +340,7 @@ class StartSkill(Skill):
     id = "coding.start"
     label = "开始编码会话"
     description = (
-        "开始一个 coding 会话：选项目目录 + Claude Code，提交任务后台流式跑，"
+        "开始一个 coding 会话：选项目目录 + 引擎（Claude Code / Codex），提交任务后台流式跑，"
         "面板实时回显文本/文件改动。立即返回，完成主动推 panel_data。"
         "【需要】cwd（用户显式选的工作目录）、prompt（任务描述）。"
     )
@@ -334,7 +357,7 @@ class StartSkill(Skill):
                     "properties": {
                         "cwd": {"type": "string", "description": "工作目录（用户显式选）"},
                         "prompt": {"type": "string", "description": "任务描述"},
-                        "agent": {"type": "string", "description": "智能体（v1 固定 claude-code）"},
+                        "agent": {"type": "string", "description": "智能体引擎：claude-code（默认）/ codex"},
                         "source": {"type": "string", "description": "会话来源（可选）：用户直起留空；交接路径传 'codex:<sid>'"},
                         "background": {"type": "boolean", "description": "后台执行（可选）：true 时不打开编码面板，静默执行，完成后任务卡汇报；适合后台/并行编码任务"},
                     },
@@ -357,11 +380,15 @@ class StartSkill(Skill):
         source = str(params.get("source") or "").strip()
         mode = str(params.get("mode") or "acceptEdits").strip() or "acceptEdits"
         background = bool(params.get("background"))
+        try:
+            runner = _runner_for(agent)
+        except ValueError as e:
+            return ActionResult(success=False, error=str(e))
         sid = start_session(ctx.db, agent=agent, cwd=cwd, prompt=prompt, source=source, mode=mode)
-        # 生产默认 runner；测试经 monkeypatch _spawn_stream 不真起线程
-        # resume_session_id 不传 → None → 全新 CC 会话（首条消息）
-        _spawn_stream(ctx.db, sid, cwd, prompt, ClaudeCodeRunner(), ctx.emit_event,
-                      permission_mode=mode)
+        # 生产默认 runner（_runner_for 按 agent 选）；测试经 monkeypatch _spawn_stream 不真起线程
+        # resume_session_id 不传 → None → 全新会话（首条消息）
+        _spawn_stream(ctx.db, sid, cwd, prompt, runner, ctx.emit_event,
+                      permission_mode=mode, agent=agent)
         return ActionResult(success=True, data={
             "session_id": sid,
             # background=true → panel=None（loop 判空不开面板），静默执行靠终态任务卡汇报
@@ -375,7 +402,8 @@ class SendSkill(Skill):
     id = "coding.send"
     label = "接续编码会话"
     description = (
-        "向既有 coding 会话追加一条消息（多轮）：用 cc_session_id resume 同一 Claude Code 历史，"
+        "向既有 coding 会话追加一条消息（多轮）：按会话引擎用 cc_session_id resume 同一会话历史"
+        "（Claude Code 走 SDK resume；Codex 走 codex exec resume thread_id），"
         "继续在同一上下文里干活，面板实时回显。立即返回，完成主动推 panel_data。"
         "【需要】id（coding.start 返回的 session_id）、prompt（本轮任务描述）。"
     )
@@ -423,10 +451,15 @@ class SendSkill(Skill):
         cwd = row.get("cwd") or ""
         # mode 跨轮沿用：send 不带 mode → 用库值（start/coding.mode 落的）；带 → 覆盖回写
         mode = str(params.get("mode") or row.get("mode") or "acceptEdits")
+        agent = str(row.get("agent") or "claude-code")   # 按会话落库引擎选驱动（codex 行走 exec resume）
+        try:
+            runner = _runner_for(agent)
+        except ValueError as e:
+            return ActionResult(success=False, error=str(e))
         # 重置 running 状态：resume 是新一轮流式，finished_at 归零；mode 一并回写
         ctx.db.update("sessions", sid, {"status": "running", "finished_at": 0, "mode": mode})
-        _spawn_stream(ctx.db, sid, cwd, prompt, ClaudeCodeRunner(), ctx.emit_event,
-                      resume_session_id=cc, permission_mode=mode)
+        _spawn_stream(ctx.db, sid, cwd, prompt, runner, ctx.emit_event,
+                      resume_session_id=cc, permission_mode=mode, agent=agent)
         return ActionResult(success=True, data={
             "session_id": sid,
             "panel": "coding:chat",
@@ -603,7 +636,8 @@ class WallDataSkill(Skill):
             prompt = str(row.get("prompt") or "")[:20]
             title = f"{base} · {prompt}" if prompt else base
             created = int(row.get("created_at") or 0)
-            subtitle = f"{_LIVE_TEXT[live]} · {_rel_time(now, created)}"
+            engine = "Codex" if str(row.get("agent") or "") == "codex" else "CC"   # 引擎徽标前缀（无 agent 的老行按 CC）
+            subtitle = f"{engine} · {_LIVE_TEXT[live]} · {_rel_time(now, created)}"
             items.append({"id": sid, "live": live, "title": title, "subtitle": subtitle})
         return ActionResult(success=True, data={"rows": items}, panel="coding:wall")
 
@@ -835,6 +869,9 @@ class RewindSkill(Skill):
         if not rows:
             return ActionResult(success=False, error=f"会话不存在：{sid}")
         row = rows[0]
+        agent = str(row.get("agent") or "claude-code")
+        if agent not in ("claude-code", "cc"):   # 文件检查点是 CC 能力；codex 会话无锚点可回滚
+            return ActionResult(success=False, error="⏪ 回滚仅支持 Claude Code 会话")
         emit = getattr(ctx, "emit_event", None)
 
         def _emit(ev: dict) -> None:
@@ -1152,8 +1189,156 @@ class AttachCcSkill(Skill):
         return ActionResult(success=True, data={"session_id": sid})
 
 
+def _detect_drivers() -> list[dict]:
+    """引擎可用性探测：claude-code 恒可用（SDK 内嵌）；codex 看二进制存在性 + 版本。
+    auth 不检测（未登录时 exec 秒败走 error 事件，文案引导 codex login——留档）；
+    任何探测失败 → codex unavailable（绝不抛）。"""
+    drivers = [{"id": "claude-code", "available": True}]
+    codex: dict = {"id": "codex", "available": False, "version": None}
+    try:
+        path = shutil.which("codex")
+        if path:
+            out = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=3)
+            if out.returncode == 0 and out.stdout.strip():
+                codex = {"id": "codex", "available": True,
+                         "version": out.stdout.strip().split()[-1]}   # "codex-cli 0.137.0" → 版本号
+    except Exception:
+        pass
+    drivers.append(codex)
+    return drivers
+
+
+class DriversSkill(Skill):
+    """编码引擎探测（ctx-row 引擎 chip 数据源）：claude-code 恒可用；codex 探测二进制+版本。
+    L0 quiet（api.toml 无 panel）——chip 初始化/刷新时直调，不开面板。"""
+    id = "coding.drivers"
+    label = "编码引擎探测"
+    description = (
+        "探测可用编码引擎：claude-code 恒可用；codex 检测 CLI 二进制存在性与版本"
+        "（shutil.which + codex --version，3s 容错）。返回 {drivers: [{id, available, version?}]}。"
+    )
+    default_risk = RiskLevel.L0_READONLY
+
+    def openai_schema(self) -> dict:
+        return {"type": "function", "function": {"name": self.id, "description": self.description,
+                "parameters": {"type": "object", "properties": {}, "required": []}}}
+
+    def run(self, params: dict, ctx: Any) -> ActionResult:
+        return ActionResult(success=True, data={"drivers": _detect_drivers()})
+
+
+def _find_codex_session(thread_id: str) -> dict | None:
+    """~/.codex/sessions 全树扫首行 session_meta 匹配 thread_id → {cwd, timestamp, path, first_line}。
+
+    attach_codex 只有 thread_id 没有 cwd（list_sessions 必须按 cwd 过滤，用不上）——
+    直接扫 rollout 首行 session_meta（cwd/timestamp 都在 payload 里），再读首条 user 摘要。
+    thread_id 白名单校验（只作等值比对，防路径逃逸意图）；任何失败 → None。
+    """
+    if not thread_id or not re.fullmatch(r"[A-Za-z0-9_-]+", thread_id):
+        return None
+    root = os.path.expanduser(_codex_sessions_root())
+    try:
+        candidates = glob.glob(os.path.join(root, "**", "*.jsonl"), recursive=True)
+    except Exception:
+        return None
+    for path in candidates:
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                meta = json.loads(f.readline())
+        except Exception:
+            continue
+        if meta.get("type") != "session_meta":
+            continue
+        p = meta.get("payload") or {}
+        if p.get("session_id") != thread_id:
+            continue
+        first_line = None
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    try:
+                        o = json.loads(line)
+                    except Exception:
+                        continue
+                    pl = o.get("payload") or {}
+                    if o.get("type") == "response_item" and pl.get("role") == "user":
+                        first_line = _codex._text(pl.get("content"))[:60] or None
+                        break
+        except Exception:
+            pass
+        return {"cwd": p.get("cwd") or "", "timestamp": p.get("timestamp") or "",
+                "path": path, "first_line": first_line}
+    return None
+
+
+def attach_codex_session(db, *, thread_id: str) -> str | None:
+    """codex 原生续导入落库（幂等），返回译宝 session_id；找不到 rollout 返回 None。
+
+    幂等：cc_session_id（=thread_id）已在 sessions 表 → 直接返回既有 id，不重复导入。
+    sessions 行：agent="codex"、source="native"、status="done"；cwd 取 rollout session_meta，
+    prompt=首条 user 摘要截 60；created_at/finished_at 取 session_meta timestamp，兜底文件 mtime。
+    导入后 send 走既有 resume 链路（SendSkill 按 agent=codex → codex exec resume thread_id）。
+    """
+    rows = db.query("sessions", where={"cc_session_id": thread_id})
+    if rows:
+        return str(rows[0]["id"])
+    meta = _find_codex_session(thread_id)
+    if meta is None:
+        return None
+    ts = _iso_ts(meta.get("timestamp"))
+    if ts is None:
+        try:
+            ts = int(os.path.getmtime(meta["path"]))
+        except Exception:
+            ts = int(time.time())
+    sid = uuid.uuid4().hex[:12]
+    db.insert("sessions", {
+        "id": sid, "agent": "codex", "cwd": meta["cwd"],
+        "prompt": (meta.get("first_line") or "")[:60] or "（导入的 Codex 会话）",
+        "status": "done", "created_at": ts, "finished_at": ts,
+        "cc_session_id": thread_id, "source": "native", "mode": "acceptEdits",
+    })
+    return sid
+
+
+class AttachCodexSkill(Skill):
+    """codex 会话原生续导入（接续 popover codex 卡「原生续」前置）。
+
+    建 DB 行（agent="codex" + cc_session_id=thread_id）后前端走现有 resumeSession；
+    发新消息时 SendSkill 按 agent=codex 走 codex exec resume 原生续，上下文完整。幂等按 cc_session_id。
+    """
+    id = "coding.attach_codex"
+    label = "导入 codex 会话"
+    description = (
+        "把指定 Codex 会话（thread_id）登记进 coding 会话库：读 ~/.codex/sessions 的 rollout "
+        "session_meta 落 sessions 行（agent=codex），返回译宝 session_id，之后按普通会话恢复/续聊"
+        "（codex exec resume 原生续）。幂等：thread_id 已在库直接返回既有 session_id。"
+        "【需要】session_id（Codex thread_id）。"
+    )
+    default_risk = RiskLevel.L0_READONLY  # 只写本插件 DB（无文件/系统副作用），导入幂等
+
+    def openai_schema(self) -> dict:
+        return {"type": "function", "function": {"name": self.id, "description": self.description,
+                "parameters": {"type": "object",
+                    "properties": {"session_id": {"type": "string", "description": "Codex thread_id"}},
+                    "required": ["session_id"]}}}
+
+    def run(self, params: dict, ctx: Any) -> ActionResult:
+        tid = str(params.get("session_id") or "").strip()
+        if not tid:
+            return ActionResult(success=False, error="缺少 session_id")
+        try:
+            sid = attach_codex_session(ctx.db, thread_id=tid)
+        except Exception as e:
+            return ActionResult(success=False, error=f"导入失败：{type(e).__name__}: {e}")
+        if sid is None:
+            return ActionResult(success=False, error=f"未找到 Codex 会话：{tid}")
+        return ActionResult(success=True, data={"session_id": sid})
+
+
 def make_tools(ctx: Any) -> list[Skill]:
     """插件加载器入口（_load_code_tools 遍历 skills/*.py 调本函数）。"""
     return [StartSkill(), SendSkill(), StopSkill(), ListSkill(), AttachSkill(),
             WallDataSkill(), HandoffListSkill(), HandoffBriefSkill(), HistorySkill(), ModeSkill(),
-            RewindSkill(), DecideSkill(), FilesSkill(), LastSessionsSkill(), AttachCcSkill()]
+            RewindSkill(), DecideSkill(), FilesSkill(), LastSessionsSkill(), AttachCcSkill(),
+            DriversSkill(), AttachCodexSkill()]
