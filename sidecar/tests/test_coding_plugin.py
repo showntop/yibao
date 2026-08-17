@@ -535,7 +535,8 @@ def test_stop_with_live_runner_no_extra_terminal(monkeypatch):
     ctx = _EmitCtx(db)
     res = StopSkill().run({"id": "s-live"}, ctx)
     assert res.success is True and cancel.is_set()
-    assert ctx.events == []     # 不重复补发
+    # 不重复补发终态 panel_data（coding_sessions 墙刷新信号是另一通道，不算补发）
+    assert [e for e in ctx.events if e.get("kind") == "panel_data"] == []
 
 
 def test_send_rejects_when_runner_finishing(monkeypatch):

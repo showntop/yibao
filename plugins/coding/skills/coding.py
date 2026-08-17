@@ -290,6 +290,7 @@ def _report_final(emit_event, sid: str, prompt: str, final: str, usage) -> None:
     带成本摘要（usage 不落库，只此一播）。"""
     if emit_event is None:
         return
+    _emit_sessions_changed(emit_event, sid, final)   # 会话墙刷新触发（done/failed/stopped 透传）
     try:
         label = prompt[:30]
         if final == "done":
@@ -390,6 +391,7 @@ class StartSkill(Skill):
         # resume_session_id 不传 → None → 全新会话（首条消息）
         _spawn_stream(ctx.db, sid, cwd, prompt, runner, ctx.emit_event,
                       permission_mode=mode, agent=agent)
+        _emit_sessions_changed(ctx.emit_event, sid, "started")
         return ActionResult(success=True, data={
             "session_id": sid,
             # background=true → panel=None（loop 判空不开面板），静默执行靠终态任务卡汇报
@@ -461,6 +463,7 @@ class SendSkill(Skill):
         ctx.db.update("sessions", sid, {"status": "running", "finished_at": 0, "mode": mode})
         _spawn_stream(ctx.db, sid, cwd, prompt, runner, ctx.emit_event,
                       resume_session_id=cc, permission_mode=mode, agent=agent)
+        _emit_sessions_changed(ctx.emit_event, sid, "started")
         return ActionResult(success=True, data={
             "session_id": sid,
             "panel": "coding:chat",
@@ -501,6 +504,7 @@ class StopSkill(Skill):
         if rows[0].get("status") not in ("running",):
             return ActionResult(success=False, error=f"会话已结束（{rows[0].get('status')}），无需停止")
         ok = _stop_session(ctx.db, _SESSIONS, sid)
+        _emit_sessions_changed(getattr(ctx, "emit_event", None), sid, "stopped")
         if not ok:
             # 无 live runner（陈旧 running，如底座重启 mid-run）：db 已落 stopped——
             # 补发终态事件让面板复位，否则发送键永久锁死
@@ -525,6 +529,13 @@ def _live_state(sid: str) -> str:
     if sid in _SESSIONS:
         return "running"
     return "idle"
+
+
+def _emit_sessions_changed(emit_event, sid: str, state: str) -> None:
+    """会话生命周期广播（会话墙实时刷新的触发源）：app 侧仅在墙开着时重查 coding.wall_data。
+    走 emit_event 公共通道；proactive dispatch 对本 kind 只广播不落 feed（高频信号，落账是噪音）。"""
+    if emit_event is not None:
+        emit_event({"kind": "coding_sessions", "session_id": sid, "state": state})
 
 
 class ListSkill(Skill):
@@ -1295,6 +1306,7 @@ class AttachCcSkill(Skill):
             return ActionResult(success=False, error=f"导入失败：{type(e).__name__}: {e}")
         if sid is None:
             return ActionResult(success=False, error=f"未找到 Claude Code 会话 transcript：{cc}")
+        _emit_sessions_changed(getattr(ctx, "emit_event", None), sid, "imported")
         return ActionResult(success=True, data={"session_id": sid})
 
 
@@ -1475,6 +1487,7 @@ class AttachCodexSkill(Skill):
             return ActionResult(success=False, error=f"导入失败：{type(e).__name__}: {e}")
         if sid is None:
             return ActionResult(success=False, error=f"未找到 Codex 会话：{tid}")
+        _emit_sessions_changed(getattr(ctx, "emit_event", None), sid, "imported")
         return ActionResult(success=True, data={"session_id": sid})
 
 

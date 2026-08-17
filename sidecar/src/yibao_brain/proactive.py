@@ -50,9 +50,10 @@ class ProactiveDispatcher:
             # 流式面板数据：直送 shell 转发对应 panel，绝不进 feed（否则每条 chunk 一条空 feed 记录）
             self.write_msg({"type": "event", "surface": None, "event": event})
             return
-        if event.get("kind") in ("confirmation_needed", "action_result"):
+        if event.get("kind") in ("confirmation_needed", "action_result", "coding_sessions"):
             # 审批请求/裁决是确认条与收件箱的入出队信号：落 Feed 只剩噪音
-            # （coding 每次审批两条且计 unread）；仍照常广播 brain-event。
+            # （coding 每次审批两条且计 unread）；coding_sessions 是会话生命周期高频信号
+            # （会话墙刷新触发源），同理不落账；仍照常广播 brain-event。
             self.write_msg({"type": "event", "surface": None, "event": event})
             return
         text = str(event.get("text", ""))

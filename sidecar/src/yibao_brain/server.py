@@ -20,6 +20,7 @@ from .audit import AuditLog
 from .background import (
     _DOCK_MAX,
     _consume_invoke_context,
+    _describe_image_attachments,
     _describe_screen,
     _dispatch_reminder,
     _distiller_loop,
@@ -1462,6 +1463,12 @@ async def serve_async(
                 ctx_text = _consume_invoke_context(invoke_ctx)
                 if ctx_text:
                     text = f"[屏幕上下文] {ctx_text}\n\n{text}"
+                # 附件图片（粘贴截图落盘 chip）：【附件：path】指向图片 → vision 描述注入，
+                # 主模型不必多模态；未配置视觉端点/无图/失败一律静默不注入
+                if _wvision is not None and "【" in text:
+                    att_desc = await _offload(_describe_image_attachments, text, _wvision)
+                    if att_desc:
+                        text = f"[附件图片内容]\n{att_desc}\n\n{text}"
                 start = lambda c, t=text, r=rid, s=surface, ci=conversation_id: _drive_run(t, r, c, s, ci)
                 print(f"[yibao] run 受理 rid={rid} surface={surface} conv={conversation_id}：{text[:30]!r}", file=sys.stderr)
                 _schedule_run(surface, rid, start)

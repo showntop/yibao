@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import sys
 import time
 
@@ -183,6 +184,46 @@ def _describe_screen(client, b64: str) -> str | None:
     from .llm import describe_screen
 
     return describe_screen(client, b64)
+
+
+# 附件图片注入（粘贴截图/附件落盘 chip → 译宝真能「看」）：run 文本里的【附件：path】/【文件：path】
+# 标记若指向图片文件，逐张 vision 描述后作为 [附件图片内容] 块前缀进 run——主模型不必多模态。
+_IMG_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+_IMG_MAX_BYTES = 8 * 1024 * 1024
+_IMG_MAX_COUNT = 3
+_IMG_MARKER = re.compile(r"【(?:附件|文件)：([^】]+)】")
+
+
+def _describe_image_attachments(text: str, client) -> str | None:
+    """扫描 run 文本里的附件/文件标记，图片逐张 vision 描述，返回「path：描述」块；无图/全失败 → None。
+
+    每张独立 try/except（坏图不挡好图）；vision 未配置（client None）直接 None。同步函数，
+    调用方走 _offload 挪线程池（vision HTTP 数百毫秒～秒级，别堵主循环）。
+    """
+    if client is None or not text:
+        return None
+    import base64
+
+    from .llm import answer_image_query
+
+    lines: list[str] = []
+    for m in _IMG_MARKER.finditer(text):
+        if len(lines) >= _IMG_MAX_COUNT:
+            break
+        path = m.group(1).strip()
+        if os.path.splitext(path)[1].lower() not in _IMG_EXTS:
+            continue
+        try:
+            if not os.path.isfile(path) or os.path.getsize(path) > _IMG_MAX_BYTES:
+                continue
+            with open(path, "rb") as f:
+                b64 = "data:image/png;base64," + base64.b64encode(f.read()).decode()
+            desc = answer_image_query(client, b64, "用一两句话描述这张图片的关键内容（用户把它作为聊天附件）")
+            if desc:
+                lines.append(f"{path}：{desc}")
+        except Exception:
+            continue   # 单张失败静默跳过，不挡其余
+    return "\n".join(lines) if lines else None
 
 
 async def _perception_cleanup_tick(pstore, distiller) -> None:
