@@ -553,8 +553,9 @@ class AttachSkill(Skill):
     """打开 coding 面板并恢复指定会话（任务卡/会话墙「接管」点击路由）。
 
     只校验会话存在，真正的恢复在面板侧：api.toml 声明 panel="coding:chat"，
-    直调成功后 panel_payload 把 data 原样透传进面板 init 数据（{session_id, attach: true}），
-    chat.html 的 handleInitData 见 attach 标志自动 resumeSession（P1 接管链路自然生效）。
+    直调成功后 panel_payload 把 data 原样透传进面板 init 数据（{session_id, agent, attach: true}），
+    chat.html 的 handleInitData 见 attach 标志自动 resumeSession（P1 接管链路自然生效）；
+    data.agent 让前端接管跨引擎会话时徽标立即正确，不用等首条流事件。
     """
     id = "coding.attach"
     label = "接管编码会话"
@@ -577,9 +578,12 @@ class AttachSkill(Skill):
         rows = ctx.db.query("sessions", where={"id": sid})
         if not rows:
             return ActionResult(success=False, error=f"会话不存在：{sid}")
-        # attach 标志逐字对齐 chat.html handleInitData 的判别（data.attach === true）
+        # attach 标志逐字对齐 chat.html handleInitData 的判别（data.attach === true）；
+        # agent 取库行值（老行缺省按 claude-code，同 _stream/_runner_for 缺省）——
+        # 前端接管跨引擎会话时引擎徽标立即正确，不等首条流事件
         return ActionResult(success=True, data={
             "session_id": sid,
+            "agent": str(rows[0].get("agent") or "claude-code"),
             "attach": True,
             "human": f"已打开编码会话 {sid}",
         })

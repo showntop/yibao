@@ -1409,6 +1409,19 @@ def test_attach_returns_session_and_attach_flag():
     assert res2.success and res2.data["attach"] is True
 
 
+def test_attach_payload_carries_agent():
+    """data.agent = 库行 agent（跨引擎接管徽标立即正确，不等首条流事件）；
+    老行缺 agent 列 → 缺省 claude-code（同 _stream/_runner_for 缺省）。"""
+    db = _FakeDB()
+    db.rows["s-cx"] = {"id": "s-cx", "status": "done", "agent": "codex"}
+    res = AttachSkill().run({"session_id": "s-cx"}, _Ctx(db))
+    assert res.success and res.data["agent"] == "codex"
+    db2 = _FakeDB()
+    db2.rows["s-old"] = {"id": "s-old", "status": "done"}    # 老行无 agent 列
+    res2 = AttachSkill().run({"session_id": "s-old"}, _Ctx(db2))
+    assert res2.success and res2.data["agent"] == "claude-code"
+
+
 def test_attach_rejects_unknown_session_and_missing_param():
     """会话不存在 → 明确错误（面板不开）；缺 session_id → 同样拒绝。"""
     db = _FakeDB()
