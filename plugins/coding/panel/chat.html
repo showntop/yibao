@@ -2206,7 +2206,8 @@
   //     Codex 卡双钮（v2）：[原生续] → coding.attach_codex{session_id}（codex thread_id 建/取 DB 行，
   //       幂等）→ resumeSession（原生 codex exec resume，上下文连续）；
   //       [交接给 CC] → 现有 handoff() 流程（交接=生成摘要交给 Claude Code，非完整搬移）；
-  //   区 2「译宝历史」= coding.list → resumeSession（行带引擎徽标：codex→Codex，其余→CC）；
+  //   区 2「译宝历史（本项目）」= coding.list 按当前 cwd 过滤 → resumeSession（行带引擎徽标：codex→Codex，其余→CC）；
+  //     全局总览归会话墙，popover 只承接本项目接续；
   //   两区皆空 → 新项目空态。恢复 = 清 log 渲染历史消息 + 分隔线；下一条发送走 coding.send
   //   （currentSession 已指回旧 sid）→ 同一 CC 上下文续聊。
   // ============================================================
@@ -2241,7 +2242,9 @@
     var cwd = $("cwd").value.trim();
     var cc = last && last.cc;
     var codex = last && last.codex;
-    var rows = listR.rows || [];
+    var rows = (listR.rows || []).filter(function (row) {
+      return normCwd(row.cwd) === normCwd(cwd);   // 只显示本项目会话；跨项目总览归会话墙
+    });
     body.innerHTML = "";
 
     // 区 1「上次会话」：跨源每源最新一条，按各自存在性显示
@@ -2272,9 +2275,9 @@
       }
     }
 
-    // 区 2「译宝历史」：coding.list → resumeSession（原历史抽屉渲染逻辑）
+    // 区 2「译宝历史（本项目）」：coding.list 已按 cwd 过滤 → resumeSession（原历史抽屉渲染逻辑）
     if (rows.length) {
-      body.appendChild(secTitle("译宝历史"));
+      body.appendChild(secTitle("译宝历史（本项目）"));
       rows.forEach(function (row) { body.appendChild(historyRow(row)); });
     } else if (listR.err && (cc || codex)) {
       var listErr = document.createElement("div");
@@ -2293,6 +2296,9 @@
       body.appendChild(empty);
     }
   }
+
+  // cwd 比较归一化：去尾部斜杠（sessions 表 cwd 与输入路径可能差一个 /）
+  function normCwd(p) { return (p || "").replace(/\/+$/, ""); }
 
   function secTitle(text) {
     var d = document.createElement("div");
