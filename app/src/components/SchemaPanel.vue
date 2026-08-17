@@ -137,8 +137,8 @@ const fallbackJson = computed(() =>
     <!-- list：卡片列表 + 行级 action -->
     <div v-if="kind === 'list'" class="list body-scroll">
       <div v-if="!listItems.length" class="empty">
-        <div class="empty-title">这里还空空的</div>
-        <div class="empty-hint">去跟译宝说一句试试，让它帮你添一条</div>
+        <div class="empty-title">{{ schema?.empty?.title || "这里还空空的" }}</div>
+        <div class="empty-hint">{{ schema?.empty?.hint || "去跟译宝说一句试试，让它帮你添一条" }}</div>
       </div>
       <div v-for="(it, i) in listItems" :key="i" class="card">
         <div class="card-main">

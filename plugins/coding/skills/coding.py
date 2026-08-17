@@ -546,6 +546,63 @@ class AttachSkill(Skill):
         })
 
 
+_LIVE_TEXT = {"waiting": "等待审批", "running": "运行中", "idle": "空闲"}
+
+
+def _rel_time(now: int, ts: int) -> str:
+    """unix 秒 → 中文相对时间（会话墙副标题）：<1 分钟 刚刚；<1 小时 N 分钟前；<1 天 N 小时前；否则 N 天前。"""
+    d = max(0, now - ts)
+    if d < 60:
+        return "刚刚"
+    if d < 3600:
+        return f"{d // 60} 分钟前"
+    if d < 86400:
+        return f"{d // 3600} 小时前"
+    return f"{d // 86400} 天前"
+
+
+class WallDataSkill(Skill):
+    """会话墙数据（coding:wall 面板的 list schema 数据源）。
+
+    每会话一张卡：title=「{cwd basename} · {prompt 前 20 字}」，subtitle=「{live 文案} · {相对时间}」，
+    按 created_at DESC。相对时间一律取 created_at（与排序同基准；v1 不跟 finished_at）。
+    行内行动作在 wall.schema.json 静态声明：「接管」coding.attach 恒显示；「停止」coding.wall_stop
+    同显——schema list 不支持按行条件显隐，idle 会话点停止由 coding.stop 返回清晰提示兜底。
+    result.panel 直接置 coding:wall：coding.wall_stop 的 refresh 通道（server._emit_refresh_panel）
+    走 invoker 直执行本 skill，panel_payload 只认 result.panel（api.toml 的 panel 覆盖管不到那条路）。
+    """
+    id = "coding.wall_data"
+    label = "编码会话墙"
+    description = "列出全部 coding 会话的总览卡片（会话墙）：目录·任务摘要 + 活体状态（等待审批/运行中/空闲）·相对时间，按创建时间倒序。"
+    default_risk = RiskLevel.L0_READONLY
+
+    def openai_schema(self) -> dict:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.id,
+                "description": self.description,
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        }
+
+    def run(self, params: dict, ctx: Any) -> ActionResult:
+        rows = ctx.db.query("sessions", order="created_at DESC")
+        now = int(time.time())
+        items: list[dict] = []
+        for row in rows:
+            sid = str(row.get("id") or "")
+            live = _live_state(sid)
+            cwd = str(row.get("cwd") or "")
+            base = (os.path.basename(os.path.normpath(cwd)) or cwd) if cwd else "?"
+            prompt = str(row.get("prompt") or "")[:20]
+            title = f"{base} · {prompt}" if prompt else base
+            created = int(row.get("created_at") or 0)
+            subtitle = f"{_LIVE_TEXT[live]} · {_rel_time(now, created)}"
+            items.append({"id": sid, "live": live, "title": title, "subtitle": subtitle})
+        return ActionResult(success=True, data={"rows": items}, panel="coding:wall")
+
+
 class HandoffListSkill(Skill):
     """列指定项目下 Codex 的会话（跨 agent 交接入口；只读）。
 
@@ -867,5 +924,5 @@ class FilesSkill(Skill):
 def make_tools(ctx: Any) -> list[Skill]:
     """插件加载器入口（_load_code_tools 遍历 skills/*.py 调本函数）。"""
     return [StartSkill(), SendSkill(), StopSkill(), ListSkill(), AttachSkill(),
-            HandoffListSkill(), HandoffBriefSkill(), HistorySkill(), ModeSkill(),
+            WallDataSkill(), HandoffListSkill(), HandoffBriefSkill(), HistorySkill(), ModeSkill(),
             RewindSkill(), DecideSkill(), FilesSkill()]

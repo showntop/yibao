@@ -42,3 +42,10 @@ type = "webview"
 name = "chat"
 label = "编码对话"
 src = "panel/chat.html"
+
+[[panel]]
+type = "schema"
+name = "wall"
+label = "会话墙"
+src = "panel/wall.schema.json"
+open = "wall_data"   # 面板级入口：插件页子入口直调此 api 方法打开
