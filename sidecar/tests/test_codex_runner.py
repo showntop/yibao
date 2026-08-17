@@ -22,16 +22,31 @@ class _FakeStdin:
     def close(self): self.closed = True
 
 
+class _FakeStderr:
+    """鸭式 StreamReader.read(n)：预置字节分块吐，读完 EOF（b""）。"""
+    def __init__(self, data): self._data = data if isinstance(data, bytes) else str(data).encode()
+    async def read(self, n=-1):
+        if not self._data:
+            return b""
+        if n is None or n <= 0:
+            n = len(self._data)
+        chunk, self._data = self._data[:n], self._data[n:]
+        return chunk
+
+
 class _FakeProc:
     """stdout 预置行异步吐出（自身兼作 stdout 流）；terminate/kill 记录；
-    wait_hangs=True 时 wait 在 kill 前永不返回（测 SIGTERM 超时升级 SIGKILL）。"""
-    def __init__(self, lines, *, wait_hangs=False):
+    wait_hangs=True 时 wait 在 kill 前永不返回（测 SIGTERM 超时升级 SIGKILL）；
+    rc 预设正常退出码（默认 0）；stderr 预置字节（测 returncode 守御的错误文案）。"""
+    def __init__(self, lines, *, wait_hangs=False, rc=0, stderr=b""):
         self.stdin = _FakeStdin()
+        self.stderr = _FakeStderr(stderr)
         self._lines = list(lines)
         self.terminated = False
         self.killed = False
         self.returncode = None
         self._wait_hangs = wait_hangs
+        self._rc = rc
 
     def terminate(self): self.terminated = True
     def kill(self): self.killed = True
@@ -39,7 +54,7 @@ class _FakeProc:
     async def wait(self):
         if self._wait_hangs and not self.killed:
             await asyncio.sleep(3600)
-        self.returncode = -9 if self.killed else (-15 if self.terminated else 0)
+        self.returncode = -9 if self.killed else (-15 if self.terminated else self._rc)
         return self.returncode
 
     @property
@@ -246,6 +261,65 @@ def test_runner_error_isolated():
     assert tid is None and any(e["kind"] == "error" for e in events)
 
 
+# ---------- runner：returncode 守御（静默失败不误报「完成」）----------
+def test_runner_nonzero_exit_emits_error_with_stderr_tail():
+    """真机形态：`codex exec resume <不存在 thread_id>` → 退出码 1、错误只在 stderr、
+    stdout 零事件。守御：发 error（stderr 尾部 + 退出码），绝不发裸 done；thread_id None。"""
+    events = []
+    proc = _FakeProc([], rc=1,
+                     stderr="ERROR: No conversation found with session ID: t-ghost\n")
+    tid = _run(CodexCliRunner(process_factory=_factory(proc)).run(
+        "继续", "/tmp", on_event=events.append, cancel_event=asyncio.Event(),
+        resume_session_id="t-ghost"))
+    assert tid is None
+    assert [e["kind"] for e in events] == ["error"]          # 无裸 done
+    text = events[0]["text"]
+    assert "退出码 1" in text and "No conversation found" in text
+
+
+def test_runner_nonzero_exit_stderr_tail_truncated_400():
+    """stderr 尾部摘要在错误文案里截 400 字（收集上限 4KB，文案只露尾部）。"""
+    events = []
+    proc = _FakeProc([], rc=2, stderr="头" + "x" * 5000)
+    _run(CodexCliRunner(process_factory=_factory(proc)).run(
+        "p", "/tmp", on_event=events.append, cancel_event=asyncio.Event()))
+    text = events[0]["text"]
+    assert events[0]["kind"] == "error" and "退出码 2" in text
+    assert "头" not in text                                   # 只留尾部
+    assert "x" * 400 in text and "x" * 401 not in text       # 截 400 字
+
+
+def test_runner_nonzero_exit_without_stderr_reports_code():
+    """stderr 也空 → 错误文案仍带退出码（不靠 stderr 也有定位信息）。"""
+    events = []
+    proc = _FakeProc([], rc=3)
+    _run(CodexCliRunner(process_factory=_factory(proc)).run(
+        "p", "/tmp", on_event=events.append, cancel_event=asyncio.Event()))
+    assert [e["kind"] for e in events] == ["error"]
+    assert "退出码 3" in events[0]["text"]
+
+
+def test_runner_nonzero_exit_after_turn_failed_no_duplicate_no_done():
+    """turn.failed 已发 error + 进程非零退 → 不重复报 error，也不补裸 done（终态就是失败）。"""
+    events = []
+    proc = _FakeProc([json.dumps({"type": "turn.failed", "error": {"message": "boom"}})], rc=1)
+    _run(CodexCliRunner(process_factory=_factory(proc)).run(
+        "p", "/tmp", on_event=events.append, cancel_event=asyncio.Event()))
+    assert [e["kind"] for e in events] == ["error"]
+    assert events[0]["text"] == "boom"
+
+
+def test_runner_zero_exit_bare_done_fallback_kept():
+    """零退出：裸 done 兜底保持原样——stderr 有噪声也不误报 error（rc=0 不看 stderr）。"""
+    events = []
+    proc = _FakeProc([json.dumps({"type": "item.completed",
+                                  "item": {"type": "agent_message", "text": "半截"}})],
+                     rc=0, stderr="DeprecationWarning: blah\n")
+    _run(CodexCliRunner(process_factory=_factory(proc)).run(
+        "p", "/tmp", on_event=events.append, cancel_event=asyncio.Event()))
+    assert [e["kind"] for e in events] == ["text_delta", "done"]
+
+
 # ---------- runner：cancel → SIGTERM →（3s）SIGKILL → stopped ----------
 def test_runner_cancel_terminates_and_emits_stopped():
     """取消：真杀子进程（terminate）+ 发 stopped 不发 done；thread_id 已捕获仍返回。"""
@@ -401,6 +475,23 @@ def test_stream_defaults_agent_claude_code():
                  emit_event=emitted.append, cancel=__import__("threading").Event()))
     datas = [e["payload"]["data"] for e in emitted if e.get("kind") == "panel_data"]
     assert datas and all(d["agent"] == "claude-code" for d in datas)
+
+
+def test_stream_keeps_thread_id_when_codex_fails_silently():
+    """codex 静默失败全链路：runner 发 error + 返回 None（未捕获 thread_id）→
+    终态 failed，且 cc_session_id 列不被抹成 ""——老行 thread_id 保留，后续 send 仍能 resume。"""
+    class _SilentFailRunner:
+        async def run(self, prompt, cwd, *, on_event, cancel_event, **kw):
+            on_event({"kind": "error", "text": "codex 异常退出（退出码 1）：No conversation found"})
+            return None
+    db = _FakeDB()
+    db.rows["s1"] = {"id": "s1", "status": "running", "cc_session_id": "t-old", "agent": "codex"}
+    _run(_stream(db, "s1", "/tmp", "p", _SilentFailRunner(),
+                 emit_event=None, cancel=__import__("threading").Event(), agent="codex"))
+    last = db.updates[-1][1]
+    assert last["status"] == "failed"
+    assert "cc_session_id" not in last                        # 不更新该列
+    assert db.rows["s1"]["cc_session_id"] == "t-old"          # 老值保留
 
 
 def test_usage_suffix_tolerates_none_cost():

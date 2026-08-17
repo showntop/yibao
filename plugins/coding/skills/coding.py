@@ -251,12 +251,13 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
         final = "done"
     try:
         # cc_session_id 一并落库：即便 final=stopped（用户主动停）也要记录 cc_sid，
-        # 后续多轮 resume 仍需它；runner 未拿到（取消/失败）则存 ""。
-        db.update("sessions", sid, {
-            "status": final,
-            "finished_at": int(time.time()),
-            "cc_session_id": cc_sid or "",
-        })
+        # 后续多轮 resume 仍需它；cc_sid 非空才更新该列——runner 未捕获（取消/失败，
+        # 如 codex 静默失败 resume 不存在 thread_id）时保留老行既有值，不抹成 ""
+        # （否则后续 send 永远报「cc_session_id 为空」）。CC 路径同款：拿不到也原样不写。
+        fields = {"status": final, "finished_at": int(time.time())}
+        if cc_sid:
+            fields["cc_session_id"] = cc_sid
+        db.update("sessions", sid, fields)
     except Exception as e:
         print(f"[yibao/coding] session {sid} 落最终状态失败：{type(e).__name__}: {e}",
               file=sys.stderr)

@@ -310,14 +310,16 @@ def test_stream_stores_cc_session_id_on_done():
     assert last["cc_session_id"] == "cc-sess-abc"
 
 
-def test_stream_stores_empty_cc_session_id_when_runner_returns_none():
-    """runner 返回 None（取消/失败）时，cc_session_id 落 ""。"""
-    db = _FakeDB(); db.rows["s2"] = {"id": "s2", "status": "running"}
+def test_stream_preserves_cc_session_id_when_runner_returns_none():
+    """runner 返回 None（取消/失败）时，不更新 cc_session_id 列——老行既有 thread_id/session_id
+    不被抹成 ""（codex 静默失败后后续 send 仍能 resume；CC 拿不到 session_id 也原样不写）。"""
+    db = _FakeDB(); db.rows["s2"] = {"id": "s2", "status": "running", "cc_session_id": "cc-old-9"}
     runner = _FakeRunner(cc_sid=None)
     cancel = _threading.Event()
     _run(_stream(db, "s2", "/tmp/p", "hi", runner, emit_event=None, cancel=cancel))
     last = db.updates[-1][1]
-    assert last["cc_session_id"] == ""
+    assert "cc_session_id" not in last                        # 终态 update 不触该列
+    assert db.rows["s2"]["cc_session_id"] == "cc-old-9"       # 老值保留
 
 
 def test_stream_preserves_stopped_and_still_records_cc_session_id():

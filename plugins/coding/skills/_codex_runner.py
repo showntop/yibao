@@ -162,8 +162,23 @@ class CodexCliRunner:
             *argv, cwd=cwd,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,   # CLI 诊断噪声不进面板流（非 JSON 行本就跳过）
+            # 静默失败排障：stderr 只留尾部 ~4KB 进 error 文案（后台排空，防 PIPE 缓冲堵死子进程）
+            stderr=asyncio.subprocess.PIPE,
         )
+
+    @staticmethod
+    async def _read_stderr_tail(stream, limit: int = 4096) -> str:
+        """后台排空 stderr，只留尾部 limit 字节（returncode 守御的错误文案用；读取绝不外抛）。"""
+        buf = b""
+        try:
+            while True:
+                chunk = await stream.read(1024)
+                if not chunk:
+                    break
+                buf = (buf + bytes(chunk))[-limit:]
+        except Exception:
+            pass
+        return buf.decode("utf-8", errors="replace")
 
     def _build_argv(self, cwd: str, resume_session_id: str | None,
                     permission_mode: str) -> list[str]:
@@ -202,7 +217,10 @@ class CodexCliRunner:
           token 经 usage_baseline 差分；duration_ms 由本 runner time.monotonic 计；cost 无→None（前端容缺）。
         - turn.failed/error → error 事件；异常不外抛转 error 事件（对齐 CC 语义）。
         - 取消：每条事件前查 cancel_event → SIGTERM（3s）→ SIGKILL，发 stopped 终态（不发 done）。
-        - 正常 EOF 且未发 done → 裸 done 兜底（对齐 CC：流尽未遇 ResultMessage 也发 done）。
+        - EOF 后 returncode 守御：非零退出 = 失败终态——本轮未发过 error/done 时补发 error
+          （stderr 尾部截 400 字 + 退出码），绝不发裸 done（静默失败不误报「完成」，
+          如 resume 不存在 thread_id：退出码 1、错误只在 stderr、stdout 零事件）；
+          零退出才走裸 done 兜底（对齐 CC：流尽未遇 ResultMessage 也发 done）。
         - can_use_tool/mode_pending/rewind_pending 忽略：headless 无运行中审批/回滚钩子
           （mode 下轮生效：SendSkill 读库 mode → 新 sandbox 进 argv）。
         """
@@ -211,6 +229,7 @@ class CodexCliRunner:
         t0 = time.monotonic()
         thread_id: str | None = None
         done_emitted = False
+        error_emitted = False   # 本轮已发 error（turn.failed/error）→ 非零退出不再重复报
         try:
             proc = await factory(argv, cwd)
             proc.stdin.write(prompt.encode("utf-8"))
@@ -218,9 +237,19 @@ class CodexCliRunner:
             if drain is not None:
                 await drain()
             proc.stdin.close()   # `-` 从 stdin 读 prompt：写完即关，CLI 才开跑
+            # stderr 后台排空（注入的 fake 无 stderr 属性 → None，不排）
+            stderr_stream = getattr(proc, "stderr", None)
+            stderr_task = (asyncio.ensure_future(self._read_stderr_tail(stderr_stream))
+                           if stderr_stream is not None else None)
             async for raw in proc.stdout:
                 if cancel_event.is_set():
                     await self._kill(proc)
+                    if stderr_task is not None:
+                        stderr_task.cancel()
+                        try:
+                            await stderr_task
+                        except (asyncio.CancelledError, Exception):
+                            pass
                     on_event({"kind": "stopped", "text": "已中断"})
                     return thread_id
                 try:
@@ -244,13 +273,30 @@ class CodexCliRunner:
                     done_emitted = True
                     continue
                 for ev in normalize_event(obj):
+                    if ev.get("kind") == "error":
+                        error_emitted = True
                     on_event(ev)
             try:
                 await asyncio.wait_for(proc.wait(), timeout=self._kill_grace_s)
             except Exception:
                 await self._kill(proc)   # 流尽进程不退 → 按取消同款升级杀（防泄漏）
+            stderr_tail = ""
+            if stderr_task is not None:
+                try:
+                    stderr_tail = await asyncio.wait_for(stderr_task, timeout=1.0)
+                except (asyncio.CancelledError, Exception):
+                    stderr_task.cancel()
+            rc = getattr(proc, "returncode", None)
             if not done_emitted and not cancel_event.is_set():
-                on_event({"kind": "done"})
+                if rc:
+                    # 非零退出 = 失败终态：已发过 error 不再重复报，且绝不补裸 done
+                    if not error_emitted:
+                        tail = stderr_tail.strip()
+                        detail = f"：{tail[-400:]}" if tail else "（stderr 无输出）"
+                        on_event({"kind": "error",
+                                  "text": f"codex 异常退出（退出码 {rc}）{detail}"})
+                else:
+                    on_event({"kind": "done"})
             return thread_id
         except Exception as e:
             print(f"[yibao/coding] codex runner 失败：{e}", file=sys.stderr)
