@@ -1,10 +1,12 @@
 // 会话 store:事件→渲染模型归约器 + 发送状态机。单工位对外暴露一个「当前会话」视图,
-// 事件按 sid 过滤(只受理当前会话,陈旧 sid 的流丢弃——无内部分槽);stage 3 多工位在
-// App 层多实例化本 store + 由 App 做事件 demux 分发。
+// 事件按 sid 过滤(只受理当前会话,陈旧 sid 的流丢弃——无内部分槽);阶段三多工位在
+// 壳层多实例化本 store + 壳做事件 demux 分发。
 // 行为对齐 chat.html:气泡切断规则、工具卡配对(lastToolCard)、兜底用户气泡原地升级、
-// pendingTurnEnded 秒败竞态、resumeSession 的 discarded 解锁、takeover 队列泄放(T9:泄放路径
+// pendingTurnEnded 秒败竞态、resumeSession 的 discarded 解锁、busy 排队泄放(T9:泄放路径
 // 补跨引擎交接守卫,对齐原 send() 内联分支)、
 // handoffSend 跨引擎交接(:1964-1991)、startHandoffSession Codex→CC(:2268-2319)。
+// 阶段三:takeover 退役(spec 输入条节)——report/takeoverStop/clearTakeoverQueue 删除,
+// takeoverInput 改名 queueInput(共享输入条 busy 排队复用同一机制)。
 import { reactive } from "vue";
 import type { CodingEvent, HistoryMessage, PanelData, Usage } from "../lib/types";
 import { composeRefs } from "../lib/refs";
@@ -28,7 +30,6 @@ export type RenderItem =
   | { type: "handoff"; seq: number; sid: string; brief: string | null; incomplete: boolean; errMsg: string | null };
 
 export type SessionEnded = "done" | "stopped" | "error" | null;
-export type ReportState = "idle" | "sending" | "streaming" | "waiting";
 
 export interface SessionState {
   items: RenderItem[];
@@ -46,7 +47,6 @@ export interface SessionState {
 
 export interface SessionDeps {
   invoke: (method: string, params?: Record<string, unknown>) => Promise<unknown>;
-  report: (st: ReportState, hasSession: boolean) => void; // takeover-state 上报(仅 takeover 态真正发)
   setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
   clearTimer: (t: ReturnType<typeof setTimeout>) => void;
   userEchoFallbackMs: number; // 生产 1500,测试可 0/手动
@@ -74,7 +74,7 @@ export function createSessionStore(deps: SessionDeps) {
 
   // —— 内部簿记(不进响应式状态)——
   const discardedSessions = new Set<string>();
-  let takeoverQueue: Array<{ text: string; refs: string[] }> = [];
+  let sendQueue: Array<{ text: string; refs: string[] }> = [];
   let pendingTurnEnded = false; // 秒败竞态:终态先于 invoke 返回
   let pendingUserEcho: ReturnType<typeof setTimeout> | null = null;
   let fallbackUserIndex = -1;   // 兜底气泡在 items 里的下标(-1 无)
@@ -113,9 +113,8 @@ export function createSessionStore(deps: SessionDeps) {
     state.ended = reason;
     state.streaming = false;
     state.waiting = false;
-    deps.report("idle", !!state.currentSession);
-    if (reason === "stopped") takeoverQueue = []; // 中断即放弃排队意图
-    else drainTakeoverQueue();
+    if (reason === "stopped") sendQueue = []; // 中断即放弃排队意图
+    else drainSendQueue();
   }
 
   /** 事件归约:sid 过滤已由调用方(handleData)做完。 */
@@ -175,13 +174,11 @@ export function createSessionStore(deps: SessionDeps) {
         finalizeAssistant();
         state.items.push({ type: "perm", rid: ev.rid, tool: ev.tool, input: ev.input ?? {}, state: "waiting" });
         state.waiting = true;
-        deps.report("waiting", !!state.currentSession);
         return;
       case "permission_done": {
         const card = state.items.find((it) => it.type === "perm" && it.rid === ev.rid);
         if (card && card.type === "perm") card.state = ev.allow ? "allowed" : "denied";
         state.waiting = false;
-        deps.report(state.streaming ? "streaming" : "idle", !!state.currentSession);
         return;
       }
       case "rewind_ok":
@@ -233,7 +230,6 @@ export function createSessionStore(deps: SessionDeps) {
     // handoff 分支由调用方(App)先判:currentSession && switchAgent !== curSessAgent → handoffSend
     state.sending = true;
     state.error = null;
-    deps.report("sending", !!state.currentSession);
     pendingTurnEnded = false;
     // 对齐 chat.html:清掉上一轮残留的兜底引用,防跨轮误升级
     fallbackUserIndex = -1;
@@ -259,15 +255,13 @@ export function createSessionStore(deps: SessionDeps) {
       if (pendingTurnEnded) { pendingTurnEnded = false; return; } // 秒败:不进 streaming
       state.streaming = true;
       state.runPrefix = "会话 " + r.session_id + (isStart ? " 启动" : " 接续"); // pill 秒表/状态行前缀
-      deps.report("streaming", true);
     } catch (e) {
       if (pendingUserEcho) { deps.clearTimer(pendingUserEcho); pendingUserEcho = null; }
-      deps.report("idle", !!state.currentSession);
       state.error = (isStart ? "启动失败:" : "发送失败:") + String(e);
       throw e;
     } finally {
       state.sending = false;
-      drainTakeoverQueue(); // 秒败/失败时 onSessionEnded 泄不动,这里兜底
+      drainSendQueue(); // 秒败/失败时 onSessionEnded 泄不动,这里兜底
     }
   }
 
@@ -281,21 +275,18 @@ export function createSessionStore(deps: SessionDeps) {
     const oldSid = state.currentSession;
     if (!oldSid) return "failed";
     state.sending = true;
-    deps.report("sending", true);
     let brief: string;
     try {
       const r = (await deps.invoke("coding.session_brief", { id: oldSid, target: newAgent })) as { brief?: string } | null;
       brief = (r && r.brief) || "（无历史上下文）";
     } catch (e) {
       state.sending = false;
-      deps.report("idle", true);
-      drainTakeoverQueue();
+      drainSendQueue();
       throw e;
     }
     if (state.currentSession !== oldSid || opts.isStale()) { // 等待期改主意 → 丢弃
       state.sending = false;
-      deps.report("idle", !!state.currentSession);
-      drainTakeoverQueue();
+      drainSendQueue();
       return "stale";
     }
     discardedSessions.add(oldSid);
@@ -319,11 +310,9 @@ export function createSessionStore(deps: SessionDeps) {
     if (state.sending || state.streaming) return false; // 重入守卫(卡上已按 streaming 拦,双保险)
     state.sending = true;
     state.error = null; // handoff 也是新 turn 入口:与 send 对齐清掉旧错误条
-    deps.report("sending", !!state.currentSession);
     pendingTurnEnded = false;
     state.streaming = true; // 受理前即 streaming(原 :2275)
     state.runPrefix = "Codex 接续启动中…";
-    deps.report("streaming", !!state.currentSession);
     try {
       const r = (await deps.invoke("coding.start", { cwd, prompt: brief, source: "codex:" + codexSid })) as { session_id?: string };
       const csid = r && r.session_id;
@@ -334,13 +323,12 @@ export function createSessionStore(deps: SessionDeps) {
       state.runPrefix = "Codex 接续会话 " + csid;
       return true;
     } catch (e) {
-      deps.report("idle", !!state.currentSession);
       state.error = "Codex 接续启动失败:" + emsg(e);
       state.streaming = false;
       return false;
     } finally {
       state.sending = false;
-      drainTakeoverQueue(); // 同 send.finally:失败/秒败路径泄放队列
+      drainSendQueue(); // 同 send.finally:失败/秒败路径泄放队列
     }
   }
 
@@ -375,8 +363,7 @@ export function createSessionStore(deps: SessionDeps) {
     state.runPrefix = "";
     fallbackUserIndex = -1;
     if (pendingUserEcho) { deps.clearTimer(pendingUserEcho); pendingUserEcho = null; }
-    takeoverQueue = [];
-    deps.report("idle", false);
+    sendQueue = [];
   }
 
   /** history 消息 → 渲染模型(user/assistant/marker;assistant 逐条成气泡且 done)。 */
@@ -414,7 +401,6 @@ export function createSessionStore(deps: SessionDeps) {
       state.lastUsage = null;
       state.runPrefix = "";
       fallbackUserIndex = -1;
-      deps.report("idle", true);
       if (r.cwd) deps.onResumedCwd?.(String(r.cwd)); // 对齐原 setCwd(r.cwd):恢复跟随会话落盘目录
       return msgs.length;
     } catch (e) {
@@ -428,10 +414,10 @@ export function createSessionStore(deps: SessionDeps) {
     }
   }
 
-  // —— takeover(宿主输入条经桥消息驱动)——
-  function takeoverInput(text: string, refs: string[], cwd: string, mode: string, agent: string) {
+  // —— busy 排队(共享输入条在工位忙时入队,终态泄放;原 takeover 队列机制更名沿用)——
+  function queueInput(text: string, refs: string[], cwd: string, mode: string, agent: string) {
     if (state.sending || state.streaming) {
-      takeoverQueue.push({ text, refs });
+      sendQueue.push({ text, refs });
       return { queued: true };
     }
     // 失败已由 state.error 承载,火忘路径不再外抛
@@ -439,18 +425,10 @@ export function createSessionStore(deps: SessionDeps) {
     return { queued: false };
   }
 
-  function takeoverStop() {
-    if (state.streaming || state.sending) void stop();
-  }
-
-  /** takeover 退出:排队输入一并作废(对齐 setTakeover :807——父侧输入条已交还译宝大脑,
-   *  滞留队列会在非接管态被意外发出) */
-  function clearTakeoverQueue() { takeoverQueue = []; }
-
-  function drainTakeoverQueue() {
-    if (!takeoverQueue.length || state.sending || state.streaming) return;
+  function drainSendQueue() {
+    if (!sendQueue.length || state.sending || state.streaming) return;
     // 出队即消费(校验拒发不补发,对齐现状);cwd/mode/agent/switchAgent 由 App 快照提供
-    const item = takeoverQueue.shift()!;
+    const item = sendQueue.shift()!;
     // 失败已由 state.error 承载,火忘路径不再外抛
     void pendingSendFromQueue(item).catch(() => {});
   }
@@ -482,9 +460,9 @@ export function createSessionStore(deps: SessionDeps) {
   return {
     state, handleData, applyEvent, send, stop, newChat, resumeSession,
     handoffSend, startHandoffSession, pushHandoffCard, dropHandoffCard,
-    takeoverInput, takeoverStop, clearTakeoverQueue, setQueueContext, historyToItems,
+    queueInput, setQueueContext, historyToItems,
     /** resume 在飞(attach/手动接续/autoReplay)——autoReplay 让位判据:在跑时不得再排候选 */
     isResuming: () => resuming,
-    _test: { discardedSessions, getQueue: () => takeoverQueue, markTurnEnded: () => { pendingTurnEnded = true; } },
+    _test: { discardedSessions, getQueue: () => sendQueue, markTurnEnded: () => { pendingTurnEnded = true; } },
   };
 }

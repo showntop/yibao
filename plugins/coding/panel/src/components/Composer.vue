@@ -14,7 +14,7 @@
 //     有 el.composing 守卫,裸绑定没有);atInsert/clear/doSend 直读写 DOM,与原一致。
 // refs 由本组件收集,send 事件上抛;发送成功由 App 调 clear() 消费(失败保留 prompt+refs
 // 可重试,对齐原 send() 的清理时机)。busy 仅反映 store 态(禁用发送钮/现身中断),
-// 输入不锁(takeoverQueue 语义在 store)。takeover 不经过本组件(store.takeoverInput 直驱)。
+// 输入不锁(busy 排队语义在 store.queueInput)。多工位:每工位一个本组件实例,聚焦者的 footer 经 CSS 停靠页底。
 import { reactive, ref, watch } from "vue";
 import { hasBridge, invoke } from "../lib/bridge";
 import { emsg } from "../lib/format";

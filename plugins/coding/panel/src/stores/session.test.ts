@@ -3,17 +3,14 @@ import { createSessionStore, type SessionDeps } from "./session";
 
 function makeDeps(invokeImpl?: SessionDeps["invoke"]) {
   const timers: Array<{ fn: () => void; ms: number; cleared: boolean }> = [];
-  const reports: string[] = [];
-  const reportArgs: Array<[string, boolean]> = [];
   const invoke = invokeImpl ?? vi.fn(async () => ({ session_id: "s1" }));
   const deps: SessionDeps = {
     invoke,
-    report: (st, hasSession) => { reports.push(st); reportArgs.push([st, hasSession]); },
     setTimer: (fn, ms) => { const t = { fn, ms, cleared: false }; timers.push(t); return t as never; },
     clearTimer: (t) => { (t as unknown as (typeof timers)[0]).cleared = true; },
     userEchoFallbackMs: 1500,
   };
-  return { deps, timers, reports, reportArgs, invoke };
+  return { deps, timers, invoke };
 }
 
 /** invoke 挂起,手动放行——用于秒败竞态/兜底定时器等需要精确时序的用例 */
@@ -74,13 +71,12 @@ describe("事件归约", () => {
 
   // 清单 3
   it("permission_request 产生等待卡,permission_done 收敛(allow/deny)并复位 waiting", () => {
-    const { deps, reports } = makeDeps();
+    const { deps } = makeDeps();
     const s = createSessionStore(deps);
     s.applyEvent(ev({ kind: "permission_request", rid: "r1", tool: "Bash", input: { command: "rm" } }));
     expect(s.state.items).toHaveLength(1);
     expect(s.state.items[0]).toMatchObject({ type: "perm", rid: "r1", tool: "Bash", input: { command: "rm" }, state: "waiting" });
     expect(s.state.waiting).toBe(true);
-    expect(reports).toContain("waiting");
     s.applyEvent(ev({ kind: "permission_done", rid: "r1", allow: true }));
     expect(s.state.items[0]).toMatchObject({ state: "allowed" });
     expect(s.state.waiting).toBe(false);
@@ -200,7 +196,7 @@ describe("会话过滤(handleData)", () => {
 describe("发送状态机", () => {
   // 清单 7(路由/状态流转/兜底定时器)
   it("send 路由:start/send 按 currentSession 分派;refs 拼接;1.5s 兜底定时器", async () => {
-    const { deps, invoke, timers, reports } = makeDeps();
+    const { deps, invoke, timers } = makeDeps();
     const s = createSessionStore(deps);
     // 无 currentSession → coding.start
     await s.send("/tmp", "你好", "acceptEdits", "codex", { refs: ["a.ts", "b.ts"] });
@@ -214,7 +210,6 @@ describe("发送状态机", () => {
     expect(s.state.curSessAgent).toBe("codex");
     expect(s.state.sending).toBe(false);
     expect(s.state.streaming).toBe(true);
-    expect(reports).toEqual(["sending", "streaming"]);
     // 1.5s 兜底定时器:未回流 user_msg 时画无锚用户气泡(完整 prompt)
     expect(timers[0].ms).toBe(1500);
     timers[0].fn();
@@ -368,7 +363,7 @@ describe("会话恢复", () => {
 describe("newChat", () => {
   // 清单 10
   it("清态并把 currentSession 进 discarded", async () => {
-    const { deps, reports } = makeDeps();
+    const { deps } = makeDeps();
     const s = createSessionStore(deps);
     await s.send("/tmp", "hi", "acceptEdits", "claude-code");
     s.applyEvent(ev({ kind: "text_delta", text: "答" }));
@@ -384,21 +379,20 @@ describe("newChat", () => {
     expect(s.state.usage).toEqual({ tok: 0, cost: 0, hasCost: false });
     expect(s._test.discardedSessions.has("s1")).toBe(true);
     expect(s._test.getQueue()).toHaveLength(0);
-    expect(reports[reports.length - 1]).toBe("idle");
   });
 });
 
-describe("takeover", () => {
+describe("queueInput(busy 排队)", () => {
   // 清单 11
-  it("busy 入队、空闲直发、终态泄放(stopped 清空)、takeover-stop 调 stop", async () => {
+  it("busy 入队、空闲直发、终态泄放(stopped 清空)", async () => {
     const { deps, invoke } = makeDeps();
     const s = createSessionStore(deps);
     s.setQueueContext({ cwd: "/q", mode: "acceptEdits", agent: "claude-code" });
     // 空闲直发
-    expect(s.takeoverInput("第一条", [], "/tmp", "acceptEdits", "claude-code")).toEqual({ queued: false });
+    expect(s.queueInput("第一条", [], "/tmp", "acceptEdits", "claude-code")).toEqual({ queued: false });
     expect(invoke).toHaveBeenCalledWith("coding.start", expect.objectContaining({ cwd: "/tmp", prompt: "第一条" }));
     // busy 入队(首个 send 尚未返回)
-    expect(s.takeoverInput("第二条", ["x.ts"], "/tmp", "acceptEdits", "claude-code")).toEqual({ queued: true });
+    expect(s.queueInput("第二条", ["x.ts"], "/tmp", "acceptEdits", "claude-code")).toEqual({ queued: true });
     expect(s._test.getQueue()).toHaveLength(1);
     await vi.waitFor(() => expect(s.state.streaming).toBe(true));
     // 终态泄放:done → 队列条目经 send 发出(cwd/mode/agent 取 queueContext 快照)
@@ -409,11 +403,8 @@ describe("takeover", () => {
       mode: "acceptEdits",
     });
     expect(s._test.getQueue()).toHaveLength(0);
-    // takeover-stop:busy(第二个 send 在途)→ 调 coding.stop
-    s.takeoverStop();
-    expect(invoke).toHaveBeenCalledWith("coding.stop", { id: "s1" });
     // stopped 清空队列:中断即放弃排队意图
-    s.takeoverInput("第三条", [], "/tmp", "acceptEdits", "claude-code");
+    s.queueInput("第三条", [], "/tmp", "acceptEdits", "claude-code");
     expect(s._test.getQueue()).toHaveLength(1);
     s.applyEvent(ev({ kind: "stopped" }));
     expect(s._test.getQueue()).toHaveLength(0);
@@ -421,44 +412,6 @@ describe("takeover", () => {
     // 在途 send 因秒败标记不进 streaming
     await vi.waitFor(() => expect(s.state.sending).toBe(false));
     expect(s.state.streaming).toBe(false);
-  });
-
-  // 清单 11(接管退出):clearTakeoverQueue 作废排队输入(对齐 setTakeover :807;由 App takeover watch 调)
-  it("clearTakeoverQueue 清空排队,泄放不再有条目可发", async () => {
-    const h = heldInvoke();
-    const { deps, invoke } = makeDeps(h.invoke as never);
-    const s = createSessionStore(deps);
-    s.setQueueContext({ cwd: "/q", mode: "acceptEdits", agent: "claude-code" });
-    const p = s.send("/q", "在途", "acceptEdits", "claude-code"); // 挂起 → busy
-    expect(s.takeoverInput("排队中", [], "/q", "acceptEdits", "claude-code")).toEqual({ queued: true });
-    expect(s._test.getQueue()).toHaveLength(1);
-    s.clearTakeoverQueue(); // takeover 退出
-    expect(s._test.getQueue()).toHaveLength(0);
-    h.release({ session_id: "s1" });
-    await p;
-    s.applyEvent(ev({ kind: "done" })); // 终态泄放:队列已空,不再有第二条 send
-    expect(invoke).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe("状态上报", () => {
-  // 清单 12
-  it("report 按状态流转上报 (state, hasSession)(仅 takeover 态由 App 经桥真发)", async () => {
-    const { deps, reportArgs } = makeDeps();
-    const s = createSessionStore(deps);
-    await s.send("/tmp", "hi", "acceptEdits", "claude-code");
-    s.applyEvent(ev({ kind: "permission_request", rid: "r1", tool: "Bash", input: {} }));
-    s.applyEvent(ev({ kind: "permission_done", rid: "r1", allow: true }));
-    s.applyEvent(ev({ kind: "done" }));
-    expect(reportArgs).toEqual([
-      ["sending", false],
-      ["streaming", true],
-      ["waiting", true],
-      ["streaming", true],
-      ["idle", true],
-    ]);
-    s.newChat();
-    expect(reportArgs[reportArgs.length - 1]).toEqual(["idle", false]);
   });
 });
 
@@ -487,8 +440,8 @@ describe("评审回归", () => {
     await p2;
   });
 
-  // send 失败:直接调用方拿到 rethrow;takeover 火忘路径吞 rejection,失败仅由 state.error 承载
-  it("失败路径:send rethrow 给直接调用方;takeoverInput 不外抛未处理 rejection", async () => {
+  // send 失败:直接调用方拿到 rethrow;queueInput 火忘路径吞 rejection,失败仅由 state.error 承载
+  it("失败路径:send rethrow 给直接调用方;queueInput 不外抛未处理 rejection", async () => {
     const failing = () => vi.fn(async () => { throw new Error("boom"); });
     // 直接调用:rethrow + errbar 前缀 + sending 复位
     const { deps } = makeDeps(failing() as never);
@@ -496,10 +449,10 @@ describe("评审回归", () => {
     await expect(s.send("/tmp", "hi", "acceptEdits", "claude-code")).rejects.toThrow("boom");
     expect(s.state.error).toContain("启动失败:");
     expect(s.state.sending).toBe(false);
-    // takeover 火忘路径:不抛未处理 rejection,失败落 state.error
+    // queueInput 火忘路径:不抛未处理 rejection,失败落 state.error
     const d2 = makeDeps(failing() as never);
     const s2 = createSessionStore(d2.deps);
-    expect(s2.takeoverInput("hi", [], "/tmp", "acceptEdits", "claude-code")).toEqual({ queued: false });
+    expect(s2.queueInput("hi", [], "/tmp", "acceptEdits", "claude-code")).toEqual({ queued: false });
     await vi.waitFor(() => expect(s2.state.error).toContain("启动失败:"));
     expect(s2.state.sending).toBe(false);
   });
@@ -519,7 +472,7 @@ describe("评审回归", () => {
     const s = createSessionStore(deps);
     await s.send("/q", "hi", "acceptEdits", "claude-code"); // currentSession=s1, curSessAgent=claude-code
     s.setQueueContext({ cwd: "/q", mode: "acceptEdits", agent: "claude-code", switchAgent: "codex" });
-    expect(s.takeoverInput("排队任务", [], "/q", "acceptEdits", "claude-code")).toEqual({ queued: true }); // streaming 中入队
+    expect(s.queueInput("排队任务", [], "/q", "acceptEdits", "claude-code")).toEqual({ queued: true }); // streaming 中入队
     s.applyEvent(ev({ kind: "done" })); // 终态泄放 → 守卫命中 → 交接
     await vi.waitFor(() => expect(s.state.currentSession).toBe("s2"));
     expect(invoke).toHaveBeenCalledWith("coding.session_brief", { id: "s1", target: "codex" });
@@ -536,7 +489,7 @@ describe("评审回归", () => {
     const s2 = createSessionStore(d2.deps);
     await s2.send("/q", "hi", "acceptEdits", "claude-code");
     s2.setQueueContext({ cwd: "/q", mode: "acceptEdits", agent: "claude-code", switchAgent: "claude-code" });
-    expect(s2.takeoverInput("再来", [], "/q", "acceptEdits", "claude-code")).toEqual({ queued: true });
+    expect(s2.queueInput("再来", [], "/q", "acceptEdits", "claude-code")).toEqual({ queued: true });
     s2.applyEvent(ev({ kind: "done" }));
     await vi.waitFor(() =>
       expect(d2.invoke).toHaveBeenCalledWith("coding.send", { id: "s1", prompt: "再来", mode: "acceptEdits" }));
@@ -554,7 +507,7 @@ describe("评审回归", () => {
     const s = createSessionStore(deps);
     await s.send("/q", "hi", "acceptEdits", "claude-code");
     s.setQueueContext({ cwd: "/q", mode: "acceptEdits", agent: "claude-code", switchAgent: "codex" });
-    s.takeoverInput("排队任务", [], "/q", "acceptEdits", "claude-code");
+    s.queueInput("排队任务", [], "/q", "acceptEdits", "claude-code");
     s.applyEvent(ev({ kind: "done" })); // 泄放 → handoffSend 挂起等 brief
     await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("coding.session_brief", expect.anything()));
     s.setQueueContext({ cwd: "/q", mode: "acceptEdits", agent: "claude-code", switchAgent: null }); // 等待期改主意
@@ -572,7 +525,7 @@ describe("评审回归", () => {
     const s2 = createSessionStore(d2.deps);
     await s2.send("/q", "hi", "acceptEdits", "claude-code");
     s2.setQueueContext({ cwd: "/q", mode: "acceptEdits", agent: "claude-code", switchAgent: "codex" });
-    s2.takeoverInput("排队任务", [], "/q", "acceptEdits", "claude-code");
+    s2.queueInput("排队任务", [], "/q", "acceptEdits", "claude-code");
     s2.applyEvent(ev({ kind: "done" }));
     await vi.waitFor(() => expect(s2.state.error).toContain("交接摘要生成失败:"));
     expect(s2.state.currentSession).toBe("s1");
@@ -590,12 +543,11 @@ describe("跨引擎交接 handoffSend", () => {
       if (method === "coding.start") return { session_id: ++startCalls === 1 ? "s1" : "s2" };
       return { session_id: "s1" };
     });
-    const { deps, reports } = makeDeps(invoke as never);
+    const { deps } = makeDeps(invoke as never);
     const s = createSessionStore(deps);
     await s.send("/tmp", "hi", "acceptEdits", "claude-code"); // currentSession = s1
     s.applyEvent(ev({ kind: "done" }));
     const handed: string[] = [];
-    const reportsBefore = reports.length;
     const r = await s.handoffSend("codex", {
       cwd: "/tmp", userText: "继续做", mode: "plan", refs: ["a.ts"],
       isStale: () => false, onHandedOff: () => { handed.push("codex"); },
@@ -616,7 +568,6 @@ describe("跨引擎交接 handoffSend", () => {
     expect(s.state.items.some((it) => it.type === "marker" &&
       it.text === "—— 交接给 codex 继续（上下文为摘要移植）——")).toBe(true);
     expect(handed).toEqual(["codex"]);
-    expect(reports[reportsBefore]).toBe("sending"); // brief 等待期占 sending 窗
   });
 
   it("等待期改主意(currentSession 变了 / isStale)→ 丢弃,不发 start", async () => {
@@ -626,7 +577,7 @@ describe("跨引擎交接 handoffSend", () => {
       method === "coding.session_brief"
         ? new Promise<{ brief: string }>((res) => { releaseBrief = res; })
         : Promise.resolve({ session_id: "s1" }));
-    const { deps, reports } = makeDeps(invoke as never);
+    const { deps } = makeDeps(invoke as never);
     const s = createSessionStore(deps);
     await s.send("/tmp", "hi", "acceptEdits", "claude-code");
     s.applyEvent(ev({ kind: "done" }));
@@ -638,7 +589,6 @@ describe("跨引擎交接 handoffSend", () => {
     const starts1 = invoke.mock.calls.filter((c) => c[0] === "coding.start");
     expect(starts1).toHaveLength(1); // 仅初始那次,交接未发 start
     expect(s.state.sending).toBe(false);
-    expect(reports[reports.length - 1]).toBe("idle");
 
     // isStale:chip 改选(App 的 switchAgent 偏离)
     const d2 = makeDeps(vi.fn(async (method: string) =>
@@ -659,7 +609,7 @@ describe("跨引擎交接 handoffSend", () => {
       if (method === "coding.session_brief") throw new Error("LLM 挂了");
       return { session_id: "s1" };
     });
-    const { deps, reports } = makeDeps(invoke as never);
+    const { deps } = makeDeps(invoke as never);
     const s = createSessionStore(deps);
     await s.send("/tmp", "hi", "acceptEdits", "claude-code");
     s.applyEvent(ev({ kind: "done" }));
@@ -668,7 +618,6 @@ describe("跨引擎交接 handoffSend", () => {
     expect(s.state.sending).toBe(false);
     expect(s.state.currentSession).toBe("s1"); // 旧会话保留
     expect(s.state.error).toBeNull(); // 原仅 setStatus,不进 errbar
-    expect(reports[reports.length - 1]).toBe("idle");
   });
 
   it("重入守卫:sending 中/无会话 → failed 且不 invoke", async () => {

@@ -20,7 +20,7 @@
 //   autoReplay(:2869-2885):纯函数抽至 lib/replay.ts(pickReplayCandidate/shouldYieldReplay/
 //     replayStep);空会话顺延;currentSession||isResuming 让位。
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { emitPanelEvent, hasBridge, invoke, onHostMessage, onInit } from "./lib/bridge";
+import { hasBridge, invoke, onHostMessage, onInit } from "./lib/bridge";
 import type { HandoffSessionItem, LastSessions, PanelData, SessionRow } from "./lib/types";
 import { doneStatusText, emsg, fmtCost, fmtTok, normCwd } from "./lib/format";
 import { pickReplayCandidate, replayStep, shouldYieldReplay } from "./lib/replay";
@@ -41,10 +41,6 @@ const takeover = ref(false);
 
 const store = createSessionStore({
   invoke: (m, p) => invoke(m, p),
-  // takeover-state 上报:仅 takeover 态真正发(store 语义;对齐 chat.html reportState)
-  report: (st, hasSession) => {
-    if (takeover.value) emitPanelEvent("takeover-state", { state: st, session: hasSession });
-  },
   setTimer: (fn, ms) => setTimeout(fn, ms),
   clearTimer: (t) => clearTimeout(t),
   userEchoFallbackMs: 1500,
@@ -82,7 +78,7 @@ onInit((data, msg) => {
 // 父侧输入条已交还译宝大脑,滞留队列会在非接管态被意外发出)
 watch(takeover, (on) => {
   document.body.classList.toggle("takeover", on);
-  if (!on) store.clearTakeoverQueue();
+  if (!on) { /* TODO(T4): 壳重写时移除(takeover 退役,清队列调用随之作废) */ }
 }, { immediate: true });
 
 // 宿主接管消息(T8;对齐 :829-847 onHostMessage):按 msg.type 判别,非接管词汇静默忽略。
@@ -90,8 +86,8 @@ watch(takeover, (on) => {
 // takeover-stop 等价点 iframe 内 stop 钮(store.takeoverStop 自判 busy)。
 onHostMessage((msg) => {
   if (!msg || typeof msg.type !== "string") return;
-  if (msg.type === "takeover-input") void onTakeoverInput(msg);
-  else if (msg.type === "takeover-stop") store.takeoverStop();
+  if (msg.type === "takeover-input") { /* TODO(T4): 壳重写时移除(takeover-input 转发层已退役) */ }
+  else if (msg.type === "takeover-stop") { /* TODO(T4): 壳重写时移除 */ }
 });
 
 // 无桥设计预览(T8;对齐 :2922-2939 renderPreviewSample):静态示例对话走同一渲染管线看样式
@@ -421,26 +417,6 @@ async function onSend(text: string, refs: string[]) {
     await store.send(cwd.value.trim(), prompt, curMode.value, dstate.curAgent, { refs });
     composerRef.value?.clear(); // 成功才消费 prompt+chips;失败保留可重试(对齐原清空时机)
   } catch { /* 失败文本已由 state.error 进状态行/errbar,prompt+refs 留存 */ }
-}
-
-// takeover-input(T9 评审修复;对齐 :831-843 经 send() 达成的行为):先过与 onSend 同组校验——
-// 原 chat.html 直发/泄放都经 send() 内联校验,重写后 store.takeoverInput 直驱绕过。busy 照旧
-// 入队(泄放时 store 侧同一交接守卫),状态行「已排队…」对齐 :837;空闲直发前先走跨引擎交接
-// 守卫(同 onSend);cwd/mode/agent 取当前实时值(原读全局变量,天然实时)。
-async function onTakeoverInput(msg: Record<string, unknown>) {
-  const refs = Array.isArray(msg.refs) && msg.refs.length ? msg.refs.map(String) : [];
-  const text = (msg.text == null ? "" : String(msg.text)).trim();
-  // 校验顺序对齐 onSend(原 send()):先 cwd 后文本;拒发不入队(原在 send() 内拒,等价不补发)
-  const c = cwd.value.trim();
-  if (!c) { onComposerStatus("请先选择项目目录", true); openLayer.value = "cwd"; return; }
-  if (!text) { onComposerStatus("请输入任务描述", true); return; }
-  if (state.sending || state.streaming) {
-    store.takeoverInput(text, refs, c, curMode.value, dstate.curAgent);
-    onComposerStatus("已排队，本轮结束后自动发送", false);
-    return;
-  }
-  if ((await runHandoff(text, refs)) !== null) return; // 跨引擎待定 → 交接编排已受理
-  store.takeoverInput(text, refs, c, curMode.value, dstate.curAgent);
 }
 
 function onComposerStop(): Promise<boolean> {
