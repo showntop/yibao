@@ -1,10 +1,13 @@
 // 会话 store:事件→渲染模型归约器 + 发送状态机。单工位对外暴露一个「当前会话」视图,
 // 内部按 sid 分槽(stage 3 多工位直接复用同一归约器多实例)。
 // 行为对齐 chat.html:气泡切断规则、工具卡配对(lastToolCard)、兜底用户气泡原地升级、
-// pendingTurnEnded 秒败竞态、resumeSession 的 discarded 解锁、takeover 队列泄放。
+// pendingTurnEnded 秒败竞态、resumeSession 的 discarded 解锁、takeover 队列泄放、
+// handoffSend 跨引擎交接(:1964-1991)、startHandoffSession Codex→CC(:2268-2319)。
 import { reactive } from "vue";
 import type { CodingEvent, HistoryMessage, PanelData, Usage } from "../lib/types";
 import { composeRefs } from "../lib/refs";
+import { emsg } from "../lib/format";
+import { agentLabel } from "./drivers";
 
 export interface ToolResultInfo { text: string; isError: boolean }
 
@@ -15,7 +18,10 @@ export type RenderItem =
   | { type: "fileedit"; tool: string; path: string | null; old: string | null; new: string | null }
   | { type: "perm"; rid: string; tool: string; input: Record<string, unknown>; state: "waiting" | "allowed" | "denied" }
   | { type: "marker"; text: string; err: boolean }
-  | { type: "error"; text: string };
+  | { type: "error"; text: string }
+  // Codex→CC 交接卡(T7):#log chat-flow 元素(session 起点,非 modal);交互态(sealed/编辑文本)
+  // 在组件内,store 只持数据;newChat/resumeSession 清 items 时卡随之消失(对齐原 #log 清空)
+  | { type: "handoff"; sid: string; brief: string | null; incomplete: boolean; errMsg: string | null };
 
 export type SessionEnded = "done" | "stopped" | "error" | null;
 export type ReportState = "idle" | "sending" | "streaming" | "waiting";
@@ -40,6 +46,18 @@ export interface SessionDeps {
   setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
   clearTimer: (t: ReturnType<typeof setTimeout>) => void;
   userEchoFallbackMs: number; // 生产 1500,测试可 0/手动
+  onResumedCwd?: (cwd: string) => void; // resumeSession 成功且 history 带 cwd 时回调(对齐原 setCwd(r.cwd))
+}
+
+export type HandoffSendResult = "sent" | "stale" | "failed";
+
+export interface HandoffSendOpts {
+  cwd: string;
+  userText: string;
+  mode: string;
+  refs?: string[];
+  isStale: () => boolean;    // 等待期用户在 chip 改选(App 的 switchAgent 偏离目标引擎)
+  onHandedOff?: () => void;  // 交接落定回调(App 清 switchAgent、curAgent 同步为新引擎)
 }
 
 export function createSessionStore(deps: SessionDeps) {
@@ -247,6 +265,88 @@ export function createSessionStore(deps: SessionDeps) {
     }
   }
 
+  // —— 跨引擎交接发送(chat.html:1964-1991 handoffSend):chip 在老会话上选了另一引擎——
+  //    coding.session_brief(DB 消息 + git → LLM 摘要,r.brief 恒有值)→ 旧会话进 discarded →
+  //    send 走 coding.start 开新引擎会话(isStart 分支带 mode+agent,对齐原 send() ov 路径)。
+  //    brief 期间占 sending 窗;等待期用户改主意(新对话/恢复别会话/chip 改选)→ 摘要到响应即弃。
+  //    失败 rethrow 给调用方亮状态行(原仅 setStatus,不进 errbar)。
+  async function handoffSend(newAgent: string, opts: HandoffSendOpts): Promise<HandoffSendResult> {
+    if (state.sending || state.streaming) return "failed"; // 重入守卫(调用方已拦,双保险)
+    const oldSid = state.currentSession;
+    if (!oldSid) return "failed";
+    state.sending = true;
+    deps.report("sending", true);
+    let brief: string;
+    try {
+      const r = (await deps.invoke("coding.session_brief", { id: oldSid, target: newAgent })) as { brief?: string } | null;
+      brief = (r && r.brief) || "（无历史上下文）";
+    } catch (e) {
+      state.sending = false;
+      deps.report("idle", true);
+      drainTakeoverQueue();
+      throw e;
+    }
+    if (state.currentSession !== oldSid || opts.isStale()) { // 等待期改主意 → 丢弃
+      state.sending = false;
+      deps.report("idle", !!state.currentSession);
+      drainTakeoverQueue();
+      return "stale";
+    }
+    discardedSessions.add(oldSid);
+    state.currentSession = null;
+    opts.onHandedOff?.(); // App:清 switchAgent、curAgent 同步为新引擎(防之后新对话落回旧引擎)
+    state.items.push({ type: "marker", text: "—— 交接给 " + agentLabel(newAgent) + " 继续（上下文为摘要移植）——", err: false });
+    state.sending = false; // 交还 re-entry 窗:正式提交由 send() 自管
+    try {
+      await send(opts.cwd, "【交接上下文】\n" + brief + "\n\n【用户继续】\n" + opts.userText, opts.mode, newAgent, { refs: opts.refs });
+      return "sent";
+    } catch {
+      return "failed"; // start 失败文本已由 state.error 承载(errbar + 状态行)
+    }
+  }
+
+  // —— Codex→CC 交接启动(chat.html:2268-2319 startHandoffSession):brief 作为 coding.start
+  //    的 prompt,source=codex:<sid> 标记来源(不带 mode/agent——CC 缺省引擎/权限);
+  //    受理前即 streaming 态,秒败竞态同 send(pendingTurnEnded 守);brief 已在封存卡内可见,
+  //    不再入列用户气泡/兜底回显。恒不 reject:失败落 state.error 返回 false。
+  async function startHandoffSession(cwd: string, codexSid: string, brief: string): Promise<boolean> {
+    if (state.sending || state.streaming) return false; // 重入守卫(卡上已按 streaming 拦,双保险)
+    state.sending = true;
+    state.error = null; // handoff 也是新 turn 入口:与 send 对齐清掉旧错误条
+    deps.report("sending", !!state.currentSession);
+    pendingTurnEnded = false;
+    state.streaming = true; // 受理前即 streaming(原 :2275)
+    state.runPrefix = "Codex 接续启动中…";
+    deps.report("streaming", !!state.currentSession);
+    try {
+      const r = (await deps.invoke("coding.start", { cwd, prompt: brief, source: "codex:" + codexSid })) as { session_id?: string };
+      const csid = r && r.session_id;
+      if (!csid) throw new Error("未返回 session_id");
+      state.currentSession = csid; // 旧会话 id 被覆盖;其迟到事件被 currentSession 过滤(同原)
+      state.curSessAgent = "claude-code"; // handoff 落 CC 会话(coding.start 缺省引擎)
+      if (pendingTurnEnded) { pendingTurnEnded = false; return true; } // 秒败:onSessionEnded 已收场
+      state.runPrefix = "Codex 接续会话 " + csid;
+      return true;
+    } catch (e) {
+      deps.report("idle", !!state.currentSession);
+      state.error = "Codex 接续启动失败:" + emsg(e);
+      state.streaming = false;
+      return false;
+    } finally {
+      state.sending = false;
+      drainTakeoverQueue(); // 同 send.finally:失败/秒败路径泄放队列
+    }
+  }
+
+  /** 交接卡(Codex→CC)入消息流:可编辑 brief/失败红条由组件渲染,交互态在组件内 */
+  function pushHandoffCard(sid: string, brief: string | null, incomplete: boolean, errMsg: string | null) {
+    state.items.push({ type: "handoff", sid, brief, incomplete, errMsg });
+  }
+  function dropHandoffCard(item: RenderItem) {
+    const i = state.items.indexOf(item);
+    if (i >= 0) state.items.splice(i, 1);
+  }
+
   /** 返回 invoke 是否受理(false=无会话/调用失败)——pill 的 Stop 据此在失败时重新解锁 */
   async function stop(): Promise<boolean> {
     const sid = state.currentSession;
@@ -309,6 +409,7 @@ export function createSessionStore(deps: SessionDeps) {
       state.runPrefix = "";
       fallbackUserIndex = -1;
       deps.report("idle", true);
+      if (r.cwd) deps.onResumedCwd?.(String(r.cwd)); // 对齐原 setCwd(r.cwd):恢复跟随会话落盘目录
       return msgs.length;
     } catch (e) {
       state.error = "恢复失败:" + String(e);
@@ -352,6 +453,7 @@ export function createSessionStore(deps: SessionDeps) {
 
   return {
     state, handleData, applyEvent, send, stop, newChat, resumeSession,
+    handoffSend, startHandoffSession, pushHandoffCard, dropHandoffCard,
     takeoverInput, takeoverStop, setQueueContext, historyToItems,
     /** resume 在飞(attach/手动接续/autoReplay)——autoReplay 让位判据:在跑时不得再排候选 */
     isResuming: () => resuming,

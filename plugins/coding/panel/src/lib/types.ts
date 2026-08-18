@@ -41,3 +41,11 @@ export interface SessionRow {
 
 export interface DriverInfo { id: string; available: boolean; version?: string | null }
 export interface HistoryMessage { role: "user" | "assistant" | "marker"; text: string; uuid?: string }
+
+// coding.handoff_list 条目(Codex→CC 接续选择器;timestamp 兼容 ISO/epoch/已格式化)
+export interface HandoffSessionItem { session_id: string; timestamp?: number | string | null; first_line?: string }
+
+// coding.last_sessions 结果(接续浮层区 1「上次会话」跨源检测;整体失败降级 null)
+export interface LastCcSession { ts?: number | string | null; summary?: string; message_count?: number | null; cc_session_id?: string }
+export interface LastCodexSession { ts?: number | string | null; summary?: string; session_id?: string }
+export interface LastSessions { cc?: LastCcSession | null; codex?: LastCodexSession | null }

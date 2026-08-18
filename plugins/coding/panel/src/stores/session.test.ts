@@ -464,3 +464,194 @@ describe("评审回归", () => {
     expect(s2.state.sending).toBe(false);
   });
 });
+
+describe("跨引擎交接 handoffSend", () => {
+  // chat.html:1964-1991:占 sending 窗 → coding.session_brief → 旧 sid 进 discarded →
+  // currentSession=null → marker → send 走 coding.start(isStart 分支带 mode+agent)
+  it("成功:摘要移植开新引擎会话,旧会话进 discarded,marker 入列,onHandedOff 回调", async () => {
+    let startCalls = 0;
+    const invoke = vi.fn(async (method: string) => {
+      if (method === "coding.session_brief") return { brief: "摘要内容" };
+      if (method === "coding.start") return { session_id: ++startCalls === 1 ? "s1" : "s2" };
+      return { session_id: "s1" };
+    });
+    const { deps, reports } = makeDeps(invoke as never);
+    const s = createSessionStore(deps);
+    await s.send("/tmp", "hi", "acceptEdits", "claude-code"); // currentSession = s1
+    s.applyEvent(ev({ kind: "done" }));
+    const handed: string[] = [];
+    const reportsBefore = reports.length;
+    const r = await s.handoffSend("codex", {
+      cwd: "/tmp", userText: "继续做", mode: "plan", refs: ["a.ts"],
+      isStale: () => false, onHandedOff: () => { handed.push("codex"); },
+    });
+    expect(r).toBe("sent");
+    expect(invoke).toHaveBeenCalledWith("coding.session_brief", { id: "s1", target: "codex" });
+    // send 的 isStart 分支:带 mode+agent(对齐原 send() ov 路径);refs 拼在交接 prompt 之后
+    expect(invoke).toHaveBeenLastCalledWith("coding.start", {
+      cwd: "/tmp",
+      prompt: "【交接上下文】\n摘要内容\n\n【用户继续】\n继续做\n\n引用文件:\n@a.ts",
+      mode: "plan",
+      agent: "codex",
+    });
+    expect(s.state.currentSession).toBe("s2");
+    expect(s.state.curSessAgent).toBe("codex");
+    expect(s.state.streaming).toBe(true);
+    expect(s._test.discardedSessions.has("s1")).toBe(true);
+    expect(s.state.items.some((it) => it.type === "marker" &&
+      it.text === "—— 交接给 codex 继续（上下文为摘要移植）——")).toBe(true);
+    expect(handed).toEqual(["codex"]);
+    expect(reports[reportsBefore]).toBe("sending"); // brief 等待期占 sending 窗
+  });
+
+  it("等待期改主意(currentSession 变了 / isStale)→ 丢弃,不发 start", async () => {
+    // currentSession 变化:等待期用户点了新对话
+    let releaseBrief!: (v: { brief: string }) => void;
+    const invoke = vi.fn((method: string) =>
+      method === "coding.session_brief"
+        ? new Promise<{ brief: string }>((res) => { releaseBrief = res; })
+        : Promise.resolve({ session_id: "s1" }));
+    const { deps, reports } = makeDeps(invoke as never);
+    const s = createSessionStore(deps);
+    await s.send("/tmp", "hi", "acceptEdits", "claude-code");
+    s.applyEvent(ev({ kind: "done" }));
+    const p = s.handoffSend("codex", { cwd: "/tmp", userText: "x", mode: "plan", isStale: () => false });
+    expect(s.state.sending).toBe(true); // brief 等待窗
+    s.newChat(); // 用户改主意:新对话
+    releaseBrief({ brief: "b" });
+    await expect(p).resolves.toBe("stale");
+    const starts1 = invoke.mock.calls.filter((c) => c[0] === "coding.start");
+    expect(starts1).toHaveLength(1); // 仅初始那次,交接未发 start
+    expect(s.state.sending).toBe(false);
+    expect(reports[reports.length - 1]).toBe("idle");
+
+    // isStale:chip 改选(App 的 switchAgent 偏离)
+    const d2 = makeDeps(vi.fn(async (method: string) =>
+      method === "coding.session_brief" ? { brief: "b" } : { session_id: "s1" }) as never);
+    const s2Store = createSessionStore(d2.deps);
+    await s2Store.send("/tmp", "hi", "acceptEdits", "claude-code");
+    s2Store.applyEvent(ev({ kind: "done" }));
+    const r2 = await s2Store.handoffSend("codex", { cwd: "/tmp", userText: "x", mode: "plan", isStale: () => true });
+    expect(r2).toBe("stale");
+    const starts2 = (d2.invoke.mock.calls as Array<[string, unknown]>).filter((c) => c[0] === "coding.start");
+    expect(starts2).toHaveLength(1); // 仅初始那次
+    expect(s2Store.state.currentSession).toBe("s1"); // 会话未动
+    expect(s2Store.state.sending).toBe(false);
+  });
+
+  it("brief 生成失败:rethrow 给调用方(状态行),sending 复位,不进 errbar", async () => {
+    const invoke = vi.fn(async (method: string) => {
+      if (method === "coding.session_brief") throw new Error("LLM 挂了");
+      return { session_id: "s1" };
+    });
+    const { deps, reports } = makeDeps(invoke as never);
+    const s = createSessionStore(deps);
+    await s.send("/tmp", "hi", "acceptEdits", "claude-code");
+    s.applyEvent(ev({ kind: "done" }));
+    await expect(s.handoffSend("codex", { cwd: "/tmp", userText: "x", mode: "plan", isStale: () => false }))
+      .rejects.toThrow("LLM 挂了");
+    expect(s.state.sending).toBe(false);
+    expect(s.state.currentSession).toBe("s1"); // 旧会话保留
+    expect(s.state.error).toBeNull(); // 原仅 setStatus,不进 errbar
+    expect(reports[reports.length - 1]).toBe("idle");
+  });
+
+  it("重入守卫:sending 中/无会话 → failed 且不 invoke", async () => {
+    const h = heldInvoke();
+    const { deps, invoke } = makeDeps(h.invoke as never);
+    const s = createSessionStore(deps);
+    const p = s.send("/tmp", "hi", "acceptEdits", "claude-code"); // sending 挂起
+    await expect(s.handoffSend("codex", { cwd: "/tmp", userText: "x", mode: "plan", isStale: () => false }))
+      .resolves.toBe("failed");
+    expect(invoke).not.toHaveBeenCalledWith("coding.session_brief", expect.anything());
+    h.release({ session_id: "s1" });
+    await p;
+    const d2 = makeDeps();
+    const s2 = createSessionStore(d2.deps); // 无会话
+    await expect(s2.handoffSend("codex", { cwd: "/tmp", userText: "x", mode: "plan", isStale: () => false }))
+      .resolves.toBe("failed");
+    expect(d2.invoke).not.toHaveBeenCalled();
+  });
+});
+
+describe("Codex→CC 交接启动 startHandoffSession", () => {
+  // chat.html:2268-2319:coding.start {cwd, prompt:brief, source:"codex:"+sid}(不带 mode/agent);
+  // 受理前即 streaming;秒败竞态同 send(pendingTurnEnded)
+  it("成功:受理前即 streaming,start 不带 mode/agent,回填 CC 会话", async () => {
+    let release!: (v: { session_id: string }) => void;
+    const invoke = vi.fn(() => new Promise<{ session_id: string }>((res) => { release = res; }));
+    const { deps } = makeDeps(invoke as never);
+    const s = createSessionStore(deps);
+    const p = s.startHandoffSession("/tmp", "cx1", "brief 文本");
+    // 受理前:streaming 已真,pill/状态行前缀就位
+    expect(s.state.sending).toBe(true);
+    expect(s.state.streaming).toBe(true);
+    expect(s.state.runPrefix).toBe("Codex 接续启动中…");
+    expect(invoke).toHaveBeenCalledWith("coding.start", { cwd: "/tmp", prompt: "brief 文本", source: "codex:cx1" });
+    release({ session_id: "s9" });
+    await expect(p).resolves.toBe(true);
+    expect(s.state.currentSession).toBe("s9");
+    expect(s.state.curSessAgent).toBe("claude-code"); // handoff 落 CC 会话
+    expect(s.state.runPrefix).toBe("Codex 接续会话 s9");
+    expect(s.state.streaming).toBe(true);
+    expect(s.state.sending).toBe(false);
+  });
+
+  it("秒败竞态:终态先于 invoke 返回 → 不覆盖 streaming,runPrefix 不起跑", async () => {
+    let release!: (v: { session_id: string }) => void;
+    const invoke = vi.fn(() => new Promise<{ session_id: string }>((res) => { release = res; }));
+    const { deps } = makeDeps(invoke as never);
+    const s = createSessionStore(deps);
+    const p = s.startHandoffSession("/tmp", "cx1", "brief");
+    s.applyEvent(ev({ kind: "error", text: "秒败" })); // sending 窗终态 → pendingTurnEnded
+    expect(s.state.streaming).toBe(false);
+    release({ session_id: "s9" });
+    await expect(p).resolves.toBe(true);
+    expect(s.state.currentSession).toBe("s9"); // 会话 id 仍回填
+    expect(s.state.streaming).toBe(false); // 不被重新置真
+    expect(s.state.ended).toBe("error");
+  });
+
+  it("失败:错误落 errbar + streaming/sending 复位,恒不 reject", async () => {
+    const { deps } = makeDeps(vi.fn(async () => { throw new Error("spawn 失败"); }) as never);
+    const s = createSessionStore(deps);
+    await expect(s.startHandoffSession("/tmp", "cx1", "brief")).resolves.toBe(false);
+    expect(s.state.error).toContain("Codex 接续启动失败:");
+    expect(s.state.streaming).toBe(false);
+    expect(s.state.sending).toBe(false);
+    // 缺 session_id 同样按失败处理
+    const d2 = makeDeps(vi.fn(async () => ({})) as never);
+    const s2 = createSessionStore(d2.deps);
+    await expect(s2.startHandoffSession("/tmp", "cx1", "brief")).resolves.toBe(false);
+    expect(s2.state.error).toContain("Codex 接续启动失败:");
+  });
+
+  it("重入守卫:sending/streaming 中 → false 且不 invoke", async () => {
+    const h = heldInvoke();
+    const { deps, invoke } = makeDeps(h.invoke as never);
+    const s = createSessionStore(deps);
+    const p = s.send("/tmp", "hi", "acceptEdits", "claude-code");
+    await expect(s.startHandoffSession("/tmp", "cx1", "brief")).resolves.toBe(false);
+    expect(invoke).not.toHaveBeenCalledWith("coding.start", expect.objectContaining({ source: "codex:cx1" }));
+    h.release({ session_id: "s1" });
+    await p;
+  });
+});
+
+describe("交接卡项", () => {
+  it("pushHandoffCard 追加 handoff 项;dropHandoffCard 移除;newChat 清空", async () => {
+    const { deps } = makeDeps();
+    const s = createSessionStore(deps);
+    s.pushHandoffCard("cx1", "brief", false, null);
+    s.pushHandoffCard("cx2", null, false, "读取 brief 失败：x"); // 失败也开卡(红条+空 textarea)
+    expect(s.state.items).toHaveLength(2);
+    expect(s.state.items[0]).toMatchObject({ type: "handoff", sid: "cx1", brief: "brief" });
+    expect(s.state.items[1]).toMatchObject({ type: "handoff", sid: "cx2", brief: null, errMsg: "读取 brief 失败：x" });
+    s.dropHandoffCard(s.state.items[0]);
+    expect(s.state.items).toHaveLength(1);
+    expect(s.state.items[0]).toMatchObject({ sid: "cx2" });
+    await s.send("/tmp", "hi", "acceptEdits", "claude-code");
+    s.newChat();
+    expect(s.state.items).toEqual([]); // 新对话清屏,卡随之消失(对齐原 #log innerHTML 清空)
+  });
+});

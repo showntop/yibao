@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { doneStatusText, emsg, fmtCost, fmtTok, humanFirstLine, relTime } from "./format";
+import { doneStatusText, emsg, fmtCost, fmtTok, fmtTs, humanFirstLine, normCwd, relTime } from "./format";
 
 describe("fmtTok", () => {
   it("千以下原样", () => {
@@ -122,5 +122,28 @@ describe("doneStatusText", () => {
   });
   it("tok 为 0 不显示 token 段", () => {
     expect(doneStatusText({ duration_ms: 500, input_tokens: 0, output_tokens: 0 })).toBe("✓ 完成 · 1s");
+  });
+});
+
+describe("fmtTs", () => {
+  it("ISO 字符串 / epoch 毫秒 → 本地「YYYY-MM-DD HH:MM」", () => {
+    expect(fmtTs("2026-08-18T07:48:49.000Z")).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+    expect(fmtTs(new Date(2026, 0, 2, 3, 4).getTime())).toBe("2026-01-02 03:04");
+  });
+  it("空值 → \"\";非法值原样返回(已格式化字符串兜底)", () => {
+    expect(fmtTs("")).toBe("");
+    expect(fmtTs(null)).toBe("");
+    expect(fmtTs(undefined)).toBe("");
+    expect(fmtTs("昨天中午")).toBe("昨天中午");
+  });
+});
+
+describe("normCwd", () => {
+  it("去尾部斜杠;空值容错", () => {
+    expect(normCwd("/a/b/")).toBe("/a/b");
+    expect(normCwd("/a/b//")).toBe("/a/b");
+    expect(normCwd("/a/b")).toBe("/a/b");
+    expect(normCwd("")).toBe("");
+    expect(normCwd(undefined as unknown as string)).toBe("");
   });
 });

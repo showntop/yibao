@@ -2,7 +2,8 @@
 // 消息流(#log):渲染 store 的 RenderItem 序列。行为对齐 chat.html:
 // 用户贴底才自动跟随滚动(:939-947,距底 <60px 视为贴底);气泡内链接一律拦下(:948-952,
 // sandbox 无导航出口,点开只会替换面板);pill 可见时底部让位(body.pill-on → #log.pill-on)。
-// user 气泡的 ⏪ 回滚锚在 Task 7 接入(RenderItem.uuid 已备)。
+// T7:user 气泡带 uuid 挂 ⏪ 回滚锚(:957-987,防重禁用经 rewindPending;点击上抛 rewind,
+// invoke 与状态行在 App);Codex→CC 交接卡(handoff 项)渲染 HandoffCard 并透传其事件。
 import { nextTick, ref, watch } from "vue";
 import type { RenderItem } from "../stores/session";
 import AssistantBubble from "./AssistantBubble.vue";
@@ -10,8 +11,20 @@ import ToolCard from "./ToolCard.vue";
 import FileEditCard from "./FileEditCard.vue";
 import PermCard from "./PermCard.vue";
 import MarkerLine from "./MarkerLine.vue";
+import HandoffCard from "./HandoffCard.vue";
 
-const props = defineProps<{ items: RenderItem[]; padForPill?: boolean }>();
+const props = defineProps<{
+  items: RenderItem[];
+  padForPill?: boolean;
+  streaming: boolean;                 // HandoffCard「用它开始」的运行中拦截
+  rewindPending: ReadonlySet<string>; // 回滚请求在飞的 uuid 集(按钮防重禁用)
+}>();
+const emit = defineEmits<{
+  rewind: [uuid: string];
+  "handoff-cancel": [item: RenderItem];
+  "handoff-start": [item: RenderItem, text: string];
+  status: [text: string, err: boolean];
+}>();
 
 const logEl = ref<HTMLElement | null>(null);
 const atBottom = ref(true); // 用户是否贴底(true 才自动跟随滚动)
@@ -41,13 +54,28 @@ function onClick(e: MouseEvent) {
   <main id="log" ref="logEl" :class="{ 'pill-on': padForPill }" @scroll="onScroll" @click="onClick">
     <template v-for="(it, i) in items" :key="i">
       <div v-if="it.type === 'user'" class="row user">
-        <div class="bubble">{{ it.text }}</div>
+        <div class="bubble">{{ it.text }}<button
+          v-if="it.uuid"
+          type="button"
+          class="rewind-btn"
+          title="回滚到这条消息时的文件状态"
+          :disabled="rewindPending.has(it.uuid)"
+          @click.stop="emit('rewind', it.uuid)"
+        >⏪</button></div>
       </div>
       <AssistantBubble v-else-if="it.type === 'assistant'" :item="it" />
       <ToolCard v-else-if="it.type === 'tool'" :item="it" />
       <FileEditCard v-else-if="it.type === 'fileedit'" :item="it" />
       <PermCard v-else-if="it.type === 'perm'" :item="it" />
       <MarkerLine v-else-if="it.type === 'marker'" :text="it.text" :err="it.err" />
+      <HandoffCard
+        v-else-if="it.type === 'handoff'"
+        :item="it"
+        :streaming="streaming"
+        @cancel="emit('handoff-cancel', it)"
+        @start="(text: string) => emit('handoff-start', it, text)"
+        @status="(t: string, e: boolean) => emit('status', t, e)"
+      />
       <!-- error 项:store 已映射进 errbar(state.error),消息流不渲染 -->
     </template>
   </main>

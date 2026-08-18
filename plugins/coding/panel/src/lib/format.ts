@@ -67,6 +67,22 @@ export function relTime(now: number, ts: number | string | null | undefined): st
   return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
 }
 
+// Codex 推送的 timestamp 兼容 ISO 字符串 / epoch 毫秒数字 / 已格式化字符串
+// (移植 chat.html:2122-2129 fmtTs,handoff picker 条目用);非法值原样返回
+export function fmtTs(ts: number | string | null | undefined): string {
+  if (!ts) return "";
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return String(ts);
+  const pad = (n: number) => (n < 10 ? "0" + n : "" + n);
+  return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) +
+         " " + pad(d.getHours()) + ":" + pad(d.getMinutes());
+}
+
+// cwd 比较归一化:去尾部斜杠(移植 chat.html:2452 normCwd;sessions 表 cwd 与输入路径可能差一个 /)
+export function normCwd(p: string): string {
+  return (p || "").replace(/\/+$/, "");
+}
+
 // 人话首行:跳过空行 / 协议 XML 行(< 开头)/ 堆栈帧(at …、File "…"、Traceback),
 // 行内残留标签剥掉;全都不是人话时给兜底文案(错误全文仍在详情区可见)
 export function humanFirstLine(text: string): string {

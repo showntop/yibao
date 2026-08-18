@@ -1,20 +1,24 @@
 <script setup lang="ts">
-// coding:studio(R4 阶段二 T6):头部控件接入——cwd chip + 浮层 / 引擎 chip + picker /
-// mode pill / 状态行 + drivers store(coding.drivers 探测 + 新会话引擎选择)。
+// coding:studio(R4 阶段二 T7):交接双路径 + rewind + 接续浮层 + autoReplay 抽取。
+// T6 已接:cwd chip + 浮层 / 引擎 chip + picker / mode pill / 状态行 + drivers store。
 // 行为逐条对齐 chat.html:
-//   commitCwd(:2890-2899):空/同值忽略、running 拒(状态行提示)、setCwd + newChat +
-//     coding.list → refreshCwdState(默认引擎记忆 = 该 cwd 时间倒序首个命中行的 agent)+ autoReplay
-//   prefillCwd(:2837-2847):init 时 coding.list 首行预填 cwd(与 probeDrivers 并发)
-//   autoReplay(:2869-2885):回放该 cwd 最近一条非空会话;活体/codex 不可用过滤;attach 抢占让位
-//   pickAgent(:1817-1827):有会话同引擎清待定/异引擎置 switchAgent + 状态行提示;无会话设 curAgent
-//   互收:单一 openLayer 兑现(开任一浮层即关其他;T7 的 history/handoff 直接加枚举值);
-//   esc 优先级(:2825-2831):agent-picker → history → handoff → stop(cwd 浮层 Esc 由其 input 消费)
-// 跨引擎交接发送(handoffSend)本体在 T7——本任务的 switchAgent 选择态 + 状态行提示已生效。
+//   handoffSend(:1964-1991,chip 跨引擎):占 sending 窗 coding.session_brief;等待期改主意
+//     (currentSession/switchAgent 变)丢弃;成功 → 旧 sid 进 discarded + marker + send 走 start
+//     (isStart 分支带 mode+agent)。编排在 store.handoffSend,switchAgent 选择态经回调同步。
+//   Codex→CC(:2047-2319):handoff_list → 0 提示/1 直进/多 picker → handoff_brief(失败也开卡)
+//     → HandoffCard(可编辑/取消/用它开始)→ store.startHandoffSession(coding.start 带
+//     source=codex:sid,不带 mode/agent;受理前即 streaming,秒败竞态同 send)。
+//   rewind(:958-987):用户气泡 uuid 挂 ⏪;coding.rewind {id,user_msg_id};rewind_ok 经事件流回。
+//   接续浮层(:2335-2554):两路并发 last_sessions(失败降级 null)+list;区 1 CC/Codex 卡,
+//     区 2 译宝历史行(normCwd 过滤);两区皆空空态;overlay 空白关闭。chip 过滤通道(无调用方)不移植。
+//   autoReplay(:2869-2885):纯函数抽至 lib/replay.ts(pickReplayCandidate/shouldYieldReplay/
+//     replayStep);空会话顺延;currentSession||isResuming 让位。
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { emitPanelEvent, hasBridge, invoke, onInit } from "./lib/bridge";
-import type { PanelData, SessionRow } from "./lib/types";
-import { doneStatusText, fmtCost, fmtTok } from "./lib/format";
-import { createSessionStore } from "./stores/session";
+import type { HandoffSessionItem, LastSessions, PanelData, SessionRow } from "./lib/types";
+import { doneStatusText, emsg, fmtCost, fmtTok, normCwd } from "./lib/format";
+import { pickReplayCandidate, replayStep, shouldYieldReplay } from "./lib/replay";
+import { createSessionStore, type RenderItem } from "./stores/session";
 import { agentLabel, createDriversStore, normAgent } from "./stores/drivers";
 import MessageList from "./components/MessageList.vue";
 import ErrBar from "./components/ErrBar.vue";
@@ -24,6 +28,8 @@ import CwdChip from "./components/CwdChip.vue";
 import ModePill from "./components/ModePill.vue";
 import AgentChip from "./components/AgentChip.vue";
 import StatusLine from "./components/StatusLine.vue";
+import HistoryOverlay from "./components/HistoryOverlay.vue";
+import HandoffPicker from "./components/HandoffPicker.vue";
 
 const takeover = ref(false);
 
@@ -36,6 +42,8 @@ const store = createSessionStore({
   setTimer: (fn, ms) => setTimeout(fn, ms),
   clearTimer: (t) => clearTimeout(t),
   userEchoFallbackMs: 1500,
+  // 恢复历史跟随会话落盘目录(对齐原 resumeSession 的 setCwd(r.cwd));闭包引用下方 cwd,调用远晚于初始化
+  onResumedCwd: (c) => { cwd.value = c; },
 });
 const state = store.state;
 
@@ -45,7 +53,7 @@ const dstate = drivers.state;
 // ---- 头部控件状态(T6):cwd 真值 / 权限模式 / 跨引擎切换待定(curAgent 在 drivers store) ----
 const cwd = ref("");
 const curMode = ref("acceptEdits");
-const switchAgent = ref<string | null>(null); // 老会话跨引擎切换待定(发送时交接摘要移植,T7)
+const switchAgent = ref<string | null>(null); // 老会话跨引擎切换待定(发送时经 store.handoffSend 摘要移植)
 // 跨引擎待定随会话切换/清空一并作废(对齐原 newChat/resumeSession 里的 switchAgent=null)
 watch(() => state.currentSession, () => { switchAgent.value = null; });
 
@@ -62,7 +70,7 @@ onInit((data, msg) => {
 // body.takeover 驱动 CSS 隐藏输入区(T8 接 takeover-input/-stop 宿主消息)
 watch(takeover, (on) => { document.body.classList.toggle("takeover", on); }, { immediate: true });
 
-// ---- 浮层互收:任一 picker/浮层开时关其他;T7 history/handoff 加枚举值即接入 ----
+// ---- 浮层互收:任一 picker/浮层开时关其他(cwd/agent/history/handoff 单枚举兑现) ----
 type Layer = "" | "cwd" | "agent" | "history" | "handoff";
 const openLayer = ref<Layer>("");
 function toggleLayer(l: Exclude<Layer, "">) { openLayer.value = openLayer.value === l ? "" : l; }
@@ -72,8 +80,8 @@ function onDocClick() { if (openLayer.value) openLayer.value = ""; }
 function onDocKeydown(e: KeyboardEvent) {
   if (e.key !== "Escape") return;
   if (openLayer.value === "agent") { openLayer.value = ""; return; }
-  if (openLayer.value === "history") { openLayer.value = ""; return; } // T7 接入
-  if (openLayer.value === "handoff") { openLayer.value = ""; return; } // T7 接入
+  if (openLayer.value === "history") { openLayer.value = ""; return; }
+  if (openLayer.value === "handoff") { openLayer.value = ""; return; }
   if (state.currentSession && (state.streaming || state.sending)) void store.stop();
 }
 
@@ -85,9 +93,16 @@ const costText = computed(() => {
 });
 const newChatDisabled = computed(() => state.sending || state.streaming || !state.currentSession);
 
-// ---- footer 状态行:提交中/运行中(spinner)/完成行(doneStatusText,isFinite 守御)/错误 ----
+// ---- footer 状态行:提交中(handoffSend 摘要窗「生成交接摘要…」/ startHandoffSession
+// invoke 窗「Codex 接续启动中…」)/运行中(spinner)/完成行(doneStatusText,isFinite 守御)/错误 ----
+const briefTarget = ref<string | null>(null); // handoffSend 摘要等待窗目标引擎
+const handoffStarting = ref(false);           // Codex→CC startHandoffSession invoke 窗
 const status = computed(() => {
-  if (state.sending) return { text: "提交中…", spin: true, err: false };
+  if (state.sending) {
+    if (briefTarget.value) return { text: "生成交接摘要，转交 " + agentLabel(briefTarget.value) + "…", spin: true, err: false };
+    if (handoffStarting.value) return { text: "Codex 接续启动中…", spin: true, err: false };
+    return { text: "提交中…", spin: true, err: false };
+  }
   if (state.streaming) return { text: (state.runPrefix || "会话") + " 运行中…", spin: true, err: false };
   if (state.error) return { text: state.error, spin: false, err: true };
   if (state.ended === "done") return { text: doneStatusText(state.lastUsage), spin: false, err: false };
@@ -96,11 +111,11 @@ const status = computed(() => {
 });
 
 // Composer/头部控件瞬时提示与 store 状态行共一位:store 状态每次变化覆盖提示
-// (对齐 chat.html setStatus 覆盖语义——后写赢)
+// (对齐 chat.html setStatus 覆盖语义——后写赢);空文本 = 清除提示(对齐 setStatus(""))
 const tip = ref<{ text: string; spin: boolean; err: boolean } | null>(null);
 watch(status, () => { tip.value = null; });
 const statusView = computed(() => tip.value ?? status.value);
-function onComposerStatus(text: string, err: boolean) { tip.value = { text, spin: false, err }; }
+function onComposerStatus(text: string, err: boolean) { tip.value = text ? { text, spin: false, err } : null; }
 
 // ---- cwd chip + 浮层(对齐 :2620-2665 / :2890-2899)----
 // 用户主动切换项目(浮层确认/📁 选目录共用入口):换目录 = 换上下文——当前会话按「新对话」清理,
@@ -133,20 +148,18 @@ function refreshCwdState(rows: SessionRow[], c: string, replay: boolean) {
   if (replay) void autoReplay(rows, c);
 }
 
-// 自动回放(对齐 :2869-2885):把当前 cwd 最近一条非空会话回放进对话框。候选过滤:
-// 活体会话(running/waiting 发送会被拒)、codex 已探测不可用;空会话经 skipIfEmpty 顺延。
-// 让位:attach 接管/手动接续抢占(currentSession 出现或 resume 在飞)即停——原查 resuming
-// 全局,这里经 store.isResuming();不重入 resumeSession(pendingResume 排队会反抢 attach)。
+// 自动回放(对齐 :2869-2885;纯函数已抽 lib/replay.ts,T7):把当前 cwd 最近一条非空会话
+// 回放进对话框。空会话(skipIfEmpty → 0)顺延下一条;让位:attach 接管/手动接续抢占
+// (currentSession 出现或 resume 在飞)即停——不重入 resumeSession(pendingResume 排队会反抢 attach)。
 async function autoReplay(rows: SessionRow[], c: string) {
-  if (state.currentSession || store.isResuming()) return;
-  const cands = rows.filter((row) =>
-    row && row.id && row.cwd === c &&
-    row.live !== "running" && row.live !== "waiting" &&
-    !(normAgent(row.agent) === "codex" && dstate.codexAvailable === false));
-  for (const cand of cands) {
-    if (state.currentSession || store.isResuming()) return;
-    const n = await store.resumeSession(cand.id, cand.agent, { skipIfEmpty: true });
-    if (n !== 0) return; // >0 已回放;-1 理论不可达(上方已守),保底停
+  let rest = rows;
+  for (;;) {
+    if (shouldYieldReplay(!!state.currentSession, store.isResuming())) return;
+    const cand = pickReplayCandidate(rest, c, dstate.codexAvailable);
+    if (!cand) return;
+    const n = await store.resumeSession(cand.sid, cand.agent, { skipIfEmpty: true });
+    if (replayStep(n) === "stop") return; // >0 已回放;-1 被归并(他路抢占),保底停
+    rest = rest.filter((r) => r.id !== cand.sid); // 空会话顺延:剔除已试
   }
 }
 
@@ -168,7 +181,7 @@ function onAgentToggle() {
   toggleLayer("agent");
 }
 // picker 选中:无会话 → curAgent(下一个新会话用);有会话——同引擎清除待定,
-// 另一引擎置 switchAgent(chip 立即显示选中项;发送时自动交接摘要,以新引擎继续——T7 接 handoffSend)
+// 另一引擎置 switchAgent(chip 立即显示选中项;发送时 store.handoffSend 自动交接摘要,以新引擎继续)
 function pickAgent(a: string) {
   openLayer.value = "";
   a = normAgent(a);
@@ -187,6 +200,141 @@ function toggleMode() {
   if (state.currentSession) void invoke("coding.mode", { id: state.currentSession, mode: curMode.value }).catch(() => {});
 }
 
+// ---- 接续浮层(T7;对齐 :2335-2554 openHistory/renderResumePopover/attach)----
+const historyLoading = ref(false);
+const historyLast = ref<LastSessions | null>(null); // 区 1 跨源检测(失败降级 null)
+const historyRows = ref<SessionRow[]>([]);          // 区 2 译宝历史(normCwd 过滤后)
+const historyListErr = ref<string | null>(null);
+
+function openHistory() {
+  if (!hasBridge) return;
+  if (state.streaming) { onComposerStatus("当前会话运行中，请先中断再恢复/接续会话", true); return; }
+  const c = cwd.value.trim();
+  if (!c) { onComposerStatus("请先选择项目目录", true); openLayer.value = "cwd"; return; }
+  openLayer.value = "history"; // 互收:agent/handoff/cwd 浮层同收(原 closeHandoffPicker/closeAgentPicker)
+  historyLoading.value = true;
+  historyLast.value = null;
+  historyRows.value = [];
+  historyListErr.value = null;
+  // 两路并发:区 1 跨源检测失败(方法缺失/扫描异常)静默降级为无区 1,不拖垮区 2
+  const lastP = invoke<LastSessions>("coding.last_sessions", { cwd: c }).catch(() => null);
+  const listP = invoke<{ sessions?: SessionRow[] }>("coding.list", {})
+    .then((r) => ({ rows: (r && r.sessions) || [], err: null as string | null }))
+    .catch((e) => ({ rows: [] as SessionRow[], err: emsg(e) }));
+  void Promise.all([lastP, listP]).then(([last, listR]) => {
+    if (openLayer.value !== "history") return; // 响应到达时浮层已关,丢弃
+    historyLast.value = last;
+    historyRows.value = listR.rows.filter((r) => normCwd(r.cwd) === normCwd(c)); // 只显示本项目;跨项目总览归会话墙
+    historyListErr.value = listR.err;
+    historyLoading.value = false;
+  });
+}
+
+// CC 卡 [继续]:attach_cc 把 transcript 导入会话库(幂等)→ resumeSession(原生 resume,上下文完整)
+async function onAttachCc(ccSid: string): Promise<boolean> {
+  onComposerStatus("导入 Claude Code 会话…", false);
+  try {
+    const r = await invoke<{ session_id?: string }>("coding.attach_cc", { cc_session_id: ccSid, cwd: cwd.value.trim() });
+    const sid = r && r.session_id;
+    if (!sid) throw new Error("attach_cc 未返回 session_id");
+    openLayer.value = ""; // 浮层关闭(原 resumeSession 内隐藏 overlay,成败都关)
+    await store.resumeSession(sid, "claude-code");
+    return true;
+  } catch (e) {
+    onComposerStatus("导入 Claude Code 会话失败：" + emsg(e), true);
+    return false; // 组件据此解锁按钮
+  }
+}
+
+// Codex 卡 [原生续]:attach_codex 用 codex thread_id 建/取 DB 行(幂等,agent="codex")→ resumeSession
+async function onAttachCodex(codexSid: string): Promise<boolean> {
+  onComposerStatus("恢复 Codex 会话…", false);
+  try {
+    const r = await invoke<{ session_id?: string }>("coding.attach_codex", { session_id: codexSid });
+    const sid = r && r.session_id;
+    if (!sid) throw new Error("attach_codex 未返回 session_id");
+    openLayer.value = "";
+    await store.resumeSession(sid, "codex");
+    return true;
+  } catch (e) {
+    onComposerStatus("恢复 Codex 会话失败：" + emsg(e), true);
+    return false;
+  }
+}
+
+// 区 2 行点击:resumeSession(row.id, row.agent)(原 resumeSession 关闭 overlay)
+function onResumeRow(row: SessionRow) {
+  openLayer.value = "";
+  void store.resumeSession(row.id, row.agent);
+}
+
+// ---- Codex→CC 交接(T7;对齐 :2047-2119 handoff/picker + :2158-2172 handoffBrief)----
+const handoffSessions = ref<HandoffSessionItem[]>([]);
+
+async function startCodexHandoff() {
+  if (!hasBridge) { onComposerStatus("未连译宝桥（设计预览模式）", true); return; }
+  if (state.streaming) { onComposerStatus("当前会话运行中，请先中断再接续", true); return; }
+  const c = cwd.value.trim();
+  if (!c) { onComposerStatus("请先选择项目目录", true); openLayer.value = "cwd"; return; }
+  openLayer.value = ""; // 两个浮层不共存
+  onComposerStatus("读取 Codex 会话列表…", false);
+  try {
+    const r = await invoke<{ sessions?: HandoffSessionItem[] }>("coding.handoff_list", { cwd: c });
+    const sessions = (r && r.sessions) || [];
+    if (!sessions.length) { onComposerStatus("该项目没有 Codex session", false); return; }
+    tip.value = null; // 原 setStatus("")
+    if (sessions.length === 1) void handoffBrief(sessions[0]!.session_id);
+    else { handoffSessions.value = sessions; openLayer.value = "handoff"; }
+  } catch (e) {
+    onComposerStatus("读取 Codex 会话失败：" + emsg(e), true);
+  }
+}
+
+// handoff_brief → 交接卡;失败也开卡(红条 + 空 textarea 可手动粘贴),不阻断接续流程
+async function handoffBrief(sid: string) {
+  if (!sid) return;
+  onComposerStatus("生成 Codex 交接 brief…", false);
+  try {
+    const r = await invoke<{ brief?: string; incomplete?: boolean }>("coding.handoff_brief", { session_id: sid, cwd: cwd.value.trim() });
+    store.pushHandoffCard(sid, r && r.brief ? r.brief : null, !!(r && r.incomplete), null);
+    tip.value = null;
+  } catch (e) {
+    store.pushHandoffCard(sid, null, false, "读取 brief 失败：" + emsg(e));
+    onComposerStatus("读取 brief 失败，可手动粘贴或取消", true);
+  }
+}
+
+function onHandoffPick(sid: string) { openLayer.value = ""; void handoffBrief(sid); }
+function onCodexCardHandoff() { openLayer.value = ""; void startCodexHandoff(); } // 区 1 Codex 卡 [交接给 CC]
+function onHandoffCancel(item: RenderItem) { store.dropHandoffCard(item); }
+
+// 交接卡 [用它开始 → Claude Code]:组件已 seal;brief 作 prompt、source 标来源,受理前即 streaming
+function onHandoffStart(item: RenderItem, text: string) {
+  const c = cwd.value.trim();
+  if (!c) { onComposerStatus("内部错误：cwd 丢失", true); return; }
+  const sid = item.type === "handoff" ? item.sid : "";
+  handoffStarting.value = true; // 状态行「Codex 接续启动中…」(invoke 窗)
+  void store.startHandoffSession(c, sid, text).finally(() => { handoffStarting.value = false; });
+}
+
+// ---- ⏪ 回滚(T7;对齐 :958-987):用户气泡 uuid 锚;点击防重 → coding.rewind {id, user_msg_id};
+//      结果经事件流 rewind_ok 回(marker,store 已处理);失败亮状态行 ----
+const rewinding = ref<Set<string>>(new Set());
+async function onRewind(uuid: string) {
+  const sid = state.currentSession;
+  if (!sid || rewinding.value.has(uuid)) return;
+  rewinding.value.add(uuid);
+  try {
+    const r = await invoke<{ ok?: boolean; error?: string }>("coding.rewind", { id: sid, user_msg_id: uuid });
+    if (r && r.ok === false) onComposerStatus("回滚失败：" + (r.error || ""), true);
+    else onComposerStatus("已提交回滚…", false);
+  } catch (e) {
+    onComposerStatus("回滚失败：" + emsg(e), true);
+  } finally {
+    rewinding.value.delete(uuid);
+  }
+}
+
 // ---- Composer 接线(T5;stop 受理信号修复见 T6)----
 const composerRef = ref<{ clear: () => void; focus: () => void } | null>(null);
 const busy = computed(() => state.sending || state.streaming);
@@ -198,7 +346,29 @@ async function onSend(text: string, refs: string[]) {
   // cwd 空拦阻并开 cwd 浮层;校验顺序对齐原 send():先 cwd 后 prompt
   if (!cwd.value.trim()) { onComposerStatus("请先选择项目目录", true); openLayer.value = "cwd"; return; }
   if (!prompt) { onComposerStatus("请输入任务描述", true); composerRef.value?.focus(); return; }
-  // 跨引擎交接分支(currentSession && switchAgent !== curSessAgent → handoffSend)属 T7
+  // 跨引擎交接(:1884-1887):老会话上 chip 选了另一引擎 → handoffSend 摘要移植开新会话
+  // (不走 coding.send,引擎间无法原生互续);编排在 store,选择态经回调同步
+  if (state.currentSession && switchAgent.value && switchAgent.value !== state.curSessAgent) {
+    const target = switchAgent.value;
+    briefTarget.value = target; // 状态行「生成交接摘要，转交 X…」
+    try {
+      const r = await store.handoffSend(target, {
+        cwd: cwd.value.trim(), userText: prompt, mode: curMode.value, refs,
+        isStale: () => switchAgent.value !== target, // 等待期 chip 改选 → 丢弃
+        onHandedOff: () => {
+          switchAgent.value = null;
+          drivers.setCurAgent(target); // 无会话态默认值同步,防之后新对话落回旧引擎
+          briefTarget.value = null;    // 进入正式 send 窗,状态行回到「提交中…」
+        },
+      });
+      if (r === "sent") composerRef.value?.clear(); // 成功才消费 prompt+chips;stale/failed 保留
+    } catch (e) {
+      onComposerStatus("交接摘要生成失败：" + emsg(e), true); // 原仅状态行,不进 errbar
+    } finally {
+      briefTarget.value = null;
+    }
+    return;
+  }
   try {
     await store.send(cwd.value.trim(), prompt, curMode.value, dstate.curAgent, { refs });
     composerRef.value?.clear(); // 成功才消费 prompt+chips;失败保留可重试(对齐原清空时机)
@@ -258,15 +428,31 @@ onBeforeUnmount(() => {
   <!-- 桥缺失时可见,提示这是设计预览 -->
   <div v-if="!hasBridge" id="bridge-warn">设计预览：未检测到译宝桥（window.yibao），起停/流式回显不可用。</div>
 
-  <!-- 顶栏:标题 + 成本聚合 + 新对话(「接续」popover 属 T7) -->
+  <!-- 顶栏:标题 + 成本聚合 + 会话(接续浮层)/ 新对话 -->
   <header>
     <span class="title">编码对话</span>
     <span class="spacer"></span>
     <span id="cost" title="本会话累计 token 与成本（done 事件累加；新对话/恢复历史后清零重计）">{{ costText }}</span>
+    <button
+      id="history"
+      type="button"
+      title="会话：上次会话（CC 继续 / Codex 原生续或交接）+ 本项目译宝历史，恢复后继续在同一上下文聊"
+      :disabled="state.sending || state.streaming"
+      @click.stop="openHistory"
+    >会话</button>
     <button id="new-chat" type="button" title="清空当前对话，开新会话（下次发送走 coding.start）" :disabled="newChatDisabled" @click="store.newChat()">新对话</button>
   </header>
 
-  <MessageList :items="state.items" :pad-for-pill="pillVisible" />
+  <MessageList
+    :items="state.items"
+    :pad-for-pill="pillVisible"
+    :streaming="state.streaming"
+    :rewind-pending="rewinding"
+    @rewind="onRewind"
+    @handoff-cancel="onHandoffCancel"
+    @handoff-start="onHandoffStart"
+    @status="onComposerStatus"
+  />
 
   <ErrBar v-if="state.error" ref="errbarRef" :text="state.error" @layout="relayout" />
   <RunPill
@@ -317,4 +503,26 @@ onBeforeUnmount(() => {
       </template>
     </Composer>
   </footer>
+
+  <!-- 接续浮层(T7):区 1 上次会话(CC 继续 / Codex 原生续·交接)+ 区 2 译宝历史 + 空态 -->
+  <HistoryOverlay
+    v-if="openLayer === 'history'"
+    :loading="historyLoading"
+    :last="historyLast"
+    :rows="historyRows"
+    :list-err="historyListErr"
+    :cur-agent="dstate.curAgent"
+    :on-attach-cc="onAttachCc"
+    :on-attach-codex="onAttachCodex"
+    @close="openLayer = ''"
+    @resume="onResumeRow"
+    @handoff="onCodexCardHandoff"
+  />
+  <!-- Codex session 选择器(T7):handoff_list 多条时弹出 -->
+  <HandoffPicker
+    v-if="openLayer === 'handoff'"
+    :sessions="handoffSessions"
+    @pick="onHandoffPick"
+    @close="openLayer = ''"
+  />
 </template>
