@@ -507,7 +507,7 @@ async function onAction(a: { method: string; params: Record<string, unknown> }) 
 }
 
 // 工作台条交互：提交走同一 runInput（focus 已在大脑上下文里）；mic/长按团子 = 语音
-const barRef = ref<HTMLElement | null>(null);
+const inputBarRef = ref<{ focus: () => void } | null>(null);
 
 function submit(text: string, contexts: InputContext[] = []) {
   errorText.value = "";
@@ -536,7 +536,7 @@ function onPetTap() {
 }
 
 function focusInput() {
-  barRef.value?.querySelector("input")?.focus();
+  inputBarRef.value?.focus(); // 经 InputBar expose 聚焦主 textarea（querySelector("input") 会误中隐藏 file-input）
 }
 
 /** 挂载补拉最近一次 panel 载荷：大窗可能在协作中途才打开（panel 事件先于本页订阅发出）。
@@ -705,7 +705,7 @@ onUnmounted(() => {
         </div>
 
         <!-- 工作台条：对话浮层（输入/回复时间线）+ 团子 + 上下文 chip + 输入条 -->
-        <div ref="barRef" class="bench">
+        <div class="bench">
           <transition name="pop">
             <div v-if="layerVisible && (msgs.length || listeningHint)" ref="layerRef" class="thread">
               <button class="thread-x" title="收起" @click="layerVisible = false">×</button>
@@ -741,7 +741,7 @@ onUnmounted(() => {
               </svg>
             </button>
             <span v-if="chipText" class="chip" :title="chipText">{{ chipText }}</span>
-            <InputBar class="bench-input" :busy="busy" :listening="state === 'listen'" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
+            <InputBar ref="inputBarRef" class="bench-input" :busy="busy" :listening="state === 'listen'" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
           </div>
         </div>
       </div>
