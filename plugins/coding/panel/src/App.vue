@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // coding:studio 多工位壳(R4 阶段三 T6,替换 T4 过渡壳)——
 //   demux:onInit 唯一入口(T4 评审收口:StationView 不再自注册)。attach 载荷(任务卡/会话墙
-//     「接管」路由)→ pickBindTarget + bind + bindSession + focus;流事件 → stationForSid
+//     「接管」路由)→ pickIdleTarget(T8:busy 守卫,全忙不绑不投+聚焦工位提示)+ bind +
+//     bindSession(拒理回滚路由表)+ focus;流事件 → stationForSid
 //     已绑投递 / 未绑 bumpRail 派生左栏活体 + 400ms 防抖刷新。
 //   预挂载 stash:壳 onInit 在 setup 顶层注册,init 数据可能早于 StationView 挂载到达——
 //     stationRef 缺失时按工位暂存(每工位 ≤20 条,超出丢最旧),ref 登记时 flush。
@@ -27,8 +28,9 @@ interface StationViewExposed {
   dockH: number;
   isBusy: boolean;
   onData: (d: PanelData) => void;
-  bindSession: (sid: string, agent: string) => void;
+  bindSession: (sid: string, agent: string) => boolean; // T8:受理 true/守卫拒绝 false(壳据此回滚路由表)
   unbindSession: () => void;
+  hint: (text: string, err?: boolean) => void;          // T8:壳侧状态行提示通道
 }
 
 // v-for 函数 ref 收集(不收进 reactive,避免组件代理被二次包裹;refsVersion 供 dockH 重算)
@@ -60,6 +62,27 @@ function deliverToStation(id: number, d: PanelData) {
   preMountStash.set(id, q);
 }
 
+// attach/join 共用目标选择(T8 修复):pickBindTarget 落 busy 工位会被 bindSession 拒理,
+// 路由表已绑但工位未绑即成黑洞——改挑首个非 busy 工位;全忙则不绑不投,聚焦工位状态行提示
+function pickIdleTarget(): number | null {
+  const t = stations.pickBindTarget();
+  if (!stationRefs[t]?.isBusy) return t;
+  const idle = stations.state.stations.find((s) => !stationRefs[s.id]?.isBusy);
+  if (idle) return idle.id;
+  stationRefs[stations.state.focusId]?.hint("所有工位都在忙，先停止一个再加入会话", true);
+  return null;
+}
+
+// attach/join 共用落位:路由表先绑 → 工位 bindSession;双保险——拒理(busy 守卫)时回滚
+// 路由表(仅当该工位路由表里仍是本 sid,防误滚新绑)。返回 false = 未绑成(调用方不聚焦不投递)
+function bindStation(target: number, sid: string, agent: string): boolean {
+  stations.bind(target, sid, agent);
+  const r = stationRefs[target];
+  if (!r || r.bindSession(sid, agent)) return true;
+  if (stations.state.stations.find((s) => s.id === target)?.boundSid === sid) stations.unbind(target);
+  return false;
+}
+
 // ---- demux(onInit 唯一入口)----
 onInit((data) => {
   const d = data as PanelData;
@@ -68,11 +91,10 @@ onInit((data) => {
     const sid = String(d.session_id || "");
     if (!sid) return;
     const agent = normAgent(String(d.agent || ""));
-    const target = stations.pickBindTarget();
-    stations.bind(target, sid, agent);
-    const r = stationRefs[target];
-    if (r) r.bindSession(sid, agent);
-    else deliverToStation(target, d); // 工位未挂载:stash,挂载 flush 经 handleData attach 分支恢复
+    const target = pickIdleTarget();             // T8:落 busy 工位会被拒理成黑洞,先挑非 busy
+    if (target === null) return;                 // 全忙:不绑不投(聚焦工位已亮提示)
+    if (!bindStation(target, sid, agent)) return; // bindSession 拒理,路由表已回滚
+    if (!stationRefs[target]) deliverToStation(target, d); // 工位未挂载:stash,挂载 flush 经 handleData attach 分支恢复
     stations.focus(target);
     return;
   }
@@ -138,11 +160,10 @@ function railSubtitle(row: SessionRow, live: RailLive): string {
 
 // ---- 行动作 ----
 function join(sid: string, agent: string) {        // 未绑行点击:加入工位(等价 attach 路径)
-  const t = stations.pickBindTarget();
-  stations.bind(t, sid, agent);
-  const r = stationRefs[t];
-  if (r) r.bindSession(sid, agent);
-  else deliverToStation(t, { session_id: sid, agent, attach: true });
+  const t = pickIdleTarget();                      // T8:落 busy 工位会被拒理成黑洞,先挑非 busy
+  if (t === null) return;                          // 全忙:不绑不投(聚焦工位已亮提示)
+  if (!bindStation(t, sid, agent)) return;         // bindSession 拒理,路由表已回滚
+  if (!stationRefs[t]) deliverToStation(t, { session_id: sid, agent, attach: true });
   stations.focus(t);
 }
 function stopSession(sid: string) {                 // 行内「停止」(主要服务未绑行;已绑工位内另有入口)

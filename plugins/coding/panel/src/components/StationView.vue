@@ -10,7 +10,7 @@
 //   props  { focused, autoplay, defaultCwd }——focused=false 时文档级 esc/click-outside 监听
 //          直接 return(多实例共存只有聚焦工位响应);autoplay=false 时 onMounted 不跑
 //          prefillCwd/autoReplay,仅把 defaultCwd 预填进 cwd(非空才填,不回放);
-//   expose { state, dockH, onData, bindSession, unbindSession, stop, isBusy };
+//   expose { state, dockH, onData, bindSession, unbindSession, stop, isBusy, hint };
 //   emits  sid-change(sid, agent) / request-focus() / request-remove()。
 // T4 行为修订:busy(sending||streaming)期 onSend 不再静默丢弃——过与空闲同组校验后
 // store.queueInput 入队(终态自动泄放),状态行提示「已排队，本轮结束后自动发送」。
@@ -439,15 +439,19 @@ function stop(): Promise<boolean> {
 }
 
 // 壳接口:绑定/解绑会话(T6 工位加入/移出)。busy 守卫——streaming/sending 中拒绝并状态行提示
-// (防流被截断,同 commitCwd/openHistory 的拦截语义)
-function bindSession(sid: string, agent: string) {
-  if (state.sending || state.streaming) { onComposerStatus("会话进行中", true); return; }
+// (防流被截断,同 commitCwd/openHistory 的拦截语义)。T8:bindSession 返回 boolean
+// (受理 true/守卫拒绝 false),壳按返回值回滚路由表
+function bindSession(sid: string, agent: string): boolean {
+  if (state.sending || state.streaming) { onComposerStatus("会话进行中", true); return false; }
   void store.resumeSession(sid, agent);
+  return true;
 }
 function unbindSession() {
   if (state.sending || state.streaming) { onComposerStatus("会话进行中", true); return; }
   store.newChat();
 }
+// 壳侧提示通道(T8):壳(路由守卫等)借本工位状态行亮瞬时提示——内调 onComposerStatus(tip 机制)
+function hint(text: string, err = false) { onComposerStatus(text, err); }
 
 // ---- RunPill 布局(C3):bottom = footer 高 + 10 + (errbar 可见时)errbar 高,现算现贴 ----
 const footerEl = ref<HTMLElement | null>(null);
@@ -498,9 +502,10 @@ onBeforeUnmount(() => {
 });
 
 // 工位接口(T5/T6 壳依赖):state=store 响应式态(壳读 busy/waiting/usage);dockH=footer 实时高;
-// onData=init 数据投递(内调 store.handleData);bindSession/unbindSession=绑定/解绑(busy 守卫);
-// stop=esc/中断(仅 streaming 受理);isBusy=sending||streaming
-defineExpose({ state, dockH, onData, bindSession, unbindSession, stop, isBusy: busy });
+// onData=init 数据投递(内调 store.handleData);bindSession=绑定(返回受理与否,busy 守卫)/
+// unbindSession=解绑(busy 守卫);stop=esc/中断(仅 streaming 受理);isBusy=sending||streaming;
+// hint=壳侧状态行提示通道(T8)
+defineExpose({ state, dockH, onData, bindSession, unbindSession, stop, isBusy: busy, hint });
 </script>
 
 <template>
