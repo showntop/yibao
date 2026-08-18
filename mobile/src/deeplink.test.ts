@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { handlePairUrl, parseDeepPath } from "./deeplink";
+import { handleDeepUrl, handlePairUrl, parseDeepPath } from "./deeplink";
 
 const passConn = vi.fn(async () => ({ ok: true }));
 const failConn = vi.fn(async () => ({ ok: false, reason: "连不上" }));
@@ -48,6 +48,35 @@ describe("handlePairUrl", () => {
     const save = vi.fn();
     const push = vi.fn();
     const ok = await handlePairUrl("https://example.com/pair?host=x&token=y", { save, push, testConn: passConn });
+    expect(ok).toBe(false);
+    expect(save).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+  });
+});
+
+describe("handleDeepUrl", () => {
+  it("yibao://pair 深链 → 配对分支：连通校验通过后保存配置并跳 /chat", async () => {
+    const save = vi.fn();
+    const push = vi.fn();
+    const ok = await handleDeepUrl("yibao://pair?host=http%3A%2F%2F127.0.0.1%3A19527&token=abc", { save, push, testConn: passConn });
+    expect(ok).toBe(true);
+    expect(save).toHaveBeenCalledWith({ host: "http://127.0.0.1:19527", token: "abc" });
+    expect(push).toHaveBeenCalledWith("/chat");
+  });
+
+  it("yibao://approvals 深链 → 审批分支：直接 push /approvals，不保存配置", async () => {
+    const save = vi.fn();
+    const push = vi.fn();
+    const ok = await handleDeepUrl("yibao://approvals", { save, push, testConn: passConn });
+    expect(ok).toBe(true);
+    expect(push).toHaveBeenCalledWith("/approvals");
+    expect(save).not.toHaveBeenCalled(); // 已配对设备直达，深链不该碰存储
+  });
+
+  it("yibao://chat 无效路径 → 不处理：不保存不跳转", async () => {
+    const save = vi.fn();
+    const push = vi.fn();
+    const ok = await handleDeepUrl("yibao://chat", { save, push, testConn: passConn });
     expect(ok).toBe(false);
     expect(save).not.toHaveBeenCalled();
     expect(push).not.toHaveBeenCalled();

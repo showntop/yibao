@@ -32,6 +32,35 @@ describe("useApprovals", () => {
     expect(await a.decide("pa_9", true, false)).toBe("gone"); // 桌面已处理/过期
   });
 
+  it("decide 三态（M 打磨）：断网/异常返 fail，error 写「发送失败」，不弹 gone 语义也不 refresh", async () => {
+    const st = fakeStream();
+    let stateCalls = 0;
+    let confirmDown = false;
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url.endsWith("/v1/state")) {
+        stateCalls++;
+        return new Response(JSON.stringify({ ok: true, running: null,
+          pending: [{ id: "pa_3", skill_id: "s", summary: "x", risk: 2, created_at: 3 }] }), { status: 200 });
+      }
+      if (confirmDown) throw new TypeError("network down"); // /v1/confirm 断网
+      return new Response("nope", { status: 500 }); // 先走非 404 的服务端错误
+    });
+    const a = useApprovals({ host: "http://x", token: "t" } as never, st as never, fetchImpl as never);
+    await a.refresh();
+    expect(a.pendings.value).toHaveLength(1);
+    // 500（非 404）：不是「桌面已处理」，是发送失败
+    expect(await a.decide("pa_3", true, false)).toBe("fail");
+    expect(a.error.value).toContain("审批发送失败");
+    expect(a.error.value).not.toContain("拉取待批失败"); // fail 路径不 refresh，语义不被覆盖
+    expect(stateCalls).toBe(1); // 没有额外的 state 拉取
+    // 断网抛异常：同样返 fail，列表保持原样（用户可重试）
+    confirmDown = true;
+    expect(await a.decide("pa_3", true, false)).toBe("fail");
+    expect(a.error.value).toContain("审批发送失败");
+    expect(a.pendings.value).toHaveLength(1);
+    expect(stateCalls).toBe(1);
+  });
+
   it("confirmation_needed 帧驱动自动刷新", async () => {
     const st = fakeStream();
     const fetchImpl = vi.fn(async () => new Response(
