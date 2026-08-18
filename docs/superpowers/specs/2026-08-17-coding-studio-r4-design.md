@@ -16,7 +16,7 @@
 - **声明**:manifest.toml `[[panel]]` 新增 `type = "module"`,`src = "panel/dist/index.html"`;旧 `webview`/`schema`/`widget` 类型不动(tools.html/editor.html/gen 面板继续走旧 srcdoc 通道,后续各自迁移,本期不改)
 - **sidecar 侧**:`_load_panels`(plugins.py:404-448)对 module 型不读文件全文,只登记 `{type:"module", entry, mtime}`;`panel_payload`(plugins.py:361-375)下发 `{webview:{url:"yibao-plugin://<pid>/panel/dist/index.html", v:<mtime>}}` 引用——全文随事件重传问题消失;每次打开面板读最新 mtime 作版本号,文件变更前端整页刷新即热加载
 - **协议层**:Rust 注册 `yibao-plugin://<pid>/<path>` 自定义协议,从 plugins_dir 只读服务文件(路径防穿越 + MIME 映射);serve index.html 时在 `<head>` 注入 CSP + 桥 SDK `<script>`(BRIDGE_JS 注入手法从 srcdoc 挪到协议层);顺带修 `plugins_dir()`(lib.rs:1213)prod 下依赖编译机路径的隐患
-- **CSP/沙箱**:CSP:sandbox iframe(仅 allow-scripts)下 'self' 不可实现,实现为显式 scheme 白名单——`default-src 'none'; script-src/style-src yibao-plugin: 'unsafe-inline'; img-src/font-src yibao-plugin: data:; connect-src 'none'`(终审记录:按 pid 收窄 script-src 与 form-action 'none' 为阶段二跟进项)。iframe 保留 `sandbox="allow-scripts"`。
+- **CSP/沙箱**:sandbox iframe(仅 allow-scripts)下 'self' 不可实现,实现为显式 scheme 白名单——`default-src 'none'; script-src/style-src yibao-plugin: 'unsafe-inline'; img-src/font-src yibao-plugin: data:; connect-src 'none'`(终审记录:按 pid 收窄 script-src 与 form-action 'none' 为阶段二跟进项)。iframe 保留 `sandbox="allow-scripts"`。
 - **前端分流**:WebviewPanel 按 payload 分叉——带 `url` 用 iframe src(新),带 `html` 走 srcdoc(旧)
 - **桥 SDK**:postMessage 协议语义原样保留正式化(`invoke/onInit/onMessage/emitEvent`,`window.yibao`,协议带版本号);方法调用仍经 panel_action → sidecar api.toml 白名单裁决,安全模型不变;`native:pick_folder/save_attachment` 白名单保留
 - **插件工程**:repo 提供共享构建脚本 + 模板(Vite);Vue 由宿主在协议源上提供共享 `vue.esm-browser` 构建,import map 解析,插件 bundle 外置 Vue(锁宿主 Vue 大版本);第三方插件可零框架纯 JS,只依赖 `window.yibao`
