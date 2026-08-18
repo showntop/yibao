@@ -303,6 +303,11 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
             brief = f"（摘要生成失败，以下为最近对话节选）\n{excerpt}"
         on_event({"kind": "marker", "text": "resume 失败，已用交接摘要新开会话续跑"})
         state["error"] = False   # 复位，让重试自行定终态（再败由 on_event 的 error 分支重立）
+        # 新会话沿用同一 session_entry：先清旧 thread 的 usage 差分基准，
+        # 否则 fallback 轮差分被旧累计值钳 0 少报（S5-T2 评审留）
+        _entry = _SESSIONS.get(sid)
+        if isinstance(_entry, dict):
+            _entry.pop("usage_baseline", None)
         try:
             cc_sid = await runner.run(
                 f"【交接上下文】\n{brief}\n\n【用户继续】\n{prompt}", cwd,

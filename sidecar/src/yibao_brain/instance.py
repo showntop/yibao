@@ -18,6 +18,8 @@ import sys
 import time
 
 _BRAIN_PATTERN = "yibao_brain.server"
+# uv run 入口点启动形态（连字符），pgrep 正则 `.` 能匹配但 Python 字面 `in` 不行
+_BRAIN_ENTRY = "yibao-brain-server"
 
 
 def _is_brain_process(pid: int) -> bool:
@@ -30,7 +32,7 @@ def _is_brain_process(pid: int) -> bool:
     except Exception:
         return False
     cmd = r.stdout.strip()
-    return _BRAIN_PATTERN in cmd and ("python" in cmd or ".venv" in cmd)
+    return (_BRAIN_PATTERN in cmd or _BRAIN_ENTRY in cmd) and ("python" in cmd or ".venv" in cmd)
 
 
 def _kill_pid(pid: int) -> None:

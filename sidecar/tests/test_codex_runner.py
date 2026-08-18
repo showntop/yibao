@@ -539,6 +539,32 @@ def test_resume_failure_falls_back_to_brief_new_session(monkeypatch):
                for e in emitted)                               # marker 双写：也进面板流
 
 
+def test_resume_fallback_clears_usage_baseline(monkeypatch):
+    """fallback 新开会话沿用同一 session_entry：旧 thread 的 usage 差分基准先清掉，
+    否则 fallback 轮差分被旧累计值钳 0 少报（S5-T2 评审留）。"""
+    class _FlakyRunner:
+        async def run(self, prompt, cwd, *, on_event, cancel_event, resume_session_id=None, **kw):
+            if resume_session_id is not None:
+                on_event({"kind": "error", "text": "codex 异常退出（退出码 1）：encrypted_content"})
+                return None
+            on_event({"kind": "done", "usage": {}})
+            return "t-new"
+
+    monkeypatch.setattr(codingmod, "_build_brief", lambda llm, turns, git, src, dst: "摘要")
+    monkeypatch.setattr(codingmod._codex, "git_summary", lambda cwd: "")
+    db = _FakeDB()
+    db.rows["s1"] = {"id": "s1", "status": "running", "cc_session_id": "t-old", "agent": "codex"}
+    entry = {"usage_baseline": {"input_tokens": 9000, "output_tokens": 900}}  # 旧 thread 累计值
+    codingmod._SESSIONS["s1"] = entry
+    try:
+        _run(_stream(db, "s1", "/tmp", "p", _FlakyRunner(),
+                     emit_event=None, cancel=__import__("threading").Event(),
+                     resume_session_id="t-old", agent="codex", llm=object()))
+        assert "usage_baseline" not in entry                     # 重跑前已清，不钳 fallback 轮差分
+    finally:
+        codingmod._SESSIONS.pop("s1", None)
+
+
 def test_resume_failure_without_llm_keeps_failed():
     """无 llm（capability 未声明）→ 跳过 fallback 走原 failed 路径：runner 只调一次，
     终态 failed，老 thread_id 保留不抹。"""
