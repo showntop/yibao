@@ -4,6 +4,7 @@
 // pendingTurnEnded 秒败竞态、resumeSession 的 discarded 解锁、takeover 队列泄放。
 import { reactive } from "vue";
 import type { CodingEvent, HistoryMessage, PanelData, Usage } from "../lib/types";
+import { composeRefs } from "../lib/refs";
 
 export interface ToolResultInfo { text: string; isError: boolean }
 
@@ -204,7 +205,7 @@ export function createSessionStore(deps: SessionDeps) {
   async function send(cwd: string, prompt: string, mode: string, agent: string, ov: SendOverride = {}): Promise<void> {
     if (state.sending || state.streaming) return;
     const refs = ov.refs ?? [];
-    const fullPrompt = prompt + (refs.length ? `\n\n引用文件:\n${refs.map((r) => "@" + r).join("\n")}` : "");
+    const fullPrompt = prompt + composeRefs(refs); // 引用段组装唯一出处:lib/refs.ts(对齐 chat.html composeRefs)
     // handoff 分支由调用方(App)先判:currentSession && switchAgent !== curSessAgent → handoffSend
     state.sending = true;
     state.error = null;

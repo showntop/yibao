@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { doneStatusText, fmtCost, fmtTok, humanFirstLine, relTime } from "./format";
+import { doneStatusText, emsg, fmtCost, fmtTok, humanFirstLine, relTime } from "./format";
 
 describe("fmtTok", () => {
   it("千以下原样", () => {
@@ -83,6 +83,23 @@ describe("humanFirstLine", () => {
   it("全非人话 / 空文本 → 兜底文案", () => {
     expect(humanFirstLine("<err>x</err>\n at y")).toBe("执行出错（点「详情」查看全文）");
     expect(humanFirstLine("")).toBe("执行出错（点「详情」查看全文）");
+  });
+});
+
+describe("emsg", () => {
+  it("Error → message", () => {
+    expect(emsg(new Error("boom"))).toBe("boom");
+  });
+  it("非 Error 直转字符串", () => {
+    expect(emsg("plain")).toBe("plain");
+    expect(emsg(42)).toBe("42");
+  });
+  it("裸对象鸭子类型取 .message(桥 reject 不一定是 Error 实例)", () => {
+    expect(emsg({ message: "桥错误" })).toBe("桥错误");
+  });
+  it("null/undefined → 空串", () => {
+    expect(emsg(null)).toBe("");
+    expect(emsg(undefined)).toBe("");
   });
 });
 

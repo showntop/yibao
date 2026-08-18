@@ -38,6 +38,13 @@ export function doneStatusText(u?: DoneUsage | null): string {
   return parts.join(" · ");
 }
 
+// 错误对象 → 人话消息(移植 chat.html:856 emsg):鸭子类型取 .message(桥 reject 可能是
+// 裸对象而非 Error 实例),取不到 String 化,空值 → ""
+export function emsg(e: unknown): string {
+  const m = (e as { message?: unknown } | null | undefined)?.message;
+  return e && m ? String(m) : String(e || "");
+}
+
 // 数字 ts 兼容秒级(<1e12 → ×1000);坏值 → null
 function toDate(ts: number | string | null | undefined): Date | null {
   if (ts == null) return null;
