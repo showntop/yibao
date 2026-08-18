@@ -207,6 +207,8 @@ export function createSessionStore(deps: SessionDeps) {
     state.error = null;
     deps.report("sending", !!state.currentSession);
     pendingTurnEnded = false;
+    // 对齐 chat.html:清掉上一轮残留的兜底引用,防跨轮误升级
+    fallbackUserIndex = -1;
     // 用户气泡不直接画:等 user_msg 回流(带 uuid rewind 锚);超时兜底画无锚气泡
     if (pendingUserEcho) deps.clearTimer(pendingUserEcho);
     pendingUserEcho = deps.setTimer(() => {
@@ -315,7 +317,8 @@ export function createSessionStore(deps: SessionDeps) {
       takeoverQueue.push({ text, refs });
       return { queued: true };
     }
-    void send(cwd, text, mode, agent, { refs });
+    // 失败已由 state.error 承载,火忘路径不再外抛
+    void send(cwd, text, mode, agent, { refs }).catch(() => {});
     return { queued: false };
   }
 
@@ -327,7 +330,8 @@ export function createSessionStore(deps: SessionDeps) {
     if (!takeoverQueue.length || state.sending || state.streaming) return;
     // 出队即消费(校验拒发不补发,对齐现状);cwd/mode/agent 由 App 在 send 时快照提供
     const item = takeoverQueue.shift()!;
-    void pendingSendFromQueue(item);
+    // 失败已由 state.error 承载,火忘路径不再外抛
+    void pendingSendFromQueue(item).catch(() => {});
   }
   // 队列条目发送需要 cwd/mode/agent 快照,由 App 注入(send 的常规参数源)
   let queueContext: { cwd: string; mode: string; agent: string } = { cwd: "", mode: "acceptEdits", agent: "claude-code" };

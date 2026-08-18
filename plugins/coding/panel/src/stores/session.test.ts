@@ -419,3 +419,46 @@ describe("状态上报", () => {
     expect(reportArgs[reportArgs.length - 1]).toEqual(["idle", false]);
   });
 });
+
+describe("评审回归", () => {
+  // send 开窗清 fallbackUserIndex:上一轮残留兜底引用不得被新一轮 user_msg 误升级
+  it("跨轮误升级守卫:turn1 无锚气泡留存,turn2 同文本 user_msg 另起新气泡", async () => {
+    const h = heldInvoke();
+    const { deps, timers } = makeDeps(h.invoke as never);
+    const s = createSessionStore(deps);
+    // turn1:兜底定时器画无锚气泡,user_msg 永不回流
+    const p1 = s.send("/tmp", "hello", "acceptEdits", "claude-code");
+    timers[timers.length - 1].fn();
+    expect(s.state.items).toHaveLength(1);
+    expect(s.state.items[0]).not.toHaveProperty("uuid");
+    h.release({ session_id: "s1" });
+    await p1;
+    s.applyEvent(ev({ kind: "done" })); // turn1 结束,残留 fallbackUserIndex
+    // turn2:同文本再发;开窗已清兜底引用 → user_msg 回流另起新气泡
+    const p2 = s.send("/tmp", "hello", "acceptEdits", "claude-code");
+    s.applyEvent(ev({ kind: "user_msg", uuid: "u-new", text: "hello" }));
+    expect(s.state.items).toHaveLength(2);
+    expect(s.state.items[0]).toMatchObject({ type: "user", text: "hello" });
+    expect(s.state.items[0]).not.toHaveProperty("uuid"); // 旧气泡不被误升级
+    expect(s.state.items[1]).toMatchObject({ type: "user", text: "hello", uuid: "u-new" });
+    h.release({ session_id: "s1" });
+    await p2;
+  });
+
+  // send 失败:直接调用方拿到 rethrow;takeover 火忘路径吞 rejection,失败仅由 state.error 承载
+  it("失败路径:send rethrow 给直接调用方;takeoverInput 不外抛未处理 rejection", async () => {
+    const failing = () => vi.fn(async () => { throw new Error("boom"); });
+    // 直接调用:rethrow + errbar 前缀 + sending 复位
+    const { deps } = makeDeps(failing() as never);
+    const s = createSessionStore(deps);
+    await expect(s.send("/tmp", "hi", "acceptEdits", "claude-code")).rejects.toThrow("boom");
+    expect(s.state.error).toContain("启动失败:");
+    expect(s.state.sending).toBe(false);
+    // takeover 火忘路径:不抛未处理 rejection,失败落 state.error
+    const d2 = makeDeps(failing() as never);
+    const s2 = createSessionStore(d2.deps);
+    expect(s2.takeoverInput("hi", [], "/tmp", "acceptEdits", "claude-code")).toEqual({ queued: false });
+    await vi.waitFor(() => expect(s2.state.error).toContain("启动失败:"));
+    expect(s2.state.sending).toBe(false);
+  });
+});
