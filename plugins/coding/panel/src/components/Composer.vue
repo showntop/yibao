@@ -12,9 +12,10 @@
 //     单一 keydown(菜单消费的键提前 return),同元素同目标行为等价。
 //   ② textarea 非受控(无 v-model/:value):Vue 在 IME 组字期回写 value 会炸组合(vModelText
 //     有 el.composing 守卫,裸绑定没有);atInsert/clear/doSend 直读写 DOM,与原一致。
-// refs 由本组件收集,send 事件上抛;发送成功由 App 调 clear() 消费(失败保留 prompt+refs
-// 可重试,对齐原 send() 的清理时机)。busy 仅反映 store 态(禁用发送钮/现身中断),
-// 输入不锁(busy 排队语义在 store.queueInput)。多工位:每工位一个本组件实例,聚焦者的 footer 经 CSS 停靠页底。
+// refs 由本组件收集,send 事件上抛;发送成功/入队由 App 调 clear() 消费(失败保留 prompt+refs
+// 可重试,对齐原 send() 的清理时机)。busy 仅反映 store 态(中断钮现身),发送不锁——busy 期
+// send 照常上抛,由 App onSend 过同组校验后 store.queueInput 排队(T4:原 takeover-input
+// 排队路径并入 onSend)。多工位:每工位一个本组件实例,聚焦者的 footer 经 CSS 停靠页底。
 import { reactive, ref, watch } from "vue";
 import { hasBridge, invoke } from "../lib/bridge";
 import { emsg } from "../lib/format";
@@ -102,7 +103,7 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 function doSend() {
-  if (props.busy) return; // 重入守卫(对齐 send();store.send 内同有)
+  // busy 不拦(T4):busy 期入队/空闲直发由 App onSend 判(校验拒发/排队提示都在那一处)
   const ta = taEl.value;
   emit("send", ta ? ta.value : "", [...refs.value]);
 }
@@ -193,7 +194,8 @@ defineExpose({ clear, focus });
        .ctx-row 是 cwd 浮层的定位锚(position:relative,同原 chat.html) -->
   <div class="ctx-row"><slot name="ctx"></slot></div>
   <!-- 段③:快捷键行——状态位由 App 经 slot 提供(store 状态行 + 本组件瞬时提示共一位),
-       中 kbd 提示(键白动作灰),右操作钮(中断 ghost busy 期现身 / 发送 accent 主钮 busy 禁用) -->
+       中 kbd 提示(键白动作灰),右操作钮(中断 ghost busy 期现身 / 发送 accent 主钮 busy 期
+       不禁用——点击/↵ 入队,状态行提示「已排队…」) -->
   <div class="keys-row">
     <slot name="status"></slot>
     <span class="keys">
@@ -203,6 +205,6 @@ defineExpose({ clear, focus });
       <span><kbd>esc</kbd>停止</span>
     </span>
     <button v-if="busy" id="stop" class="act ghost" type="button" :disabled="stopArmed" @click="onStop">中断</button>
-    <button id="send" class="act" type="button" :disabled="busy" @click="doSend">发送</button>
+    <button id="send" class="act" type="button" @click="doSend">发送</button>
   </div>
 </template>
