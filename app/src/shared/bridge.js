@@ -22,7 +22,7 @@
     emitEvent: function (name, payload) {
       parent.postMessage({ src: "yibao-webview", event: name, payload: payload }, "*");
     },
-    // 收 host 任意消息(init 与 invoke 响应之外的,如 {type:"takeover-input", text})
+    // 收 host 任意消息(init 与 invoke 响应之外的,如 {type:"ping"})
     onMessage: function (cb) { msgCbs.push(cb); }
   };
   window.addEventListener("message", function (ev) {

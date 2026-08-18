@@ -5,8 +5,8 @@
 //   iframe → 父：{src:"yibao-webview", id, method, params}   请求调方法
 //   iframe → 父：{src:"yibao-webview", event, payload}       事件上报（无 id 无回包，父侧 emit "panel-event"）
 //   父 → iframe：{src:"yibao-host", id, ok, result|error}    回包
-//   父 → iframe：{src:"yibao-host", type:"init", data, takeover}  面板事件 data（iframe 加载完成 & data 变更时推）；takeover 标志随 init 下发
-//   父 → iframe：{src:"yibao-host", ...任意消息}              postToIframe（如 {type:"takeover-input", text}，iframe 经 yibao.onMessage 收）
+//   父 → iframe：{src:"yibao-host", type:"init", data}            面板事件 data（iframe 加载完成 & data 变更时推）
+//   父 → iframe：{src:"yibao-host", ...任意消息}                  postToIframe（如 {type:"ping"}，iframe 经 yibao.onMessage 收）
 // 父侧只做命名空间粗筛（method 须以当前面板插件 id 开头）+ event.source 校验；L2 确认条由 PanelApp 闭环。
 // module 面板(R4):props.url 非空时走 iframe src(yibao-plugin://),桥由协议层注入;srcdoc 路径行为不变。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
@@ -20,7 +20,6 @@ const props = defineProps<{
   url?: string; // module 面板 URL（yibao-plugin://，桥由协议层注入，CSP 见 plugin_proto.rs）
   v?: number; // module 面板内容版本（入口 mtime）：变 → :key 变 → iframe 重载（热加载）
   data: Record<string, unknown>; // panel 事件注入的数据（init 推给 iframe）
-  takeover?: boolean; // 接管标志：随 init 载荷下发给 iframe（默认 false，不下传则 iframe 保留自带输入框）
 }>();
 
 const emit = defineEmits<{
@@ -144,13 +143,13 @@ function onEvent(e: BrainEvent) {
   }
 }
 
-/** 把面板事件 data 推给 iframe（加载完成时 + data 变更时；同面板重发不重建 iframe）。takeover 标志随 init 下发。 */
+/** 把面板事件 data 推给 iframe（加载完成时 + data 变更时；同面板重发不重建 iframe）。 */
 function postInit() {
-  replyToIframe({ type: "init", data: props.data, takeover: props.takeover ?? false });
+  replyToIframe({ type: "init", data: props.data });
 }
 watch(() => props.data, postInit);
 
-/** 父 → iframe 任意消息（如 {type:"takeover-input", text}）：iframe 经 yibao.onMessage 收。去 Proxy 范式同 replyToIframe。 */
+/** 父 → iframe 任意消息（如 {type:"ping"}）：iframe 经 yibao.onMessage 收。去 Proxy 范式同 replyToIframe。 */
 function postToIframe(msg: Record<string, unknown>) {
   const plain = JSON.parse(JSON.stringify(msg)) as Record<string, unknown>;
   iframeEl.value?.contentWindow?.postMessage({ src: "yibao-host", ...plain }, "*");

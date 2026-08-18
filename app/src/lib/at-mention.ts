@@ -42,7 +42,7 @@ export function formatContextPrefix(contexts: InputContext[]): string {
   return lines.join("\n") + "\n\n";
 }
 
-/** file contexts → 相对路径数组（coding takeover 转发 iframe 组装 @refs 用）。 */
+/** file contexts → 相对路径数组（coding 面板 @refs 组装用）。 */
 export function fileRefPaths(contexts: InputContext[]): string[] {
   return contexts.filter((c) => c.kind === "file" && !!c.path).map((c) => c.path as string);
 }

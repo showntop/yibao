@@ -8,17 +8,14 @@ import { parseAtTrigger, stripAtTrigger, type InputContext } from "../lib/at-men
 
 // busy = 生成/播报中（可打断）；listening = 录音中（麦克风切声波态，点击=取消录音）
 // draft = 外部预填草稿（主屏 Feed 点击带上下文来）；变化即填入并聚焦
-// takeover = 编码智能体接管（coding 面板打开）：文本直送编码会话、不经过译宝大脑，
-//            主按钮不显示停止态、发送不触发 brain interrupt（打断语义归编码会话）
 const props = withDefaults(
   defineProps<{
     busy?: boolean;
     listening?: boolean;
     draft?: string;
     placeholder?: string;
-    takeover?: boolean;
   }>(),
-  { placeholder: "对译宝说点什么…（shift+回车换行）", takeover: false },
+  { placeholder: "对译宝说点什么…（shift+回车换行）" },
 );
 const emit = defineEmits<{
   (e: "submit", text: string, contexts: InputContext[]): void;
@@ -288,9 +285,8 @@ function onMic() {
   else emit("mic");
 }
 
-/** 右端主按钮：生成/播报中=打断、其余=发送（无内容置灰）；聆听时取消录音归麦克风，主按钮仍是发送。
- * takeover（编码接管）时不进入停止态——busy 是译宝大脑的状态，接管期间发送不应打断它。 */
-const stopping = computed(() => props.busy && !props.listening && !props.takeover);
+/** 右端主按钮：生成/播报中=打断、其余=发送（无内容置灰）；聆听时取消录音归麦克风，主按钮仍是发送。 */
+const stopping = computed(() => props.busy && !props.listening);
 
 function onMain() {
   // 生成/播报中：有输入文字 → 打断并发送新消息；无文字 → 仅打断
@@ -337,7 +333,7 @@ function insertText(t: string) {
   inputRef.value?.focus();
 }
 
-// 全局唤起等外部焦点请求（反射键唤起后输入就绪）；insertText 供接管方注入文本
+// 全局唤起等外部焦点请求（反射键唤起后输入就绪）；insertText 供面板 insert-draft 注入文本
 defineExpose({ focus: () => inputRef.value?.focus(), insertText });
 </script>
 

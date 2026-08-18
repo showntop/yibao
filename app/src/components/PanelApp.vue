@@ -2,7 +2,7 @@
 // 面板窗根组件：标题栏（可拖动 + 面板名 + 关闭）/ 单条快批 / 错误细条 / SchemaPanel 撑满。
 // 工作台条（v2 §5）：面板是手、译宝是脑——条上有团子（状态同步）+ 上下文 chip + 输入条，
 // 对话走同一大脑；面板内容作为 focus 上报，注入 LLM 上下文（「这个/它」有解）。
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import SchemaPanel from "./SchemaPanel.vue";
@@ -28,7 +28,7 @@ import {
   rememberLabelForSkill,
 } from "../lib/brain";
 import { procLabel, procSkip, procResultSuffix } from "../lib/proc";
-import { fileRefPaths, formatContextPrefix, type InputContext } from "../lib/at-mention";
+import { formatContextPrefix, type InputContext } from "../lib/at-mention";
 import type { WebviewPayload } from "../lib/webview-source";
 
 // 当前面板：kind="panel" 事件整体替换刷新（webview 非空 → webview 面板，否则 schema 面板）
@@ -56,8 +56,7 @@ const focus = ref<PanelFocus | null>(null); // 当前面板焦点（同步给大
 const chipText = computed(() => {
   const t = focus.value?.item?.title;
   if (typeof t !== "string" || !t) return "";
-  // coding 接管：title 自带状态（「编码对话（运行中）」），直用不加「在看：」前缀
-  return isCoding.value ? t : `在看：${t}`;
+  return `在看：${t}`;
 });
 // ---- 对话浮层（工作台条上方）：输入/回复都留痕成时间线；一轮结束几秒后自动收起，角标可重开 ----
 // proc = 过程展示行（工具调用，样式同 hint 淡色小字）
@@ -76,13 +75,6 @@ const layerVisible = ref(false);
 const listeningHint = ref(false); // 聆听占位行（识别完替换为用户气泡）
 const layerRef = ref<HTMLElement | null>(null);
 let collapseTimer: ReturnType<typeof setTimeout> | null = null;
-
-// ---- 逃生口「问团子」（P2）：takeover 中浮层底部 mini 输入行，直问译宝大脑（绕过 coding 路由）----
-const askText = ref("");
-// 浮层收起即清空 mini 输入，下次打开不留残稿
-watch(layerVisible, (v) => {
-  if (!v) askText.value = "";
-});
 
 function openLayer() {
   layerVisible.value = true;
@@ -130,20 +122,10 @@ function computeFocus(cur: typeof current.value): PanelFocus | null {
 
 /** 面板内容统一入口：赋值 + 重算焦点 + 上报大脑 + 会话分流 surface 随插件切换。 */
 function setCurrent(v: typeof current.value) {
-  const wasCoding = isCoding.value;
   current.value = v;
   focus.value = computeFocus(v);
   if (focus.value) setSurface(`panel:${focus.value.plugin}`);
   void reportPanelContext(focus.value).catch(() => {});
-  if (!wasCoding && isCoding.value) {
-    // 接管回执：翻进 coding 的瞬间推一次（pushMsg 自带 openLayer）；submit 不 pushMsg 用户行，历史不双写
-    pushMsg("hint", "编码智能体已接管输入条，直接对它说任务；关闭或切走面板即交还");
-  } else if (wasCoding && !isCoding.value) {
-    // 切走/关闭：WebviewPanel :key 重建、事件自然断流，无需清理；codingBusy 一并复位，
-    // avatar 仅停在接管 work 时复位
-    codingBusy.value = false;
-    if (state.value === "work") state.value = "idle";
-  }
 }
 
 function onEvent(e: BrainEvent) {
@@ -291,12 +273,6 @@ const barRef = ref<HTMLElement | null>(null);
 
 function submit(text: string, contexts: InputContext[] = []) {
   errorText.value = "";
-  // 接管：coding 面板期间文本直送 iframe 编码会话——不 pushMsg、不 runInput，防历史双写；
-  // @ 文件 chips 的相对路径随 refs 转发，iframe 侧组装进 prompt（composeRefs）
-  if (isCoding.value) {
-    webviewRef.value?.postToIframe({ type: "takeover-input", text, refs: fileRefPaths(contexts) });
-    return;
-  }
   const t = formatContextPrefix(contexts) + text;
   pushMsg("user", t); // 输入立刻有落点（浮层时间线）
   void runInput(t).catch((err) => {
@@ -304,29 +280,7 @@ function submit(text: string, contexts: InputContext[] = []) {
   });
 }
 
-/** 逃生口 mini 提交：直走译宝大脑（原 runInput 路径，面板 focus 已在大脑上下文里），
- *  绕过 submit 的 isCoding 路由——takeover 中也能问团子，不打断编码会话。 */
-function submitBrain(text: string) {
-  const t = text.trim();
-  if (!t) return;
-  errorText.value = "";
-  askText.value = "";
-  pushMsg("user", t); // 输入立刻有落点（浮层时间线）
-  void runInput(t).catch((err) => {
-    errorText.value = "发送失败：" + String(err);
-  });
-}
-
-// mini 输入 IME 守卫（同 InputBar：WebKit 下 compositionend 先于确认 Enter 的 keydown，
-// 该 keydown 的 isComposing 已为 false——记 compositionend 时间戳，50ms 窗口内的 Enter 一并拦截）
-let askCompEnd = 0;
-function onAskEnter(e: KeyboardEvent) {
-  if (e.isComposing || Date.now() - askCompEnd < 50) return;
-  submitBrain(askText.value);
-}
-
 function onMic() {
-  if (isCoding.value) return; // 接管期语音不发起（InputBar takeover 不屏蔽 onMic，接线处保证互斥）
   void voiceStart().catch((err) => {
     errorText.value = "语音失败：" + String(err);
   });
@@ -334,18 +288,12 @@ function onMic() {
 
 function onInterrupt() {
   if (!busy.value) return;
-  // 接管：打断语义归编码会话，不调 brain interrupt（InputBar takeover 已屏蔽 stopping，此处双保险）
-  if (isCoding.value) {
-    webviewRef.value?.postToIframe({ type: "takeover-stop" });
-    return;
-  }
   void interrupt().catch(() => {});
 }
 
-/** 聆听中点团子 = 取消录音；takeover 中 = 逃生口（开浮层，底部 mini 输入行直问大脑）；否则聚焦输入框。 */
+/** 聆听中点团子 = 取消录音；否则聚焦输入框。 */
 function onPetTap() {
   if (state.value === "listen") onInterrupt();
-  else if (isCoding.value) openLayer();
   else focusInput();
 }
 
@@ -382,59 +330,16 @@ const webviewHtml = computed(() => current.value?.webview?.html ?? "");
 const webviewUrl = computed(() => current.value?.webview?.url ?? "");
 const webviewV = computed(() => current.value?.webview?.v ?? 0);
 
-// ---- coding 接管（P1）：coding 面板打开时 InputBar 直送 iframe 编码会话，不进译宝大脑 ----
-const webviewRef = ref();
 const inputBarRef = ref();
-// T9 泛化：coding:* 的 webview/module 面板都算接管（chat.html 退役后 coding:studio 生效）；
-// coding:wall 是 schema 面板——webviewHtml/webviewUrl 均空，天然排除
-const isCoding = computed(
-  () => !!current.value && current.value.panel.startsWith("coding:") && !!(webviewHtml.value || webviewUrl.value),
-);
-// coding 运行闸：只由 iframe 的 takeover-state 维护，与 state 解耦——大脑事件（final_reply/
-// interrupted/error 把 state 打回 idle）不再让 esc 转发静默失效
-const codingBusy = ref(false);
 
-// takeover-state → 中文状态文案（上报大脑上下文的 item.title 用）
-const CODING_STATE_LABEL: Record<string, string> = {
-  sending: "提交中",
-  streaming: "运行中",
-  waiting: "等待审批",
-  idle: "空闲",
-};
-
-/** iframe 面板事件：takeover-state 驱动团子 avatar + 上报大脑上下文；insert-draft 回输 InputBar 草稿。 */
+/** iframe 面板事件：insert-draft 回输 InputBar 草稿。 */
 function onPanelEvent(name: string, payload: any) {
-  if (name === "takeover-state") {
-    const st = typeof payload?.state === "string" ? payload.state : "idle";
-    // esc 转发闸只认 codingBusy：大脑事件把 state 打回 idle 也不影响中断转发
-    codingBusy.value = st !== "idle";
-    // 状态打架取舍：takeover 期间 submit 不进大脑，大脑的 state 迁移基本不会发生；若大脑正在
-    // 说话/思考时用户打开 coding 面板，这里以 coding 状态为准（非 idle 一律 work），不加额外锁；
-    // avatar 仍走共享 state，大脑事件盖掉 coding 的 work 属装饰性漂移，接受（esc 已不看它）
-    state.value = st === "idle" ? "idle" : "work";
-    void reportPanelContext({
-      plugin: "coding",
-      panel: current.value?.panel.split(":")[1] ?? "studio", // T9：面板名跟实际 ref 走（chat 退役 → studio）
-      item: {
-        id: payload?.session ? "session" : "coding",
-        title: `编码对话（${CODING_STATE_LABEL[st] ?? st}）`,
-        status: st,
-      },
-    }).catch(() => {});
-  } else if (name === "insert-draft") {
+  if (name === "insert-draft") {
     inputBarRef.value?.insertText(payload?.text ?? "");
   }
 }
 
-/** esc 转发：coding 运行中按 esc → 中断编码会话（PanelApp 现有无 esc 监听，不抢浮层等既有语义）。 */
-function onKeydown(e: KeyboardEvent) {
-  if (e.key === "Escape" && isCoding.value && codingBusy.value) {
-    webviewRef.value?.postToIframe({ type: "takeover-stop" });
-  }
-}
-
 onMounted(async () => {
-  document.addEventListener("keydown", onKeydown); // coding 接管期 esc 转发
   unlisten = await onBrainEvent(onEvent);
   unlistenApprovals = onPendingConfirms((items) => {
     pendingConfirms.value = items.filter((item) => item.surface?.startsWith("panel"));
@@ -452,7 +357,6 @@ onMounted(async () => {
   });
 });
 onUnmounted(() => {
-  document.removeEventListener("keydown", onKeydown);
   unlisten?.();
   unlistenFocus?.();
   unlistenApprovals?.();
@@ -493,13 +397,11 @@ onUnmounted(() => {
       <WebviewPanel
         v-if="current && (webviewHtml || webviewUrl)"
         :key="current.panel"
-        ref="webviewRef"
         :panel="current.panel"
         :html="webviewHtml"
         :url="webviewUrl"
         :v="webviewV"
         :data="current.data"
-        :takeover="isCoding"
         @panel-event="onPanelEvent"
       />
       <SchemaPanel
@@ -519,8 +421,7 @@ onUnmounted(() => {
     <!-- 工作台条：对话浮层（输入/回复时间线）+ 团子 + 上下文 chip + 输入条 -->
     <div ref="barRef" class="bench">
       <transition name="pop">
-        <!-- takeover 时空消息也渲染浮层：逃生口 mini 输入行要有落点 -->
-        <div v-if="layerVisible && (msgs.length || listeningHint || isCoding)" ref="layerRef" class="thread">
+        <div v-if="layerVisible && (msgs.length || listeningHint)" ref="layerRef" class="thread">
           <button class="thread-x" title="收起" aria-label="收起对话" @click="layerVisible = false">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -548,20 +449,6 @@ onUnmounted(() => {
             <YbIcon class="t-ic" name="mic" :size="12" />
             <span>聆听中…（点团子取消）</span>
           </div>
-          <!-- 逃生口 mini 输入行（仅 takeover 渲染）：单行 input + 发送钮，直问译宝大脑 -->
-          <div v-if="isCoding" class="ask-row">
-            <input
-              v-model="askText"
-              class="ask-input"
-              type="text"
-              placeholder="问团子…（不打断编码会话）"
-              @keydown.enter.exact.prevent="onAskEnter"
-              @compositionend="askCompEnd = Date.now()"
-            />
-            <button type="button" class="ask-send" :disabled="!askText.trim()" @click="submitBrain(askText)">
-              发送
-            </button>
-          </div>
         </div>
       </transition>
       <div class="bench-bar">
@@ -578,8 +465,6 @@ onUnmounted(() => {
           ref="inputBarRef"
           :busy="busy"
           :listening="state === 'listen'"
-          :takeover="isCoding"
-          :placeholder="isCoding ? '编码智能体接管中，直接说任务…' : undefined"
           @submit="submit"
           @mic="onMic"
           @interrupt="onInterrupt"
@@ -873,42 +758,6 @@ onUnmounted(() => {
 }
 .t-row.is-fail {
   color: var(--yb-danger);
-}
-/* 逃生口 mini 输入行：thread 底部单行 input + accent 发送钮，与 thread 同玻璃调性 */
-.ask-row {
-  display: flex;
-  align-items: center;
-  gap: var(--yb-space-2);
-  padding-top: 2px;
-}
-.ask-input {
-  flex: 1;
-  min-width: 0;
-  padding: 5px 10px;
-  border: 1px solid var(--yb-surface-border);
-  border-radius: var(--yb-radius-md);
-  background: var(--yb-surface);
-  color: var(--yb-text);
-  font-size: var(--yb-fs-md);
-  font-family: inherit;
-  outline: none;
-}
-.ask-input:focus {
-  border-color: var(--yb-accent);
-}
-.ask-send {
-  flex-shrink: 0;
-  border: none;
-  border-radius: var(--yb-radius-md);
-  padding: 5px 14px;
-  background: var(--yb-accent);
-  color: var(--yb-text-on-accent);
-  font-size: var(--yb-fs-md);
-  cursor: pointer;
-}
-.ask-send:disabled {
-  opacity: 0.5;
-  cursor: default;
 }
 .thread-open {
   width: 28px;
