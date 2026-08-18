@@ -50,11 +50,11 @@
 
 ### F. 落地顺序(每步独立可验收)
 
-1. 插件运行时:`yibao-plugin://` 协议 + SDK 注入 + manifest module 类型 + 构建模板(hello 面板打通全链路)
-2. coding 前端重写:单工位能力对齐现状,替换 chat.html
-3. 多工位:工位区 + 会话列表左栏 + 聚焦路由输入条
-4. 统一 review 栏 + permission_resolved 广播
-5. 收口:wall.schema.json 退役、文档更新;顺带清留档小修四件(codex resume brief fallback、usage baseline 持久化、手机端 coding 待批卡、takeover 非 file contexts 丢弃)
+1. 插件运行时:`yibao-plugin://` 协议 + SDK 注入 + manifest module 类型 + 构建模板(hello 面板打通全链路) ✅(2026-08-19)
+2. coding 前端重写:单工位能力对齐现状,替换 chat.html ✅(2026-08-19)
+3. 多工位:工位区 + 会话列表左栏 + 聚焦路由输入条 ✅(2026-08-19)
+4. 统一 review 栏 + permission_resolved 广播 ✅(2026-08-19)
+5. 收口:wall.schema.json 退役、文档更新;顺带清留档小修四件(codex resume brief fallback、usage baseline 持久化、手机端 coding 待批卡、takeover 非 file contexts 丢弃——退役即关闭(阶段三 T7)) ✅(2026-08-19)
 
 ## 非目标
 
