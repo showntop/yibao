@@ -899,6 +899,47 @@ fn save_attachment(data: String, ext: String) -> Result<String, String> {
     Ok(path.to_string_lossy().into_owned())
 }
 
+/// 保存文件到用户指定位置（图片转 PDF 等面板产物落盘）：base64 → 保存对话框选位 → 写文件。
+/// webview iframe 无 Tauri IPC，面板经 WebviewPanel `native:` 白名单旁路直调本命令；
+/// 对话框必须 Rust 侧开（对照 pick_folder 的 async 死锁注释：blocking_save_file 同样
+/// 内部 run_on_main_thread + 原地阻塞，必须 async 跑在异步线程上）。
+/// 用户取消返回 None。
+#[tauri::command]
+async fn save_file(
+    window: tauri::Window,
+    data: String,
+    default_name: String,
+) -> Result<Option<String>, String> {
+    use base64::Engine;
+    use tauri_plugin_dialog::DialogExt;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data.trim())
+        .map_err(|e| format!("文件 base64 解码失败：{e}"))?;
+    if bytes.len() > 50 * 1024 * 1024 {
+        return Err("文件过大（>50MB）".into());
+    }
+    // 默认名只取文件名部分（去路径分隔符），防路径注入；空则兜底 untitled
+    let name = default_name
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or("untitled")
+        .to_string();
+    let name = if name.is_empty() { "untitled".to_string() } else { name };
+    let file = window
+        .app_handle()
+        .dialog()
+        .file()
+        .set_title("保存文件")
+        .set_parent(&window)
+        .set_file_name(&name)
+        .blocking_save_file();
+    let Some(path) = file.and_then(|p| p.into_path().ok()) else {
+        return Ok(None); // 用户取消
+    };
+    std::fs::write(&path, &bytes).map_err(|e| format!("写文件失败：{e}"))?;
+    Ok(Some(path.to_string_lossy().into_owned()))
+}
+
 /// 看门狗：每 5s 发 ping；运行中 >15s 无 pong 视为疑似僵死。
 /// 两轮确认：第一轮只补发 ping 并标记 warned，下一轮仍无 pong 才 kill（由桥任务 Terminated 统一重启）——
 /// macOS App Nap/休眠会把整个壳挂起，苏醒后 last_pong 时间跳变，单轮判断会误杀健康大脑。
@@ -2387,7 +2428,8 @@ pub fn run() {
             close_home_window,
             set_pet_expanded,
             pick_folder,
-            save_attachment
+            save_attachment,
+            save_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

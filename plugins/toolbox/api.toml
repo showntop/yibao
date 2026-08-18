@@ -19,3 +19,8 @@ direct = true
 name = "timestamp"
 handler = "toolbox.timestamp"
 direct = true
+
+[[method]]
+name = "img2pdf"
+handler = "toolbox.img2pdf"
+direct = true

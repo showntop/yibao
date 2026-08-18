@@ -190,6 +190,21 @@
   .find-count { flex: none; min-width: 46px; text-align: center; font-size: 11px; color: var(--faint); }
   .find-bar button.mini { flex: none; }
   #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* ---- 图片转 PDF ---- */
+  #page-imgpdf { flex: 1; display: flex; flex-direction: column; min-height: 0; gap: 10px; }
+  label.file-btn { cursor: pointer; }
+  label.file-btn:hover { background: var(--accent-soft); color: var(--accent-deep); }
+  .imgs { overflow: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px; max-height: 230px; }
+  .img-item { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border: 1px solid var(--border-soft); border-radius: 10px; }
+  .img-item .idx { flex: none; width: 24px; text-align: center; font-size: 11px; color: var(--faint); }
+  .img-item .thumb { flex: none; width: 46px; height: 46px; object-fit: cover; border-radius: 7px; border: 1px solid var(--border-soft); background: #fff; }
+  .img-item .meta { flex: 1; min-width: 0; }
+  .img-item .nm { font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .img-item .sz { font-size: 11px; color: var(--faint); }
+  .opts { display: flex; flex-wrap: wrap; gap: 10px; padding: 8px 12px; align-items: center; }
+  .ts-v.mono { font-family: var(--mono); word-break: break-all; white-space: normal; }
+
 </style>
 </head>
 <body>
@@ -197,6 +212,7 @@
   <button id="tab-json" class="on">JSON 格式化</button>
   <button id="tab-diff">文本对比</button>
   <button id="tab-ts">时间戳</button>
+  <button id="tab-imgpdf">图片转 PDF</button>
 </div>
 
 <!-- 面板内搜索（⌘F 唤起；Tauri webview 无原生 Find，需面板自实现） -->
@@ -311,6 +327,69 @@
   </div>
 </div>
 
+<!-- 图片转 PDF -->
+<div id="page-imgpdf" class="hidden">
+  <div class="card">
+    <div class="card-head">图片 <span class="muted" id="ip-count"></span>
+      <span class="spacer"></span>
+      <label class="mini file-btn" title="多选图片">＋ 选择图片
+        <input type="file" id="ip-file" accept="image/*" multiple hidden>
+      </label>
+    </div>
+    <div class="imgs" id="ip-list"></div>
+  </div>
+  <div class="card">
+    <div class="card-head">页面设置 <span class="muted">全部图片合为一个 PDF，按列表顺序排页</span></div>
+    <div class="opts">
+      <label class="opt">页面
+        <select id="ip-size">
+          <option value="auto">按图片</option>
+          <option value="a4">A4</option>
+          <option value="letter">Letter</option>
+        </select>
+      </label>
+      <label class="opt">方向
+        <select id="ip-orient">
+          <option value="auto">自动</option>
+          <option value="portrait">纵向</option>
+          <option value="landscape">横向</option>
+        </select>
+      </label>
+      <label class="opt">边距
+        <select id="ip-margin">
+          <option value="0" selected>0 mm</option>
+          <option value="10">10 mm</option>
+          <option value="20">20 mm</option>
+        </select>
+      </label>
+      <label class="opt">分辨率
+        <select id="ip-dpi">
+          <option value="144" selected>144 dpi</option>
+          <option value="72">72 dpi</option>
+          <option value="216">216 dpi</option>
+          <option value="300">300 dpi</option>
+        </select>
+      </label>
+    </div>
+    <div class="toolbar">
+      <button class="act" id="ip-run">转为 PDF</button>
+      <button class="act ghost" id="ip-clear">清空</button>
+      <span class="spacer"></span>
+      <span class="hint">PNG / JPEG / WebP / GIF / BMP / TIFF</span>
+    </div>
+  </div>
+  <div class="banner err hidden" id="ip-err"></div>
+  <div class="card hidden" id="ip-out-card">
+    <div class="card-head">结果 <span class="muted" id="ip-out-info"></span>
+      <span class="spacer"></span>
+      <button class="mini" id="ip-copy-path">复制路径</button>
+    </div>
+    <div class="ts-out">
+      <div class="ts-row"><span class="ts-k">保存位置</span><span class="ts-v mono" id="ip-out-path"></span></div>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -349,13 +428,16 @@
     $("tab-json").className = t === "json" ? "on" : "";
     $("tab-diff").className = t === "diff" ? "on" : "";
     $("tab-ts").className = t === "timestamp" ? "on" : "";
+    $("tab-imgpdf").className = t === "img2pdf" ? "on" : "";
     $("page-json").className = t === "json" ? "" : "hidden";
     $("page-diff").className = t === "diff" ? "" : "hidden";
     $("page-ts").className = t === "timestamp" ? "" : "hidden";
+    $("page-imgpdf").className = t === "img2pdf" ? "" : "hidden";
   }
   $("tab-json").addEventListener("click", function () { showTab("json"); });
   $("tab-diff").addEventListener("click", function () { showTab("diff"); });
   $("tab-ts").addEventListener("click", function () { showTab("timestamp"); });
+  $("tab-imgpdf").addEventListener("click", function () { showTab("img2pdf"); });
 
   // ---- Unix 时间戳：当前时间实时刷新 + 输入即转（纯前端，无需后端） ----
   var tsTimer = null;
@@ -739,6 +821,122 @@
     clearHl(edOld, hlOld); clearHl(edNew, hlNew);
   });
 
+  // ---- 图片转 PDF：选图 → base64 → 后端转换 → native:save_file 弹框落盘 ----
+  var ipImgs = []; // {name, size, thumb(dataURL), data(base64 无前缀)}
+  function ipReadFile(file) {
+    return new Promise(function (resolve) {
+      var r = new FileReader();
+      r.onload = function () {
+        var du = r.result;
+        resolve({ name: file.name, size: file.size, thumb: du, data: du.slice(du.indexOf(",") + 1) });
+      };
+      r.onerror = function () { resolve(null); };
+      r.readAsDataURL(file);
+    });
+  }
+  function ipRender() {
+    var list = $("ip-list");
+    list.innerHTML = "";
+    ipImgs.forEach(function (it, i) {
+      var row = document.createElement("div");
+      row.className = "img-item";
+      var idx = document.createElement("span");
+      idx.className = "idx"; idx.textContent = String(i + 1);
+      var thumb = document.createElement("img");
+      thumb.className = "thumb"; thumb.src = it.thumb; thumb.alt = "";
+      var meta = document.createElement("div");
+      meta.className = "meta";
+      var nm = document.createElement("div");
+      nm.className = "nm"; nm.textContent = it.name;
+      var sz = document.createElement("div");
+      sz.className = "sz";
+      sz.textContent = it.size > 1048576 ? (it.size / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(it.size / 1024)) + " KB";
+      meta.appendChild(nm); meta.appendChild(sz);
+      var bUp = document.createElement("button");
+      bUp.className = "mini"; bUp.textContent = "↑"; bUp.title = "上移";
+      bUp.addEventListener("click", function () {
+        if (i > 0) { var t = ipImgs[i - 1]; ipImgs[i - 1] = ipImgs[i]; ipImgs[i] = t; ipRender(); }
+      });
+      var bDn = document.createElement("button");
+      bDn.className = "mini"; bDn.textContent = "↓"; bDn.title = "下移";
+      bDn.addEventListener("click", function () {
+        if (i < ipImgs.length - 1) { var t = ipImgs[i + 1]; ipImgs[i + 1] = ipImgs[i]; ipImgs[i] = t; ipRender(); }
+      });
+      var bDel = document.createElement("button");
+      bDel.className = "mini"; bDel.textContent = "✕"; bDel.title = "删除";
+      bDel.addEventListener("click", function () {
+        ipImgs.splice(i, 1); ipRender();
+      });
+      row.appendChild(idx); row.appendChild(thumb); row.appendChild(meta);
+      row.appendChild(bUp); row.appendChild(bDn); row.appendChild(bDel);
+      list.appendChild(row);
+    });
+    $("ip-count").textContent = ipImgs.length ? ipImgs.length + " 张" : "";
+  }
+  $("ip-file").addEventListener("change", function () {
+    var files = Array.prototype.slice.call($("ip-file").files || []);
+    if (!files.length) return;
+    hide($("ip-err"));
+    Promise.all(files.map(ipReadFile)).then(function (items) {
+      items.filter(Boolean).forEach(function (it) { ipImgs.push(it); });
+      $("ip-file").value = "";
+      ipRender();
+    });
+  });
+  function ipSave(data) {
+    hide($("ip-err"));
+    window.yibao.invoke("native:save_file", {
+      data: data.pdf_data, defaultName: data.name || "images.pdf"
+    }).then(function (saved) {
+      if (saved === null || saved === undefined) { toast("已取消保存"); return; }
+      $("ip-out-info").textContent = (data.count || "?") + " 页 · " + (data.size_bytes / 1024 / 1024).toFixed(2) + " MB";
+      $("ip-out-path").textContent = saved;
+      show($("ip-out-card"));
+      toast("PDF 已保存");
+    }).catch(function (e) {
+      $("ip-err").textContent = e && e.message ? e.message : String(e || "保存失败");
+      show($("ip-err"));
+    });
+  }
+  function ipRun() {
+    hide($("ip-err"));
+    hide($("ip-out-card"));
+    if (!ipImgs.length) {
+      $("ip-err").textContent = "请先选择图片";
+      show($("ip-err"));
+      return;
+    }
+    var runBtn = $("ip-run");
+    var oldTxt = runBtn.textContent;
+    runBtn.disabled = true;
+    runBtn.textContent = "转换中…";
+    window.yibao.invoke("toolbox.img2pdf", {
+      pages: ipImgs.map(function (it) { return { data: it.data, name: it.name }; }),
+      page_size: $("ip-size").value,
+      orientation: $("ip-orient").value,
+      margin_mm: parseInt($("ip-margin").value, 10),
+      dpi: parseInt($("ip-dpi").value, 10)
+    }).then(function (r) {
+      if (!r || !r.pdf_data) throw new Error("后端未返回 PDF 数据");
+      ipSave(r);
+    }).catch(function (e) {
+      $("ip-err").textContent = e && e.message ? e.message : String(e || "转换失败");
+      show($("ip-err"));
+    }).finally(function () {
+      runBtn.disabled = false;
+      runBtn.textContent = oldTxt;
+    });
+  }
+  $("ip-run").addEventListener("click", ipRun);
+  $("ip-clear").addEventListener("click", function () {
+    ipImgs = []; ipRender();
+    hide($("ip-err")); hide($("ip-out-card"));
+  });
+  $("ip-copy-path").addEventListener("click", function () {
+    var p = $("ip-out-path").textContent;
+    if (p) copyText(p);
+  });
+
   // ---- 快捷键：⌘/Ctrl + Enter 执行当前页主操作 ----
   document.addEventListener("keydown", function (e) {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
@@ -768,7 +966,9 @@
   // 避免覆盖用户后续编辑。
   window.yibao.onInit(function (data) {
     if (!data || !data.tool) return;
-    showTab(data.tool === "diff" ? "diff" : data.tool === "timestamp" ? "timestamp" : "json");
+    showTab(data.tool === "diff" ? "diff"
+      : data.tool === "timestamp" ? "timestamp"
+      : data.tool === "img2pdf" ? "img2pdf" : "json");
     if (data.tool === "json") {
       var cur = $("json-in").value;
       if (typeof data.output === "string" && data.output &&
@@ -800,6 +1000,10 @@
         $("ts-o-local").textContent = data.local;
         show($("ts-out-card"));
       }
+    } else if (data.tool === "img2pdf") {
+      // 对话流（LLM 给路径转换）带结果：面板列表为空时才展示结果卡可直接保存；
+      // 面板内手动直调已由 ipRun 处理，这里跳过避免重复弹保存框。
+      if (data.pdf_data && !ipImgs.length) ipSave(data);
     }
   });
 })();
