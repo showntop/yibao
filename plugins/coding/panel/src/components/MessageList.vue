@@ -9,7 +9,6 @@ import type { RenderItem } from "../stores/session";
 import AssistantBubble from "./AssistantBubble.vue";
 import ToolCard from "./ToolCard.vue";
 import FileEditCard from "./FileEditCard.vue";
-import PermCard from "./PermCard.vue";
 import MarkerLine from "./MarkerLine.vue";
 import HandoffCard from "./HandoffCard.vue";
 
@@ -66,7 +65,6 @@ function onClick(e: MouseEvent) {
       <AssistantBubble v-else-if="it.type === 'assistant'" :item="it" />
       <ToolCard v-else-if="it.type === 'tool'" :item="it" />
       <FileEditCard v-else-if="it.type === 'fileedit'" :item="it" />
-      <PermCard v-else-if="it.type === 'perm'" :item="it" />
       <MarkerLine v-else-if="it.type === 'marker'" :text="it.text" :err="it.err" />
       <HandoffCard
         v-else-if="it.type === 'handoff'"

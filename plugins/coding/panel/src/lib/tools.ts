@@ -1,5 +1,5 @@
-// 工具卡/审批卡的纯展示助手(移植 chat.html:1363-1389 工具图标与意图摘要、
-// :1478-1491 结果计数、:1537-1544 审批动词映射)。DOM 无关,node 可测。
+// 工具卡的纯展示助手(移植 chat.html:1363-1389 工具图标与意图摘要、
+// :1478-1491 结果计数)。DOM 无关,node 可测。
 
 // 工具图标:emoji/字符与现有 ✎/🔐 风格一致;未列出的工具默认 ⚙
 const TOOL_ICONS: Record<string, string> = {
@@ -46,16 +46,4 @@ export function resultTally(tool: string, text: string): string {
     return lines.length ? lines.length + " lines" : "";
   }
   return "";
-}
-
-// 审批动词映射:permission_done 收敛单行复用(「✓ 已允许 运行命令」),默认「允许」
-const PERM_VERBS: Record<string, string> = {
-  Bash: "运行命令",
-  Edit: "保存修改", MultiEdit: "保存修改", Write: "保存修改",
-  WebFetch: "抓取网页", WebSearch: "联网搜索",
-  NotebookEdit: "保存 notebook",
-};
-
-export function permVerb(tool: string): string {
-  return PERM_VERBS[tool] || "允许";
 }

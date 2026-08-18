@@ -1,5 +1,5 @@
 /* coding:studio 全局样式 —— 移植 chat.html <style> 段(R4 阶段二 T4)。
-   选择器与原文件保持一致(#log/.card/.bubble/.perm-card/#errbar/#runpill…),后续任务增量补段。
+   选择器与原文件保持一致(#log/.card/.bubble/#errbar/#runpill…),后续任务增量补段。
    结构差异:#app 顶替 body 做 flex 列容器(Vue 挂载点);markdown 内容包一层 .mdc(v-html 与
    think-block 分离),原 .bubble.md > :first-child/:last-child 规则同步复制到 .mdc 子层。 */
 
@@ -159,7 +159,7 @@ header .title { flex: none; font-size: 13px; font-weight: 600; color: var(--text
   border: 1px solid var(--accent-line);
 }
 .dot-waiting, .dot-running { flex: none; width: 8px; height: 8px; border-radius: 50%; }
-.dot-waiting { background: var(--amber); animation: perm-pulse 2s ease-in-out infinite; }
+.dot-waiting { background: var(--amber); animation: waiting-pulse 2s ease-in-out infinite; }
 .dot-running { background: var(--green); }
 .station-remove {
   flex: none; border: none; background: transparent; color: var(--faint);
@@ -376,32 +376,9 @@ header .title { flex: none; font-size: 13px; font-weight: 600; color: var(--text
   white-space: pre-wrap; word-break: break-word;
 }
 
-/* 权限审批卡(只读镜像):等待中 = 琥珀脉冲边框 + 只读提示(无按钮——裁决走 L2 确认体系);
-   permission_done 后收敛为灰小字单行记录(.perm-done)。
-   脉冲用 ::before 叠层只动 opacity(transform/opacity 性能约束) */
-.perm-card { position: relative; border-color: var(--amber); background: var(--amber-bg); padding: 10px 13px; }
-.perm-card::before {
-  content: ""; position: absolute; inset: 0; border-radius: inherit;
-  border: 2px solid var(--amber); pointer-events: none;
-  animation: perm-pulse 2s ease-in-out infinite;
-}
-@keyframes perm-pulse { 0%, 100% { opacity: .25; } 50% { opacity: .9; } }
-.perm-head { font-weight: 600; }
-.perm-input {
-  max-height: 120px; overflow: auto; font-size: 11px; margin-top: 6px;
-  padding: 6px 9px; border-radius: 8px; background: var(--card);
-  font-family: ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-word;
-}
-.perm-state { font-size: 11px; color: var(--amber); margin-top: 6px; }
-/* 裁决后收敛:灰小字单行「✓ 已允许 运行命令」/「✗ 已拒绝」,内容宽度自适应;
-   消息带居中后贴带左缘(margin-left = 带宽外余量),不随 #log>.card 整宽居中 */
-#log > .card.perm-card.perm-done {
-  width: fit-content; margin-left: max(0px, calc(50% - 380px)); margin-right: auto;
-  padding: 4px 12px;
-  background: var(--surface-2); border-color: var(--border);
-  font-size: 11.5px; color: var(--muted); box-shadow: none;
-}
-.perm-card.perm-done::before { content: none; }
+/* 待批脉冲(工位头 dot-waiting / 左栏活体共用;阶段四 T3 起审批卡不再进消息流,
+   原 .perm-card 段随之删除) */
+@keyframes waiting-pulse { 0%, 100% { opacity: .25; } 50% { opacity: .9; } }
 
 /* 终止标 / 错误(灰小字 11px --faint) */
 .marker {

@@ -20,7 +20,6 @@ export type RenderItem =
   | { type: "assistant"; raw: string; thinking: string[]; done: boolean }
   | { type: "tool"; tool: string; input: Record<string, unknown>; results: ToolResultInfo[]; hasError: boolean }
   | { type: "fileedit"; tool: string; path: string | null; old: string | null; new: string | null }
-  | { type: "perm"; rid: string; tool: string; input: Record<string, unknown>; state: "waiting" | "allowed" | "denied" }
   | { type: "marker"; text: string; err: boolean }
   | { type: "error"; text: string }
   // Codex→CC 交接卡(T7):#log chat-flow 元素(session 起点,非 modal);交互态(sealed/编辑文本)
@@ -172,15 +171,11 @@ export function createSessionStore(deps: SessionDeps) {
       }
       case "permission_request":
         finalizeAssistant();
-        state.items.push({ type: "perm", rid: ev.rid, tool: ev.tool, input: ev.input ?? {}, state: "waiting" });
-        state.waiting = true;
+        state.waiting = true;   // 待批卡不再进消息流;统一落 review 栏(壳层聚合)
         return;
-      case "permission_done": {
-        const card = state.items.find((it) => it.type === "perm" && it.rid === ev.rid);
-        if (card && card.type === "perm") card.state = ev.allow ? "allowed" : "denied";
+      case "permission_done":
         state.waiting = false;
         return;
-      }
       case "rewind_ok":
         state.items.push({ type: "marker", text: ev.text || "已回滚", err: false });
         return;

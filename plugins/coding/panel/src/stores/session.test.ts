@@ -69,22 +69,26 @@ describe("事件归约", () => {
     expect(last).toMatchObject({ type: "marker", text: "旁注", err: false });
   });
 
-  // 清单 3
-  it("permission_request 产生等待卡,permission_done 收敛(allow/deny)并复位 waiting", () => {
+  // 清单 3(阶段四 T3:工位流内不再镜像待批卡,审批统一落 review 栏)
+  it("permission_request 只置 waiting(不进消息流),permission_done 复位,终态也复位", () => {
     const { deps } = makeDeps();
     const s = createSessionStore(deps);
     s.applyEvent(ev({ kind: "permission_request", rid: "r1", tool: "Bash", input: { command: "rm" } }));
-    expect(s.state.items).toHaveLength(1);
-    expect(s.state.items[0]).toMatchObject({ type: "perm", rid: "r1", tool: "Bash", input: { command: "rm" }, state: "waiting" });
+    expect(s.state.items).toHaveLength(0); // 待批卡不再镜像进消息流
     expect(s.state.waiting).toBe(true);
     s.applyEvent(ev({ kind: "permission_done", rid: "r1", allow: true }));
-    expect(s.state.items[0]).toMatchObject({ state: "allowed" });
+    expect(s.state.items).toHaveLength(0); // 裁决也不落收敛卡
     expect(s.state.waiting).toBe(false);
-    // deny 分支
+    // deny 分支同样只动 waiting
     s.applyEvent(ev({ kind: "permission_request", rid: "r2", tool: "Write", input: {} }));
     expect(s.state.waiting).toBe(true);
     s.applyEvent(ev({ kind: "permission_done", rid: "r2", allow: false }));
-    expect(s.state.items[1]).toMatchObject({ state: "denied" });
+    expect(s.state.items).toHaveLength(0);
+    expect(s.state.waiting).toBe(false);
+    // 待批中收到终态:waiting 复位(onSessionEnded 既有行为)
+    s.applyEvent(ev({ kind: "permission_request", rid: "r3", tool: "Bash", input: {} }));
+    expect(s.state.waiting).toBe(true);
+    s.applyEvent(ev({ kind: "done" }));
     expect(s.state.waiting).toBe(false);
   });
 

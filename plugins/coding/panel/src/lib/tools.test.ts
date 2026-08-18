@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { permVerb, resultTally, summarizeTool, toolIcon } from "./tools";
+import { resultTally, summarizeTool, toolIcon } from "./tools";
 
 describe("toolIcon", () => {
   it("已知工具取映射,未知工具默认 ⚙", () => {
@@ -49,21 +49,5 @@ describe("resultTally", () => {
   it("其它工具 / 空文本 → 空串", () => {
     expect(resultTally("Edit", "x\ny")).toBe("");
     expect(resultTally("Read", "")).toBe("");
-  });
-});
-
-describe("permVerb", () => {
-  it("映射命中", () => {
-    expect(permVerb("Bash")).toBe("运行命令");
-    expect(permVerb("Edit")).toBe("保存修改");
-    expect(permVerb("MultiEdit")).toBe("保存修改");
-    expect(permVerb("Write")).toBe("保存修改");
-    expect(permVerb("WebFetch")).toBe("抓取网页");
-    expect(permVerb("WebSearch")).toBe("联网搜索");
-    expect(permVerb("NotebookEdit")).toBe("保存 notebook");
-  });
-  it("默认「允许」", () => {
-    expect(permVerb("Read")).toBe("允许");
-    expect(permVerb("")).toBe("允许");
   });
 });
