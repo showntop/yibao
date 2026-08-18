@@ -3,7 +3,6 @@ import {
   parseAtTrigger,
   stripAtTrigger,
   formatContextPrefix,
-  fileRefPaths,
   type InputContext,
 } from "./at-mention";
 
@@ -60,17 +59,5 @@ describe("formatContextPrefix", () => {
   it("file 落全路径（path 优先于 label）", () => {
     expect(formatContextPrefix([{ kind: "file", label: "main.rs", path: "src/main.rs" }]))
       .toBe("【文件：src/main.rs】\n\n");
-  });
-});
-
-describe("fileRefPaths", () => {
-  it("只取 file 且有 path 的项", () => {
-    const ctx: InputContext[] = [
-      { kind: "file", label: "a", path: "src/a.ts" },
-      { kind: "attachment", label: "b.png" },
-      { kind: "file", label: "c" }, // 无 path 丢弃
-      { kind: "file", label: "d", path: "d.md" },
-    ];
-    expect(fileRefPaths(ctx)).toEqual(["src/a.ts", "d.md"]);
   });
 });

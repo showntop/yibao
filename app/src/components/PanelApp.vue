@@ -269,8 +269,6 @@ async function onAction(a: { method: string; params: Record<string, unknown> }) 
 }
 
 // 工作台条交互：提交走同一 runInput（focus 已在大脑上下文里）；mic/长按团子 = 语音
-const barRef = ref<HTMLElement | null>(null);
-
 function submit(text: string, contexts: InputContext[] = []) {
   errorText.value = "";
   const t = formatContextPrefix(contexts) + text;
@@ -298,7 +296,8 @@ function onPetTap() {
 }
 
 function focusInput() {
-  barRef.value?.querySelector("input")?.focus();
+  // 经 ref 调 InputBar expose 的 focus()——querySelector("input") 会误中隐藏 file-input（主输入是 textarea）
+  inputBarRef.value?.focus();
 }
 
 function close() {
@@ -419,7 +418,7 @@ onUnmounted(() => {
     </div>
 
     <!-- 工作台条：对话浮层（输入/回复时间线）+ 团子 + 上下文 chip + 输入条 -->
-    <div ref="barRef" class="bench">
+    <div class="bench">
       <transition name="pop">
         <div v-if="layerVisible && (msgs.length || listeningHint)" ref="layerRef" class="thread">
           <button class="thread-x" title="收起" aria-label="收起对话" @click="layerVisible = false">

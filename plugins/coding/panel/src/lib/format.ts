@@ -1,5 +1,5 @@
 // 展示格式化纯函数:fmtTok/fmtCost 对齐 chat.html:876-894 的顶栏成本语义;
-// relTime 对齐 :2132-2151 的 wall subtitle 相对时间(now 由调用方注入,便于测试);
+// relTime 会话相对时间(rail 行/历史浮层用;now 由调用方注入,便于测试);
 // humanFirstLine 移植 :1181-1191 的 errbar 摘要规则。
 
 // token 计数:999→"999"、1500→"1.5k"、2300000→"2.3M";非有限数 → "0"
@@ -91,6 +91,17 @@ export function permSummary(tool: string, input: unknown): string {
     ? input : {}) as Record<string, unknown>;
   const text = d.command || d.file_path || d.path || JSON.stringify(d);
   return String(text).replace(/\n/g, " ").trim().slice(0, 80);
+}
+
+// 审批卡公开参数(镜像 _runner._public_params):command/file_path/path 取一截 200 字,否则 {}——
+// 悬停详情只给决策有关字段,不带全量 input(review 栏 tap 的 upsert 用)
+export function permPublicParams(input: unknown): Record<string, string> {
+  const d = (input !== null && typeof input === "object" && !Array.isArray(input)
+    ? input : {}) as Record<string, unknown>;
+  for (const k of ["command", "file_path", "path"]) {
+    if (d[k]) return { [k]: String(d[k]).slice(0, 200) };
+  }
+  return {};
 }
 
 // 人话首行:跳过空行 / 协议 XML 行(< 开头)/ 堆栈帧(at …、File "…"、Traceback),

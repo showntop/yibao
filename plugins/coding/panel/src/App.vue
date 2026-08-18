@@ -18,7 +18,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { hasBridge, invoke, onInit } from "./lib/bridge";
 import type { PanelData, SessionRow } from "./lib/types";
-import { permSummary, relTime } from "./lib/format";
+import { permPublicParams, permSummary, relTime } from "./lib/format";
 import { normAgent } from "./stores/drivers";
 import { createStationsStore, MAX_STATIONS, type RailLive } from "./stores/stations";
 import { createReviewStore, type ReviewItem } from "./stores/review";
@@ -112,7 +112,7 @@ onInit((data) => {
   const ev = d.event;                            // review 栏 tap(T5):工位路由之前,全量 sid(含未绑)入出列
   if (ev.kind === "permission_request") {
     review.upsert({ rid: String(ev.rid || ""), sid, tool: String(ev.tool || ""),
-                    summary: permSummary(String(ev.tool || ""), ev.input), params: {} });
+                    summary: permSummary(String(ev.tool || ""), ev.input), params: permPublicParams(ev.input) });
   } else if (ev.kind === "permission_done") {
     review.resolve(String(ev.rid || ""));
   }
@@ -129,7 +129,7 @@ const railRows = ref<RailRow[]>([]);
 const lastCwd = ref(""); // refreshRail 首行(最近会话)cwd 缓存,新工位 defaultCwd 预填
 
 let railTimer: ReturnType<typeof setTimeout> | null = null;
-function scheduleRailRefresh() {                     // 400ms 防抖(对齐 wall 刷新惯例)
+function scheduleRailRefresh() {                     // 400ms 防抖(rail 刷新惯例;原对齐的会话墙已退役)
   if (railTimer) clearTimeout(railTimer);
   railTimer = setTimeout(() => { railTimer = null; void refreshRail(); }, 400);
 }

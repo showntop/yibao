@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { doneStatusText, emsg, fmtCost, fmtTok, fmtTs, humanFirstLine, normCwd, relTime } from "./format";
+import { doneStatusText, emsg, fmtCost, fmtTok, fmtTs, humanFirstLine, normCwd, permPublicParams, relTime } from "./format";
 
 describe("fmtTok", () => {
   it("千以下原样", () => {
@@ -42,7 +42,7 @@ describe("relTime", () => {
   it("天(<7)", () => {
     expect(relTime(now, now - 2 * 86_400_000)).toBe("2 天前");
   });
-  it("≥7 天 → 绝对日期 YYYY-MM-DD(本地时区,与 wall subtitle 语义一致)", () => {
+  it("≥7 天 → 绝对日期 YYYY-MM-DD(本地时区)", () => {
     const ts = now - 10 * 86_400_000;
     const d = new Date(ts);
     const pad = (x: number) => String(x).padStart(2, "0");
@@ -122,6 +122,26 @@ describe("doneStatusText", () => {
   });
   it("tok 为 0 不显示 token 段", () => {
     expect(doneStatusText({ duration_ms: 500, input_tokens: 0, output_tokens: 0 })).toBe("✓ 完成 · 1s");
+  });
+});
+
+describe("permPublicParams", () => {
+  it("command/file_path/path 取其一(优先级序)", () => {
+    expect(permPublicParams({ command: "ls -la" })).toEqual({ command: "ls -la" });
+    expect(permPublicParams({ command: "ls", file_path: "/a.ts" })).toEqual({ command: "ls" });
+    expect(permPublicParams({ file_path: "/a.ts", path: "/b.ts" })).toEqual({ file_path: "/a.ts" });
+  });
+  it("值截 200 字", () => {
+    expect(permPublicParams({ command: "x".repeat(300) }).command).toHaveLength(200);
+  });
+  it("假值键跳过(对齐后端 d.get(k) 真值判断)", () => {
+    expect(permPublicParams({ command: "", path: "/b" })).toEqual({ path: "/b" });
+  });
+  it("无公开键/非 dict 输入 → {}", () => {
+    expect(permPublicParams({ url: "http://x" })).toEqual({});
+    expect(permPublicParams("raw")).toEqual({});
+    expect(permPublicParams(null)).toEqual({});
+    expect(permPublicParams([1, 2])).toEqual({});
   });
 });
 
