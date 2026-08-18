@@ -21,10 +21,15 @@ import { emsg } from "../lib/format";
 import { basename, matchAtQuery, pushRef } from "../lib/refs";
 import AtRefsChips from "./AtRefsChips.vue";
 
-const props = defineProps<{ busy: boolean; cwd: string }>();
+const props = defineProps<{
+  busy: boolean;
+  cwd: string;
+  // 中断受理信号(对齐 RunPill 的 onStop):受理 true / 拒理或失败 false——
+  // sending 窗 App 拒理(会话 id 未回填是死点击),false 时中断钮立即重新解锁
+  onStop: () => Promise<boolean>;
+}>();
 const emit = defineEmits<{
   send: [text: string, refs: string[]];
-  stop: [];
   status: [text: string, err: boolean]; // 瞬时状态行(截图反馈),由 App keys-row 状态位展示
 }>();
 
@@ -134,14 +139,17 @@ function onPaste(e: ClipboardEvent) {
   }
 }
 
-// ---- 中断:busy 期现身;点击上锁到终态(对齐原 #stop 防连点——stopArmed 由 busy 回落解锁)。
-//      失败重解锁经 RunPill 的 Stop(store.stop 返回 false 时它复位),本钮不重复实现 ----
+// ---- 中断:busy 期现身;点击上锁,仅受理后保持——拒理(sending 窗死点击)/失败(false)
+//      立即重新解锁(对齐 RunPill clickStop;修复 T5 评审:sending 窗 no-op 点击上锁后
+//      锁存过整个窗口,streaming 起跑后钮已废) ----
 const stopArmed = ref(false);
 watch(() => props.busy, (b) => { if (!b) stopArmed.value = false; });
 function onStop() {
   if (stopArmed.value || !props.busy) return;
   stopArmed.value = true;
-  emit("stop");
+  Promise.resolve(props.onStop())
+    .then((ok) => { if (!ok) stopArmed.value = false; })
+    .catch(() => { stopArmed.value = false; });
 }
 
 function removeRef(i: number) { refs.value.splice(i, 1); }
@@ -181,6 +189,9 @@ defineExpose({ clear, focus });
       >{{ rel }}</div>
     </div>
   </div>
+  <!-- 段②:上下文行——T6 头部控件槽位(cwd chip + 浮层 / mode pill / 引擎 chip + picker);
+       .ctx-row 是 cwd 浮层的定位锚(position:relative,同原 chat.html) -->
+  <div class="ctx-row"><slot name="ctx"></slot></div>
   <!-- 段③:快捷键行——状态位由 App 经 slot 提供(store 状态行 + 本组件瞬时提示共一位),
        中 kbd 提示(键白动作灰),右操作钮(中断 ghost busy 期现身 / 发送 accent 主钮 busy 禁用) -->
   <div class="keys-row">

@@ -353,6 +353,8 @@ export function createSessionStore(deps: SessionDeps) {
   return {
     state, handleData, applyEvent, send, stop, newChat, resumeSession,
     takeoverInput, takeoverStop, setQueueContext, historyToItems,
+    /** resume 在飞(attach/手动接续/autoReplay)——autoReplay 让位判据:在跑时不得再排候选 */
+    isResuming: () => resuming,
     _test: { discardedSessions, getQueue: () => takeoverQueue, markTurnEnded: () => { pendingTurnEnded = true; } },
   };
 }

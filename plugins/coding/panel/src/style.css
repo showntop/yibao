@@ -344,6 +344,66 @@ footer {
           font-size: 11px; font-family: var(--mono-family); }
 .at-ref span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .at-ref button { border: none; background: transparent; color: inherit; cursor: pointer; padding: 0; font-size: 12px; line-height: 1; }
+/* 段②:上下文行(T6)——cwd chip(📁+目录名 pill,点击弹浮层改路径)+ 权限模式 pill
+   + 引擎 chip #agent-chip(v2 双驱动:点击开引擎 picker——无会话选新会话引擎 /
+   有会话选继续引擎(跨引擎=发送时交接摘要移植,.sw 虚线待定态)/ codex 不可用灰显禁选)。
+   .ctx-row 是 cwd 浮层的定位锚(position:relative,同原 chat.html) */
+.ctx-row { position: relative; display: flex; align-items: center; gap: 6px; }
+.pill {
+  flex: none; font-size: 11px; padding: 2px 10px; border-radius: var(--r-pill);
+  border: 1px solid var(--border-strong); background: var(--surface-2);
+  color: var(--muted); cursor: pointer; transition: all .15s ease;
+}
+.pill:hover { border-color: var(--accent); color: var(--accent-deep); }
+.pill.plan { border-color: var(--accent); color: var(--accent-deep); background: var(--accent-soft); }
+.pill:disabled { opacity: .45; cursor: not-allowed; }
+.pill:disabled:hover { border-color: var(--border-strong); color: var(--muted); }
+.cwd-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 220px; }
+.cwd-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono-family); font-size: 11px; }
+.cwd-chip.empty span { color: var(--faint); font-family: var(--sans); }
+/* cwd 浮层:锚定上下文行向上展开(同 .at-menu 的 bottom:100% 定位模式) */
+.cwd-pop {
+  position: absolute; bottom: calc(100% + 4px); left: 0; z-index: 30;
+  width: min(360px, 100%);
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--r-md);
+  box-shadow: var(--shadow-card); padding: 6px;
+}
+.cwd-pop-row { display: flex; align-items: center; gap: 6px; }
+#cwd-input {
+  flex: 1 1 auto; min-width: 0; border: 1px solid var(--border); border-radius: var(--r-sm);
+  padding: 4px 8px; font: var(--mono); font-size: 12px;
+  background: var(--surface-2); color: var(--text); outline: none;
+}
+#cwd-input:focus { border-color: var(--accent); background: var(--card); }
+#cwd-input::placeholder { color: var(--faint); font-family: var(--sans); }
+.cwd-pop button {
+  flex: none; border: 1px solid var(--border-strong); background: var(--surface-2);
+  color: var(--muted); font-size: 12px; padding: 3px 8px; border-radius: var(--r-sm); cursor: pointer;
+}
+.cwd-pop button:hover { border-color: var(--accent); color: var(--accent-deep); }
+/* 引擎 chip:有会话时只读徽标配色(.ro:无 hover 反馈);跨引擎切换待定态(.sw:已选另一引擎、
+   发送时交接摘要移植)用虚线描边区分;codex 不可用 → 无会话态 disabled 灰显 + title 原因 */
+#agent-chip.ro { cursor: default; }
+#agent-chip.ro:hover { border-color: var(--border-strong); color: var(--muted); }
+#agent-chip.sw { border-style: dashed; border-color: var(--accent); color: var(--accent-deep); }
+/* 引擎 picker:fixed 弹层 + backdrop(iframe srcdoc 里 absolute 含块不可靠);
+   静态定位:header(40px)下方靠右;窄版只有两三个选项 */
+#agent-backdrop { position: fixed; inset: 0; z-index: 40; }
+#agent-picker {
+  position: fixed; z-index: 50; top: 46px; right: 12px;
+  width: min(240px, 92vw); max-height: 320px; overflow-y: auto;
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--r-md);
+  box-shadow: var(--shadow-pop); padding: 6px;
+}
+#agent-picker .pick-item {
+  padding: 8px 10px; border-radius: 8px; cursor: pointer; transition: background .12s ease;
+  display: flex; flex-direction: column; gap: 2px;
+}
+#agent-picker .pick-item:hover { background: var(--accent-soft); }
+#agent-picker .pick-item.disabled { opacity: .45; cursor: default; }
+#agent-picker .pick-item.disabled:hover { background: transparent; }
+#agent-picker .pick-item .ag { font-size: 12.5px; font-weight: 600; color: var(--text); }
+#agent-picker .pick-item .ds { font-size: 11px; color: var(--muted); }
 /* 段③操作钮:#send accent 实心主钮 / #stop ghost */
 button.act {
   border: none; border-radius: var(--r-pill); padding: 5px 16px; cursor: pointer;

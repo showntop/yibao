@@ -318,6 +318,7 @@ describe("会话恢复", () => {
         : Promise.resolve({ session_id: "s1" })) as never);
     const s5 = createSessionStore(d5.deps);
     const p1 = s5.resumeSession("sA");
+    expect(s5.isResuming()).toBe(true); // autoReplay 让位判据:attach/手动接续在跑时不得再排候选
     const p2 = s5.resumeSession("sB"); // 重入 → -1,登记 pending
     const p3 = s5.resumeSession("sC"); // 再重入 → 覆盖 pending,只留最新
     await expect(p2).resolves.toBe(-1);
@@ -328,6 +329,7 @@ describe("会话恢复", () => {
     releaseH({ messages: [{ role: "user", text: "C" }] }); // 放行接力的 sC
     await vi.waitFor(() => expect(s5.state.currentSession).toBe("sC"));
     expect(s5.state.items[0]).toMatchObject({ type: "user", text: "C" });
+    await vi.waitFor(() => expect(s5.isResuming()).toBe(false)); // 接力链排空后回落
     expect(d5.invoke).toHaveBeenCalledWith("coding.history", { id: "sC" });
     expect(d5.invoke).not.toHaveBeenCalledWith("coding.history", { id: "sB" }); // sB 被覆盖丢弃
 
