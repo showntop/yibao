@@ -1333,7 +1333,7 @@ async def serve_async(
         pending = [{"id": cid, **meta} for cid, meta in confirm_meta.items()]
         perm = _coding_perm_registry()
         if perm:
-            for rid, entry in perm.items():
+            for rid, entry in list(perm.items()):
                 if isinstance(entry, dict) and entry.get("allow") is None:
                     pending.append({"id": rid, "skill_id": "coding",
                                     "summary": str(entry.get("summary") or entry.get("tool") or "编码审批"),
