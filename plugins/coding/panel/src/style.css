@@ -42,9 +42,84 @@ body {
   font: 13px/1.6 -apple-system, "PingFang SC", sans-serif;
   background: var(--bg); color: var(--text);
 }
-/* Vue 挂载点顶替 chat.html 的 body flex 列(header / #log / #errbar / footer 纵向排) */
+/* Vue 挂载点;唯一子级是 .shell(T6 多工位壳 flex 行——工位纵向排在 .station 内) */
 #app { display: flex; flex-direction: column; }
 .hidden { display: none !important; }
+
+/* ---- 多工位壳(R4 阶段三 T6)——.shell 横排行:左栏 rail + .stations 工位区。
+   .station 正式 flex 列(T4 display:contents 过渡技巧退役),同时是工位内浮层
+   (接续浮层/handoff picker 罩层)的定位锚(position:relative)。
+   聚焦停靠:非聚焦工位 footer 隐藏(实例存活,草稿保留);聚焦工位 footer 绝对定位停靠
+   本列页底(stations 区底沿),dock 空间由 .station.focused 的 padding-bottom 让出——
+   高度变量 --dock-h 挂 .stations(壳按聚焦工位 dockH 现算),经继承到工位 ---- */
+.shell { position: relative; display: flex; height: 100vh; }
+.stations { position: relative; flex: 1; display: flex; min-width: 0; }
+.station {
+  position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column;
+  border-left: 1px solid var(--line);
+}
+.station:first-of-type { border-left: none; }  /* of-type:窄窗 ☰ 钮(.stations 首子级)不顶掉首个工位 */
+.station.focused { box-shadow: inset 0 0 0 1px var(--accent-line); padding-bottom: var(--dock-h, 150px); }
+.station footer { display: none; }                 /* 非聚焦工位输入条隐藏(实例存活,草稿保留) */
+.station.focused footer { display: flex; position: absolute; z-index: 20; left: 0; right: 0; bottom: 0; }
+
+/* ---- 左栏会话 rail(T5 结构,T6 落样式;卡片化/圆角对齐会话墙视觉,配色用本面板既有变量) ---- */
+.rail {
+  flex: none; width: 240px; display: flex; flex-direction: column;
+  background: var(--surface-2); border-right: 1px solid var(--line);
+}
+.rail-head {
+  flex: none; display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 10px; border-bottom: 1px solid var(--line);
+}
+.rail-title { font-size: 12px; font-weight: 600; color: var(--muted); }
+.rail-add {
+  border: 1px solid var(--border-strong); background: var(--card); color: var(--muted);
+  font-size: 11.5px; padding: 3px 10px; border-radius: var(--r-pill); cursor: pointer;
+  transition: all .15s ease;
+}
+.rail-add:hover { border-color: var(--accent); color: var(--accent-deep); }
+.rail-add:disabled { opacity: .45; cursor: default; }
+.rail-add:disabled:hover { border-color: var(--border-strong); color: var(--muted); }
+.rail-rows { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.rail-row {
+  position: relative; padding: 7px 10px; border-radius: 10px;
+  background: var(--card); border: 1px solid var(--border); cursor: pointer;
+  transition: border-color .12s ease, box-shadow .12s ease;
+}
+.rail-row:hover { border-color: var(--border-strong); box-shadow: var(--shadow-card); }
+.rail-row.bound { background: var(--accent-soft); border-color: var(--accent-line); }
+.rail-row-title {
+  font-size: 12px; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rail-row-sub {
+  margin-top: 2px; font: var(--mono); font-size: 10.5px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rail-badge {
+  display: inline-block; margin-right: 4px; padding: 0 5px; line-height: 14px;
+  font-size: 9.5px; font-weight: 700; border-radius: 3px; vertical-align: 1px;
+  background: var(--card); color: var(--accent-deep); border: 1px solid var(--accent-line);
+}
+.rail-stop {
+  position: absolute; top: 6px; right: 6px; border: none; border-radius: var(--r-pill);
+  padding: 2px 10px; font-size: 10.5px; font-weight: 600; cursor: pointer;
+  background: var(--red); color: #fff; transition: filter .15s ease;
+}
+.rail-stop:hover { filter: brightness(0.92); }
+.rail-empty { padding: 18px 12px; text-align: center; color: var(--muted); font-size: 12px; }
+/* 抽屉模式(窄窗):罩层 + 左滑出面板(fixed 盖在工位区上,260px 对齐设计稿 overlay 宽) */
+.rail-mask { position: fixed; inset: 0; z-index: 60; background: rgba(30,42,56,0.32); }
+.rail-drawer { position: fixed; z-index: 61; left: 0; top: 0; bottom: 0; width: 260px; box-shadow: var(--shadow-pop); }
+/* 窄窗 ☰:stations 左上角绝对定位,仅 narrow 渲染;工位头左让位 */
+.rail-toggle {
+  position: absolute; z-index: 25; top: 6px; left: 6px;
+  border: 1px solid var(--border-strong); background: var(--card); color: var(--muted);
+  font-size: 13px; line-height: 1; padding: 4px 8px; border-radius: 8px; cursor: pointer;
+  box-shadow: var(--shadow-card);
+}
+.shell.narrow .station header { padding-left: 36px; }
 
 /* 设计预览态(无 window.yibao 桥时) */
 #bridge-warn {
@@ -76,6 +151,21 @@ header .title { flex: none; font-size: 13px; font-weight: 600; color: var(--text
   background: var(--surface-2); color: var(--accent-deep); border-color: var(--border);
 }
 #history:disabled, #new-chat:disabled { opacity: .5; cursor: default; }
+
+/* 工位头新增件(T4 结构,T6 落样式):引擎徽标 / waiting·running 状态点 / 移出 ✕ */
+.agent-badge {
+  flex: none; font-size: 10px; font-weight: 700; line-height: 15px; padding: 0 6px;
+  border-radius: 4px; background: var(--accent-soft); color: var(--accent-deep);
+  border: 1px solid var(--accent-line);
+}
+.dot-waiting, .dot-running { flex: none; width: 8px; height: 8px; border-radius: 50%; }
+.dot-waiting { background: var(--amber); animation: perm-pulse 2s ease-in-out infinite; }
+.dot-running { background: var(--green); }
+.station-remove {
+  flex: none; border: none; background: transparent; color: var(--faint);
+  font-size: 12px; padding: 2px 6px; border-radius: 6px; cursor: pointer; transition: all .15s ease;
+}
+.station-remove:hover { background: var(--surface-2); color: var(--red); }
 
 /* ---- 主区:流式日志(唯一视觉焦点)。消息节奏行距 12,宽屏限 760px 消息带居中;
    marker 小丸自带 align-self 居中不受影响 ---- */
@@ -395,9 +485,10 @@ footer {
 #agent-chip.ro { cursor: default; }
 #agent-chip.ro:hover { border-color: var(--border-strong); color: var(--muted); }
 #agent-chip.sw { border-style: dashed; border-color: var(--accent); color: var(--accent-deep); }
-/* 引擎 picker:fixed 弹层 + backdrop(iframe srcdoc 里 absolute 含块不可靠);
-   静态定位:header(40px)下方靠右;窄版只有两三个选项 */
-#handoff-backdrop, #history-overlay, #agent-backdrop { position: fixed; inset: 0; z-index: 40; }
+/* 引擎 picker:fixed 弹层 + backdrop;静态定位:header(40px)下方靠右;窄版只有两三个选项。
+   多工位壳(T6):history/handoff 罩层与弹层改 absolute 相对工位根(.station),只罩本工位 */
+#agent-backdrop { position: fixed; inset: 0; z-index: 40; }
+#handoff-backdrop, #history-overlay { position: absolute; inset: 0; z-index: 40; }
 #agent-picker {
   position: fixed; z-index: 50; top: 46px; right: 12px;
   width: min(240px, 92vw); max-height: 320px; overflow-y: auto;
@@ -414,15 +505,15 @@ footer {
 #agent-picker .pick-item .ag { font-size: 12.5px; font-weight: 600; color: var(--text); }
 #agent-picker .pick-item .ds { font-size: 11px; color: var(--muted); }
 
-/* ---- Codex session 选择器 + 接续浮层(T7,对齐 chat.html:521-604) ---- */
+/* ---- Codex session 选择器 + 接续浮层(T7,对齐 chat.html:521-604;T6 起 absolute 相对工位根) ---- */
 #handoff-picker, #history-picker {
-  position: fixed; z-index: 50; top: 46px; right: 12px;
-  width: min(420px, 92vw); overflow-y: auto;
+  position: absolute; z-index: 50; top: 46px; right: 12px;
+  width: min(420px, 92%); overflow-y: auto;
   background: var(--card); border: 1px solid var(--border); border-radius: var(--r-md);
   box-shadow: var(--shadow-pop); padding: 6px;
 }
 #handoff-picker { max-height: 320px; }
-#history-picker { max-height: min(560px, calc(100vh - 60px)); } /* 两区内容多,限高放宽 */
+#history-picker { max-height: min(560px, calc(100% - 60px)); } /* 两区内容多,限高放宽(100%=工位高) */
 #handoff-picker .pick-item, #history-picker .hrow {
   padding: 8px 10px; border-radius: 8px; cursor: pointer; transition: background .12s ease;
   display: flex; flex-direction: column; gap: 2px;
@@ -567,14 +658,6 @@ button.ghost:disabled { opacity: .5; cursor: default; }
 /* 窄面板优先保住状态行与操作钮:快捷键提示让位(整组隐藏) */
 @media (max-width: 480px) { .keys { display: none; } }
 
-/* 接管模式(body.takeover):宿主 InputBar 接管文本输入——隐藏段①输入框整段(@ 内联菜单随之
-   不触发)与 #send 主钮;「↵发送/⇧↵换行/@文件」提示一并隐藏;状态行与其余控件保留。
-   footer 因此变矮:RunPill bottom 每次按 footer.offsetHeight 现算,无需特判 */
-body.takeover .prompt-wrap { display: none; }
-body.takeover #send { display: none; }
-body.takeover .keys .send-hint { display: none; }
-body.takeover .keys .at-kbd-hint { display: none; }
-
 /* spinner:10px 边框圆 + 旋转(状态行 / 运行 pill 共用) */
 .spin {
   display: inline-block; width: 10px; height: 10px; margin-right: 6px;
@@ -584,7 +667,7 @@ body.takeover .keys .at-kbd-hint { display: none; }
 }
 @keyframes status-spin { to { transform: rotate(360deg); } }
 
-/* 运行状态悬浮 pill(C3):底部居中浮在 footer 上方(fixed,bottom 由 App 按 footer/#errbar
+/* 运行状态悬浮 pill(C3):底部居中浮在 footer 上方(fixed,bottom 由工位按 footer/#errbar
    高度现算,垂直堆叠不重叠),不占消息流空间;仅 streaming/sending 期间可见。
    spinner + 已耗时秒表 + 会话累计 token + 红 Stop;done/stopped/error 后消失 */
 #runpill {

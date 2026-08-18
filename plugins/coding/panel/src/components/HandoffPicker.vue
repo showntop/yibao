@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // Codex session 选择器(R4 阶段二 T7;对齐 chat.html:2072-2119 showHandoffPicker):
 // handoff_list 多条时弹出——条目 fmtTs(timestamp)+first_line,点选上抛 pick;
-// backdrop 点击 / [取消] 上抛 close。fixed 弹层(iframe srcdoc 里 absolute 含块不可靠),
-// 静态定位 header 下方靠右(同 agent picker)。互收与 esc 链在 App(openLayer="handoff")。
+// backdrop 点击 / [取消] 上抛 close。T6 起 absolute 定位相对工位根(.station),header 下方靠右
+// (同 agent picker)。互收与 esc 链在 StationView(openLayer="handoff")。
 import { fmtTs } from "../lib/format";
 import type { HandoffSessionItem } from "../lib/types";
 

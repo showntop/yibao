@@ -4,6 +4,8 @@
 // mode pill/接续浮层/Codex→CC 交接/⏪/Composer 接线/RunPill 布局/RO/生命周期),单工位态行为
 // 与阶段二等价。T3 后 takeover 退役:onInit 不再读 takeover 标志(数据直投 store.handleData),
 // onHostMessage 段整段不搬(宿主消息通道随 takeover 退役无消费方)。
+// T6 后 onInit 注册收归壳(App.vue demux 唯一入口),本组件不再自注册——init 数据只经
+// expose 的 onData 收壳投递。
 // 工位接口(T5/T6 壳依赖):
 //   props  { focused, autoplay, defaultCwd }——focused=false 时文档级 esc/click-outside 监听
 //          直接 return(多实例共存只有聚焦工位响应);autoplay=false 时 onMounted 不跑
@@ -25,7 +27,7 @@
 //   autoReplay(:2869-2885):纯函数抽至 lib/replay.ts(pickReplayCandidate/shouldYieldReplay/
 //     replayStep);空会话顺延;currentSession||isResuming 让位。
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { hasBridge, invoke, onInit } from "../lib/bridge";
+import { hasBridge, invoke } from "../lib/bridge";
 import type { HandoffSessionItem, LastSessions, PanelData, SessionRow } from "../lib/types";
 import { doneStatusText, emsg, fmtCost, fmtTok, normCwd } from "../lib/format";
 import { pickReplayCandidate, replayStep, shouldYieldReplay } from "../lib/replay";
@@ -87,10 +89,9 @@ watch([cwd, curMode, () => dstate.curAgent, switchAgent], ([c, m, a, sw]) => {
   store.setQueueContext({ cwd: c, mode: m, agent: a, switchAgent: sw });
 }, { immediate: true });
 
-// init 数据入口(expose 给壳:T6 壳 demux 后按 sid 投递;T4 过渡壳单工位,onInit 直投本工位。
+// init 数据入口(expose 给壳:T6 壳 demux 后按 sid 投递;onInit 注册已收归壳,T4 评审收口。
 // takeover 标志读取随 T3 退役剥离——行为对齐 handleInitData 的单会话处理)
 function onData(data: PanelData) { store.handleData(data); }
-onInit((data) => { onData(data as PanelData); });
 
 // 无桥设计预览(T8;对齐 :2922-2939 renderPreviewSample):静态示例对话走同一渲染管线看样式
 // (user 气泡 + AI 气泡 + fileedit 卡 + tooluse 卡 + toolresult + done 气泡)
@@ -503,9 +504,9 @@ defineExpose({ state, dockH, onData, bindSession, unbindSession, stop, isBusy: b
 </script>
 
 <template>
-  <!-- 工位根(T4):display:contents 不产生盒子——子节点仍是 #app flex 列的直接布局项(与搬运前
-       逐像素等价);根仅作组件挂载与 request-focus 事件锚,多工位布局样式 T6 壳统一落 -->
-  <div class="station" style="display:contents" @mousedown="emit('request-focus')">
+  <!-- 工位根(T6 起正式盒模型:flex 列,布局/停靠样式由壳 style.css 落;T4 的 display:contents
+       过渡技巧已退役);根同时是浮层定位锚(position:relative)与 request-focus 事件锚 -->
+  <div class="station" @mousedown="emit('request-focus')">
     <!-- 桥缺失时可见,提示这是设计预览 -->
     <div v-if="!hasBridge" id="bridge-warn">设计预览：未检测到译宝桥（window.yibao），起停/流式回显不可用。</div>
 
@@ -594,7 +595,7 @@ defineExpose({ state, dockH, onData, bindSession, unbindSession, stop, isBusy: b
     </footer>
 
     <!-- 接续浮层(T7):区 1 上次会话(CC 继续 / Codex 原生续·交接)+ 区 2 译宝历史 + 空态;
-         留在工位内(position:fixed 暂相对全页,T6 多工位壳统一改定位) -->
+         留在工位内(T6:position:absolute 相对工位根定位,样式壳 style.css 落) -->
     <HistoryOverlay
       v-if="openLayer === 'history'"
       :loading="historyLoading"

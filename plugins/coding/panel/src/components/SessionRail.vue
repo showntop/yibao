@@ -13,12 +13,13 @@ export const LIVE_TEXT = { waiting: "等待审批", running: "运行中", idle: 
 <script setup lang="ts">
 // 左栏会话列表(R4 阶段三 T5,纯展示):工位徽标 + 会话行(加入工位/聚焦/停止) + 新工位入口。
 // 数据编排(coding.sessions 拉取/派生合并/防抖)在壳 App.vue;本组件只渲染 props 与转发 emits,零 invoke、零 store。
-defineProps<{
+withDefaults(defineProps<{
   rows: RailRow[];      // 会话行(壳合并 coding.sessions 结果与派生状态)
   stations: Station[];  // 工位徽标行(已绑会话归属显示)
   focusId: number;
   drawer: boolean;      // 窄窗抽屉模式(壳传;宽窗忽略)
-}>();
+  addDisabled?: boolean; // 满 3 工位时壳禁用「+ 新工位」(T6)
+}>(), { addDisabled: false });
 const emit = defineEmits<{
   join: [sid: string, agent: string]; // 点未绑行 = 加入工位
   stop: [sid: string];                // 行内「停止」
@@ -38,7 +39,7 @@ function onRow(r: RailRow) {
   <aside v-if="!drawer" class="rail">
     <div class="rail-head">
       <span class="rail-title">会话</span>
-      <button type="button" class="rail-add" @click="emit('new-session')">+ 新工位</button>
+      <button type="button" class="rail-add" :disabled="addDisabled" @click="emit('new-session')">+ 新工位</button>
     </div>
     <div class="rail-rows">
       <div
@@ -64,7 +65,7 @@ function onRow(r: RailRow) {
     <aside class="rail rail-drawer">
       <div class="rail-head">
         <span class="rail-title">会话</span>
-        <button type="button" class="rail-add" @click="emit('new-session')">+ 新工位</button>
+        <button type="button" class="rail-add" :disabled="addDisabled" @click="emit('new-session')">+ 新工位</button>
       </div>
       <div class="rail-rows">
         <div
