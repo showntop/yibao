@@ -456,7 +456,7 @@ class _FakeRunner:
 
 
 def test_stream_panel_data_carries_agent():
-    """panel_data data = {session_id, agent, event} 三键（chat.html 按 agent 更新引擎徽标）。"""
+    """panel_data data = {session_id, agent, event} 三键（面板按 agent 更新引擎徽标）。"""
     db = _FakeDB(); db.rows["s1"] = {"id": "s1", "status": "running"}
     emitted = []
     _run(_stream(db, "s1", "/tmp", "p", _FakeRunner(),

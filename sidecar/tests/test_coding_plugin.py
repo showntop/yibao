@@ -522,7 +522,7 @@ def test_stop_stale_running_emits_stopped_terminal(monkeypatch):
             if e.get("kind") == "panel_data"
             and e["payload"]["data"]["event"].get("kind") == "stopped"]
     assert term, ctx.events
-    assert term[0]["payload"]["panel"] == "coding:chat"
+    assert term[0]["payload"]["panel"] == "coding:studio"
     assert term[0]["payload"]["data"]["session_id"] == "s-stale"
 
 
@@ -881,7 +881,7 @@ def test_rewind_idle_session_uses_fresh_client(monkeypatch):
     assert r.success and r.data["live"] is False
     assert client.calls == ["connect", ("rewind_files", "u-1"), "disconnect"]
     assert seen["resume"] == "cc-old-1" and seen["cwd"] == "/tmp/p"
-    # rewind_ok 事件经 panel_data 推到 coding:chat 面板
+    # rewind_ok 事件经 panel_data 推到 coding:studio 面板
     ok = [e for e in events if e.get("kind") == "panel_data"
           and e["payload"]["data"]["event"].get("kind") == "rewind_ok"]
     assert ok and ok[0]["payload"]["data"]["session_id"] == "sid-1"
@@ -1306,14 +1306,14 @@ def test_list_skill_live_states():
 
 
 def test_start_skill_background_param(monkeypatch):
-    """background=true → data.panel=None（不开面板，静默执行）；缺省 → coding:chat 照开。"""
+    """background=true → data.panel=None（不开面板，静默执行）；缺省 → coding:studio 照开。"""
     db = _FakeDB()
     monkeypatch.setattr(codingmod, "_spawn_stream", lambda *a, **k: None)
     r = StartSkill().run({"cwd": "/tmp", "prompt": "后台改 X", "background": True}, _Ctx(db))
     assert r.success and r.data["panel"] is None
     assert "后台" in r.data["human"]
     r2 = StartSkill().run({"cwd": "/tmp", "prompt": "普通任务"}, _Ctx(db))
-    assert r2.success and r2.data["panel"] == "coding:chat"
+    assert r2.success and r2.data["panel"] == "coding:studio"
     props = StartSkill().openai_schema()["function"]["parameters"]["properties"]
     assert props["background"]["type"] == "boolean"
 
@@ -1397,7 +1397,7 @@ from coding import AttachSkill  # noqa: E402
 
 
 def test_attach_returns_session_and_attach_flag():
-    """attach 成功：data 带 {session_id, attach:True}（逐字对齐 chat.html init 判别）；
+    """attach 成功：data 带 {session_id, attach:True}（逐字对齐 studio 面板 handleData init 判别）；
     任何终态/运行态会话都可接管（恢复/围观由面板侧处理）。"""
     db = _FakeDB()
     db.rows["s-att"] = {"id": "s-att", "status": "done"}

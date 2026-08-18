@@ -503,6 +503,81 @@ describe("评审回归", () => {
     await vi.waitFor(() => expect(s2.state.error).toContain("启动失败:"));
     expect(s2.state.sending).toBe(false);
   });
+
+  // T9 评审修复①:泄放路径跨引擎守卫(对齐原 send() :1884 内联分支——排队条目泄放同样经 send)
+  it("泄放跨引擎守卫:queueContext 带 switchAgent(≠curSessAgent)→ 交接;快照漂移/同引擎 → 普通 send", async () => {
+    // ① 快照带待定切换:busy 入队 → done 泄放 → handoffSend(session_brief → start 带新引擎)
+    let startCalls = 0;
+    const invoke = vi.fn(async (method: string) => {
+      if (method === "coding.session_brief") return { brief: "摘要" };
+      if (method === "coding.start") return { session_id: ++startCalls === 1 ? "s1" : "s2" };
+      return { session_id: "s1" };
+    });
+    const { deps } = makeDeps(invoke as never);
+    const handed: string[] = [];
+    deps.onQueueHandoff = (a) => { handed.push(a); };
+    const s = createSessionStore(deps);
+    await s.send("/q", "hi", "acceptEdits", "claude-code"); // currentSession=s1, curSessAgent=claude-code
+    s.setQueueContext({ cwd: "/q", mode: "acceptEdits", agent: "claude-code", switchAgent: "codex" });
+    expect(s.takeoverInput("排队任务", [], "/q", "acceptEdits", "claude-code")).toEqual({ queued: true }); // streaming 中入队
+    s.applyEvent(ev({ kind: "done" })); // 终态泄放 → 守卫命中 → 交接
+    await vi.waitFor(() => expect(s.state.currentSession).toBe("s2"));
+    expect(invoke).toHaveBeenCalledWith("coding.session_brief", { id: "s1", target: "codex" });
+    expect(invoke).toHaveBeenLastCalledWith("coding.start", {
+      cwd: "/q", prompt: "【交接上下文】\n摘要\n\n【用户继续】\n排队任务", mode: "acceptEdits", agent: "codex",
+    });
+    expect(s.state.curSessAgent).toBe("codex");
+    expect(handed).toEqual(["codex"]); // onQueueHandoff 回告(App 清待定 + curAgent 同步)
+    expect(s._test.getQueue()).toHaveLength(0);
+    expect(s._test.discardedSessions.has("s1")).toBe(true);
+
+    // ② 同引擎快照(用户在 chip 点回当前引擎):不触发交接,普通 coding.send 续聊
+    const d2 = makeDeps();
+    const s2 = createSessionStore(d2.deps);
+    await s2.send("/q", "hi", "acceptEdits", "claude-code");
+    s2.setQueueContext({ cwd: "/q", mode: "acceptEdits", agent: "claude-code", switchAgent: "claude-code" });
+    expect(s2.takeoverInput("再来", [], "/q", "acceptEdits", "claude-code")).toEqual({ queued: true });
+    s2.applyEvent(ev({ kind: "done" }));
+    await vi.waitFor(() =>
+      expect(d2.invoke).toHaveBeenCalledWith("coding.send", { id: "s1", prompt: "再来", mode: "acceptEdits" }));
+    expect(d2.invoke).not.toHaveBeenCalledWith("coding.session_brief", expect.anything());
+  });
+
+  it("泄放跨引擎守卫:brief 等待期快照漂移(chip 改选/清空)→ 丢弃不发 start;brief 失败落 errbar", async () => {
+    // 快照漂移:brief 挂起期间 queueContext.switchAgent 被改 → stale,旧会话保留
+    let releaseBrief!: (v: { brief: string }) => void;
+    const invoke = vi.fn((method: string) =>
+      method === "coding.session_brief"
+        ? new Promise<{ brief: string }>((res) => { releaseBrief = res; })
+        : Promise.resolve({ session_id: "s1" }));
+    const { deps } = makeDeps(invoke as never);
+    const s = createSessionStore(deps);
+    await s.send("/q", "hi", "acceptEdits", "claude-code");
+    s.setQueueContext({ cwd: "/q", mode: "acceptEdits", agent: "claude-code", switchAgent: "codex" });
+    s.takeoverInput("排队任务", [], "/q", "acceptEdits", "claude-code");
+    s.applyEvent(ev({ kind: "done" })); // 泄放 → handoffSend 挂起等 brief
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("coding.session_brief", expect.anything()));
+    s.setQueueContext({ cwd: "/q", mode: "acceptEdits", agent: "claude-code", switchAgent: null }); // 等待期改主意
+    releaseBrief({ brief: "b" });
+    await vi.waitFor(() => expect(s.state.sending).toBe(false));
+    expect(s.state.currentSession).toBe("s1"); // 未交接
+    expect(invoke).not.toHaveBeenCalledWith("coding.start", expect.objectContaining({ agent: "codex" }));
+
+    // brief 失败:泄放路径无状态行通道 → 落 errbar(state.error),旧会话保留
+    const failing = vi.fn(async (method: string) => {
+      if (method === "coding.session_brief") throw new Error("LLM 挂了");
+      return { session_id: "s1" };
+    });
+    const d2 = makeDeps(failing as never);
+    const s2 = createSessionStore(d2.deps);
+    await s2.send("/q", "hi", "acceptEdits", "claude-code");
+    s2.setQueueContext({ cwd: "/q", mode: "acceptEdits", agent: "claude-code", switchAgent: "codex" });
+    s2.takeoverInput("排队任务", [], "/q", "acceptEdits", "claude-code");
+    s2.applyEvent(ev({ kind: "done" }));
+    await vi.waitFor(() => expect(s2.state.error).toContain("交接摘要生成失败:"));
+    expect(s2.state.currentSession).toBe("s1");
+    expect(s2.state.sending).toBe(false);
+  });
 });
 
 describe("跨引擎交接 handoffSend", () => {

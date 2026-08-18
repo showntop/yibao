@@ -38,12 +38,6 @@ columns = [
 indexes = ["session_id", "seq"]
 
 [[panel]]
-type = "webview"
-name = "chat"
-label = "编码对话"
-src = "panel/chat.html"
-
-[[panel]]
 type = "schema"
 name = "wall"
 label = "会话墙"

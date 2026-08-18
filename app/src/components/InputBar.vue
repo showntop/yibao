@@ -140,7 +140,7 @@ function closeAt() {
 
 function pickAt(f: { rel: string }) {
   text.value = stripAtTrigger(text.value, atCaret, atStart); // 移除触发片段，文件成 chip
-  // 去重：同文件重复引用无意义（与 chat.html addAtRef 同约定）
+  // 去重：同文件重复引用无意义（与 coding 面板 pushRef 同约定）
   if (!pendingContexts.value.some((c) => c.kind === "file" && c.path === f.rel)) {
     pendingContexts.value.push({ kind: "file", label: f.rel.split("/").pop() || f.rel, path: f.rel });
   }
@@ -304,7 +304,7 @@ function onMain() {
 
 // IME 组字守卫（WebKit bug 165004：compositionend 先于确认 Enter 的 keydown 派发，
 // 该 keydown 的 isComposing 已为 false，单靠 e.isComposing 会穿透误发——
-// 记 compositionend 时间戳，50ms 窗口内的 Enter 一并拦截。参考 plugins/coding/panel/chat.html）
+// 记 compositionend 时间戳，50ms 窗口内的 Enter 一并拦截。参考 plugins/coding/panel/src/components/Composer.vue）
 const imeComposing = ref(false);
 let lastCompEnd = 0;
 

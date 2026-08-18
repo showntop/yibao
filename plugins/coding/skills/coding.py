@@ -3,7 +3,7 @@
 三件事：
 1. start_session：纯函数，往 sessions 表插一行 running（测试直接打）。
 2. _spawn_stream：起 daemon 线程，线程内开自己的 asyncio loop 跑 ClaudeCodeRunner，
-   每条 SDK 事件 normalize 后经 ctx.emit_event → panel_data 推 coding:chat 面板。
+   每条 SDK 事件 normalize 后经 ctx.emit_event → panel_data 推 coding:studio 面板。
 3. _stop_session：race-safe 取消——先 db.update(stopped) 再 set cancel（仿 agents.task_stop），
    保证收尾线程的 done/failed 落库不覆盖用户主动停止。
 
@@ -129,7 +129,7 @@ def _spawn_stream(db, sid: str, cwd: str, prompt: str, runner, emit_event,
         None（StartSkill 路径）→ 全新会话。
     permission_mode：透传 runner.run（acceptEdits/plan），进 SDK options / codex sandbox。
     agent：会话引擎 id（claude-code/cc/codex），透传 _stream → panel_data data 平级键
-        （chat.html 实时更新引擎徽标）。
+        （面板按此实时更新引擎徽标）。
     _SESSIONS[sid] entry 同时是运行中切模式的通道（coding.mode 写 mode_pending，
     runner 每条消息前消费 → client.set_permission_mode）。
     """
@@ -176,7 +176,7 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
     codex=exec resume thread_id）。
     permission_mode：透传 runner.run（acceptEdits/plan）。
     agent：会话引擎 id，panel_data data 加平级 "agent" 键（data={session_id, agent, event}，
-    chat.html 按此实时更新引擎徽标）。
+    面板按此实时更新引擎徽标）。
     session_entry：_SESSIONS[sid] live entry 透传 runner.run——coding.mode 写入
     mode_pending 后，runner 每条消息前消费并 client.set_permission_mode（运行中切模式）。
     can_use_tool：每轮新建权限回调桥（make_permission_callback(sid, on_event, emit_event=…)）——
@@ -219,7 +219,7 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
             # panel/data 必须包在 payload 下：PanelApp.vue 的 panel_data 处理读
             # e.payload?.panel / e.payload?.data，shell proactive→Rust→PanelApp 不再加包装。
             emit_event({"kind": "panel_data",
-                        "payload": {"panel": "coding:chat",
+                        "payload": {"panel": "coding:studio",
                                     "data": {"session_id": sid, "agent": agent, "event": ev}}})
         if ev.get("kind") == "error":
             state["error"] = True
@@ -397,7 +397,7 @@ class StartSkill(Skill):
         return ActionResult(success=True, data={
             "session_id": sid,
             # background=true → panel=None（loop 判空不开面板），静默执行靠终态任务卡汇报
-            "panel": None if background else "coding:chat",
+            "panel": None if background else "coding:studio",
             "human": (f"已开始后台编码会话 {sid}，完成会汇报" if background
                       else f"已开始编码会话 {sid}，面板实时回显"),
         })
@@ -468,7 +468,7 @@ class SendSkill(Skill):
         _emit_sessions_changed(ctx.emit_event, sid, "started")
         return ActionResult(success=True, data={
             "session_id": sid,
-            "panel": "coding:chat",
+            "panel": "coding:studio",
             "human": f"已接续会话 {sid}，面板实时回显",
         })
 
@@ -515,7 +515,7 @@ class StopSkill(Skill):
             emit = getattr(ctx, "emit_event", None)
             if emit is not None:
                 emit({"kind": "panel_data",
-                      "payload": {"panel": "coding:chat",
+                      "payload": {"panel": "coding:studio",
                                   "data": {"session_id": sid,
                                            "event": {"kind": "stopped", "text": "已中断"}}}})
         return ActionResult(success=True, data={
@@ -561,15 +561,15 @@ class ListSkill(Skill):
     def run(self, params: dict, ctx: Any) -> ActionResult:
         rows = ctx.db.query("sessions", order="created_at DESC")
         sessions = [{**dict(row), "live": _live_state(str(row.get("id") or ""))} for row in rows]
-        return ActionResult(success=True, data={"sessions": sessions, "panel": "coding:chat"})
+        return ActionResult(success=True, data={"sessions": sessions, "panel": "coding:studio"})
 
 
 class AttachSkill(Skill):
     """打开 coding 面板并恢复指定会话（任务卡/会话墙「接管」点击路由）。
 
-    只校验会话存在，真正的恢复在面板侧：api.toml 声明 panel="coding:chat"，
+    只校验会话存在，真正的恢复在面板侧：api.toml 声明 panel="coding:studio"，
     直调成功后 panel_payload 把 data 原样透传进面板 init 数据（{session_id, agent, attach: true}），
-    chat.html 的 handleInitData 见 attach 标志自动 resumeSession（P1 接管链路自然生效）；
+    studio 面板的 handleData 见 attach 标志自动 resumeSession（P1 接管链路自然生效）；
     data.agent 让前端接管跨引擎会话时徽标立即正确，不用等首条流事件。
     """
     id = "coding.attach"
@@ -593,7 +593,7 @@ class AttachSkill(Skill):
         rows = ctx.db.query("sessions", where={"id": sid})
         if not rows:
             return ActionResult(success=False, error=f"会话不存在：{sid}")
-        # attach 标志逐字对齐 chat.html handleInitData 的判别（data.attach === true）；
+        # attach 标志逐字对齐 studio 面板 handleData 的判别（data.attach === true）；
         # agent 取库行值（老行缺省按 claude-code，同 _stream/_runner_for 缺省）——
         # 前端接管跨引擎会话时引擎徽标立即正确，不等首条流事件
         return ActionResult(success=True, data={
@@ -988,7 +988,7 @@ class RewindSkill(Skill):
 
         def _emit(ev: dict) -> None:
             if emit is not None:
-                emit({"kind": "panel_data", "payload": {"panel": "coding:chat",
+                emit({"kind": "panel_data", "payload": {"panel": "coding:studio",
                       "data": {"session_id": sid, "event": ev}}})
 
         # 在跑：下条消息前由 runner 执行（消费 rewind_pending）。

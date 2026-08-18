@@ -1,7 +1,8 @@
 // 会话 store:事件→渲染模型归约器 + 发送状态机。单工位对外暴露一个「当前会话」视图,
 // 内部按 sid 分槽(stage 3 多工位直接复用同一归约器多实例)。
 // 行为对齐 chat.html:气泡切断规则、工具卡配对(lastToolCard)、兜底用户气泡原地升级、
-// pendingTurnEnded 秒败竞态、resumeSession 的 discarded 解锁、takeover 队列泄放、
+// pendingTurnEnded 秒败竞态、resumeSession 的 discarded 解锁、takeover 队列泄放(T9:泄放路径
+// 补跨引擎交接守卫,对齐原 send() 内联分支)、
 // handoffSend 跨引擎交接(:1964-1991)、startHandoffSession Codex→CC(:2268-2319)。
 import { reactive } from "vue";
 import type { CodingEvent, HistoryMessage, PanelData, Usage } from "../lib/types";
@@ -49,6 +50,7 @@ export interface SessionDeps {
   clearTimer: (t: ReturnType<typeof setTimeout>) => void;
   userEchoFallbackMs: number; // 生产 1500,测试可 0/手动
   onResumedCwd?: (cwd: string) => void; // resumeSession 成功且 history 带 cwd 时回调(对齐原 setCwd(r.cwd))
+  onQueueHandoff?: (agent: string) => void; // 泄放路径跨引擎交接落定(T9):App 清 switchAgent + curAgent 同步
 }
 
 export type HandoffSendResult = "sent" | "stale" | "failed";
@@ -446,15 +448,33 @@ export function createSessionStore(deps: SessionDeps) {
 
   function drainTakeoverQueue() {
     if (!takeoverQueue.length || state.sending || state.streaming) return;
-    // 出队即消费(校验拒发不补发,对齐现状);cwd/mode/agent 由 App 在 send 时快照提供
+    // 出队即消费(校验拒发不补发,对齐现状);cwd/mode/agent/switchAgent 由 App 快照提供
     const item = takeoverQueue.shift()!;
     // 失败已由 state.error 承载,火忘路径不再外抛
     void pendingSendFromQueue(item).catch(() => {});
   }
-  // 队列条目发送需要 cwd/mode/agent 快照,由 App 注入(send 的常规参数源)
-  let queueContext: { cwd: string; mode: string; agent: string } = { cwd: "", mode: "acceptEdits", agent: "claude-code" };
-  function setQueueContext(ctx: { cwd: string; mode: string; agent: string }) { queueContext = ctx; }
+  // 队列条目发送需要 cwd/mode/agent 快照,由 App 注入(send 的常规参数源);
+  // switchAgent 一并快照(T9):泄放路径跨引擎交接守卫的判据(对齐原 send() :1884 内联分支)
+  let queueContext: { cwd: string; mode: string; agent: string; switchAgent?: string | null } =
+    { cwd: "", mode: "acceptEdits", agent: "claude-code", switchAgent: null };
+  function setQueueContext(ctx: { cwd: string; mode: string; agent: string; switchAgent?: string | null }) { queueContext = ctx; }
   async function pendingSendFromQueue(item: { text: string; refs: string[] }) {
+    const sw = queueContext.switchAgent;
+    // 跨引擎待定守卫(T9 评审修复①,原经 send() 内联分支覆盖泄放路径):老会话 + chip 选了
+    // 另一引擎 → handoffSend 摘要移植,与 App onSend 同一判据;等待期快照漂移(chip 改选/清空)即弃;
+    // brief 失败:泄放路径无状态行通道,落 errbar 兜底(直发路径是 App 侧状态行 tip)
+    if (state.currentSession && sw && sw !== state.curSessAgent) {
+      try {
+        await handoffSend(sw, {
+          cwd: queueContext.cwd, userText: item.text, mode: queueContext.mode, refs: item.refs,
+          isStale: () => queueContext.switchAgent !== sw,
+          onHandedOff: () => deps.onQueueHandoff?.(sw),
+        });
+      } catch (e) {
+        state.error = "交接摘要生成失败:" + emsg(e);
+      }
+      return;
+    }
     await send(queueContext.cwd, item.text, queueContext.mode, queueContext.agent, { refs: item.refs });
   }
 

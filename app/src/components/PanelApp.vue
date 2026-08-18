@@ -385,8 +385,10 @@ const webviewV = computed(() => current.value?.webview?.v ?? 0);
 // ---- coding 接管（P1）：coding 面板打开时 InputBar 直送 iframe 编码会话，不进译宝大脑 ----
 const webviewRef = ref();
 const inputBarRef = ref();
+// T9 泛化：coding:* 的 webview/module 面板都算接管（chat.html 退役后 coding:studio 生效）；
+// coding:wall 是 schema 面板——webviewHtml/webviewUrl 均空，天然排除
 const isCoding = computed(
-  () => !!current.value && current.value.panel === "coding:chat" && !!webviewHtml.value,
+  () => !!current.value && current.value.panel.startsWith("coding:") && !!(webviewHtml.value || webviewUrl.value),
 );
 // coding 运行闸：只由 iframe 的 takeover-state 维护，与 state 解耦——大脑事件（final_reply/
 // interrupted/error 把 state 打回 idle）不再让 esc 转发静默失效
@@ -412,7 +414,7 @@ function onPanelEvent(name: string, payload: any) {
     state.value = st === "idle" ? "idle" : "work";
     void reportPanelContext({
       plugin: "coding",
-      panel: "chat",
+      panel: current.value?.panel.split(":")[1] ?? "studio", // T9：面板名跟实际 ref 走（chat 退役 → studio）
       item: {
         id: payload?.session ? "session" : "coding",
         title: `编码对话（${CODING_STATE_LABEL[st] ?? st}）`,

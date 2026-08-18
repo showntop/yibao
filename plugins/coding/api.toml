@@ -2,13 +2,13 @@
 name = "coding.start"
 handler = "coding.start"
 direct = true
-panel = "coding:chat"
+panel = "coding:studio"
 
 [[method]]
 name = "coding.send"
 handler = "coding.send"
 direct = true
-panel = "coding:chat"
+panel = "coding:studio"
 
 [[method]]
 name = "coding.stop"
@@ -19,14 +19,14 @@ direct = true
 name = "coding.list"
 handler = "coding.list"
 direct = true
-panel = "coding:chat"
+panel = "coding:studio"
 
-# 任务卡/会话墙「接管」：打开 coding:chat 面板并恢复该会话（data 透传 {session_id, attach:true} → 面板 init 自动 resume）
+# 任务卡/会话墙「接管」：打开 coding:studio 面板并恢复该会话（data 透传 {session_id, attach:true} → 面板 init 自动 resume）
 [[method]]
 name = "coding.attach"
 handler = "coding.attach"
 direct = true
-panel = "coding:chat"
+panel = "coding:studio"
 
 # 会话墙：多会话总览（schema list 面板；插件页子入口 open="wall_data" 直调打开）
 [[method]]
@@ -116,7 +116,7 @@ handler = "coding.attach_codex"
 direct = true
 quiet = true
 
-# 主输入条 @ 引用：取最近会话 cwd 用（quiet 别名——coding.list 本体带 panel="coding:chat" 事件，
+# 主输入条 @ 引用：取最近会话 cwd 用（quiet 别名——coding.list 本体带 panel="coding:studio" 事件，
 # 主输入条/非 coding 场景调用会把插件页顶成 coding 面板；照 last_sessions/history 的 quiet 别名先例）
 [[method]]
 name = "sessions"
