@@ -667,11 +667,13 @@ button.ghost:disabled { opacity: .5; cursor: default; }
 }
 @keyframes status-spin { to { transform: rotate(360deg); } }
 
-/* 运行状态悬浮 pill(C3):底部居中浮在 footer 上方(fixed,bottom 由工位按 footer/#errbar
-   高度现算,垂直堆叠不重叠),不占消息流空间;仅 streaming/sending 期间可见。
+/* 运行状态悬浮 pill(C3):列内底部居中浮在 footer 上方(absolute 锚 .station 列——T6 多工位
+   各管各列,不再跨工位重叠;bottom 由工位按 footer/#errbar 高度现算,垂直堆叠不重叠;非聚焦
+   工位 footer 隐藏 → bottom 退化 ~10px,pill 贴列底),不占消息流空间;仅 streaming/sending 可见。
+   z-index 35:高于本列停靠 footer(z-20),低于工位罩层 history/handoff(z-40,忙时本不开启)。
    spinner + 已耗时秒表 + 会话累计 token + 红 Stop;done/stopped/error 后消失 */
 #runpill {
-  position: fixed; left: 50%; transform: translateX(-50%); bottom: 110px; z-index: 35;
+  position: absolute; left: 50%; transform: translateX(-50%); bottom: 110px; z-index: 35;
   display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 12px;
   border-radius: var(--r-pill); background: var(--card);
   border: 1px solid var(--border-strong); box-shadow: var(--shadow-pop);

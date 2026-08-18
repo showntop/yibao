@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 运行状态悬浮 pill(对齐 chat.html:897-937 + :2669-2677):fixed 底部居中,浮于 footer 上方
+// 运行状态悬浮 pill(对齐 chat.html:897-937 + :2669-2677):absolute 锚 .station 列内底部居中,浮于 footer 上方
 // (bottom 由 App 按 footer/errbar 高度现算,垂直堆叠不重叠),不占消息流;仅 sending/streaming 可见。
 // sending 期「提交中…」(Stop 禁用——会话 id 未回填是死点击);streaming 起跑秒表「prefix · Ns」
 // 并解锁 Stop;终态由 App 条件渲染收起。完成行「✓ 完成 · Ns · tok · $」在 footer 状态行(见 App)。
