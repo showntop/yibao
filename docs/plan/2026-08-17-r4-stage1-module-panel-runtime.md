@@ -421,10 +421,17 @@ fn pct_decode(s: &str) -> Option<String> {
 }
 
 /// 在 <head> 之后注入 CSP + importmap + 桥 SDK(无 <head> 则放最前)——与 WebviewPanel srcdoc 注入同手法。
+/// 在原串上做 ASCII 大小写不敏感查找:to_lowercase() 会改变字节长度,索引回切原串会错位/越界。
 fn inject_sdk(html: &str) -> String {
     let tag = format!("{CSP_META}{IMPORTMAP}{BRIDGE_TAG}");
-    match html.to_lowercase().find("<head>") {
-        Some(i) => format!("{}<head>{tag}{}", &html[..i], &html[i + 6..]),
+    let bytes = html.as_bytes();
+    let needle = b"<head>";
+    let pos = bytes
+        .windows(needle.len())
+        .position(|w| w.eq_ignore_ascii_case(needle));
+    match pos {
+        // 命中段是纯 ASCII,索引必落在字符边界上;保留原串标签大小写
+        Some(i) => format!("{}{}{}", &html[..i + needle.len()], tag, &html[i + needle.len()..]),
         None => format!("{tag}{html}"),
     }
 }

@@ -79,10 +79,17 @@ fn pct_decode(s: &str) -> Option<String> {
 }
 
 /// 在 <head> 之后注入 CSP + importmap + 桥 SDK(无 <head> 则放最前)——与 WebviewPanel srcdoc 注入同手法。
+/// 在原串上做 ASCII 大小写不敏感查找:to_lowercase() 会改变字节长度,索引回切原串会错位/越界。
 fn inject_sdk(html: &str) -> String {
     let tag = format!("{CSP_META}{IMPORTMAP}{BRIDGE_TAG}");
-    match html.to_lowercase().find("<head>") {
-        Some(i) => format!("{}<head>{tag}{}", &html[..i], &html[i + 6..]),
+    let bytes = html.as_bytes();
+    let needle = b"<head>";
+    let pos = bytes
+        .windows(needle.len())
+        .position(|w| w.eq_ignore_ascii_case(needle));
+    match pos {
+        // 命中段是纯 ASCII,索引必落在字符边界上;保留原串标签大小写
+        Some(i) => format!("{}{}{}", &html[..i + needle.len()], tag, &html[i + needle.len()..]),
         None => format!("{tag}{html}"),
     }
 }
@@ -169,6 +176,17 @@ mod tests {
         assert!(head < csp && csp < map && map < bridge); // 桥在插件脚本前生效
         let bare = inject_sdk("<div/>");
         assert!(bare.find("Content-Security-Policy").unwrap() < bare.find("<div/>").unwrap());
+    }
+
+    #[test]
+    fn injects_with_non_ascii_before_head() {
+        // 回归:to_lowercase 变长字符(İ)在 <head> 前时索引不得错位/越界
+        let out = inject_sdk("<!-- İ 注释 --><html><HEAD><title>t</title></HEAD><body/></html>");
+        let head_end = out.find("<HEAD>").unwrap() + 6;
+        // 紧跟 <HEAD> 之后(CSP_META 以 `<meta http-equiv="` 开头)
+        assert!(out[head_end..].starts_with("<meta http-equiv=\"Content-Security-Policy"));
+        assert!(out.contains("<body/>"));
+        assert!(out.contains("<!-- İ 注释 -->"));
     }
 
     #[test]
