@@ -2,6 +2,7 @@
 // 两条注入路径共用本文件:旧 srcdoc 面板由 WebviewPanel 内联注入(?raw import);
 // module 面板由 Rust yibao-plugin:// 协议层 serve /__yibao__/bridge.js(include_bytes!)。
 // 必须出现在插件自有脚本之前(协议层注入到 <head> 之后),否则插件脚本执行时 window.yibao 未定义。
+// 警告:本文件会被内联进 srcdoc 的 <script> 标签——内容里禁止出现字面 "</script>"(会截断注入脚本)。
 (function () {
   window.YIBAO_BRIDGE_VERSION = 1;
   var seq = 0;
