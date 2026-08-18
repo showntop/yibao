@@ -29,13 +29,14 @@ import {
 } from "../lib/brain";
 import { procLabel, procSkip, procResultSuffix } from "../lib/proc";
 import { fileRefPaths, formatContextPrefix, type InputContext } from "../lib/at-mention";
+import type { WebviewPayload } from "../lib/webview-source";
 
 // 当前面板：kind="panel" 事件整体替换刷新（webview 非空 → webview 面板，否则 schema 面板）
 const current = ref<{
   panel: string;
   title: string;
   schema: any;
-  webview: { html?: string; url?: string; v?: number } | null;
+  webview: WebviewPayload | null;
   data: Record<string, unknown>;
 } | null>(null);
 const errorText = ref(""); // 面板内顶部错误细条（不进对话气泡）
@@ -363,7 +364,7 @@ async function pullCache() {
       panel: string;
       title?: string;
       schema: any;
-      webview: { html?: string; url?: string; v?: number } | null;
+      webview: WebviewPayload | null;
       data: Record<string, unknown>;
     } | null>("get_current_panel");
     if (cached && current.value === null) {

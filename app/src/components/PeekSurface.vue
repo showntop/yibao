@@ -7,6 +7,7 @@ import SchemaPanel from "./SchemaPanel.vue";
 import WebviewPanel from "./WebviewPanel.vue";
 import YbIcon from "./YbIcon.vue";
 import { onBrainEvent, type BrainEvent } from "../lib/brain";
+import type { WebviewPayload } from "../lib/webview-source";
 
 const props = withDefaults(
   defineProps<{
@@ -14,7 +15,7 @@ const props = withDefaults(
     title: string; // 面板显示名
     provider: string; // 插件 id
     schema: Record<string, any> | null;
-    webview: { html?: string; url?: string; v?: number } | null;
+    webview: WebviewPayload | null;
     data: Record<string, unknown>;
   }>(),
   { schema: null, webview: null },

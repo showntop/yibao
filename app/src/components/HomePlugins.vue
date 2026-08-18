@@ -25,6 +25,7 @@ import { formatContextPrefix, type InputContext } from "../lib/at-mention";
 import { procLabel, procSkip, procResultSuffix } from "../lib/proc";
 import { sessionStore } from "../state/store";
 import type { Attention, Presentation } from "../lib/surface-policy";
+import type { WebviewPayload } from "../lib/webview-source";
 
 type AvatarState = "idle" | "listen" | "think" | "work" | "say";
 const props = withDefaults(defineProps<{
@@ -212,7 +213,7 @@ const current = ref<{
   panel: string;
   title: string;
   schema: any;
-  webview: { html?: string; url?: string; v?: number } | null;
+  webview: WebviewPayload | null;
   data: Record<string, unknown>;
   hints?: { presentation: Presentation | null; attention: Attention; surfaces?: Presentation[] };
 } | null>(null);
@@ -563,7 +564,7 @@ async function pullCache() {
       panel: string;
       title?: string;
       schema: any;
-      webview: { html?: string; url?: string; v?: number } | null;
+      webview: WebviewPayload | null;
       data: Record<string, unknown>;
     } | null>("get_current_panel");
     if (cached && current.value === null) {

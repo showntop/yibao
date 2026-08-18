@@ -1,0 +1,16 @@
+{
+  "name": "yibao-panel-coding",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "vitest run", "build": "node ../../../scripts/panel-build/build.mjs coding" },
+  "dependencies": {
+    "dompurify": "^3.2.4",
+    "highlight.js": "^11.11.1",
+    "marked": "^15.0.0",
+    "vue": "3.5.40"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.10"
+  }
+}

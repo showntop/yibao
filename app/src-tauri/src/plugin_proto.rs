@@ -15,9 +15,16 @@ use tauri::http::{Request, Response};
 const BRIDGE_JS: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../src/shared/bridge.js"));
 const VUE_JS: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/resources/sdk/vue.esm-browser.js"));
 
-const CSP_META: &str = "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src yibao-plugin: 'unsafe-inline'; style-src yibao-plugin: 'unsafe-inline'; img-src yibao-plugin: data:; font-src yibao-plugin: data:; connect-src 'none'; object-src 'none'; base-uri 'none'\">";
 const IMPORTMAP: &str = "<script type=\"importmap\">{\"imports\":{\"vue\":\"/__yibao__/vue.esm-browser.js\"}}</script>";
 const BRIDGE_TAG: &str = "<script src=\"/__yibao__/bridge.js\"></script>";
+
+/// CSP 按 pid 收窄到本插件源;/__yibao__/ SDK 在任意 pid 下可服务,故同属本源可达。
+/// form-action 禁表单外发;connect-src 'none' 断网络(XHR/fetch/ws)。
+fn csp_meta(pid: &str) -> String {
+    format!(
+        "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src yibao-plugin://{pid} 'unsafe-inline'; style-src yibao-plugin://{pid} 'unsafe-inline'; img-src yibao-plugin://{pid} data:; font-src yibao-plugin://{pid} data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'\">"
+    )
+}
 
 fn mime_for(path: &Path) -> &'static str {
     match path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase().as_str() {
@@ -80,8 +87,8 @@ fn pct_decode(s: &str) -> Option<String> {
 
 /// 在 <head> 之后注入 CSP + importmap + 桥 SDK(无 <head> 则放最前)——与 WebviewPanel srcdoc 注入同手法。
 /// 在原串上做 ASCII 大小写不敏感查找:to_lowercase() 会改变字节长度,索引回切原串会错位/越界。
-fn inject_sdk(html: &str) -> String {
-    let tag = format!("{CSP_META}{IMPORTMAP}{BRIDGE_TAG}");
+fn inject_sdk(html: &str, pid: &str) -> String {
+    let tag = format!("{}{}{}", csp_meta(pid), IMPORTMAP, BRIDGE_TAG);
     let bytes = html.as_bytes();
     let needle = b"<head>";
     let pos = bytes
@@ -121,7 +128,7 @@ pub fn handle(request: &Request<Vec<u8>>, plugins_root: &Path) -> Response<Cow<'
     let mime = mime_for(&path);
     match std::fs::read(&path) {
         Ok(bytes) if mime.starts_with("text/html") => match String::from_utf8(bytes) {
-            Ok(html) => respond(200, mime, Cow::Owned(inject_sdk(&html).into_bytes())),
+            Ok(html) => respond(200, mime, Cow::Owned(inject_sdk(&html, pid).into_bytes())),
             Err(_) => respond(500, "text/plain; charset=utf-8", Cow::Borrowed(&b"bad html"[..])),
         },
         Ok(bytes) => respond(200, mime, Cow::Owned(bytes)),
@@ -168,20 +175,20 @@ mod tests {
 
     #[test]
     fn injects_after_head_or_prepends() {
-        let out = inject_sdk("<html><head><title>t</title></head><body/></html>");
+        let out = inject_sdk("<html><head><title>t</title></head><body/></html>", "demo");
         let head = out.find("<head>").unwrap();
         let csp = out.find("Content-Security-Policy").unwrap();
         let map = out.find("importmap").unwrap();
         let bridge = out.find("/__yibao__/bridge.js").unwrap();
         assert!(head < csp && csp < map && map < bridge); // 桥在插件脚本前生效
-        let bare = inject_sdk("<div/>");
+        let bare = inject_sdk("<div/>", "demo");
         assert!(bare.find("Content-Security-Policy").unwrap() < bare.find("<div/>").unwrap());
     }
 
     #[test]
     fn injects_with_non_ascii_before_head() {
         // 回归:to_lowercase 变长字符(İ)在 <head> 前时索引不得错位/越界
-        let out = inject_sdk("<!-- İ 注释 --><html><HEAD><title>t</title></HEAD><body/></html>");
+        let out = inject_sdk("<!-- İ 注释 --><html><HEAD><title>t</title></HEAD><body/></html>", "demo");
         let head_end = out.find("<HEAD>").unwrap() + 6;
         // 紧跟 <HEAD> 之后(CSP_META 以 `<meta http-equiv="` 开头)
         assert!(out[head_end..].starts_with("<meta http-equiv=\"Content-Security-Policy"));
@@ -195,6 +202,17 @@ mod tests {
         assert!(pct_decode("a%2f..%2f").is_some()); // 解码后含 .. 由 resolve_plugin_path 拦
         assert!(pct_decode("%zz").is_none());
         assert!(pct_decode("%4").is_none());
+    }
+
+    #[test]
+    fn csp_is_scoped_per_pid() {
+        let root = fixture_root();
+        let r = handle(&req("yibao-plugin://demo/panel/dist/index.html"), &root);
+        let body = String::from_utf8_lossy(r.body()).into_owned();
+        assert!(body.contains("script-src yibao-plugin://demo 'unsafe-inline'"));
+        assert!(body.contains("form-action 'none'"));
+        // 旧形式是裸 scheme 源 `yibao-plugin: '(后跟空格+引号);新形式带 ://<pid>,前缀重合,须带空格区分
+        assert!(!body.contains("script-src yibao-plugin: '"));
     }
 
     #[test]
