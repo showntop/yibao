@@ -340,6 +340,29 @@ describe("会话恢复", () => {
     await vi.waitFor(() => expect(s6.state.currentSession).toBe("s9"));
     expect(s6.state.curSessAgent).toBe("codex");
   });
+
+  // onResumedCwd:成功且 history 带 cwd → 回调(对齐原 setCwd(r.cwd));skipIfEmpty 空历史早退 → 不回调
+  it("onResumedCwd:resumeSession 成功带 cwd 回调;skipIfEmpty 空历史不回调", async () => {
+    const onResumedCwd = vi.fn();
+    const { deps } = makeDeps(vi.fn(async () => ({
+      messages: [{ role: "user", text: "旧" }],
+      cwd: "/resumed/dir",
+    })) as never);
+    deps.onResumedCwd = onResumedCwd;
+    const s = createSessionStore(deps);
+    const n = await s.resumeSession("s1");
+    expect(n).toBe(1);
+    expect(onResumedCwd).toHaveBeenCalledWith("/resumed/dir");
+
+    // skipIfEmpty 空历史:早退在 cwd 回调之前,即使响应带 cwd 也不得回调
+    const onResumedCwd2 = vi.fn();
+    const d2 = makeDeps(vi.fn(async () => ({ messages: [], cwd: "/x" })) as never);
+    d2.deps.onResumedCwd = onResumedCwd2;
+    const s2 = createSessionStore(d2.deps);
+    const n2 = await s2.resumeSession("sEmpty", undefined, { skipIfEmpty: true });
+    expect(n2).toBe(0);
+    expect(onResumedCwd2).not.toHaveBeenCalled();
+  });
 });
 
 describe("newChat", () => {
@@ -645,8 +668,9 @@ describe("交接卡项", () => {
     s.pushHandoffCard("cx1", "brief", false, null);
     s.pushHandoffCard("cx2", null, false, "读取 brief 失败：x"); // 失败也开卡(红条+空 textarea)
     expect(s.state.items).toHaveLength(2);
-    expect(s.state.items[0]).toMatchObject({ type: "handoff", sid: "cx1", brief: "brief" });
-    expect(s.state.items[1]).toMatchObject({ type: "handoff", sid: "cx2", brief: null, errMsg: "读取 brief 失败：x" });
+    // seq 自增且唯一:v-for key 用,防 index-key 删前卡后组件实例复用串扰(sid 可重复不能作 key)
+    expect(s.state.items[0]).toMatchObject({ type: "handoff", seq: 1, sid: "cx1", brief: "brief" });
+    expect(s.state.items[1]).toMatchObject({ type: "handoff", seq: 2, sid: "cx2", brief: null, errMsg: "读取 brief 失败：x" });
     s.dropHandoffCard(s.state.items[0]);
     expect(s.state.items).toHaveLength(1);
     expect(s.state.items[0]).toMatchObject({ sid: "cx2" });

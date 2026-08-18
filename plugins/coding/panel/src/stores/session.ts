@@ -20,8 +20,10 @@ export type RenderItem =
   | { type: "marker"; text: string; err: boolean }
   | { type: "error"; text: string }
   // Codex→CC 交接卡(T7):#log chat-flow 元素(session 起点,非 modal);交互态(sealed/编辑文本)
-  // 在组件内,store 只持数据;newChat/resumeSession 清 items 时卡随之消失(对齐原 #log 清空)
-  | { type: "handoff"; sid: string; brief: string | null; incomplete: boolean; errMsg: string | null };
+  // 在组件内,store 只持数据;newChat/resumeSession 清 items 时卡随之消失(对齐原 #log 清空)。
+  // seq 自增序号:v-for key 用——index-key 在删前卡后会让后卡复用前卡组件实例(text/sealed 串扰),
+  // sid 同会话可出两张卡不能作 key
+  | { type: "handoff"; seq: number; sid: string; brief: string | null; incomplete: boolean; errMsg: string | null };
 
 export type SessionEnded = "done" | "stopped" | "error" | null;
 export type ReportState = "idle" | "sending" | "streaming" | "waiting";
@@ -73,6 +75,7 @@ export function createSessionStore(deps: SessionDeps) {
   let pendingTurnEnded = false; // 秒败竞态:终态先于 invoke 返回
   let pendingUserEcho: ReturnType<typeof setTimeout> | null = null;
   let fallbackUserIndex = -1;   // 兜底气泡在 items 里的下标(-1 无)
+  let handoffSeq = 0;           // 交接卡自增序号(v-for key;newChat 清卡不复位,单调递增即唯一)
 
   const curAssistant = (): Extract<RenderItem, { type: "assistant" }> | null => {
     const last = state.items[state.items.length - 1];
@@ -340,7 +343,7 @@ export function createSessionStore(deps: SessionDeps) {
 
   /** 交接卡(Codex→CC)入消息流:可编辑 brief/失败红条由组件渲染,交互态在组件内 */
   function pushHandoffCard(sid: string, brief: string | null, incomplete: boolean, errMsg: string | null) {
-    state.items.push({ type: "handoff", sid, brief, incomplete, errMsg });
+    state.items.push({ type: "handoff", seq: ++handoffSeq, sid, brief, incomplete, errMsg });
   }
   function dropHandoffCard(item: RenderItem) {
     const i = state.items.indexOf(item);

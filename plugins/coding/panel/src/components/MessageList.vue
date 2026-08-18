@@ -52,7 +52,7 @@ function onClick(e: MouseEvent) {
 
 <template>
   <main id="log" ref="logEl" :class="{ 'pill-on': padForPill }" @scroll="onScroll" @click="onClick">
-    <template v-for="(it, i) in items" :key="i">
+    <template v-for="(it, i) in items" :key="it.type === 'handoff' ? 'h:' + it.seq : i">
       <div v-if="it.type === 'user'" class="row user">
         <div class="bubble">{{ it.text }}<button
           v-if="it.uuid"
