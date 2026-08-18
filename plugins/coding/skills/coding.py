@@ -120,7 +120,8 @@ class _AsyncShield:
 def _spawn_stream(db, sid: str, cwd: str, prompt: str, runner, emit_event,
                   resume_session_id: str | None = None,
                   permission_mode: str = "acceptEdits",
-                  agent: str = "claude-code") -> None:
+                  agent: str = "claude-code",
+                  llm=None) -> None:
     """起 daemon 线程跑 runner（线程内自带 asyncio loop）。
 
     emit_event 已线程安全（proactive_dispatcher.emit → call_soon_threadsafe），
@@ -130,6 +131,8 @@ def _spawn_stream(db, sid: str, cwd: str, prompt: str, runner, emit_event,
     permission_mode：透传 runner.run（acceptEdits/plan），进 SDK options / codex sandbox。
     agent：会话引擎 id（claude-code/cc/codex），透传 _stream → panel_data data 平级键
         （面板按此实时更新引擎徽标）。
+    llm：会话级 LLM 能力（SendSkill 透传 ctx.llm），仅供 _stream 的 codex resume
+        失败 fallback 生成交接摘要用；None → 无 fallback，落原 failed 路径。
     _SESSIONS[sid] entry 同时是运行中切模式的通道（coding.mode 写 mode_pending，
     runner 每条消息前消费 → client.set_permission_mode）。
     """
@@ -143,7 +146,7 @@ def _spawn_stream(db, sid: str, cwd: str, prompt: str, runner, emit_event,
             loop.run_until_complete(
                 _stream(db, sid, cwd, prompt, runner, emit_event, cancel,
                         resume_session_id=resume_session_id,
-                        permission_mode=permission_mode, agent=agent))
+                        permission_mode=permission_mode, agent=agent, llm=llm))
         except Exception as e:  # 兜底：流式线程任何意外都不许炸出来
             print(f"[yibao/coding] session {sid} stream 线程崩：{type(e).__name__}: {e}",
                   file=sys.stderr)
@@ -163,7 +166,8 @@ def _spawn_stream(db, sid: str, cwd: str, prompt: str, runner, emit_event,
 async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cancel,
                   resume_session_id: str | None = None,
                   permission_mode: str = "acceptEdits",
-                  agent: str = "claude-code") -> None:
+                  agent: str = "claude-code",
+                  llm=None) -> None:
     """跑 runner；每条事件转 panel_data 推面板 + 落 messages 表；结束按 cancel/error/done 落最终状态。
 
     transcript 落库：user_msg（带 CC uuid，rewind 锚点）/ text_delta / done·stopped 终态 marker，
@@ -177,6 +181,11 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
     permission_mode：透传 runner.run（acceptEdits/plan）。
     agent：会话引擎 id，panel_data data 加平级 "agent" 键（data={session_id, agent, event}，
     面板按此实时更新引擎徽标）。
+    llm：会话级 LLM 能力（SendSkill 透传 ctx.llm）。codex resume 零事件失败
+    （encrypted_content bug 形态：stdout 零事件 → 未捕获 thread.started → cc_sid None，
+    runner returncode 守御补发 error）时一次性自动 fallback：用交接摘要新开会话续跑
+    （SessionBriefSkill 手动补救流程的自动化），再败自然落原 failed 路径（无循环）；
+    llm None → 跳过 fallback。
     session_entry：_SESSIONS[sid] live entry 透传 runner.run——coding.mode 写入
     mode_pending 后，runner 每条消息前消费并 client.set_permission_mode（运行中切模式）。
     can_use_tool：每轮新建权限回调桥（make_permission_callback(sid, on_event, emit_event=…)）——
@@ -215,6 +224,10 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
             state["usage"] = ev.get("usage") if isinstance(ev.get("usage"), dict) else {}
         elif kind == "stopped":
             _persist("marker", str(ev.get("text") or "已中断"))
+        elif kind == "marker":
+            # 流内留痕（如 codex resume 失败 fallback 提示）：落 messages 表 + 经下方
+            # emit_event 进面板流（双写一致，同 done/stopped 的 marker 发送方式）
+            _persist("marker", str(ev.get("text") or ""))
         if emit_event is not None:
             # panel/data 必须包在 payload 下：PanelApp.vue 的 panel_data 处理读
             # e.payload?.panel / e.payload?.data，shell proactive→Rust→PanelApp 不再加包装。
@@ -235,6 +248,49 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
         print(f"[yibao/coding] session {sid} runner 框架异常：{type(e).__name__}: {e}",
               file=sys.stderr)
         state["error"] = True
+
+    # codex resume 零事件失败的一次性自动 fallback（encrypted_content bug 形态：stdout 零事件
+    # → 未捕获 thread.started → cc_sid None，runner returncode 守御补发 error——「resume 根本
+    # 没跑起来」；turn 中途失败已捕获 thread_id，cc_sid 非 None 不触发）。判据齐备则用交接摘要
+    # 新开会话续跑（SessionBriefSkill 手动补救流程的自动化）；只重试一次，再败自然落原
+    # failed 路径（state["error"] 由重试的 error 事件重立，无循环）。
+    if (agent == "codex" and resume_session_id and cc_sid is None
+            and state["error"] and not cancel.is_set() and llm is not None):
+        # 摘要生成同 SessionBriefSkill：messages 尾 40 条（seq DESC LIMIT 40 再反转回正序）
+        # → _build_brief；LLM 失败/空历史退化为最近消息原文节选（兜底恒有交接上下文）
+        try:
+            msgs = db.query("messages", where={"session_id": sid}, order="seq DESC", limit=40)
+            msgs.reverse()
+            turns = [{"role": m["role"], "text": m["text"]} for m in msgs]
+        except Exception as e:
+            print(f"[yibao/coding] session {sid} fallback 查历史失败（按空历史续）：{e}",
+                  file=sys.stderr)
+            turns = []
+        brief = None
+        if turns:
+            try:
+                git = _codex.git_summary(cwd) if cwd else ""
+            except Exception:
+                git = ""   # git 摘要失败不挡路（非 git 目录等），brief 仍有对话内容
+            brief = _build_brief(llm, turns, git, "Codex", "Codex")
+        if not brief:
+            excerpt = "\n".join(f"{t['role']}: {str(t['text'])[:500]}" for t in turns[-10:]) or "（无历史消息）"
+            brief = f"（摘要生成失败，以下为最近对话节选）\n{excerpt}"
+        on_event({"kind": "marker", "text": "resume 失败，已用交接摘要新开会话续跑"})
+        state["error"] = False   # 复位，让重试自行定终态（再败由 on_event 的 error 分支重立）
+        try:
+            cc_sid = await runner.run(
+                f"【交接上下文】\n{brief}\n\n【用户继续】\n{prompt}", cwd,
+                on_event=on_event, cancel_event=_AsyncShield(cancel),
+                resume_session_id=None,
+                permission_mode=permission_mode,
+                can_use_tool=_runner.make_permission_callback(
+                    sid, on_event, emit_event=emit_event),
+                session_entry=_SESSIONS.get(sid))
+        except Exception as e:  # 与首轮同款框架级兜底
+            print(f"[yibao/coding] session {sid} fallback 重跑框架异常：{type(e).__name__}: {e}",
+                  file=sys.stderr)
+            state["error"] = True
 
     # 定最终状态：stopped（用户主动停）> error > done
     try:
@@ -464,7 +520,8 @@ class SendSkill(Skill):
         # 重置 running 状态：resume 是新一轮流式，finished_at 归零；mode 一并回写
         ctx.db.update("sessions", sid, {"status": "running", "finished_at": 0, "mode": mode})
         _spawn_stream(ctx.db, sid, cwd, prompt, runner, ctx.emit_event,
-                      resume_session_id=cc, permission_mode=mode, agent=agent)
+                      resume_session_id=cc, permission_mode=mode, agent=agent,
+                      llm=getattr(ctx, "llm", None))   # codex resume 失败 fallback 摘要用；无则不补救
         _emit_sessions_changed(ctx.emit_event, sid, "started")
         return ActionResult(success=True, data={
             "session_id": sid,

@@ -494,6 +494,72 @@ def test_stream_keeps_thread_id_when_codex_fails_silently():
     assert db.rows["s1"]["cc_session_id"] == "t-old"          # 老值保留
 
 
+def test_resume_failure_falls_back_to_brief_new_session(monkeypatch):
+    """codex resume 零事件失败（encrypted_content bug 形态：stdout 零事件 → 未捕获
+    thread.started → runner 守御补发 error）→ 一次性自动 fallback：交接摘要新开会话续跑。
+    二次调用 resume_session_id is None、prompt 含【交接上下文】+原 prompt、终态 done、
+    cc_session_id 更新、messages 表有 fallback marker（且经 panel_data 进面板流）。"""
+    calls = []
+
+    class _FlakyResumeRunner:
+        async def run(self, prompt, cwd, *, on_event, cancel_event, resume_session_id=None, **kw):
+            calls.append({"prompt": prompt, "resume_session_id": resume_session_id})
+            if resume_session_id is not None:
+                on_event({"kind": "error", "text": "codex 异常退出（退出码 1）：encrypted_content"})
+                return None                                   # 未捕获 thread.started
+            on_event({"kind": "text_delta", "text": "接着做完了"})
+            on_event({"kind": "done", "usage": {}})
+            return "t-new"
+
+    monkeypatch.setattr(codingmod, "_build_brief",
+                        lambda llm, turns, git, src, dst: "交接摘要XYZ")
+    monkeypatch.setattr(codingmod._codex, "git_summary", lambda cwd: "")
+    db = _FakeDB()
+    db.rows["s1"] = {"id": "s1", "status": "running", "cc_session_id": "t-old", "agent": "codex"}
+    db.insert("messages", {"session_id": "s1", "role": "user", "text": "老任务",
+                           "ts": 1, "seq": 1, "uuid": ""})
+    emitted = []
+    _run(_stream(db, "s1", "/tmp", "原任务", _FlakyResumeRunner(),
+                 emit_event=emitted.append, cancel=__import__("threading").Event(),
+                 resume_session_id="t-old", agent="codex", llm=object()))
+    assert len(calls) == 2                                     # 首轮 resume + fallback 新会话
+    assert calls[0]["resume_session_id"] == "t-old"
+    assert calls[1]["resume_session_id"] is None               # fallback 全新会话
+    p2 = calls[1]["prompt"]
+    assert "【交接上下文】" in p2 and "交接摘要XYZ" in p2
+    assert "【用户继续】" in p2 and "原任务" in p2
+    last = db.updates[-1][1]
+    assert last["status"] == "done"                            # 终态按重试结果定
+    assert last["cc_session_id"] == "t-new"                    # 新 thread_id 落库
+    markers = [r for r in db._tables.get("messages", []) if r["role"] == "marker"]
+    assert any("resume 失败，已用交接摘要新开会话续跑" in m["text"] for m in markers)
+    assert any(e.get("kind") == "panel_data"
+               and e["payload"]["data"]["event"].get("kind") == "marker"
+               and "resume 失败" in str(e["payload"]["data"]["event"].get("text") or "")
+               for e in emitted)                               # marker 双写：也进面板流
+
+
+def test_resume_failure_without_llm_keeps_failed():
+    """无 llm（capability 未声明）→ 跳过 fallback 走原 failed 路径：runner 只调一次，
+    终态 failed，老 thread_id 保留不抹。"""
+    calls = []
+
+    class _FailRunner:
+        async def run(self, prompt, cwd, *, on_event, cancel_event, resume_session_id=None, **kw):
+            calls.append(resume_session_id)
+            on_event({"kind": "error", "text": "codex 异常退出（退出码 1）：encrypted_content"})
+            return None
+
+    db = _FakeDB()
+    db.rows["s1"] = {"id": "s1", "status": "running", "cc_session_id": "t-old", "agent": "codex"}
+    _run(_stream(db, "s1", "/tmp", "p", _FailRunner(),
+                 emit_event=None, cancel=__import__("threading").Event(),
+                 resume_session_id="t-old", agent="codex"))
+    assert calls == ["t-old"]                                  # 未重试
+    assert db.updates[-1][1]["status"] == "failed"
+    assert db.rows["s1"]["cc_session_id"] == "t-old"
+
+
 def test_usage_suffix_tolerates_none_cost():
     """codex usage：cost_usd=None → 后缀跳过成本段，只留耗时/token。"""
     s = codingmod._usage_suffix({"duration_ms": 1200, "cost_usd": None,
