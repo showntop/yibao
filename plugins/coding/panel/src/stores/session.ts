@@ -176,6 +176,9 @@ export function createSessionStore(deps: SessionDeps) {
       case "permission_done":
         state.waiting = false;
         return;
+      case "marker": // 流内提示入列（coding.py _stream 的 codex resume fallback 直发；空文本兜底）
+        state.items.push({ type: "marker", text: ev.text || "", err: false });
+        return;
       case "rewind_ok":
         state.items.push({ type: "marker", text: ev.text || "已回滚", err: false });
         return;

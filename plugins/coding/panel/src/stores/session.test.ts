@@ -92,6 +92,22 @@ describe("事件归约", () => {
     expect(s.state.waiting).toBe(false);
   });
 
+  // marker 事件（coding.py _stream 的 codex resume fallback 提示等）入列渲染项；空文本兜底 ""
+  it("marker 事件入列渲染项；空文本兜底空串", () => {
+    const { deps } = makeDeps();
+    const s = createSessionStore(deps);
+    s.applyEvent(ev({ kind: "marker", text: "resume 失败，已用交接摘要新开会话续跑" }));
+    expect(s.state.items).toHaveLength(1);
+    expect(s.state.items[0]).toMatchObject({ type: "marker", text: "resume 失败，已用交接摘要新开会话续跑", err: false });
+    // text 缺省 → 空串兜底（不得落 undefined）
+    s.applyEvent(ev({ kind: "marker" }));
+    expect(s.state.items).toHaveLength(2);
+    expect(s.state.items[1]).toMatchObject({ type: "marker", text: "", err: false });
+    // 不触终态、不动 errbar（纯提示留痕）
+    expect(s.state.ended).toBeNull();
+    expect(s.state.error).toBeNull();
+  });
+
   // 清单 4
   it("user_msg 产生用户气泡(带 uuid);文本匹配的兜底气泡原地升级不双份", async () => {
     // 直接回流(无兜底)→ 新用户气泡

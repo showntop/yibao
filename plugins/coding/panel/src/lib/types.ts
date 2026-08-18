@@ -1,6 +1,7 @@
 // coding 面板协议类型(与 plugins/coding/skills 的 _runner.py/_codex_runner.py normalize 输出对齐)。
 // 容缺红线:agent 在 rewind/stop 兜底事件缺失;usage 可整体缺;cost_usd 恒 null(codex);
 // history fallback 消息无 uuid;codex 会话无 user_msg/permission_*/rewind_ok。
+// marker 例外：非 runner normalize 输出，由 coding.py _stream 直发（codex resume fallback 提示等流内留痕）。
 export type AgentName = "claude-code" | "cc" | "codex";
 
 export interface Usage {
@@ -20,6 +21,7 @@ export type CodingEvent =
   | { kind: "permission_request"; rid: string; tool: string; input: Record<string, unknown> }
   | { kind: "permission_done"; rid: string; allow: boolean }
   | { kind: "rewind_ok"; text?: string }
+  | { kind: "marker"; text?: string }
   | { kind: "done"; usage?: Usage }
   | { kind: "stopped"; text?: string }
   | { kind: "error"; text: string };
