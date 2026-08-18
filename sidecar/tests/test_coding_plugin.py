@@ -404,7 +404,7 @@ def test_send_skill_openai_schema_shape():
 
 def test_make_tools_includes_send():
     """make_tools 返回 Start/Send/Stop/List/Attach/WallData + HandoffList/HandoffBrief/History/Mode/Rewind/Decide/Files
-    + LastSessions/AttachCc + Drivers/AttachCodex + SessionBrief 十八件。"""
+    + LastSessions/AttachCc + Drivers/AttachCodex + SessionBrief + Studio 十九件。"""
     tools = codingmod.make_tools(type("C", (), {"db": None, "emit_event": None})())
     ids = [t.id for t in tools]
     assert "coding.send" in ids
@@ -412,7 +412,8 @@ def test_make_tools_includes_send():
                    "coding.wall_data", "coding.handoff_list", "coding.handoff_brief", "coding.history",
                    "coding.mode", "coding.rewind", "coding.decide", "coding.files",
                    "coding.last_sessions", "coding.attach_cc",
-                   "coding.drivers", "coding.attach_codex", "coding.session_brief"]
+                   "coding.drivers", "coding.attach_codex", "coding.session_brief",
+                   "coding.studio"]
 
 
 def test_start_skill_does_not_pass_resume(monkeypatch):

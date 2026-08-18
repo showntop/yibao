@@ -662,6 +662,31 @@ class WallDataSkill(Skill):
         return ActionResult(success=True, data={"rows": items}, panel="coding:wall")
 
 
+class StudioSkill(Skill):
+    """打开 coding:studio 多工位面板(R4 module 面板,新 coding UI 骨架)。
+
+    L0 只读:只发 panel 事件。数据消费全部走面板内 invoke(coding.list 等既有方法),
+    本 skill 不带数据(data={}),与 wall_data 的数据源职责分开。
+    """
+    id = "coding.studio"
+    label = "多工位"
+    description = "打开 coding 多工位面板(module 面板运行时;多会话同屏工位,阶段一为骨架)。"
+    default_risk = RiskLevel.L0_READONLY
+
+    def openai_schema(self) -> dict:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.id,
+                "description": self.description,
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        }
+
+    def run(self, params: dict, ctx: Any) -> ActionResult:
+        return ActionResult(success=True, data={}, panel="coding:studio")
+
+
 class HandoffListSkill(Skill):
     """列指定项目下 Codex 的会话（跨 agent 交接入口；只读）。
 
@@ -1500,4 +1525,4 @@ def make_tools(ctx: Any) -> list[Skill]:
     return [StartSkill(), SendSkill(), StopSkill(), ListSkill(), AttachSkill(),
             WallDataSkill(), HandoffListSkill(), HandoffBriefSkill(), HistorySkill(), ModeSkill(),
             RewindSkill(), DecideSkill(), FilesSkill(), LastSessionsSkill(), AttachCcSkill(),
-            DriversSkill(), AttachCodexSkill(), SessionBriefSkill()]
+            DriversSkill(), AttachCodexSkill(), SessionBriefSkill(), StudioSkill()]

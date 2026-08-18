@@ -49,3 +49,12 @@ name = "wall"
 label = "会话墙"
 src = "panel/wall.schema.json"
 open = "wall_data"   # 面板级入口：插件页子入口直调此 api 方法打开
+
+# R4 多工位(module 面板,新插件运行时):panel/dist 由 scripts/panel-build 构建;
+# open 让插件页出现子入口「多工位(新)」,直调 coding.studio 打开
+[[panel]]
+type = "module"
+name = "studio"
+label = "多工位(新)"
+src = "panel/dist/index.html"
+open = "studio"

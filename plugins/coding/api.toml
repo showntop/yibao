@@ -130,3 +130,10 @@ name = "session_brief"
 handler = "coding.session_brief"
 direct = true
 quiet = true
+
+# 多工位(R4):打开 coding:studio module 面板(插件页子入口 open="studio" 直调)
+[[method]]
+name = "coding.studio"
+handler = "coding.studio"
+direct = true
+panel = "coding:studio"
