@@ -1,22 +1,24 @@
 <script setup lang="ts">
-// 快捷面板（单窗三态的 quick 内容层）：3 圆（常用插件，上拱弧形）+ 底部输入条。
-// 与团子同窗渲染（App.vue 内 v-show），热区由 App.vue 统一上报（.wb-zone），交互走普通事件。
+// 快捷面板：团子脚下一条垂直栈（输入条 → 插件），高度随输入条变，不再绝对定位叠上去。
 import { computed, onMounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import InputBar from "./InputBar.vue";
 import { getDockListOnce } from "../lib/brain";
 import type { InputContext } from "../lib/at-mention";
+import {
+  DOCK_SIZE,
+  quickStackLeft,
+  quickStackTop,
+  STACK_W,
+} from "../lib/quick-dock";
 
 const props = withDefaults(
   defineProps<{
     busy?: boolean;
     listening?: boolean;
-    /** 团子窗口内 top（CSS 像素）：布局随团子联动（输入条 = petY + 130，间距恒定） */
     petY?: number;
-    /** 顶部贴顶时 3 圆与团子重叠（团子顶 < 3圆底），隐藏 3 圆只留输入条 */
-    showDock?: boolean;
   }>(),
-  { petY: 100, showDock: true },
+  { petY: 100 },
 );
 const emit = defineEmits<{
   (e: "submit", text: string, contexts?: InputContext[]): void;
@@ -25,7 +27,6 @@ const emit = defineEmits<{
   (e: "interrupt"): void;
 }>();
 
-// ---- 3 圆快捷插件：Dock pinned 优先 + 频率补齐，不足 3 用「全部」虚线占位 ----
 interface PluginInfo { id: string; name: string }
 const topPlugins = ref<PluginInfo[]>([]);
 type DockSlot = { kind: "plugin"; p: PluginInfo } | { kind: "more" };
@@ -53,9 +54,6 @@ function onDock(slot: DockSlot) {
   else emit("launch", { id: "", name: "全部" });
 }
 
-// ---- 插件图标配色：按 id 哈希到 5 色调色板。
-// 色值引用 tokens.css 的 --yb-icon-* 变量：深浅主题自动切换，
-// 深色模式字母字提亮、底色透明度略升（可读性）。
 const ICON_PALETTE = [
   { bg: "var(--yb-icon-bg-0)", fg: "var(--yb-icon-fg-0)" },
   { bg: "var(--yb-icon-bg-1)", fg: "var(--yb-icon-fg-1)" },
@@ -71,36 +69,43 @@ function iconStyle(id: string) {
 }
 
 onMounted(() => void reloadDock());
+
+const stackStyle = computed(() => ({
+  top: quickStackTop(props.petY) + "px",
+  left: quickStackLeft() + "px",
+  width: STACK_W + "px",
+}));
 </script>
 
 <template>
   <div class="wb">
-    <!-- 3 圆快捷插件：上拱弧形（中间圆高 20px 弧差），跟随团子（top = petY-52/72，
-         间距恒 2px），贴顶时 3 圆自动出窗由 showDock 隐藏 -->
-    <button
-      v-for="(slot, i) in dockSlots"
-      v-if="props.showDock"
-      :key="i"
-      :class="['wb-zone', 'wb-dock', `wb-dock-${i + 1}`, slot.kind === 'more' && 'wb-dock-more']"
-      :style="{ top: props.petY - 52 - (i === 1 ? 20 : 0) + 'px' }"
-      :title="slot.kind === 'plugin' ? slot.p.name : '全部插件'"
-      @click="onDock(slot)"
-    >
-      <span class="wb-dock-ic" :style="slot.kind === 'plugin' ? iconStyle(slot.p.id) : undefined">
-        <span v-if="slot.kind === 'plugin'" class="wb-dock-letter">{{ slot.p.name.slice(0, 1) }}</span>
-        <span v-else class="wb-dock-plus">+</span>
-      </span>
-    </button>
-
-    <!-- 底部输入条：跟随团子（top = petY + 98，与团子底间距恒定 2px） -->
-    <div class="wb-zone wb-input" :style="{ top: props.petY + 98 + 'px' }">
-      <InputBar
-        :busy="props.busy"
-        :listening="props.listening"
-        @submit="(t, ctx) => emit('submit', t, ctx)"
-        @mic="() => emit('mic')"
-        @interrupt="() => emit('interrupt')"
-      />
+    <div class="wb-stack" :style="stackStyle">
+      <div class="wb-zone wb-input">
+        <InputBar
+          :busy="props.busy"
+          :listening="props.listening"
+          placeholder="说点什么…"
+          @submit="(t, ctx) => emit('submit', t, ctx)"
+          @mic="() => emit('mic')"
+          @interrupt="() => emit('interrupt')"
+        />
+      </div>
+      <div class="wb-docks">
+        <button
+          v-for="(slot, i) in dockSlots"
+          :key="i"
+          class="wb-zone wb-dock"
+          :class="slot.kind === 'more' && 'wb-dock-more'"
+          :style="{ width: DOCK_SIZE + 'px', height: DOCK_SIZE + 'px' }"
+          :title="slot.kind === 'plugin' ? slot.p.name : '全部插件'"
+          @click="onDock(slot)"
+        >
+          <span class="wb-dock-ic" :style="slot.kind === 'plugin' ? iconStyle(slot.p.id) : undefined">
+            <span v-if="slot.kind === 'plugin'" class="wb-dock-letter">{{ slot.p.name.slice(0, 1) }}</span>
+            <span v-else class="wb-dock-plus">+</span>
+          </span>
+        </button>
+      </div>
     </div>
   </div>
 </template>
@@ -111,12 +116,24 @@ onMounted(() => void reloadDock());
   inset: 0;
   pointer-events: none;
 }
-
-/* 3 圆：上拱弧形（窗口 320×300，团子 y:100-196） */
-.wb-dock {
+.wb-stack {
   position: absolute;
-  width: 50px;
-  height: 50px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.wb-input {
+  width: 100%;
+  pointer-events: auto;
+}
+.wb-docks {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+.wb-dock {
   padding: 0;
   border: 1px solid var(--yb-surface-border);
   border-radius: 50%;
@@ -125,33 +142,31 @@ onMounted(() => void reloadDock());
   backdrop-filter: var(--yb-blur);
   box-shadow:
     0 1px 2px rgba(var(--yb-c-slate-rgb), 0.06),
-    0 8px 20px rgba(var(--yb-c-slate-rgb), 0.10);
+    0 6px 14px rgba(var(--yb-c-slate-rgb), 0.10);
   cursor: pointer;
   pointer-events: auto;
+  display: grid;
+  place-items: center;
+  flex: none;
   transition: transform var(--yb-dur) var(--yb-ease-spring),
               box-shadow var(--yb-dur-fast) var(--yb-ease-out);
 }
 .wb-dock:hover {
-  transform: scale(1.04);
+  transform: scale(1.06);
   box-shadow:
     0 1px 2px rgba(var(--yb-c-slate-rgb), 0.08),
-    0 10px 24px rgba(var(--yb-c-slate-rgb), 0.14);
+    0 8px 18px rgba(var(--yb-c-slate-rgb), 0.14);
 }
 .wb-dock:active {
   transform: scale(0.96);
 }
-.wb-dock-1 { left: 87px; }
-.wb-dock-2 { left: 167px; }
-.wb-dock-3 { left: 247px; }
-
 .wb-dock-ic {
   display: grid;
   place-items: center;
-  width: 38px;
-  height: 38px;
-  margin: 0 auto;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
-  font-size: 15.5px;
+  font-size: 13px;
   font-weight: var(--yb-fw-bold);
 }
 .wb-dock-letter {
@@ -159,7 +174,7 @@ onMounted(() => void reloadDock());
   line-height: 1;
 }
 .wb-dock-plus {
-  font-size: 22px;
+  font-size: 18px;
   font-weight: 300;
   color: var(--yb-text-dim);
   line-height: 1;
@@ -167,14 +182,5 @@ onMounted(() => void reloadDock());
 .wb-dock-more .wb-dock-ic {
   background: transparent;
   border: 1px dashed var(--yb-surface-border);
-}
-
-/* 输入条：下方居中（窗口 320×300，整体右移 32 与团子对齐）；top 由 petY 驱动（petY+98） */
-.wb-input {
-  position: absolute;
-  left: 72px;
-  top: 230px;
-  width: 240px;
-  pointer-events: auto;
 }
 </style>

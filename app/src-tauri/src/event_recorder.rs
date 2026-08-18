@@ -77,6 +77,7 @@ impl EventRecorder {
             "final_reply_chunk" => self.on_chunk(db, conv_id, e),
             "final_reply" => self.on_final_reply(db, conv_id, e),
             "interrupted" => self.on_interrupted(db, conv_id),
+            "listening_done" => self.on_listening_done(db, conv_id, e),
             "notice" => self.append_simple(db, conv_id, "sys", e, None),
             "reminder" => self.append_simple(db, conv_id, "ai", e, Some("clock")),
             "error" => self.append_simple(db, conv_id, "ai", e, Some("alert")),
@@ -87,6 +88,15 @@ impl EventRecorder {
 
     fn append(&self, db: &SessionDb, conv_id: &str, role: &str, payload: Value, ts: i64) {
         let _ = db.append_message(conv_id, &new_id(), role, payload, ts, false);
+    }
+
+    fn on_listening_done(&self, db: &SessionDb, conv_id: &str, e: &Value) {
+        // 语音识别用户句：打字走 run_input 在 Rust 落库，语音不走那条，必须在这里补上。
+        // 空识别不落库（前端只做「没听清」提示，不当成用户消息）。
+        let Some(text) = e.get("text").and_then(|t| t.as_str()).filter(|s| !s.is_empty()) else {
+            return;
+        };
+        self.append(db, conv_id, "user", json!({ "text": text }), now_ms());
     }
 
     fn append_simple(&self, db: &SessionDb, conv_id: &str, role: &str, e: &Value, icon: Option<&str>) {
@@ -351,6 +361,16 @@ mod tests {
         let (db, mut r) = setup();
         r.record(&db, "", &json!({"kind":"final_reply","text":"x"}));
         assert_eq!(db.get_messages("c1", 10).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn listening_done_with_text_appends_user() {
+        let (db, mut r) = setup();
+        r.record(&db, "c1", &json!({"kind":"listening_done","text":"今天天气怎么样"}));
+        r.record(&db, "c1", &json!({"kind":"listening_done","text":""}));
+        r.record(&db, "c1", &json!({"kind":"listening_done"}));
+        assert_eq!(texts(&db), vec!["今天天气怎么样"]);
+        assert_eq!(db.get_messages("c1", 10).unwrap()[0].role, "user");
     }
 
     #[test]

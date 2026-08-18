@@ -1133,8 +1133,11 @@ async def serve_async(
         tts_q: asyncio.Queue | None = asyncio.Queue() if voice is not None else None
         tts_task = asyncio.create_task(_pump_tts(tts_q, cancel, surface)) if tts_q is not None else None
         started_speaking = False
+        saw_interrupted = False
         try:
             async for event in agent.arun(text, cancel, surface=surface, conversation_id=conversation_id or None):
+                if event.kind == "interrupted":
+                    saw_interrupted = True
                 write_msg({"type": "event", "surface": surface, "conversation_id": conversation_id, "event": event.model_dump(mode="json")})
                 if (
                     tts_q is not None
@@ -1154,6 +1157,10 @@ async def serve_async(
                 await tts_q.put(None)  # 收尾哨兵，唤醒可能在 get() 上等待的 _pump_tts
             if tts_task is not None:
                 await tts_task
+            # LLM 已吐完 final_reply 后打断只停 TTS，arun 不再 yield interrupted；
+            # 前端靠 interrupted 回 idle，不发则停止按钮停在「说话中」。
+            if cancel.is_set() and not saw_interrupted:
+                write_msg({"type": "event", "surface": surface, "conversation_id": conversation_id, "event": {"kind": "interrupted"}})
             if emit_done:  # 连续语音会话里 run_done 由 _drive_voice_start 在会话结束时统一发
                 write_msg({"type": "run_done", "id": rid})
             print(f"[yibao] run 完成 rid={rid}（{time.monotonic() - t0:.1f}s）", file=sys.stderr)
@@ -1163,12 +1170,14 @@ async def serve_async(
 
     async def _drive_voice_start(rid, cancel: asyncio.Event, surface: str = "pet", conversation_id: str = "", continuous: bool = False):
         # 连续对话（长按团子进入）：答完接着听。退出：退出语 / 连续两次没听清 / 打断。
+        def _vev(event: dict) -> None:
+            write_msg({"type": "event", "surface": surface, "conversation_id": conversation_id, "event": event})
+
         if continuous:
-            write_msg({"type": "event", "surface": surface, "event": {
-                "kind": "notice", "text": _VOICE_SESSION_HINT}})
+            _vev({"kind": "notice", "text": _VOICE_SESSION_HINT})
         empties = 0
         while True:
-            write_msg({"type": "event", "surface": surface, "event": {"kind": "listening"}})
+            _vev({"kind": "listening"})
 
             async def _watch_cancel():
                 await cancel.wait()
@@ -1179,24 +1188,23 @@ async def serve_async(
             try:
                 text = await ai_loop.run_in_executor(None, voice.listen)
             except Exception as e:
-                write_msg({"type": "event", "surface": surface, "event": {"kind": "error", "text": f"语音识别失败：{e}"}})
+                _vev({"kind": "error", "text": f"语音识别失败：{e}"})
                 write_msg({"type": "run_done", "id": rid})
                 return
             finally:
                 watcher.cancel()
             print(f"[yibao] 聆听结束（{time.monotonic() - t0:.1f}s）：{text[:30]!r}", file=sys.stderr)
             if cancel.is_set():  # 聆听被打断：不走 listening_done（避免误进 think 态）
-                write_msg({"type": "event", "surface": surface, "event": {"kind": "interrupted"}})
+                _vev({"kind": "interrupted"})
                 write_msg({"type": "run_done", "id": rid})
                 return
-            write_msg({"type": "event", "surface": surface, "event": {"kind": "listening_done", "text": text}})
+            _vev({"kind": "listening_done", "text": text})
             if not text:
                 if continuous:
                     empties += 1
                     if empties < _VOICE_SESSION_MAX_EMPTY:
                         continue  # 没听清：会话中不打岔，直接再听一轮
-                    write_msg({"type": "event", "surface": surface, "event": {
-                        "kind": "notice", "text": "一会儿没说话，先退下啦，叫我随时来～"}})
+                    _vev({"kind": "notice", "text": "一会儿没说话，先退下啦，叫我随时来～"})
                     write_msg({"type": "run_done", "id": rid})
                     return
                 write_msg({"type": "run_done", "id": rid})
@@ -1204,8 +1212,8 @@ async def serve_async(
             empties = 0
             if continuous and _is_exit_phrase(text):
                 # 退出语：固定告别（不过 LLM，确定性收尾）
-                write_msg({"type": "event", "surface": surface, "event": {"kind": "final_reply", "text": _VOICE_SESSION_BYE}})
-                write_msg({"type": "event", "surface": surface, "event": {"kind": "speaking"}})
+                _vev({"kind": "final_reply", "text": _VOICE_SESSION_BYE})
+                _vev({"kind": "speaking"})
 
                 async def _bye():
                     yield _VOICE_SESSION_BYE
@@ -1214,8 +1222,10 @@ async def serve_async(
                     await voice.speak_stream(_bye(), cancel)
                 except Exception as e:
                     print(f"[yibao] 会话告别播报失败：{e}", file=sys.stderr)
-                if not cancel.is_set():
-                    write_msg({"type": "event", "surface": surface, "event": {"kind": "speaking_done"}})
+                if cancel.is_set():
+                    _vev({"kind": "interrupted"})
+                else:
+                    _vev({"kind": "speaking_done"})
                 write_msg({"type": "run_done", "id": rid})
                 return
             # 连续会话的 run_done 由本函数在会话结束时发（每轮结束就发会让前端以为请求完结）

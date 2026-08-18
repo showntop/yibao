@@ -161,8 +161,12 @@ export function sendConfirmBatch(
 
 /** 触发语音输入：sidecar 录音→STT→run→TTS 播报（Plan 4a 最小语音）。
  *  continuous=true 进连续会话：答完自动再听，退出语/打断收尾（二期）。 */
-export function voiceStart(surface?: string, continuous?: boolean): Promise<void> {
-  return invoke("voice_start", { surface: surface ?? _surface, continuous: continuous ?? false });
+export function voiceStart(surface?: string, continuous?: boolean, conversationId?: string): Promise<void> {
+  return invoke("voice_start", {
+    surface: surface ?? _surface,
+    continuous: continuous ?? false,
+    conversationId: conversationId ?? "",
+  });
 }
 
 /** 打断进行中的生成/播报（Plan 4b：停 TTS + 终止 LLM + 清队列）。 */

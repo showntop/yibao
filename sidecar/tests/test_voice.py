@@ -162,6 +162,7 @@ def test_serve_async_voice_interrupt_stops_speaking(tmp_path):
     kinds = [m["event"]["kind"] for m in out if m["type"] == "event"]
     assert voice.stream_interrupted
     assert "speaking_done" not in kinds  # 被打断，无正常收尾
+    assert "interrupted" in kinds  # TTS 阶段打断也要回 idle，否则停止按钮停不住
 
 
 def test_serve_async_voice_interrupt_cancels_listening(tmp_path):

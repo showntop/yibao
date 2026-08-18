@@ -40,7 +40,7 @@ function recheck() {
     </div>
     <div class="foot">
       <button class="dim" @click="recheck">重新检测</button>
-      <span class="hint">授权后点「重新检测」；屏幕录制需重启译宝生效。开发模式下屏幕录制状态可能误报。</span>
+      <p class="hint">授权后点「重新检测」。屏幕录制需重启译宝生效；开发模式下状态可能误报。</p>
     </div>
   </div>
 </template>
@@ -100,13 +100,16 @@ button:hover {
 }
 .foot {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 8px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--yb-space-2);
+  margin-top: var(--yb-space-3);
 }
 .hint {
+  margin: 0;
+  max-width: 100%;
   font-size: var(--yb-fs-sm);
   color: var(--yb-text-dim);
-  line-height: var(--yb-lh-ui);
+  line-height: var(--yb-lh-base);
 }
 </style>

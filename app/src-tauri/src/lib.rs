@@ -1699,6 +1699,7 @@ fn voice_start(
     state: tauri::State<Brain>,
     surface: Option<String>,
     continuous: Option<bool>,
+    conversation_id: Option<String>,
 ) -> Result<(), String> {
     write_to_brain(
         &state,
@@ -1707,6 +1708,7 @@ fn voice_start(
             "type": "voice_start",
             "surface": surface.unwrap_or_else(|| "pet".into()),
             "continuous": continuous.unwrap_or(false),
+            "conversation_id": conversation_id.unwrap_or_default(),
         }),
     )
 }

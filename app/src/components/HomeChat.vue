@@ -678,13 +678,12 @@ async function submit(text: string, contexts: InputContext[] = []) {
 
 function onMic() {
   // 不乐观置 listen：等大脑 listening 事件确认（语音栈不可用时大脑会回 error，别自欺卡死）
-  void voiceStart("pet").catch((err) => {
+  void voiceStart("pet", false, currentSessionId.value).catch((err) => {
     pushWarn("语音启动失败：" + String(err));
   });
 }
 
 function onInterrupt() {
-  if (!busy.value) return;
   void interrupt().catch((err) => {
     pushWarn("打断失败：" + String(err));
   });

@@ -121,7 +121,7 @@ const speech = ref<string | null>(null);
 const speechStreaming = ref(false);
 const speechVisible = ref(false);
 let speechTimer: ReturnType<typeof setTimeout> | null = null;
-/** 团子窗口内 top（CSS 像素）：正常 100（3 圆在头顶、输入条在脚下）；
+/** 团子窗口内 top（CSS 像素）：正常 100（脚下输入条，再下是插件）；
  *  窗口贴近屏幕顶时动态上移（macOS 不允许窗口出屏），让团子贴菜单栏下缘。
  *  团子屏幕 y = 窗口y + petY，min(100, 窗口y+40) 保证接近顶部时连续上贴。 */
 const petY = ref(100);
@@ -223,6 +223,28 @@ watch(() => bubbles.value.length, () => scrollBubbles(true));
 watch(() => bubbles.value[bubbles.value.length - 1]?.text, () => scrollBubbles(false));
 watch(showTyping, () => scrollBubbles(true));
 
+// 对话区挂在 v-if="expanded" 上：收起即拆 DOM，滚动位置归零。
+// 再展开时 bubbles 已在内存、length 不变，上面的 watch 不触发，会停在最顶。
+// 收起前记下「是否贴底 / 滚动偏移」，展开后恢复；贴底或没有记录则滚到最新。
+const STICK_BOTTOM_PX = 80;
+let stickBottom = true;
+let savedScrollTop = 0;
+function captureBubbleScroll() {
+  const el = bubblesRef.value;
+  if (!el) return;
+  stickBottom = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_BOTTOM_PX;
+  savedScrollTop = el.scrollTop;
+}
+function restoreBubbleScroll() {
+  void nextTick(() => {
+    requestAnimationFrame(() => {
+      const el = bubblesRef.value;
+      if (!el) return;
+      el.scrollTop = stickBottom ? el.scrollHeight : savedScrollTop;
+    });
+  });
+}
+
 /** 单窗热区上报：idle 只报团子盒（pet），quick 追加面板元素（ui，.wb-zone）。
  *  Rust 据此放行鼠标穿透 + 驱动 enter/leave；窗口相对坐标，拖动自动跟随。 */
 function syncHotRects() {
@@ -261,7 +283,7 @@ function syncHotRects() {
  *     f = clamp(窗口y - 24, 0, 100)   （窗口内正常位 = 100）
  *     团子屏幕 y = max(窗口y + f, 24)  →  团子窗口内 y = 屏幕y - 窗口y
  *  效果：窗口 y ∈ [0,24] 时团子恒贴菜单栏下缘（屏幕 y=24）；拖离顶部后线性过渡
- *  回窗口内 100。3 圆在团子顶不足 76px 时重叠，由 QuickPanel showDock 隐藏。
+ *  回窗口内 100。快捷态顺序：团子 → 输入条 → 插件。
  *  热区随 petY 变化实时上报。 */
 function onWindowMoved(p: { x: number; y: number }) {
   const winY = p.y / (scaleCached || 1);
@@ -278,17 +300,22 @@ async function expand() {
   attentionNeeded.value = false; // 用户来看了 = 事已知，notify 态消
   expanded.value = true;
   // 收起态气泡内容迁入气泡流（点击气泡/点团子展开都带上）
-  if (speech.value) bubbles.value.push({ role: "ai", text: speech.value });
+  if (speech.value) {
+    bubbles.value.push({ role: "ai", text: speech.value });
+    stickBottom = true; // 收起态新回复迁入，打开应对准最新
+  }
   speechVisible.value = false;
   speech.value = null;
   speechStreaming.value = false;
   if (speechTimer) { clearTimeout(speechTimer); speechTimer = null; }
+  restoreBubbleScroll();
   // 先记录收起态位置（collapse 还原用），再交给 Rust 展开（定位 + clamp + 缩放一步完成）
   try {
     const p = await getCurrentWindow().outerPosition();
     idlePos = { x: p.x, y: p.y };
   } catch { /* 忽略 */ }
-  void invoke("expand_chat").catch(() => {});
+  await invoke("expand_chat").catch(() => {});
+  restoreBubbleScroll(); // 窗口 320×300 → 360×520 后 clientHeight 变了，贴底要再对准一次
 }
 
 /** 显示收起态回复气泡（回复类事件用；与快捷面板互斥，区域重叠） */
@@ -310,6 +337,7 @@ function onSpeechExpand() {
   void expand();
 }
 async function collapse() {
+  captureBubbleScroll(); // 必须在 v-if 拆掉 .bubbles 之前
   expanded.value = false;
   quick.value = false;
   void setMainSize(320, 300).catch(() => {});
@@ -748,14 +776,14 @@ function onEvent(e: BrainEvent) {
       break;
     case "listening_done":
       // 空识别（超时/没说话）：回 idle 并提示——不能进 think，run_done 不复位状态，会永远卡「思考中」
+      // 用户句必须无条件入列：长按团子发生在收起态，等 expanded 再 push 会把识别结果丢掉。
       if (e.text) {
         state.value = "think";
-        if (expanded.value) bubbles.value.push({ role: "user", text: e.text });
+        bubbles.value.push({ role: "user", text: e.text });
       } else {
         state.value = "idle";
-        if (expanded.value) {
-          bubbles.value.push({ role: "ai", text: "没听清，再试一次？" });
-        } else {
+        bubbles.value.push({ role: "ai", text: "没听清，再试一次？" });
+        if (!expanded.value) {
           speech.value = "没听清，再试一次？";
           speechStreaming.value = false;
           showSpeechBubble();
@@ -934,20 +962,20 @@ function clearApprovalGuard() {
 
 function onMic() {
   // 不乐观置 listen：等大脑 listening 事件确认（语音栈不可用时大脑会回 error，别自欺卡死）
-  void voiceStart().catch((err) => {
+  void ensurePetConversation().then(() => voiceStart("pet", false, petConvId.value)).catch((err) => {
     pushWarn("语音启动失败：" + String(err));
   });
 }
 
 function onMicContinuous() {
   // 长按团子 = 连续对话：答完接着听，说「退出」或点团子结束（会话提示由大脑 notice 落气泡）
-  void voiceStart(undefined, true).catch((err) => {
+  void ensurePetConversation().then(() => voiceStart("pet", true, petConvId.value)).catch((err) => {
     pushWarn("语音启动失败：" + String(err));
   });
 }
 
 function onInterrupt() {
-  if (!busy.value) return;
+  // 不看 busy：TTS 播完字后打断若晚到，state 可能已和音频脱节；多发一次 interrupt 无害。
   void interrupt().catch((err) => {
     pushWarn("打断失败：" + String(err));
   });
@@ -999,6 +1027,10 @@ async function reloadMessages(): Promise<void> {
   streamingIdx.value = null;
   procIdx.clear(); // 过程行下标随气泡重建作废
   surfaceAnchor.clear(); // 表面锚点同样指向气泡下标，随重建作废
+  // 列表整表重建，旧偏移失效；收起期间重拉则下次打开对准最新
+  stickBottom = true;
+  savedScrollTop = 0;
+  if (expanded.value) restoreBubbleScroll();
 }
 
 onMounted(async () => {
@@ -1152,7 +1184,6 @@ onUnmounted(() => {
           :busy="busy"
           :listening="state === 'listen'"
           :pet-y="petY"
-          :show-dock="petY >= 72"
           @submit="onQuickSubmit"
           @launch="onQuickLaunch"
           @mic="onQuickMic"
@@ -1341,9 +1372,9 @@ onUnmounted(() => {
   gap: var(--yb-space-3);
   padding: 0 var(--yb-space-3) var(--yb-space-3);
 }
-/* 收起/快捷态：恒窗 320×300 内，团子锚点 x:112、y 动态（正常 100，贴顶时由
- * onWindowMoved 下移，inline style 覆盖；3 圆在其头顶 y:0-70、输入条在其脚下
- * y:230，与 QuickPanel 布局常量一致）。团子热区由 syncHotRects 上报 Rust
+/* 收起/快捷态：恒窗 320×300 内，团子锚点 x:144、y 动态（正常 100，贴顶时由
+ * onWindowMoved 下移，inline style 覆盖；输入条在脚下，插件在输入条下方
+ * y: petY+98，与 QuickPanel 布局常量一致）。团子热区由 syncHotRects 上报 Rust
  * （kind=pet）放行穿透 + 驱动 hover；窗口整体可拖，拖动=移动窗口。 */
 .pet {
   position: absolute;
@@ -1371,13 +1402,13 @@ onUnmounted(() => {
 }
 
 /* ---- 状态切换过渡（弹出质感）----
- * quick 面板：hover 弹出——从上方掉下 + spring 回弹（overshoot），收起时上收淡出 */
+ * quick 面板：hover 弹出——从团子向下长出 + spring 回弹，收起时缩回淡出 */
 .quick-enter-active {
   transition: opacity 0.16s ease-out, transform 0.38s var(--yb-ease-spring);
 }
 .quick-enter-from {
   opacity: 0;
-  transform: translateY(-14px);
+  transform: translateY(-10px);
 }
 .quick-leave-active {
   transition: opacity 0.16s ease-in, transform 0.18s ease-in;
@@ -1390,11 +1421,11 @@ onUnmounted(() => {
 .quick-enter-active :deep(.wb-dock) {
   animation: dock-pop 0.42s var(--yb-ease-spring) backwards;
 }
-.quick-enter-active :deep(.wb-dock:nth-child(1)) { animation-delay: 0.02s; }
-.quick-enter-active :deep(.wb-dock:nth-child(2)) { animation-delay: 0.08s; }
-.quick-enter-active :deep(.wb-dock:nth-child(3)) { animation-delay: 0.14s; }
+.quick-enter-active :deep(.wb-dock:nth-of-type(1)) { animation-delay: 0.02s; }
+.quick-enter-active :deep(.wb-dock:nth-of-type(2)) { animation-delay: 0.08s; }
+.quick-enter-active :deep(.wb-dock:nth-of-type(3)) { animation-delay: 0.14s; }
 @keyframes dock-pop {
-  from { opacity: 0; transform: scale(0.55) translateY(10px); }
+  from { opacity: 0; transform: scale(0.55) translateY(-10px); }
   to { opacity: 1; transform: scale(1) translateY(0); }
 }
 /* 收起态气泡：淡入淡出（位移由 SpeechBubble 自带 rise 负责，避免叠影） */

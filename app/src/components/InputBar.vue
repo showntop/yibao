@@ -18,7 +18,7 @@ const props = withDefaults(
     placeholder?: string;
     takeover?: boolean;
   }>(),
-  { placeholder: "对译宝说点什么…（shift+回车换行）", takeover: false },
+  { placeholder: "对译宝说点什么…", takeover: false },
 );
 const emit = defineEmits<{
   (e: "submit", text: string, contexts: InputContext[]): void;
@@ -293,13 +293,9 @@ function onMic() {
 const stopping = computed(() => props.busy && !props.listening && !props.takeover);
 
 function onMain() {
-  // 生成/播报中：有输入文字 → 打断并发送新消息；无文字 → 仅打断
-  if (stopping.value) {
-    if (text.value.trim()) send();
-    else emit("interrupt");
-  } else {
-    send();
-  }
+  // 停止图标只打断。生成中要改口：回车/点发送走 send()（内部先 interrupt 再发）。
+  if (stopping.value) emit("interrupt");
+  else send();
 }
 
 // IME 组字守卫（WebKit bug 165004：compositionend 先于确认 Enter 的 keydown 派发，
@@ -398,6 +394,7 @@ defineExpose({ focus: () => inputRef.value?.focus(), insertText });
         v-model="text"
         rows="1"
         :placeholder="placeholder"
+        title="Shift+回车换行"
         @keydown.enter.exact.prevent="onEnter"
         @keydown="onAtKeydown"
         @compositionstart="onCompStart"
@@ -452,6 +449,7 @@ defineExpose({ focus: () => inputRef.value?.focus(), insertText });
   display: flex;
   flex-direction: column;                 /* chips 行在上、输入行在下（无 chips 时视觉与单行一致） */
   align-items: stretch;
+  box-sizing: border-box;
   min-height: 46px;
   padding: 5px 5px 5px 7px;
   border-radius: 24px;                        /* 更高的对话胶囊 */
@@ -538,6 +536,7 @@ textarea {
   outline: none;
   color: var(--yb-text);
   resize: none;                               /* 去右下角拖拽柄 */
+  overflow-x: hidden;
   overflow-y: auto;                           /* 超上限滚动 */
   line-height: 1.45;
   padding: 7px 0;                             /* 单行时垂直居中接近原 input */
@@ -545,6 +544,9 @@ textarea {
 }
 textarea::placeholder {
   color: var(--yb-text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 /* 滚动条细化（多行输入时可见） */
 textarea::-webkit-scrollbar {
