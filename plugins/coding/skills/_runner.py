@@ -5,7 +5,10 @@ from typing import Protocol, Callable, Any
 
 _FILE_EDIT_TOOLS = {"Write", "Edit", "MultiEdit"}
 
-# can_use_tool 权限桥：rid → {"event": threading.Event, "allow": bool|None}。
+# can_use_tool 权限桥：rid → {"event": threading.Event, "allow": bool|None,
+# "tool": str, "summary": str, "params": dict}——tool/summary/params 为展示字段
+#（review 栏快照源，coding.perm_pending 直读；summary/params 由
+# _summarize_tool_input/_public_params 生成）。
 # 回调（runner 线程的 asyncio loop）发 permission_request 后在 asyncio.to_thread 里等
 # event.wait（不堵 loop）；面板审批卡按钮 → coding.decide（DecideSkill）写 allow + set。
 _PERM: dict = {}

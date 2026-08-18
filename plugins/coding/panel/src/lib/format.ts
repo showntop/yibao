@@ -83,6 +83,16 @@ export function normCwd(p: string): string {
   return (p || "").replace(/\/+$/, "");
 }
 
+// 审批摘要(镜像 _runner._summarize_tool_input):input 为 dict 时 command/file_path/path
+// 取其一,否则 JSON 全量;单行化(\n→空格)trim 后截 80 字。非 dict 输入对齐后端 d={} → "{}";
+// JSON 段走 JSON.stringify(无空格分隔,与后端 json.dumps 的空格风格有微差,展示用不逐字对齐)。
+export function permSummary(tool: string, input: unknown): string {
+  const d = (input !== null && typeof input === "object" && !Array.isArray(input)
+    ? input : {}) as Record<string, unknown>;
+  const text = d.command || d.file_path || d.path || JSON.stringify(d);
+  return String(text).replace(/\n/g, " ").trim().slice(0, 80);
+}
+
 // 人话首行:跳过空行 / 协议 XML 行(< 开头)/ 堆栈帧(at …、File "…"、Traceback),
 // 行内残留标签剥掉;全都不是人话时给兜底文案(错误全文仍在详情区可见)
 export function humanFirstLine(text: string): string {

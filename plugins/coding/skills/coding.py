@@ -56,7 +56,7 @@ _runner = _sibling("_runner")
 ClaudeCodeRunner = _runner.ClaudeCodeRunner   # 生产默认 runner factory（claude-code/cc）
 _codex_runner = _sibling("_codex_runner")
 CodexCliRunner = _codex_runner.CodexCliRunner  # codex CLI 子进程 runner factory
-_PERM = _runner._PERM                         # can_use_tool 裁决注册表（rid → {event, allow}；DecideSkill 消费）
+_PERM = _runner._PERM                         # can_use_tool 裁决注册表（rid → {event, allow, tool, summary, params}；DecideSkill 消费，perm_pending 读展示字段）
 
 
 def _runner_for(agent: str):
