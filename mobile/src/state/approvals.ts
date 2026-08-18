@@ -18,8 +18,9 @@ interface StreamLike {
 /**
  * 审批页状态：/v1/state 全量拉取为准（SSE 帧只是「该刷了」的信号，不解析帧内容——
  * 广播帧无 surface 信封，桌面发起的确认手机也要看到）。
- * decide：POST /v1/confirm；200→"ok"；404→"gone"（桌面已处理/过期）；其他/异常→
- * error 提示 + "gone"（fail-safe：不让按钮卡死，列表靠 refresh 收敛）。
+ * decide 三态（打磨批）：POST /v1/confirm；200→"ok"；404→"gone"（桌面已处理/过期）；
+ * 网络/其他异常→"fail"——error 写「发送失败（网络）」且不 refresh，与「已处理」
+ * 语义彻底分开（此前复用 "gone" 收口会把断网点批准误报成「桌面已处理」）。
  */
 export function useApprovals(
   conn: ConnConfig,
@@ -47,7 +48,7 @@ export function useApprovals(
     }
   }
 
-  async function decide(id: string, approved: boolean, remember: boolean): Promise<"ok" | "gone"> {
+  async function decide(id: string, approved: boolean, remember: boolean): Promise<"ok" | "gone" | "fail"> {
     try {
       const r = await fetchImpl(`${conn.host}/v1/confirm`, {
         method: "POST",
@@ -59,10 +60,12 @@ export function useApprovals(
         return "gone"; // 桌面已处理/过期
       }
       if (!r.ok) throw new Error(`confirm ${r.status}`);
-    } catch (e) {
-      error.value = `审批发送失败：${e instanceof Error ? e.message : "网络错误"}`;
-      await refresh();
-      return "gone"; // 异常也按 gone 收口：列表以 refresh 后的事实为准
+    } catch {
+      // 网络/服务端异常：发送失败，不是「桌面已处理」。不 refresh——断网时 state
+      // 同样到不了（失败还会把这条更准的提示覆盖成「拉取待批失败」）；列表保持
+      // 原样，用户重试或下次进页靠 refresh 收敛
+      error.value = "审批发送失败（网络）";
+      return "fail";
     }
     await refresh();
     return "ok";

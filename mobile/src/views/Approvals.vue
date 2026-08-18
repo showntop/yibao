@@ -13,8 +13,11 @@ const approvals = shallowRef<ReturnType<typeof useApprovals> | null>(null);
 const stream = shallowRef<ReturnType<typeof useEventStream> | null>(null);
 // 每卡独立的「本会话不再询问」勾选（默认关；批准时随 remember 传给服务端）
 const remembers = ref<Record<string, boolean>>({});
-// gone 提示位：decide 返回 gone 时亮一条（该审批已在桌面处理）
+// gone 提示位：decide 返回 gone（404）时亮一条（该审批已在桌面处理）；
+// 新的成功操作会清掉——不留陈旧提示误导「刚这条也是已处理」（打磨批）
 const goneNote = ref("");
+// decide 进行中锁（id 级）：同一张卡批准/拒绝在途时互斥禁用，防双击重复 POST
+const deciding = ref<Record<string, boolean>>({});
 // 待批角标（M2）：本页也挂帧——帧语义已是 debounce sync（confirmation_needed 只当
 // 「有变化」提示，300ms 合并后拉一次 /v1/state，重放帧不虚增）；审批处理完 sync 当场收敛
 let badgeSync: (() => Promise<void>) | null = null;
@@ -31,10 +34,18 @@ onMounted(async () => {
 onUnmounted(() => stream.value?.stop());
 
 async function onDecide(p: PendingConfirm, approved: boolean) {
-  if (!approvals.value) return;
-  const res = await approvals.value.decide(p.id, approved, !!remembers.value[p.id]);
-  if (res === "gone") goneNote.value = "该审批已在桌面处理，列表已刷新";
-  void badgeSync?.(); // 角标按服务端事实重收敛（处理完归零）
+  if (!approvals.value || deciding.value[p.id]) return; // 在途重复点击：直接忽略
+  deciding.value[p.id] = true;
+  try {
+    const res = await approvals.value.decide(p.id, approved, !!remembers.value[p.id]);
+    if (res === "gone") goneNote.value = "该审批已在桌面处理，列表已刷新";
+    else if (res === "ok") goneNote.value = ""; // ok 清陈旧 gone 提示
+    // "fail"：error 已由状态层写「审批发送失败（网络）」，这里不弹 goneNote——
+    // 网络错误不是「桌面已处理」，两套语义不许混（打磨批）
+    void badgeSync?.(); // 角标按服务端事实重收敛（处理完归零）
+  } finally {
+    deciding.value[p.id] = false; // 成败都解锁，失败可重试
+  }
 }
 </script>
 
@@ -69,8 +80,8 @@ async function onDecide(p: PendingConfirm, approved: boolean) {
             <input type="checkbox" v-model="remembers[p.id]" /> 本会话不再询问
           </label>
           <div class="btns">
-            <button class="deny" @click="onDecide(p, false)">拒绝</button>
-            <button class="ok" @click="onDecide(p, true)">批准</button>
+            <button class="deny" :disabled="!!deciding[p.id]" @click="onDecide(p, false)">拒绝</button>
+            <button class="ok" :disabled="!!deciding[p.id]" @click="onDecide(p, true)">批准</button>
           </div>
         </div>
       </template>
@@ -101,6 +112,7 @@ async function onDecide(p: PendingConfirm, approved: boolean) {
 .remember { font-size: 13px; display: flex; align-items: center; gap: 6px; }
 .btns { display: flex; gap: 8px; }
 .btns button { flex: 1; padding: 10px 0; border-radius: 12px; border: none; font-size: 15px; }
+.btns button:disabled { opacity: 0.5; } /* decide 在途：视觉上同锁 */
 .deny { background: rgba(128, 128, 128, 0.18); }
 .ok { background: #2f6fed; color: #fff; }
 </style>

@@ -13,9 +13,14 @@ const feed = shallowRef<ReturnType<typeof useFeed> | null>(null);
 const reminders = shallowRef<ReturnType<typeof useReminders> | null>(null);
 // 取消确认（二次点击制，不弹窗）：id → 超时句柄；3s 未复点自动退出确认态
 const confirming = ref<Record<string, number>>({});
+// 卸载竞态守卫（打磨批）：loadConn 是 async——await 期间离页的话 onUnmounted 已先
+// 跑（彼时无 feed 可 stop），迟到的连接结果还去构造 useFeed 会留下无人停的 30s
+// interval（跨页持续打 /v1/feed）。构造前查此标志，已卸载直接收手
+let disposed = false;
 
 onMounted(async () => {
   const conn = await loadConn();
+  if (disposed) return; // 已卸载：不再构造 useFeed/useReminders（也就无 interval 可漏）
   if (!conn) return router.replace("/pairing");
   // useFeed 默认开 30s 轮询（M3 进行中区块靠它近实时）；卸载侧 stop
   feed.value = useFeed(conn);
@@ -28,6 +33,7 @@ onMounted(async () => {
 // 已卸载组件的闭包（泄漏），页重建后也不该有旧定时器回来动 confirming；
 // M3 增：feed 轮询 interval 一并停（跨页存留即泄漏，且会持续打 /v1/feed）
 onUnmounted(() => {
+  disposed = true; // 迟到的 onMounted 续体看到后自行放弃（竞态守卫）
   feed.value?.stop();
   for (const t of Object.values(confirming.value)) window.clearTimeout(t);
   confirming.value = {};
@@ -91,9 +97,12 @@ function refreshAll(): void {
               </div>
             </div>
           </div>
+          <!-- 进行中计数去重（打磨批）：上方区块显示时计数已在区块头，此处隐藏该段；
+               区块隐藏（无进行中）时 statline 完整显示，信息不缺位 -->
           <p v-if="feed.stats.value" class="statline">
-            24 小时完成 {{ feed.stats.value.done_24h ?? 0 }} · 进行中 {{ feed.running.value.length }} · 待提醒
-            {{ feed.stats.value.pending_reminders ?? 0 }}
+            24 小时完成 {{ feed.stats.value.done_24h ?? 0 }}
+            <span v-if="!feed.running.value.length">· 进行中 {{ feed.running.value.length }}</span>
+            · 待提醒 {{ feed.stats.value.pending_reminders ?? 0 }}
           </p>
           <p v-if="feed.items.value.length === 0" class="empty">还没有动态——译宝忙起来就有了</p>
           <div

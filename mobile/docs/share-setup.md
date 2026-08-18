@@ -28,7 +28,7 @@
 1. Play 商店 / F-Droid 安装 [HTTP Shortcuts](https://http-shortcuts.rmy.ch/)
 2. 新建 Shortcut：
    - Method `POST`，URL `http://<大脑地址>/v1/save`
-   - Request Body → Custom Text（JSON）：`{"text": "{{input}}", "title": "", "mode": "material"}`（开启 Share 接收后 `{{input}}` 即分享进来的文本）
+   - Request Body → Custom Text（JSON）：`{"text": "{{input}}", "title": "", "url": "", "mode": "material"}`（开启 Share 接收后 `{{input}}` 即分享进来的文本；`url` 留空即可，与 iOS 表对齐——服务端对空值本就容忍）
    - Request Headers：`X-Yibao-Token: <你的 token>`
 3. 应用设置 → **Share** 接收 → 启用，Shortcut 设为可被分享调用
 4. 任何 App：分享 → HTTP Shortcuts → 存入
