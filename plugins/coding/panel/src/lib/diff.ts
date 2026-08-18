@@ -5,6 +5,16 @@ export interface DiffLine {
   text: string;
 }
 
+// 行序列 → {a,d} 增删行数统计(移植 chat.html:1339-1346;文件改动卡头行 +a/-d 用)
+export function diffStats(lines: DiffLine[]): { a: number; d: number } {
+  let a = 0, d = 0;
+  for (const l of lines) {
+    if (l.type === "add") a++;
+    else if (l.type === "del") d++;
+  }
+  return { a, d };
+}
+
 function toLines(text: string | null | undefined): string[] {
   if (text == null || text === "") return [];
   return String(text).split("\n");

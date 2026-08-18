@@ -28,6 +28,8 @@ export interface SessionState {
   waiting: boolean; // 有待批 permission_request
   ended: SessionEnded;
   usage: { tok: number; cost: number; hasCost: boolean };
+  lastUsage: Usage | null; // 最近一个 done 事件的原始 usage(完成状态行「✓ 完成 · Ns · tok · $」用)
+  runPrefix: string;       // 运行 pill/状态行前缀「会话 <sid> 启动|接续」(send 进 streaming 时落定)
   error: string | null; // errbar 文本
 }
 
@@ -43,7 +45,7 @@ export function createSessionStore(deps: SessionDeps) {
   const state = reactive<SessionState>({
     items: [], currentSession: null, curSessAgent: "claude-code",
     sending: false, streaming: false, waiting: false, ended: null,
-    usage: { tok: 0, cost: 0, hasCost: false }, error: null,
+    usage: { tok: 0, cost: 0, hasCost: false }, lastUsage: null, runPrefix: "", error: null,
   });
 
   // —— 内部簿记(不进响应式状态)——
@@ -77,6 +79,7 @@ export function createSessionStore(deps: SessionDeps) {
       state.usage.cost += u.cost_usd;
       state.usage.hasCost = true;
     }
+    state.lastUsage = u; // 完成状态行按最近 done 事件的 usage 渲染(对齐 setStatusDone)
   }
 
   function onSessionEnded(reason: Exclude<SessionEnded, null>) {
@@ -137,7 +140,7 @@ export function createSessionStore(deps: SessionDeps) {
           card.results.push({ text: ev.text, isError: ev.is_error });
           if (ev.is_error) card.hasError = true;
         } else if (ev.is_error) {
-          state.error = ev.text; // 无卡错误结果退化进 errbar
+          state.error = ev.text || "工具执行失败"; // 无卡错误结果退化进 errbar(空文本兜底,对齐原 appendError)
         } else {
           state.items.push({ type: "marker", text: ev.text, err: false });
         }
@@ -168,7 +171,7 @@ export function createSessionStore(deps: SessionDeps) {
         onSessionEnded("done");
         return;
       case "error":
-        state.error = ev.text;
+        state.error = ev.text || "未知错误"; // 空文本兜底(对齐原 appendError 调用点)
         onSessionEnded("error");
         return;
       default:
@@ -230,6 +233,7 @@ export function createSessionStore(deps: SessionDeps) {
       if (isStart) state.curSessAgent = normAgent(ov.agent ?? agent);
       if (pendingTurnEnded) { pendingTurnEnded = false; return; } // 秒败:不进 streaming
       state.streaming = true;
+      state.runPrefix = "会话 " + r.session_id + (isStart ? " 启动" : " 接续"); // pill 秒表/状态行前缀
       deps.report("streaming", true);
     } catch (e) {
       if (pendingUserEcho) { deps.clearTimer(pendingUserEcho); pendingUserEcho = null; }
@@ -242,11 +246,12 @@ export function createSessionStore(deps: SessionDeps) {
     }
   }
 
-  async function stop(): Promise<void> {
+  /** 返回 invoke 是否受理(false=无会话/调用失败)——pill 的 Stop 据此在失败时重新解锁 */
+  async function stop(): Promise<boolean> {
     const sid = state.currentSession;
-    if (!sid) return;
-    try { await deps.invoke("coding.stop", { id: sid }); }
-    catch { /* 流式 stopped 终态负责复位;失败仅解锁由调用方处理 */ }
+    if (!sid) return false;
+    try { await deps.invoke("coding.stop", { id: sid }); return true; }
+    catch { return false; } // 流式 stopped 终态负责复位;失败仅解锁由调用方处理
   }
 
   function newChat() {
@@ -259,6 +264,8 @@ export function createSessionStore(deps: SessionDeps) {
     state.ended = null;
     state.error = null;
     state.usage = { tok: 0, cost: 0, hasCost: false };
+    state.lastUsage = null;
+    state.runPrefix = "";
     fallbackUserIndex = -1;
     if (pendingUserEcho) { deps.clearTimer(pendingUserEcho); pendingUserEcho = null; }
     takeoverQueue = [];
@@ -297,6 +304,8 @@ export function createSessionStore(deps: SessionDeps) {
       state.ended = null;
       state.error = null;
       state.usage = { tok: 0, cost: 0, hasCost: false };
+      state.lastUsage = null;
+      state.runPrefix = "";
       fallbackUserIndex = -1;
       deps.report("idle", true);
       return msgs.length;

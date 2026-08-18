@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fmtCost, fmtTok, humanFirstLine, relTime } from "./format";
+import { doneStatusText, fmtCost, fmtTok, humanFirstLine, relTime } from "./format";
 
 describe("fmtTok", () => {
   it("千以下原样", () => {
@@ -83,5 +83,27 @@ describe("humanFirstLine", () => {
   it("全非人话 / 空文本 → 兜底文案", () => {
     expect(humanFirstLine("<err>x</err>\n at y")).toBe("执行出错（点「详情」查看全文）");
     expect(humanFirstLine("")).toBe("执行出错（点「详情」查看全文）");
+  });
+});
+
+describe("doneStatusText", () => {
+  it("全字段:✓ 完成 · Ns · tok · $(cost 三位小数)", () => {
+    expect(doneStatusText({ duration_ms: 23400, input_tokens: 1200, output_tokens: 300, cost_usd: 0.12345 }))
+      .toBe("✓ 完成 · 23s · 1.5k tok · $0.123");
+  });
+  it("无 usage / 空 usage → 仅「✓ 完成」", () => {
+    expect(doneStatusText(null)).toBe("✓ 完成");
+    expect(doneStatusText(undefined)).toBe("✓ 完成");
+    expect(doneStatusText({})).toBe("✓ 完成");
+  });
+  it("codex 容缺:cost_usd null → 无成本段", () => {
+    expect(doneStatusText({ duration_ms: 1000, input_tokens: 5, cost_usd: null })).toBe("✓ 完成 · 1s · 5 tok");
+  });
+  it("坏值各段静默略过,绝不上抛", () => {
+    expect(doneStatusText({ duration_ms: NaN, input_tokens: undefined, cost_usd: Infinity })).toBe("✓ 完成");
+    expect(doneStatusText({ duration_ms: "x" as unknown as number })).toBe("✓ 完成");
+  });
+  it("tok 为 0 不显示 token 段", () => {
+    expect(doneStatusText({ duration_ms: 500, input_tokens: 0, output_tokens: 0 })).toBe("✓ 完成 · 1s");
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { lcsLines, multiEditDiff } from "./diff";
+import { diffStats, lcsLines, multiEditDiff } from "./diff";
 
 describe("lcsLines", () => {
   it("基本:同首行 ctx,不同行 del→add(顺序按 LCS)", () => {
@@ -77,5 +77,17 @@ describe("multiEditDiff", () => {
     expect(multiEditDiff("{oops")).toBeNull();
     expect(multiEditDiff('"just a string"')).toBeNull();
     expect(multiEditDiff('{"nope":1}')).toBeNull();
+  });
+});
+
+describe("diffStats", () => {
+  it("只计 add/del,ctx 忽略", () => {
+    expect(diffStats([
+      { type: "ctx", text: "a" },
+      { type: "del", text: "b" },
+      { type: "add", text: "c" },
+      { type: "add", text: "d" },
+    ])).toEqual({ a: 2, d: 1 });
+    expect(diffStats([])).toEqual({ a: 0, d: 0 });
   });
 });

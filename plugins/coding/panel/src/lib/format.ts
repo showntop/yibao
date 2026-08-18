@@ -15,6 +15,29 @@ export function fmtCost(n: number): string {
   return "$" + n.toFixed(4);
 }
 
+interface DoneUsage {
+  duration_ms?: number | null;
+  input_tokens?: number;
+  output_tokens?: number;
+  cost_usd?: number | null;
+}
+
+// 完成状态行(移植 chat.html:1566-1579 setStatusDone):「✓ 完成 · Ns · X tok · $Y」。
+// 数值强转 + isFinite 守御:usage 段坏值静默略过该段,绝不上抛(旧码直接 .toFixed 抛错,
+// initCbs try/catch 会吞掉后续终态处理 → 流式卡死);cost 段三位小数(与顶栏四位聚合不同,原样)。
+export function doneStatusText(u?: DoneUsage | null): string {
+  const parts = ["✓ 完成"];
+  if (u) {
+    const dur = Number(u.duration_ms);
+    if (u.duration_ms != null && isFinite(dur)) parts.push(Math.round(dur / 1000) + "s");
+    const tok = (Number(u.input_tokens) || 0) + (Number(u.output_tokens) || 0);
+    if (tok) parts.push(fmtTok(tok) + " tok");
+    const cost = Number(u.cost_usd);
+    if (u.cost_usd != null && isFinite(cost)) parts.push("$" + cost.toFixed(3));
+  }
+  return parts.join(" · ");
+}
+
 // 数字 ts 兼容秒级(<1e12 → ×1000);坏值 → null
 function toDate(ts: number | string | null | undefined): Date | null {
   if (ts == null) return null;

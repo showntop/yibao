@@ -1,6 +1,374 @@
-body { margin: 0; font-family: -apple-system, "PingFang SC", sans-serif; background: #f5f5f7; color: #1d1d1f; }
-.hello { padding: 24px; max-width: 640px; margin: 0 auto; }
-.hello h1 { font-size: 18px; }
-.hello button { padding: 6px 14px; border-radius: 8px; border: 1px solid #d2d2d7; background: #fff; cursor: pointer; }
-.hello pre { background: #fff; border: 1px solid #d2d2d7; border-radius: 8px; padding: 12px; font-size: 12px; overflow: auto; }
-.err { color: #c41e3a; }
+/* coding:studio 全局样式 —— 移植 chat.html <style> 段(R4 阶段二 T4)。
+   选择器与原文件保持一致(#log/.card/.bubble/.perm-card/#errbar/#runpill…),后续任务增量补段。
+   结构差异:#app 顶替 body 做 flex 列容器(Vue 挂载点);markdown 内容包一层 .mdc(v-html 与
+   think-block 分离),原 .bubble.md > :first-child/:last-child 规则同步复制到 .mdc 子层。 */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* 与译宝主 UI tokens.css 对齐的冷 slate/sky 配色(沙箱吃不到 tokens.css,内联写死) */
+:root {
+  --bg: #eef2f7;              /* slate-100 主区底 */
+  --card: #ffffff;            /* 表面 L1:卡 / 工具栏 / 输入条 */
+  --surface-2: #f3f6fa;       /* slate-050:头部底 / 输入填充 / 卡头 */
+  --surface-2h: #e9edf3;      /* surface-2 的 hover 加深 */
+  --text: #1e2a38;            /* ink-900 */
+  --muted: #6b7d91;           /* ink-500 次要文本 */
+  --faint: #8a9aac;           /* ink-400 占位 / 极弱 */
+  --accent: #4d90c4;          /* sky-500 主色 */
+  --accent-deep: #3d7aa8;     /* sky-600 hover / 强调 */
+  --accent-soft: #e7f0f8;     /* sky-050 薄膜 */
+  --accent-line: #cfe0ed;     /* sky-100:accent-soft 区块的 hairline 描边 */
+  --border: rgba(40,60,90,0.10);
+  --border-strong: rgba(40,60,90,0.18);
+  --border-soft: rgba(40,60,90,0.08);
+  --line: rgba(40,60,90,0.08);
+  --green-bg: #dceee3; --green: #3e8e5a; --green-bar: #8fd0a6; --green-line: #c4e0cf;
+  --red-bg: #f4dedb; --red: #b6554a; --red-bar: #dca59e;
+  --amber: #d97706; --amber-bg: #fdf5e7;   /* 等待审批脉冲 */
+  --amber-deep: #9a7b28;
+  --ai-bg: #ffffff;           /* AI 气泡:白底 + 描边 */
+  --user-bg: #4d90c4;         /* 用户气泡:sky-500 */
+  --code-bg: #22303f;         /* ink-900 加深:markdown 代码块底 */
+  --code-text: #d9e3ee;       /* 代码块正文 */
+  --sans: -apple-system, "PingFang SC", sans-serif;
+  --mono: 12.5px/1.6 "SF Mono", ui-monospace, Menlo, monospace;
+  --mono-family: "SF Mono", ui-monospace, Menlo, monospace;
+  --r-sm: 10px; --r-md: 14px; --r-pill: 999px;
+  --shadow-card: 0 1px 2px rgba(30,42,56,0.04);
+  --shadow-pop: 0 8px 24px rgba(30,42,56,0.14);
+}
+html, body, #app { height: 100%; }
+body {
+  font: 13px/1.6 -apple-system, "PingFang SC", sans-serif;
+  background: var(--bg); color: var(--text);
+}
+/* Vue 挂载点顶替 chat.html 的 body flex 列(header / #log / #errbar / footer 纵向排) */
+#app { display: flex; flex-direction: column; }
+.hidden { display: none !important; }
+
+/* 设计预览态(无 window.yibao 桥时) */
+#bridge-warn {
+  flex: none;
+  padding: 6px 12px; background: var(--accent-soft); color: var(--accent-deep); font-size: 11.5px;
+  text-align: center; border-bottom: 1px solid var(--accent-line);
+}
+
+/* ---- 顶栏(D4 收窄,高约 40px):左标题「编码对话」+ 右成本聚合 + 新对话 ghost ---- */
+header {
+  flex: none; display: flex; align-items: center; gap: 8px;
+  padding: 5px 14px; min-height: 40px; border-bottom: 1px solid var(--line);
+  background: var(--card);
+}
+header .title { flex: none; font-size: 13px; font-weight: 600; color: var(--text); }
+.spacer { flex: 1; }
+/* 会话成本聚合(C4):顶栏右侧灰小字「N tok · $X.XXXX」,done 事件 usage 前端累加 */
+#cost {
+  flex: none; font: var(--mono); font-size: 11px; color: var(--faint);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* 右上工具按钮:安静 ghost(#history[T6] / #new-chat 共用) */
+#history, #new-chat {
+  flex: none; border: 1px solid transparent; background: transparent;
+  color: var(--muted); font-size: 12px; padding: 4px 10px; border-radius: 8px;
+  cursor: pointer; font-weight: 500; transition: all .15s ease;
+}
+#history:hover, #new-chat:hover {
+  background: var(--surface-2); color: var(--accent-deep); border-color: var(--border);
+}
+#history:disabled, #new-chat:disabled { opacity: .5; cursor: default; }
+
+/* ---- 主区:流式日志(唯一视觉焦点)。消息节奏行距 12,宽屏限 760px 消息带居中;
+   marker 小丸自带 align-self 居中不受影响 ---- */
+#log {
+  flex: 1; overflow-y: auto; padding: 16px 14px;
+  display: flex; flex-direction: column; gap: 12px;
+  background: var(--bg);
+}
+#log > .row, #log > .card, #log > .tool-result {
+  width: 100%; max-width: 760px; margin-left: auto; margin-right: auto;
+}
+.row { display: flex; width: 100%; }
+.row.user { justify-content: flex-end; }
+.row.ai { justify-content: flex-start; }
+
+.bubble {
+  max-width: 85%; padding: 9px 13px; border-radius: var(--r-md);
+  font-size: 13px; line-height: 1.7; word-break: break-word; white-space: pre-wrap;
+}
+.row.user .bubble { background: var(--user-bg); color: #fff; border-bottom-right-radius: 4px; position: relative; }
+/* ⏪ 回滚钮样式随 Task 7 回滚锚一并移植 */
+.row.ai .bubble { background: var(--ai-bg); color: var(--text); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+.row.ai .bubble.done::after {
+  content: " ✓"; color: var(--green); font-weight: 600; font-size: 11px;
+}
+
+/* ---- AI 气泡 markdown(渲染基座:marked → DOMPurify → hljs;.md 类仅渲染成功时挂上) ---- */
+.row.ai .bubble.md { white-space: normal; }  /* markdown 结构自带块距,弃 pre-wrap 防空行加倍 */
+.bubble.md > :first-child { margin-top: 0; }
+.bubble.md > :last-child { margin-bottom: 0; }
+/* Vue 下 markdown 内容包一层 .mdc(v-html 与 think-block 同级分离),首尾块距规则复制到 .mdc 子层 */
+.bubble.md .mdc > :first-child { margin-top: 0; }
+.bubble.md .mdc > :last-child { margin-bottom: 0; }
+.bubble.md p { margin: 6px 0; }
+.bubble.md h1, .bubble.md h2, .bubble.md h3,
+.bubble.md h4, .bubble.md h5, .bubble.md h6 { margin: 12px 0 6px; line-height: 1.4; font-weight: 600; }
+.bubble.md h1 { font-size: 17px; }
+.bubble.md h2 { font-size: 15.5px; }
+.bubble.md h3 { font-size: 14px; }
+.bubble.md h4, .bubble.md h5, .bubble.md h6 { font-size: 13px; }
+.bubble.md ul, .bubble.md ol { margin: 6px 0; padding-left: 22px; }
+.bubble.md li { margin: 2px 0; }
+.bubble.md li > p { margin: 2px 0; }         /* GFM 松散列表内段落不撑双距 */
+.bubble.md li input[type="checkbox"] { margin-right: 5px; vertical-align: -1px; }
+.bubble.md blockquote {
+  margin: 8px 0; padding: 2px 12px; color: var(--muted);
+  border-left: 3px solid var(--border-strong);
+}
+.bubble.md blockquote p { margin: 4px 0; }
+.bubble.md a { color: var(--accent-deep); }
+.bubble.md hr { border: none; border-top: 1px solid var(--line); margin: 10px 0; }
+.bubble.md img { max-width: 100%; }
+/* 行内码:浅底 chip(与深色代码块区分) */
+.bubble.md code {
+  font: var(--mono); font-size: 12px; padding: 1px 5px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px;
+}
+/* 表格:细边框 + 轻斑马纹;超宽整块横向滚动 */
+.bubble.md table {
+  display: block; overflow-x: auto; max-width: 100%;
+  border-collapse: collapse; margin: 8px 0; font-size: 12.5px;
+}
+.bubble.md th, .bubble.md td { border: 1px solid var(--border-strong); padding: 4px 10px; text-align: left; }
+.bubble.md th { background: var(--surface-2); font-weight: 600; }
+.bubble.md tr:nth-child(even) td { background: rgba(40,60,90,0.03); }
+/* 代码块:深色块 + 顶部细条(左语言标签灰小字 / 右复制钮;组件把 pre 包进 .codeblock) */
+.bubble.md .codeblock { margin: 8px 0; border-radius: 10px; overflow: hidden; background: var(--code-bg); }
+.bubble.md .code-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 2px 8px 2px 12px; border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.bubble.md .code-lang { font-size: 11px; color: #8fa3b8; }
+.bubble.md .code-copy {
+  border: none; background: transparent; color: #8fa3b8; font-size: 11px;
+  padding: 2px 8px; border-radius: 6px; cursor: pointer; transition: all .15s ease;
+}
+.bubble.md .code-copy:hover { background: rgba(255,255,255,0.10); color: #e4ecf4; }
+.bubble.md .code-copy.ok { color: var(--green-bar); }
+.bubble.md pre { margin: 0; padding: 10px 12px; overflow-x: auto; font: var(--mono); color: var(--code-text); white-space: pre; }
+.bubble.md pre code { padding: 0; background: none; border: none; border-radius: 0; font-size: inherit; color: inherit; }
+/* hljs 迷你深色主题(手写常用 token 配色,向 slate/sky 色板靠) */
+.bubble.md .hljs-comment, .bubble.md .hljs-quote { color: #7f93a8; font-style: italic; }
+.bubble.md .hljs-keyword, .bubble.md .hljs-selector-tag, .bubble.md .hljs-built_in, .bubble.md .hljs-literal { color: #7cb3e8; }
+.bubble.md .hljs-string, .bubble.md .hljs-regexp, .bubble.md .hljs-addition { color: #9ed3a9; }
+.bubble.md .hljs-number, .bubble.md .hljs-symbol, .bubble.md .hljs-bullet { color: #e0b184; }
+.bubble.md .hljs-title, .bubble.md .hljs-section { color: #e5c07b; }
+.bubble.md .hljs-attr, .bubble.md .hljs-attribute, .bubble.md .hljs-variable, .bubble.md .hljs-template-variable { color: #d9a87e; }
+.bubble.md .hljs-type, .bubble.md .hljs-name, .bubble.md .hljs-selector-class { color: #6fc7bd; }
+.bubble.md .hljs-deletion { color: #e08a80; }
+.bubble.md .hljs-meta { color: #b493e6; }
+
+/* 文件改动 / 工具调用卡片(v1 单列) */
+.card {
+  max-width: 85%; background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--r-md); overflow: hidden; box-shadow: var(--shadow-card);
+}
+.card-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 11px; background: var(--surface-2); border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.card-head .ic { flex: none; }
+.card-head .lbl { font-weight: 600; color: var(--text); flex: none; }
+.card.tooluse .card-head .ic { color: var(--muted); }
+/* 工具卡单行头:chevron + 图标 + 工具名 + 意图摘要 + 结果计数;整行点击展开详情 */
+.card.tooluse .card-head { cursor: pointer; user-select: none; }
+.card.tooluse .card-head:hover { background: var(--surface-2h); }
+.card-head .chev { flex: none; width: 11px; color: var(--faint); font-size: 10px; }
+.card-head .intent {
+  flex: 1; min-width: 0; font: var(--mono); color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.card-head .tally { flex: none; font: var(--mono); font-size: 11px; color: var(--faint); }
+/* 工具失败标红(卡级 err 态 + 单行尾 ✗,不新增卡片) */
+.card.tooluse.err { border-color: var(--red-bar); }
+.card.tooluse.err .card-head .ic { color: var(--red); }
+.card.tooluse.err .card-head .tally { color: var(--red); font-weight: 600; }
+.card-body { padding: 0; background: var(--card); }
+.card-body.collapsed { display: none; }
+.card-body.open { display: block; }
+.card-body .note {
+  padding: 10px 13px; font-size: 12px; color: var(--muted); font-style: italic;
+}
+.card-body .dl {
+  font: var(--mono); padding: 1px 12px 1px 18px; white-space: pre-wrap; word-break: break-word;
+  min-height: 1.6em;
+}
+.card-body .dl.s { color: var(--muted); }
+/* 工具卡 input JSON(原 chat.html 内联样式的类化:white-space/pre-wrap + 8px 上下 padding) */
+.card-body .tool-input { white-space: pre-wrap; padding: 8px 12px 8px 18px; margin: 0; }
+/* diff 行着色:新增绿底 / 删除红底+删除线 / 上下文灰 */
+.card-body .dl.diff-add { background: var(--green-bg); box-shadow: inset 3px 0 var(--green-bar); color: var(--green); }
+.card-body .dl.diff-del { background: var(--red-bg); box-shadow: inset 3px 0 var(--red-bar); color: var(--red); text-decoration: line-through; }
+.card-body .dl.diff-ctx { color: var(--muted); }
+/* MultiEdit 段头(第 N 处) */
+.card-body .seg-head { font: var(--mono); color: var(--muted); padding: 6px 12px 0 18px; }
+/* 文件改动卡头行:✎ path +x -y tool(默认展开无折叠钮;chrome 对齐 card-head) */
+.edit-head {
+  padding: 7px 11px; background: var(--surface-2); border-bottom: 1px solid var(--line);
+  font: var(--mono); font-size: 12px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.edit-head .add { color: var(--green); }
+.edit-head .del { color: var(--red); }
+.edit-head .tool-tag { opacity: .55; font-size: 11px; }
+
+/* 思考块(thinking 事件):淡色斜体小块,挂 assistant 气泡内顶部 */
+.think-block {
+  margin-top: 8px; padding: 6px 10px; border-radius: 8px;
+  background: var(--surface-2); color: var(--muted);
+  font-size: 12px; font-style: italic; white-space: pre-wrap; word-break: break-word;
+}
+.think-block .think-tag {
+  font-style: normal; font-weight: 600; font-size: 11px;
+  color: var(--faint); margin-right: 6px;
+}
+
+/* 工具输出(tool_result):挂工具卡内。≤8 行直接可见(.plain 无 summary),
+   >8 行 details 默认收起、summary 显示「… +N lines」;err 红态 */
+.tool-result {
+  max-width: 85%; margin-top: 8px; padding: 6px 11px 8px;
+  border-top: 1px dashed var(--border); font-size: 12px;
+}
+#log > .tool-result {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--r-md); box-shadow: var(--shadow-card);
+}
+.tool-result > summary { cursor: pointer; color: var(--muted); font-size: 11.5px; }
+.tool-result > pre {
+  margin-top: 6px; padding: 8px 10px; border-radius: 8px;
+  font: var(--mono); white-space: pre-wrap; word-break: break-word;
+  color: var(--muted); background: var(--surface-2);
+  max-height: 240px; overflow-y: auto;
+}
+.tool-result.plain > pre { margin-top: 2px; }
+.tool-result.err > summary, .tool-result.err > pre { color: var(--red); }
+.tool-result.err > pre { background: var(--red-bg); }
+
+/* turn 级错误条(B3):底部固定红底细条——左摘要单行截断 + 右「详情」展开/收起全文;
+   协议 XML/堆栈只进详情区,摘要只显示人话首行;新 turn 开始(send/user_msg)消失 */
+#errbar {
+  flex: none; padding: 6px 12px; background: var(--red-bg);
+  border-top: 1px solid var(--red-bar); font-size: 12px;
+}
+#errbar .err-row { display: flex; align-items: center; gap: 8px; }
+#errbar .err-summary {
+  flex: 1; min-width: 0; color: var(--red);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#errbar .err-toggle {
+  flex: none; border: 1px solid var(--red-bar); background: transparent; color: var(--red);
+  font-size: 11px; padding: 1px 10px; border-radius: 6px; cursor: pointer; transition: all .15s ease;
+}
+#errbar .err-toggle:hover { background: rgba(182,85,74,0.12); }
+#errbar .err-detail {
+  margin-top: 6px; max-height: 160px; overflow-y: auto; padding: 6px 9px;
+  border-radius: 8px; background: rgba(255,255,255,0.55);
+  font: var(--mono); font-size: 11.5px; color: var(--red);
+  white-space: pre-wrap; word-break: break-word;
+}
+
+/* 权限审批卡(只读镜像):等待中 = 琥珀脉冲边框 + 只读提示(无按钮——裁决走 L2 确认体系);
+   permission_done 后收敛为灰小字单行记录(.perm-done)。
+   脉冲用 ::before 叠层只动 opacity(transform/opacity 性能约束) */
+.perm-card { position: relative; border-color: var(--amber); background: var(--amber-bg); padding: 10px 13px; }
+.perm-card::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit;
+  border: 2px solid var(--amber); pointer-events: none;
+  animation: perm-pulse 2s ease-in-out infinite;
+}
+@keyframes perm-pulse { 0%, 100% { opacity: .25; } 50% { opacity: .9; } }
+.perm-head { font-weight: 600; }
+.perm-input {
+  max-height: 120px; overflow: auto; font-size: 11px; margin-top: 6px;
+  padding: 6px 9px; border-radius: 8px; background: var(--card);
+  font-family: ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-word;
+}
+.perm-state { font-size: 11px; color: var(--amber); margin-top: 6px; }
+/* 裁决后收敛:灰小字单行「✓ 已允许 运行命令」/「✗ 已拒绝」,内容宽度自适应;
+   消息带居中后贴带左缘(margin-left = 带宽外余量),不随 #log>.card 整宽居中 */
+#log > .card.perm-card.perm-done {
+  width: fit-content; margin-left: max(0px, calc(50% - 380px)); margin-right: auto;
+  padding: 4px 12px;
+  background: var(--surface-2); border-color: var(--border);
+  font-size: 11.5px; color: var(--muted); box-shadow: none;
+}
+.perm-card.perm-done::before { content: none; }
+
+/* 终止标 / 错误(灰小字 11px --faint) */
+.marker {
+  align-self: center; font-size: 11px; color: var(--faint);
+  padding: 2px 10px; border-radius: var(--r-pill); background: var(--surface-2);
+}
+.marker.err { color: var(--red); background: var(--red-bg); }
+
+/* ---- 底栏(T4 骨架:Composer 占位 + 状态行;三段式输入区随 Task 5 接入) ---- */
+footer {
+  flex: none; border-top: 1px solid var(--line); background: var(--card);
+  padding: 8px 12px 5px; display: flex; flex-direction: column; gap: 4px;
+}
+/* Composer 占位:T5 落地前明示,不装成可用输入区 */
+.composer-ph {
+  padding: 6px 10px; border: 1px dashed var(--border-strong); border-radius: var(--r-md);
+  color: var(--faint); font-size: 12px; text-align: center;
+}
+.keys-row { display: flex; align-items: center; gap: 8px; }
+#status {
+  flex: 1; min-width: 0; font-size: 11px; color: var(--faint);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#status.err { color: var(--red); }
+.keys {
+  flex: 0 1 auto; overflow: hidden; display: flex; align-items: center; gap: 8px;
+  font-size: 11px; color: var(--faint); white-space: nowrap;
+}
+.keys kbd {
+  display: inline-block; margin-right: 3px; padding: 0 5px; line-height: 15px;
+  background: var(--card); border: 1px solid var(--border-strong); border-radius: 4px;
+  font: var(--mono); font-size: 10px; color: var(--muted);
+}
+/* 窄面板优先保住状态行与操作钮:快捷键提示让位(整组隐藏) */
+@media (max-width: 480px) { .keys { display: none; } }
+
+/* 接管模式(body.takeover):宿主 InputBar 接管文本输入——隐藏 Composer 占位段(T5 落地后
+   换成 prompt-wrap/#send 等原规则);状态行保留 */
+body.takeover .composer-ph { display: none; }
+
+/* spinner:10px 边框圆 + 旋转(状态行 / 运行 pill 共用) */
+.spin {
+  display: inline-block; width: 10px; height: 10px; margin-right: 6px;
+  border: 2px solid var(--border-strong); border-top-color: var(--accent);
+  border-radius: 50%; vertical-align: -1px;
+  animation: status-spin .8s linear infinite;
+}
+@keyframes status-spin { to { transform: rotate(360deg); } }
+
+/* 运行状态悬浮 pill(C3):底部居中浮在 footer 上方(fixed,bottom 由 App 按 footer/#errbar
+   高度现算,垂直堆叠不重叠),不占消息流空间;仅 streaming/sending 期间可见。
+   spinner + 已耗时秒表 + 会话累计 token + 红 Stop;done/stopped/error 后消失 */
+#runpill {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: 110px; z-index: 35;
+  display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 12px;
+  border-radius: var(--r-pill); background: var(--card);
+  border: 1px solid var(--border-strong); box-shadow: var(--shadow-pop);
+  font-size: 11.5px; color: var(--muted); white-space: nowrap;
+}
+#runpill .rp-tok { font: var(--mono); font-size: 11px; color: var(--faint); }
+#runpill .rp-stop {
+  border: none; border-radius: var(--r-pill); padding: 3px 12px; cursor: pointer;
+  background: var(--red); color: #fff; font-size: 11.5px; font-weight: 600;
+  transition: filter .15s ease;
+}
+#runpill .rp-stop:hover { filter: brightness(0.92); }
+#runpill .rp-stop:disabled { opacity: .5; cursor: default; }
+/* pill 可见时给消息流底部让位,末条消息不被盖住(原 body.pill-on #log → #log.pill-on) */
+#log.pill-on { padding-bottom: 58px; }
