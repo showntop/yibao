@@ -63,7 +63,7 @@ body {
 .station footer { display: none; }                 /* 非聚焦工位输入条隐藏(实例存活,草稿保留) */
 .station.focused footer { display: flex; position: absolute; z-index: 20; left: 0; right: 0; bottom: 0; }
 
-/* ---- 左栏会话 rail(T5 结构,T6 落样式;卡片化/圆角对齐会话墙视觉,配色用本面板既有变量) ---- */
+/* ---- 左栏会话 rail(T5 结构,T6 落样式;卡片化/圆角,配色用本面板既有变量) ---- */
 .rail {
   flex: none; width: 240px; display: flex; flex-direction: column;
   background: var(--surface-2); border-right: 1px solid var(--line);

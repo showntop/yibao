@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // coding:studio 多工位壳(R4 阶段三 T6,替换 T4 过渡壳)——
-//   demux:onInit 唯一入口(T4 评审收口:StationView 不再自注册)。attach 载荷(任务卡/会话墙
+//   demux:onInit 唯一入口(T4 评审收口:StationView 不再自注册)。attach 载荷(任务卡/左栏
 //     「接管」路由)→ stationForSid 已绑短路聚焦(不跳槽,不重拉)/ 未绑 → pickIdleTarget
 //     (T8:busy 守卫,全忙不绑不投+聚焦工位提示)+ bind + bindSession(拒理回滚路由表)+
 //     focus;流事件 → stationForSid
@@ -8,7 +8,7 @@
 //   预挂载 stash:壳 onInit 在 setup 顶层注册,init 数据可能早于 StationView 挂载到达——
 //     stationRef 缺失时按工位暂存(每工位 ≤20 条,超出丢最旧),ref 登记时 flush。
 //   左栏编排:coding.sessions quiet 别名拉取(coding.list 本体带 panel 事件,会把插件页顶成
-//     coding 面板);title/subtitle 对齐 wall_data 语义;已绑行活体直读工位态。
+//     coding 面板);title/subtitle 语义见 railTitle 注释;已绑行活体直读工位态。
 //   聚焦停靠:每工位各自 Composer,非聚焦工位 footer 隐藏(实例存活,草稿保留),聚焦者
 //     footer 绝对定位停靠 stations 区页底;--dock-h 由聚焦工位 dockH 驱动。
 //   窄窗(matchMedia "(max-width: 720px)"):rail 隐藏 + ☰ 开抽屉,v-show 只留聚焦工位。
@@ -94,7 +94,7 @@ function bindStation(target: number, sid: string, agent: string): boolean {
 onInit((data) => {
   const d = data as PanelData;
   if (!d) return;
-  if (d.attach === true && !d.event) {           // attach 载荷(任务卡/会话墙「接管」路由)
+  if (d.attach === true && !d.event) {           // attach 载荷(任务卡/左栏「接管」路由)
     const sid = String(d.session_id || "");
     if (!sid) return;
     const ex = stations.stationForSid(sid);         // 终审修复:已绑 sid 再 attach 会改绑别工位,原工位成 ghost
@@ -161,7 +161,7 @@ function liveOfStation(id: number): RailLive {
 // 后端 _live_state 字串直通("waiting"/"running"/"idle"),缺省 "idle"
 function normLive(v: string): RailLive { return v === "waiting" || v === "running" ? v : "idle"; }
 
-// title/subtitle 对齐 wall_data(coding.py WallDataSkill):basename+prompt 前 20 字 / 引擎·活体·相对时间
+// title/subtitle:basename+prompt 前 20 字 / 引擎·活体·相对时间
 function railTitle(row: SessionRow): string {
   const cwd = String(row.cwd || "");
   const normed = cwd.replace(/\/+$/, "") || cwd;   // normpath 去尾斜杠;根目录回退原值

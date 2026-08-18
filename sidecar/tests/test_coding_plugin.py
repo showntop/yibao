@@ -1,6 +1,6 @@
 """coding 插件：runner 流式/取消/容错（FakeSDK 注入，不跑真 SDK）。"""
 from __future__ import annotations
-import asyncio, os, sys
+import asyncio, os, sys, time
 from types import SimpleNamespace
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 # 插件 skills 不在 src 下，单独加路径
@@ -403,13 +403,13 @@ def test_send_skill_openai_schema_shape():
 
 
 def test_make_tools_includes_send():
-    """make_tools 返回 Start/Send/Stop/List/Attach/WallData + HandoffList/HandoffBrief/History/Mode/Rewind/Decide/PermPending/Files
-    + LastSessions/AttachCc + Drivers/AttachCodex + SessionBrief + Studio 二十件。"""
+    """make_tools 返回 Start/Send/Stop/List/Attach + HandoffList/HandoffBrief/History/Mode/Rewind/Decide/PermPending/Files
+    + LastSessions/AttachCc + Drivers/AttachCodex + SessionBrief + Studio 十九件。"""
     tools = codingmod.make_tools(type("C", (), {"db": None, "emit_event": None})())
     ids = [t.id for t in tools]
     assert "coding.send" in ids
     assert ids == ["coding.start", "coding.send", "coding.stop", "coding.list", "coding.attach",
-                   "coding.wall_data", "coding.handoff_list", "coding.handoff_brief", "coding.history",
+                   "coding.handoff_list", "coding.handoff_brief", "coding.history",
                    "coding.mode", "coding.rewind", "coding.decide", "coding.perm_pending", "coding.files",
                    "coding.last_sessions", "coding.attach_cc",
                    "coding.drivers", "coding.attach_codex", "coding.session_brief",
@@ -536,7 +536,7 @@ def test_stop_with_live_runner_no_extra_terminal(monkeypatch):
     ctx = _EmitCtx(db)
     res = StopSkill().run({"id": "s-live"}, ctx)
     assert res.success is True and cancel.is_set()
-    # 不重复补发终态 panel_data（coding_sessions 墙刷新信号是另一通道，不算补发）
+    # 不重复补发终态 panel_data（live runner 的终态由流式线程收尾发，stop 不再补）
     assert [e for e in ctx.events if e.get("kind") == "panel_data"] == []
 
 
@@ -1444,115 +1444,6 @@ def test_attach_skill_openai_schema_shape():
     props = schema["function"]["parameters"]["properties"]
     assert set(props.keys()) == {"session_id"}
     assert schema["function"]["parameters"]["required"] == ["session_id"]
-
-
-# ---------- P2 B4：会话墙 coding.wall_data（coding:wall 面板数据源）----------
-import time  # noqa: E402
-from coding import WallDataSkill  # noqa: E402
-
-
-def test_wall_data_shape_sort_and_panel_ref():
-    """rows 按 created_at DESC；每行 {id, live, title, subtitle}；result.panel=coding:wall
-    （coding.wall_stop 的 refresh 通道走 invoker 直执行，panel_payload 只认 result.panel）。"""
-    db = _FakeDB()
-    db.rows["a"] = {"id": "a", "status": "done", "created_at": 1,
-                    "cwd": "/tmp/proj-alpha", "prompt": "修一下登录页的样式问题，顺便看看按钮对齐和字体"}
-    db.rows["b"] = {"id": "b", "status": "done", "created_at": 2,
-                    "cwd": "/tmp/proj-beta/", "prompt": "短任务"}
-    db.rows["c"] = {"id": "c", "status": "done", "created_at": 3,
-                    "cwd": "", "prompt": ""}
-    res = WallDataSkill().run({}, _Ctx(db))
-    assert res.success and res.panel == "coding:wall"
-    rows = res.data["rows"]
-    assert [r["id"] for r in rows] == ["c", "b", "a"]            # created_at DESC
-    assert all(set(r.keys()) == {"id", "live", "title", "subtitle"} for r in rows)
-    # title = 「{cwd basename} · {prompt 前 20 字}」；basename 容忍尾部斜杠；prompt 截 20 字（23 字原文 → 断在「齐」）
-    assert rows[2]["title"] == "proj-alpha · 修一下登录页的样式问题，顺便看看按钮对齐"
-    assert rows[1]["title"] == "proj-beta · 短任务"
-    assert rows[0]["title"] == "?"                                # cwd/prompt 皆空 → 退化 basename 占位
-
-
-def test_wall_data_live_text_and_rel_time():
-    """subtitle = 「{引擎} · {live 文案} · {相对时间}」：引擎前缀 Codex/CC（无 agent 老行按 CC）；
-    live 文案 等待审批/运行中/空闲（waiting>running>idle 同 list）。"""
-    now = int(time.time())
-    db = _FakeDB()
-    db.rows["a"] = {"id": "a", "status": "done", "created_at": now - 5,
-                    "cwd": "/tmp/p", "prompt": "x"}
-    db.rows["b"] = {"id": "b", "status": "running", "created_at": now - 7200,
-                    "cwd": "/tmp/p", "prompt": "x"}
-    db.rows["c"] = {"id": "c", "status": "running", "created_at": now - 3 * 86400,
-                    "cwd": "/tmp/p", "prompt": "x"}
-    db.rows["d"] = {"id": "d", "status": "done", "created_at": now - 60,
-                    "cwd": "/tmp/p", "prompt": "x", "agent": "codex"}
-    _runner_mod._PERM["perm_c_1"] = {"event": _threading.Event(), "allow": None}
-    codingmod._SESSIONS["b"] = {"cancel": _threading.Event()}
-    codingmod._SESSIONS["c"] = {"cancel": _threading.Event()}
-    try:
-        rows = {r["id"]: r for r in WallDataSkill().run({}, _Ctx(db)).data["rows"]}
-        assert rows["a"]["live"] == "idle" and rows["a"]["subtitle"] == "CC · 空闲 · 刚刚"
-        assert rows["b"]["live"] == "running" and rows["b"]["subtitle"] == "CC · 运行中 · 2 小时前"
-        assert rows["c"]["live"] == "waiting" and rows["c"]["subtitle"] == "CC · 等待审批 · 3 天前"
-        assert rows["d"]["subtitle"] == "Codex · 空闲 · 1 分钟前"
-    finally:
-        _runner_mod._PERM.pop("perm_c_1", None)
-        codingmod._SESSIONS.pop("b", None)
-        codingmod._SESSIONS.pop("c", None)
-
-
-def test_wall_data_empty():
-    """空态：无会话 → rows=[]（面板空态文案在 wall.schema.json 的 empty 声明，见下）。"""
-    res = WallDataSkill().run({}, _Ctx(_FakeDB()))
-    assert res.success and res.data["rows"] == []
-
-
-def test_wall_data_is_l0_readonly():
-    """会话墙取数只读 → L0（直调/refresh 均不弹确认）。"""
-    assert WallDataSkill.default_risk == RiskLevel.L0_READONLY
-
-
-def test_rel_time():
-    now = 1_000_000
-    assert codingmod._rel_time(now, now - 5) == "刚刚"
-    assert codingmod._rel_time(now, now - 599) == "9 分钟前"
-    assert codingmod._rel_time(now, now - 7200) == "2 小时前"
-    assert codingmod._rel_time(now, now - 3 * 86400) == "3 天前"
-    assert codingmod._rel_time(now, now + 10) == "刚刚"            # 时钟回拨负值兜 0
-
-
-def test_wall_schema_json_matches_api_and_manifest():
-    """wall.schema.json ↔ api.toml ↔ manifest.toml 三方契约锁定：
-    schema 行行动作指向白名单方法（接管=coding.attach 恒显；停止=coding.wall_stop——
-    schema list 不支持按行条件显隐，v1 两动作同显，idle 停止由 coding.stop 提示兜底）；
-    wall_stop refresh 回刷 wall_data；manifest 声明 coding:wall 面板 + open 插件页入口。"""
-    import json
-    import tomllib
-    coding_dir = os.path.join(os.path.dirname(__file__), "..", "..", "plugins", "coding")
-    schema = json.loads((open(os.path.join(coding_dir, "panel", "wall.schema.json"),
-                              encoding="utf-8")).read())
-    assert schema["type"] == "list" and schema["bind"]["items"] == "$data.rows"
-    assert schema["empty"]["title"] == "还没有编码会话"
-    actions = {a["label"]: a for a in schema["item"]["actions"]}
-    assert actions["接管"]["method"] == "coding.attach"
-    assert actions["接管"]["params"] == {"session_id": "$item.id"}
-    assert actions["停止"]["method"] == "coding.wall_stop"
-    assert actions["停止"]["params"] == {"id": "$item.id"}
-
-    api = tomllib.loads(open(os.path.join(coding_dir, "api.toml"), encoding="utf-8").read())
-    methods = {m["name"]: m for m in api["method"]}
-    assert methods["coding.wall_data"]["handler"] == "coding.wall_data"
-    assert methods["coding.wall_data"]["panel"] == "coding:wall"
-    assert methods["coding.wall_data"]["direct"] is True
-    assert methods["coding.wall_stop"]["handler"] == "coding.stop"
-    assert methods["coding.wall_stop"]["refresh"] == "coding.wall_data"
-    assert "panel" not in methods["coding.wall_stop"]          # refresh 通道自带 panel，不双发
-
-    manifest = tomllib.loads(open(os.path.join(coding_dir, "manifest.toml"),
-                                  encoding="utf-8").read())
-    panels = {p["name"]: p for p in manifest["panel"]}
-    assert panels["wall"]["type"] == "schema"
-    assert panels["wall"]["src"] == "panel/wall.schema.json"
-    assert panels["wall"]["open"] == "wall_data"               # 插件页子入口直调 coding.wall_data
 
 
 # ---------- P1 C1：统一接续 popover —— coding.last_sessions / coding.attach_cc ----------

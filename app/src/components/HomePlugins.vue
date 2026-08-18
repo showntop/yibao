@@ -378,26 +378,10 @@ function clearObjectScope(): boolean {
 
 defineExpose({ backToList, suspendSurface, restoreSurface, clearObjectScope, collapseScene });
 
-// ---- 会话墙实时刷新（coding_sessions 生命周期事件 → 防抖重查 wall_data）----
-let wallTimer: ReturnType<typeof setTimeout> | null = null;
-function scheduleWallRefresh() {
-  if (wallTimer) clearTimeout(wallTimer);
-  wallTimer = setTimeout(() => {
-    wallTimer = null;
-    if (viewingList.value || current.value?.panel !== "coding:wall") return;   // 防抖窗口内切走/返回列表则不查
-    void panelAction("coding.wall_data", {}, undefined, surface.value).catch(() => {});
-  }, 400);
-}
-
 function onEvent(e: BrainEvent) {
   // 会话分流：宠物场景（对话页）的对话事件不归这里；panel/panel_data 例外（面板内容必须接）
   if (e.kind !== "panel" && e.kind !== "panel_data" && e.surface === "pet") return;
   switch (e.kind) {
-    case "coding_sessions":
-      // 会话墙实时刷新：仅墙正在展示才重查（重查会 emit panel 事件——backToList 后 current
-      // 粘性保留（再进秒开），不看 panel 会误判「墙开着」而把用户从插件列表拽回墙）
-      if (!viewingList.value && current.value?.panel === "coding:wall") scheduleWallRefresh();
-      break;
     case "panel_data":
       // 流式增量：同面板才合并；只动 data（webview/schema/title 不动 → srcdoc 不变 → iframe 不重载）
       if (current.value?.panel === (e.payload?.panel ?? "")) {
@@ -639,7 +623,6 @@ onMounted(async () => {
 onUnmounted(() => {
   unlisten?.();
   if (collapseTimer !== null) clearTimeout(collapseTimer);
-  if (wallTimer) clearTimeout(wallTimer);
 });
 </script>
 

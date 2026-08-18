@@ -19,8 +19,7 @@ export type BrainEventKind =
   | "reminder"
   | "notice"
   | "panel"
-  | "panel_data"
-  | "coding_sessions";
+  | "panel_data";
 
 export interface BrainAction {
   id?: string;

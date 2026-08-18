@@ -262,7 +262,7 @@ function openHistory() {
   void Promise.all([lastP, listP]).then(([last, listR]) => {
     if (openLayer.value !== "history") return; // 响应到达时浮层已关,丢弃
     historyLast.value = last;
-    historyRows.value = listR.rows.filter((r) => normCwd(r.cwd) === normCwd(c)); // 只显示本项目;跨项目总览归会话墙
+    historyRows.value = listR.rows.filter((r) => normCwd(r.cwd) === normCwd(c)); // 只显示本项目;跨项目总览归左栏 rail
     historyListErr.value = listR.err;
     historyLoading.value = false;
   });
