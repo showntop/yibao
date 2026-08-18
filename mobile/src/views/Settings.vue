@@ -36,6 +36,13 @@ function maskToken(t: string): string {
         <button class="entry" @click="router.push('/memories')">📖 记忆库 ›</button>
       </section>
 
+      <!-- 分享送素材（M3 T2）：配置文档指引，纯静态 -->
+      <section class="card">
+        <h2>分享到译宝</h2>
+        <p class="note">在任何 App 里「分享 → 发给译宝」即可存入素材库。用 iOS 快捷指令 / Android HTTP Shortcuts 一次配置：</p>
+        <p class="note mono">配置步骤见 mobile/docs/share-setup.md（仓库内）</p>
+      </section>
+
       <section class="card">
         <h2>关于</h2>
         <p class="row"><span class="k">版本</span><span class="v">译宝伴生端 v0.1</span></p>

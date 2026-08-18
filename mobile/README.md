@@ -42,3 +42,7 @@ manifest（`public/manifest.webmanifest`）+ 图标已就位，HTTPS 下浏览�
 
 - 打不开页面：Mac 防火墙放行 5173；确认手机用的是 `https://`（dev 面已是 TLS，手敲 `http://` 打不开）。
 - 配对页报「无法连接大脑」：sidecar（`host` 参数指向的 `http://<内网IP>:<端口>`）未起或端口变了，回设置页重扫。
+
+## 分享送素材（任何 App → 译宝素材库）
+
+iOS 快捷指令 / Android HTTP Shortcuts 一次配置，之后系统分享菜单直达：见 [docs/share-setup.md](docs/share-setup.md)。
