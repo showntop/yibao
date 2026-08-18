@@ -190,7 +190,7 @@ mod tests {
         // 回归:to_lowercase 变长字符(İ)在 <head> 前时索引不得错位/越界
         let out = inject_sdk("<!-- İ 注释 --><html><HEAD><title>t</title></HEAD><body/></html>", "demo");
         let head_end = out.find("<HEAD>").unwrap() + 6;
-        // 紧跟 <HEAD> 之后(CSP_META 以 `<meta http-equiv="` 开头)
+        // 紧跟 <HEAD> 之后(csp_meta(pid) 以 `<meta http-equiv="` 开头)
         assert!(out[head_end..].starts_with("<meta http-equiv=\"Content-Security-Policy"));
         assert!(out.contains("<body/>"));
         assert!(out.contains("<!-- İ 注释 -->"));

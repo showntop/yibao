@@ -1,5 +1,6 @@
 // 会话 store:事件→渲染模型归约器 + 发送状态机。单工位对外暴露一个「当前会话」视图,
-// 内部按 sid 分槽(stage 3 多工位直接复用同一归约器多实例)。
+// 事件按 sid 过滤(只受理当前会话,陈旧 sid 的流丢弃——无内部分槽);stage 3 多工位在
+// App 层多实例化本 store + 由 App 做事件 demux 分发。
 // 行为对齐 chat.html:气泡切断规则、工具卡配对(lastToolCard)、兜底用户气泡原地升级、
 // pendingTurnEnded 秒败竞态、resumeSession 的 discarded 解锁、takeover 队列泄放(T9:泄放路径
 // 补跨引擎交接守卫,对齐原 send() 内联分支)、

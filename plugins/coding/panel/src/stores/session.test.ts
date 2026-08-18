@@ -648,7 +648,7 @@ describe("跨引擎交接 handoffSend", () => {
     s2Store.applyEvent(ev({ kind: "done" }));
     const r2 = await s2Store.handoffSend("codex", { cwd: "/tmp", userText: "x", mode: "plan", isStale: () => true });
     expect(r2).toBe("stale");
-    const starts2 = (d2.invoke.mock.calls as Array<[string, unknown]>).filter((c) => c[0] === "coding.start");
+    const starts2 = ((d2.invoke as ReturnType<typeof vi.fn>).mock.calls as Array<[string, unknown]>).filter((c) => c[0] === "coding.start");
     expect(starts2).toHaveLength(1); // 仅初始那次
     expect(s2Store.state.currentSession).toBe("s1"); // 会话未动
     expect(s2Store.state.sending).toBe(false);

@@ -164,7 +164,7 @@ function onEvent(e: BrainEvent) {
         panel: e.payload?.panel ?? "",
         title: e.payload?.title ?? e.payload?.panel ?? "",
         schema: (e.payload?.schema as any) ?? null,
-        webview: (e.payload?.webview as { html?: string } | null) ?? null,
+        webview: (e.payload?.webview as WebviewPayload | null) ?? null,
         data: e.payload?.data ?? {},
       });
       break;

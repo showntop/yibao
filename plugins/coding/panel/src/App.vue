@@ -275,7 +275,9 @@ async function onAttachCc(ccSid: string): Promise<boolean> {
     const sid = r && r.session_id;
     if (!sid) throw new Error("attach_cc 未返回 session_id");
     openLayer.value = ""; // 浮层关闭(原 resumeSession 内隐藏 overlay,成败都关)
-    await store.resumeSession(sid, "claude-code");
+    const n = await store.resumeSession(sid, "claude-code");
+    // 恢复成功反馈(对齐原 resumeSession 的 setStatus);失败由 state.error 承载、顺延(-1)不亮
+    if (n >= 0 && !state.error) onComposerStatus("已恢复会话 " + sid + "，发消息将在同一上下文继续", false);
     return true;
   } catch (e) {
     onComposerStatus("导入 Claude Code 会话失败：" + emsg(e), true);
@@ -291,7 +293,9 @@ async function onAttachCodex(codexSid: string): Promise<boolean> {
     const sid = r && r.session_id;
     if (!sid) throw new Error("attach_codex 未返回 session_id");
     openLayer.value = "";
-    await store.resumeSession(sid, "codex");
+    const n = await store.resumeSession(sid, "codex");
+    // 同 onAttachCc:成功才亮「已恢复会话」提示
+    if (n >= 0 && !state.error) onComposerStatus("已恢复会话 " + sid + "，发消息将在同一上下文继续", false);
     return true;
   } catch (e) {
     onComposerStatus("恢复 Codex 会话失败：" + emsg(e), true);
@@ -302,7 +306,10 @@ async function onAttachCodex(codexSid: string): Promise<boolean> {
 // 区 2 行点击:resumeSession(row.id, row.agent)(原 resumeSession 关闭 overlay)
 function onResumeRow(row: SessionRow) {
   openLayer.value = "";
-  void store.resumeSession(row.id, row.agent);
+  void store.resumeSession(row.id, row.agent).then((n) => {
+    // 同 attach 两路:成功才亮「已恢复会话」提示(对齐原 setStatus)
+    if (n >= 0 && !state.error) onComposerStatus("已恢复会话 " + row.id + "，发消息将在同一上下文继续", false);
+  });
 }
 
 // ---- Codex→CC 交接(T7;对齐 :2047-2119 handoff/picker + :2158-2172 handoffBrief)----

@@ -7,6 +7,7 @@
  * - interact 只存面板宿主层通用交互态；插件业务状态归插件 data.db，不进本体系。
  */
 import type { KVStore, SurfaceInteract, SurfacePanel, SurfaceScene } from "../types";
+import type { WebviewPayload } from "../../lib/webview-source";
 import { TABLES } from "../persist-engine";
 import { getDescriptor, registerDomain, validateRecord, withSavedAt, withinQuota } from "../schema-registry";
 
@@ -39,7 +40,7 @@ function isPanel(raw: unknown): SurfacePanel | null {
     title: typeof p.title === "string" ? p.title : p.panel,
     schema: p.schema && typeof p.schema === "object" ? (p.schema as Record<string, unknown>) : null,
     data: p.data && typeof p.data === "object" ? (p.data as Record<string, unknown>) : {},
-    webview: p.webview && typeof p.webview === "object" ? (p.webview as { html?: string } | null) : null,
+    webview: p.webview && typeof p.webview === "object" ? (p.webview as WebviewPayload | null) : null,
   };
 }
 
