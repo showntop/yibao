@@ -1,8 +1,9 @@
 <script setup lang="ts">
 // coding:studio 多工位壳(R4 阶段三 T6,替换 T4 过渡壳)——
 //   demux:onInit 唯一入口(T4 评审收口:StationView 不再自注册)。attach 载荷(任务卡/会话墙
-//     「接管」路由)→ pickIdleTarget(T8:busy 守卫,全忙不绑不投+聚焦工位提示)+ bind +
-//     bindSession(拒理回滚路由表)+ focus;流事件 → stationForSid
+//     「接管」路由)→ stationForSid 已绑短路聚焦(不跳槽,不重拉)/ 未绑 → pickIdleTarget
+//     (T8:busy 守卫,全忙不绑不投+聚焦工位提示)+ bind + bindSession(拒理回滚路由表)+
+//     focus;流事件 → stationForSid
 //     已绑投递 / 未绑 bumpRail 派生左栏活体 + 400ms 防抖刷新。
 //   预挂载 stash:壳 onInit 在 setup 顶层注册,init 数据可能早于 StationView 挂载到达——
 //     stationRef 缺失时按工位暂存(每工位 ≤20 条,超出丢最旧),ref 登记时 flush。
@@ -90,6 +91,8 @@ onInit((data) => {
   if (d.attach === true && !d.event) {           // attach 载荷(任务卡/会话墙「接管」路由)
     const sid = String(d.session_id || "");
     if (!sid) return;
+    const ex = stations.stationForSid(sid);         // 终审修复:已绑 sid 再 attach 会改绑别工位,原工位成 ghost
+    if (ex !== null) { stations.focus(ex); return; } // 已绑即聚焦,不跳槽;attach 语义=聚焦,不重拉历史(工位内会话流是活的)
     const agent = normAgent(String(d.agent || ""));
     const target = pickIdleTarget();             // T8:落 busy 工位会被拒理成黑洞,先挑非 busy
     if (target === null) return;                 // 全忙:不绑不投(聚焦工位已亮提示)
@@ -160,6 +163,8 @@ function railSubtitle(row: SessionRow, live: RailLive): string {
 
 // ---- 行动作 ----
 function join(sid: string, agent: string) {        // 未绑行点击:加入工位(等价 attach 路径)
+  const ex = stations.stationForSid(sid);           // 未绑行才有 join,但 400ms 防抖窗内行数据可能陈旧,短路兜底
+  if (ex !== null) { stations.focus(ex); return; } // 已绑即聚焦,不跳槽
   const t = pickIdleTarget();                      // T8:落 busy 工位会被拒理成黑洞,先挑非 busy
   if (t === null) return;                          // 全忙:不绑不投(聚焦工位已亮提示)
   if (!bindStation(t, sid, agent)) return;         // bindSession 拒理,路由表已回滚

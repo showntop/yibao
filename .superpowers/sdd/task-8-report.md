@@ -33,3 +33,34 @@ pnpm typecheck → vue-tsc --noEmit 无错误
 
 - 壳逻辑无组件测试基建（工程惯例），本修复保障靠 typecheck + build + 132 例 store/lib 测试闸；busy 守卫在壳（读 expose 的 isBusy），非 store 纯逻辑，故无新增单测。
 - 预挂载窗内 stationRef 缺失时 `isBusy` 读不到按非 busy 处理——未挂载工位不可能在跑流，语义正确；全忙提示在聚焦工位 ref 缺失时静默丢弃（预挂载窗内无可见工位可提示，可接受）。
+
+---
+
+# 阶段三终审 fix-before-merge:attach/join 对已绑 sid 缺 stationForSid 短路
+
+## 状态
+
+完成。闸门全绿:`pnpm test` 10 文件 132 通过(基线 132 绿保持);`pnpm build` ✓ built in 2.09s;`pnpm typecheck`(vue-tsc --noEmit)无错误。
+
+## 问题
+
+对已在某工位的会话 X 再触发 attach/join,会把 X 改绑到别的工位,原工位 store 仍持 currentSession=X 成 ghost(streaming 永卡、esc 误停)。
+
+## 修法(按终审裁定方向)
+
+- attach 分支(demux onInit 内,App.vue:94-95)与 join 处理器(App.vue:166-168)开头各加短路:`const ex = stations.stationForSid(sid); if (ex !== null) { stations.focus(ex); return; }`,在 pickIdleTarget/bindStation 之前。
+- 短路后 attach 载荷不再走 bindSession:会话已在工位内,无需 resume;attach 语义=聚焦,不重拉历史(工位内会话流是活的)——注释已写明。
+- join 场景:未绑行才有 join(已绑行走 focus-station),但 400ms 防抖窗内行数据可能陈旧,短路兜底——注释已写明。
+- 头部 demux 注释同步新流程;stations store 未动。
+
+## 改动文件
+
+- `plugins/coding/panel/src/App.vue`(仅此一文件)
+
+## 闸门输出
+
+```
+pnpm test      → Test Files 10 passed (10) / Tests 132 passed (132)(基线 132 绿保持)
+pnpm build     → ✓ built in 2.09s(chunk >500kB 警告为既有基线警告)
+pnpm typecheck → vue-tsc --noEmit 无错误
+```
