@@ -35,7 +35,7 @@ const current = ref<{
   panel: string;
   title: string;
   schema: any;
-  webview: { html?: string } | null;
+  webview: { html?: string; url?: string; v?: number } | null;
   data: Record<string, unknown>;
 } | null>(null);
 const errorText = ref(""); // 面板内顶部错误细条（不进对话气泡）
@@ -363,7 +363,7 @@ async function pullCache() {
       panel: string;
       title?: string;
       schema: any;
-      webview: { html?: string } | null;
+      webview: { html?: string; url?: string; v?: number } | null;
       data: Record<string, unknown>;
     } | null>("get_current_panel");
     if (cached && current.value === null) {
@@ -377,6 +377,9 @@ async function pullCache() {
 
 // webview 面板 html（空串 → 走 schema 面板/占位）
 const webviewHtml = computed(() => current.value?.webview?.html ?? "");
+// module 面板(R4):url/v 直传 WebviewPanel;空串 → 与 html 一起判空走 schema/占位
+const webviewUrl = computed(() => current.value?.webview?.url ?? "");
+const webviewV = computed(() => current.value?.webview?.v ?? 0);
 
 // ---- coding 接管（P1）：coding 面板打开时 InputBar 直送 iframe 编码会话，不进译宝大脑 ----
 const webviewRef = ref();
@@ -485,11 +488,13 @@ onUnmounted(() => {
 
     <div class="content">
       <WebviewPanel
-        v-if="current && webviewHtml"
+        v-if="current && (webviewHtml || webviewUrl)"
         :key="current.panel"
         ref="webviewRef"
         :panel="current.panel"
         :html="webviewHtml"
+        :url="webviewUrl"
+        :v="webviewV"
         :data="current.data"
         :takeover="isCoding"
         @panel-event="onPanelEvent"
