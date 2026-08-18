@@ -2,7 +2,8 @@
 // 引擎 chip + picker(R4 阶段二 T6,对齐 chat.html:1758-1833):
 //   chip 三态——徽标态(有会话,.ro 显示 curSessAgent)/ 跨引擎待定(.sw 虚线显 switchAgent)/
 //   无会话(显 curAgent);codex 不可用且无会话整颗 disabled;四种 title 文案对齐 :1769-1775。
-//   picker = fixed 弹层 + backdrop;两项(CC 全能力恒可选 / Codex 按可用),当前项 ✓
+//   picker = 弹层(absolute 锚 .ctx-row 向上展开,阶段四 T5 修:原 fixed 页右会盖相邻工位)
+//   + backdrop(fixed 全窗,点击即关);两项(CC 全能力恒可选 / Codex 按可用),当前项 ✓
 //   (有会话 = switchAgent||curSessAgent)。pick 语义(同引擎清待定/异引擎置待定/无会话设
 //   curAgent)与 streaming/sending 点击拦截都在 App——本组件只上抛意图。
 // 互收由 App 的单一 openLayer 兑现(开任一浮层即关其他);esc 优先级链也在 App。
@@ -60,7 +61,7 @@ const current = computed(() => (props.hasSession ? props.switchAgent || props.cu
     :title="title"
     @click.stop="emit('toggle')"
   >{{ agentLabel(shown) }}</button>
-  <!-- 引擎 picker:fixed 弹层 + backdrop(原挂 document.body;此处与 chip 同层,fixed 等效) -->
+  <!-- 引擎 picker:absolute 弹层(锚 .ctx-row 向上展开) + fixed backdrop(点击即关) -->
   <div v-if="open" id="agent-backdrop" @click="emit('close')"></div>
   <div v-if="open" id="agent-picker" @click.stop>
     <div

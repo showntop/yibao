@@ -12,16 +12,22 @@
 //   聚焦停靠:每工位各自 Composer,非聚焦工位 footer 隐藏(实例存活,草稿保留),聚焦者
 //     footer 绝对定位停靠 stations 区页底;--dock-h 由聚焦工位 dockH 驱动。
 //   窄窗(matchMedia "(max-width: 720px)"):rail 隐藏 + ☰ 开抽屉,v-show 只留聚焦工位。
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+//   review 栏(R4 阶段四 T5):demux tap permission_request/permission_done 入出列(已绑 sid
+//     照常投递工位,waiting 态工位自维护)+ perm_pending 挂载快照对账;宽窗右栏 260px 仅
+//     有待批出列,窄窗 stations 右上「审批 N」徽按钮开 drawer(裁决清空自动收)。
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { hasBridge, invoke, onInit } from "./lib/bridge";
 import type { PanelData, SessionRow } from "./lib/types";
-import { relTime } from "./lib/format";
+import { permSummary, relTime } from "./lib/format";
 import { normAgent } from "./stores/drivers";
 import { createStationsStore, MAX_STATIONS, type RailLive } from "./stores/stations";
+import { createReviewStore, type ReviewItem } from "./stores/review";
 import StationView from "./components/StationView.vue";
 import SessionRail, { LIVE_TEXT, type RailRow } from "./components/SessionRail.vue";
+import ReviewRail from "./components/ReviewRail.vue";
 
 const stations = createStationsStore();
+const review = createReviewStore();
 
 // StationView defineExpose 的壳侧视图(以磁盘实装为准;expose 代理 unwrap ref,dockH 直读数字)
 interface StationViewExposed {
@@ -103,6 +109,13 @@ onInit((data) => {
   }
   const sid = d.session_id ? String(d.session_id) : "";
   if (!sid || !d.event) return;
+  const ev = d.event;                            // review 栏 tap(T5):工位路由之前,全量 sid(含未绑)入出列
+  if (ev.kind === "permission_request") {
+    review.upsert({ rid: String(ev.rid || ""), sid, tool: String(ev.tool || ""),
+                    summary: permSummary(String(ev.tool || ""), ev.input), params: {} });
+  } else if (ev.kind === "permission_done") {
+    review.resolve(String(ev.rid || ""));
+  }
   const id = stations.stationForSid(sid);
   if (id !== null) deliverToStation(id, d);      // 已绑工位:投递
   else {                                          // 未绑:左栏派生 + 终态/陌生 sid 防抖刷新
@@ -202,6 +215,40 @@ function onSidChange(id: number, sid: string | null, agent: string) {
   scheduleRailRefresh();
 }
 
+// ---- review 栏(R4 阶段四 T5):跨工位待批聚合的壳侧接线 ----
+// 挂载快照:perm_pending 全量对账(面板晚开错过 permission_request 时补全);失败静默——
+// 后续增删由流事件 tap 兜底(permission_request 增 / permission_done 删)
+async function syncReviewPending() {
+  if (!hasBridge) return;
+  try {
+    const r = await invoke<{ pending?: ReviewItem[] }>("coding.perm_pending", {});
+    review.snapshot((r && r.pending) || []);
+  } catch { /* 静默:流事件兜底后续增删 */ }
+}
+
+// 裁决:成功路径不本地移除,等 permission_done 流事件驱动出列(单一事实源);
+// catch(已超时/已被他通道裁决)→ 本地 resolve 兜底(store 幂等,重复出列静默)
+async function onDecide(rid: string, allow: boolean) {
+  try { await invoke("coding.decide", { rid, allow }); }
+  catch { review.resolve(rid); }
+}
+// 组头「全批」:逐 rid 走 onDecide(每条独立裁决/独立兜底)
+function onDecideGroup(sid: string, allow: boolean) {
+  for (const it of review.state.items.filter((x) => x.sid === sid)) void onDecide(it.rid, allow);
+}
+
+// groups props 装配:label = 已绑「工位 N」/ 未绑 sid 前 8 位;stationId 经路由表现算
+const reviewGroups = computed(() =>
+  review.groups.value.map((g) => {
+    const stationId = stations.stationForSid(g.sid);
+    return { ...g, stationId, label: stationId !== null ? `工位 ${stationId}` : g.sid.slice(0, 8) };
+  }),
+);
+
+// 窄窗 review drawer:stations 右上「审批 N」徽按钮开;drawer 内裁决清空后自动收
+const reviewDrawerOpen = ref(false);
+watch(() => review.state.items.length, (n) => { if (!n) reviewDrawerOpen.value = false; });
+
 // ---- 聚焦停靠:--dock-h 由聚焦工位 dockH 驱动(refsVersion 保证 ref 登记后重算) ----
 const dockH = computed(() => {
   void refsVersion.value;
@@ -214,7 +261,7 @@ const drawerOpen = ref(false);
 let mq: MediaQueryList | null = null;
 function onMqChange() {
   narrow.value = !!mq?.matches;
-  if (!narrow.value) drawerOpen.value = false; // 回宽窗收抽屉,rail 回侧栏
+  if (!narrow.value) { drawerOpen.value = false; reviewDrawerOpen.value = false; } // 回宽窗收抽屉,rail/review 回侧栏
 }
 
 onMounted(() => {
@@ -224,6 +271,7 @@ onMounted(() => {
     mq.addEventListener("change", onMqChange);
   }
   void refreshRail(); // 挂载即刷
+  void syncReviewPending(); // review 栏挂载快照(T5)
 });
 onBeforeUnmount(() => {
   mq?.removeEventListener("change", onMqChange);
@@ -232,7 +280,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="shell" :class="{ narrow }">
+  <div class="shell" :class="{ narrow, 'has-review': review.state.items.length > 0 }">
     <SessionRail
       v-if="!narrow || drawerOpen"
       :rows="railRows"
@@ -249,6 +297,11 @@ onBeforeUnmount(() => {
     <div class="stations" :style="{ '--dock-h': dockH + 'px' }">
       <!-- 窄窗 ☰:开左栏抽屉(壳绝对定位于 stations 左上角,仅 narrow 渲染;聚焦切换在抽屉内完成) -->
       <button v-if="narrow" type="button" class="rail-toggle" title="会话列表" @click="drawerOpen = true">☰</button>
+      <!-- 窄窗「审批 N」徽按钮(T5):与 ☰ 对称(stations 右上角),仅有待批时现身,点击开 review drawer -->
+      <button
+        v-if="narrow && review.state.items.length" type="button" class="review-toggle"
+        title="有待批的权限请求" @click="reviewDrawerOpen = true"
+      >审批 {{ review.state.items.length }}</button>
       <!-- autoplay 仅 1 号工位:id 单调分配不复用 + v-show 只切显隐不重挂载,s.id===1 即首挂载 -->
       <StationView
         v-for="s in stations.state.stations" :key="s.id"
@@ -263,5 +316,14 @@ onBeforeUnmount(() => {
         @request-remove="onRemoveStation(s.id)"
       />
     </div>
+    <!-- 统一 review 栏(T5):宽窗右栏 260px 仅有待批出列(自动进出);窄窗改 drawer 模式(徽按钮开) -->
+    <ReviewRail
+      v-if="review.state.items.length > 0 && (!narrow || reviewDrawerOpen)"
+      :groups="reviewGroups"
+      :drawer="narrow"
+      @decide="onDecide"
+      @decide-group="onDecideGroup"
+      @close-drawer="reviewDrawerOpen = false"
+    />
   </div>
 </template>
