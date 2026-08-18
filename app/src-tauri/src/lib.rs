@@ -1,5 +1,6 @@
 // 译宝桌面壳：拉起 Python 大脑 sidecar + stdio 桥 + 守护（崩溃重启/看门狗）+ 全局热键 + 输入/确认命令。
 mod event_recorder;
+mod plugin_proto;
 mod session_db;
 
 use std::sync::Mutex;
@@ -2099,6 +2100,10 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         // 原生文件/文件夹对话框（pick_folder 命令经 DialogExt 使用）
         .plugin(tauri_plugin_dialog::init())
+        // module 面板静态资源协议(R4 插件运行时):yibao-plugin://<pid>/<path>
+        .register_uri_scheme_protocol("yibao-plugin", |_ctx, request| {
+            plugin_proto::handle(&request, &plugins_dir())
+        })
         // 开机启动（macOS LaunchAgent）；前端直接调插件 API（enable/disable/isEnabled）
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -2121,6 +2126,16 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            // plugins_dir() 的 CARGO_MANIFEST_DIR 相对路径在 prod 是构建机残留:
+            // bundle.resources 打进资源目录的 plugins 才是真相(dev 下资源目录无 plugins,自动落空走原逻辑)
+            if std::env::var("YIBAO_PLUGINS_DIR").is_err() {
+                if let Ok(rd) = app.path().resource_dir() {
+                    let bundled = rd.join("plugins");
+                    if bundled.is_dir() {
+                        std::env::set_var("YIBAO_PLUGINS_DIR", bundled);
+                    }
+                }
+            }
             // 主窗默认停靠屏幕右上角（菜单栏下方留边距）；用户可拖动，展开方向自适应
             if let Some(win) = app.get_webview_window("main") {
                 if let Ok(Some(mon)) = win.current_monitor() {
