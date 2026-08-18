@@ -1,4 +1,5 @@
 // 引擎驱动 store(R4 阶段二 T6):coding.drivers 探测 + 新会话引擎选择(curAgent)。
+// 阶段三:probe 模块级缓存——多工位各持本 store(curAgent 是工位态),探测只跑一次;失败清缓存可重试。
 // 行为对齐 chat.html:1750-1756(normAgent/agentLabel)、:1838-1850(probeDrivers)、
 // :2852-2862(refreshCwdState 的默认引擎记忆段)——
 //   codexAvailable: null=未探测或探测失败(按可用呈现,不影响 CC 路径)/false/true;
@@ -20,6 +21,20 @@ export interface DriversDeps {
   invoke: (method: string, params?: Record<string, unknown>) => Promise<unknown>;
 }
 
+// 探测结果全局共享(codex 装没装与工位无关):缓存进行中的 promise,成功恒定复用,失败清缓存下次重试
+let probeCache: Promise<{ drivers?: DriverInfo[] } | null> | null = null;
+function probeOnce(invoke: DriversDeps["invoke"]): Promise<{ drivers?: DriverInfo[] } | null> {
+  if (!probeCache) {
+    probeCache = (invoke("coding.drivers", {}) as Promise<{ drivers?: DriverInfo[] }>).catch(() => {
+      probeCache = null; // 失败不留缓存,下个 store 的 probe 重试
+      return null;
+    });
+  }
+  return probeCache;
+}
+/** 测试钩子:隔离用例间的探针缓存 */
+export function _resetProbeCacheForTest() { probeCache = null; }
+
 export function createDriversStore(deps: DriversDeps) {
   const state = reactive<DriversState>({ codexAvailable: null, curAgent: "claude-code" });
 
@@ -30,16 +45,15 @@ export function createDriversStore(deps: DriversDeps) {
   /** L0 quiet 探测;桥 resolve result.data 本体 → r.drivers(与 coding.list 的 r.sessions 同形态)。
       失败保持 null 按可用呈现;恒 resolve,调用方无需再兜。 */
   async function probe(): Promise<void> {
-    try {
-      const r = (await deps.invoke("coding.drivers", {})) as { drivers?: DriverInfo[] };
-      const list = (r && r.drivers) || [];
-      let found = false;
-      for (const d of list) {
-        if (d && d.id === "codex") { state.codexAvailable = !!d.available; found = true; break; }
-      }
-      if (!found) state.codexAvailable = false; // 应答里查无 codex 项同样视为不可用
-      enforceFallback();
-    } catch { /* 探测失败静默:保持 null,chip 按可用呈现 */ }
+    const r = await probeOnce(deps.invoke);
+    if (r === null) return; // 探测失败静默:保持 null,chip 按可用呈现
+    const list = (r && r.drivers) || [];
+    let found = false;
+    for (const d of list) {
+      if (d && d.id === "codex") { state.codexAvailable = !!d.available; found = true; break; }
+    }
+    if (!found) state.codexAvailable = false; // 应答里查无 codex 项同样视为不可用
+    enforceFallback();
   }
 
   /** 无会话态 picker 选中(仅归一化;codex 不可用在 picker 层已禁选,不在此重复拦截) */
