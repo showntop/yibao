@@ -60,3 +60,24 @@
   无此形态，留作已知边界。
 - 裸 `uv run yibao-brain-server` 的 uv 父进程 cmdline 不含 python/.venv 判 False，
   回收目标是其 venv python 子进程（持锁者），符合预期。
+
+---
+
+## R4 终审 fix-before-merge（2026-08-18 修复子代理）
+
+**问题**：fallback 成功后 errbar 永红——codex resume 失败 → error 事件置 `state.error` +
+ended="error" → fallback 重跑成功 → done 事件到达，但 `session.ts` applyEvent 的 done 分支
+不清 `state.error`；codex 会话无 user_msg 回流（轮内唯一既有清 error 路径），errbar 常显红条、
+状态行停在错误而非「✓ 完成」，直到下次发送自愈。
+
+**修法**（最小改动）：
+1. `plugins/coding/panel/src/stores/session.ts` applyEvent `case "done"`：加 `state.error = null;`
+   （终态 done 覆盖同轮 transient error；先例=user_msg 分支清 error）。`case "stopped"` 不动
+   （stopped 后 error 保留语义不变）。
+2. `plugins/coding/panel/src/stores/session.test.ts` 加用例「error 后 done：终态清 error、
+   ended 覆盖为 done；stopped 后 error 保留（语义不变）」。
+
+**验证（闸门全绿）**：
+- `cd plugins/coding/panel && pnpm test` → **139 passed**（基线 138 + 新增 1）
+- `pnpm build` ✓（dist 产物正常，仅既有 chunk size 警告）
+- `pnpm typecheck`（vue-tsc --noEmit）✓

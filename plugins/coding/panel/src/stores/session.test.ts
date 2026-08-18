@@ -176,6 +176,24 @@ describe("事件归约", () => {
     expect(s.state.error).toBe("boom");
   });
 
+  // R4 终审 fix-before-merge：codex resume 失败 → error 事件置 error/ended，fallback 重跑成功 → done 到达；
+  // codex 会话无 user_msg 回流（轮内唯一既有清 error 路径），done 终态必须清 error，否则 errbar 永红
+  it("error 后 done：终态清 error、ended 覆盖为 done；stopped 后 error 保留（语义不变）", () => {
+    const { deps } = makeDeps();
+    const s = createSessionStore(deps);
+    s.applyEvent(ev({ kind: "error", text: "resume 失败" }));
+    expect(s.state.error).toBe("resume 失败");
+    expect(s.state.ended).toBe("error");
+    s.applyEvent(ev({ kind: "done" }));
+    expect(s.state.error).toBeNull();
+    expect(s.state.ended).toBe("done");
+    // stopped 分支不动：error 保留语义不变
+    s.applyEvent(ev({ kind: "error", text: "又坏" }));
+    s.applyEvent(ev({ kind: "stopped" }));
+    expect(s.state.error).toBe("又坏");
+    expect(s.state.ended).toBe("stopped");
+  });
+
   // 清单 7(秒败竞态)
   it("send 秒败竞态:终态先于 invoke 返回 → 不进 streaming", async () => {
     let release!: (v: { session_id: string }) => void;

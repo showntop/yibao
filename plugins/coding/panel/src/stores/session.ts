@@ -187,6 +187,9 @@ export function createSessionStore(deps: SessionDeps) {
         onSessionEnded("stopped");
         return;
       case "done":
+        // 终态 done 覆盖同轮 transient error（codex resume 失败置 error 后 fallback 重跑成功：
+        // codex 会话无 user_msg 回流——轮内唯一既有清 error 路径——不清则 errbar 永红）
+        state.error = null;
         addUsage(ev.usage);
         onSessionEnded("done");
         return;
