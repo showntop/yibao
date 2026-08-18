@@ -403,14 +403,14 @@ def test_send_skill_openai_schema_shape():
 
 
 def test_make_tools_includes_send():
-    """make_tools 返回 Start/Send/Stop/List/Attach/WallData + HandoffList/HandoffBrief/History/Mode/Rewind/Decide/Files
-    + LastSessions/AttachCc + Drivers/AttachCodex + SessionBrief + Studio 十九件。"""
+    """make_tools 返回 Start/Send/Stop/List/Attach/WallData + HandoffList/HandoffBrief/History/Mode/Rewind/Decide/PermPending/Files
+    + LastSessions/AttachCc + Drivers/AttachCodex + SessionBrief + Studio 二十件。"""
     tools = codingmod.make_tools(type("C", (), {"db": None, "emit_event": None})())
     ids = [t.id for t in tools]
     assert "coding.send" in ids
     assert ids == ["coding.start", "coding.send", "coding.stop", "coding.list", "coding.attach",
                    "coding.wall_data", "coding.handoff_list", "coding.handoff_brief", "coding.history",
-                   "coding.mode", "coding.rewind", "coding.decide", "coding.files",
+                   "coding.mode", "coding.rewind", "coding.decide", "coding.perm_pending", "coding.files",
                    "coding.last_sessions", "coding.attach_cc",
                    "coding.drivers", "coding.attach_codex", "coding.session_brief",
                    "coding.studio"]
@@ -1903,3 +1903,69 @@ def test_attach_codex_bad_rollout_degrades(tmp_path, monkeypatch):
         f.write("{ totally broken\n")
     res2 = AttachCodexSkill().run({"session_id": "t-x"}, _Ctx(db))
     assert not res2.success and "t-x" in res2.error
+
+
+# ---------- R4 阶段四 Task 1: coding.perm_pending（review 栏挂载快照源）----------
+from coding import PermPendingSkill  # noqa: E402
+
+
+def test_perm_pending_lists_only_undecided():
+    """_PERM 挂起项列出 rid/sid/tool/summary/params；已裁决项不出现；sid 含下划线解析安全。"""
+    _runner_mod._PERM.clear()
+    try:
+        _runner_mod._PERM["perm_s1_1"] = {"event": _threading.Event(), "allow": None,
+            "tool": "Bash", "summary": "ls -la", "params": {"command": "ls -la"}}
+        _runner_mod._PERM["perm_s1_2"] = {"event": _threading.Event(), "allow": True,
+            "tool": "Edit", "summary": "a.py", "params": {"file_path": "a.py"}}
+        _runner_mod._PERM["perm_my_sid_9"] = {"event": _threading.Event(), "allow": None,
+            "tool": "Read", "summary": "b.py", "params": {"file_path": "b.py"}}
+        r = PermPendingSkill().run({}, _Ctx(_FakeDB()))
+        assert r.success
+        pending = r.data["pending"]
+        assert [p["rid"] for p in pending] == ["perm_s1_1", "perm_my_sid_9"]
+        item = pending[0]
+        assert item["sid"] == "s1"
+        assert item["tool"] == "Bash" and item["summary"] == "ls -la"
+        assert item["params"] == {"command": "ls -la"}
+        assert pending[1]["sid"] == "my_sid"           # rsplit 去尾序号，sid 含下划线安全
+    finally:
+        _runner_mod._PERM.clear()
+
+
+def test_perm_pending_legacy_entry_missing_fields():
+    """老 entry 只有 event/allow（缺 tool/summary/params）→ summary 返 ""、params 返 {}，不炸。"""
+    _runner_mod._PERM.clear()
+    try:
+        _runner_mod._PERM["perm_old_1"] = {"event": _threading.Event(), "allow": None}
+        r = PermPendingSkill().run({}, _Ctx(_FakeDB()))
+        assert r.success
+        item = r.data["pending"][0]
+        assert item["rid"] == "perm_old_1" and item["sid"] == "old"
+        assert item["tool"] == "" and item["summary"] == "" and item["params"] == {}
+    finally:
+        _runner_mod._PERM.clear()
+
+
+def test_perm_entry_carries_tool_summary_params():
+    """回调桥写 entry 带 tool/summary/params 三字段（perm_pending 快照数据源）。"""
+    async def _probe():
+        events = []
+        cb = _runner_mod.make_permission_callback("s9", events.append, timeout_s=5.0)
+
+        async def _decide():
+            # 等 permission_request 发出（回调先同步发事件再 await 等裁决）
+            while not events:
+                await asyncio.sleep(0.005)
+            rid = events[0]["rid"]
+            entry = _runner_mod._PERM[rid]
+            assert entry["tool"] == "Bash"
+            assert entry["summary"] == "ls -la"
+            assert entry["params"] == {"command": "ls -la"}
+            r = DecideSkill().run({"rid": rid, "allow": True}, _Ctx(_FakeDB()))
+            assert r.success, r.error
+
+        decider = asyncio.create_task(_decide())
+        await cb("Bash", {"command": "ls -la"})
+        await decider
+
+    _run(_probe())

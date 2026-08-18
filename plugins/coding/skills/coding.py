@@ -1033,6 +1033,35 @@ class DecideSkill(Skill):
         return ActionResult(success=True, data={"ok": True})
 
 
+class PermPendingSkill(Skill):
+    """待批权限清单（studio review 栏挂载快照；quiet 只读）。
+
+    面板晚开错过 permission_request 流事件时补齐全量挂起项；之后的增删由流事件驱动
+    （permission_request 增 / permission_done 删）。rid 解析 sid：perm_<sid>_<seq>，rsplit 去尾序号。
+    """
+    id = "coding.perm_pending"
+    label = "待批权限清单"
+    description = "列出 coding 当前全部挂起中的工具权限请求（review 栏快照用；L0 只读）。"
+    default_risk = RiskLevel.L0_READONLY
+
+    def openai_schema(self) -> dict:
+        return {"type": "function", "function": {"name": self.id,
+                "description": self.description,
+                "parameters": {"type": "object", "properties": {}, "required": []}}}
+
+    def run(self, params: dict, ctx: Any) -> ActionResult:
+        out = []
+        for rid, entry in list(_PERM.items()):
+            if not isinstance(entry, dict) or entry.get("allow") is not None:
+                continue
+            sid = rid[len("perm_"):].rsplit("_", 1)[0] if rid.startswith("perm_") else ""
+            out.append({"rid": rid, "sid": sid,
+                        "tool": str(entry.get("tool") or ""),
+                        "summary": str(entry.get("summary") or ""),
+                        "params": entry.get("params") if isinstance(entry.get("params"), dict) else {}})
+        return ActionResult(success=True, data={"pending": out})
+
+
 _FILES_EXCLUDE = {".git", "node_modules", "dist", "target", ".venv", "build", "out", "__pycache__", ".next", ".cache"}
 
 
@@ -1524,5 +1553,5 @@ def make_tools(ctx: Any) -> list[Skill]:
     """插件加载器入口（_load_code_tools 遍历 skills/*.py 调本函数）。"""
     return [StartSkill(), SendSkill(), StopSkill(), ListSkill(), AttachSkill(),
             WallDataSkill(), HandoffListSkill(), HandoffBriefSkill(), HistorySkill(), ModeSkill(),
-            RewindSkill(), DecideSkill(), FilesSkill(), LastSessionsSkill(), AttachCcSkill(),
+            RewindSkill(), DecideSkill(), PermPendingSkill(), FilesSkill(), LastSessionsSkill(), AttachCcSkill(),
             DriversSkill(), AttachCodexSkill(), SessionBriefSkill(), StudioSkill()]

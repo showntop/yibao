@@ -137,3 +137,10 @@ name = "coding.studio"
 handler = "coding.studio"
 direct = true
 panel = "coding:studio"
+
+# review 栏挂载快照：待批权限清单（quiet 不发 panel 事件）
+[[method]]
+name = "coding.perm_pending"
+handler = "coding.perm_pending"
+direct = true
+quiet = true
