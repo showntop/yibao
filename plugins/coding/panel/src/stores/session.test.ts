@@ -422,6 +422,23 @@ describe("takeover", () => {
     await vi.waitFor(() => expect(s.state.sending).toBe(false));
     expect(s.state.streaming).toBe(false);
   });
+
+  // 清单 11(接管退出):clearTakeoverQueue 作废排队输入(对齐 setTakeover :807;由 App takeover watch 调)
+  it("clearTakeoverQueue 清空排队,泄放不再有条目可发", async () => {
+    const h = heldInvoke();
+    const { deps, invoke } = makeDeps(h.invoke as never);
+    const s = createSessionStore(deps);
+    s.setQueueContext({ cwd: "/q", mode: "acceptEdits", agent: "claude-code" });
+    const p = s.send("/q", "在途", "acceptEdits", "claude-code"); // 挂起 → busy
+    expect(s.takeoverInput("排队中", [], "/q", "acceptEdits", "claude-code")).toEqual({ queued: true });
+    expect(s._test.getQueue()).toHaveLength(1);
+    s.clearTakeoverQueue(); // takeover 退出
+    expect(s._test.getQueue()).toHaveLength(0);
+    h.release({ session_id: "s1" });
+    await p;
+    s.applyEvent(ev({ kind: "done" })); // 终态泄放:队列已空,不再有第二条 send
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("状态上报", () => {

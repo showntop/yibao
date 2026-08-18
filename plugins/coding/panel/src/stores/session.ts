@@ -440,6 +440,10 @@ export function createSessionStore(deps: SessionDeps) {
     if (state.streaming || state.sending) void stop();
   }
 
+  /** takeover 退出:排队输入一并作废(对齐 setTakeover :807——父侧输入条已交还译宝大脑,
+   *  滞留队列会在非接管态被意外发出) */
+  function clearTakeoverQueue() { takeoverQueue = []; }
+
   function drainTakeoverQueue() {
     if (!takeoverQueue.length || state.sending || state.streaming) return;
     // 出队即消费(校验拒发不补发,对齐现状);cwd/mode/agent 由 App 在 send 时快照提供
@@ -457,7 +461,7 @@ export function createSessionStore(deps: SessionDeps) {
   return {
     state, handleData, applyEvent, send, stop, newChat, resumeSession,
     handoffSend, startHandoffSession, pushHandoffCard, dropHandoffCard,
-    takeoverInput, takeoverStop, setQueueContext, historyToItems,
+    takeoverInput, takeoverStop, clearTakeoverQueue, setQueueContext, historyToItems,
     /** resume 在飞(attach/手动接续/autoReplay)——autoReplay 让位判据:在跑时不得再排候选 */
     isResuming: () => resuming,
     _test: { discardedSessions, getQueue: () => takeoverQueue, markTurnEnded: () => { pendingTurnEnded = true; } },

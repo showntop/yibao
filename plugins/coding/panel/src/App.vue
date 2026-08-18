@@ -1,5 +1,8 @@
 <script setup lang="ts">
-// coding:studio(R4 阶段二 T7):交接双路径 + rewind + 接续浮层 + autoReplay 抽取。
+// coding:studio(R4 阶段二 T8):takeover 接线收尾——onInit takeover 标志(退出清 store 队列)、
+// onHostMessage(takeover-input 排队/直发 + takeover-stop)、takeover-state 经真桥上报(见 store report hook)、
+// esc 优先级链(agent→history→handoff→stop,T6 已接,T8 对齐 :2825-2831 复核)、无桥预览静态样例。
+// T7:交接双路径 + rewind + 接续浮层 + autoReplay 抽取。
 // T6 已接:cwd chip + 浮层 / 引擎 chip + picker / mode pill / 状态行 + drivers store。
 // 行为逐条对齐 chat.html:
 //   handoffSend(:1964-1991,chip 跨引擎):占 sending 窗 coding.session_brief;等待期改主意
@@ -14,7 +17,7 @@
 //   autoReplay(:2869-2885):纯函数抽至 lib/replay.ts(pickReplayCandidate/shouldYieldReplay/
 //     replayStep);空会话顺延;currentSession||isResuming 让位。
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { emitPanelEvent, hasBridge, invoke, onInit } from "./lib/bridge";
+import { emitPanelEvent, hasBridge, invoke, onHostMessage, onInit } from "./lib/bridge";
 import type { HandoffSessionItem, LastSessions, PanelData, SessionRow } from "./lib/types";
 import { doneStatusText, emsg, fmtCost, fmtTok, normCwd } from "./lib/format";
 import { pickReplayCandidate, replayStep, shouldYieldReplay } from "./lib/replay";
@@ -62,13 +65,47 @@ watch([cwd, curMode, () => dstate.curAgent], ([c, m, a]) => {
   store.setQueueContext({ cwd: c, mode: m, agent: a });
 }, { immediate: true });
 
-// init 回调第二参是完整载荷:takeover 标志随每条 panel_data 重提(旧桥只传 data → undefined 视为 false)
+// init 回调第二参是完整载荷:takeover 标志随每条 panel_data 重提(旧桥只传 data → undefined 视为 false;
+// ref 赋同值不触发 watch,天然幂等——对齐 setTakeover :802-805 态不变不动 DOM)
 onInit((data, msg) => {
   takeover.value = !!(msg && msg.takeover);
   store.handleData(data as PanelData);
 });
-// body.takeover 驱动 CSS 隐藏输入区(T8 接 takeover-input/-stop 宿主消息)
-watch(takeover, (on) => { document.body.classList.toggle("takeover", on); }, { immediate: true });
+// body.takeover 驱动 CSS 隐藏输入区;退出接管清空 store 排队输入(对齐 :806-808——
+// 父侧输入条已交还译宝大脑,滞留队列会在非接管态被意外发出)
+watch(takeover, (on) => {
+  document.body.classList.toggle("takeover", on);
+  if (!on) store.clearTakeoverQueue();
+}, { immediate: true });
+
+// 宿主接管消息(T8;对齐 :829-847 onHostMessage):按 msg.type 判别,非接管词汇静默忽略。
+// takeover-input:busy(sending/streaming)入队,本轮结束自动泄放(状态行「已排队…」对齐 :837),
+// 空闲直发——cwd/mode/agent 取当前实时值(原读全局变量,天然实时);refs 回填进 prompt 引用段。
+// takeover-stop 等价点 iframe 内 stop 钮(store.takeoverStop 自判 busy)。
+onHostMessage((msg) => {
+  if (!msg || typeof msg.type !== "string") return;
+  if (msg.type === "takeover-input") {
+    const refs = Array.isArray(msg.refs) && msg.refs.length ? msg.refs.map(String) : [];
+    const text = msg.text == null ? "" : String(msg.text);
+    const r = store.takeoverInput(text, refs, cwd.value.trim(), curMode.value, dstate.curAgent);
+    if (r.queued) onComposerStatus("已排队，本轮结束后自动发送", false);
+  } else if (msg.type === "takeover-stop") {
+    store.takeoverStop();
+  }
+});
+
+// 无桥设计预览(T8;对齐 :2922-2939 renderPreviewSample):静态示例对话走同一渲染管线看样式
+// (user 气泡 + AI 气泡 + fileedit 卡 + tooluse 卡 + toolresult + done 气泡)
+if (!hasBridge) {
+  state.items.push(
+    { type: "user", text: "帮我看一下 src/main.rs 的入口在哪" },
+    { type: "assistant", raw: "我打开项目看一下 main.rs 的结构…", thinking: [], done: true },
+    { type: "fileedit", tool: "Read", path: "src/main.rs", old: null, new: null },
+    { type: "tool", tool: "Bash", input: { command: "wc -l src/main.rs", description: "统计行数" },
+      results: [{ text: "152 src/main.rs", isError: false }], hasError: false },
+    { type: "assistant", raw: "入口在 src/main.rs:12 的 fn main()。需要我加点日志吗？", thinking: [], done: true },
+  );
+}
 
 // ---- 浮层互收:任一 picker/浮层开时关其他(cwd/agent/history/handoff 单枚举兑现) ----
 type Layer = "" | "cwd" | "agent" | "history" | "handoff";
