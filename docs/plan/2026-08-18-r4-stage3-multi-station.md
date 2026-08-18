@@ -496,7 +496,7 @@ git commit -m "refactor: session store takeover 退役、队列改名 queueInput
 - Consumes: T1 stations store（本任务不用，T6 用）、T3 后的 session store API（`queueInput` 等）、T2 后的 drivers store
 - Produces（T5/T6 壳依赖的确切接口）:
   - props: `{ focused: boolean; autoplay: boolean; defaultCwd: string }`
-  - expose: `{ state, dockH, onData, bindSession, unbindSession, applyQueueInput, stop, isBusy }`
+  - expose: `{ state, dockH, onData, bindSession, unbindSession, stop, isBusy }`（实装定稿：applyQueueInput 撤销——busy 排队并入 StationView 内部 onSend，入队即消费 composer）
     - `state` = session store 的 reactive state（壳读 busy/waiting/usage 做工位头/左栏）
     - `dockH: Ref<number>` = footer 实时高度（壳停靠布局用，RO 驱动）
     - `onData(data: PanelData): void` = 壳 demux 后投递（内调 `store.handleData`）
