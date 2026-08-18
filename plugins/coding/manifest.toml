@@ -21,6 +21,7 @@ columns = [
   {name = "cc_session_id", type = "text", default = ""},   # Claude Code 会话 id（runner.run 返回；后续多轮 resume 用）
   {name = "source", type = "text", default = ""},           # 会话来源：""=用户直起；"codex:<sid>"=交接切过来
   {name = "mode", type = "text", default = "acceptEdits"},  # 权限模式（plan/acceptEdits/…，下一任务接线用）
+  {name = "usage_baseline", type = "text", default = ""},   # codex usage 差分基准（JSON 串 {"input_tokens":N,"output_tokens":N}；多轮 resume 跨轮持久，内存 entry 流终即丢）
 ]
 indexes = ["status", "created_at"]
 

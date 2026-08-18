@@ -1969,3 +1969,104 @@ def test_perm_entry_carries_tool_summary_params():
         await decider
 
     _run(_probe())
+
+
+
+# ---------- R4 阶段五 Task 2: codex usage baseline 落库（多轮 resume 差分跨轮持久）----------
+from _codex_runner import CodexCliRunner  # noqa: E402
+
+
+class _CodexFakeProc:
+    """鸭式 asyncio.subprocess.Process（codex runner fake，不触真 CLI）：
+    stdin 写入/关闭收下即弃；stdout=自身异步迭代预置 JSONL 行；无 stderr 属性
+    （runner getattr 容缺不排）；wait 即退、returncode=0。"""
+    def __init__(self, lines):
+        self.stdin = SimpleNamespace(write=lambda b: None, close=lambda: None)
+        self._lines = list(lines)
+        self.returncode = 0
+    async def wait(self): return self.returncode
+    @property
+    def stdout(self): return self
+    def __aiter__(self): return self._gen()
+    async def _gen(self):
+        for ln in self._lines:
+            yield (ln + "\n").encode()
+
+
+def _codex_runner_with(lines):
+    """预置 JSONL 行的 CodexCliRunner（process_factory 注入 fake proc）。"""
+    proc = _CodexFakeProc(lines)
+    async def factory(argv, cwd): return proc
+    return CodexCliRunner(process_factory=factory)
+
+
+def _wait_stream_done(sid, timeout=5.0):
+    """等 _spawn_stream 的 daemon 线程收尾（entry pop = 流终）；超时直接断言失败。"""
+    deadline = time.time() + timeout
+    while sid in codingmod._SESSIONS:
+        assert time.time() < deadline, f"session {sid} 流式线程未在 {timeout}s 内收尾"
+        time.sleep(0.01)
+
+
+def test_usage_baseline_persisted_and_restored(monkeypatch):
+    """两轮 codex send（真 _spawn_stream 线程）：第一轮 done 后 sessions 行 usage_baseline
+    已落库（thread 累计值 JSON）；entry 流终 pop 后第二轮 _spawn_stream 从库回填——
+    done 的 usage 是增量而非 thread 全量（修多轮 resume token 逐轮重复计）。"""
+    db = _FakeDB()
+    db.rows["s-cx"] = {"id": "s-cx", "status": "running", "agent": "codex",
+                       "cwd": "/tmp/p", "cc_session_id": "t-1"}
+    monkeypatch.setattr(codingmod, "_SESSIONS", {})   # 隔离真注册表；流式线程内读写同此 dict
+    emitted = []
+
+    # 第一轮：全新 entry（无 baseline）→ done 报全量 1000/100，baseline 落库
+    codingmod._spawn_stream(db, "s-cx", "/tmp/p", "第一轮", _codex_runner_with([
+        _json.dumps({"type": "thread.started", "thread_id": "t-1"}),
+        _json.dumps({"type": "turn.completed",
+                     "usage": {"input_tokens": 1000, "output_tokens": 100}}),
+    ]), emitted.append, agent="codex")
+    _wait_stream_done("s-cx")
+    base1 = _json.loads(db.rows["s-cx"]["usage_baseline"])
+    assert base1 == {"input_tokens": 1000, "output_tokens": 100}
+
+    # 第二轮：entry 已 pop（模拟重启/多轮形态）→ _spawn_stream 从库回填 → done 只报增量
+    db.update("sessions", "s-cx", {"status": "running"})   # send 的重置（本测试直调 _spawn_stream）
+    emitted.clear()
+    codingmod._spawn_stream(db, "s-cx", "/tmp/p", "第二轮", _codex_runner_with([
+        _json.dumps({"type": "thread.started", "thread_id": "t-1"}),
+        _json.dumps({"type": "turn.completed",
+                     "usage": {"input_tokens": 1400, "output_tokens": 130}}),
+    ]), emitted.append, resume_session_id="t-1", agent="codex")
+    _wait_stream_done("s-cx")
+    dones = [e["payload"]["data"]["event"] for e in emitted
+             if e.get("kind") == "panel_data"
+             and e["payload"]["data"]["event"].get("kind") == "done"]
+    assert len(dones) == 1
+    assert dones[0]["usage"]["input_tokens"] == 400     # 增量 = 1400 − 1000（非全量 1400）
+    assert dones[0]["usage"]["output_tokens"] == 30
+    # 第二轮 baseline 同步刷新落库（第三轮差分基准）
+    assert _json.loads(db.rows["s-cx"]["usage_baseline"]) == {
+        "input_tokens": 1400, "output_tokens": 130}
+
+
+def test_usage_baseline_corrupt_row_does_not_break_stream(monkeypatch):
+    """坏数据不炸流：sessions 行 usage_baseline 非法 JSON → 回填静默跳过（baseline 按 0，
+    本轮退化为全量上报），流照常 done；结束后以新累计值覆盖落库。"""
+    db = _FakeDB()
+    db.rows["s-bad"] = {"id": "s-bad", "status": "running", "agent": "codex",
+                        "cwd": "/tmp/p", "cc_session_id": "t-9",
+                        "usage_baseline": "{not json"}
+    monkeypatch.setattr(codingmod, "_SESSIONS", {})
+    emitted = []
+    codingmod._spawn_stream(db, "s-bad", "/tmp/p", "任务", _codex_runner_with([
+        _json.dumps({"type": "thread.started", "thread_id": "t-9"}),
+        _json.dumps({"type": "turn.completed",
+                     "usage": {"input_tokens": 50, "output_tokens": 5}}),
+    ]), emitted.append, resume_session_id="t-9", agent="codex")
+    _wait_stream_done("s-bad")
+    dones = [e["payload"]["data"]["event"] for e in emitted
+             if e.get("kind") == "panel_data"
+             and e["payload"]["data"]["event"].get("kind") == "done"]
+    assert len(dones) == 1
+    assert dones[0]["usage"]["input_tokens"] == 50      # baseline 按 0 → 全量上报一轮（退化不炸）
+    assert _json.loads(db.rows["s-bad"]["usage_baseline"]) == {
+        "input_tokens": 50, "output_tokens": 5}

@@ -135,9 +135,24 @@ def _spawn_stream(db, sid: str, cwd: str, prompt: str, runner, emit_event,
         失败 fallback 生成交接摘要用；None → 无 fallback，落原 failed 路径。
     _SESSIONS[sid] entry 同时是运行中切模式的通道（coding.mode 写 mode_pending，
     runner 每条消息前消费 → client.set_permission_mode）。
+    usage_baseline 回填：codex 的 usage 差分基准（_codex_runner._diff_usage 就地写
+    entry）跨轮持久在 sessions 表——entry 每轮新建且流终 pop，不回填则第 2 轮起
+    baseline 落空、done 报 thread 全量累计，token 逐轮重复计。新建 entry 后查库回填；
+    坏数据（非法 JSON/非 dict）静默跳过，baseline 按 0 退化为全量上报一轮，不炸流。
+    CC runner 不读该键，回填与否皆无害。
     """
     cancel = threading.Event()
-    _SESSIONS[sid] = {"cancel": cancel}
+    entry: dict = {"cancel": cancel}
+    try:
+        rows = db.query("sessions", where={"id": sid})
+        raw = str(rows[0].get("usage_baseline") or "") if rows else ""
+        if raw:
+            base = json.loads(raw)
+            if isinstance(base, dict):
+                entry["usage_baseline"] = base
+    except Exception:
+        pass   # 坏数据不炸流：baseline 缺失按 0 差分（详见 docstring）
+    _SESSIONS[sid] = entry
 
     def _thread():
         loop = asyncio.new_event_loop()
@@ -222,6 +237,18 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
         elif kind == "done":
             _persist("marker", "完成")
             state["usage"] = ev.get("usage") if isinstance(ev.get("usage"), dict) else {}
+            # codex usage 差分基准落库：runner 发 done 前已把 thread 累计值就地写回
+            # session_entry["usage_baseline"]（_codex_runner._diff_usage），这里同步落
+            # sessions 行供下轮 _spawn_stream 回填（entry 流终 pop，内存留不住）。
+            # CC 引擎 entry 无该键 → 跳过；失败只 print 不炸流（同 _persist 隔离风格）。
+            try:
+                entry = _SESSIONS.get(sid)
+                base = entry.get("usage_baseline") if isinstance(entry, dict) else None
+                if isinstance(base, dict) and base:
+                    db.update("sessions", sid, {"usage_baseline": json.dumps(base)})
+            except Exception as e:
+                print(f"[yibao/coding] session {sid} usage_baseline 落库失败（跳过）：{e}",
+                      file=sys.stderr)
         elif kind == "stopped":
             _persist("marker", str(ev.get("text") or "已中断"))
         elif kind == "marker":
@@ -345,7 +372,9 @@ def _report_final(emit_event, sid: str, prompt: str, final: str, usage) -> None:
     stopped → event（仅 Feed 任务卡，不弹气泡防打扰）。task meta 供 Feed 任务卡与
     后续点击路由（plugin:"coding"）；status 发英文键（done/failed/stopped——HomeFeed
     徽章/图标/tag CSS 只认英文，对齐 agents 先例），中文文案在 text；done 的 text
-    带成本摘要（usage 不落库，只此一播）。"""
+    带成本摘要。usage 数值本身不落库（只此一播进气泡/任务卡）——注意 sessions 表
+    usage_baseline 列落的是 codex 差分基准（thread 累计值，下轮 resume 回填用），
+    不是本轮用量，两者别混。"""
     if emit_event is None:
         return
     _emit_sessions_changed(emit_event, sid, final)   # 会话墙刷新触发（done/failed/stopped 透传）
