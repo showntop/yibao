@@ -5,18 +5,21 @@
 //   iframe → 父：{src:"yibao-webview", id, method, params}   请求调方法
 //   iframe → 父：{src:"yibao-webview", event, payload}       事件上报（无 id 无回包，父侧 emit "panel-event"）
 //   父 → iframe：{src:"yibao-host", id, ok, result|error}    回包
-//   父 → iframe：{src:"yibao-host", type:"init", data, takeover}  面板事件 data（iframe 加载完成 & data 变更时推）；takeover 标志随 init 下发
-//   父 → iframe：{src:"yibao-host", ...任意消息}              postToIframe（如 {type:"takeover-input", text}，iframe 经 yibao.onMessage 收）
+//   父 → iframe：{src:"yibao-host", type:"init", data}            面板事件 data（iframe 加载完成 & data 变更时推）
+//   父 → iframe：{src:"yibao-host", ...任意消息}                  postToIframe（如 {type:"ping"}，iframe 经 yibao.onMessage 收）
 // 父侧只做命名空间粗筛（method 须以当前面板插件 id 开头）+ event.source 校验；L2 确认条由 PanelApp 闭环。
+// module 面板(R4):props.url 非空时走 iframe src(yibao-plugin://),桥由协议层注入;srcdoc 路径行为不变。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { onBrainEvent, panelAction, type BrainEvent } from "../lib/brain";
+import { resolveWebviewSource } from "../lib/webview-source";
 
 const props = defineProps<{
   panel: string; // 面板引用（plugin_id:name），推导可调方法的命名空间前缀
-  html: string; // 插件 webview HTML（桥 JS 由本组件注入）
+  html?: string; // 旧 srcdoc 面板 HTML（桥 JS 由本组件注入）
+  url?: string; // module 面板 URL（yibao-plugin://，桥由协议层注入，CSP 见 plugin_proto.rs）
+  v?: number; // module 面板内容版本（入口 mtime）：变 → :key 变 → iframe 重载（热加载）
   data: Record<string, unknown>; // panel 事件注入的数据（init 推给 iframe）
-  takeover?: boolean; // 接管标志：随 init 载荷下发给 iframe（默认 false，不下传则 iframe 保留自带输入框）
 }>();
 
 const emit = defineEmits<{
@@ -25,64 +28,31 @@ const emit = defineEmits<{
 
 const iframeEl = ref<HTMLIFrameElement | null>(null);
 
-// 注入 iframe 的桥 JS：提供 window.yibao.invoke()/onInit()/emitEvent()/onMessage()。必须出现在插件自有脚本之前，
-// 否则插件脚本执行时 window.yibao 尚未定义——故注入到 <head> 之后（无 <head> 则放最前）。
-// 注：本字符串里不能出现字面 "</scr" + "ipt>"（会被 Vue SFC 解析器当成脚本块结束）。
-const BRIDGE_JS = `
-(function () {
-  var seq = 0;
-  var pending = new Map();
-  var initCbs = [];
-  var msgCbs = [];
-  window.yibao = {
-    invoke: function (method, params) {
-      return new Promise(function (resolve, reject) {
-        var id = ++seq;
-        pending.set(id, { resolve: resolve, reject: reject });
-        parent.postMessage({ src: "yibao-webview", id: id, method: method, params: params || {} }, "*");
-      });
-    },
-    onInit: function (cb) { initCbs.push(cb); },
-    // 事件上报（iframe → 父，无 id 无回包）：父侧 emit("panel-event", name, payload)
-    emitEvent: function (name, payload) {
-      parent.postMessage({ src: "yibao-webview", event: name, payload: payload }, "*");
-    },
-    // 收 host 任意消息（init 与 invoke 响应之外的，如 {type:"takeover-input", text}）
-    onMessage: function (cb) { msgCbs.push(cb); }
-  };
-  window.addEventListener("message", function (ev) {
-    var d = ev.data;
-    if (!d || d.src !== "yibao-host") return;
-    if (d.type === "init") {
-      initCbs.forEach(function (cb) { try { cb(d.data, d); } catch (e) { console.error(e); } });
-      return;
-    }
-    var p = pending.get(d.id);
-    if (p) {
-      pending.delete(d.id);
-      if (d.ok) p.resolve(d.result);
-      else p.reject(new Error(d.error || "调用失败"));
-      return;
-    }
-    msgCbs.forEach(function (cb) { try { cb(d); } catch (e) { console.error(e); } });
-  });
-})();
-`;
+// 注入 iframe 的桥 JS(?raw 读 app/src/shared/bridge.js,与 Rust 协议层 include_bytes! 同一文件)。
+// 必须出现在插件自有脚本之前——注入到 <head> 之后(无 <head> 则放最前),见 srcdoc computed。
+import bridgeJs from "../shared/bridge.js?raw";
 
 const SCRIPT_OPEN = "<scr" + "ipt>";
 const SCRIPT_CLOSE = "</scr" + "ipt>";
 
 // CSP 沙箱兜底（gen 面板等动态 HTML）：禁一切网络/外链，只放行内联脚本样式与 data: 图片字体。
-// 与 BRIDGE_JS 同位置注入（<head> 之后），对插件面板同样生效——插件面板本就要求无网络。
+// 与桥 JS 同位置注入（<head> 之后），对插件面板同样生效——插件面板本就要求无网络。
 const CSP_META = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:">`;
+
+// module 面板源:有 url 即走真实 src(桥/CSP/importmap 由 yibao-plugin:// 协议层注入,本组件不再注)
+const urlSource = computed(() => {
+  const s = resolveWebviewSource({ url: props.url, v: props.v });
+  return s && s.kind === "url" ? s : null;
+});
 
 /** 插件 HTML + 桥 JS 合成 srcdoc（桥注入到插件脚本之前；无 <head> 时整体放最前）。 */
 const srcdoc = computed(() => {
-  const tag = CSP_META + SCRIPT_OPEN + BRIDGE_JS + SCRIPT_CLOSE;
-  const headAt = props.html.toLowerCase().indexOf("<head>");
+  const html = props.html ?? "";
+  const tag = CSP_META + SCRIPT_OPEN + bridgeJs + SCRIPT_CLOSE;
+  const headAt = html.toLowerCase().indexOf("<head>");
   return headAt >= 0
-    ? props.html.slice(0, headAt + 6) + tag + props.html.slice(headAt + 6)
-    : tag + props.html;
+    ? html.slice(0, headAt + 6) + tag + html.slice(headAt + 6)
+    : tag + html;
 });
 
 // ---- 在途桥调用：桥 id → 回包函数；rid 关联 action_result（sidecar 动作 id 为 "pa_<rid>"）----
@@ -174,13 +144,13 @@ function onEvent(e: BrainEvent) {
   }
 }
 
-/** 把面板事件 data 推给 iframe（加载完成时 + data 变更时；同面板重发不重建 iframe）。takeover 标志随 init 下发。 */
+/** 把面板事件 data 推给 iframe（加载完成时 + data 变更时；同面板重发不重建 iframe）。 */
 function postInit() {
-  replyToIframe({ type: "init", data: props.data, takeover: props.takeover ?? false });
+  replyToIframe({ type: "init", data: props.data });
 }
 watch(() => props.data, postInit);
 
-/** 父 → iframe 任意消息（如 {type:"takeover-input", text}）：iframe 经 yibao.onMessage 收。去 Proxy 范式同 replyToIframe。 */
+/** 父 → iframe 任意消息（如 {type:"ping"}）：iframe 经 yibao.onMessage 收。去 Proxy 范式同 replyToIframe。 */
 function postToIframe(msg: Record<string, unknown>) {
   const plain = JSON.parse(JSON.stringify(msg)) as Record<string, unknown>;
   iframeEl.value?.contentWindow?.postMessage({ src: "yibao-host", ...plain }, "*");
@@ -201,6 +171,16 @@ onBeforeUnmount(() => {
 
 <template>
   <iframe
+    v-if="urlSource"
+    :key="urlSource.key"
+    ref="iframeEl"
+    class="webview"
+    sandbox="allow-scripts"
+    :src="urlSource.url"
+    @load="postInit"
+  />
+  <iframe
+    v-else
     ref="iframeEl"
     class="webview"
     sandbox="allow-scripts"

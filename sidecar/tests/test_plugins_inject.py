@@ -11,7 +11,6 @@ from yibao_brain.plugins import _inline_vendor, _load_panels, get_panel
 from yibao_brain.skills import SkillRegistry
 
 REPO_PLUGINS_DIR = Path(__file__).resolve().parents[2] / "plugins"
-CODING_DIR = REPO_PLUGINS_DIR / "coding"
 
 
 # ---------- 测试素材 ----------
@@ -30,14 +29,17 @@ def _make_plugin(root: Path, vendor_files: dict, html: str) -> Path:
 # ---------- _inline_vendor 单测 ----------
 
 
-def test_placeholder_replaced_with_real_vendor_files():
-    """真 vendor 三库：占位被替换且内容含标志全局名（marked / DOMPurify / hljs）。"""
-    html = (
-        "<script><!--inject:vendor/marked.min.js--></script>"
-        "<script><!--inject:vendor/dompurify.min.js--></script>"
-        "<script><!--inject:vendor/highlight.min.js--></script>"
-    )
-    out = _inline_vendor(html, CODING_DIR)
+def test_placeholder_replaced_with_vendor_files(tmp_path):
+    """占位被 vendor 文件内容替换（仿真三库标志全局名：marked / DOMPurify / hljs——
+    coding 面板真三库已走 npm，vendor/ 目录随 chat.html 一并退役）。"""
+    child = _make_plugin(tmp_path, {
+        "marked.min.js": 'g["marked"]={};',
+        "dompurify.min.js": "var DOMPurify={};",
+        "highlight.min.js": "var hljs={};",
+    }, "<script><!--inject:vendor/marked.min.js--></script>"
+       "<script><!--inject:vendor/dompurify.min.js--></script>"
+       "<script><!--inject:vendor/highlight.min.js--></script>")
+    out = _inline_vendor((child / "panel" / "chat.html").read_text(encoding="utf-8"), child)
     assert "<!--inject:" not in out
     assert 'g["marked"]' in out          # marked UMD 挂载全局 marked
     assert "DOMPurify" in out

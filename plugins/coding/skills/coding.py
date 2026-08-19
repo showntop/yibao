@@ -3,7 +3,7 @@
 三件事：
 1. start_session：纯函数，往 sessions 表插一行 running（测试直接打）。
 2. _spawn_stream：起 daemon 线程，线程内开自己的 asyncio loop 跑 ClaudeCodeRunner，
-   每条 SDK 事件 normalize 后经 ctx.emit_event → panel_data 推 coding:chat 面板。
+   每条 SDK 事件 normalize 后经 ctx.emit_event → panel_data 推 coding:studio 面板。
 3. _stop_session：race-safe 取消——先 db.update(stopped) 再 set cancel（仿 agents.task_stop），
    保证收尾线程的 done/failed 落库不覆盖用户主动停止。
 
@@ -56,7 +56,7 @@ _runner = _sibling("_runner")
 ClaudeCodeRunner = _runner.ClaudeCodeRunner   # 生产默认 runner factory（claude-code/cc）
 _codex_runner = _sibling("_codex_runner")
 CodexCliRunner = _codex_runner.CodexCliRunner  # codex CLI 子进程 runner factory
-_PERM = _runner._PERM                         # can_use_tool 裁决注册表（rid → {event, allow}；DecideSkill 消费）
+_PERM = _runner._PERM                         # can_use_tool 裁决注册表（rid → {event, allow, tool, summary, params}；DecideSkill 消费，perm_pending 读展示字段）
 
 
 def _runner_for(agent: str):
@@ -120,7 +120,8 @@ class _AsyncShield:
 def _spawn_stream(db, sid: str, cwd: str, prompt: str, runner, emit_event,
                   resume_session_id: str | None = None,
                   permission_mode: str = "acceptEdits",
-                  agent: str = "claude-code") -> None:
+                  agent: str = "claude-code",
+                  llm=None) -> None:
     """起 daemon 线程跑 runner（线程内自带 asyncio loop）。
 
     emit_event 已线程安全（proactive_dispatcher.emit → call_soon_threadsafe），
@@ -129,12 +130,29 @@ def _spawn_stream(db, sid: str, cwd: str, prompt: str, runner, emit_event,
         None（StartSkill 路径）→ 全新会话。
     permission_mode：透传 runner.run（acceptEdits/plan），进 SDK options / codex sandbox。
     agent：会话引擎 id（claude-code/cc/codex），透传 _stream → panel_data data 平级键
-        （chat.html 实时更新引擎徽标）。
+        （面板按此实时更新引擎徽标）。
+    llm：会话级 LLM 能力（SendSkill 透传 ctx.llm），仅供 _stream 的 codex resume
+        失败 fallback 生成交接摘要用；None → 无 fallback，落原 failed 路径。
     _SESSIONS[sid] entry 同时是运行中切模式的通道（coding.mode 写 mode_pending，
     runner 每条消息前消费 → client.set_permission_mode）。
+    usage_baseline 回填：codex 的 usage 差分基准（_codex_runner._diff_usage 就地写
+    entry）跨轮持久在 sessions 表——entry 每轮新建且流终 pop，不回填则第 2 轮起
+    baseline 落空、done 报 thread 全量累计，token 逐轮重复计。新建 entry 后查库回填；
+    坏数据（非法 JSON/非 dict）静默跳过，baseline 按 0 退化为全量上报一轮，不炸流。
+    CC runner 不读该键，回填与否皆无害。
     """
     cancel = threading.Event()
-    _SESSIONS[sid] = {"cancel": cancel}
+    entry: dict = {"cancel": cancel}
+    try:
+        rows = db.query("sessions", where={"id": sid})
+        raw = str(rows[0].get("usage_baseline") or "") if rows else ""
+        if raw:
+            base = json.loads(raw)
+            if isinstance(base, dict):
+                entry["usage_baseline"] = base
+    except Exception:
+        pass   # 坏数据不炸流：baseline 缺失按 0 差分（详见 docstring）
+    _SESSIONS[sid] = entry
 
     def _thread():
         loop = asyncio.new_event_loop()
@@ -143,7 +161,7 @@ def _spawn_stream(db, sid: str, cwd: str, prompt: str, runner, emit_event,
             loop.run_until_complete(
                 _stream(db, sid, cwd, prompt, runner, emit_event, cancel,
                         resume_session_id=resume_session_id,
-                        permission_mode=permission_mode, agent=agent))
+                        permission_mode=permission_mode, agent=agent, llm=llm))
         except Exception as e:  # 兜底：流式线程任何意外都不许炸出来
             print(f"[yibao/coding] session {sid} stream 线程崩：{type(e).__name__}: {e}",
                   file=sys.stderr)
@@ -151,8 +169,6 @@ def _spawn_stream(db, sid: str, cwd: str, prompt: str, runner, emit_event,
                 db.update("sessions", sid, {"status": "failed", "finished_at": int(time.time())})
             except Exception:
                 pass
-            # 崩在 _stream 之外（不经 _report_final）→ 补发生命周期事件，否则墙卡「运行中」不刷新
-            _emit_sessions_changed(emit_event, sid, "failed")
         finally:
             loop.close()
             _SESSIONS.pop(sid, None)
@@ -163,7 +179,8 @@ def _spawn_stream(db, sid: str, cwd: str, prompt: str, runner, emit_event,
 async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cancel,
                   resume_session_id: str | None = None,
                   permission_mode: str = "acceptEdits",
-                  agent: str = "claude-code") -> None:
+                  agent: str = "claude-code",
+                  llm=None) -> None:
     """跑 runner；每条事件转 panel_data 推面板 + 落 messages 表；结束按 cancel/error/done 落最终状态。
 
     transcript 落库：user_msg（带 CC uuid，rewind 锚点）/ text_delta / done·stopped 终态 marker，
@@ -176,7 +193,12 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
     codex=exec resume thread_id）。
     permission_mode：透传 runner.run（acceptEdits/plan）。
     agent：会话引擎 id，panel_data data 加平级 "agent" 键（data={session_id, agent, event}，
-    chat.html 按此实时更新引擎徽标）。
+    面板按此实时更新引擎徽标）。
+    llm：会话级 LLM 能力（SendSkill 透传 ctx.llm）。codex resume 零事件失败
+    （encrypted_content bug 形态：stdout 零事件 → 未捕获 thread.started → cc_sid None，
+    runner returncode 守御补发 error）时一次性自动 fallback：用交接摘要新开会话续跑
+    （SessionBriefSkill 手动补救流程的自动化），再败自然落原 failed 路径（无循环）；
+    llm None → 跳过 fallback。
     session_entry：_SESSIONS[sid] live entry 透传 runner.run——coding.mode 写入
     mode_pending 后，runner 每条消息前消费并 client.set_permission_mode（运行中切模式）。
     can_use_tool：每轮新建权限回调桥（make_permission_callback(sid, on_event, emit_event=…)）——
@@ -213,13 +235,29 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
         elif kind == "done":
             _persist("marker", "完成")
             state["usage"] = ev.get("usage") if isinstance(ev.get("usage"), dict) else {}
+            # codex usage 差分基准落库：runner 发 done 前已把 thread 累计值就地写回
+            # session_entry["usage_baseline"]（_codex_runner._diff_usage），这里同步落
+            # sessions 行供下轮 _spawn_stream 回填（entry 流终 pop，内存留不住）。
+            # CC 引擎 entry 无该键 → 跳过；失败只 print 不炸流（同 _persist 隔离风格）。
+            try:
+                entry = _SESSIONS.get(sid)
+                base = entry.get("usage_baseline") if isinstance(entry, dict) else None
+                if isinstance(base, dict) and base:
+                    db.update("sessions", sid, {"usage_baseline": json.dumps(base)})
+            except Exception as e:
+                print(f"[yibao/coding] session {sid} usage_baseline 落库失败（跳过）：{e}",
+                      file=sys.stderr)
         elif kind == "stopped":
             _persist("marker", str(ev.get("text") or "已中断"))
+        elif kind == "marker":
+            # 流内留痕（如 codex resume 失败 fallback 提示）：落 messages 表 + 经下方
+            # emit_event 进面板流（双写一致，同 done/stopped 的 marker 发送方式）
+            _persist("marker", str(ev.get("text") or ""))
         if emit_event is not None:
             # panel/data 必须包在 payload 下：PanelApp.vue 的 panel_data 处理读
             # e.payload?.panel / e.payload?.data，shell proactive→Rust→PanelApp 不再加包装。
             emit_event({"kind": "panel_data",
-                        "payload": {"panel": "coding:chat",
+                        "payload": {"panel": "coding:studio",
                                     "data": {"session_id": sid, "agent": agent, "event": ev}}})
         if ev.get("kind") == "error":
             state["error"] = True
@@ -235,6 +273,54 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
         print(f"[yibao/coding] session {sid} runner 框架异常：{type(e).__name__}: {e}",
               file=sys.stderr)
         state["error"] = True
+
+    # codex resume 零事件失败的一次性自动 fallback（encrypted_content bug 形态：stdout 零事件
+    # → 未捕获 thread.started → cc_sid None，runner returncode 守御补发 error——「resume 根本
+    # 没跑起来」；turn 中途失败已捕获 thread_id，cc_sid 非 None 不触发）。判据齐备则用交接摘要
+    # 新开会话续跑（SessionBriefSkill 手动补救流程的自动化）；只重试一次，再败自然落原
+    # failed 路径（state["error"] 由重试的 error 事件重立，无循环）。
+    if (agent == "codex" and resume_session_id and cc_sid is None
+            and state["error"] and not cancel.is_set() and llm is not None):
+        # 摘要生成同 SessionBriefSkill：messages 尾 40 条（seq DESC LIMIT 40 再反转回正序）
+        # → _build_brief；LLM 失败/空历史退化为最近消息原文节选（兜底恒有交接上下文）
+        try:
+            msgs = db.query("messages", where={"session_id": sid}, order="seq DESC", limit=40)
+            msgs.reverse()
+            turns = [{"role": m["role"], "text": m["text"]} for m in msgs]
+        except Exception as e:
+            print(f"[yibao/coding] session {sid} fallback 查历史失败（按空历史续）：{e}",
+                  file=sys.stderr)
+            turns = []
+        brief = None
+        if turns:
+            try:
+                git = _codex.git_summary(cwd) if cwd else ""
+            except Exception:
+                git = ""   # git 摘要失败不挡路（非 git 目录等），brief 仍有对话内容
+            brief = _build_brief(llm, turns, git, "Codex", "Codex")
+        if not brief:
+            excerpt = "\n".join(f"{t['role']}: {str(t['text'])[:500]}" for t in turns[-10:]) or "（无历史消息）"
+            brief = f"（摘要生成失败，以下为最近对话节选）\n{excerpt}"
+        on_event({"kind": "marker", "text": "resume 失败，已用交接摘要新开会话续跑"})
+        state["error"] = False   # 复位，让重试自行定终态（再败由 on_event 的 error 分支重立）
+        # 新会话沿用同一 session_entry：先清旧 thread 的 usage 差分基准，
+        # 否则 fallback 轮差分被旧累计值钳 0 少报（S5-T2 评审留）
+        _entry = _SESSIONS.get(sid)
+        if isinstance(_entry, dict):
+            _entry.pop("usage_baseline", None)
+        try:
+            cc_sid = await runner.run(
+                f"【交接上下文】\n{brief}\n\n【用户继续】\n{prompt}", cwd,
+                on_event=on_event, cancel_event=_AsyncShield(cancel),
+                resume_session_id=None,
+                permission_mode=permission_mode,
+                can_use_tool=_runner.make_permission_callback(
+                    sid, on_event, emit_event=emit_event),
+                session_entry=_SESSIONS.get(sid))
+        except Exception as e:  # 与首轮同款框架级兜底
+            print(f"[yibao/coding] session {sid} fallback 重跑框架异常：{type(e).__name__}: {e}",
+                  file=sys.stderr)
+            state["error"] = True
 
     # 定最终状态：stopped（用户主动停）> error > done
     try:
@@ -289,10 +375,11 @@ def _report_final(emit_event, sid: str, prompt: str, final: str, usage) -> None:
     stopped → event（仅 Feed 任务卡，不弹气泡防打扰）。task meta 供 Feed 任务卡与
     后续点击路由（plugin:"coding"）；status 发英文键（done/failed/stopped——HomeFeed
     徽章/图标/tag CSS 只认英文，对齐 agents 先例），中文文案在 text；done 的 text
-    带成本摘要（usage 不落库，只此一播）。"""
+    带成本摘要。usage 数值本身不落库（只此一播进气泡/任务卡）——注意 sessions 表
+    usage_baseline 列落的是 codex 差分基准（thread 累计值，下轮 resume 回填用），
+    不是本轮用量，两者别混。"""
     if emit_event is None:
         return
-    _emit_sessions_changed(emit_event, sid, final)   # 会话墙刷新触发（done/failed/stopped 透传）
     try:
         label = prompt[:30]
         if final == "done":
@@ -393,11 +480,10 @@ class StartSkill(Skill):
         # resume_session_id 不传 → None → 全新会话（首条消息）
         _spawn_stream(ctx.db, sid, cwd, prompt, runner, ctx.emit_event,
                       permission_mode=mode, agent=agent)
-        _emit_sessions_changed(ctx.emit_event, sid, "started")
         return ActionResult(success=True, data={
             "session_id": sid,
             # background=true → panel=None（loop 判空不开面板），静默执行靠终态任务卡汇报
-            "panel": None if background else "coding:chat",
+            "panel": None if background else "coding:studio",
             "human": (f"已开始后台编码会话 {sid}，完成会汇报" if background
                       else f"已开始编码会话 {sid}，面板实时回显"),
         })
@@ -464,11 +550,11 @@ class SendSkill(Skill):
         # 重置 running 状态：resume 是新一轮流式，finished_at 归零；mode 一并回写
         ctx.db.update("sessions", sid, {"status": "running", "finished_at": 0, "mode": mode})
         _spawn_stream(ctx.db, sid, cwd, prompt, runner, ctx.emit_event,
-                      resume_session_id=cc, permission_mode=mode, agent=agent)
-        _emit_sessions_changed(ctx.emit_event, sid, "started")
+                      resume_session_id=cc, permission_mode=mode, agent=agent,
+                      llm=getattr(ctx, "llm", None))   # codex resume 失败 fallback 摘要用；无则不补救
         return ActionResult(success=True, data={
             "session_id": sid,
-            "panel": "coding:chat",
+            "panel": "coding:studio",
             "human": f"已接续会话 {sid}，面板实时回显",
         })
 
@@ -506,16 +592,13 @@ class StopSkill(Skill):
         if rows[0].get("status") not in ("running",):
             return ActionResult(success=False, error=f"会话已结束（{rows[0].get('status')}），无需停止")
         ok = _stop_session(ctx.db, _SESSIONS, sid)
-        # 此次广播时 _SESSIONS 条目可能尚未 pop（runner 线程退出才清）→ 墙的首次重查仍显示
-        # 「运行中」，由随后 _report_final 的第二次事件纠正（双事件自洽，不判重）
-        _emit_sessions_changed(getattr(ctx, "emit_event", None), sid, "stopped")
         if not ok:
             # 无 live runner（陈旧 running，如底座重启 mid-run）：db 已落 stopped——
             # 补发终态事件让面板复位，否则发送键永久锁死
             emit = getattr(ctx, "emit_event", None)
             if emit is not None:
                 emit({"kind": "panel_data",
-                      "payload": {"panel": "coding:chat",
+                      "payload": {"panel": "coding:studio",
                                   "data": {"session_id": sid,
                                            "event": {"kind": "stopped", "text": "已中断"}}}})
         return ActionResult(success=True, data={
@@ -533,13 +616,6 @@ def _live_state(sid: str) -> str:
     if sid in _SESSIONS:
         return "running"
     return "idle"
-
-
-def _emit_sessions_changed(emit_event, sid: str, state: str) -> None:
-    """会话生命周期广播（会话墙实时刷新的触发源）：app 侧仅在墙开着时重查 coding.wall_data。
-    走 emit_event 公共通道；proactive dispatch 对本 kind 只广播不落 feed（高频信号，落账是噪音）。"""
-    if emit_event is not None:
-        emit_event({"kind": "coding_sessions", "session_id": sid, "state": state})
 
 
 class ListSkill(Skill):
@@ -561,21 +637,21 @@ class ListSkill(Skill):
     def run(self, params: dict, ctx: Any) -> ActionResult:
         rows = ctx.db.query("sessions", order="created_at DESC")
         sessions = [{**dict(row), "live": _live_state(str(row.get("id") or ""))} for row in rows]
-        return ActionResult(success=True, data={"sessions": sessions, "panel": "coding:chat"})
+        return ActionResult(success=True, data={"sessions": sessions, "panel": "coding:studio"})
 
 
 class AttachSkill(Skill):
-    """打开 coding 面板并恢复指定会话（任务卡/会话墙「接管」点击路由）。
+    """打开 coding 面板并恢复指定会话（任务卡/studio 左栏「接管」点击路由）。
 
-    只校验会话存在，真正的恢复在面板侧：api.toml 声明 panel="coding:chat"，
+    只校验会话存在，真正的恢复在面板侧：api.toml 声明 panel="coding:studio"，
     直调成功后 panel_payload 把 data 原样透传进面板 init 数据（{session_id, agent, attach: true}），
-    chat.html 的 handleInitData 见 attach 标志自动 resumeSession（P1 接管链路自然生效）；
+    studio 面板的 handleData 见 attach 标志自动 resumeSession（P1 接管链路自然生效）；
     data.agent 让前端接管跨引擎会话时徽标立即正确，不用等首条流事件。
     """
     id = "coding.attach"
     label = "接管编码会话"
     description = (
-        "打开 coding 面板并恢复指定会话的上下文（点击 Feed 任务卡/会话墙「接管」的路由）。"
+        "打开 coding 面板并恢复指定会话的上下文（点击 Feed 任务卡/studio 左栏「接管」的路由）。"
         "【需要】session_id（coding.start 返回的会话 id）。"
     )
     default_risk = RiskLevel.L0_READONLY  # 只校验存在 + 打开面板，不改任何状态
@@ -593,7 +669,7 @@ class AttachSkill(Skill):
         rows = ctx.db.query("sessions", where={"id": sid})
         if not rows:
             return ActionResult(success=False, error=f"会话不存在：{sid}")
-        # attach 标志逐字对齐 chat.html handleInitData 的判别（data.attach === true）；
+        # attach 标志逐字对齐 studio 面板 handleData 的判别（data.attach === true）；
         # agent 取库行值（老行缺省按 claude-code，同 _stream/_runner_for 缺省）——
         # 前端接管跨引擎会话时引擎徽标立即正确，不等首条流事件
         return ActionResult(success=True, data={
@@ -604,34 +680,15 @@ class AttachSkill(Skill):
         })
 
 
-_LIVE_TEXT = {"waiting": "等待审批", "running": "运行中", "idle": "空闲"}
+class StudioSkill(Skill):
+    """打开 coding:studio 多工位面板(R4 module 面板,新 coding UI 骨架)。
 
-
-def _rel_time(now: int, ts: int) -> str:
-    """unix 秒 → 中文相对时间（会话墙副标题）：<1 分钟 刚刚；<1 小时 N 分钟前；<1 天 N 小时前；否则 N 天前。"""
-    d = max(0, now - ts)
-    if d < 60:
-        return "刚刚"
-    if d < 3600:
-        return f"{d // 60} 分钟前"
-    if d < 86400:
-        return f"{d // 3600} 小时前"
-    return f"{d // 86400} 天前"
-
-
-class WallDataSkill(Skill):
-    """会话墙数据（coding:wall 面板的 list schema 数据源）。
-
-    每会话一张卡：title=「{cwd basename} · {prompt 前 20 字}」，subtitle=「{live 文案} · {相对时间}」，
-    按 created_at DESC。相对时间一律取 created_at（与排序同基准；v1 不跟 finished_at）。
-    行内行动作在 wall.schema.json 静态声明：「接管」coding.attach 恒显示；「停止」coding.wall_stop
-    同显——schema list 不支持按行条件显隐，idle 会话点停止由 coding.stop 返回清晰提示兜底。
-    result.panel 直接置 coding:wall：coding.wall_stop 的 refresh 通道（server._emit_refresh_panel）
-    走 invoker 直执行本 skill，panel_payload 只认 result.panel（api.toml 的 panel 覆盖管不到那条路）。
+    L0 只读:只发 panel 事件。数据消费全部走面板内 invoke(coding.list 等既有方法),
+    本 skill 不带数据(data={})。
     """
-    id = "coding.wall_data"
-    label = "编码会话墙"
-    description = "列出全部 coding 会话的总览卡片（会话墙）：目录·任务摘要 + 活体状态（等待审批/运行中/空闲）·相对时间，按创建时间倒序。"
+    id = "coding.studio"
+    label = "多工位"
+    description = "打开 coding 多工位面板(module 面板运行时;多会话同屏工位,阶段一为骨架)。"
     default_risk = RiskLevel.L0_READONLY
 
     def openai_schema(self) -> dict:
@@ -645,21 +702,7 @@ class WallDataSkill(Skill):
         }
 
     def run(self, params: dict, ctx: Any) -> ActionResult:
-        rows = ctx.db.query("sessions", order="created_at DESC")
-        now = int(time.time())
-        items: list[dict] = []
-        for row in rows:
-            sid = str(row.get("id") or "")
-            live = _live_state(sid)
-            cwd = str(row.get("cwd") or "")
-            base = (os.path.basename(os.path.normpath(cwd)) or cwd) if cwd else "?"
-            prompt = str(row.get("prompt") or "")[:20]
-            title = f"{base} · {prompt}" if prompt else base
-            created = int(row.get("created_at") or 0)
-            engine = "Codex" if str(row.get("agent") or "") == "codex" else "CC"   # 引擎徽标前缀（无 agent 的老行按 CC）
-            subtitle = f"{engine} · {_LIVE_TEXT[live]} · {_rel_time(now, created)}"
-            items.append({"id": sid, "live": live, "title": title, "subtitle": subtitle})
-        return ActionResult(success=True, data={"rows": items}, panel="coding:wall")
+        return ActionResult(success=True, data={}, panel="coding:studio")
 
 
 class HandoffListSkill(Skill):
@@ -963,7 +1006,7 @@ class RewindSkill(Skill):
 
         def _emit(ev: dict) -> None:
             if emit is not None:
-                emit({"kind": "panel_data", "payload": {"panel": "coding:chat",
+                emit({"kind": "panel_data", "payload": {"panel": "coding:studio",
                       "data": {"session_id": sid, "event": ev}}})
 
         # 在跑：下条消息前由 runner 执行（消费 rewind_pending）。
@@ -1006,6 +1049,35 @@ class DecideSkill(Skill):
         entry["allow"] = allow
         entry["event"].set()
         return ActionResult(success=True, data={"ok": True})
+
+
+class PermPendingSkill(Skill):
+    """待批权限清单（studio review 栏挂载快照；quiet 只读）。
+
+    面板晚开错过 permission_request 流事件时补齐全量挂起项；之后的增删由流事件驱动
+    （permission_request 增 / permission_done 删）。rid 解析 sid：perm_<sid>_<seq>，rsplit 去尾序号。
+    """
+    id = "coding.perm_pending"
+    label = "待批权限清单"
+    description = "列出 coding 当前全部挂起中的工具权限请求（review 栏快照用；L0 只读）。"
+    default_risk = RiskLevel.L0_READONLY
+
+    def openai_schema(self) -> dict:
+        return {"type": "function", "function": {"name": self.id,
+                "description": self.description,
+                "parameters": {"type": "object", "properties": {}, "required": []}}}
+
+    def run(self, params: dict, ctx: Any) -> ActionResult:
+        out = []
+        for rid, entry in list(_PERM.items()):
+            if not isinstance(entry, dict) or entry.get("allow") is not None:
+                continue
+            sid = rid[len("perm_"):].rsplit("_", 1)[0] if rid.startswith("perm_") else ""
+            out.append({"rid": rid, "sid": sid,
+                        "tool": str(entry.get("tool") or ""),
+                        "summary": str(entry.get("summary") or ""),
+                        "params": entry.get("params") if isinstance(entry.get("params"), dict) else {}})
+        return ActionResult(success=True, data={"pending": out})
 
 
 _FILES_EXCLUDE = {".git", "node_modules", "dist", "target", ".venv", "build", "out", "__pycache__", ".next", ".cache"}
@@ -1310,7 +1382,6 @@ class AttachCcSkill(Skill):
             return ActionResult(success=False, error=f"导入失败：{type(e).__name__}: {e}")
         if sid is None:
             return ActionResult(success=False, error=f"未找到 Claude Code 会话 transcript：{cc}")
-        _emit_sessions_changed(getattr(ctx, "emit_event", None), sid, "imported")
         return ActionResult(success=True, data={"session_id": sid})
 
 
@@ -1491,13 +1562,12 @@ class AttachCodexSkill(Skill):
             return ActionResult(success=False, error=f"导入失败：{type(e).__name__}: {e}")
         if sid is None:
             return ActionResult(success=False, error=f"未找到 Codex 会话：{tid}")
-        _emit_sessions_changed(getattr(ctx, "emit_event", None), sid, "imported")
         return ActionResult(success=True, data={"session_id": sid})
 
 
 def make_tools(ctx: Any) -> list[Skill]:
     """插件加载器入口（_load_code_tools 遍历 skills/*.py 调本函数）。"""
     return [StartSkill(), SendSkill(), StopSkill(), ListSkill(), AttachSkill(),
-            WallDataSkill(), HandoffListSkill(), HandoffBriefSkill(), HistorySkill(), ModeSkill(),
-            RewindSkill(), DecideSkill(), FilesSkill(), LastSessionsSkill(), AttachCcSkill(),
-            DriversSkill(), AttachCodexSkill(), SessionBriefSkill()]
+            HandoffListSkill(), HandoffBriefSkill(), HistorySkill(), ModeSkill(),
+            RewindSkill(), DecideSkill(), PermPendingSkill(), FilesSkill(), LastSessionsSkill(), AttachCcSkill(),
+            DriversSkill(), AttachCodexSkill(), SessionBriefSkill(), StudioSkill()]

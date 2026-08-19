@@ -21,6 +21,7 @@ columns = [
   {name = "cc_session_id", type = "text", default = ""},   # Claude Code 会话 id（runner.run 返回；后续多轮 resume 用）
   {name = "source", type = "text", default = ""},           # 会话来源：""=用户直起；"codex:<sid>"=交接切过来
   {name = "mode", type = "text", default = "acceptEdits"},  # 权限模式（plan/acceptEdits/…，下一任务接线用）
+  {name = "usage_baseline", type = "text", default = ""},   # codex usage 差分基准（JSON 串 {"input_tokens":N,"output_tokens":N}；多轮 resume 跨轮持久，内存 entry 流终即丢）
 ]
 indexes = ["status", "created_at"]
 
@@ -37,15 +38,11 @@ columns = [
 ]
 indexes = ["session_id", "seq"]
 
+# R4 多工位(module 面板,新插件运行时):panel/dist 由 scripts/panel-build 构建;
+# open 让插件页出现子入口「多工位」,直调 coding.studio 打开
 [[panel]]
-type = "webview"
-name = "chat"
-label = "编码对话"
-src = "panel/chat.html"
-
-[[panel]]
-type = "schema"
-name = "wall"
-label = "会话墙"
-src = "panel/wall.schema.json"
-open = "wall_data"   # 面板级入口：插件页子入口直调此 api 方法打开
+type = "module"
+name = "studio"
+label = "多工位"
+src = "panel/dist/index.html"
+open = "studio"

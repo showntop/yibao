@@ -389,12 +389,12 @@ async function openInChat(it: FeedItem) {
   emit("chat", draft);
 }
 
-// ---- coding 任务卡点击路由（B3）：attach 打开 coding:chat 面板并恢复该会话 ----
+// ---- coding 任务卡点击路由（B3）：attach 打开 coding:studio 面板并恢复该会话 ----
 // 直调失败/会话不存在的回执经 onBrainEvent 按 skill_id 认领（面板没开成必须看得见，点了没反应是最差反馈）
 const actionErr = ref("");
 
 /** coding 任务卡 → coding.attach{session_id}（L0 直调）：面板窗/peek 由宿主既有表面裁决呈现，
- *  data={session_id, attach:true} 透传进面板 init，chat.html 自动 resumeSession。 */
+ *  data={session_id, attach:true} 透传进面板 init，studio 面板 handleData 自动 resumeSession。 */
 async function openCodingSession(it: FeedItem, sid: string) {
   actionErr.value = "";
   await markReadOptimistic(it);

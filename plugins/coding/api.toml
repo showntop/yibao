@@ -2,13 +2,13 @@
 name = "coding.start"
 handler = "coding.start"
 direct = true
-panel = "coding:chat"
+panel = "coding:studio"
 
 [[method]]
 name = "coding.send"
 handler = "coding.send"
 direct = true
-panel = "coding:chat"
+panel = "coding:studio"
 
 [[method]]
 name = "coding.stop"
@@ -19,29 +19,14 @@ direct = true
 name = "coding.list"
 handler = "coding.list"
 direct = true
-panel = "coding:chat"
+panel = "coding:studio"
 
-# 任务卡/会话墙「接管」：打开 coding:chat 面板并恢复该会话（data 透传 {session_id, attach:true} → 面板 init 自动 resume）
+# 任务卡/studio 左栏「接管」：打开 coding:studio 面板并恢复该会话（data 透传 {session_id, attach:true} → 面板 init 自动 resume）
 [[method]]
 name = "coding.attach"
 handler = "coding.attach"
 direct = true
-panel = "coding:chat"
-
-# 会话墙：多会话总览（schema list 面板；插件页子入口 open="wall_data" 直调打开）
-[[method]]
-name = "coding.wall_data"
-handler = "coding.wall_data"
-direct = true
-panel = "coding:wall"
-
-# 会话墙行内「停止」：同 handler 复用 coding.stop，refresh 回刷会话墙拿最新卡片
-# （仿 zimeiti.hot_add 同 handler 多入口先例；不给 coding.stop 本体加 refresh——chat 面板里停止不该把用户甩到会话墙）
-[[method]]
-name = "coding.wall_stop"
-handler = "coding.stop"
-direct = true
-refresh = "coding.wall_data"
+panel = "coding:studio"
 
 [[method]]
 name = "coding.handoff_list"
@@ -116,7 +101,7 @@ handler = "coding.attach_codex"
 direct = true
 quiet = true
 
-# 主输入条 @ 引用：取最近会话 cwd 用（quiet 别名——coding.list 本体带 panel="coding:chat" 事件，
+# 主输入条 @ 引用：取最近会话 cwd 用（quiet 别名——coding.list 本体带 panel="coding:studio" 事件，
 # 主输入条/非 coding 场景调用会把插件页顶成 coding 面板；照 last_sessions/history 的 quiet 别名先例）
 [[method]]
 name = "sessions"
@@ -128,5 +113,19 @@ quiet = true
 [[method]]
 name = "session_brief"
 handler = "coding.session_brief"
+direct = true
+quiet = true
+
+# 多工位(R4):打开 coding:studio module 面板(插件页子入口 open="studio" 直调)
+[[method]]
+name = "coding.studio"
+handler = "coding.studio"
+direct = true
+panel = "coding:studio"
+
+# review 栏挂载快照：待批权限清单（quiet 不发 panel 事件）
+[[method]]
+name = "coding.perm_pending"
+handler = "coding.perm_pending"
 direct = true
 quiet = true

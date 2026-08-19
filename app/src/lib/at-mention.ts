@@ -1,5 +1,5 @@
 /** @ 文件引用（输入条 chips 化）：@ 触发解析 / 触发片段移除 / 引用 contexts 的文本组装。
- *  coding 面板（chat.html）另有同款 composeRefs（iframe 沙箱不引 ts 模块，格式约定保持一致）。 */
+ *  coding 面板（panel/src/lib/refs.ts）另有同款 composeRefs（iframe 沙箱不引 ts 模块，格式约定保持一致）。 */
 
 export interface AtTrigger {
   start: number; // "@" 在文本中的下标
@@ -40,9 +40,4 @@ export function formatContextPrefix(contexts: InputContext[]): string {
     return `【引用：${c.label}】`;
   });
   return lines.join("\n") + "\n\n";
-}
-
-/** file contexts → 相对路径数组（coding takeover 转发 iframe 组装 @refs 用）。 */
-export function fileRefPaths(contexts: InputContext[]): string[] {
-  return contexts.filter((c) => c.kind === "file" && !!c.path).map((c) => c.path as string);
 }

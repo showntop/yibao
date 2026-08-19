@@ -7,6 +7,7 @@ import SchemaPanel from "./SchemaPanel.vue";
 import WebviewPanel from "./WebviewPanel.vue";
 import YbIcon from "./YbIcon.vue";
 import { onBrainEvent, type BrainEvent } from "../lib/brain";
+import type { WebviewPayload } from "../lib/webview-source";
 
 const props = withDefaults(
   defineProps<{
@@ -14,7 +15,7 @@ const props = withDefaults(
     title: string; // 面板显示名
     provider: string; // 插件 id
     schema: Record<string, any> | null;
-    webview: { html?: string } | null;
+    webview: WebviewPayload | null;
     data: Record<string, unknown>;
   }>(),
   { schema: null, webview: null },
@@ -22,7 +23,7 @@ const props = withDefaults(
 const emit = defineEmits<{ close: [] }>();
 
 const rootEl = ref<HTMLElement | null>(null);
-const isWebview = computed(() => !!props.webview?.html);
+const isWebview = computed(() => !!(props.webview?.html || props.webview?.url));
 
 // 面板数据本地镜像：props.data 是开窗快照；panel_data 流式增量（同面板）浅合并进来，
 // WebviewPanel watch(data) 自动 postInit 推给 iframe（对齐 PanelApp 合并范式；纯接收，不发信）
@@ -100,7 +101,7 @@ onBeforeUnmount(() => {
         <button type="button" class="peek-close" aria-label="收起" @click="close"><YbIcon name="x" :size="14" /></button>
       </header>
       <div class="peek-body">
-        <WebviewPanel v-if="isWebview" :panel="panel" :html="webview!.html!" :data="mergedData" />
+        <WebviewPanel v-if="isWebview" :panel="panel" :html="webview!.html" :url="webview!.url" :v="webview!.v" :data="mergedData" />
         <SchemaPanel v-else :panel="panel" :schema="schema" :data="mergedData" />
       </div>
     </section>

@@ -6,3 +6,7 @@ __pycache__/
 # 点击精度评测会保存真实屏幕与 a11y 树；仅本机使用，禁止误提交。
 sidecar/scripts/eval_scenarios/*.json
 sidecar/scripts/eval_scenarios/*.png
+
+# 插件 module 面板构建产物(scripts/panel-build 生成;打包管线阶段五接入,产物不入库)
+plugins/*/panel/dist/
+plugins/*/panel/node_modules/

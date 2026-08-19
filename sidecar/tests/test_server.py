@@ -2886,3 +2886,84 @@ def test_serve_feed_includes_running_coding_session(tmp_path, monkeypatch):
     assert coding_tasks[0]["label"] == "编码会话"
     assert coding_tasks[0]["prompt"] == "改登录 bug"
     assert coding_tasks[0]["status"] == "running"
+
+
+def test_mobile_state_merges_coding_perm_pending(tmp_path, monkeypatch):
+    """_PERM 挂起项只读合并进 /v1/state 的 pending（真 HTTP 路径，serve_async 级）：
+    挂起（allow is None）出现且字段齐（id/skill_id/summary/risk/created_at），
+    已裁决（allow 非 None）不出现；手机裁决后条目从 pending 收敛。
+    顺带钉死 _confirm_mobile 的 perm_ 分支：未知 rid → 404（不再恒 200 假 ok）。"""
+    import os
+    import threading as _th
+    os.environ["YIBAO_HTTP_PORT"] = "19869"  # 19862-19868 已被上游用例占用
+    import yibao_brain.server as S
+
+    ev = _th.Event()
+    perms = {
+        "perm_cs1_1": {"event": ev, "allow": None, "tool": "Bash",
+                       "summary": "rm -rf /tmp/x", "params": {"command": "rm -rf /tmp/x"},
+                       "created_at": 1700000000},
+        "perm_cs1_2": {"event": _th.Event(), "allow": True, "tool": "Write",
+                       "summary": "/tmp/y", "params": {}, "created_at": 1700000001},
+    }
+    _fake_coding_runner_module(monkeypatch, perms)
+    orig_load = S.load_settings
+    S.load_settings = lambda: {"http.token": "btok", "http.mobile_token": "mtok"}
+    inbox = queue.Queue()
+
+    async def main():
+        out = []
+        serve_task = asyncio.ensure_future(S.serve_async(
+            inbox.get, lambda m: out.append(m), use_real=False,
+            db_path=str(tmp_path / "mp.db"), provider=FakeProvider(text="ok"), http_enabled=True))
+        try:
+            import aiohttp
+
+            async with aiohttp.ClientSession() as sess:
+                # 等服务起（轮询 /v1/health，固定 sleep 在机器慢时会假红）
+                for _ in range(50):
+                    try:
+                        async with sess.get("http://127.0.0.1:19869/v1/health",
+                                            headers={"X-Yibao-Token": "mtok"}) as r:
+                            if r.status == 200:
+                                break
+                    except aiohttp.ClientConnectorError:
+                        pass
+                    await asyncio.sleep(0.1)
+                else:
+                    raise AssertionError("HTTP 面未在 5s 内就绪")
+
+                async def get_state():
+                    async with sess.get("http://127.0.0.1:19869/v1/state",
+                                        headers={"X-Yibao-Token": "mtok"}) as r:
+                        assert r.status == 200
+                        return (await r.json())["pending"]
+
+                pend = await get_state()
+                assert [p["id"] for p in pend] == ["perm_cs1_1"]  # 已裁决项不出现
+                item = pend[0]
+                assert item["skill_id"] == "coding"
+                assert item["summary"] == "rm -rf /tmp/x"
+                assert item["risk"] == 1
+                assert item["created_at"] == 1700000000
+
+                # 未知 perm_ rid：兑现失败 → 404（修前恒 200 假 ok）
+                async with sess.post("http://127.0.0.1:19869/v1/confirm",
+                                     headers={"X-Yibao-Token": "mtok"},
+                                     json={"id": "perm_ghost_9", "approved": True}) as r:
+                    assert r.status == 404
+
+                # 手机裁决挂起项：200 + 写 allow + set 事件；条目从 pending 收敛
+                async with sess.post("http://127.0.0.1:19869/v1/confirm",
+                                     headers={"X-Yibao-Token": "mtok"},
+                                     json={"id": "perm_cs1_1", "approved": True}) as r:
+                    assert r.status == 200
+                assert perms["perm_cs1_1"]["allow"] is True and ev.is_set()
+                assert await get_state() == []
+        finally:
+            S.load_settings = orig_load
+            os.environ.pop("YIBAO_HTTP_PORT", None)
+            inbox.put(None)  # 结束 stdin 读线程
+            await asyncio.wait_for(serve_task, 5)
+
+    asyncio.run(main())

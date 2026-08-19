@@ -281,17 +281,23 @@ async def _emit_refresh_panel(agent: AgentLoop, emit, refresh_tool: str) -> None
         emit(Event(kind="panel", payload=payload))
 
 
+def _coding_perm_registry() -> dict | None:
+    """coding 插件 can_use_tool 的 _PERM 注册表（_sibling 加载的模块单例
+    sys.modules["yibao_plugin_coding__runner"] 上）；插件未加载/形态不对 → None。"""
+    mod = sys.modules.get("yibao_plugin_coding__runner")
+    perm = getattr(mod, "_PERM", None)
+    return perm if isinstance(perm, dict) else None
+
+
 def _fulfill_coding_perm(cid: str, approved: bool) -> bool:
     """coding 插件 can_use_tool 审批兑现：cid 以 "perm_" 开头的确认路由进插件 _PERM 注册表
     （写 allow + set 等待事件）。与 coding.decide 双通道幂等——先到先得，后到不覆盖；
     插件未加载 / 请求已超时清理 → False（无害，等待方 60s 超时 deny 兜底）。
 
-    coding 审批不经 batch_confirmer 的 future：runner 线程在 threading.Event 上等，
-    注册表挂在 _sibling 加载的模块单例 sys.modules["yibao_plugin_coding__runner"] 上。
+    coding 审批不经 batch_confirmer 的 future：runner 线程在 threading.Event 上等。
     """
-    mod = sys.modules.get("yibao_plugin_coding__runner")
-    perm = getattr(mod, "_PERM", None)
-    if not isinstance(perm, dict):
+    perm = _coding_perm_registry()
+    if perm is None:
         return False
     entry = perm.get(cid)
     if not isinstance(entry, dict):
@@ -1311,8 +1317,10 @@ async def serve_async(
         if cid in _confirm_done:
             return False
         if cid.startswith("perm_"):
-            # coding 工具审批：与壳 confirm_batch 同路由（双通道幂等），不占 future/早到缓存
-            _fulfill_coding_perm(cid, approved)
+            # coding 工具审批：与壳 confirm_batch 同路由（双通道幂等），不占 future/早到缓存；
+            # 兑现失败（插件未加载/请求已清理）→ False（404），不假 ok
+            if not _fulfill_coding_perm(cid, approved):
+                return False
             _confirm_done.append(cid)
             return True
         fut = pending_confirms.get(cid)
@@ -1326,9 +1334,22 @@ async def serve_async(
         return True
 
     def _mobile_state() -> dict:
+        """/v1/state 载荷：running + pending。pending = confirm_meta 展开（L2 确认）
+        + coding 审批只读合并 _PERM 挂起项（allow is None；confirmation_needed 只广播
+        不落 confirm_meta，故在此补源）——生命周期随裁决/超时/stop 的 _PERM.pop 收敛，
+        无需出队钩子。元素键名对齐 confirm_meta：id/skill_id/summary/risk/created_at。"""
         task = run_state["task"]
         running = {"surface": run_state["surface"]} if (task is not None and not task.done()) else None
-        return {"running": running, "pending": [{"id": cid, **meta} for cid, meta in confirm_meta.items()]}
+        pending = [{"id": cid, **meta} for cid, meta in confirm_meta.items()]
+        perm = _coding_perm_registry()
+        if perm:
+            for rid, entry in list(perm.items()):
+                if isinstance(entry, dict) and entry.get("allow") is None:
+                    pending.append({"id": rid, "skill_id": "coding",
+                                    "summary": str(entry.get("summary") or entry.get("tool") or "编码审批"),
+                                    "risk": 1,
+                                    "created_at": int(entry.get("created_at") or 0)})
+        return {"running": running, "pending": pending}
 
     def _mobile_feed(limit: int = 60) -> dict:
         """/v1/feed 载荷（mobile M2）：与桌面 feed IPC 完全同形（items 倒序 + 问候统计 +

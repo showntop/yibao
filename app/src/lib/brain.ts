@@ -1,6 +1,7 @@
 // 封装与大脑 sidecar 的通信（经 Tauri Rust 桥）。
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen, once, type UnlistenFn } from "@tauri-apps/api/event";
+import type { WebviewPayload } from "./webview-source";
 
 export type BrainEventKind =
   | "thought"
@@ -18,8 +19,7 @@ export type BrainEventKind =
   | "reminder"
   | "notice"
   | "panel"
-  | "panel_data"
-  | "coding_sessions";
+  | "panel_data";
 
 export interface BrainAction {
   id?: string;
@@ -46,8 +46,8 @@ export interface PanelPayload {
   /** 面板显示名（插件名 · 面板 label，sidecar 注入；缺省退化用 panel ref） */
   title?: string;
   schema?: unknown;
-  /** webview 面板：插件 HTML 文本（父侧注入桥 JS 后以 iframe srcdoc 渲染）；schema 面板无此字段 */
-  webview?: { html?: string } | null;
+  /** webview 面板载荷：module 面板为 {url,v}（R4 插件运行时），旧 html 面板为 {html}（srcdoc 渲染）；schema 面板无此字段 */
+  webview?: WebviewPayload | null;
   data?: Record<string, unknown>;
   // ---- 能力表面提示（Phase 1）：sidecar 透传的技能建议，宿主裁决用；缺省按老规则 ----
   /** 技能建议的展示级别（建议非命令）；旧插件缺省 null */

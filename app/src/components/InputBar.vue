@@ -8,17 +8,14 @@ import { parseAtTrigger, stripAtTrigger, type InputContext } from "../lib/at-men
 
 // busy = 生成/播报中（可打断）；listening = 录音中（麦克风切声波态，点击=取消录音）
 // draft = 外部预填草稿（主屏 Feed 点击带上下文来）；变化即填入并聚焦
-// takeover = 编码智能体接管（coding 面板打开）：文本直送编码会话、不经过译宝大脑，
-//            主按钮不显示停止态、发送不触发 brain interrupt（打断语义归编码会话）
 const props = withDefaults(
   defineProps<{
     busy?: boolean;
     listening?: boolean;
     draft?: string;
     placeholder?: string;
-    takeover?: boolean;
   }>(),
-  { placeholder: "对译宝说点什么…", takeover: false },
+  { placeholder: "对译宝说点什么…（shift+回车换行）" },
 );
 const emit = defineEmits<{
   (e: "submit", text: string, contexts: InputContext[]): void;
@@ -140,7 +137,7 @@ function closeAt() {
 
 function pickAt(f: { rel: string }) {
   text.value = stripAtTrigger(text.value, atCaret, atStart); // 移除触发片段，文件成 chip
-  // 去重：同文件重复引用无意义（与 chat.html addAtRef 同约定）
+  // 去重：同文件重复引用无意义（与 coding 面板 pushRef 同约定）
   if (!pendingContexts.value.some((c) => c.kind === "file" && c.path === f.rel)) {
     pendingContexts.value.push({ kind: "file", label: f.rel.split("/").pop() || f.rel, path: f.rel });
   }
@@ -288,9 +285,8 @@ function onMic() {
   else emit("mic");
 }
 
-/** 右端主按钮：生成/播报中=打断、其余=发送（无内容置灰）；聆听时取消录音归麦克风，主按钮仍是发送。
- * takeover（编码接管）时不进入停止态——busy 是译宝大脑的状态，接管期间发送不应打断它。 */
-const stopping = computed(() => props.busy && !props.listening && !props.takeover);
+/** 右端主按钮：生成/播报中=打断、其余=发送（无内容置灰）；聆听时取消录音归麦克风，主按钮仍是发送。 */
+const stopping = computed(() => props.busy && !props.listening);
 
 function onMain() {
   // 停止图标只打断。生成中要改口：回车/点发送走 send()（内部先 interrupt 再发）。
@@ -300,7 +296,7 @@ function onMain() {
 
 // IME 组字守卫（WebKit bug 165004：compositionend 先于确认 Enter 的 keydown 派发，
 // 该 keydown 的 isComposing 已为 false，单靠 e.isComposing 会穿透误发——
-// 记 compositionend 时间戳，50ms 窗口内的 Enter 一并拦截。参考 plugins/coding/panel/chat.html）
+// 记 compositionend 时间戳，50ms 窗口内的 Enter 一并拦截。参考 plugins/coding/panel/src/components/Composer.vue）
 const imeComposing = ref(false);
 let lastCompEnd = 0;
 
@@ -333,7 +329,7 @@ function insertText(t: string) {
   inputRef.value?.focus();
 }
 
-// 全局唤起等外部焦点请求（反射键唤起后输入就绪）；insertText 供接管方注入文本
+// 全局唤起等外部焦点请求（反射键唤起后输入就绪）；insertText 供面板 insert-draft 注入文本
 defineExpose({ focus: () => inputRef.value?.focus(), insertText });
 </script>
 

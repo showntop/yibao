@@ -1,5 +1,7 @@
 /** SessionState 体系跨域公共类型 */
 
+import type { WebviewPayload } from "../lib/webview-source";
+
 /** 状态域标识：域间平行，仅 surface 域内存在嵌套链 */
 export type DomainId = "conversation" | "surface" | "window";
 
@@ -137,7 +139,7 @@ export interface SurfacePanel {
   title: string;
   schema: Record<string, unknown> | null;
   data: Record<string, unknown>;
-  webview: { html?: string } | null;
+  webview: WebviewPayload | null;
 }
 
 /** interact：面板内交互态（嵌套链第三层；乐观可失效） */

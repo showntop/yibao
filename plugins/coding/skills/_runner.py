@@ -1,11 +1,14 @@
 """AgentRunner：程序化驱动 coding agent 流式跑。v1 实装 ClaudeCodeRunner（claude-agent-sdk）。"""
 from __future__ import annotations
-import asyncio, itertools, json, sys, threading
+import asyncio, itertools, json, sys, threading, time
 from typing import Protocol, Callable, Any
 
 _FILE_EDIT_TOOLS = {"Write", "Edit", "MultiEdit"}
 
-# can_use_tool 权限桥：rid → {"event": threading.Event, "allow": bool|None}。
+# can_use_tool 权限桥：rid → {"event": threading.Event, "allow": bool|None,
+# "tool": str, "summary": str, "params": dict, "created_at": int}——tool/summary/params 为展示字段
+#（review 栏快照源，coding.perm_pending 直读；summary/params 由
+# _summarize_tool_input/_public_params 生成）；created_at 供手机 /v1/state 待批卡展示。
 # 回调（runner 线程的 asyncio loop）发 permission_request 后在 asyncio.to_thread 里等
 # event.wait（不堵 loop）；面板审批卡按钮 → coding.decide（DecideSkill）写 allow + set。
 _PERM: dict = {}
@@ -94,7 +97,10 @@ def make_permission_callback(sid: str, on_event, *, timeout_s: float = 60.0, emi
     （emit 自身异常不再穿透回 SDK）。返回 SDK 期望的 async callable。"""
     async def _cb(tool_name, input, context=None):
         rid = f"perm_{sid}_{next(_perm_seq)}"
-        entry = {"event": threading.Event(), "allow": None}
+        entry = {"event": threading.Event(), "allow": None,
+                 "tool": str(tool_name), "summary": _summarize_tool_input(tool_name, input),
+                 "params": _public_params(input),   # review 栏快照源（coding.perm_pending 直读）
+                 "created_at": int(time.time())}    # 手机 /v1/state 待批卡展示
         _PERM[rid] = entry
         try:
             on_event({"kind": "permission_request", "rid": rid,

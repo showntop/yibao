@@ -1,6 +1,6 @@
 """coding 插件：runner 流式/取消/容错（FakeSDK 注入，不跑真 SDK）。"""
 from __future__ import annotations
-import asyncio, os, sys
+import asyncio, os, sys, time
 from types import SimpleNamespace
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 # 插件 skills 不在 src 下，单独加路径
@@ -403,16 +403,17 @@ def test_send_skill_openai_schema_shape():
 
 
 def test_make_tools_includes_send():
-    """make_tools 返回 Start/Send/Stop/List/Attach/WallData + HandoffList/HandoffBrief/History/Mode/Rewind/Decide/Files
-    + LastSessions/AttachCc + Drivers/AttachCodex + SessionBrief 十八件。"""
+    """make_tools 返回 Start/Send/Stop/List/Attach + HandoffList/HandoffBrief/History/Mode/Rewind/Decide/PermPending/Files
+    + LastSessions/AttachCc + Drivers/AttachCodex + SessionBrief + Studio 十九件。"""
     tools = codingmod.make_tools(type("C", (), {"db": None, "emit_event": None})())
     ids = [t.id for t in tools]
     assert "coding.send" in ids
     assert ids == ["coding.start", "coding.send", "coding.stop", "coding.list", "coding.attach",
-                   "coding.wall_data", "coding.handoff_list", "coding.handoff_brief", "coding.history",
-                   "coding.mode", "coding.rewind", "coding.decide", "coding.files",
+                   "coding.handoff_list", "coding.handoff_brief", "coding.history",
+                   "coding.mode", "coding.rewind", "coding.decide", "coding.perm_pending", "coding.files",
                    "coding.last_sessions", "coding.attach_cc",
-                   "coding.drivers", "coding.attach_codex", "coding.session_brief"]
+                   "coding.drivers", "coding.attach_codex", "coding.session_brief",
+                   "coding.studio"]
 
 
 def test_start_skill_does_not_pass_resume(monkeypatch):
@@ -521,7 +522,7 @@ def test_stop_stale_running_emits_stopped_terminal(monkeypatch):
             if e.get("kind") == "panel_data"
             and e["payload"]["data"]["event"].get("kind") == "stopped"]
     assert term, ctx.events
-    assert term[0]["payload"]["panel"] == "coding:chat"
+    assert term[0]["payload"]["panel"] == "coding:studio"
     assert term[0]["payload"]["data"]["session_id"] == "s-stale"
 
 
@@ -535,7 +536,7 @@ def test_stop_with_live_runner_no_extra_terminal(monkeypatch):
     ctx = _EmitCtx(db)
     res = StopSkill().run({"id": "s-live"}, ctx)
     assert res.success is True and cancel.is_set()
-    # 不重复补发终态 panel_data（coding_sessions 墙刷新信号是另一通道，不算补发）
+    # 不重复补发终态 panel_data（live runner 的终态由流式线程收尾发，stop 不再补）
     assert [e for e in ctx.events if e.get("kind") == "panel_data"] == []
 
 
@@ -880,7 +881,7 @@ def test_rewind_idle_session_uses_fresh_client(monkeypatch):
     assert r.success and r.data["live"] is False
     assert client.calls == ["connect", ("rewind_files", "u-1"), "disconnect"]
     assert seen["resume"] == "cc-old-1" and seen["cwd"] == "/tmp/p"
-    # rewind_ok 事件经 panel_data 推到 coding:chat 面板
+    # rewind_ok 事件经 panel_data 推到 coding:studio 面板
     ok = [e for e in events if e.get("kind") == "panel_data"
           and e["payload"]["data"]["event"].get("kind") == "rewind_ok"]
     assert ok and ok[0]["payload"]["data"]["session_id"] == "sid-1"
@@ -1305,14 +1306,14 @@ def test_list_skill_live_states():
 
 
 def test_start_skill_background_param(monkeypatch):
-    """background=true → data.panel=None（不开面板，静默执行）；缺省 → coding:chat 照开。"""
+    """background=true → data.panel=None（不开面板，静默执行）；缺省 → coding:studio 照开。"""
     db = _FakeDB()
     monkeypatch.setattr(codingmod, "_spawn_stream", lambda *a, **k: None)
     r = StartSkill().run({"cwd": "/tmp", "prompt": "后台改 X", "background": True}, _Ctx(db))
     assert r.success and r.data["panel"] is None
     assert "后台" in r.data["human"]
     r2 = StartSkill().run({"cwd": "/tmp", "prompt": "普通任务"}, _Ctx(db))
-    assert r2.success and r2.data["panel"] == "coding:chat"
+    assert r2.success and r2.data["panel"] == "coding:studio"
     props = StartSkill().openai_schema()["function"]["parameters"]["properties"]
     assert props["background"]["type"] == "boolean"
 
@@ -1396,7 +1397,7 @@ from coding import AttachSkill  # noqa: E402
 
 
 def test_attach_returns_session_and_attach_flag():
-    """attach 成功：data 带 {session_id, attach:True}（逐字对齐 chat.html init 判别）；
+    """attach 成功：data 带 {session_id, attach:True}（逐字对齐 studio 面板 handleData init 判别）；
     任何终态/运行态会话都可接管（恢复/围观由面板侧处理）。"""
     db = _FakeDB()
     db.rows["s-att"] = {"id": "s-att", "status": "done"}
@@ -1443,115 +1444,6 @@ def test_attach_skill_openai_schema_shape():
     props = schema["function"]["parameters"]["properties"]
     assert set(props.keys()) == {"session_id"}
     assert schema["function"]["parameters"]["required"] == ["session_id"]
-
-
-# ---------- P2 B4：会话墙 coding.wall_data（coding:wall 面板数据源）----------
-import time  # noqa: E402
-from coding import WallDataSkill  # noqa: E402
-
-
-def test_wall_data_shape_sort_and_panel_ref():
-    """rows 按 created_at DESC；每行 {id, live, title, subtitle}；result.panel=coding:wall
-    （coding.wall_stop 的 refresh 通道走 invoker 直执行，panel_payload 只认 result.panel）。"""
-    db = _FakeDB()
-    db.rows["a"] = {"id": "a", "status": "done", "created_at": 1,
-                    "cwd": "/tmp/proj-alpha", "prompt": "修一下登录页的样式问题，顺便看看按钮对齐和字体"}
-    db.rows["b"] = {"id": "b", "status": "done", "created_at": 2,
-                    "cwd": "/tmp/proj-beta/", "prompt": "短任务"}
-    db.rows["c"] = {"id": "c", "status": "done", "created_at": 3,
-                    "cwd": "", "prompt": ""}
-    res = WallDataSkill().run({}, _Ctx(db))
-    assert res.success and res.panel == "coding:wall"
-    rows = res.data["rows"]
-    assert [r["id"] for r in rows] == ["c", "b", "a"]            # created_at DESC
-    assert all(set(r.keys()) == {"id", "live", "title", "subtitle"} for r in rows)
-    # title = 「{cwd basename} · {prompt 前 20 字}」；basename 容忍尾部斜杠；prompt 截 20 字（23 字原文 → 断在「齐」）
-    assert rows[2]["title"] == "proj-alpha · 修一下登录页的样式问题，顺便看看按钮对齐"
-    assert rows[1]["title"] == "proj-beta · 短任务"
-    assert rows[0]["title"] == "?"                                # cwd/prompt 皆空 → 退化 basename 占位
-
-
-def test_wall_data_live_text_and_rel_time():
-    """subtitle = 「{引擎} · {live 文案} · {相对时间}」：引擎前缀 Codex/CC（无 agent 老行按 CC）；
-    live 文案 等待审批/运行中/空闲（waiting>running>idle 同 list）。"""
-    now = int(time.time())
-    db = _FakeDB()
-    db.rows["a"] = {"id": "a", "status": "done", "created_at": now - 5,
-                    "cwd": "/tmp/p", "prompt": "x"}
-    db.rows["b"] = {"id": "b", "status": "running", "created_at": now - 7200,
-                    "cwd": "/tmp/p", "prompt": "x"}
-    db.rows["c"] = {"id": "c", "status": "running", "created_at": now - 3 * 86400,
-                    "cwd": "/tmp/p", "prompt": "x"}
-    db.rows["d"] = {"id": "d", "status": "done", "created_at": now - 60,
-                    "cwd": "/tmp/p", "prompt": "x", "agent": "codex"}
-    _runner_mod._PERM["perm_c_1"] = {"event": _threading.Event(), "allow": None}
-    codingmod._SESSIONS["b"] = {"cancel": _threading.Event()}
-    codingmod._SESSIONS["c"] = {"cancel": _threading.Event()}
-    try:
-        rows = {r["id"]: r for r in WallDataSkill().run({}, _Ctx(db)).data["rows"]}
-        assert rows["a"]["live"] == "idle" and rows["a"]["subtitle"] == "CC · 空闲 · 刚刚"
-        assert rows["b"]["live"] == "running" and rows["b"]["subtitle"] == "CC · 运行中 · 2 小时前"
-        assert rows["c"]["live"] == "waiting" and rows["c"]["subtitle"] == "CC · 等待审批 · 3 天前"
-        assert rows["d"]["subtitle"] == "Codex · 空闲 · 1 分钟前"
-    finally:
-        _runner_mod._PERM.pop("perm_c_1", None)
-        codingmod._SESSIONS.pop("b", None)
-        codingmod._SESSIONS.pop("c", None)
-
-
-def test_wall_data_empty():
-    """空态：无会话 → rows=[]（面板空态文案在 wall.schema.json 的 empty 声明，见下）。"""
-    res = WallDataSkill().run({}, _Ctx(_FakeDB()))
-    assert res.success and res.data["rows"] == []
-
-
-def test_wall_data_is_l0_readonly():
-    """会话墙取数只读 → L0（直调/refresh 均不弹确认）。"""
-    assert WallDataSkill.default_risk == RiskLevel.L0_READONLY
-
-
-def test_rel_time():
-    now = 1_000_000
-    assert codingmod._rel_time(now, now - 5) == "刚刚"
-    assert codingmod._rel_time(now, now - 599) == "9 分钟前"
-    assert codingmod._rel_time(now, now - 7200) == "2 小时前"
-    assert codingmod._rel_time(now, now - 3 * 86400) == "3 天前"
-    assert codingmod._rel_time(now, now + 10) == "刚刚"            # 时钟回拨负值兜 0
-
-
-def test_wall_schema_json_matches_api_and_manifest():
-    """wall.schema.json ↔ api.toml ↔ manifest.toml 三方契约锁定：
-    schema 行行动作指向白名单方法（接管=coding.attach 恒显；停止=coding.wall_stop——
-    schema list 不支持按行条件显隐，v1 两动作同显，idle 停止由 coding.stop 提示兜底）；
-    wall_stop refresh 回刷 wall_data；manifest 声明 coding:wall 面板 + open 插件页入口。"""
-    import json
-    import tomllib
-    coding_dir = os.path.join(os.path.dirname(__file__), "..", "..", "plugins", "coding")
-    schema = json.loads((open(os.path.join(coding_dir, "panel", "wall.schema.json"),
-                              encoding="utf-8")).read())
-    assert schema["type"] == "list" and schema["bind"]["items"] == "$data.rows"
-    assert schema["empty"]["title"] == "还没有编码会话"
-    actions = {a["label"]: a for a in schema["item"]["actions"]}
-    assert actions["接管"]["method"] == "coding.attach"
-    assert actions["接管"]["params"] == {"session_id": "$item.id"}
-    assert actions["停止"]["method"] == "coding.wall_stop"
-    assert actions["停止"]["params"] == {"id": "$item.id"}
-
-    api = tomllib.loads(open(os.path.join(coding_dir, "api.toml"), encoding="utf-8").read())
-    methods = {m["name"]: m for m in api["method"]}
-    assert methods["coding.wall_data"]["handler"] == "coding.wall_data"
-    assert methods["coding.wall_data"]["panel"] == "coding:wall"
-    assert methods["coding.wall_data"]["direct"] is True
-    assert methods["coding.wall_stop"]["handler"] == "coding.stop"
-    assert methods["coding.wall_stop"]["refresh"] == "coding.wall_data"
-    assert "panel" not in methods["coding.wall_stop"]          # refresh 通道自带 panel，不双发
-
-    manifest = tomllib.loads(open(os.path.join(coding_dir, "manifest.toml"),
-                                  encoding="utf-8").read())
-    panels = {p["name"]: p for p in manifest["panel"]}
-    assert panels["wall"]["type"] == "schema"
-    assert panels["wall"]["src"] == "panel/wall.schema.json"
-    assert panels["wall"]["open"] == "wall_data"               # 插件页子入口直调 coding.wall_data
 
 
 # ---------- P1 C1：统一接续 popover —— coding.last_sessions / coding.attach_cc ----------
@@ -1902,3 +1794,170 @@ def test_attach_codex_bad_rollout_degrades(tmp_path, monkeypatch):
         f.write("{ totally broken\n")
     res2 = AttachCodexSkill().run({"session_id": "t-x"}, _Ctx(db))
     assert not res2.success and "t-x" in res2.error
+
+
+# ---------- R4 阶段四 Task 1: coding.perm_pending（review 栏挂载快照源）----------
+from coding import PermPendingSkill  # noqa: E402
+
+
+def test_perm_pending_lists_only_undecided():
+    """_PERM 挂起项列出 rid/sid/tool/summary/params；已裁决项不出现；sid 含下划线解析安全。"""
+    _runner_mod._PERM.clear()
+    try:
+        _runner_mod._PERM["perm_s1_1"] = {"event": _threading.Event(), "allow": None,
+            "tool": "Bash", "summary": "ls -la", "params": {"command": "ls -la"}}
+        _runner_mod._PERM["perm_s1_2"] = {"event": _threading.Event(), "allow": True,
+            "tool": "Edit", "summary": "a.py", "params": {"file_path": "a.py"}}
+        _runner_mod._PERM["perm_my_sid_9"] = {"event": _threading.Event(), "allow": None,
+            "tool": "Read", "summary": "b.py", "params": {"file_path": "b.py"}}
+        r = PermPendingSkill().run({}, _Ctx(_FakeDB()))
+        assert r.success
+        pending = r.data["pending"]
+        assert [p["rid"] for p in pending] == ["perm_s1_1", "perm_my_sid_9"]
+        item = pending[0]
+        assert item["sid"] == "s1"
+        assert item["tool"] == "Bash" and item["summary"] == "ls -la"
+        assert item["params"] == {"command": "ls -la"}
+        assert pending[1]["sid"] == "my_sid"           # rsplit 去尾序号，sid 含下划线安全
+    finally:
+        _runner_mod._PERM.clear()
+
+
+def test_perm_pending_legacy_entry_missing_fields():
+    """老 entry 只有 event/allow（缺 tool/summary/params）→ summary 返 ""、params 返 {}，不炸。"""
+    _runner_mod._PERM.clear()
+    try:
+        _runner_mod._PERM["perm_old_1"] = {"event": _threading.Event(), "allow": None}
+        r = PermPendingSkill().run({}, _Ctx(_FakeDB()))
+        assert r.success
+        item = r.data["pending"][0]
+        assert item["rid"] == "perm_old_1" and item["sid"] == "old"
+        assert item["tool"] == "" and item["summary"] == "" and item["params"] == {}
+    finally:
+        _runner_mod._PERM.clear()
+
+
+def test_perm_entry_carries_tool_summary_params():
+    """回调桥写 entry 带 tool/summary/params 三字段（perm_pending 快照数据源）。"""
+    async def _probe():
+        events = []
+        cb = _runner_mod.make_permission_callback("s9", events.append, timeout_s=5.0)
+
+        async def _decide():
+            # 等 permission_request 发出（回调先同步发事件再 await 等裁决）
+            while not events:
+                await asyncio.sleep(0.005)
+            rid = events[0]["rid"]
+            entry = _runner_mod._PERM[rid]
+            assert entry["tool"] == "Bash"
+            assert entry["summary"] == "ls -la"
+            assert entry["params"] == {"command": "ls -la"}
+            r = DecideSkill().run({"rid": rid, "allow": True}, _Ctx(_FakeDB()))
+            assert r.success, r.error
+
+        decider = asyncio.create_task(_decide())
+        await cb("Bash", {"command": "ls -la"})
+        await decider
+
+    _run(_probe())
+
+
+
+# ---------- R4 阶段五 Task 2: codex usage baseline 落库（多轮 resume 差分跨轮持久）----------
+from _codex_runner import CodexCliRunner  # noqa: E402
+
+
+class _CodexFakeProc:
+    """鸭式 asyncio.subprocess.Process（codex runner fake，不触真 CLI）：
+    stdin 写入/关闭收下即弃；stdout=自身异步迭代预置 JSONL 行；无 stderr 属性
+    （runner getattr 容缺不排）；wait 即退、returncode=0。"""
+    def __init__(self, lines):
+        self.stdin = SimpleNamespace(write=lambda b: None, close=lambda: None)
+        self._lines = list(lines)
+        self.returncode = 0
+    async def wait(self): return self.returncode
+    @property
+    def stdout(self): return self
+    def __aiter__(self): return self._gen()
+    async def _gen(self):
+        for ln in self._lines:
+            yield (ln + "\n").encode()
+
+
+def _codex_runner_with(lines):
+    """预置 JSONL 行的 CodexCliRunner（process_factory 注入 fake proc）。"""
+    proc = _CodexFakeProc(lines)
+    async def factory(argv, cwd): return proc
+    return CodexCliRunner(process_factory=factory)
+
+
+def _wait_stream_done(sid, timeout=5.0):
+    """等 _spawn_stream 的 daemon 线程收尾（entry pop = 流终）；超时直接断言失败。"""
+    deadline = time.time() + timeout
+    while sid in codingmod._SESSIONS:
+        assert time.time() < deadline, f"session {sid} 流式线程未在 {timeout}s 内收尾"
+        time.sleep(0.01)
+
+
+def test_usage_baseline_persisted_and_restored(monkeypatch):
+    """两轮 codex send（真 _spawn_stream 线程）：第一轮 done 后 sessions 行 usage_baseline
+    已落库（thread 累计值 JSON）；entry 流终 pop 后第二轮 _spawn_stream 从库回填——
+    done 的 usage 是增量而非 thread 全量（修多轮 resume token 逐轮重复计）。"""
+    db = _FakeDB()
+    db.rows["s-cx"] = {"id": "s-cx", "status": "running", "agent": "codex",
+                       "cwd": "/tmp/p", "cc_session_id": "t-1"}
+    monkeypatch.setattr(codingmod, "_SESSIONS", {})   # 隔离真注册表；流式线程内读写同此 dict
+    emitted = []
+
+    # 第一轮：全新 entry（无 baseline）→ done 报全量 1000/100，baseline 落库
+    codingmod._spawn_stream(db, "s-cx", "/tmp/p", "第一轮", _codex_runner_with([
+        _json.dumps({"type": "thread.started", "thread_id": "t-1"}),
+        _json.dumps({"type": "turn.completed",
+                     "usage": {"input_tokens": 1000, "output_tokens": 100}}),
+    ]), emitted.append, agent="codex")
+    _wait_stream_done("s-cx")
+    base1 = _json.loads(db.rows["s-cx"]["usage_baseline"])
+    assert base1 == {"input_tokens": 1000, "output_tokens": 100}
+
+    # 第二轮：entry 已 pop（模拟重启/多轮形态）→ _spawn_stream 从库回填 → done 只报增量
+    db.update("sessions", "s-cx", {"status": "running"})   # send 的重置（本测试直调 _spawn_stream）
+    emitted.clear()
+    codingmod._spawn_stream(db, "s-cx", "/tmp/p", "第二轮", _codex_runner_with([
+        _json.dumps({"type": "thread.started", "thread_id": "t-1"}),
+        _json.dumps({"type": "turn.completed",
+                     "usage": {"input_tokens": 1400, "output_tokens": 130}}),
+    ]), emitted.append, resume_session_id="t-1", agent="codex")
+    _wait_stream_done("s-cx")
+    dones = [e["payload"]["data"]["event"] for e in emitted
+             if e.get("kind") == "panel_data"
+             and e["payload"]["data"]["event"].get("kind") == "done"]
+    assert len(dones) == 1
+    assert dones[0]["usage"]["input_tokens"] == 400     # 增量 = 1400 − 1000（非全量 1400）
+    assert dones[0]["usage"]["output_tokens"] == 30
+    # 第二轮 baseline 同步刷新落库（第三轮差分基准）
+    assert _json.loads(db.rows["s-cx"]["usage_baseline"]) == {
+        "input_tokens": 1400, "output_tokens": 130}
+
+
+def test_usage_baseline_corrupt_row_does_not_break_stream(monkeypatch):
+    """坏数据不炸流：sessions 行 usage_baseline 非法 JSON → 回填静默跳过（baseline 按 0，
+    本轮退化为全量上报），流照常 done；结束后以新累计值覆盖落库。"""
+    db = _FakeDB()
+    db.rows["s-bad"] = {"id": "s-bad", "status": "running", "agent": "codex",
+                        "cwd": "/tmp/p", "cc_session_id": "t-9",
+                        "usage_baseline": "{not json"}
+    monkeypatch.setattr(codingmod, "_SESSIONS", {})
+    emitted = []
+    codingmod._spawn_stream(db, "s-bad", "/tmp/p", "任务", _codex_runner_with([
+        _json.dumps({"type": "thread.started", "thread_id": "t-9"}),
+        _json.dumps({"type": "turn.completed",
+                     "usage": {"input_tokens": 50, "output_tokens": 5}}),
+    ]), emitted.append, resume_session_id="t-9", agent="codex")
+    _wait_stream_done("s-bad")
+    dones = [e["payload"]["data"]["event"] for e in emitted
+             if e.get("kind") == "panel_data"
+             and e["payload"]["data"]["event"].get("kind") == "done"]
+    assert len(dones) == 1
+    assert dones[0]["usage"]["input_tokens"] == 50      # baseline 按 0 → 全量上报一轮（退化不炸）
+    assert _json.loads(db.rows["s-bad"]["usage_baseline"]) == {
+        "input_tokens": 50, "output_tokens": 5}

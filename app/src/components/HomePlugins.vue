@@ -25,6 +25,7 @@ import { formatContextPrefix, type InputContext } from "../lib/at-mention";
 import { procLabel, procSkip, procResultSuffix } from "../lib/proc";
 import { sessionStore } from "../state/store";
 import type { Attention, Presentation } from "../lib/surface-policy";
+import type { WebviewPayload } from "../lib/webview-source";
 
 type AvatarState = "idle" | "listen" | "think" | "work" | "say";
 const props = withDefaults(defineProps<{
@@ -212,7 +213,7 @@ const current = ref<{
   panel: string;
   title: string;
   schema: any;
-  webview: { html?: string } | null;
+  webview: WebviewPayload | null;
   data: Record<string, unknown>;
   hints?: { presentation: Presentation | null; attention: Attention; surfaces?: Presentation[] };
 } | null>(null);
@@ -377,26 +378,10 @@ function clearObjectScope(): boolean {
 
 defineExpose({ backToList, suspendSurface, restoreSurface, clearObjectScope, collapseScene });
 
-// ---- 会话墙实时刷新（coding_sessions 生命周期事件 → 防抖重查 wall_data）----
-let wallTimer: ReturnType<typeof setTimeout> | null = null;
-function scheduleWallRefresh() {
-  if (wallTimer) clearTimeout(wallTimer);
-  wallTimer = setTimeout(() => {
-    wallTimer = null;
-    if (viewingList.value || current.value?.panel !== "coding:wall") return;   // 防抖窗口内切走/返回列表则不查
-    void panelAction("coding.wall_data", {}, undefined, surface.value).catch(() => {});
-  }, 400);
-}
-
 function onEvent(e: BrainEvent) {
   // 会话分流：宠物场景（对话页）的对话事件不归这里；panel/panel_data 例外（面板内容必须接）
   if (e.kind !== "panel" && e.kind !== "panel_data" && e.surface === "pet") return;
   switch (e.kind) {
-    case "coding_sessions":
-      // 会话墙实时刷新：仅墙正在展示才重查（重查会 emit panel 事件——backToList 后 current
-      // 粘性保留（再进秒开），不看 panel 会误判「墙开着」而把用户从插件列表拽回墙）
-      if (!viewingList.value && current.value?.panel === "coding:wall") scheduleWallRefresh();
-      break;
     case "panel_data":
       // 流式增量：同面板才合并；只动 data（webview/schema/title 不动 → srcdoc 不变 → iframe 不重载）
       if (current.value?.panel === (e.payload?.panel ?? "")) {
@@ -411,7 +396,7 @@ function onEvent(e: BrainEvent) {
         panel: e.payload?.panel ?? "",
         title: e.payload?.title ?? e.payload?.panel ?? "",
         schema: (e.payload?.schema as any) ?? null,
-        webview: (e.payload?.webview as { html?: string } | null) ?? null,
+        webview: (e.payload?.webview as WebviewPayload | null) ?? null,
         data: e.payload?.data ?? {},
         hints: {
           presentation: (e.payload?.presentation as Presentation | null | undefined) ?? null,
@@ -522,7 +507,7 @@ async function onAction(a: { method: string; params: Record<string, unknown> }) 
 }
 
 // 工作台条交互：提交走同一 runInput（focus 已在大脑上下文里）；mic/长按团子 = 语音
-const barRef = ref<HTMLElement | null>(null);
+const inputBarRef = ref<{ focus: () => void } | null>(null);
 
 function submit(text: string, contexts: InputContext[] = []) {
   errorText.value = "";
@@ -551,7 +536,7 @@ function onPetTap() {
 }
 
 function focusInput() {
-  barRef.value?.querySelector("input")?.focus();
+  inputBarRef.value?.focus(); // 经 InputBar expose 聚焦主 textarea（querySelector("input") 会误中隐藏 file-input）
 }
 
 /** 挂载补拉最近一次 panel 载荷：大窗可能在协作中途才打开（panel 事件先于本页订阅发出）。
@@ -563,7 +548,7 @@ async function pullCache() {
       panel: string;
       title?: string;
       schema: any;
-      webview: { html?: string } | null;
+      webview: WebviewPayload | null;
       data: Record<string, unknown>;
     } | null>("get_current_panel");
     if (cached && current.value === null) {
@@ -585,6 +570,9 @@ async function pullCache() {
 
 // webview 面板 html（空串 → 走 schema 面板）
 const webviewHtml = computed(() => current.value?.webview?.html ?? "");
+// module 面板(R4):url/v 直传 WebviewPanel;空串 → 与 html 一起判空走 schema/占位
+const webviewUrl = computed(() => current.value?.webview?.url ?? "");
+const webviewV = computed(() => current.value?.webview?.v ?? 0);
 
 watch(state, (s) => emit("state", s));
 
@@ -635,7 +623,6 @@ onMounted(async () => {
 onUnmounted(() => {
   unlisten?.();
   if (collapseTimer !== null) clearTimeout(collapseTimer);
-  if (wallTimer) clearTimeout(wallTimer);
 });
 </script>
 
@@ -700,10 +687,12 @@ onUnmounted(() => {
 
         <div class="content">
           <WebviewPanel
-            v-if="current && webviewHtml"
+            v-if="current && (webviewHtml || webviewUrl)"
             :key="current.panel"
             :panel="current.panel"
             :html="webviewHtml"
+            :url="webviewUrl"
+            :v="webviewV"
             :data="current.data"
           />
           <SchemaPanel
@@ -716,7 +705,7 @@ onUnmounted(() => {
         </div>
 
         <!-- 工作台条：对话浮层（输入/回复时间线）+ 团子 + 上下文 chip + 输入条 -->
-        <div ref="barRef" class="bench">
+        <div class="bench">
           <transition name="pop">
             <div v-if="layerVisible && (msgs.length || listeningHint)" ref="layerRef" class="thread">
               <button class="thread-x" title="收起" @click="layerVisible = false">×</button>
@@ -752,7 +741,7 @@ onUnmounted(() => {
               </svg>
             </button>
             <span v-if="chipText" class="chip" :title="chipText">{{ chipText }}</span>
-            <InputBar class="bench-input" :busy="busy" :listening="state === 'listen'" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
+            <InputBar ref="inputBarRef" class="bench-input" :busy="busy" :listening="state === 'listen'" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
           </div>
         </div>
       </div>
