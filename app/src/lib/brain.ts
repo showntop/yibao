@@ -60,6 +60,8 @@ export interface PanelPayload {
   surfaces?: string[];
   /** 面板声明的最小宽度（px）；宿主窄窗降级用 */
   min_width?: number;
+  /** 面板输入安排（manifest [[panel]].input 四模式）:handoff/none 时壳输入条让位;缺省 inherit */
+  input?: "inherit" | "coexist" | "handoff" | "none";
   /** 发起动作 id：前端把表面锚定到对应的过程行 */
   origin?: string;
 }

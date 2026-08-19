@@ -43,10 +43,10 @@ function mountApp() {
   });
 }
 
-function firePanel(panel: string) {
+function firePanel(panel: string, input?: string) {
   brainHandler!({
     kind: "panel",
-    payload: { panel, title: panel, schema: null, webview: { url: "yibao-plugin://x/panel/dist/index.html", v: 1 }, data: {} },
+    payload: { panel, title: panel, schema: null, webview: { url: "yibao-plugin://x/panel/dist/index.html", v: 1 }, data: {}, ...(input ? { input } : {}) },
   });
 }
 
@@ -56,7 +56,7 @@ describe("输入条 handoff", () => {
     await flushPromises();
     expect(w.find(".bench-bar").exists()).toBe(true);
     expect(w.find(".titlebar .pet").exists()).toBe(false);
-    firePanel("coding:studio");
+    firePanel("coding:studio", "handoff");
     await nextTick();
     expect(w.find(".bench-bar").exists()).toBe(false);
     expect(w.find(".titlebar .pet").exists()).toBe(true);
@@ -69,7 +69,7 @@ describe("输入条 handoff", () => {
   it("handoff 期点标题栏团子开浮层,mini 输入直问大脑;收起清空残稿", async () => {
     const w = mountApp();
     await flushPromises();
-    firePanel("coding:studio");
+    firePanel("coding:studio", "handoff");
     await nextTick();
     await w.find(".titlebar .pet").trigger("click");
     expect(w.find(".ask-row").exists()).toBe(true);
@@ -109,7 +109,7 @@ describe("输入条 handoff", () => {
     firePanel("toolbox:main"); // 先落在非 coding:不触发
     await flushPromises();
     expect(takeDraft).not.toHaveBeenCalled();
-    firePanel("coding:studio");
+    firePanel("coding:studio", "handoff");
     await flushPromises();
     expect(takeDraft).toHaveBeenCalledTimes(1);
     expect(postToIframe).toHaveBeenCalledWith({ type: "handoff-draft", text: "草稿文字" });
@@ -130,9 +130,43 @@ describe("输入条 handoff", () => {
       },
     });
     await flushPromises();
-    firePanel("coding:studio");
+    firePanel("coding:studio", "handoff");
     await flushPromises();
     expect(takeDraft).toHaveBeenCalledTimes(1); // 取稿照跑(空稿也要清持久化副本)
     expect(postToIframe).not.toHaveBeenCalled();
+  });
+
+  it("声明缺省/非 handoff:即使是 coding:studio 也不让位(判定只读声明,无硬编码)", async () => {
+    const w = mountApp();
+    await flushPromises();
+    firePanel("coding:studio"); // 无 input 键
+    await nextTick();
+    expect(w.find(".bench-bar").exists()).toBe(true);
+    firePanel("coding:studio", "coexist");
+    await nextTick();
+    expect(w.find(".bench-bar").exists()).toBe(true);
+  });
+
+  it("none 让位但不随迁(无 Composer,随迁=丢稿)", async () => {
+    const takeDraft = vi.fn(() => "草稿");
+    const postToIframe = vi.fn();
+    const w = mount(PanelApp, {
+      global: {
+        stubs: {
+          SchemaPanel: { template: "<div />" },
+          WebviewPanel: { template: "<div />", setup(_: any, { expose }: any) { expose({ postToIframe }); return {}; } },
+          InputBar: { template: "<div />", setup(_: any, { expose }: any) { expose({ takeDraft, focus() {}, insertText() {} }); return {}; } },
+          Avatar: { template: "<button class='avatar-stub' v-bind='$attrs' />" },
+          YbIcon: { template: "<i />" },
+        },
+      },
+    });
+    await flushPromises();
+    firePanel("toolbox:main");
+    await flushPromises();
+    firePanel("zimeiti:board", "none");
+    await nextTick();
+    expect(w.find(".bench-bar").exists()).toBe(false); // 让位
+    expect(takeDraft).not.toHaveBeenCalled();          // 但不取稿
   });
 });

@@ -38,6 +38,7 @@ const current = ref<{
   schema: any;
   webview: WebviewPayload | null;
   data: Record<string, unknown>;
+  input?: "inherit" | "coexist" | "handoff" | "none";
 } | null>(null);
 const errorText = ref(""); // 面板内顶部错误细条（不进对话气泡）
 const pendingConfirms = ref<PendingConfirm[]>([]);
@@ -58,9 +59,12 @@ const chipText = computed(() => {
   if (typeof t !== "string" || !t) return "";
   return `在看：${t}`;
 });
-// ---- 输入条 handoff(2026-08-19 input-handoff spec):coding:studio 打开期间译宝条整行让位,
-//      iframe 内 Composer 落进本槽位接管输入;团子搬标题栏做逃生口。纯壳侧行为,零桥协议 ----
-const handoff = computed(() => current.value?.panel === "coding:studio");
+// ---- 输入条 handoff(input-handoff spec):声明制(panel-input-modes spec)——
+//      input ∈ {handoff, none} 壳条让位;随迁仅 handoff(none 无 Composer,随迁=丢稿) ----
+const handoff = computed(() => {
+  const m = current.value?.input;
+  return m === "handoff" || m === "none";
+});
 // ---- 对话浮层（工作台条上方）：输入/回复都留痕成时间线；一轮结束几秒后自动收起，角标可重开 ----
 // proc = 过程展示行（工具调用，样式同 hint 淡色小字）
 // pstate 驱动图标与颜色，不再把状态符号拼进 text——文案与呈现分离，图标才能统一走 YbIcon
@@ -124,17 +128,17 @@ function computeFocus(cur: typeof current.value): PanelFocus | null {
 }
 
 /** 面板内容统一入口:赋值 + 重算焦点 + 上报大脑 + 会话分流 surface 随插件切换;
- *  handoff 草稿随迁:进 coding:studio 瞬间取走译宝条草稿移交聚焦工位 Composer(单向)。
+ *  handoff 草稿随迁:进 handoff 面板瞬间取走译宝条草稿移交聚焦工位 Composer(单向)。
  *  取稿必须先于 current 赋值——handoff 后 bench-bar 移除,InputBar 随之卸载。 */
 function setCurrent(v: typeof current.value) {
-  const entering = current.value?.panel !== "coding:studio" && v?.panel === "coding:studio";
+  const entering = current.value?.input !== "handoff" && v?.input === "handoff";
   const draft = entering ? (inputBarRef.value?.takeDraft?.() ?? "") : "";
   current.value = v;
   focus.value = computeFocus(v);
   if (focus.value) setSurface(`panel:${focus.value.plugin}`);
   void reportPanelContext(focus.value).catch(() => {});
   if (draft) void nextTick(() => {
-    if (current.value?.panel !== "coding:studio") return; // 同 tick 已切走,不投给错误 iframe
+    if (current.value?.input !== "handoff") return; // 同 tick 已切走,不投给错误 iframe
     webviewRef.value?.postToIframe({ type: "handoff-draft", text: draft });
   });
 }
@@ -159,6 +163,7 @@ function onEvent(e: BrainEvent) {
         schema: (e.payload?.schema as any) ?? null,
         webview: (e.payload?.webview as WebviewPayload | null) ?? null,
         data: e.payload?.data ?? {},
+        input: e.payload?.input,
       });
       break;
     case "action_proposed":
@@ -355,6 +360,7 @@ async function pullCache() {
       schema: any;
       webview: WebviewPayload | null;
       data: Record<string, unknown>;
+      input?: "inherit" | "coexist" | "handoff" | "none";
     } | null>("get_current_panel");
     if (cached && current.value === null) {
       setCurrent({ ...cached, title: cached.title ?? cached.panel });
