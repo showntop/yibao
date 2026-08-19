@@ -58,6 +58,9 @@ const chipText = computed(() => {
   if (typeof t !== "string" || !t) return "";
   return `在看：${t}`;
 });
+// ---- 输入条 handoff(2026-08-19 input-handoff spec):coding:studio 打开期间译宝条整行让位,
+//      iframe 内 Composer 落进本槽位接管输入;团子搬标题栏做逃生口。纯壳侧行为,零桥协议 ----
+const handoff = computed(() => current.value?.panel === "coding:studio");
 // ---- 对话浮层（工作台条上方）：输入/回复都留痕成时间线；一轮结束几秒后自动收起，角标可重开 ----
 // proc = 过程展示行（工具调用，样式同 hint 淡色小字）
 // pstate 驱动图标与颜色，不再把状态符号拼进 text——文案与呈现分离，图标才能统一走 YbIcon
@@ -368,7 +371,11 @@ onUnmounted(() => {
 <template>
   <div class="panel-shell">
     <div class="titlebar" data-tauri-drag-region>
-      <span class="name">{{ current?.title ?? "面板" }}</span>
+      <span class="name">
+        <!-- handoff 逃生口:团子搬到壳标题栏(点击开浮层问译宝,mini 输入见 Task 2) -->
+        <Avatar v-if="handoff" class="pet titlebar-pet" :state="state" :size="20" @click="openLayer" />
+        {{ current?.title ?? "面板" }}
+      </span>
       <button class="x" title="关闭" @click="close">×</button>
     </div>
 
@@ -450,7 +457,7 @@ onUnmounted(() => {
           </div>
         </div>
       </transition>
-      <div class="bench-bar">
+      <div v-if="!handoff" class="bench-bar">
         <Avatar class="pet" :state="state" :size="30" @click="onPetTap" @longpress="onMic" />
         <button v-if="!layerVisible && msgs.length" class="thread-open" title="查看对话" @click="openLayer">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -497,8 +504,15 @@ onUnmounted(() => {
   user-select: none;
 }
 .name {
+  display: flex;
+  align-items: center;
+  gap: var(--yb-space-2);
   font-size: var(--yb-fs-lg);
   font-weight: 600;
+}
+.titlebar-pet {
+  flex-shrink: 0;
+  cursor: pointer;
 }
 .x {
   border: none;
@@ -624,7 +638,6 @@ onUnmounted(() => {
 /* ---- 工作台条 ---- */
 .bench {
   position: relative;
-  margin: 0 var(--yb-space-2) var(--yb-space-2);
 }
 /* thread：取消 box-shadow / 独立圆角 / 独立边框。
    原版像独立 popover（圆角+边框+阴影+实色背景），与下方 .bar (InputBar)
@@ -792,6 +805,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: var(--yb-space-2);
+  margin: 0 var(--yb-space-2) var(--yb-space-2);
 }
 .pet {
   flex-shrink: 0;
