@@ -65,4 +65,29 @@ describe("输入条 handoff", () => {
     expect(w.find(".bench-bar").exists()).toBe(true);
     expect(w.find(".titlebar .pet").exists()).toBe(false);
   });
+
+  it("handoff 期点标题栏团子开浮层,mini 输入直问大脑;收起清空残稿", async () => {
+    const w = mountApp();
+    await flushPromises();
+    firePanel("coding:studio");
+    await nextTick();
+    await w.find(".titlebar .pet").trigger("click");
+    expect(w.find(".ask-row").exists()).toBe(true);
+    await w.find(".ask-input").setValue("这个报错什么意思");
+    await w.find(".ask-send").trigger("click");
+    expect(runInputMock).toHaveBeenCalledWith("这个报错什么意思");
+    expect(w.find(".t-row.user").text()).toContain("这个报错什么意思");
+    // 收起清空残稿,重开不留
+    await w.find(".thread-x").trigger("click");
+    await w.find(".titlebar .pet").trigger("click");
+    expect((w.find(".ask-input").element as HTMLInputElement).value).toBe("");
+  });
+
+  it("非 handoff 时无 mini 输入(主 InputBar 在场,不需要逃生口)", async () => {
+    const w = mountApp();
+    await flushPromises();
+    firePanel("toolbox:main");
+    await nextTick();
+    expect(w.find(".ask-row").exists()).toBe(false);
+  });
 });

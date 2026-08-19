@@ -2,7 +2,7 @@
 // 面板窗根组件：标题栏（可拖动 + 面板名 + 关闭）/ 单条快批 / 错误细条 / SchemaPanel 撑满。
 // 工作台条（v2 §5）：面板是手、译宝是脑——条上有团子（状态同步）+ 上下文 chip + 输入条，
 // 对话走同一大脑；面板内容作为 focus 上报，注入 LLM 上下文（「这个/它」有解）。
-import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import SchemaPanel from "./SchemaPanel.vue";
@@ -281,6 +281,33 @@ function submit(text: string, contexts: InputContext[] = []) {
   });
 }
 
+/** 逃生口「问团子」(handoff 期浮层底部 mini 输入):直走译宝大脑(原 runInput 路径,
+ *  面板 focus 已在大脑上下文里),不打断编码会话。复活自 30dd8c9,takeover 路由已退役。 */
+const askText = ref("");
+// 浮层收起即清空 mini 输入,下次打开不留残稿
+watch(layerVisible, (v) => {
+  if (!v) askText.value = "";
+});
+
+function submitBrain(text: string) {
+  const t = text.trim();
+  if (!t) return;
+  errorText.value = "";
+  askText.value = "";
+  pushMsg("user", t); // 输入立刻有落点(浮层时间线)
+  void runInput(t).catch((err) => {
+    errorText.value = "发送失败：" + String(err);
+  });
+}
+
+// mini 输入 IME 守卫(同 InputBar:WebKit 下 compositionend 先于确认 Enter 的 keydown,
+// 该 keydown 的 isComposing 已为 false——记 compositionend 时间戳,50ms 窗口内的 Enter 一并拦截)
+let askCompEnd = 0;
+function onAskEnter(e: KeyboardEvent) {
+  if (e.isComposing || Date.now() - askCompEnd < 50) return;
+  submitBrain(askText.value);
+}
+
 function onMic() {
   void voiceStart().catch((err) => {
     errorText.value = "语音失败：" + String(err);
@@ -427,7 +454,7 @@ onUnmounted(() => {
     <!-- 工作台条：对话浮层（输入/回复时间线）+ 团子 + 上下文 chip + 输入条 -->
     <div class="bench">
       <transition name="pop">
-        <div v-if="layerVisible && (msgs.length || listeningHint)" ref="layerRef" class="thread">
+        <div v-if="layerVisible && (msgs.length || listeningHint || handoff)" ref="layerRef" class="thread">
           <button class="thread-x" title="收起" aria-label="收起对话" @click="layerVisible = false">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -454,6 +481,20 @@ onUnmounted(() => {
           <div v-if="listeningHint" class="t-row hint">
             <YbIcon class="t-ic" name="mic" :size="12" />
             <span>聆听中…（点团子取消）</span>
+          </div>
+          <!-- 逃生口 mini 输入行(仅 handoff 渲染):单行 input + 发送钮,直问译宝大脑 -->
+          <div v-if="handoff" class="ask-row">
+            <input
+              v-model="askText"
+              class="ask-input"
+              type="text"
+              placeholder="问团子…（不打断编码会话）"
+              @keydown.enter.exact.prevent="onAskEnter"
+              @compositionend="askCompEnd = Date.now()"
+            />
+            <button type="button" class="ask-send" :disabled="!askText.trim()" @click="submitBrain(askText)">
+              发送
+            </button>
           </div>
         </div>
       </transition>
@@ -770,6 +811,42 @@ onUnmounted(() => {
 }
 .t-row.is-fail {
   color: var(--yb-danger);
+}
+/* 逃生口 mini 输入行:thread 底部单行 input + accent 发送钮,与 thread 同玻璃调性 */
+.ask-row {
+  display: flex;
+  align-items: center;
+  gap: var(--yb-space-2);
+  padding-top: 2px;
+}
+.ask-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 10px;
+  border: 1px solid var(--yb-surface-border);
+  border-radius: var(--yb-radius-md);
+  background: var(--yb-surface);
+  color: var(--yb-text);
+  font-size: var(--yb-fs-md);
+  font-family: inherit;
+  outline: none;
+}
+.ask-input:focus {
+  border-color: var(--yb-accent);
+}
+.ask-send {
+  flex-shrink: 0;
+  border: none;
+  border-radius: var(--yb-radius-md);
+  padding: 5px 14px;
+  background: var(--yb-accent);
+  color: var(--yb-text-on-accent);
+  font-size: var(--yb-fs-md);
+  cursor: pointer;
+}
+.ask-send:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 .thread-open {
   width: 28px;
