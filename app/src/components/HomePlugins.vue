@@ -215,6 +215,7 @@ const current = ref<{
   schema: any;
   webview: WebviewPayload | null;
   data: Record<string, unknown>;
+  input?: "inherit" | "coexist" | "handoff" | "none";
   hints?: { presentation: Presentation | null; attention: Attention; surfaces?: Presentation[] };
 } | null>(null);
 const errorText = ref(""); // 面板内顶部错误细条（不进对话气泡）
@@ -229,6 +230,12 @@ const surface = computed(() => (focus.value ? `panel:${focus.value.plugin}` : "p
 const chipText = computed(() => {
   const t = focus.value?.item?.title;
   return t ? `在看：${t}` : "";
+});
+// ---- 大窗输入条 handoff(panel-input-modes spec §C):声明制,与 PanelApp 同规则——
+//      input ∈ {handoff, none} 壳条让位;逃生口 = 顶部「主屏」tab,不加新元素 ----
+const handoff = computed(() => {
+  const m = current.value?.input;
+  return m === "handoff" || m === "none";
 });
 // ---- 对话浮层（工作台条上方）：输入/回复都留痕成时间线；一轮结束几秒后自动收起，角标可重开 ----
 // proc = 过程展示行（工具调用，样式同 hint 淡色小字）
@@ -398,6 +405,7 @@ function onEvent(e: BrainEvent) {
         schema: (e.payload?.schema as any) ?? null,
         webview: (e.payload?.webview as WebviewPayload | null) ?? null,
         data: e.payload?.data ?? {},
+        input: e.payload?.input,
         hints: {
           presentation: (e.payload?.presentation as Presentation | null | undefined) ?? null,
           attention: (e.payload?.attention as Attention | undefined) ?? "suggest",
@@ -550,6 +558,7 @@ async function pullCache() {
       schema: any;
       webview: WebviewPayload | null;
       data: Record<string, unknown>;
+      input?: "inherit" | "coexist" | "handoff" | "none";
     } | null>("get_current_panel");
     if (cached && current.value === null) {
       setCurrent({ ...cached, title: cached.title ?? cached.panel }, true);
@@ -704,8 +713,9 @@ onUnmounted(() => {
           />
         </div>
 
-        <!-- 工作台条：对话浮层（输入/回复时间线）+ 团子 + 上下文 chip + 输入条 -->
-        <div class="bench">
+        <!-- 工作台条：对话浮层（输入/回复时间线）+ 团子 + 上下文 chip + 输入条。
+             handoff 时 bench-bar 让位,is-handoff 清容器垂直 padding/分隔线,不留空缝 -->
+        <div class="bench" :class="{ 'is-handoff': handoff }">
           <transition name="pop">
             <div v-if="layerVisible && (msgs.length || listeningHint)" ref="layerRef" class="thread">
               <button class="thread-x" title="收起" @click="layerVisible = false">×</button>
@@ -732,7 +742,7 @@ onUnmounted(() => {
               </div>
             </div>
           </transition>
-          <div class="bench-bar">
+          <div v-if="!handoff" class="bench-bar">
             <Avatar class="pet" :state="state" :size="30" @click="onPetTap" @longpress="onMic" />
             <button v-if="!layerVisible && msgs.length" class="thread-open" title="查看对话" @click="openLayer">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -1054,6 +1064,9 @@ onUnmounted(() => {
   backdrop-filter: blur(18px);
 }
 .is-focus .bench { padding-left: 24px; padding-right: 24px; }
+/* handoff 让位:bench-bar 已移除,容器垂直 padding 与分隔线一并让位——空 bench 高 0,面板内容到底不留缝隙。
+   水平 padding 保留:高度为 0 时不可见,也无需区分 in-scene/is-focus 变体(规则顺序在后,覆盖它们) */
+.bench.is-handoff { padding-top: 0; padding-bottom: 0; border-top: none; }
 
 @media (max-width: 720px) {
   .scene-source { display: none; }
