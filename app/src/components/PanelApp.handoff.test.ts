@@ -114,4 +114,25 @@ describe("输入条 handoff", () => {
     expect(takeDraft).toHaveBeenCalledTimes(1);
     expect(postToIframe).toHaveBeenCalledWith({ type: "handoff-draft", text: "草稿文字" });
   });
+
+  it("takeDraft 返回空串不投递", async () => {
+    const takeDraft = vi.fn(() => "");
+    const postToIframe = vi.fn();
+    mount(PanelApp, {
+      global: {
+        stubs: {
+          SchemaPanel: { template: "<div />" },
+          WebviewPanel: { template: "<div />", setup(_: any, { expose }: any) { expose({ postToIframe }); return {}; } },
+          InputBar: { template: "<div />", setup(_: any, { expose }: any) { expose({ takeDraft, focus() {}, insertText() {} }); return {}; } },
+          Avatar: { template: "<button class='avatar-stub' v-bind='$attrs' />" },
+          YbIcon: { template: "<i />" },
+        },
+      },
+    });
+    await flushPromises();
+    firePanel("coding:studio");
+    await flushPromises();
+    expect(takeDraft).toHaveBeenCalledTimes(1); // 取稿照跑(空稿也要清持久化副本)
+    expect(postToIframe).not.toHaveBeenCalled();
+  });
 });

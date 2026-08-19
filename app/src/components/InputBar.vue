@@ -61,7 +61,12 @@ onBeforeUnmount(() => {
   for (const p of pendingCalls.values()) clearTimeout(p.timer);
   pendingCalls.clear();
 });
-watch(text, (v) => persistDraft(v));
+// takeDraft 清屏也会触发本 watch——那次由 takeDraft 写穿落库,这里跳过一次,避免重排 debounce 二次写
+let skipDraftPersist = false;
+watch(text, (v) => {
+  if (skipDraftPersist) { skipDraftPersist = false; return; }
+  persistDraft(v);
+});
 
 // ---- @ 文件引用（chips 化）：输入 @ 触发文件搜索浮层，选中成 file chip 进 pendingContexts。
 //      搜索通道 = panelAction + onBrainEvent 关联 pa_<rid>（WebviewPanel 既有模式）；
@@ -329,13 +334,17 @@ function insertText(t: string) {
   inputRef.value?.focus();
 }
 
-/** handoff 草稿随迁(spec §C):取走草稿=清文本+清持久化副本(persistDraft("")走 300ms
- *  debounce 写 store);空草稿返回 ""。调用时机必须在 InputBar 随 bench-bar 卸载之前。 */
+/** handoff 草稿随迁(spec §C):取走草稿=清文本+清持久化副本(写穿,不走 persistDraft 的
+ *  300ms debounce——窗口期内重挂会读到未清旧稿并重新持久化);空草稿返回 ""。
+ *  调用时机必须在 InputBar 随 bench-bar 卸载之前。 */
 function takeDraft(): string {
   const d = text.value.trim();
   if (!d) return "";
+  if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; } // 掐死在途的打字 debounce
+  skipDraftPersist = true; // 下方清屏触发的 watch 由这里写穿代劳,不再排 debounce
   text.value = "";
-  persistDraft("");
+  const id = sessionStore.conversation.getActiveConversationId();
+  if (id) sessionStore.conversation.setDraft(id, ""); // 随迁即清,写穿 store
   return d;
 }
 

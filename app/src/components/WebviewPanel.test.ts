@@ -30,4 +30,21 @@ describe("WebviewPanel postToIframe 就绪暂存", () => {
     (w.vm as any).postToIframe({ type: "handoff-draft", text: "乙" });
     expect(postSpy).toHaveBeenCalledTimes(1);
   });
+
+  it("load 前两次暂存只补发最后一条", async () => {
+    const w = mount(WebviewPanel, { props: PROPS, attachTo: document.body });
+    const iframe = w.find("iframe").element as HTMLIFrameElement;
+    const postSpy = vi.spyOn(iframe.contentWindow!, "postMessage");
+    (w.vm as any).postToIframe({ type: "handoff-draft", text: "甲" });
+    (w.vm as any).postToIframe({ type: "handoff-draft", text: "乙" });
+    await w.find("iframe").trigger("load");
+    expect(postSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "handoff-draft", text: "甲" }),
+      "*",
+    );
+    expect(postSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ src: "yibao-host", type: "handoff-draft", text: "乙" }),
+      "*",
+    );
+  });
 });

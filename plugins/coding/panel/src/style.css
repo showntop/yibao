@@ -476,9 +476,10 @@ footer { flex: none; background: transparent; padding: 0 10px 10px; }
 .cbtn.stop { background: var(--red-bg); color: var(--red); }
 .cbtn.stop:hover { filter: brightness(.97); }
 .cbtn.stop:disabled { opacity: .5; cursor: default; }
-/* 状态细行：输入框上方淡小字，有内容才占位（StationView status slot 空态不渲染） */
-.status-line { font-size: 11px; color: var(--faint); padding: 0 6px 2px; }
-.status-line:empty { display: none; }
+/* 状态细行：输入框上方淡小字，有内容才占位（StationView status slot 空态不渲染）；
+   inline #status 失去旧 .keys-row 的 flex 上下文，块级截断防长文横向溢出 composer-bar */
+.status-line { font-size: 11px; color: var(--faint); padding: 0 6px 2px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.status-line:empty { display: none; } /* slot 空态渲染的是注释节点,不影响 :empty 匹配 */
 /* @ 补全下拉:textarea 容器相对定位,菜单向上展开 */
 .prompt-wrap { position: relative; }
 .at-menu { position: absolute; bottom: 100%; left: 0; right: 0; max-height: 200px; overflow: auto; background: var(--card); border: 1px solid var(--border); border-radius: var(--r-md); box-shadow: var(--shadow-card); z-index: 30; }

@@ -133,7 +133,10 @@ function setCurrent(v: typeof current.value) {
   focus.value = computeFocus(v);
   if (focus.value) setSurface(`panel:${focus.value.plugin}`);
   void reportPanelContext(focus.value).catch(() => {});
-  if (draft) void nextTick(() => webviewRef.value?.postToIframe({ type: "handoff-draft", text: draft }));
+  if (draft) void nextTick(() => {
+    if (current.value?.panel !== "coding:studio") return; // 同 tick 已切走,不投给错误 iframe
+    webviewRef.value?.postToIframe({ type: "handoff-draft", text: draft });
+  });
 }
 
 function onEvent(e: BrainEvent) {
@@ -291,6 +294,10 @@ function submit(text: string, contexts: InputContext[] = []) {
 const askText = ref("");
 // 浮层收起即清空 mini 输入,下次打开不留残稿
 watch(layerVisible, (v) => {
+  if (!v) askText.value = "";
+});
+// handoff 结束(切走)同样清残稿——浮层可能未收起,下次进 coding 不复活旧稿
+watch(handoff, (v) => {
   if (!v) askText.value = "";
 });
 
@@ -684,8 +691,11 @@ onUnmounted(() => {
 }
 
 /* ---- 工作台条 ---- */
+/* 水平 margin 锚在 .bench:浮层 .thread 以它为定位锚(left/right:0),边缘与 bench-bar 对齐;
+   空 .bench 高 0 且无垂直 margin,handoff 让位后不留缝隙 */
 .bench {
   position: relative;
+  margin: 0 var(--yb-space-2);
 }
 /* thread：取消 box-shadow / 独立圆角 / 独立边框。
    原版像独立 popover（圆角+边框+阴影+实色背景），与下方 .bar (InputBar)
@@ -889,7 +899,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: var(--yb-space-2);
-  margin: 0 var(--yb-space-2) var(--yb-space-2);
+  margin-bottom: var(--yb-space-2);
 }
 .pet {
   flex-shrink: 0;
