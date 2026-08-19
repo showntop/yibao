@@ -801,6 +801,52 @@ def test_panel_payload_webview_shape(data_dir, tmp_path):
     assert panel_payload(r2) is None
 
 
+# ---------- 面板输入模式声明 [[panel]].input(panel-input-modes spec)----------
+
+
+def test_panel_input_declared_passthrough(data_dir, tmp_path):
+    """声明 input = "handoff" → 注册表保留且 panel_payload 载荷透传。"""
+    from yibao_brain.plugins import get_panel, panel_payload
+
+    manifest = NOTES_PANEL_MANIFEST.replace(
+        'type = "schema"\nname = "list"',
+        'type = "schema"\nname = "list"\ninput = "handoff"',
+    )
+    _write_plugin(tmp_path, "notes", manifest, {"panel/list.schema.json": LIST_SCHEMA})
+    reg = SkillRegistry()
+    assert _load(tmp_path, reg) == {"notes": "ok"}
+    assert get_panel("notes:list")["input"] == "handoff"
+    p = panel_payload(ActionResult(success=True, data={"rows": []}, panel="notes:list"))
+    assert p["input"] == "handoff"
+
+
+def test_panel_input_absent_no_key(data_dir, tmp_path):
+    """未声明 → 注册表与载荷都无 input 键(缺省 inherit 由前端语义兜,不发键)。"""
+    from yibao_brain.plugins import get_panel, panel_payload
+
+    _write_plugin(tmp_path, "notes", NOTES_PANEL_MANIFEST, {"panel/list.schema.json": LIST_SCHEMA})
+    reg = SkillRegistry()
+    _load(tmp_path, reg)
+    assert "input" not in get_panel("notes:list")
+    p = panel_payload(ActionResult(success=True, data={"rows": []}, panel="notes:list"))
+    assert "input" not in p
+
+
+def test_panel_input_invalid_warns_and_drops(data_dir, tmp_path, capsys):
+    """非法值 → stderr 告警 + 按未声明处理(不回退出键,前端语义 inherit)。"""
+    from yibao_brain.plugins import get_panel
+
+    manifest = NOTES_PANEL_MANIFEST.replace(
+        'type = "schema"\nname = "list"',
+        'type = "schema"\nname = "list"\ninput = "takeover"',
+    )
+    _write_plugin(tmp_path, "notes", manifest, {"panel/list.schema.json": LIST_SCHEMA})
+    reg = SkillRegistry()
+    assert _load(tmp_path, reg) == {"notes": "ok"}
+    assert "input" not in get_panel("notes:list")
+    assert "inherit" in capsys.readouterr().err
+
+
 # ---------- db insert auto（系统生成字段）----------
 
 

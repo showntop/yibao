@@ -30,6 +30,8 @@ from .skills import Skill, SkillContext, SkillRegistry
 CAPABILITIES = {"db", "memory", "http", "llm", "host", "reminders", "process"}
 # 能力表面四档（调研 §12.7）：manifest 面板可声明支持哪些档；非法值静默过滤
 _SURFACE_LEVELS = ("inline", "peek", "stage", "focus")
+# 面板输入模式（panel-input-modes spec）：[[panel]].input 合法值；非法值告警后按未声明处理
+_INPUT_MODES = ("inherit", "coexist", "handoff", "none")
 # 声明式 tool 类型 → 所需 capability（加载期校验，manifest 未声明即加载失败）
 TOOL_TYPE_CAPABILITY = {"db": "db", "http": "http", "prompt": "llm"}
 
@@ -348,7 +350,7 @@ def get_widgets() -> dict[str, dict]:
 
 
 def _surface_decl_from(panel) -> dict:
-    """面板声明的表面范围（surfaces/min_width）→ payload 顶层字段，供宿主裁决回落。"""
+    """面板声明的表面范围（surfaces/min_width）与输入模式（input）→ payload 顶层字段，供宿主裁决回落。"""
     if not isinstance(panel, dict):
         return {}
     out: dict = {}
@@ -356,6 +358,7 @@ def _surface_decl_from(panel) -> dict:
         out["surfaces"] = panel["surfaces"]
     if "min_width" in panel:
         out["min_width"] = panel["min_width"]
+    if "input" in panel: out["input"] = panel["input"]
     return out
 
 
@@ -365,7 +368,7 @@ def panel_payload(result) -> dict | None:
     schema 面板:{panel, title, schema, data};webview 面板:{..., webview: {html}, data};
     module 面板(R4):{..., webview: {url, v}, data}——url 指 yibao-plugin:// 协议,v 为入口文件
     mtime(热加载版本号:文件变 → v 变 → 前端 iframe 重载,sidecar 不重启)。
-    面板声明过 surfaces/min_width 时顶层同步带上(宿主裁决回落依据)。
+    面板声明过 surfaces/min_width/input 时顶层同步带上(宿主裁决回落依据)。
     """
     if not result.panel:
         return None
@@ -474,6 +477,14 @@ def _load_panels(child: Path, pid: str, manifest: dict, registry: SkillRegistry)
             mw = None
         if mw is not None:
             parsed["min_width"] = int(mw)
+        # 输入模式声明（panel-input-modes spec）：合法值原样入注册表随载荷透传；
+        # 非法值告警并按未声明处理（不发键，前端语义缺省 inherit）。
+        im = p.get("input")
+        if im is not None:
+            if im in _INPUT_MODES:
+                parsed["input"] = im
+            else:
+                print(f"[yibao] 插件 {pid} panel {ref} 的 input={im!r} 非法,按 inherit 处理", file=sys.stderr)
         _PANELS[ref] = parsed
 
 
