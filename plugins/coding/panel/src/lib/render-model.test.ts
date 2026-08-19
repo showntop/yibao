@@ -4,14 +4,8 @@ import { describe, expect, it, vi } from "vitest";
 import { createSessionStore, type SessionDeps } from "../stores/session";
 
 function makeDeps(invokeImpl?: SessionDeps["invoke"]) {
-  const timers: Array<{ fn: () => void; ms: number; cleared: boolean }> = [];
-  const deps: SessionDeps = {
-    invoke: invokeImpl ?? vi.fn(async () => ({ session_id: "s1" })),
-    setTimer: (fn, ms) => { const t = { fn, ms, cleared: false }; timers.push(t); return t as never; },
-    clearTimer: (t) => { (t as unknown as (typeof timers)[0]).cleared = true; },
-    userEchoFallbackMs: 1500,
-  };
-  return { deps, timers };
+  const deps: SessionDeps = { invoke: invokeImpl ?? vi.fn(async () => ({ session_id: "s1" })) };
+  return { deps };
 }
 
 describe("T4 渲染模型补缺", () => {

@@ -46,9 +46,6 @@ export interface SessionState {
 
 export interface SessionDeps {
   invoke: (method: string, params?: Record<string, unknown>) => Promise<unknown>;
-  setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
-  clearTimer: (t: ReturnType<typeof setTimeout>) => void;
-  userEchoFallbackMs: number; // 生产 1500,测试可 0/手动
   onResumedCwd?: (cwd: string) => void; // resumeSession 成功且 history 带 cwd 时回调(对齐原 setCwd(r.cwd))
   onQueueHandoff?: (agent: string) => void; // 泄放路径跨引擎交接落定(T9):App 清 switchAgent + curAgent 同步
 }
@@ -75,8 +72,7 @@ export function createSessionStore(deps: SessionDeps) {
   const discardedSessions = new Set<string>();
   let sendQueue: Array<{ text: string; refs: string[] }> = [];
   let pendingTurnEnded = false; // 秒败竞态:终态先于 invoke 返回
-  let pendingUserEcho: ReturnType<typeof setTimeout> | null = null;
-  let fallbackUserIndex = -1;   // 兜底气泡在 items 里的下标(-1 无)
+  let fallbackUserIndex = -1;   // 即时上屏的无锚用户气泡在 items 里的下标(-1 无;回流升级后归位)
   let handoffSeq = 0;           // 交接卡自增序号(v-for key;newChat 清卡不复位,单调递增即唯一)
 
   const curAssistant = (): Extract<RenderItem, { type: "assistant" }> | null => {
@@ -121,9 +117,8 @@ export function createSessionStore(deps: SessionDeps) {
     switch (ev.kind) {
       case "user_msg": {
         state.error = null;
-        if (pendingUserEcho) { deps.clearTimer(pendingUserEcho); pendingUserEcho = null; }
         finalizeAssistant();
-        // 兜底气泡原地升级(文本匹配才认,防双份)
+        // 即时上屏的无锚气泡原地升级补 uuid(文本匹配才认,防双份)
         if (fallbackUserIndex >= 0) {
           const it = state.items[fallbackUserIndex];
           if (it && it.type === "user" && it.text === ev.text && !it.uuid) {
@@ -232,15 +227,13 @@ export function createSessionStore(deps: SessionDeps) {
     state.sending = true;
     state.error = null;
     pendingTurnEnded = false;
-    // 对齐 chat.html:清掉上一轮残留的兜底引用,防跨轮误升级
+    // 清掉上一轮残留的引用,防跨轮误升级(对齐 chat.html 的兜底清理语义)
     fallbackUserIndex = -1;
-    // 用户气泡不直接画:等 user_msg 回流(带 uuid rewind 锚);超时兜底画无锚气泡
-    if (pendingUserEcho) deps.clearTimer(pendingUserEcho);
-    pendingUserEcho = deps.setTimer(() => {
-      state.items.push({ type: "user", text: fullPrompt });
-      fallbackUserIndex = state.items.length - 1;
-      pendingUserEcho = null;
-    }, deps.userEchoFallbackMs);
+    // 用户气泡立即上屏(验收体验:引擎 resume/启动慢,等 user_msg 回流会先弹「接续」像没发出去;
+    // Codex 会话根本无 user_msg 回流,原 1500ms 兜底是必然路径)。回流时由 user_msg 分支
+    // 原地升级补 uuid rewind 锚(文本匹配才认,防双份)。
+    state.items.push({ type: "user", text: fullPrompt });
+    fallbackUserIndex = state.items.length - 1;
 
     const isStart = !state.currentSession;
     const method = isStart ? "coding.start" : "coding.send";
@@ -257,7 +250,12 @@ export function createSessionStore(deps: SessionDeps) {
       state.streaming = true;
       state.runPrefix = "会话 " + r.session_id + (isStart ? " 启动" : " 接续"); // pill 秒表/状态行前缀
     } catch (e) {
-      if (pendingUserEcho) { deps.clearTimer(pendingUserEcho); pendingUserEcho = null; }
+      // 失败摘除刚上屏的无锚气泡(消息没发出去不留痕;已带 uuid 说明已回流,不动)
+      if (fallbackUserIndex >= 0) {
+        const it = state.items[fallbackUserIndex];
+        if (it && it.type === "user" && !it.uuid) state.items.splice(fallbackUserIndex, 1);
+        fallbackUserIndex = -1;
+      }
       state.error = (isStart ? "启动失败:" : "发送失败:") + String(e);
       throw e;
     } finally {
@@ -363,7 +361,6 @@ export function createSessionStore(deps: SessionDeps) {
     state.lastUsage = null;
     state.runPrefix = "";
     fallbackUserIndex = -1;
-    if (pendingUserEcho) { deps.clearTimer(pendingUserEcho); pendingUserEcho = null; }
     sendQueue = [];
   }
 

@@ -7,11 +7,11 @@
 //     已绑投递 / 未绑 bumpRail 派生左栏活体 + 400ms 防抖刷新。
 //   预挂载 stash:壳 onInit 在 setup 顶层注册,init 数据可能早于 StationView 挂载到达——
 //     stationRef 缺失时按工位暂存(每工位 ≤20 条,超出丢最旧),ref 登记时 flush。
-//   左栏编排:coding.sessions quiet 别名拉取(coding.list 本体带 panel 事件,会把插件页顶成
-//     coding 面板);title/subtitle 语义见 railTitle 注释;已绑行活体直读工位态。
+//   左栏:常驻抽屉(验收样式迭代——会话列表默认收起,☰ 常显,stations 区铺满全宽);
+//     编排不变(coding.sessions quiet 别名拉取;title/subtitle 语义见 railTitle 注释;已绑行活体直读工位态)。
 //   聚焦停靠:每工位各自 Composer,非聚焦工位 footer 隐藏(实例存活,草稿保留),聚焦者
 //     footer 绝对定位停靠 stations 区页底;--dock-h 由聚焦工位 dockH 驱动。
-//   窄窗(matchMedia "(max-width: 720px)"):rail 隐藏 + ☰ 开抽屉,v-show 只留聚焦工位。
+//   窄窗(matchMedia "(max-width: 720px)"):v-show 只留聚焦工位 + review 徽按钮开 drawer。
 //   review 栏(R4 阶段四 T5):demux tap permission_request/permission_done 入出列(已绑 sid
 //     照常投递工位,waiting 态工位自维护)+ perm_pending 挂载快照对账;宽窗右栏 260px 仅
 //     有待批出列,窄窗 stations 右上「审批 N」徽按钮开 drawer(裁决清空自动收)。
@@ -315,12 +315,15 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="shell" :class="{ narrow, 'has-review': review.state.items.length > 0 }">
+    <a class="skip-link" href="#stations">跳到工位</a>
+    <!-- 左栏常驻抽屉(验收样式迭代:会话列表默认收起,stations 区铺满全宽):☰ 常显开抽屉,
+         点行/罩层即收(SessionRail 内部自带 close-drawer);窄窗语义不变(单工位 + review 徽按钮) -->
     <SessionRail
-      v-if="!narrow || drawerOpen"
+      v-if="drawerOpen"
       :rows="railRows"
       :stations="stations.state.stations"
       :focus-id="stations.state.focusId"
-      :drawer="narrow"
+      drawer
       :add-disabled="stations.state.stations.length >= MAX_STATIONS"
       @join="join"
       @stop="stopSession"
@@ -328,9 +331,13 @@ onBeforeUnmount(() => {
       @focus-station="onFocusStation"
       @close-drawer="drawerOpen = false"
     />
-    <div class="stations" :style="{ '--dock-h': dockH + 'px' }">
-      <!-- 窄窗 ☰:开左栏抽屉(壳绝对定位于 stations 左上角,仅 narrow 渲染;聚焦切换在抽屉内完成) -->
-      <button v-if="narrow" type="button" class="rail-toggle" title="会话列表" @click="drawerOpen = true">☰</button>
+    <div id="stations" class="stations" :style="{ '--dock-h': dockH + 'px' }">
+      <!-- 会话列表钮常显(左栏常驻抽屉):stations 左上角,点击开会话列表抽屉 -->
+      <button type="button" class="rail-toggle" title="会话列表" aria-label="会话列表" :aria-expanded="drawerOpen" @click="drawerOpen = true">
+        <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+          <path fill="currentColor" d="M2.5 3.75h11v1.25h-11zm0 3.5h11v1.25h-11zm0 3.5h11v1.25h-11z"/>
+        </svg>
+      </button>
       <!-- 窄窗「审批 N」徽按钮(T5):与 ☰ 对称(stations 右上角),仅有待批时现身,点击开 review drawer -->
       <button
         v-if="narrow && review.state.items.length" type="button" class="review-toggle"

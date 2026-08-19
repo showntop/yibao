@@ -2,18 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import { createSessionStore, type SessionDeps } from "./session";
 
 function makeDeps(invokeImpl?: SessionDeps["invoke"]) {
-  const timers: Array<{ fn: () => void; ms: number; cleared: boolean }> = [];
   const invoke = invokeImpl ?? vi.fn(async () => ({ session_id: "s1" }));
-  const deps: SessionDeps = {
-    invoke,
-    setTimer: (fn, ms) => { const t = { fn, ms, cleared: false }; timers.push(t); return t as never; },
-    clearTimer: (t) => { (t as unknown as (typeof timers)[0]).cleared = true; },
-    userEchoFallbackMs: 1500,
-  };
-  return { deps, timers, invoke };
+  const deps: SessionDeps = { invoke };
+  return { deps, invoke };
 }
 
-/** invoke 挂起,手动放行——用于秒败竞态/兜底定时器等需要精确时序的用例 */
+/** invoke 挂起,手动放行——用于秒败竞态等需要精确时序的用例 */
 function heldInvoke() {
   let release!: (v: { session_id: string }) => void;
   const invoke = vi.fn(() => new Promise<{ session_id: string }>((res) => { release = res; }));
@@ -109,20 +103,18 @@ describe("事件归约", () => {
   });
 
   // 清单 4
-  it("user_msg 产生用户气泡(带 uuid);文本匹配的兜底气泡原地升级不双份", async () => {
-    // 直接回流(无兜底)→ 新用户气泡
+  it("user_msg 产生用户气泡(带 uuid);即时上屏的无锚气泡原地升级不双份", async () => {
+    // 直接回流(无发送)→ 新用户气泡
     const { deps } = makeDeps();
     const s = createSessionStore(deps);
     s.applyEvent(ev({ kind: "user_msg", uuid: "u1", text: "hi" }));
     expect(s.state.items).toHaveLength(1);
     expect(s.state.items[0]).toMatchObject({ type: "user", text: "hi", uuid: "u1" });
 
-    // 兜底升级:超时画的无锚气泡,user_msg 回流文本匹配 → 原地补 uuid,不双份
+    // 升级:send 即画无锚气泡(不等回流),user_msg 回流文本匹配 → 原地补 uuid,不双份
     const h = heldInvoke();
-    const d2 = makeDeps(h.invoke as never);
-    const s2 = createSessionStore(d2.deps);
+    const s2 = createSessionStore(makeDeps(h.invoke as never).deps);
     const p = s2.send("/tmp", "hello", "acceptEdits", "claude-code");
-    d2.timers[d2.timers.length - 1].fn(); // 手动触发 1.5s 兜底
     expect(s2.state.items).toHaveLength(1);
     expect(s2.state.items[0]).toMatchObject({ type: "user", text: "hello" });
     expect(s2.state.items[0]).not.toHaveProperty("uuid");
@@ -134,12 +126,10 @@ describe("事件归约", () => {
     h.release({ session_id: "s1" });
     await p;
 
-    // 文本不匹配 → 兜底留存,另起新气泡
+    // 文本不匹配 → 即时气泡留存,另起新气泡
     const h3 = heldInvoke();
-    const d3 = makeDeps(h3.invoke as never);
-    const s3 = createSessionStore(d3.deps);
+    const s3 = createSessionStore(makeDeps(h3.invoke as never).deps);
     const p3 = s3.send("/tmp", "hello", "acceptEdits", "claude-code");
-    d3.timers[d3.timers.length - 1].fn();
     s3.applyEvent(ev({ kind: "user_msg", uuid: "u8", text: "world" }));
     expect(s3.state.items).toHaveLength(2);
     expect(s3.state.items[0]).toMatchObject({ type: "user", text: "hello" });
@@ -232,9 +222,9 @@ describe("会话过滤(handleData)", () => {
 });
 
 describe("发送状态机", () => {
-  // 清单 7(路由/状态流转/兜底定时器)
-  it("send 路由:start/send 按 currentSession 分派;refs 拼接;1.5s 兜底定时器", async () => {
-    const { deps, invoke, timers } = makeDeps();
+  // 清单 7(路由/状态流转/即时上屏)
+  it("send 路由:start/send 按 currentSession 分派;refs 拼接;用户气泡即时上屏", async () => {
+    const { deps, invoke } = makeDeps();
     const s = createSessionStore(deps);
     // 无 currentSession → coding.start
     await s.send("/tmp", "你好", "acceptEdits", "codex", { refs: ["a.ts", "b.ts"] });
@@ -248,9 +238,7 @@ describe("发送状态机", () => {
     expect(s.state.curSessAgent).toBe("codex");
     expect(s.state.sending).toBe(false);
     expect(s.state.streaming).toBe(true);
-    // 1.5s 兜底定时器:未回流 user_msg 时画无锚用户气泡(完整 prompt)
-    expect(timers[0].ms).toBe(1500);
-    timers[0].fn();
+    // 即时上屏:send 即画无锚用户气泡(完整 prompt),不等 user_msg 回流
     expect(s.state.items[0]).toMatchObject({ type: "user", text: "你好\n\n引用文件:\n@a.ts\n@b.ts" });
     expect(s.state.items[0]).not.toHaveProperty("uuid");
     // 有 currentSession → coding.send
@@ -454,23 +442,22 @@ describe("queueInput(busy 排队)", () => {
 });
 
 describe("评审回归", () => {
-  // send 开窗清 fallbackUserIndex:上一轮残留兜底引用不得被新一轮 user_msg 误升级
+  // send 开窗清 fallbackUserIndex:上一轮残留的无锚引用不得被新一轮 user_msg 误升级
   it("跨轮误升级守卫:turn1 无锚气泡留存,turn2 同文本 user_msg 另起新气泡", async () => {
     const h = heldInvoke();
-    const { deps, timers } = makeDeps(h.invoke as never);
+    const { deps } = makeDeps(h.invoke as never);
     const s = createSessionStore(deps);
-    // turn1:兜底定时器画无锚气泡,user_msg 永不回流
+    // turn1:无锚气泡即时上屏,user_msg 永不回流
     const p1 = s.send("/tmp", "hello", "acceptEdits", "claude-code");
-    timers[timers.length - 1].fn();
     expect(s.state.items).toHaveLength(1);
     expect(s.state.items[0]).not.toHaveProperty("uuid");
     h.release({ session_id: "s1" });
     await p1;
     s.applyEvent(ev({ kind: "done" })); // turn1 结束,残留 fallbackUserIndex
-    // turn2:同文本再发;开窗已清兜底引用 → user_msg 回流另起新气泡
+    // turn2:同文本再发;开窗已清上轮引用 → user_msg 回流升级的是本轮气泡,旧气泡不动
     const p2 = s.send("/tmp", "hello", "acceptEdits", "claude-code");
     s.applyEvent(ev({ kind: "user_msg", uuid: "u-new", text: "hello" }));
-    expect(s.state.items).toHaveLength(2);
+    expect(s.state.items).toHaveLength(2); // turn1 留存 + turn2 即时气泡(被升级)
     expect(s.state.items[0]).toMatchObject({ type: "user", text: "hello" });
     expect(s.state.items[0]).not.toHaveProperty("uuid"); // 旧气泡不被误升级
     expect(s.state.items[1]).toMatchObject({ type: "user", text: "hello", uuid: "u-new" });
@@ -487,12 +474,14 @@ describe("评审回归", () => {
     await expect(s.send("/tmp", "hi", "acceptEdits", "claude-code")).rejects.toThrow("boom");
     expect(s.state.error).toContain("启动失败:");
     expect(s.state.sending).toBe(false);
+    expect(s.state.items).toHaveLength(0); // 失败摘除即时上屏的无锚气泡(没发出去不留痕)
     // queueInput 火忘路径:不抛未处理 rejection,失败落 state.error
     const d2 = makeDeps(failing() as never);
     const s2 = createSessionStore(d2.deps);
     expect(s2.queueInput("hi", [], "/tmp", "acceptEdits", "claude-code")).toEqual({ queued: false });
     await vi.waitFor(() => expect(s2.state.error).toContain("启动失败:"));
     expect(s2.state.sending).toBe(false);
+    expect(s2.state.items).toHaveLength(0);
   });
 
   // T9 评审修复①:泄放路径跨引擎守卫(对齐原 send() :1884 内联分支——排队条目泄放同样经 send)

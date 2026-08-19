@@ -17,7 +17,7 @@ withDefaults(defineProps<{
   rows: RailRow[];      // 会话行(壳合并 coding.sessions 结果与派生状态)
   stations: Station[];  // 工位徽标行(已绑会话归属显示)
   focusId: number;
-  drawer: boolean;      // 窄窗抽屉模式(壳传;宽窗忽略)
+  drawer: boolean;      // 常驻抽屉模式(壳传;验收样式迭代后恒 true——左栏默认收起,☰ 唤出)
   addDisabled?: boolean; // 满 3 工位时壳禁用「+ 新工位」(T6)
 }>(), { addDisabled: false });
 const emit = defineEmits<{
@@ -28,7 +28,7 @@ const emit = defineEmits<{
   "close-drawer": [];                 // 抽屉模式:点罩层/选中后收抽屉
 }>();
 
-// 行点击按绑定态分流:已绑 → 聚焦工位;未绑 → 加入工位;两种都顺手收抽屉(宽窗壳侧忽略)
+// 行点击按绑定态分流:已绑 → 聚焦工位;未绑 → 加入工位;两种都顺手收抽屉(常驻抽屉,点完即收)
 function onRow(r: RailRow) {
   if (r.boundStationId !== null) { emit("focus-station", r.boundStationId); emit("close-drawer"); }
   else { emit("join", r.id, r.agent); emit("close-drawer"); }
@@ -56,7 +56,7 @@ function onRow(r: RailRow) {
           @click.stop="emit('stop', r.id)"
         >停止</button>
       </div>
-      <div v-if="!rows.length" class="rail-empty">暂无会话</div>
+      <div v-if="!rows.length" class="rail-empty">还没有会话<br>发送一条消息，或点「+ 新工位」</div>
     </div>
   </aside>
   <template v-else>
@@ -82,7 +82,7 @@ function onRow(r: RailRow) {
             @click.stop="emit('stop', r.id)"
           >停止</button>
         </div>
-        <div v-if="!rows.length" class="rail-empty">暂无会话</div>
+        <div v-if="!rows.length" class="rail-empty">还没有会话<br>发送一条消息，或点「+ 新工位」</div>
       </div>
     </aside>
   </template>

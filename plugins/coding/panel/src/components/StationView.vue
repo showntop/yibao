@@ -58,9 +58,6 @@ const emit = defineEmits<{
 
 const store = createSessionStore({
   invoke: (m, p) => invoke(m, p),
-  setTimer: (fn, ms) => setTimeout(fn, ms),
-  clearTimer: (t) => clearTimeout(t),
-  userEchoFallbackMs: 1500,
   // 恢复历史跟随会话落盘目录(对齐原 resumeSession 的 setCwd(r.cwd));闭包引用下方 cwd,调用远晚于初始化
   onResumedCwd: (c) => { cwd.value = c; },
   // 队列泄放路径的跨引擎交接落定(T9):同 onSend 的 onHandedOff——清待定 + curAgent 同步;
@@ -542,7 +539,11 @@ defineExpose({ state, dockH, onData, bindSession, unbindSession, stop, isBusy: b
     </header>
 
     <!-- 空工位态(验收样式收敛):无会话无消息时的居中淡指引,替代大片灰底 -->
-    <div v-if="!state.items.length" class="station-empty">输入消息开始新会话<br>或点右上「接续」恢复历史会话</div>
+    <div v-if="!state.items.length" class="station-empty">
+      <p class="station-empty-kicker">空工位</p>
+      <p class="station-empty-lead">输入消息开始新会话</p>
+      <p class="station-empty-hint">或点右上「接续」恢复历史</p>
+    </div>
     <MessageList
       v-show="state.items.length > 0"
       :items="state.items"
