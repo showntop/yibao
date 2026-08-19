@@ -2170,12 +2170,22 @@ pub fn run() {
         })
         .setup(|app| {
             // plugins_dir() 的 CARGO_MANIFEST_DIR 相对路径在 prod 是构建机残留:
-            // bundle.resources 打进资源目录的 plugins 才是真相(dev 下资源目录无 plugins,自动落空走原逻辑)
+            // bundle.resources 打进资源目录的 plugins 才是真相。
+            // 注意顺序(合并后实测事故):dev 下 Tauri 也会把 resources 同步进 target/debug/plugins,
+            // 且拷贝只增不删——改名/删除的插件文件在里面留尸(如 codex_reader.py),
+            // 本进程 set_var 后 brain 子进程继承,吃到陈旧插件树直接加载失败。
+            // 故 dev(仓库 plugins 目录存在)绝不指 bundled,prod(构建机路径落空)才用 Resources。
             if std::env::var("YIBAO_PLUGINS_DIR").is_err() {
-                if let Ok(rd) = app.path().resource_dir() {
-                    let bundled = rd.join("plugins");
-                    if bundled.is_dir() {
-                        std::env::set_var("YIBAO_PLUGINS_DIR", bundled);
+                let repo = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("..")
+                    .join("..")
+                    .join("plugins");
+                if !repo.is_dir() {
+                    if let Ok(rd) = app.path().resource_dir() {
+                        let bundled = rd.join("plugins");
+                        if bundled.is_dir() {
+                            std::env::set_var("YIBAO_PLUGINS_DIR", bundled);
+                        }
                     }
                 }
             }
