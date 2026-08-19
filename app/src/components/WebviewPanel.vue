@@ -150,8 +150,28 @@ function postInit() {
 }
 watch(() => props.data, postInit);
 
-/** 父 → iframe 任意消息（如 {type:"ping"}）：iframe 经 yibao.onMessage 收。去 Proxy 范式同 replyToIframe。 */
+// iframe 就绪闸门(input-handoff spec §C):load 前 postToIframe 暂存(只存最后一条),
+// load 时随 init 之后补发;iframe 重建(:key/srcdoc 变)即重置
+let loaded = false;
+let stashed: Record<string, unknown> | null = null;
+watch(() => [props.url, props.v, props.html], () => { loaded = false; });
+
+function onIframeLoad() {
+  loaded = true;
+  postInit();
+  if (stashed) {
+    const m = stashed;
+    stashed = null;
+    postToIframe(m);
+  }
+}
+
+/** 父 → iframe 任意消息:iframe 经 yibao.onMessage 收。未就绪暂存;去 Proxy 范式同 replyToIframe。 */
 function postToIframe(msg: Record<string, unknown>) {
+  if (!loaded) {
+    stashed = msg;
+    return;
+  }
   const plain = JSON.parse(JSON.stringify(msg)) as Record<string, unknown>;
   iframeEl.value?.contentWindow?.postMessage({ src: "yibao-host", ...plain }, "*");
 }
@@ -177,7 +197,7 @@ onBeforeUnmount(() => {
     class="webview"
     sandbox="allow-scripts"
     :src="urlSource.url"
-    @load="postInit"
+    @load="onIframeLoad"
   />
   <iframe
     v-else
@@ -185,7 +205,7 @@ onBeforeUnmount(() => {
     class="webview"
     sandbox="allow-scripts"
     :srcdoc="srcdoc"
-    @load="postInit"
+    @load="onIframeLoad"
   />
 </template>
 

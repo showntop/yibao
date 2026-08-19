@@ -329,8 +329,19 @@ function insertText(t: string) {
   inputRef.value?.focus();
 }
 
-// 全局唤起等外部焦点请求（反射键唤起后输入就绪）；insertText 供面板 insert-draft 注入文本
-defineExpose({ focus: () => inputRef.value?.focus(), insertText });
+/** handoff 草稿随迁(spec §C):取走草稿=清文本+清持久化副本(persistDraft("")走 300ms
+ *  debounce 写 store);空草稿返回 ""。调用时机必须在 InputBar 随 bench-bar 卸载之前。 */
+function takeDraft(): string {
+  const d = text.value.trim();
+  if (!d) return "";
+  text.value = "";
+  persistDraft("");
+  return d;
+}
+
+// 全局唤起等外部焦点请求(反射键唤起后输入就绪);insertText 供面板 insert-draft 注入文本;
+// takeDraft 供 handoff 随迁取稿
+defineExpose({ focus: () => inputRef.value?.focus(), insertText, takeDraft });
 </script>
 
 <template>

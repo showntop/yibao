@@ -123,12 +123,17 @@ function computeFocus(cur: typeof current.value): PanelFocus | null {
   };
 }
 
-/** 面板内容统一入口：赋值 + 重算焦点 + 上报大脑 + 会话分流 surface 随插件切换。 */
+/** 面板内容统一入口:赋值 + 重算焦点 + 上报大脑 + 会话分流 surface 随插件切换;
+ *  handoff 草稿随迁:进 coding:studio 瞬间取走译宝条草稿移交聚焦工位 Composer(单向)。
+ *  取稿必须先于 current 赋值——handoff 后 bench-bar 移除,InputBar 随之卸载。 */
 function setCurrent(v: typeof current.value) {
+  const entering = current.value?.panel !== "coding:studio" && v?.panel === "coding:studio";
+  const draft = entering ? (inputBarRef.value?.takeDraft?.() ?? "") : "";
   current.value = v;
   focus.value = computeFocus(v);
   if (focus.value) setSurface(`panel:${focus.value.plugin}`);
   void reportPanelContext(focus.value).catch(() => {});
+  if (draft) void nextTick(() => webviewRef.value?.postToIframe({ type: "handoff-draft", text: draft }));
 }
 
 function onEvent(e: BrainEvent) {
@@ -360,6 +365,7 @@ const webviewUrl = computed(() => current.value?.webview?.url ?? "");
 const webviewV = computed(() => current.value?.webview?.v ?? 0);
 
 const inputBarRef = ref();
+const webviewRef = ref<InstanceType<typeof WebviewPanel> | null>(null);
 
 /** iframe 面板事件：insert-draft 回输 InputBar 草稿。 */
 function onPanelEvent(name: string, payload: any) {
@@ -430,6 +436,7 @@ onUnmounted(() => {
       <WebviewPanel
         v-if="current && (webviewHtml || webviewUrl)"
         :key="current.panel"
+        ref="webviewRef"
         :panel="current.panel"
         :html="webviewHtml"
         :url="webviewUrl"

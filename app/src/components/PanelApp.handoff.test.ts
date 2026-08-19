@@ -90,4 +90,28 @@ describe("输入条 handoff", () => {
     await nextTick();
     expect(w.find(".ask-row").exists()).toBe(false);
   });
+
+  it("随迁:进 coding 瞬间取走译宝条草稿,postToIframe handoff-draft;空稿不触发", async () => {
+    const takeDraft = vi.fn(() => "草稿文字");
+    const postToIframe = vi.fn();
+    mount(PanelApp, {
+      global: {
+        stubs: {
+          SchemaPanel: { template: "<div />" },
+          WebviewPanel: { template: "<div />", setup(_: any, { expose }: any) { expose({ postToIframe }); return {}; } },
+          InputBar: { template: "<div />", setup(_: any, { expose }: any) { expose({ takeDraft, focus() {}, insertText() {} }); return {}; } },
+          Avatar: { template: "<button class='avatar-stub' v-bind='$attrs' />" },
+          YbIcon: { template: "<i />" },
+        },
+      },
+    });
+    await flushPromises();
+    firePanel("toolbox:main"); // 先落在非 coding:不触发
+    await flushPromises();
+    expect(takeDraft).not.toHaveBeenCalled();
+    firePanel("coding:studio");
+    await flushPromises();
+    expect(takeDraft).toHaveBeenCalledTimes(1);
+    expect(postToIframe).toHaveBeenCalledWith({ type: "handoff-draft", text: "草稿文字" });
+  });
 });
