@@ -16,7 +16,7 @@
 //     照常投递工位,waiting 态工位自维护)+ perm_pending 挂载快照对账;宽窗右栏 260px 仅
 //     有待批出列,窄窗 stations 右上「审批 N」徽按钮开 drawer(裁决清空自动收)。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { hasBridge, invoke, onInit } from "./lib/bridge";
+import { hasBridge, invoke, onInit, onHostMessage } from "./lib/bridge";
 import type { PanelData, SessionRow } from "./lib/types";
 import { permPublicParams, permSummary, relTime } from "./lib/format";
 import { normAgent } from "./stores/drivers";
@@ -38,6 +38,7 @@ interface StationViewExposed {
   bindSession: (sid: string, agent: string) => boolean; // T8:受理 true/守卫拒绝 false(壳据此回滚路由表)
   unbindSession: () => void;
   hint: (text: string, err?: boolean) => void;          // T8:壳侧状态行提示通道
+  fillDraft: (text: string) => void;                    // handoff 草稿随迁（壳 → 聚焦工位 Composer）
 }
 
 // v-for 函数 ref 收集(不收进 reactive,避免组件代理被二次包裹;refsVersion 供 dockH 重算)
@@ -73,6 +74,11 @@ function setStationRef(id: number, el: unknown) {
     preMountStash.delete(id);
     for (const d of q) r.onData(d); // stash 整载荷回放:attach 走 handleData 的 attach 分支自恢复
   }
+  if (pendingDraft && id === stations.state.focusId) {
+    const d = pendingDraft;
+    pendingDraft = null;
+    r.fillDraft(d);
+  }
 }
 
 // 已绑工位投递:ref 在 → 直投 onData;缺失(预挂载窗)→ 入 stash
@@ -105,6 +111,18 @@ function bindStation(target: number, sid: string, agent: string): boolean {
   if (stations.state.stations.find((s) => s.id === target)?.boundSid === sid) stations.unbind(target);
   return false;
 }
+
+// handoff 草稿随迁（input-handoff spec §C）：壳译宝条草稿 → 聚焦工位 Composer；
+// 工位 ref 未就绪（预挂载窗）暂存一条，登记时若恰是聚焦工位即 flush（同 preMountStash 节奏）
+let pendingDraft: string | null = null;
+onHostMessage((msg) => {
+  if (msg?.type !== "handoff-draft") return;
+  const text = String((msg as Record<string, unknown>).text ?? "").trim();
+  if (!text) return;
+  const r = stationRefs[stations.state.focusId];
+  if (r) r.fillDraft(text);
+  else pendingDraft = text;
+});
 
 // ---- demux(onInit 唯一入口)----
 onInit((data) => {

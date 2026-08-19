@@ -162,7 +162,14 @@ function clear() {
   closeAt();
 }
 function focus() { taEl.value?.focus(); }
-defineExpose({ clear, focus });
+/** handoff 草稿随迁（spec §C）：壳侧译宝条草稿填入——已有残稿换行追加（不覆盖用户输入），填完聚焦 */
+function fillDraft(text: string) {
+  const ta = taEl.value;
+  if (!ta) return;
+  ta.value = ta.value.trim() ? ta.value.replace(/\s+$/, "") + "\n" + text : text;
+  ta.focus();
+}
+defineExpose({ clear, focus, fillDraft });
 </script>
 
 <template>

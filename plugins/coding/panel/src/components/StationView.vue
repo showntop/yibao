@@ -381,7 +381,7 @@ async function onRewind(uuid: string) {
 }
 
 // ---- Composer 接线(T5;stop 受理信号修复见 T6)----
-const composerRef = ref<{ clear: () => void; focus: () => void } | null>(null);
+const composerRef = ref<{ clear: () => void; focus: () => void; fillDraft: (t: string) => void } | null>(null);
 const busy = computed(() => state.sending || state.streaming);
 
 // 跨引擎交接(:1884-1887;T9 抽出):老会话上 chip 选了另一引擎 → handoffSend 摘要移植开新会话
@@ -505,7 +505,9 @@ onBeforeUnmount(() => {
 // onData=init 数据投递(内调 store.handleData);bindSession=绑定(返回受理与否,busy 守卫)/
 // unbindSession=解绑(busy 守卫);stop=esc/中断(仅 streaming 受理);isBusy=sending||streaming;
 // hint=壳侧状态行提示通道(T8)
-defineExpose({ state, dockH, onData, bindSession, unbindSession, stop, isBusy: busy, hint });
+// handoff 草稿随迁：壳路由 → 本工位 Composer（壳只管投递，工位内直转）
+function fillDraft(text: string) { composerRef.value?.fillDraft(text); }
+defineExpose({ state, dockH, onData, bindSession, unbindSession, stop, isBusy: busy, hint, fillDraft });
 </script>
 
 <template>
