@@ -26,7 +26,7 @@
 - **布局**(大窗四区):左栏会话列表(原会话墙能力:状态/cwd/prompt/时间卡片,「加入工位」「停止」,顶部新建会话选 cwd+引擎)| 工位区(默认 1 栏,「+ 新工位」加到最多 3——验收样式收敛:默认单工位清爽,空工位灰底显乱;工位头显示会话名/引擎/状态,可换绑/移出,点击聚焦高亮)| 右栏统一 review | 底部共享输入条
 - **自适应**:一套 UI 随宽度伸缩;面板窗窄宽自动单工位 + 侧栏抽屉化,行为等价今天 chat 面板;无模式分叉
 - **数据流**:后端 `emit panel_data` 的 panel 字段 `coding:chat` → `coding:studio`(载荷本有 session_id);studio 单实例收全量会话流,按 sid 分拣进 per-sid 缓冲,未绑工位的 sid 进后台缓冲、绑上即回放对齐——替代现有每 iframe 自筛(chat.html:1604)
-- **输入条**:studio 自实现(iframe 内复用不了宿主 InputBar),能力对齐:@ chips(会话+文件,经 `coding.sessions` + `native:pick_folder`)、粘贴截图(`native:save_attachment` 落盘 chip)、busy 排队(Codex Queue 式)、esc 中断;按聚焦工位路由,输入条左侧显示目标会话 chip;`coding.start` 支持在指定工位开新会话;takeover-input 转发层(PanelApp.vue:291)随之退役(2026-08-19 input-handoff:面板窗内译宝条让位,Composer 复刻接管,见 specs/2026-08-19-input-handoff-design.md)
+- **输入条**:studio 自实现(iframe 内复用不了宿主 InputBar),能力对齐:@ chips(会话+文件,经 `coding.sessions` + `native:pick_folder`)、粘贴截图(`native:save_attachment` 落盘 chip)、busy 排队(Codex Queue 式)、esc 中断;按聚焦工位路由,输入条左侧显示目标会话 chip;`coding.start` 支持在指定工位开新会话;takeover-input 转发层(PanelApp.vue:291)随之退役(2026-08-19 input-handoff:面板窗内译宝条让位,Composer 复刻接管,见 specs/2026-08-19-input-handoff-design.md;大窗同规则,见 specs/2026-08-19-panel-input-modes-design.md)
 - **统一 review**:数据源为各会话事件流 `permission_request`(rid 形如 `perm_<sid>_n` 天然带归因);卡片区操作类型/命令/路径摘要,单条「允许/拒绝」+ 组级「全批这组」,裁决调 `coding.decide`(既有,与 confirm_batch 同写 `_PERM` 注册表,幂等先到先得);后端补 `permission_resolved` 广播事件,任一通道裁决后所有表面(确认条/收件箱/手机/review 栏)同步消失;工位流内不再镜像待批卡
 - **「接管」语义**:会话列表行动作从「接管」变为「加入工位/聚焦」;`coding.attach` 仍用于历史回放
 

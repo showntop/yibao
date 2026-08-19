@@ -10,6 +10,8 @@ R4 退役 takeover 转发层后,面板窗内回到两个输入框上下叠放(st
 
 **全程零后端改动、零新协议基础设施**:随迁走现有 `postToIframe`(宿主→iframe 单向无回执),逃生口在壳自己的标题栏(不过桥),`emitEvent` 通道不需要新增消息。
 
+后续:声明制四模式 + 大窗扩展见 specs/2026-08-19-panel-input-modes-design.md(本 spec 的 coding:studio 硬编码判定已收编为读声明)。
+
 ## 范围
 
 1. 壳让位:PanelApp handoff 判定 + bench-bar 整行移除(bench 容器保留,对话浮层挂在里面)
