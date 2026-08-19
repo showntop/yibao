@@ -41,14 +41,30 @@ interface StationViewExposed {
 }
 
 // v-for 函数 ref 收集(不收进 reactive,避免组件代理被二次包裹;refsVersion 供 dockH 重算)
+// 渲染风暴防线(真机实测卡死,R4 验收):函数 ref 每渲染都会被重调——回调必须幂等,
+// 同实例重复登记零写入;否则「渲染→ref 回调→refsVersion++→dockH 失效→再渲染」无限风暴,
+// WebView JS 线程打满全程不可点。回归用例:App.mount.test.ts。
 const stationRefs: Record<number, StationViewExposed | null> = {};
 const refsVersion = ref(0);
+// ref 函数按工位 id 缓存稳定:内联箭头每次渲染换新身份,会被 unset/set 反复进出,
+// 幂等守卫吸不住(proxy→null→proxy 两次都是真变化)
+const stationRefFns = new Map<number, (el: unknown) => void>();
 // 预挂载 stash:stationRef 缺失时的载荷暂存(T4 评审收口),ref 登记 flush;每工位 ≤20 条丢最旧
 const STASH_MAX = 20;
 const preMountStash = new Map<number, PanelData[]>();
 
+function stationRefFn(id: number): (el: unknown) => void {
+  let f = stationRefFns.get(id);
+  if (!f) {
+    f = (el: unknown) => setStationRef(id, el);
+    stationRefFns.set(id, f);
+  }
+  return f;
+}
+
 function setStationRef(id: number, el: unknown) {
   const r = (el as StationViewExposed | null) ?? null;
+  if (stationRefs[id] === r) return; // 幂等:同实例重复登记零写入(渲染风暴防线,见上)
   stationRefs[id] = r;
   refsVersion.value++;
   if (!r) return;
@@ -305,7 +321,7 @@ onBeforeUnmount(() => {
       <!-- autoplay 仅 1 号工位:id 单调分配不复用 + v-show 只切显隐不重挂载,s.id===1 即首挂载 -->
       <StationView
         v-for="s in stations.state.stations" :key="s.id"
-        :ref="(el) => setStationRef(s.id, el)"
+        :ref="stationRefFn(s.id)"
         v-show="!narrow || s.id === stations.state.focusId"
         :class="{ focused: s.id === stations.state.focusId }"
         :focused="s.id === stations.state.focusId"
