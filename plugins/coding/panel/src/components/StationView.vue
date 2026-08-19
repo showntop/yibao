@@ -599,7 +599,7 @@ defineExpose({ state, dockH, onData, bindSession, unbindSession, stop, isBusy: b
           />
         </template>
         <template #status>
-          <StatusLine :text="statusView.text" :spin="statusView.spin" :err="statusView.err" />
+          <StatusLine v-if="statusView.text" :text="statusView.text" :spin="statusView.spin" :err="statusView.err" />
         </template>
       </Composer>
     </footer>

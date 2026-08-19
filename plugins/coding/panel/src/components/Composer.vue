@@ -16,6 +16,8 @@
 // 可重试,对齐原 send() 的清理时机)。busy 仅反映 store 态(中断钮现身),发送不锁——busy 期
 // send 照常上抛,由 App onSend 过同组校验后 store.queueInput 排队(T4:原 takeover-input
 // 排队路径并入 onSend)。多工位:每工位一个本组件实例,聚焦者的 footer 经 CSS 停靠页底。
+// 复刻宿主 InputBar 几何（handoff spec §D）：composer-bar 圆角玻璃容器，
+// 发送/中断圆钮入输入行（InputBar mic/send 槽位），keys-row 退役；样式源头 InputBar.vue，改版需同步。
 import { reactive, ref, watch } from "vue";
 import { hasBridge, invoke } from "../lib/bridge";
 import { emsg } from "../lib/format";
@@ -31,7 +33,7 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{
   send: [text: string, refs: string[]];
-  status: [text: string, err: boolean]; // 瞬时状态行(截图反馈),由 App keys-row 状态位展示
+  status: [text: string, err: boolean]; // 瞬时状态行(截图反馈),由壳 status slot(.status-line)展示
 }>();
 
 const taEl = ref<HTMLTextAreaElement | null>(null);
@@ -173,40 +175,42 @@ defineExpose({ clear, focus, fillDraft });
 </script>
 
 <template>
-  <!-- 段①:输入框;.prompt-wrap 是 @ 补全菜单的定位锚(向上展开) -->
-  <div class="prompt-wrap">
-    <AtRefsChips :refs="refs" @remove="removeRef" />
-    <textarea
-      id="prompt"
-      ref="taEl"
-      placeholder="输入消息，@ 引用文件…"
-      rows="1"
-      @input="onInput"
-      @keydown="onKeydown"
-      @compositionend="lastCompEnd = Date.now()"
-      @paste="onPaste"
-    ></textarea>
-    <div v-if="at.open" id="at-menu" class="at-menu">
-      <div v-if="!at.items.length" class="at-empty">无匹配</div>
-      <div
-        v-for="(rel, i) in at.items"
-        :key="rel"
-        class="at-item"
-        :class="{ sel: i === at.idx }"
-        @mousedown.prevent="atInsert(rel)"
-      >{{ rel }}</div>
+  <!-- 复刻宿主 InputBar（.bar）的圆角容器：chips 行 → 状态细行（有内容才占位）→
+       输入行（textarea + 中断/发送圆钮）→ ctx 家具细行；.prompt-wrap 是 @ 菜单定位锚 -->
+  <div class="composer-bar">
+    <div class="prompt-wrap">
+      <AtRefsChips :refs="refs" @remove="removeRef" />
+      <div class="status-line"><slot name="status" /></div>
+      <div class="composer-row">
+        <textarea
+          id="prompt"
+          ref="taEl"
+          placeholder="输入消息，@ 引用文件…"
+          rows="1"
+          @input="onInput"
+          @keydown="onKeydown"
+          @compositionend="lastCompEnd = Date.now()"
+          @paste="onPaste"
+        ></textarea>
+        <button v-if="busy" id="stop" class="cbtn stop" type="button" title="中断当前运行(esc)" :disabled="stopArmed" @click="onStop">
+          <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2.5" /></svg>
+        </button>
+        <button id="send" class="cbtn main" type="button" title="发送(↵) · 换行(⇧↵) · @ 引用文件" @click="doSend">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" /></svg>
+        </button>
+      </div>
+      <div v-if="at.open" id="at-menu" class="at-menu">
+        <div v-if="!at.items.length" class="at-empty">无匹配</div>
+        <div
+          v-for="(rel, i) in at.items"
+          :key="rel"
+          class="at-item"
+          :class="{ sel: i === at.idx }"
+          @mousedown.prevent="atInsert(rel)"
+        >{{ rel }}</div>
+      </div>
     </div>
-  </div>
-  <!-- 段②:上下文行——T6 头部控件槽位(cwd chip + 浮层 / mode pill / 引擎 chip + picker);
-       .ctx-row 是 cwd 浮层的定位锚(position:relative,同原 chat.html) -->
-  <div class="ctx-row"><slot name="ctx"></slot></div>
-  <!-- 段③:操作行(验收样式收敛:kbd 提示簇退役,快捷键收进按钮 title)——
-       左状态位(App 经 slot 提供:store 状态行 + 本组件瞬时提示共一位),
-       右操作钮(中断 ghost busy 期现身 / 发送 accent 主钮 busy 期
-       不禁用——点击/↵ 入队,状态行提示「已排队…」) -->
-  <div class="keys-row">
-    <slot name="status"></slot>
-    <button v-if="busy" id="stop" class="act ghost" type="button" title="中断当前运行(esc)" :disabled="stopArmed" @click="onStop">中断</button>
-    <button id="send" class="act" type="button" title="发送(↵) · 换行(⇧↵) · @ 引用文件" @click="doSend">发送</button>
+    <!-- 家具细行（诚实差异区）：cwd chip + 浮层 / mode pill / 引擎 chip + picker，壳 slot 注入 -->
+    <div class="ctx-row"><slot name="ctx" /></div>
   </div>
 </template>
