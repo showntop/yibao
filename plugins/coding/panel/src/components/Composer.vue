@@ -193,18 +193,13 @@ defineExpose({ clear, focus });
   <!-- 段②:上下文行——T6 头部控件槽位(cwd chip + 浮层 / mode pill / 引擎 chip + picker);
        .ctx-row 是 cwd 浮层的定位锚(position:relative,同原 chat.html) -->
   <div class="ctx-row"><slot name="ctx"></slot></div>
-  <!-- 段③:快捷键行——状态位由 App 经 slot 提供(store 状态行 + 本组件瞬时提示共一位),
-       中 kbd 提示(键白动作灰),右操作钮(中断 ghost busy 期现身 / 发送 accent 主钮 busy 期
+  <!-- 段③:操作行(验收样式收敛:kbd 提示簇退役,快捷键收进按钮 title)——
+       左状态位(App 经 slot 提供:store 状态行 + 本组件瞬时提示共一位),
+       右操作钮(中断 ghost busy 期现身 / 发送 accent 主钮 busy 期
        不禁用——点击/↵ 入队,状态行提示「已排队…」) -->
   <div class="keys-row">
     <slot name="status"></slot>
-    <span class="keys">
-      <span class="send-hint"><kbd>↵</kbd>发送</span>
-      <span class="send-hint"><kbd>⇧↵</kbd>换行</span>
-      <span class="at-kbd-hint"><kbd>@</kbd>文件</span>
-      <span><kbd>esc</kbd>停止</span>
-    </span>
-    <button v-if="busy" id="stop" class="act ghost" type="button" :disabled="stopArmed" @click="onStop">中断</button>
-    <button id="send" class="act" type="button" @click="doSend">发送</button>
+    <button v-if="busy" id="stop" class="act ghost" type="button" title="中断当前运行(esc)" :disabled="stopArmed" @click="onStop">中断</button>
+    <button id="send" class="act" type="button" title="发送(↵) · 换行(⇧↵) · @ 引用文件" @click="doSend">发送</button>
   </div>
 </template>

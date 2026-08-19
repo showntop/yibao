@@ -59,7 +59,7 @@ body {
   border-left: 1px solid var(--line);
 }
 .station:first-of-type { border-left: none; }  /* of-type:窄窗 ☰ 钮(.stations 首子级)不顶掉首个工位 */
-.station.focused { box-shadow: inset 0 0 0 1px var(--accent-line); padding-bottom: var(--dock-h, 150px); }
+.station.focused { box-shadow: inset 0 2px 0 var(--accent); padding-bottom: var(--dock-h, 150px); } /* 聚焦信号:顶部 accent 细条(原全周描边显框感,验收样式收敛) */
 .station footer { display: none; }                 /* 非聚焦工位输入条隐藏(实例存活,草稿保留) */
 .station.focused footer { display: flex; position: absolute; z-index: 20; left: 0; right: 0; bottom: 0; }
 
@@ -156,7 +156,7 @@ body {
 }
 .review-card-summary {
   margin: 4px 0 6px; font: var(--mono); font-size: 11.5px; color: var(--text);
-  word-break: break-all;
+  overflow-wrap: anywhere; /* 路径/命令折行不断词中(原 break-all 会把文件名拦腰截断) */
 }
 .review-allow, .review-deny {
   border-radius: var(--r-pill); padding: 3px 12px;
@@ -197,14 +197,14 @@ header .title { flex: none; font-size: 13px; font-weight: 600; color: var(--text
   flex: none; font: var(--mono); font-size: 11px; color: var(--faint);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-/* 右上工具按钮:安静 ghost(#history[T6] / #new-chat 共用) */
+/* 右上工具按钮:轻描边小钮(验收样式收敛:纯文本像半成品,加形出按钮感) */
 #history, #new-chat {
-  flex: none; border: 1px solid transparent; background: transparent;
-  color: var(--muted); font-size: 12px; padding: 4px 10px; border-radius: 8px;
+  flex: none; border: 1px solid var(--border); background: var(--card);
+  color: var(--muted); font-size: 12px; padding: 3px 10px; border-radius: var(--r-pill);
   cursor: pointer; font-weight: 500; transition: all .15s ease;
 }
 #history:hover, #new-chat:hover {
-  background: var(--surface-2); color: var(--accent-deep); border-color: var(--border);
+  border-color: var(--accent); color: var(--accent-deep); background: var(--accent-soft);
 }
 #history:disabled, #new-chat:disabled { opacity: .5; cursor: default; }
 
@@ -253,9 +253,7 @@ header .title { flex: none; font-size: 13px; font-weight: 600; color: var(--text
 .rewind-btn:disabled { opacity: .3; cursor: default; }
 .row.user .bubble:has(.rewind-btn) { padding-right: 30px; }
 .row.ai .bubble { background: var(--ai-bg); color: var(--text); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
-.row.ai .bubble.done::after {
-  content: " ✓"; color: var(--green); font-weight: 600; font-size: 11px;
-}
+/* 气泡尾 ✓ 已退役(验收样式收敛:换行成的孤行绿勾像残留物;完成态由 footer 状态行「✓ 完成 · Ns · tok」承载) */
 
 /* ---- AI 气泡 markdown(渲染基座:marked → DOMPurify → hljs;.md 类仅渲染成功时挂上) ---- */
 .row.ai .bubble.md { white-space: normal; }  /* markdown 结构自带块距,弃 pre-wrap 防空行加倍 */
@@ -443,14 +441,14 @@ header .title { flex: none; font-size: 13px; font-weight: 600; color: var(--text
 }
 .marker.err { color: var(--red); background: var(--red-bg); }
 
-/* ---- 底栏三段式(D1,对标 opencode 底栏;三段合计 ≤110px 紧凑) ----
+/* ---- 底栏(验收样式收敛:三段式收为两段——输入框 + 上下文/操作行;kbd 提示簇退役,
+   快捷键收进按钮 title 提示;#status 灰小字融入操作行左侧) ----
    ① 输入框:2px 左竖条 accent(focus 时 accent-deep),圆角 --r-md
    ② 上下文行:cwd chip + 权限模式 pill + 引擎 chip(T6 接入)
-   ③ 快捷键行:键白动作灰(kbd 白底小圆角描边 + --faint 动作词);#status 灰小字融入本行
-      左侧不独占一行;操作钮收敛右侧:#send accent 实心主钮 / #stop ghost */
+   ③ 操作行:#status 状态行居左;右 #send accent 实心主钮 / #stop ghost(busy 期现身) */
 footer {
   flex: none; border-top: 1px solid var(--line); background: var(--card);
-  padding: 8px 12px 5px; display: flex; flex-direction: column; gap: 4px;
+  padding: 8px 12px; display: flex; flex-direction: column; gap: 6px;
 }
 /* 段①:输入框(display:block 消除 inline 基线下方虚高) */
 #prompt {
@@ -683,17 +681,13 @@ button.ghost:disabled { opacity: .5; cursor: default; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 #status.err { color: var(--red); }
-.keys {
-  flex: 0 1 auto; overflow: hidden; display: flex; align-items: center; gap: 8px;
-  font-size: 11px; color: var(--faint); white-space: nowrap;
+
+/* 空工位态(验收样式收敛:默认单工位后,无会话无消息时的大片灰底显空——居中淡指引) */
+.station-empty {
+  flex: 1; display: grid; place-items: center;
+  color: var(--faint); font-size: 12.5px; text-align: center; padding: 24px;
+  user-select: none;
 }
-.keys kbd {
-  display: inline-block; margin-right: 3px; padding: 0 5px; line-height: 15px;
-  background: var(--card); border: 1px solid var(--border-strong); border-radius: 4px;
-  font: var(--mono); font-size: 10px; color: var(--muted);
-}
-/* 窄面板优先保住状态行与操作钮:快捷键提示让位(整组隐藏) */
-@media (max-width: 480px) { .keys { display: none; } }
 
 /* spinner:10px 边框圆 + 旋转(状态行 / 运行 pill 共用) */
 .spin {

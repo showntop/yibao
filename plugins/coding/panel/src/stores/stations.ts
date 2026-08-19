@@ -17,14 +17,12 @@ export interface StationsState {
 
 export function createStationsStore() {
   const state = reactive<StationsState>({
-    stations: [
-      { id: 1, boundSid: null, boundAgent: "claude-code" },
-      { id: 2, boundSid: null, boundAgent: "claude-code" },
-    ],
+    // 默认单工位(验收样式收敛:空工位大片灰底显乱;多工位经「+ 新工位」按需加)
+    stations: [{ id: 1, boundSid: null, boundAgent: "claude-code" }],
     focusId: 1,
     railLive: {},
   });
-  let seq = 2;
+  let seq = 1;
 
   const byId = (id: number) => state.stations.find((s) => s.id === id) ?? null;
 

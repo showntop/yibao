@@ -6,7 +6,7 @@
 
 1. **插件前端运行时("module 面板")**:面板从「启动时读进内存的单文件 HTML 字符串」改为「plugins/ 下独立构建的静态 bundle,运行时经自定义协议按需加载」——真·运行时扩展,第三方插件不重建 app 可装;多文件工程、资源、代码分割解锁;热加载免重启 sidecar
 2. **coding 前端重写**:chat.html(2943 行 vanilla JS)拆成多文件 Vue 工程重实现,能力对齐现状(对话流/自动回放/引擎 picker/跨引擎交接/rewind/mode/@ chips/粘贴截图)
-3. **R4 多工位**:新面板 `coding:studio`——左栏会话列表(原会话墙)+ 中部并排工位(默认 2 最多 3)+ 底部共享输入条按聚焦路由;单一自适应 UI,窄窗(面板窗)自动收成单工位、侧栏变抽屉;coding 唯一入口,chat.html 与 wall.schema.json 退役
+3. **R4 多工位**:新面板 `coding:studio`——左栏会话列表(原会话墙)+ 中部并排工位(默认 1,经「+ 新工位」加到最多 3;验收样式收敛:空工位大片灰底显乱)+ 底部共享输入条按聚焦路由;单一自适应 UI,窄窗(面板窗)自动收成单工位、侧栏变抽屉;coding 唯一入口,chat.html 与 wall.schema.json 退役
 4. **统一 review 栏**:studio 右栏,全量待批按会话分组,单条/组级裁决走 `coding.decide`;与 L2 确认条/收件箱/手机端同一 `_PERM` 注册表双通道幂等,后端补「已裁决」广播保证各处同步消失
 
 ## 关键设计决策(侦察依据)
@@ -23,7 +23,7 @@
 
 ### B. coding studio(多工位)
 
-- **布局**(大窗四区):左栏会话列表(原会话墙能力:状态/cwd/prompt/时间卡片,「加入工位」「停止」,顶部新建会话选 cwd+引擎)| 工位区(默认 2 栏,「+」加到最多 3,工位头显示会话名/引擎/状态,可换绑/移出,点击聚焦高亮)| 右栏统一 review | 底部共享输入条
+- **布局**(大窗四区):左栏会话列表(原会话墙能力:状态/cwd/prompt/时间卡片,「加入工位」「停止」,顶部新建会话选 cwd+引擎)| 工位区(默认 1 栏,「+ 新工位」加到最多 3——验收样式收敛:默认单工位清爽,空工位灰底显乱;工位头显示会话名/引擎/状态,可换绑/移出,点击聚焦高亮)| 右栏统一 review | 底部共享输入条
 - **自适应**:一套 UI 随宽度伸缩;面板窗窄宽自动单工位 + 侧栏抽屉化,行为等价今天 chat 面板;无模式分叉
 - **数据流**:后端 `emit panel_data` 的 panel 字段 `coding:chat` → `coding:studio`(载荷本有 session_id);studio 单实例收全量会话流,按 sid 分拣进 per-sid 缓冲,未绑工位的 sid 进后台缓冲、绑上即回放对齐——替代现有每 iframe 自筛(chat.html:1604)
 - **输入条**:studio 自实现(iframe 内复用不了宿主 InputBar),能力对齐:@ chips(会话+文件,经 `coding.sessions` + `native:pick_folder`)、粘贴截图(`native:save_attachment` 落盘 chip)、busy 排队(Codex Queue 式)、esc 中断;按聚焦工位路由,输入条左侧显示目标会话 chip;`coding.start` 支持在指定工位开新会话;takeover-input 转发层(PanelApp.vue:291)随之退役

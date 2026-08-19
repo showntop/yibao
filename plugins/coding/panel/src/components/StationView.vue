@@ -531,15 +531,18 @@ defineExpose({ state, dockH, onData, bindSession, unbindSession, stop, isBusy: b
       <button
         id="history"
         type="button"
-        title="会话：上次会话（CC 继续 / Codex 原生续或交接）+ 本项目译宝历史，恢复后继续在同一上下文聊"
+        title="接续历史会话：上次会话（CC 继续 / Codex 原生续或交接）+ 本项目译宝历史，恢复后继续在同一上下文聊"
         :disabled="state.sending || state.streaming"
         @click.stop="openHistory"
-      >会话</button>
+      >接续</button>
       <button id="new-chat" type="button" title="清空当前对话，开新会话（下次发送走 coding.start）" :disabled="newChatDisabled" @click="store.newChat()">新对话</button>
       <button class="station-remove" type="button" title="移出本会话（由壳决定解绑或移除工位）" @click="emit('request-remove')">✕</button>
     </header>
 
+    <!-- 空工位态(验收样式收敛):无会话无消息时的居中淡指引,替代大片灰底 -->
+    <div v-if="!state.items.length" class="station-empty">输入消息开始新会话<br>或点右上「接续」恢复历史会话</div>
     <MessageList
+      v-show="state.items.length > 0"
       :items="state.items"
       :pad-for-pill="pillVisible"
       :streaming="state.streaming"
