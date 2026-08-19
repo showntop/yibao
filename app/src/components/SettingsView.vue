@@ -26,6 +26,13 @@ import {
 } from "../lib/brain";
 import type { TrustStats } from "../lib/brain";
 import { buildPairUrl } from "../lib/pair";
+import { applyFinish, FINISHES, readFinish, type FinishId } from "../lib/finish";
+import {
+  HOME_WIDGETS,
+  WIDGET_MATERIALS,
+  WIDGET_SIZES,
+  useHomeWidgets,
+} from "../lib/home-widgets";
 
 // ---- 分类导航（macOS 系统设置语言）----
 // 原先 11 个分组平铺一列要滚很久，且「感知日志」「记忆管理」这种数据浏览器
@@ -34,6 +41,12 @@ import { buildPairUrl } from "../lib/pair";
 // 单独成类更明确——「通用」只剩真正可改的设置。
 type Cat = "general" | "proactive" | "privacy" | "about";
 const cat = ref<Cat>("general");
+const finish = ref<FinishId>(readFinish());
+function onFinish(id: FinishId) {
+  finish.value = id;
+  applyFinish(id);
+}
+const homeWidgets = useHomeWidgets();
 const CATS: { id: Cat; label: string; icon: "gear" | "sparkle" | "lock" | "info" }[] = [
   { id: "general", label: "通用", icon: "gear" },
   { id: "proactive", label: "主动协助", icon: "sparkle" },
@@ -658,6 +671,68 @@ onUnmounted(() => {
       <!-- ============ 通用：模型 / 语音 / 启动 ============ -->
       <template v-if="cat === 'general'">
         <section class="s-group">
+          <div class="s-group-title">外观</div>
+          <div class="s-note">材质与深浅主题分开：主题管颜色，材质管圆角、釉面和阴影。组件只读令牌，之后加皮肤只扩这一项。</div>
+          <div class="s-row">
+            <span class="s-row-label">材质</span>
+            <div class="finish-seg" role="radiogroup" aria-label="材质">
+              <button
+                v-for="f in FINISHES"
+                :key="f.id"
+                type="button"
+                class="finish-opt"
+                role="radio"
+                :aria-checked="finish === f.id"
+                :class="{ on: finish === f.id }"
+                :title="f.hint"
+                @click="onFinish(f.id)"
+              >{{ f.label }}</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="s-group">
+          <div class="s-group-title">主屏零件</div>
+          <div class="s-note">左右栏是桌面上的瓷片，不是钉死的侧栏。可隐藏、改大小、换瓷或玻璃；桌面上按住零件右上角拖动可排序。</div>
+          <div v-for="w in HOME_WIDGETS" :key="w.id" class="s-row widget-row">
+            <label class="s-row-label">
+              <input
+                type="checkbox"
+                :checked="homeWidgets.spec(w.id).visible"
+                @change="homeWidgets.hide(w.id)"
+              />
+              {{ w.label }}
+            </label>
+            <div class="widget-ctrls">
+              <div class="finish-seg" role="radiogroup" :aria-label="`${w.label}大小`">
+                <button
+                  v-for="s in WIDGET_SIZES"
+                  :key="s.id"
+                  type="button"
+                  class="finish-opt"
+                  :class="{ on: homeWidgets.spec(w.id).size === s.id }"
+                  @click="homeWidgets.setSize(w.id, s.id)"
+                >{{ s.label }}</button>
+              </div>
+              <div class="finish-seg" role="radiogroup" :aria-label="`${w.label}材质`">
+                <button
+                  v-for="m in WIDGET_MATERIALS"
+                  :key="m.id"
+                  type="button"
+                  class="finish-opt"
+                  :class="{ on: homeWidgets.spec(w.id).material === m.id }"
+                  @click="homeWidgets.setMaterial(w.id, m.id)"
+                >{{ m.label }}</button>
+              </div>
+            </div>
+          </div>
+          <div class="s-row">
+            <span class="s-row-label">布局</span>
+            <button type="button" class="s-mini-btn" @click="homeWidgets.reset()">恢复默认</button>
+          </div>
+        </section>
+
+        <section class="s-group">
           <div class="s-group-title">模型</div>
           <label class="s-field">
             <span class="s-label">API Key</span>
@@ -1278,6 +1353,46 @@ select option {
 .s-row-btns {
   display: inline-flex;
   gap: 6px;
+}
+.finish-seg {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  border-radius: var(--yb-radius-sm);
+  background: var(--yb-segment-track);
+  box-shadow: var(--yb-press);
+}
+.finish-opt {
+  height: 24px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: calc(var(--yb-radius-sm) - 2px);
+  background: transparent;
+  color: var(--yb-text-dim);
+  font: inherit;
+  font-size: var(--yb-fs-sm);
+  cursor: pointer;
+}
+.finish-opt.on {
+  background: var(--yb-segment-thumb);
+  color: var(--yb-text-strong);
+  box-shadow: var(--yb-glaze-hi), var(--yb-shadow-1);
+}
+.widget-row {
+  align-items: flex-start;
+  padding: 6px 0;
+  border-top: 1px solid var(--yb-card-row-line);
+}
+.widget-row:first-of-type { border-top: 0; }
+.widget-ctrls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.widget-row .s-row-label input {
+  margin: 0 4px 0 0;
+  accent-color: var(--yb-accent);
 }
 .s-mini-btn {
   margin-left: 6px;

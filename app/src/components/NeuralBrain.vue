@@ -138,12 +138,11 @@ function pulseAlong(route: readonly number[], count: number, speed: number, alph
     const b = nodePoint(route[segment + 1]);
     const control = curveControl(a, b, route[segment] * 31 + route[segment + 1] * 17);
     const point = quadraticPoint(a, control, b, local);
-    const gradient = context.createRadialGradient(point.x, point.y, 0, point.x, point.y, 7);
-    gradient.addColorStop(0, "rgba(255, 255, 255, 0.98)");
-    gradient.addColorStop(0.26, `rgba(111, 177, 225, ${alpha})`);
-    gradient.addColorStop(1, "rgba(111, 177, 225, 0)");
+    const gradient = context.createRadialGradient(point.x, point.y, 0, point.x, point.y, 4);
+    gradient.addColorStop(0, `rgba(77, 144, 196, ${alpha})`);
+    gradient.addColorStop(1, "rgba(77, 144, 196, 0)");
     context.beginPath();
-    context.arc(point.x, point.y, 7, 0, Math.PI * 2);
+    context.arc(point.x, point.y, 4, 0, Math.PI * 2);
     context.fillStyle = gradient;
     context.fill();
   }
@@ -154,25 +153,23 @@ function draw(time: number) {
   context.clearRect(0, 0, width, height);
   context.lineCap = "round";
 
-  graphEdges.forEach(([a, b], index) => drawCurve(a, b, 0.12 + (index % 4) * 0.015, index % 7 === 0 ? 0.95 : 0.72));
+  graphEdges.forEach(([a, b], index) => drawCurve(a, b, 0.08 + (index % 4) * 0.01, index % 7 === 0 ? 0.85 : 0.62));
   for (let index = 0; index < activeRoute.length - 1; index += 1) {
-    drawCurve(activeRoute[index], activeRoute[index + 1], props.state === "idle" ? 0.18 : 0.28, 1.05);
+    drawCurve(activeRoute[index], activeRoute[index + 1], props.state === "idle" ? 0.14 : 0.22, 0.9);
   }
 
   graphPoints.forEach((_, index) => {
     const point = nodePoint(index);
     const important = index < 8;
     context!.beginPath();
-    context!.arc(point.x, point.y, important ? 1.8 : 1.05, 0, Math.PI * 2);
-    context!.fillStyle = important ? "rgba(77, 144, 196, 0.48)" : "rgba(77, 144, 196, 0.22)";
+    context!.arc(point.x, point.y, important ? 1.45 : 0.9, 0, Math.PI * 2);
+    context!.fillStyle = important ? "rgba(77, 144, 196, 0.36)" : "rgba(77, 144, 196, 0.16)";
     context!.fill();
   });
 
   if (!reducedMotion) {
-    // 主链：状态越快脉冲越多（think/work 加速）
-    pulseAlong(activeRoute, props.state === "idle" ? 2 : 4, stateSpeed(), 0.82, time);
-    // 旁路：始终伴有一条更慢的弱脉冲，网络两端都在流动
-    pulseAlong(ambientRoute, 2, stateSpeed() * 0.68, 0.5, time);
+    pulseAlong(activeRoute, props.state === "idle" ? 2 : 3, stateSpeed(), 0.45, time);
+    pulseAlong(ambientRoute, 1, stateSpeed() * 0.68, 0.28, time);
   }
 
   if (!reducedMotion) frame = requestAnimationFrame(draw);
@@ -216,7 +213,7 @@ onUnmounted(() => {
     :class="[`state-${state}`]"
     :style="{ '--brain-mask': `url(${brainShellUrl})` }"
   >
-    <img class="brain-shell" :src="brainShellUrl" alt="" aria-hidden="true" />
+    <div class="brain-glaze" aria-hidden="true" />
     <canvas ref="canvas" class="neural-network" aria-hidden="true" />
 
     <button
@@ -280,35 +277,45 @@ onUnmounted(() => {
 .neural-brain {
   position: relative;
   width: 100%;
-  height: 176px;
-  overflow: visible;
+  height: 156px;
+  overflow: hidden;
   color: var(--yb-text-dim);
 }
 
-.brain-shell,
+.brain-glaze,
 .neural-network {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: fill;
   pointer-events: none;
+  -webkit-mask-image: var(--brain-mask);
+  -webkit-mask-size: 100% 100%;
+  -webkit-mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  mask-image: var(--brain-mask);
+  mask-size: 100% 100%;
+  mask-position: center;
+  mask-repeat: no-repeat;
 }
 
-.brain-shell {
+/* 釉下彩：轮廓只当遮罩，不再贴雾状 PNG */
+.brain-glaze {
   z-index: 0;
-  opacity: 0.72;
-  filter: saturate(0.78) contrast(0.9) drop-shadow(0 12px 22px rgba(var(--yb-c-sky-rgb), 0.09));
+  background:
+    radial-gradient(ellipse 62% 54% at 48% 46%, rgba(var(--yb-c-sky-rgb), 0.16), transparent 72%),
+    color-mix(in srgb, var(--yb-accent) 11%, var(--yb-note-mute));
+  filter: blur(0.7px);
+}
+
+.yb-widget--glass .brain-glaze {
+  background:
+    radial-gradient(ellipse 62% 54% at 48% 46%, rgba(158, 200, 232, 0.22), transparent 72%),
+    rgba(158, 200, 232, 0.10);
 }
 
 .neural-network {
   z-index: 1;
-  -webkit-mask-image: var(--brain-mask);
-  -webkit-mask-size: 100% 100%;
-  -webkit-mask-repeat: no-repeat;
-  mask-image: var(--brain-mask);
-  mask-size: 100% 100%;
-  mask-repeat: no-repeat;
 }
 
 .synapse {
@@ -328,24 +335,24 @@ onUnmounted(() => {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   transform: translate(-50%, -50%);
-  background: #77a9cf;
-  box-shadow: 0 0 0 5px rgba(var(--yb-c-sky-rgb), 0.08), 0 0 14px rgba(var(--yb-c-sky-rgb), 0.34);
+  background: var(--yb-accent);
+  box-shadow: 0 0 0 3px rgba(var(--yb-c-sky-rgb), 0.08);
   transition: transform 180ms var(--yb-ease-out), box-shadow 180ms var(--yb-ease-out), background 180ms var(--yb-ease-out);
 }
 
 .synapse span {
   position: absolute;
-  left: 12px;
-  top: -9px;
+  left: 11px;
+  top: -8px;
   white-space: nowrap;
-  color: var(--yb-text-dim);
+  color: var(--yb-paper-ink-dim);
   font-size: 10px;
   font-weight: var(--yb-fw-medium);
-  line-height: 18px;
+  line-height: 16px;
 }
 
 .synapse b {
@@ -358,9 +365,9 @@ onUnmounted(() => {
 .synapse:hover i,
 .synapse:focus-visible i,
 .synapse.active i {
-  transform: translate(-50%, -50%) scale(1.3);
+  transform: translate(-50%, -50%) scale(1.2);
   background: var(--yb-accent);
-  box-shadow: 0 0 0 7px rgba(var(--yb-c-sky-rgb), 0.11), 0 0 20px rgba(var(--yb-c-sky-rgb), 0.48);
+  box-shadow: 0 0 0 4px rgba(var(--yb-c-sky-rgb), 0.12);
 }
 
 .synapse:focus-visible {
@@ -373,15 +380,21 @@ onUnmounted(() => {
 .act-node { left: 73%; top: 74%; }
 .memory-placeholder { left: 23%; top: 50%; }
 
-.functional i { width: 10px; height: 10px; }
-.think-node { width: 32px; height: 32px; }
+.functional i { width: 8px; height: 8px; }
+.think-node { width: 28px; height: 28px; }
 .think-node i {
-  width: 14px;
-  height: 14px;
+  width: 10px;
+  height: 10px;
   background: var(--yb-accent);
-  box-shadow: 0 0 0 7px rgba(var(--yb-c-sky-rgb), 0.09), 0 0 23px rgba(var(--yb-c-sky-rgb), 0.36);
+  box-shadow: 0 0 0 3px rgba(var(--yb-c-sky-rgb), 0.10);
 }
-.think-node span { left: 15px; top: -11px; color: var(--yb-text-strong); font-size: 12px; font-weight: var(--yb-fw-bold); }
+.think-node span {
+  left: 13px;
+  top: -9px;
+  color: var(--yb-paper-ink);
+  font-size: 11px;
+  font-weight: var(--yb-fw-bold);
+}
 
 .memory-node i { width: 6px; height: 6px; }
 .memory-node span {
@@ -423,8 +436,8 @@ onUnmounted(() => {
 .memory-node.fresh i { animation: synapse-arrive 900ms var(--yb-ease-out) both; }
 
 .state-think .think-node i {
-  background: #7567cf;
-  box-shadow: 0 0 0 8px rgba(117, 103, 207, 0.1), 0 0 26px rgba(117, 103, 207, 0.42);
+  background: var(--yb-state-think);
+  box-shadow: 0 0 0 4px rgba(var(--yb-c-sky-rgb), 0.10);
 }
 /* 思考中：中心节点外圈光环脉冲（与 canvas 加速的脉冲呼应，"大脑正在运转"） */
 .state-think .think-node i::after {
@@ -432,7 +445,7 @@ onUnmounted(() => {
   position: absolute;
   inset: -5px;
   border-radius: 50%;
-  border: 1.5px solid rgba(117, 103, 207, 0.5);
+  border: 1.5px solid rgba(var(--yb-c-sky-rgb), 0.5);
   animation: node-ring 1.8s ease-out infinite;
 }
 @keyframes node-ring {

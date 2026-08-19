@@ -16,6 +16,7 @@ import {
   type PendingConfirm,
   type WidgetPayload,
 } from "../lib/brain";
+import HomeWidget from "./HomeWidget.vue";
 
 type AgentState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
 interface ProcessEntry { label: string; done: boolean; ok?: boolean }
@@ -511,18 +512,20 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <aside class="session-inspector" aria-label="本次会话状态与上下文">
-    <div class="si-sheet">
-    <header class="inspector-head">
-      <span class="inspector-kicker">本次会话</span>
-      <strong>{{ sessionTitle || "新对话" }}</strong>
-      <p>{{ goalText }}</p>
-      <span class="session-state" :class="`state-${sessionState}`"><i />{{ stateLabel }}</span>
-    </header>
+  <aside class="session-inspector yb-desk" aria-label="本次会话状态与上下文">
+    <HomeWidget id="now" class="now-widget">
+      <h2 class="yb-widget-head">本次</h2>
+      <div class="now-body">
+        <strong>{{ sessionTitle || "新对话" }}</strong>
+        <p>{{ goalText }}</p>
+        <span class="session-state" :class="`state-${sessionState}`"><i />{{ stateLabel }}</span>
+      </div>
+    </HomeWidget>
 
-    <div v-if="hasInspectorContent" class="session-thread">
-      <section v-if="interruptedApprovals.length" class="session-section interrupted-section" aria-labelledby="session-interrupted-title">
-        <h2 id="session-interrupted-title">上次未处理 <span>{{ interruptedApprovals.length }}</span></h2>
+    <template v-if="hasInspectorContent">
+      <section v-if="interruptedApprovals.length" class="yb-widget interrupted-section" aria-labelledby="session-interrupted-title">
+        <h2 class="yb-widget-head" id="session-interrupted-title">上次未处理 <span class="yb-widget-meta">{{ interruptedApprovals.length }}</span></h2>
+        <div class="yb-widget-body">
         <article v-for="approval in interruptedApprovals" :key="approval.id" class="approval-card interrupted-card">
           <div class="approval-head">
             <i class="row-node paused" />
@@ -540,10 +543,12 @@ onUnmounted(() => {
             </button>
           </div>
         </article>
+        </div>
       </section>
 
-      <section v-if="displayApprovals.length" class="session-section needs-you" aria-labelledby="session-needs-title">
-        <h2 id="session-needs-title">需要你</h2>
+      <section v-if="displayApprovals.length" class="yb-widget needs-you" aria-labelledby="session-needs-title">
+        <h2 class="yb-widget-head" id="session-needs-title">需要你</h2>
+        <div class="yb-widget-body">
         <article
           v-for="approval in displayApprovals"
           :key="approval.id"
@@ -573,19 +578,22 @@ onUnmounted(() => {
             </button>
           </div>
         </article>
+        </div>
       </section>
 
-      <section v-if="displayTasks.length" class="session-section" aria-labelledby="session-running-title">
-        <h2 id="session-running-title">正在进行</h2>
+      <section v-if="displayTasks.length" class="yb-widget" aria-labelledby="session-running-title">
+        <h2 class="yb-widget-head" id="session-running-title">正在进行</h2>
+        <div class="yb-widget-body">
         <button v-for="task in displayTasks" :key="task.id" class="session-row task-row" type="button" @click="openTasks">
           <i class="row-node running" />
           <span class="row-main"><strong>{{ task.label }}</strong><small>{{ previewDemo ? "2 / 4" : "执行中" }} · {{ elapsedSince(task.created_at) }}</small></span>
           <span class="task-stop" aria-hidden="true" />
         </button>
+        </div>
       </section>
 
-      <section v-if="contextRows.length" class="session-section" aria-labelledby="session-context-title">
-        <h2 id="session-context-title">上下文 <span>{{ contextRows.length }}</span></h2>
+      <section v-if="contextRows.length" class="yb-widget" aria-labelledby="session-context-title">
+        <h2 class="yb-widget-head" id="session-context-title">上下文 <span class="yb-widget-meta">{{ contextRows.length }}</span></h2>
         <div class="row-group">
           <button v-for="row in contextRows" :key="row.id" class="plain-row" type="button" @click="emit('chat', `查看本次会话使用的上下文「${row.title}」`)">
             <span class="context-kind" :class="`kind-${row.kind}`" aria-hidden="true">{{ row.kind === "memory" ? "忆" : row.kind === "screen" ? "屏" : row.kind === "conversation" ? "话" : "文" }}</span>
@@ -594,8 +602,8 @@ onUnmounted(() => {
         </div>
       </section>
 
-      <section v-if="relatedWidgets.length" class="session-section" aria-labelledby="session-capability-title">
-        <h2 id="session-capability-title">关联能力</h2>
+      <section v-if="relatedWidgets.length" class="yb-widget" aria-labelledby="session-capability-title">
+        <h2 class="yb-widget-head" id="session-capability-title">关联能力</h2>
         <div class="row-group">
           <button v-for="widget in relatedWidgets" :key="widget.panel" class="plain-row capability-row" type="button" :disabled="!widget.open" @click="openWidget(widget)">
             <i class="ability-dot" /><span>{{ widget.title }}</span><span class="row-arrow">›</span>
@@ -603,8 +611,8 @@ onUnmounted(() => {
         </div>
       </section>
 
-      <section v-if="outputs.length" class="session-section" aria-labelledby="session-output-title">
-        <h2 id="session-output-title">本次产出</h2>
+      <section v-if="outputs.length" class="yb-widget" aria-labelledby="session-output-title">
+        <h2 class="yb-widget-head" id="session-output-title">本次产出</h2>
         <div class="row-group">
           <button v-for="output in outputs" :key="output.id" class="plain-row" type="button" @click="emit('chat', `查看本次会话的产出「${output.title}」`)">
             <span class="output-mark" aria-hidden="true" /><span>{{ output.title }}</span><small>{{ output.meta }}</small>
@@ -612,7 +620,7 @@ onUnmounted(() => {
         </div>
       </section>
 
-      <section v-if="processedHistory.length" class="session-section history-section">
+      <section v-if="processedHistory.length" class="yb-widget history-section">
         <button class="process-toggle" type="button" :aria-expanded="historyOpen" @click="historyOpen = !historyOpen">
           <span>已处理</span><small>{{ processedHistory.length }}</small><span class="process-chevron" :class="{ open: historyOpen }">⌄</span>
         </button>
@@ -624,7 +632,7 @@ onUnmounted(() => {
         </div>
       </section>
 
-      <section v-if="processRows.length" class="session-section process-section">
+      <section v-if="processRows.length" class="yb-widget process-section">
         <button class="process-toggle" type="button" :aria-expanded="processOpen" @click="processOpen = !processOpen">
           <span>过程记录</span><small>{{ processRows.length }}</small><span class="process-chevron" :class="{ open: processOpen }">⌄</span>
         </button>
@@ -634,13 +642,12 @@ onUnmounted(() => {
           </span>
         </div>
       </section>
-    </div>
+    </template>
 
-    <div v-else-if="loaded" class="inspector-empty">
+    <div v-else-if="loaded" class="yb-widget inspector-empty">
       <i />
       <strong>尚未加入上下文</strong>
       <span>文件、屏幕、记忆和执行状态会随本次会话出现在这里</span>
-    </div>
     </div>
   </aside>
 </template>
@@ -649,67 +656,28 @@ onUnmounted(() => {
 .session-inspector {
   width: 280px;
   flex-shrink: 0;
-  min-height: 0;
-  box-sizing: border-box;
-  padding: 12px 12px 12px 10px;
-  overflow: hidden;
-  color: var(--yb-paper-ink);
-  /* 与中栏同底，不再铺侧栏灰蓝底色 */
-  background: transparent;
-  position: relative;
-  display: flex;
-  flex-direction: column;
-}
-
-.si-sheet {
-  position: relative;
-  z-index: 1;
-  flex: 1;
-  min-height: 0;
   overflow-y: auto;
   scrollbar-width: thin;
-  border-radius: var(--yb-note-radius);
-  background: var(--yb-note-bg);
-  border: 1px solid var(--yb-note-border);
-  box-shadow: var(--yb-note-shadow);
-  padding: 0 12px 16px;
+  color: var(--yb-paper-ink);
 }
 
 button { font: inherit; }
 
-.inspector-head {
-  position: sticky;
-  top: 0;
-  z-index: 2;
+.now-body {
+  padding: 2px var(--yb-widget-pad-x) 12px;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 14px 2px 12px;
-  margin: 0 -12px;
-  padding-left: 14px;
-  padding-right: 14px;
-  background: var(--yb-paper-sticky);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
 }
 
-.inspector-kicker {
-  margin-bottom: 3px;
-  color: var(--yb-paper-ink-dim);
-  font-size: 10px;
-  font-weight: var(--yb-fw-bold);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.inspector-head strong {
+.now-body strong {
   color: var(--yb-paper-ink);
   font-size: 14px;
   font-weight: var(--yb-fw-bold);
   line-height: 1.35;
 }
 
-.inspector-head p {
+.now-body p {
   margin: 0;
   color: var(--yb-paper-ink-dim);
   font-size: 11px;
@@ -739,38 +707,7 @@ button { font: inherit; }
 .session-state.state-success i { background: var(--yb-state-success); }
 .session-state.state-error i { background: var(--yb-state-error); }
 
-/* ---- 会话时间线重构（简洁分区）：去掉垂直线 + 圆点节点；
- * section 用 hairline 顶边 + 突出主标题，自然留白代替装饰。 ---- */
-.session-thread {
-  position: relative;
-  padding-left: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.session-section {
-  position: relative;
-  padding: 12px 0 10px;
-  border-top: 1px solid var(--yb-note-border);
-}
-.session-section:first-child { border-top: 0; padding-top: 6px; }
-
-.session-section h2 {
-  margin: 0 0 8px;
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  color: var(--yb-paper-ink-dim);
-  font-size: 11px;
-  font-weight: var(--yb-fw-bold);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.session-section h2 span { font-size: 10px; font-weight: var(--yb-fw-medium); color: var(--yb-paper-ink-dim); opacity: 0.75; }
-.needs-you h2 { color: var(--yb-intent-pending-ink); }
-.interrupted-section h2 { color: var(--yb-paper-ink-dim); }
+.needs-you .yb-widget-head { color: var(--yb-intent-pending-ink); }
 
 .session-row,
 .plain-row {
@@ -789,20 +726,18 @@ button { font: inherit; }
   display: flex;
   align-items: center;
   gap: 8px;
-  border: 1px solid var(--yb-note-border);
-  border-radius: var(--yb-radius-sm);
-  background: var(--yb-note-soft);
-  box-shadow: 0 2px 8px rgba(var(--yb-paper-shade-rgb), 0.06);
-  transition: transform 160ms var(--yb-ease-out), box-shadow 160ms var(--yb-ease-out);
+  border-radius: calc(var(--yb-widget-radius) - 6px);
+  background: var(--yb-note-mute);
+  box-shadow: var(--yb-press);
+  transition: background 160ms var(--yb-ease-out);
 }
 
 .approval-card {
   box-sizing: border-box;
   padding: 10px;
-  border: 1px solid var(--yb-intent-pending-soft);
-  border-radius: var(--yb-radius-sm);
-  background: color-mix(in srgb, var(--yb-intent-pending-soft) 28%, var(--yb-note-bg));
-  box-shadow: 0 3px 12px rgba(var(--yb-paper-shade-rgb), 0.08);
+  border-radius: calc(var(--yb-widget-radius) - 6px);
+  background: color-mix(in srgb, var(--yb-intent-pending-soft) 40%, var(--yb-note-mute));
+  box-shadow: var(--yb-press);
 }
 
 .interrupted-card {
@@ -810,7 +745,8 @@ button { font: inherit; }
   background: var(--yb-note-mute);
 }
 
-.interrupted-card + .interrupted-card { margin-top: 7px; }
+.approval-card + .approval-card,
+.session-row + .session-row { margin-top: 7px; }
 .row-node.paused { border-color: var(--yb-text-faint); background: rgba(var(--yb-c-slate-rgb), 0.08); }
 
 .paused-badge {
@@ -954,8 +890,7 @@ button { font: inherit; }
 }
 
 .session-row:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 6px 16px rgba(var(--yb-paper-shade-rgb), 0.1);
+  background: var(--yb-note-soft);
 }
 .plain-row:hover { background: var(--yb-note-mute); }
 
@@ -1005,10 +940,10 @@ button { font: inherit; }
 
 .row-group {
   overflow: hidden;
-  border: 1px solid var(--yb-note-border);
-  border-radius: var(--yb-radius-sm);
-  background: var(--yb-note-soft);
-  box-shadow: 0 2px 10px rgba(var(--yb-paper-shade-rgb), 0.05);
+  margin: 0 8px 8px;
+  border-radius: calc(var(--yb-widget-radius) - 6px);
+  background: var(--yb-note-mute);
+  box-shadow: var(--yb-press);
 }
 
 .plain-row {
@@ -1037,7 +972,7 @@ button { font: inherit; }
   font-size: 9px;
   font-weight: var(--yb-fw-bold);
 }
-.kind-memory { color: #6d6ab7; background: rgba(109, 106, 183, 0.08); }
+.kind-memory { color: var(--yb-accent-deep); background: rgba(var(--yb-c-sky-rgb), 0.08); }
 .kind-screen { color: #567d95; }
 
 .capability-row > span:nth-of-type(1) { flex: 1; }
@@ -1045,12 +980,12 @@ button { font: inherit; }
 .ability-dot { width: 2px; height: 12px; flex: none; border-radius: 1px; background: var(--yb-border-strong); align-self: center; }
 .output-mark { width: 6px; height: 6px; flex: none; border-radius: 2px; background: var(--yb-surface-2); }
 
-.process-section { padding-bottom: 0; }
-.history-section { padding-bottom: 2px; }
+.process-section,
+.history-section { padding-bottom: 4px; }
 .process-toggle {
   width: 100%;
   min-height: 32px;
-  padding: 4px 0;
+  padding: 8px var(--yb-widget-pad-x);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1065,14 +1000,14 @@ button { font: inherit; }
 .process-toggle small { font-size: 9px; }
 .process-chevron { margin-left: auto; transition: transform 160ms var(--yb-ease-out); }
 .process-chevron.open { transform: rotate(180deg); }
-.process-list { padding: 2px 0 6px; display: flex; flex-direction: column; gap: 5px; }
+.process-list { padding: 2px var(--yb-widget-pad-x) 10px; display: flex; flex-direction: column; gap: 5px; }
 .process-row { display: flex; align-items: center; gap: 8px; color: var(--yb-text-dim); font-size: 11px; }
 .process-row i { width: 2px; height: 12px; flex: none; border-radius: 1px; background: var(--yb-border-strong); align-self: center; }
 .process-row i.done { background: var(--yb-intent-ok); }
 .process-row i.failed { background: var(--yb-danger); }
 
 .processed-list {
-  padding: 1px 0 6px;
+  padding: 1px var(--yb-widget-pad-x) 8px;
   display: flex;
   flex-direction: column;
 }
@@ -1121,18 +1056,12 @@ button { font: inherit; }
 .processed-row small { color: var(--yb-text-faint); font-size: 9px; }
 
 .inspector-empty {
-  min-height: 180px;
-  margin-top: 8px;
-  padding: 28px 16px;
+  padding: 22px 14px 18px;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 6px;
   color: var(--yb-paper-ink-dim);
-  border-radius: var(--yb-radius-sm);
-  background: var(--yb-note-soft);
-  border: 1px solid var(--yb-note-border);
-  box-shadow: 0 2px 10px rgba(var(--yb-paper-shade-rgb), 0.05);
 }
 .inspector-empty i { width: 8px; height: 8px; border-radius: 50%; background: rgba(var(--yb-paper-shade-rgb), 0.22); }
 .inspector-empty strong { color: var(--yb-paper-ink); font-size: 12px; }

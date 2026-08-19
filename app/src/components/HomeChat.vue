@@ -26,6 +26,7 @@ import {
   type BrainStatusMsg,
 } from "../lib/brain";
 import { procLabel, procSkip, procResultSuffix, procDetail } from "../lib/proc";
+import { groupThread, runAnswer, runIsLive, runTailIndex } from "../lib/work-thread";
 import { formatContextPrefix, type InputContext } from "../lib/at-mention";
 import type { RunMetrics } from "../lib/brain";
 import { sessionStore } from "../state/store";
@@ -392,6 +393,14 @@ watch(showTyping, () => scrollBubbles(true));
 watch(state, (s) => emit("state", s));
 // 持久化不在 deep watch 全量写：各事件点显式 appendMessage/syncMessage（流式 chunk 只改内存，消除写放大）
 
+/** 工具行插入前封口当前流式段，让后续 chunk 在过程卡之后另起一条 AI 消息。 */
+function sealStreaming() {
+  if (streamingIdx.value === null) return;
+  const b = bubbles.value[streamingIdx.value];
+  if (b?.id) syncBubble(b);
+  streamingIdx.value = null;
+}
+
 let unlisten: (() => void) | null = null;
 let unlistenStatus: (() => void) | null = null;
 let unlistenPerms: (() => void) | null = null;
@@ -412,6 +421,7 @@ function onEvent(e: BrainEvent) {
       state.value = "work";
       // 过程行：🔧 技能短标签（use_plugin 跳过——成功有 notice，不重复）
       if (e.action?.id && !procSkip(e.action)) {
+        sealStreaming();
         const procBubble: BubbleMsg = {
           id: newId(),
           role: "sys",
@@ -608,6 +618,42 @@ function procText(p: ProcInfo): string {
   return procDetail(p.action, p.result);
 }
 
+/** 一次工作合成一条线索：正文与工具按时序穿插，页脚只出现在整轮收束。 */
+const thread = computed(() => groupThread(bubbles.value, showDateDivider));
+function threadKey(item: ReturnType<typeof groupThread>[number]): string {
+  return item.type === "run" ? `run-${item.start}` : `${item.type}-${item.index}`;
+}
+function runBusy(indices: number[]): boolean {
+  return runIsLive(bubbles.value, indices, streamingIdx.value);
+}
+function runHalted(indices: number[]): boolean {
+  return indices.some((i) => bubbles.value[i].halted);
+}
+function runShowFooter(indices: number[]): boolean {
+  return !runBusy(indices) || runHalted(indices);
+}
+function runMetricsOf(indices: number[]) {
+  for (let k = indices.length - 1; k >= 0; k -= 1) {
+    const metrics = bubbles.value[indices[k]].metrics;
+    if (metrics) return metrics;
+  }
+  return undefined;
+}
+function runRefsOf(indices: number[]): BubbleMsg | undefined {
+  for (let k = indices.length - 1; k >= 0; k -= 1) {
+    const b = bubbles.value[indices[k]];
+    if (b.refs?.length) return b;
+  }
+  return undefined;
+}
+function toggleRunRefs(indices: number[]) {
+  const b = runRefsOf(indices);
+  if (b) b.refsOpen = !b.refsOpen;
+}
+function copyRun(indices: number[]) {
+  copyText(runAnswer(bubbles.value, indices));
+}
+
 function onStatus(m: BrainStatusMsg) {
   if (m.status === "up") {
     if (brainDown.value) {
@@ -772,7 +818,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <!-- thinking：AI 思考时对话区泛紫微光（与左栏大脑转紫呼应） -->
+  <!-- thinking：天青釉微光（finish 令牌 --yb-think-mist，不用紫） -->
   <div class="chat-page" :class="{ thinking: state === 'think' }">
     <SetupWizard v-if="setupNeeded" :model="setupCfg.model" :base-url="setupCfg.baseUrl" :voice="setupCfg.voice" @saved="onSetupSaved" />
 
@@ -780,9 +826,11 @@ onUnmounted(() => {
     <!-- 用 wrapper div 包左/右栏：scoped CSS 才能命中（直接 class 加在子组件根会因 scope 不匹配而失效） -->
     <div v-else class="chat-cols" :class="{ 'left-collapsed': !props.leftRailOpen, 'right-collapsed': !props.rightRailOpen }">
     <!-- 左栏折叠时露出 36×36 团子头像按钮（展开入口）；展开态无按钮——左栏有更多折叠方式（点空白/脑会话 tab 切换/键盘等），与右栏信息密度需求不同 -->
-    <button v-if="!props.leftRailOpen" class="rail-avatar-reopen" type="button" title="展开左栏" aria-label="展开左栏" @click="emit('toggleLeft')">
-      <Avatar :state="state" :size="28" compact />
-    </button>
+    <Transition name="rail-fab">
+      <button v-if="!props.leftRailOpen" class="rail-avatar-reopen" type="button" title="展开左栏" aria-label="展开左栏" @click="emit('toggleLeft')">
+        <Avatar :state="state" :size="28" compact />
+      </button>
+    </Transition>
     <button
       class="rail-toggle rail-toggle-right"
       :class="{ collapsed: !props.rightRailOpen }"
@@ -803,87 +851,101 @@ onUnmounted(() => {
     <div class="bubbles" ref="bubblesRef" @scroll="onBubblesScroll">
       <div v-if="!bubbles.length && !showTyping" class="empty-hint">
         <div class="eh-glow"><Avatar :state="state" :size="64" /></div>
-        <p class="eh-title">{{ greeting }}，叫我做什么都行～</p>
-        <p class="eh-sub">整理会议纪要 · 规划今日 · 记住你的偏好</p>
+        <p class="eh-title">{{ greeting }}</p>
+        <p class="eh-sub">输入一条，或从下面开始</p>
         <div class="chips">
           <button v-for="c in SUGGEST_CHIPS" :key="c.text" class="chip" @click="submit(c.text)">
             <YbIcon :name="c.icon" :size="12" />{{ c.text }}
           </button>
         </div>
       </div>
-      <template v-for="(b, i) in bubbles" :key="i">
-        <!-- 跨日日期分隔（今天/昨天/更早） -->
-        <div v-if="showDateDivider(i)" class="date-divider"><span>{{ fmtDay(b.ts) }}</span></div>
+      <template v-for="item in thread" :key="threadKey(item)">
+        <div v-if="item.type === 'day'" class="date-divider"><span>{{ fmtDay(bubbles[item.index].ts) }}</span></div>
 
-        <!-- 「⇢ 协作」关联气泡：可点击，在当前任务内展开能力工作面。 -->
-        <button v-if="b.panelLink" class="assoc" @click="emit('openPanel')">
-          {{ b.text }}<span class="assoc-arrow">展开 ›</span>
+        <button v-else-if="item.type === 'misc' && bubbles[item.index].panelLink" class="assoc" @click="emit('openPanel')">
+          {{ bubbles[item.index].text }}<span class="assoc-arrow">展开 ›</span>
         </button>
 
-        <!-- 过程工作卡：图标 + 描述 + 进度条（进行中）/ ✅❌（完成），点「详情」展开参数与结果 -->
-        <div v-else-if="b.proc" class="proc">
-          <div
-            class="proc-card"
-            :class="{ done: b.proc.done && procOk(b.proc), fail: b.proc.done && !procOk(b.proc) }"
-            :aria-expanded="b.proc.expanded"
-            @click="b.proc && (b.proc.expanded = !b.proc.expanded)"
-          >
-            <YbIcon
-              class="proc-ic"
-              :name="b.proc.done ? (procOk(b.proc) ? 'check' : 'x') : 'spinner'"
-              :spin="!b.proc.done"
-              :size="13"
-            />
-            <div class="proc-main">
-              <span class="proc-label">{{ b.proc.label }}{{ b.proc.done ? procErrSuffix(b.proc) : "" }}</span>
-              <span v-if="!b.proc.done" class="proc-track"><i /></span>
+        <div v-else-if="item.type === 'run'" class="work-run">
+          <Avatar class="work-run-ava" :state="state" :size="22" compact />
+          <div class="work-run-body">
+            <template v-for="i in item.indices" :key="i">
+              <div v-if="bubbles[i].proc" class="work-proc">
+                <button
+                  type="button"
+                  class="work-proc-row"
+                  :class="{ done: bubbles[i].proc.done && procOk(bubbles[i].proc), fail: bubbles[i].proc.done && !procOk(bubbles[i].proc) }"
+                  :aria-expanded="bubbles[i].proc.expanded"
+                  @click="bubbles[i].proc && (bubbles[i].proc.expanded = !bubbles[i].proc.expanded)"
+                >
+                  <YbIcon
+                    class="proc-ic"
+                    :name="bubbles[i].proc.done ? (procOk(bubbles[i].proc) ? 'check' : 'x') : 'spinner'"
+                    :spin="!bubbles[i].proc.done"
+                    :size="12"
+                  />
+                  <span class="proc-label">{{ bubbles[i].proc.label }}{{ bubbles[i].proc.done ? procErrSuffix(bubbles[i].proc) : "" }}</span>
+                  <span class="proc-toggle">{{ bubbles[i].proc.expanded ? "收起" : "详情" }}</span>
+                </button>
+                <span v-if="!bubbles[i].proc.done" class="proc-track"><i /></span>
+                <pre v-if="bubbles[i].proc.expanded" class="proc-detail">{{ procText(bubbles[i].proc) }}</pre>
+              </div>
+              <Bubble
+                v-else
+                :role="bubbles[i].role"
+                :text="bubbles[i].text"
+                plain
+                :streaming="i === streamingIdx"
+                :halted="bubbles[i].halted"
+                :icon="bubbles[i].icon"
+              />
+            </template>
+
+            <div v-if="runRefsOf(item.indices)" class="refs">
+              <button class="refs-toggle" @click="toggleRunRefs(item.indices)">
+                <span>参考了 {{ runRefsOf(item.indices)?.refs?.length }} 项</span>
+                <i :class="{ open: runRefsOf(item.indices)?.refsOpen }" />
+              </button>
+              <Transition name="refs-fade">
+                <ul v-if="runRefsOf(item.indices)?.refsOpen" class="refs-list">
+                  <li v-for="(r, ri) in runRefsOf(item.indices)?.refs" :key="ri" :class="{ fail: !r.ok }">
+                    <YbIcon :name="r.ok ? 'check' : 'x'" :size="10" />
+                    <span class="refs-label">{{ r.label }}</span>
+                    <span class="refs-detail">{{ r.detail }}</span>
+                  </li>
+                </ul>
+              </Transition>
             </div>
-            <span class="proc-toggle">{{ b.proc.expanded ? "收起" : "详情" }}</span>
+
+            <div v-if="runShowFooter(item.indices)" class="msg-meta">
+              <UsageBar v-if="runMetricsOf(item.indices)" :metrics="runMetricsOf(item.indices)!" />
+              <i v-if="runMetricsOf(item.indices)" class="msg-meta-rule" aria-hidden="true" />
+              <div class="msg-actions">
+                <button @click="copyRun(item.indices)">复制</button>
+                <button :title="'有帮助'" @click="onFeedback(true)"><YbIcon name="thumb-up" :size="12" /></button>
+                <button :title="'没帮助'" @click="onFeedback(false)"><YbIcon name="thumb-down" :size="12" /></button>
+                <button @click="regenerate(runTailIndex(bubbles, item.indices))">{{ runHalted(item.indices) ? "重试" : "重写" }}</button>
+              </div>
+            </div>
           </div>
-          <pre v-if="b.proc.expanded" class="proc-detail">{{ procText(b.proc) }}</pre>
         </div>
 
-        <!-- AI 消息：无气泡主文 + 头像 + hover 操作 + 溯源（"参考了 ▾"） -->
-        <div v-else-if="b.role === 'ai'" class="msg-row">
-          <div class="ai-line">
-            <Avatar class="ai-ava" :state="state" :size="22" compact />
-            <Bubble :role="b.role" :text="b.text" plain :streaming="i === streamingIdx" :halted="b.halted" :icon="b.icon" />
-          </div>
-          <!-- run 统计 indicator bar（token/费用/耗时；hover 看明细） -->
-          <UsageBar v-if="b.metrics" :metrics="b.metrics" />
-          <div v-if="b.refs?.length" class="refs">
-            <button class="refs-toggle" @click="b.refsOpen = !b.refsOpen">
-              <span>参考了 {{ b.refs.length }} 项</span>
-              <i :class="{ open: b.refsOpen }" />
-            </button>
-            <Transition name="refs-fade">
-              <ul v-if="b.refsOpen" class="refs-list">
-                <li v-for="(r, ri) in b.refs" :key="ri" :class="{ fail: !r.ok }">
-                  <YbIcon :name="r.ok ? 'check' : 'x'" :size="10" />
-                  <span class="refs-label">{{ r.label }}</span>
-                  <span class="refs-detail">{{ r.detail }}</span>
-                </li>
-              </ul>
-            </Transition>
-          </div>
+        <div v-else-if="item.type === 'user'" class="msg-row user-msg">
+          <Bubble :role="bubbles[item.index].role" :text="bubbles[item.index].text" :streaming="item.index === streamingIdx" :halted="bubbles[item.index].halted" :icon="bubbles[item.index].icon" />
           <div class="msg-actions">
-            <button @click="copyText(b.text)">复制</button>
-            <button :title="'有帮助'" @click="onFeedback(true)"><YbIcon name="thumb-up" :size="12" /></button>
-            <button :title="'没帮助'" @click="onFeedback(false)"><YbIcon name="thumb-down" :size="12" /></button>
-            <button @click="regenerate(i)">{{ b.halted ? "重试" : "重写" }}</button>
+            <button @click="copyText(bubbles[item.index].text)">复制</button>
+            <button @click="onEditMessage(item.index)">编辑</button>
           </div>
         </div>
 
-        <!-- 用户消息：气泡 + hover 复制/编辑（改完从该条起替换） -->
-        <div v-else-if="b.role === 'user'" class="msg-row user-msg">
-          <Bubble :role="b.role" :text="b.text" :streaming="i === streamingIdx" :halted="b.halted" :icon="b.icon" />
-          <div class="msg-actions">
-            <button @click="copyText(b.text)">复制</button>
-            <button @click="onEditMessage(i)">编辑</button>
-          </div>
-        </div>
-
-        <Bubble v-else :role="b.role" :text="b.text" :streaming="i === streamingIdx" :halted="b.halted" :icon="b.icon" />
+        <Bubble
+          v-else-if="item.type === 'misc'"
+          :role="bubbles[item.index].role"
+          :text="bubbles[item.index].text"
+          :streaming="item.index === streamingIdx"
+          :halted="bubbles[item.index].halted"
+          :icon="bubbles[item.index].icon"
+        />
       </template>
 
       <template v-if="showTyping">
@@ -938,6 +1000,7 @@ onUnmounted(() => {
   display: flex;
   min-width: 0;
   position: relative;
+  overflow: hidden;
 }
 .rail-toggle {
   position: absolute;
@@ -989,9 +1052,46 @@ onUnmounted(() => {
   border-color: var(--yb-accent);
   background: var(--yb-accent-soft);
 }
+.rail-fab-enter-active,
+.rail-fab-leave-active {
+  transition: opacity var(--yb-dur) var(--yb-ease-out), transform var(--yb-dur) var(--yb-ease-out);
+}
+.rail-fab-enter-from,
+.rail-fab-leave-to {
+  opacity: 0;
+  transform: scale(0.86);
+}
 .chat-cols.left-collapsed > .col-left,
 .chat-cols.right-collapsed > .col-context {
-  display: none;
+  width: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  box-shadow: none;
+}
+.col-left,
+.col-context {
+  flex: none;
+  width: 280px;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition:
+    width var(--yb-dur-slow) var(--yb-ease-out),
+    opacity var(--yb-dur) var(--yb-ease-out),
+    box-shadow var(--yb-dur) var(--yb-ease-out);
+}
+.col-left > :deep(*),
+.col-context > :deep(*) {
+  min-width: 280px;
+}
+.col-left {
+  box-shadow: 1px 0 0 var(--yb-border-base);
+}
+.col-context {
+  box-shadow: -1px 0 0 var(--yb-border-base);
 }
 .chat-main {
   flex: 1;
@@ -1012,10 +1112,10 @@ onUnmounted(() => {
     display: none;
   }
 }
-/* AI 思考：对话区泛紫微光（与 AgentBrain think 光晕呼应） */
+/* AI 思考：天青釉微光 */
 .chat-page.thinking {
   background:
-    radial-gradient(90% 60% at 50% 30%, rgba(142, 124, 240, 0.05), transparent 65%),
+    radial-gradient(90% 60% at 50% 30%, var(--yb-think-mist), transparent 65%),
     var(--yb-content-bg);
 }
 /* AI 消息行：角色头像 + 气泡（人格化：团子本尊在说话） */
@@ -1036,7 +1136,7 @@ onUnmounted(() => {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--yb-space-2);
+  gap: var(--yb-space-3);
   overflow-y: auto;
   padding: var(--yb-space-3) var(--yb-space-5) 0;
   scrollbar-width: thin;
@@ -1096,45 +1196,83 @@ onUnmounted(() => {
   font-size: var(--yb-fs-md);
   white-space: nowrap;
 }
-/* 过程工作卡：白底圆角卡居中，工具图标 + 描述 + 进度条（进行中）/ ✅❌（完成） */
-.proc {
-  align-self: center;
-  max-width: 92%;
+.work-run {
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  animation: pop var(--yb-dur-fast) var(--yb-ease-out);
+  align-items: flex-start;
+  gap: 8px;
+  align-self: stretch;
+  max-width: min(100%, 760px);
 }
-.proc-card {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  min-width: 220px;
-  max-width: 100%;
-  padding: 8px 10px 8px 12px;
-  border: 1px solid rgba(var(--yb-c-sky-rgb), 0.12);
-  border-radius: var(--yb-radius-md);
-  background: rgba(255, 255, 255, 0.7);
-  box-shadow: var(--yb-shadow-1), inset 0 1px 0 rgba(255, 255, 255, 0.9);
-  color: var(--yb-text-dim);
-  font-family: inherit;
-  font-size: var(--yb-fs-xs);
-  line-height: var(--yb-lh-base);
-  cursor: pointer;
-  transition: all var(--yb-dur-fast) var(--yb-ease-out);
+.work-run-ava {
+  flex: none;
+  margin-top: 2px;
+  opacity: 0.92;
 }
-.proc-card:hover {
-  border-color: rgba(var(--yb-c-sky-rgb), 0.3);
-  box-shadow: var(--yb-shadow-2), inset 0 1px 0 rgba(255, 255, 255, 0.9);
-}
-.proc-main {
+.work-run-body {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
+  gap: 8px;
+}
+.work-run-body :deep(.bubble.plain) {
+  max-width: 100%;
+}
+.work-run .msg-meta,
+.work-run .refs {
+  margin-left: 0;
+}
+.work-proc {
+  display: flex;
+  flex-direction: column;
   gap: 4px;
 }
-/* 进行中进度条：accent 渐变流光 */
+.work-proc + .work-proc {
+  margin-top: -4px;
+}
+.work-proc-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 20px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--yb-paper-ink-dim);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+}
+.work-proc-row:hover .proc-toggle {
+  opacity: 1;
+  color: var(--yb-accent-deep);
+}
+.proc-ic {
+  flex-shrink: 0;
+  color: var(--yb-accent);
+}
+.work-proc-row.done .proc-ic {
+  color: var(--yb-intent-ok);
+}
+.work-proc-row.fail,
+.work-proc-row.fail .proc-ic {
+  color: var(--yb-danger);
+}
+.proc-label {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.proc-toggle {
+  flex-shrink: 0;
+  opacity: 0.45;
+  font-size: 11px;
+}
 .proc-track {
   position: relative;
   height: 2px;
@@ -1154,35 +1292,12 @@ onUnmounted(() => {
   from { transform: translateX(-100%); }
   to { transform: translateX(350%); }
 }
-/* 进行中的转圈图标用 accent，成功转 success：颜色本身就是状态信号 */
-.proc-ic {
-  flex-shrink: 0;
-  color: var(--yb-accent);
-}
-.proc-card.done .proc-ic {
-  color: var(--yb-intent-ok);
-}
-.proc-label {
-  min-width: 0;
-  text-align: left;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.proc-card.fail,
-.proc-card.fail .proc-ic {
-  color: var(--yb-danger);
-}
-.proc-toggle {
-  flex-shrink: 0;
-  opacity: 0.55;
-  font-size: var(--yb-fs-xs);
-}
 .proc-detail {
-  margin: 4px 0 0;
+  margin: 0;
   padding: 8px 10px;
-  background: var(--yb-code-bg);
-  border-radius: var(--yb-radius-sm);
+  background: var(--yb-note-mute);
+  box-shadow: var(--yb-press);
+  border-radius: calc(var(--yb-widget-radius) - 8px);
   font-family: var(--yb-mono);
   font-size: var(--yb-fs-xs);
   line-height: var(--yb-lh-base);
@@ -1242,15 +1357,15 @@ onUnmounted(() => {
   align-items: center;
   gap: 6px;
   padding: 6px 14px;
-  border: 1px solid var(--yb-surface-border);
+  border: 1px solid transparent;
   border-radius: var(--yb-radius-pill);
   background: var(--yb-surface-solid);
-  box-shadow: var(--yb-shadow-1);
+  box-shadow: var(--yb-glaze-hi), var(--yb-shadow-1);
   color: var(--yb-accent-deep);
   font-size: var(--yb-fs-lg);
   font-family: inherit;
   cursor: pointer;
-  transition: all var(--yb-dur-fast) var(--yb-ease-out);
+  transition: background var(--yb-dur-fast) var(--yb-ease-out), color var(--yb-dur-fast) var(--yb-ease-out), box-shadow var(--yb-dur-fast) var(--yb-ease-out);
 }
 .chip svg {
   color: var(--yb-accent);
@@ -1275,29 +1390,49 @@ onUnmounted(() => {
   align-self: flex-end;
   align-items: flex-end;
 }
+.msg-meta {
+  margin: 4px 0 0 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 22px;
+  max-width: 100%;
+}
+.msg-meta :deep(.usage-bar) {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+}
+.msg-meta-rule {
+  flex: none;
+  width: 1px;
+  height: 11px;
+  background: var(--yb-border-strong);
+}
 .msg-actions {
-  position: absolute;
-  top: -18px;
-  right: 0;
+  margin: 4px 0 0 30px;
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  padding: 2px;
-  border-radius: var(--yb-radius-sm);
-  background: rgba(255, 255, 255, 0.92);
-  border: 1px solid var(--yb-surface-border);
-  box-shadow: var(--yb-shadow-1);
   opacity: 0;
   pointer-events: none;
   transform: translateY(2px);
   transition: opacity var(--yb-dur-fast) var(--yb-ease-out), transform var(--yb-dur-fast) var(--yb-ease-out);
-  z-index: 6;
+}
+.msg-meta .msg-actions {
+  margin: 0;
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
 }
 .msg-row:hover .msg-actions,
 .msg-row:focus-within .msg-actions {
   opacity: 1;
   pointer-events: auto;
   transform: none;
+}
+.user-msg .msg-actions {
+  margin-left: 0;
 }
 .msg-actions button {
   display: inline-flex;

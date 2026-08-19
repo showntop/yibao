@@ -90,10 +90,10 @@ function fmtTime(ts: number): string {
 
 <template>
   <aside class="session">
-    <header class="echo-head">
+    <header class="echo-head yb-widget-head">
       <div>
-        <span class="echo-kicker">会话</span>
-        <span class="echo-count">{{ sessions.length ? `${sessions.length} 条` : "暂无" }}</span>
+        <span>会话</span>
+        <span class="echo-count yb-widget-meta">{{ sessions.length ? `${sessions.length} 条` : "暂无" }}</span>
       </div>
       <button class="echo-new" type="button" title="开始一段新对话" aria-label="开始一段新对话" @click="newChat">
         <span>新对话</span>
@@ -132,27 +132,13 @@ function fmtTime(ts: number): string {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  position: relative;
-  /* 整栏滚动，echo-head sticky 才能压住下方列表 */
-  overflow-y: auto;
-  scrollbar-width: thin;
 }
 
 button { font: inherit; }
 
 .echo-head {
   flex: none;
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  padding: 8px 10px 6px 12px;
-  display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  background: var(--yb-paper-sticky);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
 }
 
 .echo-head > div {
@@ -160,14 +146,6 @@ button { font: inherit; }
   display: flex;
   align-items: baseline;
   gap: 7px;
-}
-
-.echo-kicker {
-  font-size: 11px;
-  font-weight: var(--yb-fw-bold);
-  color: var(--yb-paper-ink-dim);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
 }
 
 .echo-count {
@@ -178,11 +156,10 @@ button { font: inherit; }
 
 .echo-new {
   flex: none;
-  height: 24px;
-  padding: 0 9px;
+  height: 22px;
+  padding: 0 8px;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
   border: 0;
   border-radius: var(--yb-radius-pill);
   background: var(--yb-accent);
@@ -190,26 +167,24 @@ button { font: inherit; }
   font-size: 10px;
   font-weight: var(--yb-fw-medium);
   cursor: pointer;
-  box-shadow: 0 1px 4px rgba(var(--yb-c-sky-rgb), 0.22);
-  transition: transform 160ms var(--yb-ease-out), box-shadow 160ms var(--yb-ease-out), filter 160ms var(--yb-ease-out);
+  box-shadow: var(--yb-glaze-hi), 0 1px 3px rgba(var(--yb-c-sky-rgb), 0.22);
+  transition: transform 160ms var(--yb-ease-out), filter 160ms var(--yb-ease-out);
 }
 
 .echo-new:hover {
   transform: translateY(-1px);
   filter: brightness(1.03);
-  box-shadow: 0 3px 10px rgba(var(--yb-c-sky-rgb), 0.3);
 }
 
 .echo-list {
-  flex: none;
-  padding: 2px 8px 12px;
-  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 6px 8px;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  scrollbar-width: thin;
 }
-
-.echo-list::before { display: none; }
 
 .echo-row {
   position: relative;
@@ -221,33 +196,26 @@ button { font: inherit; }
   min-width: 0;
   flex: 1;
   margin: 0;
-  padding: 7px 28px 7px 10px;
-  border: 1px solid var(--yb-note-border);
-  border-radius: var(--yb-radius-sm);
-  background: var(--yb-note-soft);
+  padding: 8px 28px 8px 8px;
+  border: 0;
+  border-radius: calc(var(--yb-widget-radius) - 6px);
+  background: transparent;
   color: var(--yb-paper-ink);
   text-align: left;
   cursor: pointer;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  box-shadow: 0 1px 4px rgba(var(--yb-paper-shade-rgb), 0.04);
-  transition:
-    transform 160ms var(--yb-ease-out),
-    box-shadow 160ms var(--yb-ease-out),
-    background 160ms var(--yb-ease-out),
-    border-color 160ms var(--yb-ease-out);
+  transition: background 160ms var(--yb-ease-out);
 }
 
 .echo-row:hover .echo-main {
-  background: var(--yb-note-bg);
-  box-shadow: 0 4px 12px rgba(var(--yb-paper-shade-rgb), 0.08);
+  background: var(--yb-row-hover);
 }
 
 .echo-row.active .echo-main {
   background: var(--yb-note-accent);
-  border-color: rgba(var(--yb-c-sky-rgb), 0.18);
-  box-shadow: 0 4px 14px rgba(var(--yb-c-sky-rgb), 0.12);
+  box-shadow: var(--yb-press);
 }
 
 /* 两行：标题+时间 / 预览 */
@@ -317,11 +285,11 @@ button { font: inherit; }
 .echo-empty {
   width: 100%;
   margin: 4px 0 0;
-  padding: 14px 12px;
-  border: 1px solid var(--yb-note-border);
-  border-radius: var(--yb-radius-sm);
-  background: var(--yb-note-soft);
-  box-shadow: none;
+  padding: 18px 12px;
+  border: 0;
+  border-radius: calc(var(--yb-widget-radius) - 6px);
+  background: var(--yb-note-mute);
+  box-shadow: var(--yb-press);
   display: flex;
   flex-direction: column;
   align-items: center;

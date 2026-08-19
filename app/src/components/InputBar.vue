@@ -468,16 +468,15 @@ defineExpose({ focus: () => inputRef.value?.focus(), insertText, takeDraft });
   box-sizing: border-box;
   min-height: 46px;
   padding: 5px 5px 5px 7px;
-  border-radius: 24px;                        /* 更高的对话胶囊 */
-  background: var(--yb-glass);                /* 毛玻璃（统一浮层质感） */
+  border-radius: 24px;
+  background: var(--yb-glass);
   -webkit-backdrop-filter: var(--yb-blur);
   backdrop-filter: var(--yb-blur);
   border: 1px solid var(--yb-surface-border);
-  /* 双层阴影：下层弥散浮起，上层锐边描立体（视觉稿感） */
-  box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.04),
+  box-shadow: var(--yb-glaze-hi), var(--yb-glaze-edge),
+    0 1px 2px rgba(var(--yb-c-slate-rgb), 0.06),
     0 6px 18px rgba(var(--yb-c-slate-rgb), 0.10);
-  transition: all var(--yb-dur-fast) var(--yb-ease-out);
+  transition: border-color var(--yb-dur-fast) var(--yb-ease-out), box-shadow var(--yb-dur-fast) var(--yb-ease-out);
 }
 .bar-row {
   display: flex;
@@ -486,8 +485,8 @@ defineExpose({ focus: () => inputRef.value?.focus(), insertText, takeDraft });
 }
 .bar:focus-within {
   border-color: var(--yb-accent);
-  box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.04),
+  box-shadow: var(--yb-glaze-hi),
+    0 1px 2px rgba(var(--yb-c-slate-rgb), 0.06),
     0 6px 18px rgba(var(--yb-c-slate-rgb), 0.10);
   /* focus ring：原用 box-shadow 0 0 0 3px spread，但 spread 在某些 WebView
    * 上从 padding-box 渲染，画在 border 内侧与 1px border 叠出"内圈"。

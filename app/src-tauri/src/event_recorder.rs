@@ -108,12 +108,26 @@ impl EventRecorder {
         self.append(db, conv_id, role, payload, now_ms());
     }
 
+    /// 工具行要按发生顺序插在对话里：若当前还在流式，先把已吐出的正文封成一段，
+    /// 后续 chunk 另起一条 AI 消息，避免终态把整段回复写回工具之前那一条。
+    fn seal_stream(&mut self, db: &SessionDb, conv_id: &str) {
+        let Some(msg_id) = self.stream_msg_id.take() else { return };
+        let mut payload = json!({ "text": self.stream_text });
+        if !self.stream_refs.is_empty() {
+            payload["refs"] = json!(self.stream_refs);
+        }
+        let _ = db.update_message_payload(conv_id, &msg_id, payload);
+        self.stream_text.clear();
+        self.stream_refs.clear();
+    }
+
     fn on_action_proposed(&mut self, db: &SessionDb, conv_id: &str, e: &Value) {
         let Some(action) = e.get("action") else { return };
         let Some(action_id) = action.get("id").and_then(|v| v.as_str()) else { return };
         if proc_skip(action) {
             return;
         }
+        self.seal_stream(db, conv_id);
         let label = proc_label(action);
         // proc 过程行（sys 淡色小字，done=false 进行中）
         let msg_id = new_id();
@@ -273,6 +287,26 @@ mod tests {
         let (db, mut r) = setup();
         r.record(&db, "c1", &json!({"kind":"final_reply","text":"完整回复"}));
         assert_eq!(texts(&db), vec!["完整回复"]);
+    }
+
+    #[test]
+    fn streaming_then_tools_then_reply_interleaves() {
+        let (db, mut r) = setup();
+        r.record(&db, "c1", &json!({"kind":"final_reply_chunk","text":"先查一下。"}));
+        r.record(&db, "c1", &json!({"kind":"action_proposed","action":{"id":"a1","skill_id":"web_search","label":"联网搜索"}}));
+        r.record(&db, "c1", &json!({"kind":"action_result","action":{"id":"a1","skill_id":"web_search","label":"联网搜索"},"result":{"success":true,"data":{"human":"ok"}}}));
+        r.record(&db, "c1", &json!({"kind":"action_proposed","action":{"id":"a2","skill_id":"extract_url","label":"读网页"}}));
+        r.record(&db, "c1", &json!({"kind":"action_result","action":{"id":"a2","skill_id":"extract_url","label":"读网页"},"result":{"success":true,"data":{"human":"ok"}}}));
+        r.record(&db, "c1", &json!({"kind":"final_reply_chunk","text":"结论是这样"}));
+        r.record(&db, "c1", &json!({"kind":"final_reply","text":"结论是这样"}));
+        let msgs = db.get_messages("c1", 10).unwrap();
+        assert_eq!(msgs.len(), 4, "正文 / 工具 / 工具 / 终复 按发生顺序各占一条");
+        assert_eq!(msgs[0].role, "ai");
+        assert_eq!(msgs[0].payload["text"], "先查一下。");
+        assert_eq!(msgs[1].payload["proc"]["label"], "联网搜索");
+        assert_eq!(msgs[2].payload["proc"]["label"], "读网页");
+        assert_eq!(msgs[3].role, "ai");
+        assert_eq!(msgs[3].payload["text"], "结论是这样");
     }
 
     #[test]

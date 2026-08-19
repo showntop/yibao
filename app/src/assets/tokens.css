@@ -217,7 +217,7 @@
    * 这是形象的状态信号通道，不可挪作装饰用途。 */
   --yb-state-idle: #aab8c8;
   --yb-state-listen: #2fb0b5;
-  --yb-state-think: #8e7cf0;
+  --yb-state-think: #3d7aa8; /* 天青釉，不用紫（通用 Agent 指纹） */
   --yb-state-work: var(--yb-c-amber-500);
   --yb-state-say: #58b368;
   --yb-state-success: var(--yb-c-green-500);
@@ -225,6 +225,16 @@
   --yb-state-notify: #ee5f8f;
   --yb-state-drowsy: #9aa8bb;
   --yb-state-stretch: var(--yb-c-sky-500); /* 久坐做操：活力青 */
+
+  /* ---- 天青瓷 OS 材质（finish）----
+   * 与深浅主题正交：theme = light/dark，finish = 半径/釉面/阴影几何。
+   * 组件只消费这批语义名。换皮肤写 <html data-finish>，见 lib/finish.ts。
+   * porcelain 是缺省，不写 data-finish 也成立。paper / metal 只覆盖本段。 */
+  --yb-glaze-hi: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  --yb-glaze-edge: inset 0 -1px 0 rgba(var(--yb-c-slate-rgb), 0.06);
+  --yb-press: inset 0 1px 2px rgba(var(--yb-c-slate-rgb), 0.14);
+  --yb-think-mist: rgba(var(--yb-c-sky-rgb), 0.08);
+  --yb-kicker-track: 0.04em;
 }
 
 /* ============ [D] 大窗：macOS 原生窗口语言 ============
@@ -245,8 +255,8 @@
   /* 分区小标题（「导航」「工作区」这类 uppercase 灰字） */
   --yb-sidebar-head: var(--yb-c-ink-400);
 
-  /* 主内容区：实白，页面底 */
-  --yb-content-bg: var(--yb-c-white);
+  /* 主内容区：瓷白胎，不用纯白（叠在别人窗口上才有厚度） */
+  --yb-content-bg: #f4f7fa;
 
   /* 分组卡片（系统设置 Ventura+ 语言）：圆角卡内多行、行间 hairline */
   --yb-card-bg: var(--yb-c-white);
@@ -277,7 +287,7 @@
   --yb-paper-ink-dim: var(--yb-text-dim);
   --yb-paper-shade-rgb: var(--yb-c-slate-rgb);
   --yb-paper-grain: rgba(var(--yb-c-slate-rgb), 0.028);
-  --yb-note-bg: #ffffff;
+  --yb-note-bg: #fbfcfe;
   --yb-note-border: rgba(var(--yb-c-slate-rgb), 0.07);
   --yb-note-radius: var(--yb-radius-sm); /* 10px：比 xl 更克制，少「气球感」 */
   --yb-note-shadow:
@@ -293,6 +303,30 @@
   --yb-note-mute: #f2f5f9;
   --yb-note-accent: rgba(var(--yb-c-sky-rgb), 0.10);
   --yb-paper-sticky: rgba(255, 255, 255, 0.86);
+
+  /* ---- OS 零件：石面桌 + 厚瓷片 / 玻璃片 ----
+   * 不要做成透视静物：不旋转、不连线、不给滚动列表铺噪点。
+   * 零件是独立浮块（有厚度、颗粒、大圆角），不是填满侧栏的卡片。 */
+  --yb-desk: #e6ebf2;
+  --yb-desk-pad: 14px 12px 16px;
+  --yb-desk-well: none;
+  --yb-widget-gap: 12px;
+  --yb-widget-radius: 22px;
+  --yb-widget-bg: #f7f9fc;
+  --yb-widget-border: rgba(var(--yb-c-slate-rgb), 0.08);
+  --yb-widget-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.82),
+    inset 0 -2px 4px rgba(var(--yb-c-slate-rgb), 0.07),
+    0 1px 1px rgba(var(--yb-c-slate-rgb), 0.05),
+    0 10px 24px rgba(var(--yb-c-slate-rgb), 0.10),
+    0 28px 48px -18px rgba(var(--yb-c-slate-rgb), 0.14);
+  --yb-widget-pad-x: 12px;
+  --yb-widget-head-fs: 11px;
+  --yb-widget-grain:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.18  0 0 0 0 0.22  0 0 0 0 0.28  0 0 0 0.55 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  --yb-widget-grain-opacity: 0.18;
+  --yb-widget-glass: rgba(24, 30, 38, 0.92);
+  --yb-widget-glass-ink: #e8eef6;
 }
 
 /* ============ 历史别名 ============
@@ -400,9 +434,9 @@ pre {
     --yb-intent-notify-soft: rgba(var(--yb-c-notify-rgb), 0.2);
 
     /* ---- 阴影（深色下更重更黑） ---- */
-    --yb-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --yb-shadow-2: 0 2px 8px rgba(0, 0, 0, 0.45);
-    --yb-shadow-3: 0 10px 32px rgba(0, 0, 0, 0.55);
+    --yb-shadow-1: 0 1px 2px rgba(8, 16, 28, 0.35);
+    --yb-shadow-2: 0 2px 8px rgba(8, 16, 28, 0.4);
+    --yb-shadow-3: 0 10px 32px rgba(8, 16, 28, 0.5);
 
     /* ---- 焦点环 ---- */
     --yb-focus-ring: 0 0 0 2px #10161d, 0 0 0 4px rgba(77, 144, 196, 0.7);
@@ -475,9 +509,25 @@ pre {
     --yb-note-accent: rgba(77, 144, 196, 0.18);
     --yb-paper-sticky: rgba(26, 34, 44, 0.9);
 
+    --yb-desk: #121820;
+    --yb-desk-well: none;
+    --yb-widget-bg: #1c252f;
+    --yb-widget-border: rgba(255, 255, 255, 0.08);
+    --yb-widget-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.10),
+      inset 0 -2px 4px rgba(0, 0, 0, 0.28),
+      0 1px 2px rgba(0, 0, 0, 0.35),
+      0 12px 28px rgba(0, 0, 0, 0.32);
+    --yb-widget-grain-opacity: 0.12;
+    --yb-widget-glass: rgba(12, 16, 22, 0.88);
+
     /* ---- 历史别名 ---- */
     --yb-surface: rgba(24, 33, 43, 0.78);
     --yb-surface-solid: #1f2a36;
+    --yb-glaze-hi: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+    --yb-glaze-edge: inset 0 -1px 0 rgba(8, 16, 28, 0.35);
+    --yb-press: inset 0 1px 2px rgba(8, 16, 28, 0.45);
+    --yb-think-mist: rgba(77, 144, 196, 0.16);
   }
 }
 
@@ -512,9 +562,9 @@ pre {
   --yb-intent-notify: #f07aa8;
   --yb-intent-notify-soft: rgba(var(--yb-c-notify-rgb), 0.2);
 
-  --yb-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --yb-shadow-2: 0 2px 8px rgba(0, 0, 0, 0.45);
-  --yb-shadow-3: 0 10px 32px rgba(0, 0, 0, 0.55);
+  --yb-shadow-1: 0 1px 2px rgba(8, 16, 28, 0.35);
+  --yb-shadow-2: 0 2px 8px rgba(8, 16, 28, 0.4);
+  --yb-shadow-3: 0 10px 32px rgba(8, 16, 28, 0.5);
 
   --yb-focus-ring: 0 0 0 2px #10161d, 0 0 0 4px rgba(77, 144, 196, 0.7);
 
@@ -579,6 +629,201 @@ pre {
   --yb-note-accent: rgba(77, 144, 196, 0.18);
   --yb-paper-sticky: rgba(26, 34, 44, 0.9);
 
+  --yb-desk: #121820;
+  --yb-desk-well: none;
+  --yb-widget-bg: #1c252f;
+  --yb-widget-border: rgba(255, 255, 255, 0.08);
+  --yb-widget-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.10),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.28),
+    0 1px 2px rgba(0, 0, 0, 0.35),
+    0 12px 28px rgba(0, 0, 0, 0.32);
+  --yb-widget-grain-opacity: 0.12;
+  --yb-widget-glass: rgba(12, 16, 22, 0.88);
+
   --yb-surface: rgba(24, 33, 43, 0.78);
   --yb-surface-solid: #1f2a36;
+  --yb-glaze-hi: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  --yb-glaze-edge: inset 0 -1px 0 rgba(8, 16, 28, 0.35);
+  --yb-press: inset 0 1px 2px rgba(8, 16, 28, 0.45);
+  --yb-think-mist: rgba(77, 144, 196, 0.16);
+}
+
+/* ============ finish 覆盖（与 theme 正交） ============
+ * porcelain = 缺省，上面 [C]/[D] 已是瓷。这里只写差异。
+ * 新 finish：加 lib/finish.ts 的 FINISHES 一行 + 本段一块。 */
+:root[data-finish="paper"] {
+  --yb-glaze-hi: none;
+  --yb-glaze-edge: none;
+  --yb-press: inset 0 1px 1px rgba(var(--yb-c-slate-rgb), 0.08);
+  --yb-radius-sm: 8px;
+  --yb-radius-md: 10px;
+  --yb-radius-lg: 12px;
+  --yb-radius-xl: 14px;
+  --yb-note-shadow: 0 1px 2px rgba(var(--yb-c-slate-rgb), 0.06);
+  --yb-note-shadow-lift: 0 2px 8px rgba(var(--yb-c-slate-rgb), 0.08);
+  --yb-shadow-2: 0 1px 4px rgba(var(--yb-c-slate-rgb), 0.08);
+  --yb-content-bg: #f7f8fa;
+  --yb-paper-bg: #eceff4;
+  --yb-desk: #eceff4;
+  --yb-desk-well: none;
+  --yb-widget-radius: 14px;
+  --yb-widget-grain-opacity: 0.06;
+  --yb-widget-shadow: 0 1px 2px rgba(var(--yb-c-slate-rgb), 0.06);
+}
+
+:root[data-finish="metal"] {
+  --yb-glaze-hi: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  --yb-glaze-edge: inset 0 -1px 0 rgba(var(--yb-c-slate-rgb), 0.14);
+  --yb-press: inset 0 2px 3px rgba(var(--yb-c-slate-rgb), 0.2);
+  --yb-radius-xs: 2px;
+  --yb-radius-sm: 6px;
+  --yb-radius-md: 8px;
+  --yb-radius-lg: 10px;
+  --yb-radius-xl: 12px;
+  --yb-content-bg: #eef1f5;
+  --yb-paper-bg: #dde3ec;
+  --yb-desk: #dde3ec;
+  --yb-widget-radius: 12px;
+  --yb-desk-well: none;
+  --yb-widget-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    inset 0 -2px 3px rgba(var(--yb-c-slate-rgb), 0.14),
+    0 1px 0 rgba(255, 255, 255, 0.7),
+    0 2px 4px rgba(var(--yb-c-slate-rgb), 0.1),
+    0 10px 22px rgba(var(--yb-c-slate-rgb), 0.12);
+  --yb-note-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.7),
+    0 2px 4px rgba(var(--yb-c-slate-rgb), 0.1),
+    0 10px 24px rgba(var(--yb-c-slate-rgb), 0.12);
+}
+
+/* OS 零件：石面桌 + 厚瓷片。左右栏、以后的插件轨共用。 */
+.yb-desk {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yb-widget-gap);
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  padding: var(--yb-desk-pad);
+  overflow: hidden;
+  background: var(--yb-desk);
+  box-shadow: var(--yb-desk-well);
+}
+
+.yb-widget {
+  position: relative;
+  min-width: 0;
+  isolation: isolate;
+  overflow: hidden;
+  border: 1px solid var(--yb-widget-border);
+  border-radius: var(--yb-widget-radius);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.38), transparent 42%),
+    var(--yb-widget-bg);
+  box-shadow: var(--yb-widget-shadow);
+}
+
+.yb-widget::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: var(--yb-widget-grain-opacity);
+  mix-blend-mode: multiply;
+  background-image: var(--yb-widget-grain);
+}
+
+.yb-widget > * {
+  position: relative;
+  z-index: 2;
+}
+
+.yb-widget-fill {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.yb-widget[data-widget="sessions"] {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.yb-widget--s[data-widget="sessions"] {
+  flex: 0 1 auto;
+  max-height: 156px;
+  display: flex;
+  flex-direction: column;
+}
+.yb-widget--m[data-widget="sessions"] {
+  flex: 0 1 auto;
+  max-height: 248px;
+  display: flex;
+  flex-direction: column;
+}
+.yb-widget--s[data-widget="mind"] .neural-brain { height: 100px; }
+.yb-widget--m[data-widget="mind"] .neural-brain { height: 132px; }
+.yb-widget--l[data-widget="mind"] .neural-brain { height: 156px; }
+
+.yb-widget--glass {
+  color: var(--yb-widget-glass-ink);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.10), transparent 40%),
+    var(--yb-widget-glass);
+  border-color: rgba(255, 255, 255, 0.12);
+  --yb-paper-ink: var(--yb-widget-glass-ink);
+  --yb-paper-ink-dim: rgba(232, 238, 246, 0.62);
+  --yb-text: var(--yb-widget-glass-ink);
+  --yb-text-dim: rgba(232, 238, 246, 0.62);
+  --yb-text-strong: #f3f6fa;
+  --yb-note-mute: rgba(255, 255, 255, 0.08);
+  --yb-note-soft: rgba(255, 255, 255, 0.06);
+  --yb-line: rgba(255, 255, 255, 0.1);
+  --yb-accent-deep: #9ec8e8;
+  --yb-widget-bg: var(--yb-widget-glass);
+}
+.yb-widget--glass::after {
+  mix-blend-mode: overlay;
+  opacity: 0.22;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .yb-widget--glass {
+    background: #1a222c;
+  }
+}
+
+.yb-widget-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 46px 4px var(--yb-widget-pad-x);
+  color: var(--yb-paper-ink-dim);
+  font-size: var(--yb-widget-head-fs);
+  font-weight: var(--yb-fw-medium);
+  letter-spacing: var(--yb-kicker-track);
+  line-height: 1.3;
+}
+
+.yb-widget-meta {
+  font-size: 10px;
+  font-weight: var(--yb-fw-medium);
+  color: var(--yb-paper-ink-dim);
+  opacity: 0.75;
+}
+
+.yb-widget-body {
+  padding: 4px var(--yb-widget-pad-x) 12px;
+}
+
+:where(button, [role="button"]):active:not(:disabled) {
+  box-shadow: var(--yb-press);
 }

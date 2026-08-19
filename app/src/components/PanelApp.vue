@@ -170,6 +170,7 @@ function onEvent(e: BrainEvent) {
       state.value = "work";
       // 过程行：技能短标签 + 进行中状态（use_plugin 跳过——成功有 notice，不重复）
       if (e.action?.id && !procSkip(e.action)) {
+        if (streamingIdx.value !== null) streamingIdx.value = null;
         procIdx.set(e.action.id, msgs.value.length);
         msgs.value.push({ role: "proc", text: procLabel(e.action), pstate: "run" });
         scrollSoon();

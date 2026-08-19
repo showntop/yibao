@@ -626,6 +626,7 @@ function onEvent(e: BrainEvent) {
       state.value = "work";
       // 过程行：技能短标签 + pstate 驱动图标（use_plugin 跳过——成功有 notice，不重复）
       if (e.action?.id && !procSkip(e.action)) {
+        if (streamingIdx.value !== null) streamingIdx.value = null;
         procIdx.set(e.action.id, bubbles.value.length);
         surfaceAnchor.set(e.action.id, bubbles.value.length);
         bubbles.value.push({ role: "sys", text: procLabel(e.action), pstate: "run" });
@@ -1263,7 +1264,7 @@ onUnmounted(() => {
       <div v-else class="bubbles" ref="bubblesRef">
         <div v-if="!bubbles.length && !showTyping" class="empty-hint">
           <Avatar :state="petState" :size="56" />
-          <p>叫我做什么都行～</p>
+          <p>说一件事</p>
           <div class="chips">
             <button v-for="c in suggestions" :key="c" class="chip" @click="submit(c)">{{ c }}</button>
           </div>

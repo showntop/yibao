@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getMemListOnce, onBrainEvent, type MemItem, type FeedStats } from "../lib/brain";
 import NeuralBrain from "./NeuralBrain.vue";
 import Avatar from "./Avatar.vue";
+import HomeWidget from "./HomeWidget.vue";
 
 type AgentState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
 type CapabilityKind = "sense" | "think" | "act";
@@ -195,34 +196,34 @@ onUnmounted(() => {
 
 <template>
   <aside class="agent" :class="[state, { compact }]">
-    <header class="agent-head">
+    <HomeWidget id="identity" class="identity-widget">
       <button class="identity" type="button" title="和译宝聊聊它的记忆与能力" @click="greet">
-        <!-- 本尊 Avatar：与顶栏同一角色（小=全局品牌 / 大=本尊特写），
-             同一身份两次亮相不冲突；pointer-events 禁用其拖动手势，避免移动窗口 -->
         <span class="identity-avatar" title="折叠左栏" @click.stop="emit('toggle')"><Avatar :state="state" :size="36" compact /></span>
         <span class="identity-copy">
           <span class="identity-line"><strong>译宝</strong><i class="state-dot" />{{ stateText }}</span>
           <span>{{ stateDetail }}</span>
         </span>
       </button>
-      <span class="mind-label">状态与能力</span>
-    </header>
+    </HomeWidget>
 
-    <section class="mind" aria-label="译宝的记忆、感知和行动能力">
-      <NeuralBrain
-        :state="state"
-        :state-text="stateText"
-        :memories="memoryPoints"
-        :loaded="loaded"
-        :mem-failed="memFailed"
-        :sense-count="3"
-        :think-count="memories.length"
-        :act-count="plugins.length"
-        :active-capability="activeCapability"
-        @capability="toggleCapability"
-        @memory="askMemory"
-        @status="greet"
-      />
+    <HomeWidget id="mind" class="mind-widget" aria-label="译宝的记忆、感知和行动能力">
+      <h2 class="yb-widget-head">认知</h2>
+      <div class="mind-well">
+        <NeuralBrain
+          :state="state"
+          :state-text="stateText"
+          :memories="memoryPoints"
+          :loaded="loaded"
+          :mem-failed="memFailed"
+          :sense-count="3"
+          :think-count="memories.length"
+          :act-count="plugins.length"
+          :active-capability="activeCapability"
+          @capability="toggleCapability"
+          @memory="askMemory"
+          @status="greet"
+        />
+      </div>
 
       <Transition name="cap-detail">
         <div v-if="activeGroup" class="capability-detail">
@@ -235,28 +236,22 @@ onUnmounted(() => {
           </div>
         </div>
       </Transition>
-    </section>
+    </HomeWidget>
 
-    <section class="today" aria-label="今日概要">
-      <span class="today-title">今日</span>
-      <span><b>{{ doneDisplay }}</b> 完成</span>
-      <i />
-      <span><b>{{ chatsDisplay }}</b> 对话</span>
-      <i />
-      <span><b>{{ memsDisplay }}</b> 新记忆</span>
-    </section>
+    <HomeWidget id="today" class="today-widget" aria-label="今日概要">
+      <h2 class="yb-widget-head">今日</h2>
+      <div class="today-cells">
+        <span class="today-cell"><b>{{ doneDisplay }}</b>完成</span>
+        <span class="today-cell"><b>{{ chatsDisplay }}</b>对话</span>
+        <span class="today-cell"><b>{{ memsDisplay }}</b>记忆</span>
+      </div>
+    </HomeWidget>
   </aside>
 </template>
 
 <style scoped>
 .agent {
-  width: 100%;
-  min-width: 0;
-  box-sizing: border-box;
-  padding: 10px 12px 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  display: contents;
   color: var(--yb-paper-ink);
   user-select: none;
 }
@@ -265,21 +260,15 @@ button {
   font: inherit;
 }
 
-.agent-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-}
-
 .identity {
+  width: 100%;
   min-width: 0;
-  padding: 0;
+  padding: 10px 40px 10px 12px;
   border: 0;
   background: transparent;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   color: inherit;
   text-align: left;
   cursor: pointer;
@@ -331,36 +320,28 @@ button {
 .success .state-dot { background: var(--yb-state-success); }
 .error .state-dot { background: var(--yb-state-error); }
 
-.mind-label {
-  padding-top: 3px;
+.mind-widget {
   flex: none;
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  color: var(--yb-paper-ink-dim);
-  text-transform: uppercase;
 }
 
-.mind {
-  width: 100%;
-  min-width: 0;
-  box-sizing: border-box;
-  position: relative;
-  border: 0;
-  background: transparent;
-  overflow: visible;
+.mind-well {
+  margin: 0 8px 8px;
+  overflow: hidden;
+  border-radius: calc(var(--yb-widget-radius) - 6px);
+  background: var(--yb-note-mute);
+  box-shadow: var(--yb-press);
 }
 
 .capability-detail {
-  margin: 0 0 2px;
+  margin: 0 8px 8px;
   padding: 6px 8px;
   min-height: 0;
-  border-radius: var(--yb-radius-sm);
-  border: 1px solid var(--yb-note-border);
+  border-radius: calc(var(--yb-widget-radius) - 6px);
   display: flex;
   align-items: center;
   gap: 6px;
-  background: var(--yb-note-soft);
-  box-shadow: none;
+  background: var(--yb-note-mute);
+  box-shadow: var(--yb-press);
   color: var(--yb-paper-ink-dim);
 }
 
@@ -372,14 +353,13 @@ button {
   padding: 3px 6px;
   border: 0;
   border-radius: 7px;
-  background: var(--yb-note-bg);
+  background: var(--yb-widget-bg);
   color: var(--yb-accent-deep);
   font-size: 9px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   cursor: pointer;
-  box-shadow: 0 1px 2px rgba(var(--yb-paper-shade-rgb), 0.05);
 }
 
 .cap-detail-enter-active,
@@ -387,23 +367,36 @@ button {
 .cap-detail-enter-from,
 .cap-detail-leave-to { opacity: 0; transform: translateY(-5px); }
 
-.today {
-  height: 28px;
-  padding: 0 8px;
-  border-radius: var(--yb-radius-sm);
-  border: 1px solid var(--yb-note-border);
+.today-cells {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  margin: 2px 8px 8px;
+  overflow: hidden;
+  border-radius: calc(var(--yb-widget-radius) - 6px);
   background: var(--yb-note-mute);
-  box-shadow: none;
+  box-shadow: var(--yb-press);
+}
+
+.today-cell {
+  padding: 8px 4px 9px;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: space-between;
-  gap: 6px;
+  gap: 2px;
   font-size: 10px;
   color: var(--yb-paper-ink-dim);
 }
 
-.today-title { color: var(--yb-paper-ink-dim); letter-spacing: 0.04em; }
-.today b { margin-right: 2px; color: var(--yb-accent-deep); font-size: 11px; font-variant-numeric: tabular-nums; }
-.today i { width: 2px; height: 2px; border-radius: 50%; background: var(--yb-border-strong); }
+.today-cell + .today-cell {
+  box-shadow: inset 1px 0 0 var(--yb-line);
+}
+
+.today-cell b {
+  color: var(--yb-accent-deep);
+  font-size: 15px;
+  font-weight: var(--yb-fw-bold);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
 
 </style>

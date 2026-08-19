@@ -34,8 +34,6 @@ const leftRailOpen = ref(true);
 const rightRailOpen = ref(true);
 // 非全屏（窗口窄）默认收起左栏：展开/折叠按钮始终可点，用户手动切换后不再被覆盖
 const isNarrowWindow = () => window.innerWidth <= 1180;
-const clockNow = ref(new Date());
-const productNote = "让信息自然归位。";
 
 // ---- 主题（顶栏切换按钮；三态：light / dark / system，与系统偏好对齐） ----
 type ThemeMode = "light" | "dark" | "system";
@@ -69,14 +67,6 @@ function cycleTheme() {
   else if (theme.value === "dark") theme.value = "light";
   else theme.value = themeEffective.value === "dark" ? "light" : "dark";
 }
-const weatherNote = "晴 · 26°";
-let clockTimer: number | null = null;
-
-const clockText = computed(() => new Intl.DateTimeFormat("zh-CN", {
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
-}).format(clockNow.value));
 
 // Phase 1：surface 裁决事件——后端建议（presentation/attention）+ 前端 explicit 推断一起进裁决器
 interface CapabilitySurfaceEvent extends CapabilityRailSurface {
@@ -341,7 +331,6 @@ onMounted(async () => {
   if (!qaMode) unApprovals = onPendingConfirms((l) => (approvalCount.value = l.length));
   window.addEventListener("keydown", onGlobalKeydown);
   if (isNarrowWindow()) leftRailOpen.value = false; // 非全屏默认收起左栏（按钮仍可展开）
-  clockTimer = window.setInterval(() => (clockNow.value = new Date()), 30_000);
   // 启动恢复：hydrate 后按 surface 域 scene 设置布局恢复窗口
   try {
     clearLegacySessionKeys();
@@ -358,7 +347,6 @@ onMounted(async () => {
 onUnmounted(() => {
   unApprovals?.();
   window.removeEventListener("keydown", onGlobalKeydown);
-  if (clockTimer !== null) window.clearInterval(clockTimer);
 });
 
 function toggleLeftRail() {
@@ -385,12 +373,7 @@ function close() {
           <!-- 顶栏品牌 = 项目 logo（阴阳鱼，与 src-tauri/icons/icon.png 一致）；
                宠物形象 Avatar 不放顶栏，归左栏身份头部（角色与产品品牌分离） -->
           <img class="tb-logo" :src="appLogo" alt="译宝" data-tauri-drag-region />
-          <span class="tb-product-note" data-tauri-drag-region>{{ productNote }}</span>
-          <span class="tb-status" data-tauri-drag-region>
-            <time>{{ clockText }}</time>
-            <i aria-hidden="true">·</i>
-            <span>{{ weatherNote }}</span>
-          </span>
+          <span class="tb-wordmark" data-tauri-drag-region>译宝</span>
         </div>
 
         <nav class="tb-nav" data-tauri-drag-region>
@@ -418,7 +401,7 @@ function close() {
           >
             <span class="activity-icon"><YbIcon name="plug" :size="12" /></span>
             <span class="activity-label">{{ capability.title }}</span>
-            <i />
+            <i v-if="activityBusy" />
           </button>
           <button class="tb-btn" title="命令面板 (⌘K)" @click="togglePalette">
             <YbIcon name="search" :size="15" />
@@ -441,7 +424,7 @@ function close() {
     <!-- 内容区：各页常驻挂载，切页只切显隐。
          主屏 = 对话 + 信息面板融合体（AI 交互主入口）；插件面板打开 → 自动切插件页 -->
     <main class="content" :class="{ 'capability-scene': sceneActive, 'capability-focus': sceneActive && presentation === 'focus' }">
-      <Transition name="chat-fade">
+      <Transition name="view-fade">
         <div v-show="tab === 'home' && !sceneActive" class="view-host chat-host">
           <HomeChat v-if="!qaMode" :left-rail-open="leftRailOpen" :right-rail-open="rightRailOpen" @toggle-left="toggleLeftRail" @toggle-right="toggleRightRail" @state="chatState = $event" @open-panel="showSurface" @reminder="navigate('home')" />
         </div>
@@ -451,7 +434,7 @@ function close() {
           <CapabilityConversationRail :surface="capability" :active="sceneActive" @close="hideSurface" @focus="toggleFocus" />
         </div>
       </Transition>
-      <Transition name="scene-panel">
+      <Transition :name="sceneActive ? 'scene-panel' : 'view-fade'">
         <div v-show="tab === 'plugins' || sceneActive" class="view-host plugin-host">
         <HomePlugins
           ref="pluginHost"
@@ -465,8 +448,12 @@ function close() {
         />
         </div>
       </Transition>
-      <div v-show="tab === 'data'" class="view-host"><DataView v-if="!qaMode" /></div>
-      <div v-show="tab === 'settings'" class="view-host"><SettingsView v-if="!qaMode" /></div>
+      <Transition name="view-fade">
+        <div v-show="tab === 'data'" class="view-host"><DataView v-if="!qaMode" /></div>
+      </Transition>
+      <Transition name="view-fade">
+        <div v-show="tab === 'settings'" class="view-host"><SettingsView v-if="!qaMode" /></div>
+      </Transition>
     </main>
 
     <!-- ⌘K 命令面板：覆盖在主屏上（AI 原生：找页面用搜/说） -->
@@ -510,7 +497,8 @@ function close() {
 <style scoped>
 /* 壳：原生窗口——不自绘圆角/阴影/玻璃，系统负责。只管 顶栏 + 内容区 布局。 */
 .home-shell {
-  height: 100vh;
+  height: 100%;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -568,31 +556,12 @@ function close() {
   cursor: default;
   -webkit-user-drag: none;
 }
-.tb-product-note {
-  color: var(--yb-text-dim);
-  font-size: var(--yb-fs-xs);
-  letter-spacing: 0.01em;
+.tb-wordmark {
+  color: var(--yb-text-strong);
+  font-size: var(--yb-fs-md);
+  font-weight: var(--yb-fw-medium);
+  letter-spacing: 0.04em;
   white-space: nowrap;
-}
-
-.tb-status {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: 2px;
-  color: var(--yb-text-faint);
-  font-size: var(--yb-fs-xs);
-  letter-spacing: 0.01em;
-  white-space: nowrap;
-}
-.tb-status time {
-  color: var(--yb-text-dim);
-  font-variant-numeric: tabular-nums;
-}
-.tb-status i {
-  color: var(--yb-border-strong);
-  font-style: normal;
 }
 
 /* 导航：居中 tabs（macOS 分段控件语言），hover/选中有底 */
@@ -617,7 +586,7 @@ function close() {
   font-size: var(--yb-fs-md);
   font-family: inherit;
   cursor: pointer;
-  transition: all var(--yb-dur-fast) var(--yb-ease-out);
+  transition: background var(--yb-dur-fast) var(--yb-ease-out), color var(--yb-dur-fast) var(--yb-ease-out), box-shadow var(--yb-dur-fast) var(--yb-ease-out);
 }
 .tb-nav-item:hover {
   background: var(--yb-row-hover);
@@ -627,7 +596,7 @@ function close() {
   background: var(--yb-segment-thumb);
   color: var(--yb-text);
   font-weight: var(--yb-fw-medium);
-  box-shadow: var(--yb-shadow-1);
+  box-shadow: var(--yb-glaze-hi), var(--yb-shadow-1);
 }
 .tb-nav-item.on .tb-nav-ic {
   color: var(--yb-accent);
@@ -677,8 +646,8 @@ function close() {
   font: inherit;
   font-size: var(--yb-fs-xs);
   cursor: pointer;
-  box-shadow: var(--yb-shadow-1);
-  transition: all var(--yb-dur-fast) var(--yb-ease-out);
+  box-shadow: var(--yb-glaze-hi), var(--yb-shadow-1);
+  transition: border-color var(--yb-dur-fast) var(--yb-ease-out), color var(--yb-dur-fast) var(--yb-ease-out), box-shadow var(--yb-dur-fast) var(--yb-ease-out);
 }
 .activity-pill:hover,
 .activity-pill.active { border-color: rgba(var(--yb-c-sky-rgb), 0.3); color: var(--yb-text); box-shadow: var(--yb-shadow-2); }
@@ -700,9 +669,8 @@ function close() {
   font-size: var(--yb-fs-md);
   font-family: inherit;
   cursor: pointer;
-  transition: all var(--yb-dur-fast) var(--yb-ease-out);
+  transition: background var(--yb-dur-fast) var(--yb-ease-out), color var(--yb-dur-fast) var(--yb-ease-out);
 }
-/* 主题「跟随系统」角标：右上小圆点提示 auto，避免与固定浅/深混淆 */
 .tb-theme-dot {
   position: absolute;
   top: 2px;
@@ -733,7 +701,7 @@ function close() {
 }
 
 @media (max-width: 1180px) {
-  .tb-status {
+  .tb-wordmark {
     display: none;
   }
 }
@@ -744,6 +712,8 @@ function close() {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  position: relative;
+  overflow: hidden;
   /* 顶部 + 左右 + 底部 accent 氛围光（radial 淡出）：四栏工作台在宽屏下
    * 各处空白由微光承接，整体有"AI 空间"层次而非死白 */
   background:
@@ -792,11 +762,19 @@ function close() {
   transform-origin: 50% 0%;
 }
 /* 收起工作面后主屏对话淡入承接（面板缩回 → 对话出现，避免场景整体瞬切） */
-.chat-fade-enter-active {
-  transition: opacity 0.18s var(--yb-ease-out);
+.view-fade-enter-active,
+.view-fade-leave-active {
+  transition: opacity var(--yb-dur) var(--yb-ease-out);
 }
-.chat-fade-enter-from {
+.view-fade-enter-from,
+.view-fade-leave-to {
   opacity: 0;
+}
+.view-fade-leave-active {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
 }
 .capability-scene .plugin-host {
   grid-column: 2;

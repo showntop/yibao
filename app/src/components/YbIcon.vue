@@ -15,6 +15,7 @@ type IconName =
   | "panel-left" | "panel-right" | "plus" | "expand"
   | "sliders" | "sun" | "moon"
   | "info"
+  | "more" | "grip"
   | "token" | "coin" | "timer";
 
 withDefaults(
@@ -99,6 +100,10 @@ const paths: Record<IconName, string> = {
   // 关于：圆圈 + 底部小点（与 Lucide info 同构，比 alert 三角更"陈述"少"警告"）
   info:
     '<circle cx="12" cy="12" r="8.5"/><path d="M12 10.5v5"/><circle cx="12" cy="7.6" r="0.6" fill="currentColor" stroke="none"/>',
+  more:
+    '<circle cx="6" cy="12" r="1.15" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.15" fill="currentColor" stroke="none"/><circle cx="18" cy="12" r="1.15" fill="currentColor" stroke="none"/>',
+  grip:
+    '<circle cx="9" cy="7" r="1.05" fill="currentColor" stroke="none"/><circle cx="15" cy="7" r="1.05" fill="currentColor" stroke="none"/><circle cx="9" cy="12" r="1.05" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="1.05" fill="currentColor" stroke="none"/><circle cx="9" cy="17" r="1.05" fill="currentColor" stroke="none"/><circle cx="15" cy="17" r="1.05" fill="currentColor" stroke="none"/>',
   // 用量条 indicator：菱形小方块+两条短水平线（代表 token 计量），比纯 hash 更明确
   token:
     '<rect x="3" y="10" width="8" height="4" rx="1" transform="rotate(-20 7 12)"/><line x1="13" y1="9" x2="21" y2="9"/><line x1="13" y1="15" x2="21" y2="15"/>',
