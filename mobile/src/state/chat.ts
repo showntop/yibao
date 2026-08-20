@@ -38,8 +38,12 @@ export function useChat(
   );
   const busy = computed(() => messages.value.some((m) => m.role === "assistant" && !m.done));
 
-  // 只认 surface==="mobile" 的帧（P1 信封字段；桌面/面板事件不进手机气泡）
-  const mine = (d: { surface?: string }) => d.surface === "mobile";
+  // 只认 surface==="mobile" 的帧（P1 信封字段；桌面/面板事件不进手机气泡）；
+  // 叠加 conversation_id 归属过滤（并发对话）：帧带了会话 id 且不是当前会话 → 丢弃，
+  // 修掉「另一台手机/另一会话的同 surface 帧串进本气泡」的串台风险（帧无会话 id 的
+  // 旧 sidecar/无归属广播照常放行，由 run_done 的 myRunId 比对兜底）。
+  const mine = (d: { surface?: string; conversation_id?: string }) =>
+    d.surface === "mobile" && (!d.conversation_id || d.conversation_id === conversationId.value);
 
   // 当前 pending 气泡对应的 run_id（send 响应取回）：桌面轮结束广播的 run_done id 不同，不误收口
   let myRunId = "";
@@ -137,8 +141,9 @@ export function useChat(
     try {
       await fetchImpl(`${conn.host}/v1/interrupt`, {
         method: "POST",
-        headers: { "X-Yibao-Token": conn.token },
-        body: "{}",
+        headers: { "X-Yibao-Token": conn.token, "Content-Type": "application/json" },
+        // 定向打断（并发对话 spec §E）：只停本会话槽，不误伤桌面/其他会话的在跑轮
+        body: JSON.stringify({ conversation_id: conversationId.value }),
       });
     } catch { /* 状态由 interrupted/run_done 帧收敛 */ }
   }

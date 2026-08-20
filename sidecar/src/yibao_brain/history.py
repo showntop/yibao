@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 from pathlib import Path
 
 # 历史里的 tool 结果只留要点：完整结果可能很大（长列表/截图数据），
@@ -18,6 +19,12 @@ _TOOL_CONTENT_MAX = 300
 
 # 无会话 id 事件的默认桶（reminder 等主动推送）
 _DEFAULT_BUCKET = "default"
+
+# 落盘锁（并发对话 spec §C）：record_messages 是「整桶读改写 + 整本覆盖写」，多会话
+# 并行 run 同时落史会互相覆盖丢轮。模块级一把锁包住读改写全程（run 在 asyncio loop
+# 内经 _offload 丢线程池调用，锁粒度 = 单次落盘，够用）。不引入 per-桶锁——
+# 整本覆盖写下无意义。
+_SAVE_LOCK = threading.Lock()
 
 
 def _valid_msg(m) -> bool:
@@ -115,12 +122,14 @@ class ConversationHistory:
         conversation_id 缺省 → default 桶（无会话维度的事件/兼容旧调用）。
         关键：工具调用轨迹必须入史。只记「请求→文字答复」会教会模型跳过工具直接声称完成
         （模型模仿自己历史的说话模式），带轨迹它才模仿「先调工具再答复」。
+        全程持 _SAVE_LOCK：并行 run 同时落史不互相覆盖（spec §C）。
         """
-        bucket = self._bucket(conversation_id or "")
-        bucket_msgs = self._buckets.setdefault(bucket, [])
-        bucket_msgs.extend(_sanitize(m) for m in msgs if _valid_msg(m))
-        self._trim(bucket_msgs)
-        self._save()
+        with _SAVE_LOCK:
+            bucket = self._bucket(conversation_id or "")
+            bucket_msgs = self._buckets.setdefault(bucket, [])
+            bucket_msgs.extend(_sanitize(m) for m in msgs if _valid_msg(m))
+            self._trim(bucket_msgs)
+            self._save()
 
     def record_turn(self, user_text: str, assistant_text: str, conversation_id: str | None = None) -> None:
         """纯对话轮（无工具调用）。"""

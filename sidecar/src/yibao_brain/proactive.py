@@ -76,7 +76,7 @@ class ProactiveDispatcher:
         delivered = {**event, "level": level}
         self.write_msg({"type": "event", "surface": "pet", "event": delivered})
         task = self.run_state.get("task")
-        idle = task is None or task.done()
+        idle = task is None or task.done()  # 并发对话后 server 传「所有槽空闲」适配视图（spec §F）
         if (
             level == "full"
             and self.voice is not None

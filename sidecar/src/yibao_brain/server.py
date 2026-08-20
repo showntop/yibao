@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import itertools
 import json
 import os
@@ -28,6 +29,7 @@ from .background import (
     _gate_proactive_event,
     _plugin_summaries_list,
     _proactive_level,
+    _recap_decide,
     _recover_background_jobs,
     _perception_cleanup_loop,
     _reminder_loop,
@@ -39,18 +41,33 @@ from .distiller import Distiller, DistillerStore
 from .jobstore import JobsStore
 from .history import ConversationHistory
 from .http_api import EventTap, MobileDeps
-from .ipc import Action, Event, RiskLevel
-from .llm import FakeProvider, GLMProvider, ToolCall
+from .ipc import Event, RiskLevel
+from .llm import FakeProvider, OpenAICompatProvider, ToolCall
 from .loop import AgentLoop, _offload
 from .memory import FakeMemory, LazyMem0Memory
 from .proactive import ProactiveDispatcher
-from .plugins import LlmChat, get_api, get_mem_namespaces, get_plugin_summaries, get_widgets, panel_payload
+from .plugins import LlmChat, get_mem_namespaces, get_plugin_summaries, get_widgets, panel_payload
 from .safety import Decision, Gate, GatePolicy, RiskClassifier
 from .skills import EchoSkill, SkillRegistry
 from .skills_composite import register_composite_skills
 from .skills_real import ComputerUseSkill, register_real_skills
 from .watch import WatchCtx
 from .watch_service import WatchService
+
+# re-export：已拆到专模块，保留 yibao_brain.server.<name> 引用路径（tests/下游 import 不变）
+from .approvals import _coding_perm_registry, _fulfill_coding_perm
+from .bridge import (
+    _bridge_save,
+    _conversations_payload,
+    _ensure_http_token,
+    _history_payload,
+    _lan_ip,
+    _pick_en_ip,
+    _reminders_cancel_payload,
+    _reminders_list_payload,
+    _start_http_api,
+)
+from .panel import _is_readonly_direct, _readonly_no_run, _render_intent, handle_panel_action
 
 ReadMsg = Callable[[], dict | None]
 WriteMsg = Callable[[dict], None]
@@ -156,7 +173,7 @@ def build_loop(
     if provider is not None:
         prov = provider
     else:
-        prov = GLMProvider() if (use_real and llm_api_key()) else FakeProvider(text="(未配置 LLM key，使用 fake 回复)")
+        prov = OpenAICompatProvider() if (use_real and llm_api_key()) else FakeProvider(text="(未配置 LLM key，使用 fake 回复)")
 
     try:
         # 懒加载：构造秒回（不 import torch/mem0），真实 mem0 后台线程就绪后接入
@@ -254,353 +271,13 @@ def _load_plugins_safe(reg, memory, prov, host, reminders=None, emit_event=None)
         print(f"[yibao] 插件加载失败（已跳过）：{e}", file=sys.stderr)
 
 
-class _KeepMissing(dict):
-    """format_map 缺键时保留 {key} 原样（intent 渲染不炸）。"""
-
-    def __missing__(self, key):
-        return "{" + key + "}"
-
-
-def _render_intent(api, params: dict) -> str:
-    """intent 模板用 params 渲染（{key} 占位）；无 intent 用「调用 <handler>」。"""
-    template = api.intent or f"调用 {api.handler}"
-    return template.format_map(_KeepMissing(params))
-
-
-async def _emit_refresh_panel(agent: AgentLoop, emit, refresh_tool: str) -> None:
-    """直调成功后的声明式刷新：执行查询 tool（应为本插件 L0 只读），把它的 panel 事件推给壳。
-
-    刷新 tool 若意外需要确认/被拒，静默跳过（不弹确认——刷新不该打断用户）。
-    """
-    action = agent.invoker.propose(ToolCall(id=f"pa_refresh_{id(emit)}", skill_id=refresh_tool, params={}))
-    if agent.invoker.decide(action) != Decision.AUTO:
-        return
-    result = await _offload(agent.invoker.execute, action, {})
-    payload = panel_payload(result)
-    if payload is not None:
-        emit(Event(kind="panel", payload=payload))
-
-
-def _coding_perm_registry() -> dict | None:
-    """coding 插件 can_use_tool 的 _PERM 注册表（_sibling 加载的模块单例
-    sys.modules["yibao_plugin_coding__runner"] 上）；插件未加载/形态不对 → None。"""
-    mod = sys.modules.get("yibao_plugin_coding__runner")
-    perm = getattr(mod, "_PERM", None)
-    return perm if isinstance(perm, dict) else None
-
-
-def _fulfill_coding_perm(cid: str, approved: bool) -> bool:
-    """coding 插件 can_use_tool 审批兑现：cid 以 "perm_" 开头的确认路由进插件 _PERM 注册表
-    （写 allow + set 等待事件）。与 coding.decide 双通道幂等——先到先得，后到不覆盖；
-    插件未加载 / 请求已超时清理 → False（无害，等待方 60s 超时 deny 兜底）。
-
-    coding 审批不经 batch_confirmer 的 future：runner 线程在 threading.Event 上等。
-    """
-    perm = _coding_perm_registry()
-    if perm is None:
-        return False
-    entry = perm.get(cid)
-    if not isinstance(entry, dict):
-        return False
-    if entry.get("allow") is None:
-        entry["allow"] = bool(approved)
-    event = entry.get("event")
-    if event is not None:
-        event.set()
-    return True
-
-
-async def handle_panel_action(msg: dict, agent: AgentLoop, write_msg: WriteMsg, *, run_text) -> None:
-    """处理壳侧 panel_action（v2 §7）：api.toml 白名单内的面板方法。
-
-    direct=true：invoker 直调（propose → api.risk 只许收紧 → decide → 确认/执行 → 审计）；
-    direct=false：intent 渲染后交给 run_text（与 type="run" 同路径的 agent 流程）。
-    """
-    surface = str(msg.get("surface") or "pet")  # 会话分流：事件随发起场景标记，壳侧各窗按 surface 过滤
-
-    def emit(event: Event) -> None:
-        write_msg({"type": "event", "surface": surface, "event": event.model_dump(mode="json")})
-
-    rid = msg.get("id")
-    method = ""
-    tag = Action(id=f"pa_{rid}", skill_id="?")  # 错误事件归属标签：壳侧桥按 pa_<rid> 认领，不误杀其他调用
-    try:
-        method = str(msg.get("method", ""))
-        tag = Action(id=f"pa_{rid}", skill_id=method or "?")
-        params = msg.get("params") or {}
-        api = get_api(method)
-        if api is None:  # 白名单外：拒绝执行
-            emit(Event(kind="error", text=f"面板方法未在白名单：{method}", action=tag))
-            write_msg({"type": "run_done", "id": rid})
-            return
-        if not api.direct:
-            await run_text(_render_intent(api, params), rid)
-            return
-
-        action = agent.invoker.propose(ToolCall(id=f"pa_{rid}", skill_id=api.handler, params=params))
-        action.id = f"pa_{rid}"  # propose 会重新发 id；壳侧桥靠 pa_<rid> 关联回包/确认/错误，必须保留
-        if api.risk is not None:
-            action.risk = max(action.risk, api.risk)  # api.toml 只许收紧，不许放宽
-        decision = agent.invoker.decide(action)
-        if decision == Decision.DENY:
-            emit(Event(kind="error", text=f"策略禁止执行 {api.handler}（风险过高）", action=action))
-            write_msg({"type": "run_done", "id": rid})
-            return
-        if decision == Decision.CONFIRM:
-            emit(Event(kind="confirmation_needed", action=action, confirmation_id=action.id))
-            # 面板直达走批量 confirmer（batch size=1）：等壳 confirm_batch 回执。
-            # remember 写入复用 invoker.apply_verdict（F4：消除 loop 之外的第 3 处重复）。
-            verdicts = await agent.invoker.batch_confirm([action])
-            approved, remember = verdicts.get(action.id, (False, False))
-            agent.invoker.apply_verdict(action, approved, remember)
-            if not approved:
-                emit(Event(kind="error", text=f"用户拒绝执行 {api.handler}", action=action))
-                write_msg({"type": "run_done", "id": rid})
-                return
-        result = await _offload(agent.invoker.execute, action, params)  # 与 arun 一致挪线程池
-        emit(Event(kind="action_result", action=action, result=result))
-        if result.success and api.refresh is not None:
-            # 声明式刷新：删除类操作后跟一次查询，面板拿新数据而不是操作回执
-            await _emit_refresh_panel(agent, emit, api.refresh)
-        else:
-            if result.success and api.panel is not None:
-                result.panel = api.panel  # method 声明的面板优先于 tool 自带引用（如 webview 编辑器）
-            if not api.quiet:  # quiet：不弹面板（唤起条存素材等静默直调）
-                payload = panel_payload(result)
-                if payload is not None:
-                    emit(Event(kind="panel", payload=payload))
-        write_msg({"type": "run_done", "id": rid})
-    except Exception as e:  # 兜底：任何意外都要给壳一个交代，别让面板卡死
-        emit(Event(kind="error", text=f"面板操作失败：{e}", action=tag))
-        write_msg({"type": "run_done", "id": rid})
-
-
-# ---------- 浏览器扩展桥（127.0.0.1 微 HTTP → zimeiti quiet 直调）----------
-
-
-def _pick_en_ip(ifconfig_out: str) -> str:
-    """从 ifconfig 输出挑物理网卡（en*）的第一个私网 IPv4；纯函数便于测试。
-    跳过 169.254（自配链路本地）。为什么不用 UDP connect 挑默认路由：公司 VPN
-    （utun）常接管默认路由，挑出来的是 VPN 隧道地址，手机根本够不着。"""
-    import ipaddress
-    import re
-
-    cur = ""
-    for ln in ifconfig_out.splitlines():
-        m = re.match(r"^(\w+):", ln)
-        if m:
-            cur = m.group(1)
-            continue
-        m = re.match(r"\s+inet (\d+\.\d+\.\d+\.\d+)", ln)
-        if m and cur.startswith("en"):
-            ip = m.group(1)
-            try:
-                if ipaddress.ip_address(ip).is_private and not ip.startswith("169.254."):
-                    return ip
-            except ValueError:
-                continue
-    return ""
-
-
-def _lan_ip() -> str:
-    """内网 IPv4（配对 URL 用）：优先物理网卡（en* = WiFi/以太网）的私网地址；
-    找不到（无 WiFi 之类）再退 UDP connect 路由选择（可能命中 utun，聊胜于无）。"""
-    import socket
-    import subprocess
-
-    try:
-        out = subprocess.run(["ifconfig"], capture_output=True, text=True, timeout=2).stdout
-    except Exception:
-        out = ""
-    ip = _pick_en_ip(out)
-    if ip:
-        return ip
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        s.connect(("192.0.2.1", 1))
-        return s.getsockname()[0]
-    except OSError:
-        return ""
-    finally:
-        s.close()
-
-
-def _ensure_http_token(settings: dict, key: str) -> str:
-    """HTTP 面共享 token（http.token=扩展桥 / http.mobile_token=手机伴生端）：
-    空则生成并持久化（save_settings 只落已知键，两键均已在默认表）。"""
-    tok = str(settings.get(key) or "")
-    if not tok:
-        import secrets
-
-        tok = secrets.token_hex(16)
-        save_settings({key: tok})
-        settings[key] = tok
-    return tok
-
-
-_BRIDGE_SEQ = itertools.count(1)  # 桥/分享保存的 action id 序（跨调用唯一）
-
-
-async def _bridge_save(agent: AgentLoop, emit, body: dict) -> tuple[int, dict]:
-    """存素材/选题核心（扩展桥 /save 与手机 /v1/save 共用；原 _make_bridge_route._route 主体）。
-    emit(action, result)：回执出口（经 EventTap → stdio 壳 + SSE 手机）。"""
-    url = str(body.get("url") or "").strip()
-    title = str(body.get("title") or "").strip()[:200]
-    text = str(body.get("text") or "").strip()[:20000]
-    mode = str(body.get("mode") or "material")
-    if not text:
-        return 400, {"ok": False, "error": "text 为空"}
-    if mode == "material":
-        api_name = "zimeiti.invoke_mat_save"
-        # 先存后整理：defer 跳过 LLM 摘要立刻落库（秒回），mat_enrich 后台补元数据
-        params = {"url": url, "text": f"{title}\n\n{text}" if title else text, "title": title, "defer": True}
-    elif mode == "topic":
-        api_name = "zimeiti.invoke_add_topic"
-        params = {"title": title or text[:30], "source": url or "浏览器扩展"}
-    else:
-        return 400, {"ok": False, "error": f"未知 mode：{mode}"}
-    api = get_api(api_name)
-    if api is None or not api.direct:
-        return 500, {"ok": False, "error": f"方法不可用：{api_name}"}
-    rid = f"http_{next(_BRIDGE_SEQ)}"
-    action = agent.invoker.propose(ToolCall(id=f"pa_{rid}", skill_id=api.handler, params=params))
-    action.id = f"pa_{rid}"  # 壳侧靠 pa_ 前缀认领回执（与 panel_action 同协议）
-    if api.risk is not None:
-        action.risk = max(action.risk, api.risk)
-    decision = agent.invoker.decide(action)
-    if decision != Decision.AUTO:
-        return 403, {"ok": False, "error": "策略要求确认或禁止（桥场景无确认通道），未执行"}
-    result = await _offload(agent.invoker.execute, action, params)
-    emit(action, result)
-    if not result.success:
-        return 500, {"ok": False, "error": result.error or "执行失败"}
-    data = result.data or {}
-    if mode == "material" and data.get("pending"):
-        asyncio.ensure_future(_enrich_later(agent, data.get("id")))
-    return 200, {"ok": True, "title": data.get("title", title)}
-
-
-async def _enrich_later(agent: AgentLoop, material_id: str | None) -> None:
-    """先存后整理的后半拍：LLM 摘要/标签后台补写。失败静默——素材本体已在库，即席元数据可用。"""
-    if not material_id:
-        return
-    try:
-        action = agent.invoker.propose(
-            ToolCall(id=f"pa_enrich_{material_id}", skill_id="zimeiti.mat_enrich", params={"id": material_id})
-        )
-        action.id = f"pa_enrich_{material_id}"
-        if agent.invoker.decide(action) != Decision.AUTO:
-            return
-        await _offload(agent.invoker.execute, action, {"id": material_id})
-    except Exception as e:
-        print(f"[yibao] 素材后台精整失败（已跳过）：{e}", file=sys.stderr)
-
-
-async def _start_http_api(agent: AgentLoop, settings: dict, tap, deps) -> "object | None":
-    """起 aiohttp HTTP 面（扩展桥 + 移动 API）；失败 → stderr + None（不拖垮大脑）。"""
-    try:
-        from .http_api import build_app, run_server
-
-        # token 兜底生成后传"现取闭包"：桌面重置 token（settings_set）后无需重启面
-        _ensure_http_token(settings, "http.token")
-        _ensure_http_token(settings, "http.mobile_token")
-        app = build_app(
-            get_bridge_token=lambda: str(settings.get("http.token") or ""),
-            get_mobile_token=lambda: str(settings.get("http.mobile_token") or ""),
-            tap=tap,
-            deps=deps,
-        )
-        bind = str(settings.get("http.bind") or "127.0.0.1")
-        runner = await run_server(app, bind, http_port())
-        print(f"[yibao] HTTP 面（桥+移动 API）已监听 {bind}:{http_port()}", file=sys.stderr)
-        return runner
-    except Exception as e:
-        print(f"[yibao] HTTP 面启动失败（{e}，已禁用）", file=sys.stderr)
-        return None
-
-
-def _conversations_payload(history) -> dict:
-    """/v1/conversations 载荷（mobile M1）：桶摘要列表。
-    history 未启用（agent.history=None，测试态/无 history_file）→ 空列表，不 503。"""
-    if history is None:
-        return {"ok": True, "items": []}
-    return {"ok": True, "items": history.conversations()}
-
-
-def _history_payload(history, conversation_id: str) -> dict:
-    """/v1/history 载荷（mobile M1）：单桶消息平铺成 {role, text}；
-    conversation_id 缺省 → default 桶。history 未启用 → 空列表。"""
-    if history is None:
-        return {"ok": True, "items": []}
-    return {"ok": True, "items": [{"role": m.get("role"), "text": m.get("content")}
-                                  for m in history.messages(conversation_id or None)]}
-
-
-async def _reminders_call(agent: AgentLoop, api_name: str, params: dict) -> dict:
-    """reminders 直连核心（mobile M2，_bridge_save 同款）：get_api → propose →
-    api.risk 只许收紧 → decide==AUTO → 线程池执行。浏览场景无确认通道，非 AUTO 即拒。
-    返回 {"ok", "data"?/"error"?}——降级策略（list 空列表 / cancel 带 error）由调用方定。"""
-    api = get_api(api_name)
-    if api is None or not api.direct:
-        return {"ok": False, "error": f"方法不可用：{api_name}"}
-    rid = f"pa_mob_{next(_BRIDGE_SEQ)}"
-    action = agent.invoker.propose(ToolCall(id=rid, skill_id=api.handler, params=params))
-    action.id = rid  # propose 不透传 ToolCall.id（Action 另起 act_ 号）——回填 pa_mob_ 前缀，壳侧审计可区分手机发起（与 _bridge_save 同协议）
-    if api.risk is not None:
-        action.risk = max(action.risk, api.risk)
-    if agent.invoker.decide(action) != Decision.AUTO:
-        return {"ok": False, "error": "策略要求确认或禁止（手机浏览场景无确认通道），未执行"}
-    result = await _offload(agent.invoker.execute, action, params)
-    if not result.success:
-        return {"ok": False, "error": result.error or "执行失败"}
-    return {"ok": True, "data": result.data or {}}
-
-
-async def _reminders_list_payload(agent: AgentLoop) -> dict:
-    """/v1/reminders 载荷（mobile M2）：reminders.list 直连，rows → items。
-    插件缺席/策略拦/执行失败/异常 → 空列表不 500（浏览宁空勿炸）。"""
-    try:
-        out = await _reminders_call(agent, "reminders.list", {})
-        rows = out.get("data", {}).get("rows") if out.get("ok") else None
-        return {"ok": True, "items": rows or []}
-    except Exception as e:
-        print(f"[yibao] 提醒列出失败（已降级空列表）：{e}", file=sys.stderr)
-        return {"ok": True, "items": []}
-
-
-async def _reminders_cancel_payload(agent: AgentLoop, rid: str) -> dict:
-    """/v1/reminders/cancel 载荷（mobile M2）：reminders.cancel 直连。
-    成功 {"ok": True}；失败/异常 {"ok": False, "error"}（路由层转 500）。"""
-    try:
-        out = await _reminders_call(agent, "reminders.cancel", {"id": rid})
-        if not out.get("ok"):
-            return {"ok": False, "error": out.get("error") or "取消失败"}
-        return {"ok": True}
-    except Exception as e:
-        return {"ok": False, "error": f"取消提醒失败：{e}"}
-
-
-async def _readonly_no_run(text: str, rid) -> None:
-    """L0 只读直调永远不会走 agent 路径（direct=true 才并发）；防御性兜底。"""
-    raise RuntimeError("只读直调不应进入 agent 路径")
-
-
-def _is_readonly_direct(msg: dict, agent: AgentLoop) -> bool:
-    """L0 只读直调（get/list/article_read 等纯查询）→ 不占槽位、不抢占。
-
-    面板/编辑器的数据加载与在跑的对话是并行关系：互相抢占会让 read_article 顶掉
-    写稿 run（回复截断），也让 run 期间的面板加载被排队/取消（「编辑器没反应」）。
-    db 层单连接+锁，并发读安全。
-    """
-    api = get_api(str(msg.get("method", "")))
-    if api is None or not api.direct:
-        return False
-    action = agent.invoker.propose(
-        ToolCall(id=f"pa_{msg.get('id')}", skill_id=api.handler, params=msg.get("params") or {})
-    )
-    if api.risk is not None:
-        action.risk = max(action.risk, api.risk)
-    return action.risk <= RiskLevel.L0_READONLY
+def _run_done_msg(rid, conversation_id: str = "") -> dict:
+    """run_done 载荷（spec §E）：conversation_id 非空才带——空 = 无归属（旧路径），
+    保持与旧客户端/旧断言的逐字节兼容（信封 _with_envelope 同样只带非空归属）。"""
+    msg = {"type": "run_done", "id": rid}
+    if conversation_id:
+        msg["conversation_id"] = conversation_id
+    return msg
 
 
 def _run_and_emit(loop: AgentLoop, text: str, write_msg: WriteMsg, rid, voice=None) -> None:
@@ -638,25 +315,6 @@ def serve(loop: AgentLoop, read_msg: ReadMsg, write_msg: WriteMsg, voice=None) -
                 write_msg({"type": "run_done", "id": req.get("id")})
 
 
-def _recap_decide(*, settings: dict, last_recap_day: str | None, today: str,
-                  yesterday_items: list[dict]) -> dict | None:
-    """反刍编排（纯逻辑，可单测）：闸门→去重→选材→拼装。返回 {text, day} 或 None。"""
-    if not (settings.get("perception.master") and settings.get("perception.distill")
-            and settings.get("perception.recap")):
-        return None
-    if last_recap_day == today:
-        return None
-    from .distiller import recap_select, build_recap_text, yesterday_window
-    selected = recap_select(yesterday_items)
-    if not selected:
-        return None
-    text = build_recap_text(selected)
-    if not text:
-        return None
-    _day, _s, _e = yesterday_window()   # 目标日 = 昨天
-    return {"text": text, "day": _day}
-
-
 async def serve_async(
     read_msg: ReadMsg,
     write_msg: WriteMsg,
@@ -676,7 +334,7 @@ async def serve_async(
 
     与同步 serve 的关键差异：读消息在独立线程，故生成/TTS 进行中仍能收到 interrupt，
     cancel_event 一键"三连取消"（停 TTS + 终止 LLM 生成 + 清 TTS 队列）。
-    新 run 到来会抢占并打断未完成的旧 run。
+    槽位 per-会话（run_slots）：同会话新 run 抢占并打断未完成的旧 run；跨会话真并行。
     """
     ai_loop = asyncio.get_running_loop()
     tap = EventTap(write_msg)  # 事件分接头：stdio 照发 + SSE 广播（Task 9 起替换 write_msg）
@@ -695,23 +353,56 @@ async def serve_async(
     # 确认多槽（spec §3.2）：按 confirmation_id 索引的 future + 早到答案缓存。
     # 早到：confirm_batch 可能先于 batch_confirmer 注册 future 到达（读线程瞬时投递
     # run+confirm，主循环先处理 confirm），直接丢会死锁——存 early_answers 待取。
-    # 多槽不假设并发数：当前单 run 抢占（dict 通常 1 entry），未来多 run 并发这层不用改。
+    # 多槽不假设并发数：多 run 真并行后（并发对话 spec）这层不用改，确认等待响应的是
+    # 本 run 槽位的 cancel（见 batch_confirmer 内 _run_ctx 读取）。
     pending_confirms: dict[str, asyncio.Future] = {}
     early_answers: dict[str, tuple[bool, bool]] = {}
-    confirm_meta: dict[str, dict] = {}  # cid -> {skill_id, summary, risk, created_at}：手机 /v1/state 待批列表
+    confirm_meta: dict[str, dict] = {}  # cid -> {skill_id, summary, risk, created_at, conversation_id, surface}：手机 /v1/state 待批列表
     _confirm_done: deque[str] = deque(maxlen=100)  # 已处理确认（防手机重复点击 404）
-    # preempt_gen：抢占代数。新请求到来即 +1；排队中的任务启动时发现自己落后 →
-    # 一启动即置 cancel（快速跳过），保证「只有最新请求真正执行」。
-    # surface：最近一次受理请求的窗口（pet=主窗 / 面板 id，dispatch 受理即写入）。
-    # 同 surface 新请求抢占；跨 surface 不抢占，排队等对方说完
-    # （子 agent 在面板里干活不该被主窗一句话顶掉）。
-    run_state: dict = {"task": None, "cancel": None, "preempt_gen": 0, "surface": None,
-                       "running_surface": None}  # running_surface=实际在跑的（排队结束才写）；surface=最近受理的
+    # run_slots：per-会话槽位表（并发对话 spec §A）。键 = conversation_id（空串归 default
+    # 槽，兼容无会话 id 的遗留调用）。每槽 {task, cancel, preempt_gen, surface, running_surface}，
+    # 字段语义同旧全局 run_state：
+    # - preempt_gen：抢占代数。同槽新请求到来即 +1；排队中的任务启动时发现自己落后 →
+    #   一启动即置 cancel（快速跳过），保证「同会话只有最新请求真正执行」。
+    # - surface：该槽最近一次受理请求的窗口（pet=主窗 / 面板 id，dispatch 受理即写入）；
+    #   running_surface：实际在跑的（排队结束才写），手机 interrupt 按它判域。
+    # - 同会话（含同会话跨 surface）新请求 → 抢占；跨会话 → 各自槽位真并行，
+    #   不再排队、不再发「另一个窗口还在说」notice；仅 default 槽保留旧的跨 surface 排队。
+    run_slots: dict[str, dict] = {}
+
+    def _slot(conversation_id: str) -> dict:
+        """取（无则建）会话槽位；conversation_id 空 → default 槽。"""
+        return run_slots.setdefault(conversation_id or "", {
+            "task": None, "cancel": None, "preempt_gen": 0, "surface": None, "running_surface": None})
+
+    class _SlotsIdleView:
+        """proactive/提醒的 idle 判定适配（spec §F）：done() = 所有槽均空闲。
+
+        包成 task 形状（done()），proactive.py/background.py 的 run_state["task"] 读取不变。"""
+
+        @staticmethod
+        def done() -> bool:
+            return all(s["task"] is None or s["task"].done() for s in run_slots.values())
+
+    # 传给 ProactiveDispatcher 与 _reminder_loop 的「全局空闲」视图：任一槽在跑即非 idle
+    slots_idle_state: dict = {"task": _SlotsIdleView()}
+
+    # 当前 run 的归属上下文（batch_confirmer 读本槽 cancel、confirm_meta 记会话归属）：
+    # 槽位任务启动时 set，经 await 链一路传进 arun → invoker → confirmer，不串槽。
+    _run_ctx: contextvars.ContextVar[dict | None] = contextvars.ContextVar("yibao_run_ctx", default=None)
+
+    # TTS 全局播报锁（spec §D）：物理声道只有一条，播报保持全局串行、不 per-会话化。
+    # 持锁者独占播放器（打断三连取消只作用本槽，A 的打断掐不掉 B 正在播的音）；
+    # 抢不到锁的 run 静默不播（文字流式照出）+ notice，不排队。
+    tts_lock = asyncio.Lock()
+
     # 并发的 L0 只读面板调用（不占槽位）：跟踪起来，stdin 关闭时一起收尾
     readonly_tasks: set[asyncio.Task] = set()
 
     # 会话内记住的「免确认」技能集合：用户勾选「本会话不再询问」并批准后记入；
     # 只活在内存，大脑重启即失效（C-4：会话级，不落盘）。
+    # 安全语义（并发对话 spec §B）：remember 保持进程级共享——它是对「动作」的信任，
+    # 不是对会话的信任；会话 A 记住的「不再询问」对会话 B 同样生效。
     remembered_confirm: set[str] = set()
 
     # 用户设置是运行期共享状态，主动分发器、感知与 watch service 都读同一字典。
@@ -740,6 +431,7 @@ async def serve_async(
                 out[cid] = early_answers.pop(cid)
                 continue
             fut = pending_confirms.setdefault(cid, ai_loop.create_future())
+            _ctx = _run_ctx.get() or {}
             confirm_meta[cid] = {
                 "skill_id": skill_id,
                 # 可读摘要：params 非空 dict → k=v 逗号形式（手机审批页直接展示）；
@@ -748,10 +440,15 @@ async def serve_async(
                             if isinstance(getattr(action, "params", None), dict) and action.params else skill_id),
                 "risk": int(getattr(getattr(action, "risk", None), "value", getattr(action, "risk", 0)) or 0),
                 "created_at": int(time.time()),
+                # 会话归属（并发对话 spec §B）：/v1/state pending 与壳端确认卡按它过滤展示
+                "conversation_id": _ctx.get("conversation_id") or "",
+                "surface": _ctx.get("surface"),
             }
-            # 确认等待必须响应抢占/打断：否则新请求 join 一个永不结束的确认 →
-            # 派发循环卡死、ping 不应答、看门狗误杀（2026-07-19 复现确认）
-            cancel = run_state["cancel"]
+            # 确认等待必须响应本槽的抢占/打断：否则新请求 join 一个永不结束的确认 →
+            # 派发循环卡死、ping 不应答、看门狗误杀（2026-07-19 复现确认）。
+            # 绑本 run 自己槽位的 cancel（_run_ctx），不绑别槽——A 会话打断不得误取消
+            # B 会话的确认等待（并发对话 spec §B）。
+            cancel = _ctx.get("cancel")
             cancel_wait = ai_loop.create_task(cancel.wait()) if cancel is not None else None
             print(f"[yibao] 等待用户确认：{skill_id}", file=sys.stderr)
             try:
@@ -782,7 +479,7 @@ async def serve_async(
         feed=feed,
         write_msg=write_msg,
         voice=voice,
-        run_state=run_state,
+        run_state=slots_idle_state,
         loop=ai_loop,
     )
     _emit_event = proactive_dispatcher.emit
@@ -870,18 +567,27 @@ async def serve_async(
             except Exception as e:
                 print(f"[yibao] coding 会话查询失败（已降级）：{e}", file=sys.stderr)
                 crows = []
+            perm = _coding_perm_registry()   # waiting 判定数据源（只读合并，同 _fulfill_coding_perm 先例）
             for row in crows:
                 sid = str(row.get("id") or "")
                 if not sid:
                     continue
-                out.append({
+                item = {
                     "id": sid,
                     "kind": "coding",
                     "label": "编码会话",
                     "prompt": str(row.get("prompt") or ""),
                     "status": "running",
                     "created_at": int(row.get("created_at") or 0),
-                })
+                }
+                # P2 督导补遗：_PERM 有该 sid 挂起审批（allow is None）→ waiting: true
+                # （additive 字段，壳侧「正在跑」计数/展示可区分「等审批」；不消费则零改动）
+                if perm and any(
+                        rid.startswith(f"perm_{sid}_")
+                        and isinstance(p, dict) and p.get("allow") is None
+                        for rid, p in list(perm.items())):
+                    item["waiting"] = True
+                out.append(item)
         return sorted(out, key=lambda item: item.get("created_at", 0), reverse=True)[:limit]
 
     def _feed_stats(running_tasks: list[dict] | None = None) -> dict:
@@ -1087,7 +793,7 @@ async def serve_async(
 
     reminder_task = asyncio.ensure_future(_reminder_loop(
         agent=agent, settings=settings, feed=feed, voice=voice,
-        run_state=run_state, write_msg=write_msg, dispatcher=proactive_dispatcher))
+        run_state=slots_idle_state, write_msg=write_msg, dispatcher=proactive_dispatcher))
 
     if http_enabled is None:
         http_enabled = use_real  # 测试默认关；生产（use_real=True）默认开
@@ -1121,7 +827,7 @@ async def serve_async(
                 return
             yield item
 
-    async def _pump_tts(tts_q: asyncio.Queue, cancel: asyncio.Event, surface: str = "pet"):
+    async def _pump_tts(tts_q: asyncio.Queue, cancel: asyncio.Event, surface: str = "pet", conversation_id: str = ""):
         if voice is None:
             return
         try:
@@ -1129,15 +835,28 @@ async def serve_async(
         except asyncio.CancelledError:
             return  # 打断命中合成/播放的正常取消，不是播报失败
         except Exception as e:
-            write_msg({"type": "event", "surface": surface, "event": {"kind": "error", "text": f"语音播报失败：{e}"}})
+            write_msg({"type": "event", "surface": surface, "conversation_id": conversation_id, "event": {"kind": "error", "text": f"语音播报失败：{e}"}})
             return
         if not cancel.is_set():
-            write_msg({"type": "event", "surface": surface, "event": {"kind": "speaking_done"}})
+            write_msg({"type": "event", "surface": surface, "conversation_id": conversation_id, "event": {"kind": "speaking_done"}})
 
     async def _stream_agent(text: str, rid, cancel: asyncio.Event, surface: str = "pet", conversation_id: str = "", emit_done: bool = True):
         t0 = time.monotonic()
         tts_q: asyncio.Queue | None = asyncio.Queue() if voice is not None else None
-        tts_task = asyncio.create_task(_pump_tts(tts_q, cancel, surface)) if tts_q is not None else None
+        tts_holds_lock = False
+        if tts_q is not None:
+            if tts_lock.locked():
+                # 另一会话正在播报（spec §D 单声道）：本 run 静默不播（文字流式照出），
+                # 不排队——排队念旧话比不念更怪。tts_q 置空后 speaking/chunk 进队逻辑整体跳过。
+                tts_q = None
+                write_msg({"type": "event", "surface": surface, "conversation_id": conversation_id,
+                           "event": {"kind": "notice", "text": "正在播报另一段对话，这段不念了"}})
+            else:
+                # 抢锁→持锁整轮（finally 里 TTS 排干后释放）：打断三连取消只作用本槽，
+                # 全局播放器的停止仅限持锁者——A 的打断掐不掉 B 正在播的音。
+                await tts_lock.acquire()
+                tts_holds_lock = True
+        tts_task = asyncio.create_task(_pump_tts(tts_q, cancel, surface, conversation_id)) if tts_q is not None else None
         started_speaking = False
         saw_interrupted = False
         try:
@@ -1163,12 +882,14 @@ async def serve_async(
                 await tts_q.put(None)  # 收尾哨兵，唤醒可能在 get() 上等待的 _pump_tts
             if tts_task is not None:
                 await tts_task
+            if tts_holds_lock:
+                tts_lock.release()  # 本槽播报排干后再放锁，下一会话才能开念
             # LLM 已吐完 final_reply 后打断只停 TTS，arun 不再 yield interrupted；
             # 前端靠 interrupted 回 idle，不发则停止按钮停在「说话中」。
             if cancel.is_set() and not saw_interrupted:
                 write_msg({"type": "event", "surface": surface, "conversation_id": conversation_id, "event": {"kind": "interrupted"}})
             if emit_done:  # 连续语音会话里 run_done 由 _drive_voice_start 在会话结束时统一发
-                write_msg({"type": "run_done", "id": rid})
+                write_msg(_run_done_msg(rid, conversation_id))
             print(f"[yibao] run 完成 rid={rid}（{time.monotonic() - t0:.1f}s）", file=sys.stderr)
 
     async def _drive_run(text: str, rid, cancel: asyncio.Event, surface: str = "pet", conversation_id: str = ""):
@@ -1178,6 +899,9 @@ async def serve_async(
         # 连续对话（长按团子进入）：答完接着听。退出：退出语 / 连续两次没听清 / 打断。
         def _vev(event: dict) -> None:
             write_msg({"type": "event", "surface": surface, "conversation_id": conversation_id, "event": event})
+
+        def _done() -> None:
+            write_msg(_run_done_msg(rid, conversation_id))
 
         if continuous:
             _vev({"kind": "notice", "text": _VOICE_SESSION_HINT})
@@ -1195,14 +919,14 @@ async def serve_async(
                 text = await ai_loop.run_in_executor(None, voice.listen)
             except Exception as e:
                 _vev({"kind": "error", "text": f"语音识别失败：{e}"})
-                write_msg({"type": "run_done", "id": rid})
+                _done()
                 return
             finally:
                 watcher.cancel()
             print(f"[yibao] 聆听结束（{time.monotonic() - t0:.1f}s）：{text[:30]!r}", file=sys.stderr)
             if cancel.is_set():  # 聆听被打断：不走 listening_done（避免误进 think 态）
                 _vev({"kind": "interrupted"})
-                write_msg({"type": "run_done", "id": rid})
+                _done()
                 return
             _vev({"kind": "listening_done", "text": text})
             if not text:
@@ -1211,100 +935,122 @@ async def serve_async(
                     if empties < _VOICE_SESSION_MAX_EMPTY:
                         continue  # 没听清：会话中不打岔，直接再听一轮
                     _vev({"kind": "notice", "text": "一会儿没说话，先退下啦，叫我随时来～"})
-                    write_msg({"type": "run_done", "id": rid})
+                    _done()
                     return
-                write_msg({"type": "run_done", "id": rid})
+                _done()
                 return
             empties = 0
             if continuous and _is_exit_phrase(text):
                 # 退出语：固定告别（不过 LLM，确定性收尾）
                 _vev({"kind": "final_reply", "text": _VOICE_SESSION_BYE})
+                if tts_lock.locked():
+                    # 另一会话正在播报（spec §D 单声道）：告别静默不抢声道、不排队
+                    _done()
+                    return
                 _vev({"kind": "speaking"})
 
                 async def _bye():
                     yield _VOICE_SESSION_BYE
 
+                await tts_lock.acquire()
                 try:
                     await voice.speak_stream(_bye(), cancel)
                 except Exception as e:
                     print(f"[yibao] 会话告别播报失败：{e}", file=sys.stderr)
+                finally:
+                    tts_lock.release()
                 if cancel.is_set():
                     _vev({"kind": "interrupted"})
                 else:
                     _vev({"kind": "speaking_done"})
-                write_msg({"type": "run_done", "id": rid})
+                _done()
                 return
             # 连续会话的 run_done 由本函数在会话结束时发（每轮结束就发会让前端以为请求完结）
             await _stream_agent(text, rid, cancel, surface, conversation_id, emit_done=not continuous)
             if not continuous:
                 return
             if cancel.is_set():
-                write_msg({"type": "run_done", "id": rid})
+                _done()
                 return
             # 答完接着听下一轮
 
-    def _preempt_current():
-        run_state["preempt_gen"] += 1
-        if run_state["cancel"] is not None:
-            run_state["cancel"].set()
+    def _preempt_current(slot: dict) -> None:
+        slot["preempt_gen"] += 1
+        if slot["cancel"] is not None:
+            slot["cancel"].set()
 
-    def _preempt_if_same_surface(surface: str) -> None:
-        """同 surface 新请求 → 抢占在跑任务；跨 surface → 不抢占，走链式排队。
+    def _preempt_if_same_surface(slot: dict, surface: str, conv_key: str) -> None:
+        """同槽（= 同会话）新请求 → 抢占在跑任务。同会话跨 surface（同一
+        conversation_id 从 Home 和 pet 同时发话）也视为同会话，照样抢占（spec §核心模型）。
 
-        跨 surface 排队时给新请求的 surface 发个轻提示（notice），
-        让用户知道「受理了，在等另一个窗口那轮说完」，而不是点了没反应。
+        仅 default 槽（conv_key 为空 = 无 conversation_id 的遗留调用）保留旧的
+        「跨 surface 不抢占、链式排队 + notice」（行为同现状）；跨会话不再走到这里——
+        不同 conversation_id 落在不同槽位，直接真并行。
 
-        比较对象是 run_state["surface"] = 最近一次受理的 surface（dispatch 时即写入，
-        无「chain 任务还没跑起来」的调度竞态）。取舍：A(pet) 在跑、B(panel) 排队中又来
-        C(pet) 时，C 会被判成跨 surface 而排队而非顶掉 A——三消息交替跨窗的极端场景，
-        排队自愈、不会卡死，不为它引入 per-surface 代数。
+        比较对象是 slot["surface"] = 该槽最近一次受理的 surface（dispatch 时即写入，
+        无「chain 任务还没跑起来」的调度竞态）。取舍：default 槽里 A(pet) 在跑、B(panel)
+        排队中又来 C(pet) 时，C 会被判成跨 surface 而排队而非顶掉 A——三消息交替跨窗的
+        极端场景，排队自愈、不会卡死，不为它引入 per-surface 代数。
         """
-        prev = run_state["task"]
+        prev = slot["task"]
         if prev is None or prev.done():
             return
-        if run_state["surface"] == surface:
-            _preempt_current()
+        if conv_key or slot["surface"] == surface:
+            _preempt_current(slot)
         else:
-            print(f"[yibao] 跨 surface 请求排队（在跑={run_state['surface']}，新={surface}）", file=sys.stderr)
+            print(f"[yibao] 跨 surface 请求排队（在跑={slot['surface']}，新={surface}）", file=sys.stderr)
             write_msg({"type": "event", "surface": surface, "event": {
                 "kind": "notice", "text": "另一个窗口还在说，等它说完就轮到你…"}})
 
-    def _schedule_run(surface: str, rid, start) -> None:
-        """受理尾巴（run/voice_start/手机 chat 共用）：同 surface 抢占 + 跨 surface 链式排队。
-        running_surface 在真正开跑时才写——手机 interrupt 按它判域，排队窗口不误杀桌面轮。"""
-        _preempt_if_same_surface(surface)
-        prev = run_state["task"]
-        run_state["surface"] = surface  # 受理即记录：下次 dispatch 判断同/跨 surface 无调度竞态
+    def _schedule_run(surface: str, rid, start, conversation_id: str = "") -> None:
+        """受理尾巴（run/voice_start/手机 chat 共用）：按 conversation_id 取槽——同槽
+        新话顶旧话，跨槽真并行零等待。running_surface 在真正开跑时才写——手机 interrupt
+        按它判域，排队窗口不误杀桌面轮。"""
+        slot = _slot(conversation_id)
+        _preempt_if_same_surface(slot, surface, conversation_id or "")
+        prev = slot["task"]
+        slot["surface"] = surface  # 受理即记录：下次 dispatch 判断同/跨 surface 无调度竞态
 
-        async def _marked(cancel, s=start, sf=surface):
-            run_state["running_surface"] = sf
+        async def _marked(cancel, s=start, sf=surface, sl=slot, ci=conversation_id or ""):
+            sl["running_surface"] = sf
+            # 归属上下文：batch_confirmer 读本槽 cancel / confirm_meta 记会话归属
+            _run_ctx.set({"cancel": cancel, "surface": sf, "conversation_id": ci})
             await s(cancel)
 
-        run_state["task"] = asyncio.ensure_future(
-            _chain_start(prev, _marked, run_state["preempt_gen"]))
+        slot["task"] = asyncio.ensure_future(
+            _chain_start(slot, prev, _marked, slot["preempt_gen"]))
 
     _MOB_SEQ = itertools.count(1)
 
     def _submit_run(text: str, conversation_id: str) -> dict:
-        """手机 /v1/chat 受理：surface=mobile（不抢桌宠，桌宠也不抢手机）。
+        """手机 /v1/chat 受理：surface=mobile（不抢桌宠，桌宠也不抢手机）；会话槽位
+        按 conversation_id 独立——手机与桌面、手机多会话之间真并行。
         不消费 invoke_ctx：那是桌面截图唤起的一次性上下文，留给桌面下一次 run。"""
         rid = f"mob_{next(_MOB_SEQ)}"
         start = lambda c, t=text, r=rid, ci=conversation_id: _drive_run(t, r, c, "mobile", ci)
         print(f"[yibao] run 受理 rid={rid} surface=mobile conv={conversation_id}：{text[:30]!r}", file=sys.stderr)
-        _schedule_run("mobile", rid, start)
+        _schedule_run("mobile", rid, start, conversation_id)
         return {"ok": True, "run_id": rid, "conversation_id": conversation_id}
 
-    def _interrupt_mobile() -> bool:
-        """只打断真正在跑的 mobile 轮（running_surface；排队中 surface 已翻但没开跑）。
+    def _interrupt_mobile(conversation_id: str = "") -> bool:
+        """手机打断：维持 surface 域限定（只动 running_surface=mobile 的槽），叠加
+        conversation_id 定向（spec §E）——带 id 只打断该会话槽；不带 id 扫所有槽里
+        在跑的 mobile 轮（旧行为）。
         task 判活对齐 _mobile_state：消掉「上轮收尾后陈旧的 running_surface=mobile」
-        误报 True + 平白推进 preempt_gen 顶掉排队桌面链的跳窗口。壳 interrupt 是
-        「全都停」；手机不该误伤桌面对话。"""
-        task = run_state["task"]
-        if (run_state.get("running_surface") == "mobile"
-                and task is not None and not task.done()
-                and run_state["cancel"] is not None):
-            _preempt_current()
-            return True
+        误报 True + 平白推进 preempt_gen 的跳窗口。壳 interrupt 是「全都停」或定向
+        某槽；手机不该误伤桌面对话。"""
+        if conversation_id:
+            named = run_slots.get(conversation_id)
+            slots = [named] if named is not None else []
+        else:
+            slots = list(run_slots.values())
+        for slot in slots:
+            task = slot["task"]
+            if (slot.get("running_surface") == "mobile"
+                    and task is not None and not task.done()
+                    and slot["cancel"] is not None):
+                _preempt_current(slot)
+                return True
         return False
 
     def _confirm_mobile(cid: str, approved: bool, remember: bool) -> bool:
@@ -1334,12 +1080,15 @@ async def serve_async(
         return True
 
     def _mobile_state() -> dict:
-        """/v1/state 载荷：running + pending。pending = confirm_meta 展开（L2 确认）
+        """/v1/state 载荷：running + pending。running = 任一槽在跑即非空闲（并发对话
+        spec §F：多槽并行后 idle 判定看全局）。pending = confirm_meta 展开（L2 确认，
+        条目带 conversation_id/surface 归属）
         + coding 审批只读合并 _PERM 挂起项（allow is None；confirmation_needed 只广播
         不落 confirm_meta，故在此补源）——生命周期随裁决/超时/stop 的 _PERM.pop 收敛，
         无需出队钩子。元素键名对齐 confirm_meta：id/skill_id/summary/risk/created_at。"""
-        task = run_state["task"]
-        running = {"surface": run_state["surface"]} if (task is not None and not task.done()) else None
+        busy = next((s for s in run_slots.values()
+                     if s["task"] is not None and not s["task"].done()), None)
+        running = {"surface": busy["surface"]} if busy is not None else None
         pending = [{"id": cid, **meta} for cid, meta in confirm_meta.items()]
         perm = _coding_perm_registry()
         if perm:
@@ -1367,18 +1116,19 @@ async def serve_async(
         settings["push.devices"] = devices
         save_settings({"push.devices": devices})
 
-    async def _chain_start(prev, start, queued_gen: int) -> None:
-        """槽位串行：等上一任务收尾再启动；主循环不在这里阻塞（ping 照答，看门狗不误杀）。
+    async def _chain_start(slot: dict, prev, start, queued_gen: int) -> None:
+        """槽内串行：等本槽上一任务收尾再启动；主循环不在这里阻塞（ping 照答，看门狗
+        不误杀）。「等上一任务」只在同槽内生效——跨槽（跨会话）零等待、真并行（spec §A）。
 
-        排队期间又来了更新的请求（preempt_gen 前进）→ 本任务一启动即置 cancel 快速跳过。
+        排队期间本槽又来了更新的请求（preempt_gen 前进）→ 本任务一启动即置 cancel 快速跳过。
         上一任务被抢占后超过 _PREEMPT_GRACE_S 仍不收尾（LLM/TTS hung 等）→ 强制取消，
-        槽位必须自愈，否则后续所有请求都静默排队（「点了没反应」）。
+        槽位必须自愈，否则本槽后续所有请求都静默排队（「点了没反应」）。
 
-        注意：run_state["task"] 只在 dispatch 处写入（= 最新受理的 chain）。
+        注意：slot["task"] 只在 dispatch 处写入（= 该槽最新受理的 chain）。
         这里绝不能再写——chain 启动晚于 dispatch，旧 chain 后启动会把 task 回写成自己，
         stdin 清理/打断看到的就是已收尾的旧任务，排队中的新任务被孤儿化（2026-07-25
         实测：测试里 asyncio.run 收尾顺手 cancel 孤儿 chain → 偶发丢 final_reply）。
-        run_state["cancel"] 由这里写（= 当前真正在跑任务的取消闸）：抢占经 gen 代数
+        slot["cancel"] 由这里写（= 本槽当前真正在跑任务的取消闸）：抢占经 gen 代数
         传导，写晚了对齐的是「在跑」语义，不会误伤排队任务。
         """
         if prev is not None and not prev.done():
@@ -1398,9 +1148,9 @@ async def serve_async(
                 pass  # prev 自身异常/被取消都算已收尾
             print(f"[yibao] 上一任务收尾完成（{time.monotonic() - t0:.1f}s）", file=sys.stderr)
         cancel = asyncio.Event()
-        if run_state["preempt_gen"] > queued_gen:
+        if slot["preempt_gen"] > queued_gen:
             cancel.set()
-        run_state["cancel"] = cancel
+        slot["cancel"] = cancel
         try:
             await start(cancel)
         except Exception as e:  # 兜底：任务未预期的异常不能毒死槽位
@@ -1439,16 +1189,19 @@ async def serve_async(
     while True:
         msg = await queue.get()
         if msg is None:
-            # stdin 关闭（壳退出）：不再接新活。给在跑任务 5s 自然收尾；
+            # stdin 关闭（壳退出）：不再接新活。遍历所有槽（并发对话 spec §F），
+            # 每个在跑任务给 5s 自然收尾；
             # 超时说明它卡死了（确认未答/hung）→ 取消 + 2s 清场 → 强 cancel。
             # 不能无限等：否则大脑变孤儿占着 qdrant 锁/麦
             # （2026-07-19 实测孤儿 brain 存活 3 小时，新 brain 被迫记忆降级）。
-            task = run_state["task"]
-            if task is not None and not task.done():
+            for _slot in run_slots.values():
+                task = _slot["task"]
+                if task is None or task.done():
+                    continue
                 done, _ = await asyncio.wait({task}, timeout=5)
                 if not done:
-                    if run_state["cancel"] is not None:
-                        run_state["cancel"].set()
+                    if _slot["cancel"] is not None:
+                        _slot["cancel"].set()
                     done, _ = await asyncio.wait({task}, timeout=2)
                     if not done:
                         task.cancel()
@@ -1484,7 +1237,7 @@ async def serve_async(
                 rid = msg.get("id")
                 print("[yibao] voice_start 收到但语音栈不可用", file=sys.stderr)
                 write_msg({"type": "event", "event": {"kind": "error", "text": "语音不可用：麦克风初始化失败或被禁用"}})
-                write_msg({"type": "run_done", "id": rid})
+                write_msg(_run_done_msg(rid, str(msg.get("conversation_id") or "")))
                 continue
             surface = str(msg.get("surface") or "pet")  # 会话分流：随 run 贯穿事件流与历史
             conversation_id = str(msg.get("conversation_id") or "")  # M3：会话归属随 run 贯穿（sidecar 单流，事件带归属）
@@ -1506,13 +1259,13 @@ async def serve_async(
                     await _drive_run(t, r, c, s, ci)
 
                 print(f"[yibao] run 受理 rid={rid} surface={surface} conv={conversation_id}：{text[:30]!r}", file=sys.stderr)
-                _schedule_run(surface, rid, _start)
+                _schedule_run(surface, rid, _start, conversation_id)
             elif voice is not None:
                 rid = msg.get("id")
                 cont = bool(msg.get("continuous"))
                 start = lambda c, r=rid, s=surface, ci=conversation_id, ct=cont: _drive_voice_start(r, c, s, ci, ct)
                 print(f"[yibao] voice_start 受理 rid={rid} surface={surface} conv={conversation_id} continuous={cont}", file=sys.stderr)
-                _schedule_run(surface, rid, start)
+                _schedule_run(surface, rid, start, conversation_id)
             else:
                 continue
         elif rtype == "panel_action":
@@ -1528,27 +1281,37 @@ async def serve_async(
                 readonly_tasks.add(t)
                 t.add_done_callback(readonly_tasks.discard)
                 continue
-            # 面板写操作/意图方法：与 run 同槽位（同 surface 抢占 / 跨 surface 排队，主循环不阻塞）
+            # 面板写操作/意图方法：与 run 同槽位（按 conversation_id 取槽：同会话抢占 /
+            # 跨会话并行；default 槽内跨 surface 仍排队，主循环不阻塞）
             surface = str(msg.get("surface") or "pet")
             conversation_id = str(msg.get("conversation_id") or "")
-            _preempt_if_same_surface(surface)
-            prev = run_state["task"]
-            run_state["surface"] = surface
+            slot = _slot(conversation_id)
+            _preempt_if_same_surface(slot, surface, conversation_id)
+            prev = slot["task"]
+            slot["surface"] = surface
             start = lambda c, m=msg, s=surface, ci=conversation_id: handle_panel_action(
                 m, agent, write_msg, run_text=lambda text, rid, c=c, s=s, ci=ci: _stream_agent(text, rid, c, s, ci)
             )
 
-            async def _marked_panel(cancel, s=start, sf=surface):
-                run_state["running_surface"] = sf
+            async def _marked_panel(cancel, s=start, sf=surface, sl=slot, ci=conversation_id):
+                sl["running_surface"] = sf
+                _run_ctx.set({"cancel": cancel, "surface": sf, "conversation_id": ci})
                 await s(cancel)
 
-            run_state["task"] = asyncio.ensure_future(
-                _chain_start(prev, _marked_panel, run_state["preempt_gen"])
+            slot["task"] = asyncio.ensure_future(
+                _chain_start(slot, prev, _marked_panel, slot["preempt_gen"])
             )
         elif rtype == "interrupt":
-            # 用户主动打断：无条件停一切。interrupt 消息不带 surface（壳上只有一个打断入口），
-            # 跨 surface 排队中的任务也会被 gen 前进顶掉——取舍：打断就是「全都停」。
-            _preempt_current()
+            # 用户主动打断（spec §E 定向化）：带 conversation_id → 只打断该会话槽
+            # （A 会话的打断不伤 B 会话）；不带 → 全停（旧行为，兼容无会话维度的调用方）。
+            _int_cid = str(msg.get("conversation_id") or "")
+            if _int_cid:
+                _int_slot = run_slots.get(_int_cid)
+                if _int_slot is not None:
+                    _preempt_current(_int_slot)
+            else:
+                for _int_slot in run_slots.values():
+                    _preempt_current(_int_slot)
         elif rtype == "panel_context":
             # 壳上面板焦点变化：存下来，下次 run 注入 LLM 上下文
             _FOCUS["value"] = msg.get("focus")

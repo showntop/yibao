@@ -132,8 +132,9 @@ const panelOpen = ref(false); // 面板浮窗当前打开状态
 const procIdx = new Map<string, number>();
 // explicit run 标记：插件视图点击 / 窄规则命中两个来源共用；run_done、final_reply、interrupted 或发起失败时清理。
 // 刻意不设过期时间：文本路径要等两轮 LLM 往返，任何墙钟窗口都会在慢模型上静默失效。
-// 注意 run_done 是不带 surface 的全局广播（任何窗口的任何 run 结束都会触发），所以无关 run
-// 可能提前清掉标记 —— 方向是「该开的窗没开」，退化成一条可点行，绝不会反向违反「模型不得自动开窗」。
+// run_done 已带 conversation_id（并发对话），监听处按归属过滤——别窗 run 收尾不再提前清掉
+// 本窗标记；无归属的旧帧仍清（方向是「该开的窗没开」，退化成一条可点行，绝不会反向违反
+// 「模型不得自动开窗」）。
 let requestedPlugin = "";
 function markExplicit(pluginId: string): void {
   requestedPlugin = pluginId;
@@ -977,7 +978,8 @@ function onMicContinuous() {
 
 function onInterrupt() {
   // 不看 busy：TTS 播完字后打断若晚到，state 可能已和音频脱节；多发一次 interrupt 无害。
-  void interrupt().catch((err) => {
+  // 定向打断（并发对话 spec §E）：只停小窗固定会话槽，不掐大窗/面板的在跑 run。
+  void interrupt(petConvId.value || undefined).catch((err) => {
     pushWarn("打断失败：" + String(err));
   });
 }
@@ -1057,7 +1059,13 @@ onMounted(async () => {
     onWindowMoved({ x: p0.x, y: p0.y });
   } catch { /* 忽略 */ }
   unlisten = await onBrainEvent(onEvent);
-  unlistenRunDone = await onRunDone(() => clearExplicit());
+  // run_done 带 conversation_id（并发对话 spec §E）：只清本会话的 explicit 标记，
+  // 别窗 run 收尾不再波及本窗（无归属的旧帧照常清，兼容旧 sidecar）。
+  unlistenRunDone = await onRunDone((v) => {
+    const cid = (v as { conversation_id?: string } | null)?.conversation_id;
+    if (cid && petConvId.value && cid !== petConvId.value) return;
+    clearExplicit();
+  });
   unlistenStatus = await onBrainStatus(onStatus);
   unlistenPerms = await onBrainPermissions(onPerms);
   // 跨窗刷新：大窗向本窗固定会话发了消息（用户消息无事件流）→ 重拉。
@@ -1073,7 +1081,13 @@ onMounted(async () => {
   });
   unlistenApprovals = onPendingConfirms((items) => {
     const previousCount = pendingConfirms.value.length;
-    pendingConfirms.value = items.filter((item) => !item.surface || item.surface === "pet");
+    // 归属过滤（并发对话 spec §B）：surface=pet 之外再按会话 id 区分——大窗会话的
+    // 确认卡不再落到小窗快批（无归属的卡保持旧行为照收）。
+    pendingConfirms.value = items.filter(
+      (item) =>
+        (!item.surface || item.surface === "pet") &&
+        (!item.conversationId || !petConvId.value || item.conversationId === petConvId.value),
+    );
     if (pendingConfirms.value.length === 0) {
       rememberPending.value = false;
       return;

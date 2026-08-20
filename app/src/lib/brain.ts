@@ -171,9 +171,11 @@ export function voiceStart(surface?: string, continuous?: boolean, conversationI
   });
 }
 
-/** 打断进行中的生成/播报（Plan 4b：停 TTS + 终止 LLM + 清队列）。 */
-export function interrupt(): Promise<void> {
-  return invoke("interrupt");
+/** 打断进行中的生成/播报（Plan 4b：停 TTS + 终止 LLM + 清队列）。
+ *  并发对话（spec §E）：带 conversationId → 只打断该会话槽（别窗的 run 不受波及）；
+ *  不带 → 全停（旧行为）。 */
+export function interrupt(conversationId?: string): Promise<void> {
+  return invoke("interrupt", { conversationId: conversationId ?? null });
 }
 
 /** 面板动作：调 api.toml 白名单内的方法（id 毫秒取模，一次请求一个够唯一；webview 桥传自有 id 做回包关联）。 */
@@ -613,6 +615,9 @@ export interface PendingConfirm {
   risk?: number;
   /** 产生确认的会话面：小窗/面板只消费自己的确认，大窗收件箱展示全部。 */
   surface?: string;
+  /** 产生确认的会话 id（并发对话 spec §B）：同 surface 的多会话（大窗/小窗都是 pet）
+   *  靠它区分归属；A 会话被打断时只出队该会话的待批卡，不误清 B 会话的。 */
+  conversationId?: string;
   /** 收件箱分层（C 子项目预留）：通知 / 问答 / 复核。本 task 不实装 tier 分流逻辑。 */
   tier?: "Notify" | "Question" | "Review";
 }
@@ -682,6 +687,8 @@ if ("__TAURI_INTERNALS__" in window) void listen<BrainEvent>("brain-event", (ev)
         risk: a.risk,
         // coding 审批经 ProactiveDispatcher 广播时顶层 surface 为 null，action 自带 surface 优先
         surface: a.surface ?? e.surface,
+        // 会话归属随信封（并发对话 spec §B）：确认卡按它过滤/定向出队
+        conversationId: e.conversationId,
       }));
     if (fresh.length) {
       _pc = [..._pc, ...fresh];
@@ -691,9 +698,12 @@ if ("__TAURI_INTERNALS__" in window) void listen<BrainEvent>("brain-event", (ev)
     _pcRemove(e.action.id);
   } else if (e.kind === "interrupted") {
     // F1（Task 2 review Important）：cancel-during-CONFIRM 从 error 改为 interrupted 后，
-    // 旧逻辑只认 action_result/error 出队 → 待批卡会滞留。打断即整批清空。
-    if (_pc.length) {
-      _pc = [];
+    // 旧逻辑只认 action_result/error 出队 → 待批卡会滞留。打断即出队。
+    // 并发对话（spec §C）：只出队该会话的卡——A 会话被打断不清 B 会话的待批确认；
+    // 双方都无归属（旧 sidecar/无会话路径）时退化为整批清空（旧语义）。
+    const n = _pc.filter((p) => p.conversationId !== e.conversationId);
+    if (n.length !== _pc.length) {
+      _pc = n;
       _pcEmit();
     }
   }

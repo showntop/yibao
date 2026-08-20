@@ -77,6 +77,35 @@ describe("useChat", () => {
     expect(chat.busy.value).toBe(false);
   });
 
+  it("conversation_id 归属过滤（并发对话）：同 surface 其他会话的帧不串进本气泡", async () => {
+    const { chat, emit } = mkChat();
+    await chat.send("本会话的问题");
+    const cid = chat.conversationId.value;
+    // 另一会话（另一台手机/另一轮 mobile 会话）的同 surface 帧：带归属且非本会话 → 全丢弃
+    emit("final_reply_chunk", { kind: "final_reply_chunk", text: "别会话的", surface: "mobile", conversation_id: "other-conv" });
+    expect(chat.messages.value[1].text).toBe("");
+    emit("notice", { kind: "notice", surface: "mobile", text: "别会话的提示", conversation_id: "other-conv" });
+    expect(chat.error.value).toBe("");
+    emit("interrupted", { kind: "interrupted", surface: "mobile", conversation_id: "other-conv" });
+    expect(chat.messages.value[1].interrupted).toBeFalsy();
+    // 本会话帧（带归属）照收
+    emit("final_reply_chunk", { kind: "final_reply_chunk", text: "本会话的", surface: "mobile", conversation_id: cid });
+    expect(chat.messages.value[1].text).toBe("本会话的");
+    // 无归属帧（旧 sidecar/广播）保持放行（myRunId/无 id 比对兜底）
+    emit("final_reply_chunk", { kind: "final_reply_chunk", text: "+无归属", surface: "mobile" });
+    expect(chat.messages.value[1].text).toBe("本会话的+无归属");
+    emit("run_done", { id: "mob_1" });
+    expect(chat.messages.value[1].done).toBe(true);
+  });
+
+  it("interrupt 定向：请求体带当前 conversation_id（spec §E）", async () => {
+    const { chat, posts } = mkChat();
+    await chat.send("长任务");
+    await chat.interrupt();
+    expect(posts[1].url).toBe("http://x/v1/interrupt");
+    expect(posts[1].body).toEqual({ conversation_id: chat.conversationId.value });
+  });
+
   it("排队 notice：mobile 写入提示位，桌面 notice 不写", async () => {
     const { chat, emit } = mkChat();
     await chat.send("跨 surface 排队");

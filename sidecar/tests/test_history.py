@@ -61,6 +61,32 @@ def test_history_trimmed_to_max_turns(tmp_path):
     assert contents == ["u1", "a1", "u2", "a2"]
 
 
+def test_history_concurrent_record_no_lost_turns(tmp_path):
+    """并发对话 spec §C/验收 D：两个会话的并行 run 同时落史（整桶读改写 + 整本覆盖写，
+    含同一 tmp 文件的 write/replace），模块级锁串行化——两线程灌完后两桶完整，
+    重启（重新加载同一文件）后仍在。"""
+    import threading
+
+    path = tmp_path / "h.json"
+    history = ConversationHistory(path, max_turns=60)
+
+    def _fill(cid: str, tag: str):
+        for i in range(30):
+            history.record_turn(f"{tag}-u{i}", f"{tag}-a{i}", cid)
+
+    t1 = threading.Thread(target=_fill, args=("conv-a", "A"))
+    t2 = threading.Thread(target=_fill, args=("conv-b", "B"))
+    t1.start(); t2.start(); t1.join(); t2.join()
+
+    for cid, tag in (("conv-a", "A"), ("conv-b", "B")):
+        contents = [m["content"] for m in history.messages(cid)]
+        assert contents == [x for i in range(30) for x in (f"{tag}-u{i}", f"{tag}-a{i}")]
+    # 模拟大脑重启：全新 history 对象从同一文件加载，两桶仍完整（文件未被交错写坏）
+    reloaded = ConversationHistory(path, max_turns=60)
+    assert len(reloaded.messages("conv-a")) == 60
+    assert len(reloaded.messages("conv-b")) == 60
+
+
 def test_failed_run_not_recorded(tmp_path):
     # 模型一直要调工具 → 达到最大步数报错，这种失败 run 不应污染历史
     history = ConversationHistory(tmp_path / "h.json")

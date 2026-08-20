@@ -15,7 +15,7 @@ columns = [
   {name = "agent", type = "text", default = "claude-code"},
   {name = "cwd", type = "text"},
   {name = "prompt", type = "text"},
-  {name = "status", type = "text", default = "running"},   # running/done/stopped/failed
+  {name = "status", type = "text", default = "running"},   # running/done/stopped/failed/interrupted（底座重启对账落）
   {name = "created_at", type = "integer"},
   {name = "finished_at", type = "integer", default = 0},
   {name = "cc_session_id", type = "text", default = ""},   # Claude Code 会话 id（runner.run 返回；后续多轮 resume 用）

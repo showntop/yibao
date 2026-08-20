@@ -169,7 +169,8 @@ def test_v1_chat_and_interrupt_routes():
             calls.append((text, conversation_id))
             return {"ok": True, "run_id": "mob_1", "conversation_id": conversation_id}
 
-        def interrupt():
+        def interrupt(conversation_id=""):
+            calls.append(("interrupt", conversation_id))
             return True
 
         deps = MobileDeps(submit_run=submit_run, interrupt=interrupt)
@@ -187,6 +188,11 @@ def test_v1_chat_and_interrupt_routes():
             assert r.status == 400
             r = await client.post("/v1/interrupt", headers={"X-Yibao-Token": "mtok"}, json={})
             assert r.status == 200 and (await r.json()) == {"ok": True, "interrupted": True}
+            assert calls[-1] == ("interrupt", "")  # 不带 conversation_id → 空串不定向（旧行为）
+            r = await client.post("/v1/interrupt", headers={"X-Yibao-Token": "mtok"},
+                                  json={"conversation_id": "c1"})
+            assert r.status == 200 and (await r.json()) == {"ok": True, "interrupted": True}
+            assert calls[-1] == ("interrupt", "c1")  # 定向打断：conversation_id 透传到 deps
         finally:
             await client.close()
 

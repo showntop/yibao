@@ -427,7 +427,7 @@ def test_start_skill_does_not_pass_resume(monkeypatch):
     assert captured["kwargs"].get("resume_session_id") is None
 
 
-# ---------- 流式防重入：send 拒 running 会话 ----------
+# ---------- 运行中 steer（spec §A）：send 对 running 会话排队而非拒绝 ----------
 
 
 def _make_ctx_with_session(status, with_messages=None):
@@ -442,16 +442,38 @@ def _make_ctx_with_session(status, with_messages=None):
     return _Ctx(db)
 
 
-def test_send_rejects_when_session_running(monkeypatch):
-    """会话 running 时 send 必须拒绝（防同 sid 双 runner 竞态）；终态会话放行。"""
-    # 不真起线程：把 _spawn_stream 占位成空
-    monkeypatch.setattr(codingmod, "_spawn_stream", lambda *a, **k: None)
+def test_send_running_session_queues_steer_instead_of_rejecting(monkeypatch):
+    """spec §A：running + live entry → 不再硬拒，prompt 入 steer 队列（返回 queued/position），
+    不另起 _spawn_stream；入队发 marker（面板流 + messages 表双写）。
+    无活体 entry 的陈旧 running（对账前的缝）与终态会话照常走 resume 放行。"""
+    spawned = {"n": 0}
+    monkeypatch.setattr(codingmod, "_spawn_stream",
+                        lambda *a, **k: spawned.__setitem__("n", spawned["n"] + 1))
     ctx = _make_ctx_with_session(status="running")
-    r = SendSkill().run({"id": "sid-1", "prompt": "再来一条"}, ctx)
-    assert not r.success and "正在运行" in (r.error or "")
+    entry = {"cancel": _threading.Event()}
+    monkeypatch.setattr(codingmod, "_SESSIONS", {"sid-1": entry})
+    events = []
+    ctx.emit_event = events.append
+    r = SendSkill().run({"id": "sid-1", "prompt": "先补一句"}, ctx)
+    assert r.success and r.data["queued"] is True and r.data["position"] == 1
+    r2 = SendSkill().run({"id": "sid-1", "prompt": "再补一句"}, ctx)
+    assert r2.data["position"] == 2
+    assert entry["steer"] == ["先补一句", "再补一句"]       # 按序排队
+    assert spawned["n"] == 0                                # 不当轮打断、不另起 runner
+    marks = [e for e in events if e.get("kind") == "panel_data"
+             and e["payload"]["data"]["event"].get("kind") == "marker"]
+    assert len(marks) == 2 and "已排队" in marks[0]["payload"]["data"]["event"]["text"]
+    assert marks[0]["payload"]["data"]["session_id"] == "sid-1"
+    db_marks = [m for m in ctx.db._tables.get("messages", []) if m["role"] == "marker"]
+    assert len(db_marks) == 2 and "已排队" in db_marks[0]["text"]
+    # 无活体 entry 的陈旧 running（如底座重启 mid-run、对账前的缝）→ 直送 resume 放行
+    monkeypatch.setattr(codingmod, "_SESSIONS", {})
+    r3 = SendSkill().run({"id": "sid-1", "prompt": "续跑"}, ctx)
+    assert r3.success and spawned["n"] == 1
+    # 终态会话放行
     ctx2 = _make_ctx_with_session(status="done")
-    r2 = SendSkill().run({"id": "sid-1", "prompt": "再来一条"}, ctx2)
-    assert r2.success, r2.error
+    r4 = SendSkill().run({"id": "sid-1", "prompt": "再来一条"}, ctx2)
+    assert r4.success, r4.error
 
 
 # ---------- start/send 风险降噪：L2 → L1 ----------
@@ -1961,3 +1983,102 @@ def test_usage_baseline_corrupt_row_does_not_break_stream(monkeypatch):
     assert dones[0]["usage"]["input_tokens"] == 50      # baseline 按 0 → 全量上报一轮（退化不炸）
     assert _json.loads(db.rows["s-bad"]["usage_baseline"]) == {
         "input_tokens": 50, "output_tokens": 5}
+
+
+# ---------- P2 收尾 spec §A/§C：steer 队列 drain / stop 清队 / 陈旧 running 对账 ----------
+
+class _SteerRunner:
+    """鸭式 runner：记录每轮 (prompt, resume)；恒返回 cc-1。
+    on_run 钩子（按已跑轮数回调）模拟「续跑期间新到 steer 入队」。"""
+    def __init__(self, on_run=None):
+        self.calls = []
+        self._on_run = on_run
+    async def run(self, prompt, cwd, *, on_event, cancel_event, resume_session_id=None,
+                  permission_mode="acceptEdits", can_use_tool=None, session_entry=None):
+        self.calls.append({"prompt": prompt, "resume": resume_session_id})
+        if self._on_run is not None:
+            self._on_run(len(self.calls))
+        on_event({"kind": "done", "usage": {}})
+        return "cc-1"
+
+
+def test_stream_drains_steer_queue_and_resumes(monkeypatch):
+    """一轮 done 后 steer 队列非空 → 全部排队消息按序合并为【督导补充】prompt，
+    以 resume_session_id=cc_sid 原地续跑；队列空才落终态 done + 接续 marker 留痕。"""
+    db = _FakeDB(); db.rows["st1"] = {"id": "st1", "status": "running"}
+    entry = {"cancel": _threading.Event(), "steer": ["补充一", "补充二"]}
+    monkeypatch.setattr(codingmod, "_SESSIONS", {"st1": entry})
+    runner = _SteerRunner()
+    _run(_stream(db, "st1", "/tmp/p", "原始任务", runner, emit_event=None,
+                 cancel=_threading.Event()))
+    assert len(runner.calls) == 2
+    assert runner.calls[1]["prompt"] == "【督导补充】\n补充一\n补充二"   # 多条合并 + 前缀
+    assert runner.calls[1]["resume"] == "cc-1"                          # 同会话同引擎 resume
+    assert entry["steer"] == []                                         # 队列已 drain
+    assert db.updates[-1][1]["status"] == "done"                        # 队列空才落终态
+    texts = [m["text"] for m in db._tables.get("messages", []) if m["role"] == "marker"]
+    assert any("督导补充已接续" in t and "2 条" in t for t in texts)
+
+
+def test_stream_drains_steer_arriving_mid_continuation(monkeypatch):
+    """续跑期间新到的 steer 继续入队 → 再续一轮（逐轮 drain 直到队列空才真终态）。"""
+    db = _FakeDB(); db.rows["st2"] = {"id": "st2", "status": "running"}
+    entry = {"cancel": _threading.Event(), "steer": ["第一轮补充"]}
+    monkeypatch.setattr(codingmod, "_SESSIONS", {"st2": entry})
+
+    def _on_run(n):
+        if n == 2:
+            entry["steer"].append("第二轮补充")      # 模拟续跑进行中 SendSkill 新入队
+
+    runner = _SteerRunner(on_run=_on_run)
+    _run(_stream(db, "st2", "/tmp/p", "原始任务", runner, emit_event=None,
+                 cancel=_threading.Event()))
+    assert [c["prompt"] for c in runner.calls] == [
+        "原始任务", "【督导补充】\n第一轮补充", "【督导补充】\n第二轮补充"]
+    assert db.updates[-1][1]["status"] == "done"
+
+
+def test_stop_clears_steer_queue_and_stream_does_not_continue(monkeypatch):
+    """spec 验收 B：stop 连 steer 队列一起清；cancel 后 _stream drain 循环顶即 break，
+    不发生「停了又自己跑起来」；stopped 终态保留不被覆盖。"""
+    db = _FakeDB(); db.rows["st3"] = {"id": "st3", "status": "running"}
+    cancel = _threading.Event()
+    entry = {"cancel": cancel, "steer": ["别跑了"]}
+    ok = _stop_session(db, {"st3": entry}, "st3")
+    assert ok and cancel.is_set()
+    assert entry["steer"] == []                                   # 队列连停清空
+    assert db.rows["st3"]["status"] == "stopped"
+    # 极端时序兜底：队列又有残留 + cancel 已 set → _stream 也不续跑
+    entry["steer"].append("尾巴")
+    monkeypatch.setattr(codingmod, "_SESSIONS", {"st3": entry})
+    runner = _SteerRunner()
+    _run(_stream(db, "st3", "/tmp/p", "原始任务", runner, emit_event=None, cancel=cancel))
+    assert len(runner.calls) == 1                                 # 只跑首轮，不续跑
+    assert db.updates[-1][1]["status"] == "stopped"
+
+
+def test_make_tools_reconciles_stale_running(monkeypatch):
+    """spec §C：make_tools 对账——sessions 表 running 但内存无活体 entry → interrupted +
+    messages 落 marker「底座重启，会话中断，可 send 续跑」；有活体的行与非 running 行不动；
+    对账后该会话可直接 send 续跑（验收 C）；db=None 形态静默跳过不炸加载。"""
+    db = _FakeDB()
+    db.rows["old-run"] = {"id": "old-run", "status": "running", "finished_at": 0,
+                          "cwd": "/tmp/p", "cc_session_id": "cc-x"}
+    db.rows["live-run"] = {"id": "live-run", "status": "running", "finished_at": 0}
+    db.rows["done-1"] = {"id": "done-1", "status": "done"}
+    monkeypatch.setattr(codingmod, "_SESSIONS", {"live-run": {"cancel": _threading.Event()}})
+    tools = codingmod.make_tools(type("C", (), {"db": db, "emit_event": None})())
+    assert tools                                                   # 加载照常
+    assert db.rows["old-run"]["status"] == "interrupted"
+    assert db.rows["old-run"]["finished_at"] > 0
+    marks = [m for m in db._tables.get("messages", [])
+             if m["session_id"] == "old-run" and m["role"] == "marker"]
+    assert len(marks) == 1 and "底座重启" in marks[0]["text"] and "send 续跑" in marks[0]["text"]
+    assert db.rows["live-run"]["status"] == "running"              # 活体不动
+    assert db.rows["done-1"]["status"] == "done"                   # 非 running 不动
+    # 对账后 interrupted 会话可直接 send 续跑（走既有 resume 链路）
+    monkeypatch.setattr(codingmod, "_spawn_stream", lambda *a, **k: None)
+    r = SendSkill().run({"id": "old-run", "prompt": "续跑"}, _Ctx(db))
+    assert r.success, r.error
+    # db=None（测试/无 db capability 形态）→ 跳过，不炸
+    assert codingmod.make_tools(type("C", (), {"db": None, "emit_event": None})())

@@ -83,9 +83,12 @@ def _codex_sessions_root() -> str:
     return os.path.expanduser("~/.codex/sessions")
 
 
-# sid -> {"cancel": threading.Event}。stop 经此拿 cancel 信号；线程收尾后 pop。
-# 跨进程丢失（底座重启）无碍——sessions 表 status 仍 running，但 cancel 信号没了，
-# C7 集成验收时再加对账（仿 agents._reconcile_orphans）；v1 不做。
+# sid -> {"cancel": threading.Event, ...}。stop 经此拿 cancel 信号；线程收尾后 pop。
+# entry 可选键：steer（运行中督导补充队列，spec §A——SendSkill 对 running 会话的 prompt
+# 排队于此，当前轮 done 后 _stream 合并续跑，stop 连队列一起清）、mode_pending/rewind_pending
+# （运行中切模式/回滚通道）、usage_baseline（codex usage 差分基准）。
+# 跨进程丢失（底座重启）：_SESSIONS 随进程蒸发，sessions 表 status 仍 running 的陈旧行
+# 由 make_tools 的 _reconcile_stale_running 对账落 interrupted + marker（仿 agents._reconcile_orphans）。
 _SESSIONS: dict[str, dict] = {}
 
 
@@ -204,6 +207,8 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
     can_use_tool：每轮新建权限回调桥（make_permission_callback(sid, on_event, emit_event=…)）——
     SDK 触发权限询问时发 permission_request 进面板流 + confirmation_needed 进 L2 确认体系，
     阻塞等 confirm_batched 路由 / coding.decide 备用通道裁决（双通道幂等，超时默认 deny）。
+    steer drain：本轮结束后查 _SESSIONS[sid]["steer"]（SendSkill 对 running 会话的排队
+    督导补充），非空合并续跑（resume_session_id=cc_sid），队列空才落终态汇报。
     """
     state = {"error": False}
     cc_sid: str | None = None   # runner.run 返回值（ResultMessage.session_id）；None=取消/失败
@@ -322,6 +327,39 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
                   file=sys.stderr)
             state["error"] = True
 
+    # steer 队列 drain（运行中 steer，spec §A）：本轮跑完后查 live entry 的 steer 队列——
+    # 非空则取出全部排队消息按序合并为一条（【督导补充】前缀），以 resume_session_id=cc_sid
+    # 原地续跑；期间新到的 steer 继续入队，逐轮 drain 直到队列空才真正落终态
+    # （_report_final 只在队列空后触发）。stop 清队列 + cancel → 循环顶检查直接 break；
+    # cc_sid 为 None（首轮取消/失败未捕获会话 id）无法 resume → break，终态照常落。
+    while not cancel.is_set() and cc_sid:
+        entry = _SESSIONS.get(sid)
+        queue = entry.get("steer") if isinstance(entry, dict) else None
+        queued: list[str] = []
+        while queue:                     # 逐条 pop(0)：与 SendSkill 并发 append 不丢消息（GIL 原子）
+            queued.append(str(queue.pop(0)))
+        if not queued:
+            break
+        on_event({"kind": "marker",
+                  "text": f"督导补充已接续（合并 {len(queued)} 条排队消息）"})
+        merged = "【督导补充】\n" + "\n".join(queued)
+        try:
+            new_sid = await runner.run(
+                merged, cwd, on_event=on_event, cancel_event=_AsyncShield(cancel),
+                resume_session_id=cc_sid,
+                permission_mode=permission_mode,
+                can_use_tool=_runner.make_permission_callback(
+                    sid, on_event, emit_event=emit_event),
+                session_entry=_SESSIONS.get(sid))
+            if new_sid:
+                cc_sid = new_sid
+        except Exception as e:  # 与首轮同款框架级兜底
+            print(f"[yibao/coding] session {sid} steer 续跑框架异常：{type(e).__name__}: {e}",
+                  file=sys.stderr)
+            state["error"] = True
+        if state["error"]:
+            break                        # 续跑失败：不再 drain，落 failed 终态（残余队列随流终丢弃）
+
     # 定最终状态：stopped（用户主动停）> error > done
     try:
         prev = db.query("sessions", where={"id": sid})
@@ -396,6 +434,21 @@ def _report_final(emit_event, sid: str, prompt: str, final: str, usage) -> None:
         print(f"[yibao/coding] session {sid} 终态汇报失败（跳过）：{e}", file=sys.stderr)
 
 
+def _persist_marker(db, sid: str, text: str) -> None:
+    """流外 marker 落 messages 表（steer 入队提示 / 重启对账留痕用）：seq 从库当前 max 续起；
+    失败只 print 不炸（同 _stream._persist 隔离风格）。seq 与流内 _persist 并发撞号无碍
+    （messages.seq 仅索引非唯一约束，面板按 seq 排序微乱可接受）。"""
+    try:
+        prev = db.query("messages", where={"session_id": sid}, order="seq DESC", limit=1)
+        seq = int(prev[0]["seq"]) + 1 if prev else 1
+        db.insert("messages", {
+            "session_id": sid, "role": "marker", "text": text,
+            "ts": int(time.time()), "seq": seq, "uuid": "",
+        })
+    except Exception as e:
+        print(f"[yibao/coding] marker 落库失败（跳过）：{e}", file=sys.stderr)
+
+
 def _stop_session(db, registry, sid: str) -> bool:
     """race-safe 取消：先 db.update(stopped)，再 set cancel（仿 agents.task_stop:343-345）。
 
@@ -422,6 +475,12 @@ def _stop_session(db, registry, sid: str) -> bool:
             entry.cancelled = True
         except Exception:
             pass
+    # steer 队列连停（spec §A：停止=全停，不留尾巴）：清空排队督导补充，
+    # _stream drain 循环顶的 cancel 检查兜底不再续跑（停了不会又自己跑起来）
+    if isinstance(entry, dict):
+        steer = entry.get("steer")
+        if isinstance(steer, list):
+            steer.clear()
     # 放行挂起的权限等待（deny 收场）：否则 cancel 要等权限 60s 超时才被消费，停止最长延迟 60s
     _runner.release_pending_permissions(sid)
     return True
@@ -496,6 +555,7 @@ class SendSkill(Skill):
         "向既有 coding 会话追加一条消息（多轮）：按会话引擎用 cc_session_id resume 同一会话历史"
         "（Claude Code 走 SDK resume；Codex 走 codex exec resume thread_id），"
         "继续在同一上下文里干活，面板实时回显。立即返回，完成主动推 panel_data。"
+        "会话正在运行时不拒绝：prompt 进督导队列（返回 queued），当前轮结束后自动合并接续。"
         "【需要】id（coding.start 返回的 session_id）、prompt（本轮任务描述）。"
     )
     default_risk = RiskLevel.L1_LOW   # 会话启动/续聊本身不执行高危动作；文件改动由 SDK acceptEdits 管理
@@ -529,9 +589,32 @@ class SendSkill(Skill):
         if not rows:
             return ActionResult(success=False, error=f"会话不存在：{sid}")
         row = rows[0]
-        if row.get("status") == "running":
-            return ActionResult(success=False, error="会话正在运行中，请先中断或等待完成")
-        if sid in _SESSIONS:  # check-then-act 缝：stop 落 stopped 但 runner 线程未退（长工具中）→ 同样拒
+        entry = _SESSIONS.get(sid)   # .get 防御 KeyError 缝：stop/收尾线程 pop entry 与 check-then-act 竞态（T3 评审）
+        if entry is not None:
+            if row.get("status") == "running":
+                # 运行中 steer（spec §A）：不拒绝，prompt 排队进 live entry 的 steer 队列，
+                # 当前轮 done 后由 _stream 合并续跑（resume 同引擎同会话，期间新到继续入队）。
+                # 并发安全照抄 entry 级操作模式（setdefault/append 与 _SESSIONS 同锁域）。
+                queue = entry.setdefault("steer", [])
+                queue.append(prompt)
+                pos = len(queue)
+                text = f"督导补充已排队（第 {pos} 条），本轮结束后自动接续"
+                _persist_marker(ctx.db, sid, text)
+                emit = getattr(ctx, "emit_event", None)
+                if emit is not None:
+                    # 面板流可见（仿 _stream marker 双写：已落库 + panel_data 进流）
+                    emit({"kind": "panel_data",
+                          "payload": {"panel": "coding:studio",
+                                      "data": {"session_id": sid,
+                                               "event": {"kind": "marker", "text": text}}}})
+                return ActionResult(success=True, data={
+                    "session_id": sid,
+                    "queued": True,
+                    "position": pos,
+                    "panel": "coding:studio",
+                    "human": f"已排队（第 {pos} 条），会话 {sid} 本轮结束后自动接续",
+                })
+            # check-then-act 缝：stop 落 stopped 但 runner 线程未退（长工具中）→ 同样拒
             return ActionResult(success=False, error="会话正在收尾中，请稍候")
         cc = row.get("cc_session_id") or ""
         if not cc:
@@ -1565,8 +1648,35 @@ class AttachCodexSkill(Skill):
         return ActionResult(success=True, data={"session_id": sid})
 
 
+def _reconcile_stale_running(ctx: Any) -> None:
+    """底座重启对账（make_tools 时跑一次，仿 agents._reconcile_orphans）：sessions 表
+    status="running" 但内存无活体 entry（_SESSIONS 随进程蒸发）→ 落 interrupted +
+    messages 补 marker「底座重启，会话中断，可 send 续跑」。coding 是 in-process，
+    判据就是「内存无 entry」而非 pid。对账只读插件 db，任何失败只 print 不炸加载。"""
+    db = getattr(ctx, "db", None)
+    if db is None:
+        return
+    try:
+        rows = db.query("sessions", where={"status": "running"})
+    except Exception as e:
+        print(f"[yibao/coding] 陈旧 running 对账查询失败：{e}", file=sys.stderr)
+        return
+    for row in rows:
+        sid = str(row.get("id") or "")
+        if not sid or sid in _SESSIONS:
+            continue                     # 有活体（理论不会：加载时无流式线程）→ 不动
+        try:
+            db.update("sessions", sid, {"status": "interrupted",
+                                        "finished_at": int(time.time())})
+            _persist_marker(db, sid, "底座重启，会话中断，可 send 续跑")
+            print(f"[yibao/coding] 对账：会话 {sid} 无活体 entry，落 interrupted", file=sys.stderr)
+        except Exception as e:
+            print(f"[yibao/coding] 会话 {sid} 对账落库失败：{e}", file=sys.stderr)
+
+
 def make_tools(ctx: Any) -> list[Skill]:
     """插件加载器入口（_load_code_tools 遍历 skills/*.py 调本函数）。"""
+    _reconcile_stale_running(ctx)
     return [StartSkill(), SendSkill(), StopSkill(), ListSkill(), AttachSkill(),
             HandoffListSkill(), HandoffBriefSkill(), HistorySkill(), ModeSkill(),
             RewindSkill(), DecideSkill(), PermPendingSkill(), FilesSkill(), LastSessionsSkill(), AttachCcSkill(),

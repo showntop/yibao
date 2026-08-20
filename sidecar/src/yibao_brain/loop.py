@@ -176,7 +176,7 @@ class AgentLoop:
 
         写操作（insert/delete 等）的 result.data 是回执 {"id":…}，直接喂面板会显示空；
         声明 refresh（如 notes.list）则面板事件携带查询结果。刷新意外需确认/失败 →
-        回退原数据（刷新不该弹确认打断用户，与 server._emit_refresh_panel 同一策略）。
+        回退原数据（刷新不该弹确认打断用户，与 panel._emit_refresh_panel 同一策略）。
 
         refresh 传参取「action 入参 ∩ refresh tool 声明参数」（如 save{id,content} → get{id}），
         无交集传 {}（list 类刷新不带条件）。最后做 focus 重定向：用户正盯着同插件 webview

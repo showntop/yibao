@@ -55,6 +55,7 @@ async def _dispatch_reminder(r: dict, *, settings: dict, feed, history, voice,
         except Exception:
             pass
     # TTS 只在完整档且「主动开口」开着；有任务在跑不打断在播的语音
+    # （并发对话后 run_state["task"] 是「所有槽空闲」适配视图：任一槽在跑即非 idle，spec §F）
     task = run_state["task"]
     if dispatcher is None and level == "full" and voice is not None and settings.get("proactive_voice", True) \
             and (task is None or task.done()):
@@ -293,3 +294,22 @@ async def _reminder_loop(*, agent, settings, feed, voice, run_state, write_msg, 
         await _reminder_tick(store=store, agent=agent, settings=settings, feed=feed,
                              voice=voice, run_state=run_state, write_msg=write_msg,
                              dispatcher=dispatcher)
+
+
+def _recap_decide(*, settings: dict, last_recap_day: str | None, today: str,
+                  yesterday_items: list[dict]) -> dict | None:
+    """反刍编排（纯逻辑，可单测）：闸门→去重→选材→拼装。返回 {text, day} 或 None。"""
+    if not (settings.get("perception.master") and settings.get("perception.distill")
+            and settings.get("perception.recap")):
+        return None
+    if last_recap_day == today:
+        return None
+    from .distiller import recap_select, build_recap_text, yesterday_window
+    selected = recap_select(yesterday_items)
+    if not selected:
+        return None
+    text = build_recap_text(selected)
+    if not text:
+        return None
+    _day, _s, _e = yesterday_window()   # 目标日 = 昨天
+    return {"text": text, "day": _day}

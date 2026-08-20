@@ -194,9 +194,54 @@ def test_serve_async_new_run_preempts_old(tmp_path):
     assert dones[-1] == {"type": "run_done", "id": 2}
 
 
-def test_serve_async_cross_surface_run_queues_not_preempts(tmp_path):
-    # 跨 surface（主窗 pet 在跑 → 面板来新 run）：不抢占，排队等它说完；
-    # 面板侧应收到 notice 轻提示，两个 run 都完整完成（先 1 后 2）。
+def test_serve_async_cross_conversation_runs_parallel(tmp_path):
+    """并发对话 spec §A/验收 A：不同 conversation_id 的两个 run（哪怕跨 surface）真并行——
+    不排队、无 notice、互不抢占；快的不等慢的（run_done 顺序 = 完成顺序）。"""
+    slow = FakeProvider(chunks=["A", "B"], delay=0.05)
+    fast = FakeProvider(chunks=["ok"])
+
+    class _ByText:
+        """按用户文本选快慢（并行下任务调度顺序不定，按调用次序选会偶发）。"""
+
+        async def astream(self, messages, tools=None):
+            src = slow if "slow" in str(messages[-1].get("content")) else fast
+            async for d in src.astream(messages, tools):
+                yield d
+
+    out = []
+    _run_async(
+        serve_async(
+            make_reader(
+                [
+                    {"id": 1, "type": "run", "text": "slow", "conversation_id": "c-home"},  # 默认 surface=pet
+                    {"id": 2, "type": "run", "text": "fast", "surface": "panel:zimeiti",
+                     "conversation_id": "c-panel"},
+                ]
+            ),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=_ByText(),
+        )
+    )
+    kinds = [m["event"]["kind"] for m in out if m["type"] == "event"]
+    # 谁都不被打断：两个 run 都完整说完
+    assert "interrupted" not in kinds
+    assert kinds.count("final_reply") == 2
+    # 跨会话不再排队：没有「另一个窗口还在说」notice
+    assert not any(m["type"] == "event" and m["event"]["kind"] == "notice" for m in out)
+    # 快的先收尾（不等慢的说完）——真并行，不是先 1 后 2 的串行
+    dones = [m["id"] for m in out if m["type"] == "run_done"]
+    assert dones == [2, 1]
+    # run_done 带会话归属（spec §E）
+    by_id = {m["id"]: m for m in out if m["type"] == "run_done"}
+    assert by_id[1].get("conversation_id") == "c-home"
+    assert by_id[2].get("conversation_id") == "c-panel"
+
+
+def test_serve_async_default_slot_cross_surface_still_queues(tmp_path):
+    """default 槽（无 conversation_id 的遗留调用）行为同现状：跨 surface 不抢占，
+    链式排队 + notice，先来的先说完（并发对话 spec §A 兼容条款）。"""
     slow = FakeProvider(chunks=["A", "B"], delay=0.05)
     fast = FakeProvider(chunks=["ok"])
     state = {"n": 0}
@@ -235,6 +280,231 @@ def test_serve_async_cross_surface_run_queues_not_preempts(tmp_path):
     # 先来的先说完，排队的后说
     dones = [m["id"] for m in out if m["type"] == "run_done"]
     assert dones == [1, 2]
+    # 无会话归属的 run_done 不带 conversation_id（兼容旧客户端/旧断言）
+    assert all("conversation_id" not in m for m in out if m["type"] == "run_done")
+
+
+def test_serve_async_same_conversation_cross_surface_preempts(tmp_path):
+    """同会话跨 surface（同一 conversation_id 从 pet 和面板同时发话）视为同会话：
+    新话顶旧话（spec §核心模型/验收 B）——interrupted 照旧，第二个 run 完整收尾。"""
+    slow = FakeProvider(chunks=["A", "B", "C", "D"], delay=0.05)
+    fast = FakeProvider(chunks=["ok"])
+
+    class _ByText:
+        async def astream(self, messages, tools=None):
+            src = slow if "slow" in str(messages[-1].get("content")) else fast
+            async for d in src.astream(messages, tools):
+                yield d
+
+    out = []
+    _run_async(
+        serve_async(
+            make_reader(
+                [
+                    {"id": 1, "type": "run", "text": "slow", "conversation_id": "c1"},  # 默认 surface=pet
+                    {"id": 2, "type": "run", "text": "fast", "surface": "panel:zimeiti",
+                     "conversation_id": "c1"},
+                ]
+            ),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=_ByText(),
+        )
+    )
+    kinds = [m["event"]["kind"] for m in out if m["type"] == "event"]
+    assert "interrupted" in kinds  # 第一个 run 被同会话新话顶掉
+    assert "final_reply" in kinds  # 第二个 run 正常完成
+    dones = [m for m in out if m["type"] == "run_done"]
+    assert dones[-1] == {"type": "run_done", "id": 2, "conversation_id": "c1"}
+
+
+# ---------- 并发对话（spec 2026-08-20 §B/§D/§E）----------
+
+
+def test_targeted_interrupt_keeps_other_conversation_confirm_alive(tmp_path):
+    """spec §B/验收 C：A 会话停在确认等待时，B 会话的定向打断只收 B——A 的确认
+    future 不被误取消（旧实现 confirmer 绑全局 cancel，打断 B 会连带拒掉 A 的确认）。
+    批准后 A 照常执行、完整收尾；confirmation_needed 事件带会话归属。"""
+    import queue as _queue
+
+    from yibao_brain.skills import Skill
+    from yibao_brain.ipc import ActionResult, RiskLevel
+
+    class DangerSkill(Skill):
+        id = "danger"; description = "危险占位"; default_risk = RiskLevel.L3_HIGH
+        def run(self, params, ctx): return ActionResult(success=True, data={"did": True})
+
+    class _Mix:
+        """A（文本含「危险」）首轮出 tool_call、确认后次轮出文本；B 慢速流式。"""
+
+        def __init__(self):
+            self._danger_prompted = False
+
+        async def astream(self, messages, tools=None):
+            joined = " ".join(str(m.get("content")) for m in messages)
+            if "危险" in joined and not self._danger_prompted:
+                self._danger_prompted = True
+                src = FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="danger", params={})])
+            elif "危险" in joined:
+                src = FakeProvider(text="A 做完了")
+            else:
+                src = FakeProvider(chunks=["B1", "B2", "B3", "B4"], delay=0.05)
+            async for d in src.astream(messages, tools):
+                yield d
+
+    out: list = []
+    inbox_q: "_queue.Queue" = _queue.Queue()
+    inbox_q.put({"id": 1, "type": "run", "text": "做危险的事", "conversation_id": "conv-a"})
+    inbox_q.put({"id": 2, "type": "run", "text": "慢速回答", "conversation_id": "conv-b"})
+    confirm_cid = [None]
+
+    def reader():
+        return inbox_q.get()
+
+    def writer(m):
+        out.append(m)
+        if m.get("type") != "event":
+            if m.get("type") == "run_done" and m.get("id") == 1:
+                inbox_q.put(None)  # A 收尾后结束 stdin
+            return
+        ev = m["event"]
+        if ev.get("kind") == "confirmation_needed" and m.get("conversation_id") == "conv-a":
+            # A 在等确认：此刻定向打断 B——不该碰 A 的确认等待
+            confirm_cid[0] = ev["confirmation_id"]
+            inbox_q.put({"type": "interrupt", "conversation_id": "conv-b"})
+        elif ev.get("kind") == "interrupted" and m.get("conversation_id") == "conv-b":
+            # B 已被打断：批准 A 的确认 → A 应照常执行（未被 B 的打断误取消成拒绝）
+            inbox_q.put({"type": "confirm_batch", "items": [
+                {"id": confirm_cid[0], "approved": True, "remember": False}]})
+
+    _run_async(
+        serve_async(
+            reader, writer,
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=_Mix(),
+            skills_factory=lambda: _registry_with(DangerSkill()),
+        )
+    )
+    # B 被打断，A 没有
+    assert any(m["type"] == "event" and m.get("conversation_id") == "conv-b"
+               and m["event"]["kind"] == "interrupted" for m in out)
+    assert not any(m["type"] == "event" and m.get("conversation_id") == "conv-a"
+                   and m["event"]["kind"] == "interrupted" for m in out)
+    # A 的确认被批准后真正执行了（确认等待没被 B 的打断取消成拒绝）
+    assert any(m["type"] == "event" and m["event"].get("kind") == "action_result"
+               and m["event"]["result"].get("success") for m in out)
+    # A 完整收尾（run_done 带归属，spec §E）
+    assert {"type": "run_done", "id": 1, "conversation_id": "conv-a"} in out
+    assert any(m["type"] == "event" and m["event"].get("kind") == "final_reply"
+               and m["event"].get("text") == "A 做完了" for m in out)
+
+
+def test_tts_lock_second_conversation_silent_with_notice(tmp_path):
+    """spec §D：物理声道只有一条——A 会话持锁播报时，B 会话的 run 静默不播
+    （文字流式照出）+ notice「这段不念了」；不排队、互不掐断。"""
+    from fakes import FakeVoice
+
+    slow = FakeProvider(chunks=["甲一。", "甲二。"], delay=0.05)
+    fast = FakeProvider(chunks=["乙一。"])
+
+    class _ByText:
+        async def astream(self, messages, tools=None):
+            src = slow if "慢" in str(messages[-1].get("content")) else fast
+            async for d in src.astream(messages, tools):
+                yield d
+
+    voice = FakeVoice("你好", stream_delay=0.05)  # 拉长 A 的播报窗口，B 必撞上锁
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([
+                {"id": 1, "type": "run", "text": "慢速播报", "conversation_id": "conv-a"},
+                {"id": 2, "type": "run", "text": "快速回答", "conversation_id": "conv-b"},
+            ]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=_ByText(),
+            voice=voice,
+        )
+    )
+    # B 抢到不锁 → 静默 + notice（带 B 的会话归属）
+    assert any(m["type"] == "event" and m.get("conversation_id") == "conv-b"
+               and m["event"]["kind"] == "notice"
+               and m["event"]["text"] == "正在播报另一段对话，这段不念了" for m in out)
+    # 只有 A 进了播报（speaking/speaking_done 都属 A），B 无 speaking
+    assert any(m["type"] == "event" and m.get("conversation_id") == "conv-a"
+               and m["event"]["kind"] == "speaking" for m in out)
+    assert any(m["type"] == "event" and m.get("conversation_id") == "conv-a"
+               and m["event"]["kind"] == "speaking_done" for m in out)
+    assert not any(m["type"] == "event" and m.get("conversation_id") == "conv-b"
+                   and m["event"]["kind"] == "speaking" for m in out)
+    # B 的文字流式照出，两个 run 都完整收尾
+    assert any(m["type"] == "event" and m.get("conversation_id") == "conv-b"
+               and m["event"]["kind"] == "final_reply" for m in out)
+    assert voice.stream_chunks == ["甲一。", "甲二。"]  # 只有 A 的文本进了播放器
+
+
+def test_targeted_interrupt_does_not_cut_other_conversations_tts(tmp_path):
+    """spec §D/验收 C：B 持锁播报中，A 的定向打断只停 A 自己的 LLM 流——
+    B 的播报播完（speaking_done 照出、播放器未见 cancel），不被 A 的打断掐掉。"""
+    from fakes import FakeVoice
+
+    provider_a = FakeProvider(chunks=["甲1", "甲2", "甲3", "甲4", "甲5", "甲6"], delay=0.05)
+    provider_b = FakeProvider(chunks=["乙1。", "乙2。"], delay=0.05)
+
+    class _ByText:
+        async def astream(self, messages, tools=None):
+            src = provider_a if "甲" in str(messages[-1].get("content")) else provider_b
+            async for d in src.astream(messages, tools):
+                yield d
+
+    def _delayed_reader(specs):
+        it = iter(specs)
+
+        def _r():
+            try:
+                msg, delay = next(it)
+            except StopIteration:
+                return None
+            if delay:
+                time.sleep(delay)
+            return msg
+
+        return _r
+
+    voice = FakeVoice("你好", stream_delay=0.05)
+    out = []
+    _run_async(
+        serve_async(
+            _delayed_reader([
+                ({"id": 1, "type": "run", "text": "乙会话长播报", "conversation_id": "conv-b"}, 0.0),
+                ({"id": 2, "type": "run", "text": "甲会话长回答", "conversation_id": "conv-a"}, 0.02),
+                ({"type": "interrupt", "conversation_id": "conv-a"}, 0.15),  # A 流式中途被打断
+                (None, 1.0),  # 留足 B 收尾窗口再关 stdin
+            ]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=_ByText(),
+            voice=voice,
+        )
+    )
+    # A 被打断；B 没有
+    assert any(m["type"] == "event" and m.get("conversation_id") == "conv-a"
+               and m["event"]["kind"] == "interrupted" for m in out)
+    assert not any(m["type"] == "event" and m.get("conversation_id") == "conv-b"
+                   and m["event"]["kind"] == "interrupted" for m in out)
+    # B 的播报完整播完：speaking_done 照出，播放器未见 cancel（A 的 cancel 没碰它）
+    assert any(m["type"] == "event" and m.get("conversation_id") == "conv-b"
+               and m["event"]["kind"] == "speaking_done" for m in out)
+    assert voice.stream_interrupted is False
+    assert voice.stream_chunks == ["乙1。", "乙2。"]
+    # 两个 run 都收了尾
+    assert any(m["type"] == "run_done" and m.get("id") == 1 for m in out)
+    assert any(m["type"] == "run_done" and m.get("id") == 2 for m in out)
 
 
 def test_serve_async_same_surface_run_still_preempts(tmp_path):
@@ -2886,6 +3156,44 @@ def test_serve_feed_includes_running_coding_session(tmp_path, monkeypatch):
     assert coding_tasks[0]["label"] == "编码会话"
     assert coding_tasks[0]["prompt"] == "改登录 bug"
     assert coding_tasks[0]["status"] == "running"
+
+
+def test_serve_feed_running_coding_session_waiting_flag(tmp_path, monkeypatch):
+    """P2 督导补遗：_running_tasks 的 coding 条目，_PERM 有该 sid 挂起审批（allow is None）
+    → waiting: true；无挂起 / 已裁决（allow 非 None）→ 不带 waiting 键（additive）。"""
+    import sqlite3
+    import threading as _th
+
+    monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path))
+    cdir = tmp_path / "plugins" / "coding"
+    cdir.mkdir(parents=True)
+    conn = sqlite3.connect(str(cdir / "data.db"))
+    conn.execute("CREATE TABLE sessions (id TEXT PRIMARY KEY, prompt TEXT, status TEXT,"
+                 " created_at INTEGER)")
+    conn.execute("INSERT INTO sessions VALUES ('cs-w', '等审批的会话', 'running', 1700000002)")
+    conn.execute("INSERT INTO sessions VALUES ('cs-r', '纯跑会话', 'running', 1700000001)")
+    conn.commit()
+    conn.close()
+    perms = {
+        "perm_cs-w_3": {"event": _th.Event(), "allow": None},    # 挂起 → waiting
+        "perm_cs-r_1": {"event": _th.Event(), "allow": True},    # 已裁决 → 不算 waiting
+    }
+    _fake_coding_runner_module(monkeypatch, perms)
+
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([{"type": "feed"}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+        )
+    )
+    feed = [m for m in out if m["type"] == "feed"][0]
+    tasks = {t["id"]: t for t in feed["running_tasks"] if t["kind"] == "coding"}
+    assert tasks["cs-w"]["waiting"] is True
+    assert "waiting" not in tasks["cs-r"]
 
 
 def test_mobile_state_merges_coding_perm_pending(tmp_path, monkeypatch):

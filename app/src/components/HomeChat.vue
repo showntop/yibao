@@ -730,7 +730,8 @@ function onMic() {
 }
 
 function onInterrupt() {
-  void interrupt().catch((err) => {
+  // 定向打断（并发对话 spec §E）：只停当前会话槽，不掐小窗/面板的在跑 run
+  void interrupt(currentSessionId.value || undefined).catch((err) => {
     pushWarn("打断失败：" + String(err));
   });
 }

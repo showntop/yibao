@@ -1755,10 +1755,18 @@ fn voice_start(
     )
 }
 
-/// 打断当前进行中的生成/播报（Plan 4b 三连取消：停 TTS + 终止 LLM + 清队列）。
+/// 打断进行中的生成/播报（Plan 4b 三连取消：停 TTS + 终止 LLM + 清队列）。
+/// 并发对话（spec §E）：带 conversation_id → 只打断该会话槽；不带/空 → 全停（旧行为）。
 #[tauri::command]
-fn interrupt(state: tauri::State<Brain>) -> Result<(), String> {
-    write_to_brain(&state, serde_json::json!({ "id": 0, "type": "interrupt" }))
+fn interrupt(state: tauri::State<Brain>, conversation_id: Option<String>) -> Result<(), String> {
+    write_to_brain(
+        &state,
+        serde_json::json!({
+            "id": 0,
+            "type": "interrupt",
+            "conversation_id": conversation_id.unwrap_or_default(),
+        }),
+    )
 }
 
 /// 面板焦点上报（v2 §5 focus）：壳面板窗内容变化时透传给大脑，run 时注入 LLM 上下文。

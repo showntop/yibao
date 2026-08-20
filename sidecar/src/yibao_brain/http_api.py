@@ -138,7 +138,7 @@ class MobileDeps:
       save:          async (body: dict) -> tuple[int, dict]
       state:         () -> dict（含 running/pending 两键）
       submit_run:    (text: str, conversation_id: str) -> dict（含 run_id/conversation_id）
-      interrupt:     () -> bool（是否真的打断）
+      interrupt:     (conversation_id: str) -> bool（是否真的打断；空串 = 不定向，域内任一在跑轮）
       confirm:       (id: str, approved: bool, remember: bool) -> bool（False=已处理/未知）
       register_push: (registration_id: str, platform: str) -> None
       conversations:  () -> dict（含 items:[{id, preview, turns}] 桶摘要）
@@ -273,7 +273,14 @@ def build_app(*, get_bridge_token: Callable[[], str], get_mobile_token: Callable
     async def v1_interrupt(request):
         if deps.interrupt is None:
             return web.json_response({"ok": False, "error": "not wired"}, status=503)
-        return web.json_response({"ok": True, "interrupted": bool(deps.interrupt())})
+        # 可选 conversation_id 定向（并发对话 spec §E）：带 → 只打断该会话槽；不带 →
+        # 域内（surface=mobile）任一在跑轮（旧行为）。body 缺失/非 JSON 按不带处理。
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        cid = str(body.get("conversation_id") or "") if isinstance(body, dict) else ""
+        return web.json_response({"ok": True, "interrupted": bool(deps.interrupt(cid))})
 
     async def v1_confirm(request):
         if deps.confirm is None:
