@@ -1,8 +1,9 @@
-"""watch mode：周期观察 + 可插拔主动行为（slice 1）。
+"""watch mode：周期观察 + 可插拔主动行为。
 
 行为只读快照、返回主动事件（或 None）；事件由 server 的 watch 循环经
-_gate_proactive_event（proactive.level）出口。本期含健康节律（久坐提醒，纯定时）
-+ 在场陪伴（占位，不出声）。无 LLM、无屏幕上云。spec：
+_gate_proactive_event（proactive.level）出口。含健康节律（久坐提醒）、深夜劝睡、
+在场陪伴（Ambient：回归问候/每日首活跃问候/专注里程碑，确定性信号零 LLM）。
+无 LLM、无屏幕上云。spec：
 docs/superpowers/specs/2026-07-31-watch-mode-core-design.md
 """
 from __future__ import annotations
@@ -140,13 +141,83 @@ class LateNightNudge:
 
 
 class Ambient:
-    """在场陪伴（slice 1）：占位，不出声。预留 snapshot_history 供 slice 3 主动搭话。"""
+    """在场陪伴：三条确定性信号，模板文案，零 LLM 零视觉（reactive-pet 设计 C）。
+
+    - 回归问候：idle ≥ return_after_minutes 后回到 active，每日 ≤ welcome_max 次
+    - 每日首活跃问候：当天首次进入 active（静默时段不算，留到出静默再问候），每日 1 次
+    - 专注里程碑：同一活动段连续 active 满 focus_hours 小时夸一句，每日 1 次
+    任一事件后 cooldown_hours 小时内不再出声；静默时段整体不触发。
+    与 HealthNudge（45min 久坐提醒）正交：信号不同源，互不互斥。"""
     name = "ambient"
 
-    def __init__(self) -> None:
-        self.snapshot_history: list[WatchSnapshot] = []
+    def __init__(self, *, return_after_minutes: int = 30, focus_hours: float = 2.0,
+                 welcome_max: int = 2, cooldown_hours: float = 2.0,
+                 quiet_hours: str = "23:00-07:00"):
+        self._return_after_s = max(1, int(return_after_minutes)) * 60
+        self._focus_s = float(focus_hours) * 3600
+        self._welcome_max = max(0, int(welcome_max))
+        self._cooldown_s = float(cooldown_hours) * 3600
+        self._quiet_hours = quiet_hours
+        self._milestone_text = f"已经连续专注{focus_hours:g}小时了，真厉害 ✨"
+        self._date: tuple | None = None     # 当前计数的本地日期（跨天清零）
+        self._welcomes = 0                  # 当日回归问候次数
+        self._greeted = False               # 当日首活跃问候是否已发
+        self._milestone_segment: object = None  # 已夸过的活动段 id
+        self._milestone_done = False        # 当日专注里程碑是否已发
+        self._last_fired = 0.0              # 最近一次 ambient 事件时刻（snapshot.now 系）
+        self._prev_state: str | None = None
+        self._prev_idle_seconds = 0.0       # 上一段 idle 期间观测到的最大持续秒
+
+    def _roll_day(self, now: float) -> None:
+        lt = time.localtime(now)
+        date = (lt.tm_year, lt.tm_mon, lt.tm_mday)
+        if date != self._date:
+            self._date = date
+            self._welcomes = 0
+            self._greeted = False
+            self._milestone_done = False
+            self._milestone_segment = None  # 跨天清零：即便段 id 理论撞车也重新可夸
+
+    def _fire(self, now: float, text: str) -> dict:
+        self._last_fired = now
+        return {"kind": "reminder", "type": "ambient", "text": text}
 
     def tick(self, snapshot: WatchSnapshot, ctx: WatchCtx) -> dict | None:
+        self._roll_day(snapshot.now)
+        act = snapshot.activity
+        state = act.get("state") if act else None
+        seconds = float(act.get("seconds", 0)) if act else 0.0
+        if state == "idle":
+            # 记录这段 idle 的持续时长，供「回归问候」判断是否离开够久
+            self._prev_idle_seconds = max(self._prev_idle_seconds, seconds)
+        prev_state, prev_idle = self._prev_state, self._prev_idle_seconds
+        self._prev_state = state
+        if state != "idle":
+            self._prev_idle_seconds = 0.0
+
+        if state != "active":
+            return None
+        if in_quiet_hours(snapshot.now, self._quiet_hours):
+            return None
+        if snapshot.now - self._last_fired < self._cooldown_s:
+            return None
+
+        # 每日首活跃问候（静默时段被抑制时不记账，出静默后仍可问候）
+        if not self._greeted:
+            self._greeted = True
+            return self._fire(snapshot.now, "你来啦，新的一天开始吧 ☀️")
+        # 回归问候：刚从 ≥30 分钟的 idle 回到 active
+        if (prev_state == "idle" and prev_idle >= self._return_after_s
+                and self._welcomes < self._welcome_max):
+            self._welcomes += 1
+            return self._fire(snapshot.now, "回来啦，接着忙吧 👋")
+        # 专注里程碑：同一活动段连续 active 满阈值，每日一句
+        seg = act.get("segment_id") if act else None
+        if (not self._milestone_done and seconds >= self._focus_s
+                and seg is not None and seg != self._milestone_segment):
+            self._milestone_segment = seg
+            self._milestone_done = True
+            return self._fire(snapshot.now, self._milestone_text)
         return None
 
 

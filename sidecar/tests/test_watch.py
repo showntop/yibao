@@ -88,9 +88,99 @@ def test_health_nudge_new_segment_re_allows():
     assert ev and ev["kind"] == "reminder"
 
 
-# ---------- Ambient + build_behaviors ----------
-def test_ambient_silent():
-    assert Ambient().tick(_snap(1, "active", 9999, 1), WatchCtx()) is None
+# ---------- Ambient（在场陪伴：首活跃问候/回归问候/专注里程碑）----------
+def _day(y, mo, d, h, mi) -> float:
+    """指定日期 h:mi 的 time.time() 值（跨天重置测试用）。"""
+    return time.mktime((y, mo, d, h, mi, 0, 0, 0, -1))
+
+
+def test_ambient_first_active_greeting_once_per_day():
+    """每日首活跃问候：当天首次 active 发一次；同日不再发。"""
+    a = Ambient(quiet_hours="")
+    ev = a.tick(_snap(_lt(9, 0), "active", 1, seg=1), WatchCtx())
+    assert ev and ev["type"] == "ambient" and "你来啦" in ev["text"]
+    assert a.tick(_snap(_lt(10, 0), "active", 2, seg=2), WatchCtx()) is None  # 同日第二次
+
+
+def test_ambient_ignores_non_active():
+    a = Ambient(quiet_hours="")
+    assert a.tick(_snap(_lt(9, 0), "idle", 9999, 1), WatchCtx()) is None
+    assert a.tick(WatchSnapshot(now=_lt(9, 0), activity=None), WatchCtx()) is None
+
+
+def test_ambient_silent_in_quiet_hours_greeting_not_consumed():
+    """静默时段整体抑制且不记账：出静默后首活跃问候仍可发。"""
+    a = Ambient(quiet_hours="23:00-07:00")
+    late = WatchSnapshot(now=_lt(23, 30), activity={"state": "active", "seconds": 10, "segment_id": 1})
+    assert a.tick(late, WatchCtx()) is None
+    assert a._greeted is False  # 静默被抑制时不记账
+    day = WatchSnapshot(now=_lt(10, 0), activity={"state": "active", "seconds": 10, "segment_id": 2})
+    ev = a.tick(day, WatchCtx())
+    assert ev and "你来啦" in ev["text"]
+
+
+def test_ambient_cooldown_suppresses_events():
+    """任一 ambient 事件后 cooldown 内不再出声（含新段场景）。"""
+    a = Ambient(quiet_hours="", cooldown_hours=2.0)
+    a.tick(_snap(_lt(9, 0), "active", 1, seg=1), WatchCtx())  # 首问候 → _last_fired=09:00
+    assert a.tick(_snap(_lt(10, 0), "active", 1, seg=2), WatchCtx()) is None  # 1h 后：冷却内
+    assert a.tick(_snap(_lt(10, 0), "idle", 30, seg=2), WatchCtx()) is None
+
+
+def test_ambient_return_greeting_after_long_idle():
+    """回归问候：idle ≥30min 回 active 发「回来啦」。"""
+    a = Ambient(quiet_hours="", return_after_minutes=30)
+    a.tick(_snap(_lt(9, 0), "active", 1, seg=1), WatchCtx())   # 首问候
+    a.tick(_snap(_lt(12, 0), "idle", 1800, seg=1), WatchCtx())  # idle 30min
+    ev = a.tick(_snap(_lt(12, 30), "active", 1, seg=2), WatchCtx())
+    assert ev and "回来啦" in ev["text"]
+
+
+def test_ambient_short_idle_no_return_greeting():
+    """短暂离开不触发回归问候。"""
+    a = Ambient(quiet_hours="", return_after_minutes=30)
+    a.tick(_snap(_lt(9, 0), "active", 1, seg=1), WatchCtx())
+    a.tick(_snap(_lt(12, 0), "idle", 60, seg=1), WatchCtx())  # 只离开 1 分钟
+    assert a.tick(_snap(_lt(12, 30), "active", 1, seg=2), WatchCtx()) is None
+
+
+def test_ambient_return_greeting_respects_daily_cap():
+    """回归问候每日上限：达 welcome_max 后不再发。"""
+    a = Ambient(quiet_hours="", return_after_minutes=30, welcome_max=1)
+    a.tick(_snap(_lt(9, 0), "active", 1, seg=1), WatchCtx())
+    a.tick(_snap(_lt(12, 0), "idle", 1800, seg=1), WatchCtx())
+    ev = a.tick(_snap(_lt(12, 30), "active", 1, seg=2), WatchCtx())
+    assert ev and "回来啦" in ev["text"]  # 第 1 次回归（上限 1）
+    a.tick(_snap(_lt(15, 0), "idle", 2000, seg=2), WatchCtx())
+    assert a.tick(_snap(_lt(15, 30), "active", 1, seg=3), WatchCtx()) is None  # 达上限
+
+
+def test_ambient_focus_milestone_uses_parameterized_text():
+    """专注里程碑：文案跟随 focus_hours 参数（_milestone_text 被真实使用）。"""
+    a = Ambient(quiet_hours="", focus_hours=1.5)
+    a.tick(_snap(_lt(9, 0), "active", 1, seg=1), WatchCtx())
+    ev = a.tick(_snap(_lt(12, 30), "active", 1.5 * 3600 + 10, seg=1), WatchCtx())
+    assert ev and "1.5小时" in ev["text"]
+
+
+def test_ambient_focus_milestone_once_per_segment_and_day():
+    """专注里程碑：同段不重复、跨段每日一次。"""
+    a = Ambient(quiet_hours="", focus_hours=2.0)
+    a.tick(_snap(_lt(9, 0), "active", 1, seg=1), WatchCtx())
+    assert a.tick(_snap(_lt(12, 30), "active", 2 * 3600 + 5, seg=1), WatchCtx())  # 触发
+    assert a.tick(_snap(_lt(14, 0), "active", 3 * 3600, seg=1), WatchCtx()) is None  # 同段不重复
+    assert a.tick(_snap(_lt(20, 0), "active", 2 * 3600 + 5, seg=2), WatchCtx()) is None  # 新段当日已夸
+
+
+def test_ambient_rolls_over_at_midnight():
+    """跨天重置：昨日的问候/里程碑/回归计数全部清零。"""
+    y = time.localtime().tm_year
+    a = Ambient(quiet_hours="")
+    a.tick(_snap(_day(y, 1, 1, 9, 0), "active", 10, seg=1), WatchCtx())  # 1/1 首问候
+    a.tick(_snap(_day(y, 1, 1, 20, 0), "active", 2 * 3600, seg=1), WatchCtx())  # 1/1 里程碑
+    a.tick(_snap(_day(y, 1, 1, 22, 0), "idle", 1800, seg=1), WatchCtx())  # 1/1 idle 30min
+    ev = a.tick(_snap(_day(y, 1, 2, 9, 0), "active", 1, seg=2), WatchCtx())  # 1/2 重置后可再问候
+    assert ev and "你来啦" in ev["text"]
 
 
 def test_build_behaviors_slice1():
