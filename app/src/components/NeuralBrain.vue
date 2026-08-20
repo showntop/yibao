@@ -12,7 +12,7 @@ interface NeuralMemory {
   fresh: boolean;
 }
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   state: AgentState;
   stateText: string;
   memories: NeuralMemory[];
@@ -22,7 +22,8 @@ const props = defineProps<{
   thinkCount: number;
   actCount: number;
   activeCapability: CapabilityKind | null;
-}>();
+  density?: "map" | "tile";
+}>(), { density: "map" });
 
 const emit = defineEmits<{
   capability: [kind: CapabilityKind];
@@ -31,7 +32,7 @@ const emit = defineEmits<{
 }>();
 
 const canvas = ref<HTMLCanvasElement | null>(null);
-const host = ref<HTMLElement | null>(null);
+const stage = ref<HTMLElement | null>(null);
 let context: CanvasRenderingContext2D | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let frame = 0;
@@ -46,10 +47,13 @@ const memoryPositions = [
   { x: 18, y: 72 },
 ];
 
-const visibleMemories = computed(() => props.memories.slice(0, memoryPositions.length).map((memory, index) => ({
-  ...memory,
-  ...memoryPositions[index],
-})));
+const visibleMemories = computed(() => {
+  if (props.density === "tile") return [];
+  return props.memories.slice(0, memoryPositions.length).map((memory, index) => ({
+    ...memory,
+    ...memoryPositions[index],
+  }));
+});
 
 const graphPoints = [
   [0.22, 0.22], [0.76, 0.21], [0.51, 0.49], [0.73, 0.74],
@@ -176,8 +180,8 @@ function draw(time: number) {
 }
 
 function resizeCanvas() {
-  if (!canvas.value || !host.value) return;
-  const rect = host.value.getBoundingClientRect();
+  if (!canvas.value || !stage.value) return;
+  const rect = stage.value.getBoundingClientRect();
   const ratio = Math.min(2, window.devicePixelRatio || 1);
   width = rect.width;
   height = rect.height;
@@ -192,11 +196,12 @@ function resizeCanvas() {
 }
 
 watch(() => props.state, () => { void nextTick(resizeCanvas); });
+watch(() => props.density, () => { void nextTick(resizeCanvas); });
 
 onMounted(() => {
   reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   resizeObserver = new ResizeObserver(resizeCanvas);
-  if (host.value) resizeObserver.observe(host.value);
+  if (stage.value) resizeObserver.observe(stage.value);
   resizeCanvas();
 });
 
@@ -208,68 +213,96 @@ onUnmounted(() => {
 
 <template>
   <div
-    ref="host"
     class="neural-brain"
-    :class="[`state-${state}`]"
+    :class="[`state-${state}`, `density-${density}`]"
     :style="{ '--brain-mask': `url(${brainShellUrl})` }"
   >
-    <div class="brain-glaze" aria-hidden="true" />
-    <canvas ref="canvas" class="neural-network" aria-hidden="true" />
+    <div ref="stage" class="brain-stage">
+      <div class="brain-glaze" aria-hidden="true" />
+      <canvas ref="canvas" class="neural-network" aria-hidden="true" />
 
-    <button
-      class="synapse functional sense-node"
-      type="button"
-      :class="{ active: activeCapability === 'sense' }"
-      :aria-expanded="activeCapability === 'sense'"
-      @click="emit('capability', 'sense')"
-    >
-      <i /><span>感知 <b>{{ senseCount }}</b></span>
-    </button>
+      <button
+        class="synapse functional sense-node"
+        type="button"
+        :class="{ active: activeCapability === 'sense' }"
+        :aria-expanded="activeCapability === 'sense'"
+        :tabindex="density === 'tile' ? -1 : 0"
+        :aria-hidden="density === 'tile'"
+        @click="emit('capability', 'sense')"
+      >
+        <i /><span>感知 <b>{{ senseCount }}</b></span>
+      </button>
 
-    <button
-      class="synapse functional think-node"
-      type="button"
-      :class="{ active: activeCapability === 'think' }"
-      :aria-expanded="activeCapability === 'think'"
-      @click="emit('capability', 'think')"
-    >
-      <i /><span>思考 <b>{{ thinkCount }}</b></span>
-    </button>
+      <button
+        class="synapse functional think-node"
+        type="button"
+        :class="{ active: activeCapability === 'think' }"
+        :aria-expanded="activeCapability === 'think'"
+        :tabindex="density === 'tile' ? -1 : 0"
+        :aria-hidden="density === 'tile'"
+        @click="emit('capability', 'think')"
+      >
+        <i /><span>思考 <b>{{ thinkCount }}</b></span>
+      </button>
 
-    <button
-      class="synapse functional act-node"
-      type="button"
-      :class="{ active: activeCapability === 'act' }"
-      :aria-expanded="activeCapability === 'act'"
-      @click="emit('capability', 'act')"
-    >
-      <i /><span>行动 <b>{{ actCount }}</b></span>
-    </button>
+      <button
+        class="synapse functional act-node"
+        type="button"
+        :class="{ active: activeCapability === 'act' }"
+        :aria-expanded="activeCapability === 'act'"
+        :tabindex="density === 'tile' ? -1 : 0"
+        :aria-hidden="density === 'tile'"
+        @click="emit('capability', 'act')"
+      >
+        <i /><span>行动 <b>{{ actCount }}</b></span>
+      </button>
 
-    <button
-      v-for="memory in visibleMemories"
-      :key="memory.id"
-      class="synapse memory-node"
-      :class="{ fresh: memory.fresh }"
-      type="button"
-      :style="{ left: `${memory.x}%`, top: `${memory.y}%` }"
-      :title="memory.full"
-      :aria-label="`记忆：${memory.full}`"
-      @click="emit('memory', memory)"
-    >
-      <i /><span>{{ memory.text }}</span>
-      <em class="mem-tip">{{ memory.full }}</em>
-    </button>
+      <button
+        v-for="memory in visibleMemories"
+        :key="memory.id"
+        class="synapse memory-node"
+        :class="{ fresh: memory.fresh }"
+        type="button"
+        :style="{ left: `${memory.x}%`, top: `${memory.y}%` }"
+        :title="memory.full"
+        :aria-label="`记忆：${memory.full}`"
+        @click="emit('memory', memory)"
+      >
+        <i /><span>{{ memory.text }}</span>
+        <em class="mem-tip">{{ memory.full }}</em>
+      </button>
 
-    <button
-      v-if="loaded && !visibleMemories.length"
-      class="synapse memory-node memory-placeholder"
-      type="button"
-      :aria-label="memFailed ? '记忆暂时离线' : '暂无记忆'"
-      @click="emit('capability', 'think')"
-    >
-      <i /><span>{{ memFailed ? '记忆离线' : '记忆 0' }}</span>
-    </button>
+      <button
+        v-if="density === 'map' && loaded && !visibleMemories.length"
+        class="synapse memory-node memory-placeholder"
+        type="button"
+        :aria-label="memFailed ? '记忆暂时离线' : '暂无记忆'"
+        @click="emit('capability', 'think')"
+      >
+        <i /><span>{{ memFailed ? '记忆离线' : '记忆 0' }}</span>
+      </button>
+    </div>
+
+    <div v-if="density === 'tile'" class="brain-legend" role="group" aria-label="感知、思考、行动">
+      <button
+        type="button"
+        :class="{ active: activeCapability === 'sense' }"
+        :aria-expanded="activeCapability === 'sense'"
+        @click="emit('capability', 'sense')"
+      >感知 <b>{{ senseCount }}</b></button>
+      <button
+        type="button"
+        :class="{ active: activeCapability === 'think' }"
+        :aria-expanded="activeCapability === 'think'"
+        @click="emit('capability', 'think')"
+      >思考 <b>{{ thinkCount }}</b></button>
+      <button
+        type="button"
+        :class="{ active: activeCapability === 'act' }"
+        :aria-expanded="activeCapability === 'act'"
+        @click="emit('capability', 'act')"
+      >行动 <b>{{ actCount }}</b></button>
+    </div>
   </div>
 </template>
 
@@ -277,9 +310,14 @@ onUnmounted(() => {
 .neural-brain {
   position: relative;
   width: 100%;
+  color: var(--yb-text-dim);
+}
+
+.brain-stage {
+  position: relative;
+  width: 100%;
   height: 156px;
   overflow: hidden;
-  color: var(--yb-text-dim);
 }
 
 .brain-glaze,
@@ -371,8 +409,13 @@ onUnmounted(() => {
 }
 
 .synapse:focus-visible {
-  outline: none !important;
-  box-shadow: none !important;
+  outline: none;
+  box-shadow: none;
+}
+.synapse:focus-visible i {
+  box-shadow:
+    0 0 0 3px var(--yb-widget-bg, var(--yb-surface-1)),
+    0 0 0 5px rgba(var(--yb-c-sky-rgb), 0.55);
 }
 
 .sense-node { left: 23%; top: 22%; }
@@ -463,9 +506,71 @@ onUnmounted(() => {
   100% { transform: translate(-50%, -50%) scale(1); }
 }
 
+.density-tile .brain-stage {
+  height: 72px;
+}
+.density-tile .synapse.functional {
+  pointer-events: none;
+}
+.density-tile .synapse span,
+.density-tile .mem-tip {
+  display: none;
+}
+
+.brain-legend {
+  display: flex;
+  align-items: stretch;
+  margin: 0;
+  overflow: hidden;
+  border-top: 1px solid var(--yb-line);
+}
+.brain-legend button {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--yb-paper-ink-dim);
+  font: inherit;
+  font-size: 10px;
+  font-weight: var(--yb-fw-medium);
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: color 160ms var(--yb-ease-out), background 160ms var(--yb-ease-out);
+}
+.brain-legend button + button {
+  box-shadow: inset 1px 0 0 var(--yb-line);
+}
+.brain-legend button b {
+  margin-left: 2px;
+  color: var(--yb-accent-deep);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.brain-legend button:hover {
+  color: var(--yb-paper-ink);
+  background: color-mix(in srgb, var(--yb-accent) 8%, transparent);
+}
+.brain-legend button:focus-visible {
+  z-index: 1;
+  box-shadow: var(--yb-focus-ring);
+}
+.brain-legend button:active {
+  transform: translateY(1px);
+}
+.brain-legend button.active {
+  color: var(--yb-paper-ink);
+  background: color-mix(in srgb, var(--yb-accent) 12%, transparent);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .synapse i { transition: none; }
   .memory-node.fresh i { animation: none; }
   .state-think .think-node i::after { animation: none; }
+  .brain-legend button { transition: none; }
 }
 </style>

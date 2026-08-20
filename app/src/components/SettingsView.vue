@@ -27,6 +27,8 @@ import {
 import type { TrustStats } from "../lib/brain";
 import { buildPairUrl } from "../lib/pair";
 import { applyFinish, FINISHES, readFinish, type FinishId } from "../lib/finish";
+import { applyChrome, isHomeChromeId, useHomeChrome } from "../lib/home-chrome";
+import { HOME_PRESET_LIST } from "../lib/home-assembly";
 import {
   HOME_WIDGETS,
   WIDGET_MATERIALS,
@@ -45,6 +47,10 @@ const finish = ref<FinishId>(readFinish());
 function onFinish(id: FinishId) {
   finish.value = id;
   applyFinish(id);
+}
+const { id: chromeId } = useHomeChrome();
+function onChrome(id: string) {
+  if (isHomeChromeId(id)) applyChrome(id);
 }
 const homeWidgets = useHomeWidgets();
 const CATS: { id: Cat; label: string; icon: "gear" | "sparkle" | "lock" | "info" }[] = [
@@ -672,7 +678,7 @@ onUnmounted(() => {
       <template v-if="cat === 'general'">
         <section class="s-group">
           <div class="s-group-title">外观</div>
-          <div class="s-note">材质与深浅主题分开：主题管颜色，材质管圆角、釉面和阴影。组件只读令牌，之后加皮肤只扩这一项。</div>
+          <div class="s-note">材质、深浅、预设分开：主题管颜色，材质管圆角釉面和阴影，预设管零件落在哪、用哪种摊法。点名字就是换桌。</div>
           <div class="s-row">
             <span class="s-row-label">材质</span>
             <div class="finish-seg" role="radiogroup" aria-label="材质">
@@ -689,11 +695,27 @@ onUnmounted(() => {
               >{{ f.label }}</button>
             </div>
           </div>
+          <div class="s-row">
+            <span class="s-row-label">预设</span>
+            <div class="finish-seg" role="radiogroup" aria-label="主屏预设">
+              <button
+                v-for="c in HOME_PRESET_LIST"
+                :key="c.id"
+                type="button"
+                class="finish-opt"
+                role="radio"
+                :aria-checked="chromeId === c.id"
+                :class="{ on: chromeId === c.id }"
+                :title="c.hint"
+                @click="onChrome(c.id)"
+              >{{ c.label }}</button>
+            </div>
+          </div>
         </section>
 
         <section class="s-group">
           <div class="s-group-title">主屏零件</div>
-          <div class="s-note">左右栏是桌面上的瓷片，不是钉死的侧栏。可隐藏、改大小、换瓷或玻璃；桌面上按住零件右上角拖动可排序。</div>
+          <div class="s-note">桌上的瓷片可隐藏、改大小、换瓷或玻璃；按住右上角拖动可排序。落在哪一格由当前预设决定。</div>
           <div v-for="w in HOME_WIDGETS" :key="w.id" class="s-row widget-row">
             <label class="s-row-label">
               <input

@@ -17,6 +17,8 @@ import {
   type WidgetPayload,
 } from "../lib/brain";
 import HomeWidget from "./HomeWidget.vue";
+import { useLiveAssembly } from "../lib/home-chrome";
+import { faceOf } from "../lib/home-assembly";
 
 type AgentState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
 interface ProcessEntry { label: string; done: boolean; ok?: boolean }
@@ -58,6 +60,8 @@ const props = withDefaults(defineProps<{
 });
 
 const emit = defineEmits<{ chat: [draft: string] }>();
+const assembly = useLiveAssembly();
+const peekDensity = computed(() => faceOf(assembly.value, "now", "inspector"));
 
 const stats = ref<FeedStats>({ pending_reminders: 0, running_tasks: 0, done_24h: 0, unread: 0, ignored: 0 });
 const runningTasks = ref<RunningTask[]>([]);
@@ -277,6 +281,12 @@ const processRows = computed<ProcessEntry[]>(() => {
 const hasInspectorContent = computed(() =>
   displayApprovals.value.length || interruptedApprovals.value.length || displayTasks.value.length || contextRows.value.length || relatedWidgets.value.length || outputs.value.length || processedHistory.value.length || processRows.value.length,
 );
+
+const contextLine = computed(() => {
+  const row = contextRows.value[0];
+  if (!row) return "";
+  return row.meta ? `${row.title} · ${row.meta}` : row.title;
+});
 
 function elapsedSince(ts: number): string {
   const seconds = Math.max(0, Math.floor(Date.now() / 1000 - ts));
@@ -512,75 +522,88 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <aside class="session-inspector yb-desk" aria-label="本次会话状态与上下文">
+  <aside class="session-inspector" :class="peekDensity" aria-label="本次会话状态与上下文">
     <HomeWidget id="now" class="now-widget">
       <h2 class="yb-widget-head">本次</h2>
       <div class="now-body">
         <strong>{{ sessionTitle || "新对话" }}</strong>
         <p>{{ goalText }}</p>
         <span class="session-state" :class="`state-${sessionState}`"><i />{{ stateLabel }}</span>
+        <template v-if="peekDensity === 'note' && contextLine">
+          <p class="now-k">上下文</p>
+          <p>{{ contextLine }}</p>
+        </template>
       </div>
     </HomeWidget>
 
-    <template v-if="hasInspectorContent">
-      <section v-if="interruptedApprovals.length" class="yb-widget interrupted-section" aria-labelledby="session-interrupted-title">
-        <h2 class="yb-widget-head" id="session-interrupted-title">上次未处理 <span class="yb-widget-meta">{{ interruptedApprovals.length }}</span></h2>
-        <div class="yb-widget-body">
-        <article v-for="approval in interruptedApprovals" :key="approval.id" class="approval-card interrupted-card">
-          <div class="approval-head">
-            <i class="row-node paused" />
-            <span class="approval-copy">
-              <strong>{{ approval.label || "受控操作" }}</strong>
-              <small>重启后已暂停，不会自动执行 · {{ pendingAge(approval.createdAt) }}</small>
-            </span>
-            <span class="paused-badge">已暂停</span>
+    <Teleport
+      v-if="interruptedApprovals.length || displayApprovals.length"
+      to="#home-paper-duty"
+      :disabled="peekDensity !== 'note'"
+      defer
+    >
+      <div class="duty-stack" :class="peekDensity">
+        <section v-if="interruptedApprovals.length" class="yb-widget interrupted-section" aria-labelledby="session-interrupted-title">
+          <h2 class="yb-widget-head" id="session-interrupted-title">上次未处理 <span class="yb-widget-meta">{{ interruptedApprovals.length }}</span></h2>
+          <div class="yb-widget-body">
+          <article v-for="approval in interruptedApprovals" :key="approval.id" class="approval-card interrupted-card">
+            <div class="approval-head">
+              <i class="row-node paused" />
+              <span class="approval-copy">
+                <strong>{{ approval.label || "受控操作" }}</strong>
+                <small>重启后已暂停，不会自动执行 · {{ pendingAge(approval.createdAt) }}</small>
+              </span>
+              <span class="paused-badge">已暂停</span>
+            </div>
+            <p class="interrupted-note">重新准备后会放入输入框；发送时将重新核对内容并再次请求批准。</p>
+            <div class="approval-actions">
+              <button type="button" class="approval-btn reject" @click="dismissInterruptedApproval(approval)">移除</button>
+              <button type="button" class="approval-btn resume" :disabled="preparedInterruptedIds.has(approval.id)" @click="prepareInterruptedApproval(approval)">
+                {{ preparedInterruptedIds.has(approval.id) ? "已放入输入框" : "重新准备" }}
+              </button>
+            </div>
+          </article>
           </div>
-          <p class="interrupted-note">重新准备后会放入输入框；发送时将重新核对内容并再次请求批准。</p>
-          <div class="approval-actions">
-            <button type="button" class="approval-btn reject" @click="dismissInterruptedApproval(approval)">移除</button>
-            <button type="button" class="approval-btn resume" :disabled="preparedInterruptedIds.has(approval.id)" @click="prepareInterruptedApproval(approval)">
-              {{ preparedInterruptedIds.has(approval.id) ? "已放入输入框" : "重新准备" }}
-            </button>
-          </div>
-        </article>
-        </div>
-      </section>
+        </section>
 
-      <section v-if="displayApprovals.length" class="yb-widget needs-you" aria-labelledby="session-needs-title">
-        <h2 class="yb-widget-head" id="session-needs-title">需要你</h2>
-        <div class="yb-widget-body">
-        <article
-          v-for="approval in displayApprovals"
-          :key="approval.id"
-          class="approval-card"
-          :aria-busy="isDeciding(approval.id)"
-        >
-          <div class="approval-head">
-            <i class="row-node" />
-            <span class="approval-copy">
-              <strong>{{ approvalTitle(approval) }}</strong>
-              <small>{{ approval.desc || "确认后译宝才会继续" }}</small>
-            </span>
+        <section v-if="displayApprovals.length" class="yb-widget needs-you" aria-labelledby="session-needs-title">
+          <h2 class="yb-widget-head" id="session-needs-title">需要你</h2>
+          <div class="yb-widget-body">
+          <article
+            v-for="approval in displayApprovals"
+            :key="approval.id"
+            class="approval-card"
+            :aria-busy="isDeciding(approval.id)"
+          >
+            <div class="approval-head">
+              <i class="row-node" />
+              <span class="approval-copy">
+                <strong>{{ approvalTitle(approval) }}</strong>
+                <small>{{ approval.desc || "确认后译宝才会继续" }}</small>
+              </span>
+            </div>
+            <div v-if="approvalCommand(approval)" class="command-preview">
+              <code>{{ approvalCommand(approval) }}</code>
+              <span v-if="approvalCwd(approval)">{{ approvalCwd(approval) }}</span>
+            </div>
+            <p v-if="approvalErrors[approval.id]" class="approval-error" role="alert">{{ approvalErrors[approval.id] }}</p>
+            <label v-if="canRememberSkill(approval.skill)" class="approval-remember">
+              <input type="checkbox" :checked="approvalRemember(approval.id)" @change="setApprovalRemember(approval.id, $event)" />
+              <span>{{ rememberLabelForSkill(approval.skill) }}</span>
+            </label>
+            <div class="approval-actions">
+              <button type="button" class="approval-btn reject" :disabled="isDeciding(approval.id)" @click="decideApproval(approval, false)">拒绝</button>
+              <button type="button" class="approval-btn allow" :disabled="isDeciding(approval.id)" @click="decideApproval(approval, true)">
+                {{ isDeciding(approval.id) ? "处理中…" : approvalRemember(approval.id) ? "允许并记住" : "仅允许本次" }}
+              </button>
+            </div>
+          </article>
           </div>
-          <div v-if="approvalCommand(approval)" class="command-preview">
-            <code>{{ approvalCommand(approval) }}</code>
-            <span v-if="approvalCwd(approval)">{{ approvalCwd(approval) }}</span>
-          </div>
-          <p v-if="approvalErrors[approval.id]" class="approval-error" role="alert">{{ approvalErrors[approval.id] }}</p>
-          <label v-if="canRememberSkill(approval.skill)" class="approval-remember">
-            <input type="checkbox" :checked="approvalRemember(approval.id)" @change="setApprovalRemember(approval.id, $event)" />
-            <span>{{ rememberLabelForSkill(approval.skill) }}</span>
-          </label>
-          <div class="approval-actions">
-            <button type="button" class="approval-btn reject" :disabled="isDeciding(approval.id)" @click="decideApproval(approval, false)">拒绝</button>
-            <button type="button" class="approval-btn allow" :disabled="isDeciding(approval.id)" @click="decideApproval(approval, true)">
-              {{ isDeciding(approval.id) ? "处理中…" : approvalRemember(approval.id) ? "允许并记住" : "仅允许本次" }}
-            </button>
-          </div>
-        </article>
-        </div>
-      </section>
+        </section>
+      </div>
+    </Teleport>
 
+    <template v-if="peekDensity === 'inspector' && hasInspectorContent">
       <section v-if="displayTasks.length" class="yb-widget" aria-labelledby="session-running-title">
         <h2 class="yb-widget-head" id="session-running-title">正在进行</h2>
         <div class="yb-widget-body">
@@ -644,7 +667,7 @@ onUnmounted(() => {
       </section>
     </template>
 
-    <div v-else-if="loaded" class="yb-widget inspector-empty">
+    <div v-else-if="loaded && peekDensity === 'inspector'" class="yb-widget inspector-empty">
       <i />
       <strong>尚未加入上下文</strong>
       <span>文件、屏幕、记忆和执行状态会随本次会话出现在这里</span>
@@ -654,11 +677,37 @@ onUnmounted(() => {
 
 <style scoped>
 .session-inspector {
-  width: 280px;
-  flex-shrink: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--yb-widget-gap);
   overflow-y: auto;
   scrollbar-width: thin;
   color: var(--yb-paper-ink);
+}
+
+.session-inspector.note {
+  height: auto;
+  gap: 8px;
+  overflow: visible;
+}
+.now-k {
+  margin: 8px 0 0;
+  color: var(--yb-text-faint);
+  font-size: 11px;
+}
+.duty-stack.note {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.duty-stack.note .yb-widget {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
 }
 
 button { font: inherit; }

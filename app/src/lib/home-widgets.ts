@@ -1,27 +1,27 @@
-/** 主屏零件布局：与 finish 正交。
- *  finish 管瓷/纸/金的全局几何；本文件管每一块零件的显隐、大小、瓷/玻璃、排序。
- *  新零件 = HOME_WIDGETS 加一行 + 栏里包 <HomeWidget id="…">。 */
+/** 主屏零件：显隐/大小/瓷玻璃。落槽由装配预设管，不在这里写左右栏。 */
 import { reactive, watch } from "vue";
 
 export const HOME_WIDGETS = [
-  { id: "identity", rail: "left", label: "身份", defaultSize: "m", defaultMaterial: "porcelain" },
-  { id: "mind", rail: "left", label: "认知", defaultSize: "l", defaultMaterial: "porcelain" },
-  { id: "today", rail: "left", label: "今日", defaultSize: "s", defaultMaterial: "porcelain" },
-  { id: "sessions", rail: "left", label: "会话", defaultSize: "l", defaultMaterial: "porcelain" },
-  { id: "now", rail: "right", label: "本次", defaultSize: "m", defaultMaterial: "porcelain" },
+  { id: "identity", label: "身份", defaultSize: "m", defaultMaterial: "porcelain" },
+  { id: "mind", label: "认知", defaultSize: "l", defaultMaterial: "porcelain" },
+  { id: "today", label: "今日", defaultSize: "s", defaultMaterial: "porcelain" },
+  { id: "need", label: "需要你", defaultSize: "m", defaultMaterial: "porcelain" },
+  { id: "tasks", label: "进行中", defaultSize: "m", defaultMaterial: "porcelain" },
+  { id: "remind", label: "提醒", defaultSize: "s", defaultMaterial: "porcelain" },
+  { id: "sessions", label: "会话", defaultSize: "l", defaultMaterial: "porcelain" },
+  { id: "now", label: "本次", defaultSize: "m", defaultMaterial: "porcelain" },
 ] as const;
 
 export type WidgetId = (typeof HOME_WIDGETS)[number]["id"];
 export type WidgetSize = "s" | "m" | "l";
 export type WidgetMaterial = "porcelain" | "glass";
-export type WidgetRail = "left" | "right";
 
 export const WIDGET_SIZES: { id: WidgetSize; label: string }[] = [
   { id: "s", label: "小" },
   { id: "m", label: "中" },
   { id: "l", label: "大" },
 ];
-export const WIDGET_MATERIALS: { id: WidgetMaterial; label: string }[] = [
+export const WIDGET_MATERIALS: { id: WidgetMaterial; label: "瓷" | "玻璃" }[] = [
   { id: "porcelain", label: "瓷" },
   { id: "glass", label: "玻璃" },
 ];
@@ -55,7 +55,7 @@ export function defaultLayout(): WidgetLayout {
     hidden: [],
     size: {},
     material: {},
-    order: HOME_WIDGETS.filter((w) => w.rail === "left").map((w) => w.id),
+    order: HOME_WIDGETS.map((w) => w.id),
   };
 }
 
@@ -91,7 +91,6 @@ export function specOf(layout: WidgetLayout, id: WidgetId) {
   return {
     id,
     label: meta.label,
-    rail: meta.rail,
     visible: !layout.hidden.includes(id),
     size: layout.size[id] ?? meta.defaultSize,
     material: layout.material[id] ?? meta.defaultMaterial,
@@ -114,10 +113,8 @@ export function setMaterial(layout: WidgetLayout, id: WidgetId, material: Widget
   return { ...layout, material: { ...layout.material, [id]: material } };
 }
 
-/** 把 `id` 插到 `before` 前面；`before` 空则放到末尾。只动同轨。 */
 export function moveWidget(layout: WidgetLayout, id: WidgetId, before: WidgetId | null): WidgetLayout {
-  const meta = HOME_WIDGETS.find((w) => w.id === id);
-  if (!meta || meta.rail !== "left") return layout;
+  if (!HOME_WIDGETS.some((w) => w.id === id)) return layout;
   const order = layout.order.filter((x) => x !== id);
   const at = before ? order.indexOf(before) : -1;
   if (at >= 0) order.splice(at, 0, id);

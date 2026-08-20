@@ -870,7 +870,7 @@ pre {
   --yb-focus-ring: 0 0 0 2px #1c1a18, 0 0 0 4px rgba(138, 163, 179, 0.5);
 }
 
-/* OS 零件：石面桌 + 厚瓷片。左右栏、以后的插件轨共用。 */
+/* OS 零件：石面桌 + 厚瓷片。主屏 desk 与 Peek 共用。 */
 .yb-desk {
   display: flex;
   flex-direction: column;
@@ -889,6 +889,7 @@ pre {
   min-width: 0;
   isolation: isolate;
   overflow: hidden;
+  order: var(--yb-widget-order, 0);
   border: 1px solid var(--yb-widget-border);
   border-radius: var(--yb-widget-radius);
   background:
@@ -927,21 +928,17 @@ pre {
   min-height: 0;
 }
 
-.yb-widget--s[data-widget="sessions"] {
+:root[data-chrome="rails"] .yb-widget--s[data-widget="sessions"] {
   flex: 0 1 auto;
   max-height: 156px;
-  display: flex;
-  flex-direction: column;
 }
-.yb-widget--m[data-widget="sessions"] {
+:root[data-chrome="rails"] .yb-widget--m[data-widget="sessions"] {
   flex: 0 1 auto;
   max-height: 248px;
-  display: flex;
-  flex-direction: column;
 }
-.yb-widget--s[data-widget="mind"] .neural-brain { height: 100px; }
-.yb-widget--m[data-widget="mind"] .neural-brain { height: 132px; }
-.yb-widget--l[data-widget="mind"] .neural-brain { height: 156px; }
+.yb-widget--s[data-widget="mind"] .density-map .brain-stage { height: 100px; }
+.yb-widget--m[data-widget="mind"] .density-map .brain-stage { height: 132px; }
+.yb-widget--l[data-widget="mind"] .density-map .brain-stage { height: 156px; }
 
 .yb-widget--glass {
   color: var(--yb-widget-glass-ink);

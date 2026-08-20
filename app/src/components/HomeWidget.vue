@@ -8,6 +8,8 @@ import {
   isWidgetId,
   type WidgetId,
 } from "../lib/home-widgets";
+import { useLiveAssembly } from "../lib/home-chrome";
+import { isPlaced } from "../lib/home-assembly";
 
 const props = defineProps<{
   id: WidgetId;
@@ -15,7 +17,9 @@ const props = defineProps<{
 }>();
 
 const widgets = useHomeWidgets();
+const assembly = useLiveAssembly();
 const spec = computed(() => widgets.spec(props.id));
+const placed = computed(() => isPlaced(assembly.value, props.id));
 const menuOpen = ref(false);
 const dragging = ref(false);
 
@@ -50,7 +54,7 @@ onUnmounted(() => document.removeEventListener("mousedown", onDoc));
 
 <template>
   <section
-    v-if="spec.visible"
+    v-if="spec.visible && placed"
     ref="root"
     class="yb-widget"
     :class="[
@@ -59,7 +63,7 @@ onUnmounted(() => document.removeEventListener("mousedown", onDoc));
       { 'yb-widget-fill': fill && spec.size === 'l', 'is-dragging': dragging },
     ]"
     :data-widget="id"
-    :style="{ order: spec.order }"
+    :style="{ '--yb-widget-order': spec.order }"
     @dragover="onDragOver"
     @drop="onDrop"
   >

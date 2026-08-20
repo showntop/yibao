@@ -30,10 +30,6 @@ const tab = ref<Tab>("home");
 const qaMode = import.meta.env.DEV && new URLSearchParams(window.location.search).get("qa") === "capability";
 const chatState = ref<AvatarState>("idle");
 const panelState = ref<AvatarState>("idle");
-const leftRailOpen = ref(true);
-const rightRailOpen = ref(true);
-// 非全屏（窗口窄）默认收起左栏：展开/折叠按钮始终可点，用户手动切换后不再被覆盖
-const isNarrowWindow = () => window.innerWidth <= 1180;
 
 // ---- 主题（顶栏切换按钮；三态：light / dark / system，与系统偏好对齐） ----
 type ThemeMode = "light" | "dark" | "system";
@@ -330,7 +326,6 @@ let unApprovals: (() => void) | null = null;
 onMounted(async () => {
   if (!qaMode) unApprovals = onPendingConfirms((l) => (approvalCount.value = l.length));
   window.addEventListener("keydown", onGlobalKeydown);
-  if (isNarrowWindow()) leftRailOpen.value = false; // 非全屏默认收起左栏（按钮仍可展开）
   // 启动恢复：hydrate 后按 surface 域 scene 设置布局恢复窗口
   try {
     clearLegacySessionKeys();
@@ -348,14 +343,6 @@ onUnmounted(() => {
   unApprovals?.();
   window.removeEventListener("keydown", onGlobalKeydown);
 });
-
-function toggleLeftRail() {
-  leftRailOpen.value = !leftRailOpen.value;
-}
-
-function toggleRightRail() {
-  rightRailOpen.value = !rightRailOpen.value;
-}
 
 function close() {
   // 收起大窗 = 隐藏 + 回小窗模式（Rust 侧还原宠物窗/面板浮窗）
@@ -426,7 +413,7 @@ function close() {
     <main class="content" :class="{ 'capability-scene': sceneActive, 'capability-focus': sceneActive && presentation === 'focus' }">
       <Transition name="view-fade">
         <div v-show="tab === 'home' && !sceneActive" class="view-host chat-host">
-          <HomeChat v-if="!qaMode" :left-rail-open="leftRailOpen" :right-rail-open="rightRailOpen" @toggle-left="toggleLeftRail" @toggle-right="toggleRightRail" @state="chatState = $event" @open-panel="showSurface" @reminder="navigate('home')" />
+          <HomeChat v-if="!qaMode" @state="chatState = $event" @open-panel="showSurface" @reminder="navigate('home')" />
         </div>
       </Transition>
       <Transition name="scene-rail">

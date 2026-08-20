@@ -10,7 +10,7 @@ import {
 } from "./home-widgets";
 
 describe("home-widgets", () => {
-  it("ignores unknown ids and keeps left order complete", () => {
+  it("ignores unknown ids and keeps order complete", () => {
     const layout = parseLayout(JSON.stringify({
       hidden: ["mind", "nope"],
       size: { today: "s", ghost: "l" },
@@ -23,6 +23,9 @@ describe("home-widgets", () => {
     expect(layout.order[0]).toBe("sessions");
     expect(layout.order).toContain("identity");
     expect(layout.order).toContain("today");
+    expect(layout.order).toContain("need");
+    expect(layout.order).toContain("tasks");
+    expect(layout.order).toContain("remind");
   });
 
   it("falls back on garbage json", () => {
@@ -36,7 +39,7 @@ describe("home-widgets", () => {
     expect(specOf(defaultLayout(), "sessions").size).toBe("l");
   });
 
-  it("moves a left widget before another", () => {
+  it("moves a widget before another", () => {
     const next = moveWidget(defaultLayout(), "sessions", "identity");
     expect(next.order[0]).toBe("sessions");
     expect(setSize(next, "sessions", "s").size.sessions).toBe("s");

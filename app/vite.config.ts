@@ -9,7 +9,7 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [vue()],
 
-  // 多页入口：宠物窗 main(index.html) + 面板窗 panel + 设置大窗 home + 设计稿 design
+  // 多页入口：宠物窗 main + 面板窗 panel + 主屏 home
   // + 唤起条 invoke + 截图框选 snip
   build: {
     rollupOptions: {
@@ -17,7 +17,6 @@ export default defineConfig(async () => ({
         main: fileURLToPath(new URL("./index.html", import.meta.url)),
         panel: fileURLToPath(new URL("./panel.html", import.meta.url)),
         home: fileURLToPath(new URL("./home.html", import.meta.url)),
-        design: fileURLToPath(new URL("./design.html", import.meta.url)),
         invoke: fileURLToPath(new URL("./invoke.html", import.meta.url)),
         snip: fileURLToPath(new URL("./snip.html", import.meta.url)),
       },

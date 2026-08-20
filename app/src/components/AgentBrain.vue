@@ -5,6 +5,8 @@ import { getMemListOnce, onBrainEvent, type MemItem, type FeedStats } from "../l
 import NeuralBrain from "./NeuralBrain.vue";
 import Avatar from "./Avatar.vue";
 import HomeWidget from "./HomeWidget.vue";
+import { useLiveAssembly } from "../lib/home-chrome";
+import { faceOf, collapsibleOf, itemOf } from "../lib/home-assembly";
 
 type AgentState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
 type CapabilityKind = "sense" | "think" | "act";
@@ -22,6 +24,15 @@ interface MemoryPoint {
 
 const props = defineProps<{ state: AgentState; compact?: boolean }>();
 const emit = defineEmits<{ chat: [draft: string]; toggle: [] }>();
+const assembly = useLiveAssembly();
+const mindFace = computed(() => {
+  const face = faceOf(assembly.value, "mind", "map");
+  return face === "tile" ? "tile" as const : "map" as const;
+});
+const canFoldLeft = computed(() => {
+  const region = itemOf(assembly.value, "identity")?.region;
+  return !!region && collapsibleOf(assembly.value.preset).includes(region);
+});
 
 const memories = ref<MemItem[]>([]);
 const plugins = ref<PluginInfo[]>([]);
@@ -198,7 +209,12 @@ onUnmounted(() => {
   <aside class="agent" :class="[state, { compact }]">
     <HomeWidget id="identity" class="identity-widget">
       <button class="identity" type="button" title="和译宝聊聊它的记忆与能力" @click="greet">
-        <span class="identity-avatar" title="折叠左栏" @click.stop="emit('toggle')"><Avatar :state="state" :size="36" compact /></span>
+        <span
+          class="identity-avatar"
+          :title="canFoldLeft ? '折叠左栏' : undefined"
+          :class="{ foldable: canFoldLeft }"
+          @click.stop="canFoldLeft && emit('toggle')"
+        ><Avatar :state="state" :size="36" compact /></span>
         <span class="identity-copy">
           <span class="identity-line"><strong>译宝</strong><i class="state-dot" />{{ stateText }}</span>
           <span>{{ stateDetail }}</span>
@@ -219,6 +235,7 @@ onUnmounted(() => {
           :think-count="memories.length"
           :act-count="plugins.length"
           :active-capability="activeCapability"
+          :density="mindFace"
           @capability="toggleCapability"
           @memory="askMemory"
           @status="greet"
@@ -274,12 +291,13 @@ button {
   cursor: pointer;
 }
 
-/* 本尊 Avatar：纯展示（状态灯/眨眼仍动），禁用手势——避免左栏内拖动误移窗口 */
 .identity-avatar {
   flex: none;
+}
+.identity-avatar.foldable {
   cursor: pointer;
 }
-.identity-avatar :deep(.av) {
+.identity-avatar.foldable :deep(.av) {
   cursor: pointer;
 }
 

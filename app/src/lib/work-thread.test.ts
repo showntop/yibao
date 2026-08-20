@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  groupPages,
   groupThread,
   isWorkPiece,
+  paperErrorNotice,
+  paperStamps,
   runAnswer,
   runIsLive,
   runTailIndex,
@@ -50,6 +53,46 @@ describe("work-thread", () => {
     expect(runIsLive(bubbles, [0, 1, 2], null)).toBe(true);
     expect(runIsLive([ai("完"), proc(true)], [0, 1], 0)).toBe(true);
     expect(runIsLive([ai("完"), proc(true)], [0, 1], null)).toBe(false);
+  });
+
+  it("binds a user turn and the following run into one page, reminders onto that page", () => {
+    const bubbles = [
+      user("调研 skill"),
+      ai("找到这些。"),
+      proc(true),
+      ai("到点了", { icon: "clock" }),
+    ];
+    expect(groupPages(bubbles)).toEqual([
+      { userIndex: 0, runIndices: [1, 2], miscIndices: [3] },
+    ]);
+  });
+
+  it("keeps a reminder-only stream as a duty page", () => {
+    expect(groupPages([ai("该开战会了", { icon: "clock" })])).toEqual([
+      { userIndex: null, runIndices: [], miscIndices: [0] },
+    ]);
+  });
+
+  it("dedupes paper stamps and keeps at most three", () => {
+    expect(paperStamps(["续源网页", "续源网页", "联网搜索", "读 readme", "多余"])).toEqual([
+      "续源网页",
+      "联网搜索",
+      "读 readme",
+    ]);
+    expect(paperStamps(["", "  "])).toEqual([]);
+  });
+
+  it("summarizes brain errors for paper, keeping the raw payload as detail", () => {
+    const raw = "大脑出错：Error code: 402 - {'error': {'message': 'Insufficient Balance'}}";
+    expect(paperErrorNotice(raw)).toEqual({
+      summary: "大脑暂时没额度",
+      detail: raw,
+    });
+    expect(paperErrorNotice("该开战会了")).toBeNull();
+    expect(paperErrorNotice("大脑出错：网络中断")).toEqual({
+      summary: "网络中断",
+      detail: "大脑出错：网络中断",
+    });
   });
 
   it("splits runs at the next user turn and inserts day markers", () => {
