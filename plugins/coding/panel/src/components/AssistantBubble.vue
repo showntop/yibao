@@ -27,8 +27,17 @@ watch(() => props.item.raw, () => {
 watch(() => props.item.done, (d) => { if (d) throttler.flush(); });
 onBeforeUnmount(() => throttler.flush()); // 卸载前把排队帧结掉,防 raw 滞留上一拍
 
-// 思考小块:摘出单独渲染(非 markdown 内容),模板里置前 → 视觉保序;空文本不渲染(对齐 appendThinking)
+// 思考小块:摘出单独渲染(非 markdown 内容),全部收进一个 <details> 折叠块——
+// 流式期自动展开看直播,done 自动收(省屏);用户手动开合后不再干预(thinkToggled 优先)。
+// 接管 summary 点击(preventDefault 只经绑定驱动):原生 toggle 事件在程序性开合时也异步触发,
+// 用它记录用户偏好会把自动展开误存成「用户钉开」,done 后永不收
 const thinks = computed(() => props.item.thinking.filter((t) => t));
+const thinkToggled = ref<boolean | null>(null);
+const thinkOpen = computed(() => thinkToggled.value ?? !props.item.done);
+function onSummaryClick(e: Event) {
+  e.preventDefault();
+  thinkToggled.value = !thinkOpen.value;
+}
 
 // v-html 唯一入口:sanitizeHtml(mdToHtml(raw));任一环异常/缺库 → null → 纯文本兜底,绝不上抛
 const html = computed((): string | null => {
@@ -110,7 +119,10 @@ onUpdated(enhanceCodeBlocks); // v-html 换内容后 pre 回到未套壳态,重�
 <template>
   <div class="row ai">
     <div class="bubble" :class="{ md: isMd, done: item.done }">
-      <div v-for="(t, i) in thinks" :key="i" class="think-block"><span class="think-tag">思考</span>{{ t }}</div>
+      <details v-if="thinks.length" class="think" :open="thinkOpen">
+        <summary @click="onSummaryClick"><span class="chev">▸</span>思考</summary>
+        <div v-for="(t, i) in thinks" :key="i" class="think-block">{{ t }}</div>
+      </details>
       <div v-if="isMd" ref="contentEl" class="mdc" v-html="html"></div>
       <div v-else class="mdc">{{ renderedRaw }}</div>
     </div>
