@@ -11,7 +11,7 @@ GOOD_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <title>天气看板</title>
-<style>:root { --bg: #f6f1ea; } body { background: var(--bg); }</style>
+<style>:root { --bg: #f0f4f8; } body { background: var(--bg); }</style>
 </head>
 <body><h1>天气</h1><script>console.log("hi");</script></body>
 </html>"""
@@ -121,7 +121,7 @@ def test_gen_prompt_carries_contract_and_oninit(data_dir):
     _gen(llm, data={"rows": [1]})
     prompt = llm.calls[0]
     assert "天气看板" in prompt and "展示一周天气" in prompt
-    assert "禁止任何外链与网络请求" in prompt and "--bg: #f6f1ea" in prompt
+    assert "禁止任何外链与网络请求" in prompt and "--bg: #f0f4f8" in prompt
     assert "yibao.onInit" in prompt  # 有 data 时教 onInit 接收
 
     llm2 = _FakeLlm(GOOD_HTML)

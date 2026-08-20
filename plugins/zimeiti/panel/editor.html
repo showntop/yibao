@@ -7,15 +7,27 @@
 <meta charset="utf-8">
 <title>写作编辑器</title>
 <style>
-  /* 设计 token 整段照抄 tools.html（iframe 沙箱内吃不到 tokens.css，内联写死） */
+  /* 设计 token 整段照抄 tools.html（iframe 沙箱内吃不到 tokens.css，内联写死）：
+     浅色为默认（slate + sky 蓝 accent），深色走 prefers-color-scheme 跟随系统 */
   * { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
-    --bg: #f6f1ea; --card: #ffffff; --border: #eee4d6; --border-soft: #f3ecdf;
-    --text: #3f372e; --muted: #a89a86; --faint: #c9bcab;
-    --accent: #ff8a5c; --accent-deep: #f2703f; --accent-soft: #fff0e8;
-    --green-bg: #dcf0e2; --green: #3e8e5a; --green-bar: #8fd0a6;
-    --red-bg: #fce7e3; --red: #c0574b; --red-bar: #f0aaa1;
+    --bg: #f0f4f8; --card: #ffffff;
+    --border: rgba(148, 170, 195, 0.22); --border-soft: #edf1f6; --border-strong: #d3dce7;
+    --text: #3d4a5c; --muted: #6b7c8f; --faint: #a5b2c2;
+    --accent: #4a88c0; --accent-deep: #3a74ab; --accent-soft: rgba(74, 136, 192, 0.12);
+    --green-bg: #e6f4ea; --green: #3e8e5a; --green-bar: #8fd0a6;
+    --red-bg: #fdecea; --red: #c0574b; --red-bar: #f0aaa1;
     --mono: 12.5px/1.6 "SF Mono", ui-monospace, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #10161d; --card: #18212b;
+      --border: rgba(255, 255, 255, 0.09); --border-soft: rgba(255, 255, 255, 0.06); --border-strong: rgba(255, 255, 255, 0.18);
+      --text: #dbe4ee; --muted: #93a3b6; --faint: #6d7f93;
+      --accent: #5ea0d2; --accent-deep: #4d90c4; --accent-soft: rgba(77, 144, 196, 0.22);
+      --green-bg: rgba(62, 142, 90, 0.2); --green: #8fd0a6; --green-bar: #6fbf8e;
+      --red-bg: rgba(192, 87, 75, 0.2); --red: #f0aaa1; --red-bar: #e38a80;
+    }
   }
   html, body { height: 100%; }
   body {
@@ -30,20 +42,20 @@
   button.act {
     border: none; border-radius: 10px; padding: 6px 16px; cursor: pointer;
     background: var(--accent); color: #fff; font-size: 12.5px; font-weight: 600;
-    box-shadow: 0 2px 6px rgba(242, 112, 63, .3); transition: all .15s ease;
+    box-shadow: 0 2px 6px rgba(58, 116, 171, .3); transition: all .15s ease;
     flex: none;
   }
   button.act:hover { background: var(--accent-deep); }
   button.act:active { transform: scale(.97); }
   button.act:disabled { opacity: .5; cursor: default; }
   button.ghost {
-    background: transparent; color: #8a7a66; border: 1px solid #e3d7c4;
+    background: transparent; color: var(--muted); border: 1px solid var(--border-strong);
     box-shadow: none; font-weight: 500;
   }
-  button.ghost:hover { background: #faf3ea; color: var(--text); border-color: #d8c9b2; }
+  button.ghost:hover { background: var(--accent-soft); color: var(--text); }
   #note {
-    width: 160px; flex: none; border: 1px solid #e3d7c4; border-radius: 10px; padding: 5px 10px;
-    font-size: 12.5px; background: #fff; color: var(--text); outline: none; font-family: inherit;
+    width: 160px; flex: none; border: 1px solid var(--border-strong); border-radius: 10px; padding: 5px 10px;
+    font-size: 12.5px; background: var(--card); color: var(--text); outline: none; font-family: inherit;
     transition: border-color .15s ease;
   }
   #note:focus { border-color: var(--accent); }
@@ -53,7 +65,7 @@
   main {
     flex: 1; display: flex; min-height: 0;
     background: var(--card); border: 1px solid var(--border); border-radius: 14px;
-    box-shadow: 0 1px 2px rgba(90, 70, 50, .04), 0 6px 16px rgba(90, 70, 50, .05);
+    box-shadow: 0 1px 2px rgba(45, 60, 80, .04), 0 6px 16px rgba(45, 60, 80, .05);
     overflow: hidden; margin-bottom: 10px;
   }
   #editor {
@@ -73,7 +85,7 @@
   #preview ul { margin: 0.5em 0; padding-left: 1.4em; }
   #preview blockquote {
     margin: 0.5em 0; padding: 8px 12px; border-left: 3px solid var(--border);
-    color: var(--muted); background: #faf7f2; border-radius: 0 8px 8px 0;
+    color: var(--muted); background: var(--border-soft); border-radius: 0 8px 8px 0;
   }
 
   /* ---- 空态（纯 CSS：编辑区为空、placeholder 可见时盖住预览区；不挡点击）---- */
@@ -95,7 +107,7 @@
   #selbar {
     position: fixed; z-index: 30; display: flex; align-items: center; gap: 4px;
     background: var(--card); border: 1px solid var(--border); border-radius: 12px;
-    padding: 5px 6px; box-shadow: 0 4px 16px rgba(90, 70, 50, .16);
+    padding: 5px 6px; box-shadow: 0 4px 16px rgba(45, 60, 80, .16);
   }
   #selbar button {
     border: none; border-radius: 8px; padding: 4px 10px; cursor: pointer;
@@ -106,19 +118,19 @@
   #selbar button:disabled { opacity: .45; cursor: default; }
   #selbar .sep { width: 1px; height: 14px; background: var(--border); margin: 0 2px; }
   #custom-inst {
-    width: 130px; border: 1px solid #e3d7c4; border-radius: 8px; padding: 3px 8px;
-    font-size: 12px; background: #fff; color: var(--text); outline: none; font-family: inherit;
+    width: 130px; border: 1px solid var(--border-strong); border-radius: 8px; padding: 3px 8px;
+    font-size: 12px; background: var(--card); color: var(--text); outline: none; font-family: inherit;
   }
   #custom-inst:focus { border-color: var(--accent); }
 
   /* ---- 弹层共用骨架（diff / 发布 / 历史 / 素材）：.ovl 遮罩 + .card 卡片 ---- */
   .ovl {
     position: fixed; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center;
-    background: rgba(63, 55, 46, .28); backdrop-filter: blur(2px);
+    background: rgba(16, 22, 29, .35); backdrop-filter: blur(2px);
   }
   .card {
     background: var(--card); border: 1px solid var(--border); border-radius: 14px;
-    box-shadow: 0 12px 40px rgba(90, 70, 50, .25); overflow: hidden;
+    box-shadow: 0 12px 40px rgba(45, 60, 80, .25); overflow: hidden;
   }
   .card > header {
     display: flex; align-items: center; gap: 8px; padding: 10px 14px; margin: 0;
@@ -141,7 +153,7 @@
   .opts { padding: 12px 14px 4px; }
   .opt {
     display: block; width: 100%; text-align: left; cursor: pointer; margin: 0 0 10px;
-    background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 11px 13px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 11px 13px;
     font-family: inherit; transition: all .15s ease;
   }
   .opt:hover { border-color: var(--accent); background: var(--accent-soft); }
@@ -162,8 +174,8 @@
   .hrow .n { flex: 1; min-width: 0; font-size: 12.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .hrow .t { font-size: 11px; color: var(--faint); flex: none; }
   .hrow .hcmp {
-    flex: none; border: 1px solid #e3d7c4; border-radius: 8px; padding: 3px 10px; cursor: pointer;
-    background: transparent; color: #8a7a66; font-size: 11.5px; font-family: inherit; transition: all .15s ease;
+    flex: none; border: 1px solid var(--border-strong); border-radius: 8px; padding: 3px 10px; cursor: pointer;
+    background: transparent; color: var(--muted); font-size: 11.5px; font-family: inherit; transition: all .15s ease;
   }
   .hrow .hcmp:hover { background: var(--accent-soft); color: var(--accent-deep); border-color: var(--accent); }
   .hempty, .mempty { padding: 26px 0; text-align: center; font-size: 12px; color: var(--faint); }
@@ -313,6 +325,8 @@
     return esc(s).replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   }
   function md(src, styled) {
+    // styled 变体供 copyRich 导出到外部编辑器（公众号等），内容离开本面板，
+    // 配色必须保持浅色硬编码——不随主题，否则深色模式下导出深灰字贴到白底
     var S = styled ? {
       h1: " style=\"font-size:20px;font-weight:700;margin:18px 0 10px;line-height:1.5\"",
       h2: " style=\"font-size:17px;font-weight:700;margin:16px 0 8px;line-height:1.5\"",
@@ -347,7 +361,7 @@
       }
     });
     flushPara(); flushList(); flushQuote();
-    return out.join("") || "<p style=\"color:#cdbfab\">（预览为空）</p>";
+    return out.join("") || "<p style=\"color:var(--faint)\">（预览为空）</p>";
   }
 
   // ---- 小红书纯文本：去 markdown 符号，保留段落 ----

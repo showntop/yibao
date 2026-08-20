@@ -38,15 +38,26 @@ _EXTERNAL_PATTERNS = [
     (r"url\(\s*[\"']?https?://", "CSS url(http…) 外链"),
 ]
 
-# 设计 token：照抄 plugins/zimeiti/panel/editor.html 的 :root 变量（沙箱内吃不到 tokens.css，
-# 生成面板与插件面板同一视觉语言——米白底、卡片圆角、橙色主色）
+# 设计 token：照抄 plugins/toolbox/panel/tools.html 的 :root 变量（沙箱内吃不到 tokens.css，
+# 生成面板与插件面板同一视觉语言——slate + sky 蓝 accent，深色跟随系统）
 _DESIGN_TOKENS = """\
 :root {
-  --bg: #f6f1ea; --card: #ffffff; --border: #eee4d6; --border-soft: #f3ecdf;
-  --text: #3f372e; --muted: #a89a86; --faint: #c9bcab;
-  --accent: #ff8a5c; --accent-deep: #f2703f; --accent-soft: #fff0e8;
-  --green-bg: #dcf0e2; --green: #3e8e5a; --green-bar: #8fd0a6;
-  --red-bg: #fce7e3; --red: #c0574b; --red-bar: #f0aaa1;
+  --bg: #f0f4f8; --card: #ffffff;
+  --border: rgba(148, 170, 195, 0.22); --border-soft: #edf1f6; --border-strong: #d3dce7;
+  --text: #3d4a5c; --muted: #6b7c8f; --faint: #a5b2c2;
+  --accent: #4a88c0; --accent-deep: #3a74ab; --accent-soft: rgba(74, 136, 192, 0.12);
+  --green-bg: #e6f4ea; --green: #3e8e5a; --green-bar: #8fd0a6;
+  --red-bg: #fdecea; --red: #c0574b; --red-bar: #f0aaa1;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #10161d; --card: #18212b;
+    --border: rgba(255, 255, 255, 0.09); --border-soft: rgba(255, 255, 255, 0.06); --border-strong: rgba(255, 255, 255, 0.18);
+    --text: #dbe4ee; --muted: #93a3b6; --faint: #6d7f93;
+    --accent: #5ea0d2; --accent-deep: #4d90c4; --accent-soft: rgba(77, 144, 196, 0.22);
+    --green-bg: rgba(62, 142, 90, 0.2); --green: #8fd0a6; --green-bar: #6fbf8e;
+    --red-bg: rgba(192, 87, 75, 0.2); --red: #f0aaa1; --red-bar: #e38a80;
+  }
 }
 body { font: 13px/1.6 -apple-system, "PingFang SC", sans-serif; background: var(--bg); color: var(--text); }"""
 
