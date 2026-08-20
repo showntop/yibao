@@ -1,4 +1,4 @@
-// T4 渲染模型补缺:store 为渲染组件新增字段的归约测试(runPrefix/lastUsage/stop 返回值)。
+// T4 渲染模型补缺:store 为渲染组件新增字段的归约测试(runVerb/lastUsage/stop 返回值)。
 // 通用归约行为见 stores/session.test.ts,这里只补 T4 渲染依赖的缺口。
 import { describe, expect, it, vi } from "vitest";
 import { createSessionStore, type SessionDeps } from "../stores/session";
@@ -9,17 +9,17 @@ function makeDeps(invokeImpl?: SessionDeps["invoke"]) {
 }
 
 describe("T4 渲染模型补缺", () => {
-  it("send 进 streaming 时落定 runPrefix:新会话「启动」/ 接续会话「接续」", async () => {
+  it("send 进 streaming 时落定 runVerb:新会话「启动」/ 接续会话「接续」", async () => {
     const { deps } = makeDeps();
     const s = createSessionStore(deps);
     await s.send("/tmp", "hi", "acceptEdits", "claude-code");
-    expect(s.state.runPrefix).toBe("会话 s1 启动");
+    expect(s.state.runVerb).toBe("启动");
     s.applyEvent({ kind: "done" });
     await s.send("/tmp", "again", "acceptEdits", "claude-code");
-    expect(s.state.runPrefix).toBe("会话 s1 接续");
+    expect(s.state.runVerb).toBe("接续");
   });
 
-  it("秒败竞态(pendingTurnEnded)不进 streaming,runPrefix 不落定", async () => {
+  it("秒败竞态(pendingTurnEnded)不进 streaming,runVerb 不落定", async () => {
     let release!: (v: { session_id: string }) => void;
     const invoke = vi.fn(() => new Promise<{ session_id: string }>((res) => { release = res; }));
     const { deps } = makeDeps(invoke);
@@ -29,7 +29,7 @@ describe("T4 渲染模型补缺", () => {
     release({ session_id: "s1" });
     await p;
     expect(s.state.streaming).toBe(false);
-    expect(s.state.runPrefix).toBe("");
+    expect(s.state.runVerb).toBe("");
   });
 
   it("done 的 usage 落 lastUsage;newChat/resumeSession 清零", async () => {
@@ -42,7 +42,7 @@ describe("T4 渲染模型补缺", () => {
     expect(s.state.usage.tok).toBe(15);
     s.newChat();
     expect(s.state.lastUsage).toBeNull();
-    expect(s.state.runPrefix).toBe("");
+    expect(s.state.runVerb).toBe("");
     expect(s.state.usage).toEqual({ tok: 0, cost: 0, hasCost: false });
   });
 
@@ -55,7 +55,7 @@ describe("T4 渲染模型补缺", () => {
     expect(s.state.ended).toBe("done");
   });
 
-  it("stop 返回值:受理 true;无会话/invoke 失败 false(pill Stop 据此重解锁)", async () => {
+  it("stop 返回值:受理 true;无会话/invoke 失败 false(中断钮据此重解锁)", async () => {
     const { deps } = makeDeps();
     const s = createSessionStore(deps);
     expect(await s.stop()).toBe(false); // 无会话

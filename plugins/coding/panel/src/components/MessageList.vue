@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 消息流(#log):渲染 store 的 RenderItem 序列。行为对齐 chat.html:
 // 用户贴底才自动跟随滚动(:939-947,距底 <60px 视为贴底);气泡内链接一律拦下(:948-952,
-// sandbox 无导航出口,点开只会替换面板);pill 可见时底部让位(body.pill-on → #log.pill-on)。
+// sandbox 无导航出口,点开只会替换面板)。
 // T7:user 气泡带 uuid 挂 ⏪ 回滚锚(:957-987,防重禁用经 rewindPending;点击上抛 rewind,
 // invoke 与状态行在 App);Codex→CC 交接卡(handoff 项)渲染 HandoffCard 并透传其事件。
 import { nextTick, ref, watch } from "vue";
@@ -14,7 +14,6 @@ import HandoffCard from "./HandoffCard.vue";
 
 const props = defineProps<{
   items: RenderItem[];
-  padForPill?: boolean;
   streaming: boolean;                 // HandoffCard「用它开始」的运行中拦截
   rewindPending: ReadonlySet<string>; // 回滚请求在飞的 uuid 集(按钮防重禁用)
 }>();
@@ -50,7 +49,7 @@ function onClick(e: MouseEvent) {
 </script>
 
 <template>
-  <main id="log" ref="logEl" :class="{ 'pill-on': padForPill }" @scroll="onScroll" @click="onClick">
+  <main id="log" ref="logEl" @scroll="onScroll" @click="onClick">
     <template v-for="(it, i) in items" :key="it.type === 'handoff' ? 'h:' + it.seq : i">
       <div v-if="it.type === 'user'" class="row user">
         <div class="bubble">{{ it.text }}<button

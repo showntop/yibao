@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // coding:studio(R4 阶段三 T4):StationView——多工位的工位单元。原 App.vue 单会话接线整体下沉
 // (store 创建/头部控件/浮层互收/esc 优先级/成本/状态行/cwd chip+浮层/autoReplay/引擎 picker/
-// mode pill/接续浮层/Codex→CC 交接/⏪/Composer 接线/RunPill 布局/RO/生命周期),单工位态行为
+// mode pill/接续浮层/Codex→CC 交接/⏪/Composer 接线/停靠高度 RO/生命周期),单工位态行为
 // 与阶段二等价。T3 后 takeover 退役:onInit 不再读 takeover 标志(数据直投 store.handleData),
 // onHostMessage 段整段不搬(宿主消息通道随 takeover 退役无消费方)。
 // T6 后 onInit 注册收归壳(App.vue demux 唯一入口),本组件不再自注册——init 数据只经
@@ -35,7 +35,6 @@ import { createSessionStore, type HandoffSendResult, type RenderItem } from "../
 import { agentLabel, createDriversStore, normAgent } from "../stores/drivers";
 import MessageList from "./MessageList.vue";
 import ErrBar from "./ErrBar.vue";
-import RunPill from "./RunPill.vue";
 import Composer from "./Composer.vue";
 import CwdChip from "./CwdChip.vue";
 import ModePill from "./ModePill.vue";
@@ -129,7 +128,7 @@ const costText = computed(() => {
 const newChatDisabled = computed(() => state.sending || state.streaming || !state.currentSession);
 
 // ---- footer 状态行:提交中(handoffSend 摘要窗「生成交接摘要…」/ startHandoffSession
-// invoke 窗「Codex 接续启动中…」)/运行中(spinner)/完成行(doneStatusText,isFinite 守御)/错误 ----
+// invoke 窗「Codex 接续启动中…」)/运行中(spinner + 秒表)/完成行(doneStatusText,isFinite 守御)/错误 ----
 const briefTarget = ref<string | null>(null); // handoffSend 摘要等待窗目标引擎
 const handoffStarting = ref(false);           // Codex→CC startHandoffSession invoke 窗
 const status = computed(() => {
@@ -138,18 +137,36 @@ const status = computed(() => {
     if (handoffStarting.value) return { text: "Codex 接续启动中…", spin: true, err: false };
     return { text: "提交中…", spin: true, err: false };
   }
-  if (state.streaming) return { text: (state.runPrefix || "会话") + " 运行中…", spin: true, err: false };
+  if (state.streaming) return { text: state.runVerb ? state.runVerb + "中" : "运行中", spin: true, err: false };
   if (state.error) return { text: state.error, spin: false, err: true };
   if (state.ended === "done") return { text: doneStatusText(state.lastUsage), spin: false, err: false };
   if (state.ended === "stopped") return { text: "已中断", spin: false, err: false };
   return { text: "", spin: false, err: false };
 });
 
+// 运行秒表(悬浮 RunPill 退役后并入状态行):streaming 起跑「接续中 · Ns」,每秒 +1;终态停表。
+// elapsed 不进 status 依赖——status 的 watch 负责清瞬时提示,秒表每秒触发会把提示误清
+const elapsed = ref(0);
+let tickTimer: ReturnType<typeof setInterval> | null = null;
+watch(() => state.streaming, (s) => {
+  if (tickTimer !== null) { clearInterval(tickTimer); tickTimer = null; }
+  if (s) {
+    const t0 = Date.now();
+    elapsed.value = 0;
+    tickTimer = setInterval(() => { elapsed.value = Math.floor((Date.now() - t0) / 1000); }, 1000);
+  }
+});
+
 // Composer/头部控件瞬时提示与 store 状态行共一位:store 状态每次变化覆盖提示
 // (对齐 chat.html setStatus 覆盖语义——后写赢);空文本 = 清除提示(对齐 setStatus(""))
 const tip = ref<{ text: string; spin: boolean; err: boolean } | null>(null);
 watch(status, () => { tip.value = null; });
-const statusView = computed(() => tip.value ?? status.value);
+const statusView = computed(() => {
+  if (tip.value) return tip.value;
+  const s = status.value;
+  if (state.streaming) return { ...s, text: s.text + " · " + elapsed.value + "s" };
+  return s;
+});
 function onComposerStatus(text: string, err: boolean) { tip.value = text ? { text, spin: false, err } : null; }
 
 // ---- cwd chip + 浮层(对齐 :2620-2665 / :2890-2899)----
@@ -450,28 +467,13 @@ function unbindSession() {
 // 壳侧提示通道(T8):壳(路由守卫等)借本工位状态行亮瞬时提示——内调 onComposerStatus(tip 机制)
 function hint(text: string, err = false) { onComposerStatus(text, err); }
 
-// ---- RunPill 布局(C3):bottom = footer 高 + 10 + (errbar 可见时)errbar 高,现算现贴 ----
+// ---- footer 停靠高度(T4 expose 给壳做停靠布局;RO + nextTick 节奏刷新) ----
 const footerEl = ref<HTMLElement | null>(null);
-const errbarRef = ref<{ root: HTMLElement | null } | null>(null);
-const pillBottom = ref(110);
-const pillVisible = computed(() => state.sending || state.streaming);
-// footer 实时高度(T4 expose 给壳做停靠布局;与 pill 同一 RO/nextTick 节奏刷新)
 const dockH = ref(0);
 
 function relayout() {
-  void nextTick(() => {
-    const fh = footerEl.value ? footerEl.value.offsetHeight : 0;
-    dockH.value = fh;
-    let b = fh + 10;
-    const e = errbarRef.value?.root;
-    if (e) b += e.offsetHeight;
-    pillBottom.value = b;
-  });
+  void nextTick(() => { dockH.value = footerEl.value ? footerEl.value.offsetHeight : 0; });
 }
-
-// errbar 出现/消失(内容变化)→ 重算;详情开合由 ErrBar 的 layout 事件上来
-watch(() => state.error, relayout);
-watch(pillVisible, relayout); // pill 现身/消失各算一次(对齐 showRunPill/hideRunPill 里的 layoutRunPill)
 
 let ro: ResizeObserver | null = null;
 onMounted(() => {
@@ -493,6 +495,7 @@ onMounted(() => {
 });
 onBeforeUnmount(() => {
   if (ro) ro.disconnect();
+  if (tickTimer !== null) clearInterval(tickTimer);
   window.removeEventListener("resize", relayout);
   document.removeEventListener("click", onDocClick);
   document.removeEventListener("keydown", onDocKeydown);
@@ -547,7 +550,6 @@ defineExpose({ state, dockH, onData, bindSession, unbindSession, stop, isBusy: b
     <MessageList
       v-show="state.items.length > 0"
       :items="state.items"
-      :pad-for-pill="pillVisible"
       :streaming="state.streaming"
       :rewind-pending="rewinding"
       @rewind="onRewind"
@@ -556,15 +558,7 @@ defineExpose({ state, dockH, onData, bindSession, unbindSession, stop, isBusy: b
       @status="onComposerStatus"
     />
 
-    <ErrBar v-if="state.error" ref="errbarRef" :text="state.error" @layout="relayout" />
-    <RunPill
-      :bottom="pillBottom"
-      :sending="state.sending"
-      :streaming="state.streaming"
-      :prefix="state.runPrefix"
-      :tok="state.usage.tok"
-      :on-stop="store.stop"
-    />
+    <ErrBar v-if="state.error" :text="state.error" />
 
     <!-- Composer(T5):输入框 / @ chips / 文件补全 / 快捷键行;段②上下文行经 ctx slot 注入
          (T6 头部控件:cwd chip + 浮层 / mode pill / 引擎 chip + picker),状态行经 status slot -->

@@ -308,7 +308,7 @@ describe("会话恢复", () => {
     expect(s2.state.items).toHaveLength(3); // 2 条历史 + 分隔 marker(旧内容已清)
     expect(s2.state.items[0]).toMatchObject({ type: "user", text: "旧问", uuid: "u0" });
     expect(s2.state.items[1]).toMatchObject({ type: "assistant", raw: "旧答", done: true });
-    expect(s2.state.items[2]).toMatchObject({ type: "marker", text: "—— 以上为历史,继续聊 ↓ ——" });
+    expect(s2.state.items[2]).toMatchObject({ type: "marker", text: "以上为历史，继续聊 ↓" });
     expect(s2.state.streaming).toBe(false);
     expect(s2.state.ended).toBeNull();
     expect(s2.state.error).toBeNull();
@@ -593,7 +593,7 @@ describe("跨引擎交接 handoffSend", () => {
     expect(s.state.streaming).toBe(true);
     expect(s._test.discardedSessions.has("s1")).toBe(true);
     expect(s.state.items.some((it) => it.type === "marker" &&
-      it.text === "—— 交接给 codex 继续（上下文为摘要移植）——")).toBe(true);
+      it.text === "交接给 codex 继续（上下文为摘要移植）")).toBe(true);
     expect(handed).toEqual(["codex"]);
   });
 
@@ -674,21 +674,21 @@ describe("Codex→CC 交接启动 startHandoffSession", () => {
     const { deps } = makeDeps(invoke as never);
     const s = createSessionStore(deps);
     const p = s.startHandoffSession("/tmp", "cx1", "brief 文本");
-    // 受理前:streaming 已真,pill/状态行前缀就位
+    // 受理前:streaming 已真,状态行动词就位
     expect(s.state.sending).toBe(true);
     expect(s.state.streaming).toBe(true);
-    expect(s.state.runPrefix).toBe("Codex 接续启动中…");
+    expect(s.state.runVerb).toBe("接续");
     expect(invoke).toHaveBeenCalledWith("coding.start", { cwd: "/tmp", prompt: "brief 文本", source: "codex:cx1" });
     release({ session_id: "s9" });
     await expect(p).resolves.toBe(true);
     expect(s.state.currentSession).toBe("s9");
     expect(s.state.curSessAgent).toBe("claude-code"); // handoff 落 CC 会话
-    expect(s.state.runPrefix).toBe("Codex 接续会话 s9");
+    expect(s.state.runVerb).toBe("接续");
     expect(s.state.streaming).toBe(true);
     expect(s.state.sending).toBe(false);
   });
 
-  it("秒败竞态:终态先于 invoke 返回 → 不覆盖 streaming,runPrefix 不起跑", async () => {
+  it("秒败竞态:终态先于 invoke 返回 → 不覆盖 streaming,runVerb 不起跑", async () => {
     let release!: (v: { session_id: string }) => void;
     const invoke = vi.fn(() => new Promise<{ session_id: string }>((res) => { release = res; }));
     const { deps } = makeDeps(invoke as never);

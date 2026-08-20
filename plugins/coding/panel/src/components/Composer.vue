@@ -27,7 +27,7 @@ import AtRefsChips from "./AtRefsChips.vue";
 const props = defineProps<{
   busy: boolean;
   cwd: string;
-  // 中断受理信号(对齐 RunPill 的 onStop):受理 true / 拒理或失败 false——
+  // 中断受理信号:受理 true / 拒理或失败 false——
   // sending 窗 App 拒理(会话 id 未回填是死点击),false 时中断钮立即重新解锁
   onStop: () => Promise<boolean>;
 }>();
@@ -143,8 +143,8 @@ function onPaste(e: ClipboardEvent) {
 }
 
 // ---- 中断:busy 期现身;点击上锁,仅受理后保持——拒理(sending 窗死点击)/失败(false)
-//      立即重新解锁(对齐 RunPill clickStop;修复 T5 评审:sending 窗 no-op 点击上锁后
-//      锁存过整个窗口,streaming 起跑后钮已废) ----
+//      立即重新解锁(修复 T5 评审:sending 窗 no-op 点击上锁后锁存过整个窗口,
+//      streaming 起跑后钮已废) ----
 const stopArmed = ref(false);
 watch(() => props.busy, (b) => { if (!b) stopArmed.value = false; });
 function onStop() {

@@ -40,7 +40,7 @@ export interface SessionState {
   ended: SessionEnded;
   usage: { tok: number; cost: number; hasCost: boolean };
   lastUsage: Usage | null; // 最近一个 done 事件的原始 usage(完成状态行「✓ 完成 · Ns · tok · $」用)
-  runPrefix: string;       // 运行 pill/状态行前缀「会话 <sid> 启动|接续」(send 进 streaming 时落定)
+  runVerb: "" | "启动" | "接续"; // 运行状态行动词(send/handoff 进 streaming 时落定;会话哈希不上状态行——头部已有会话标识)
   error: string | null; // errbar 文本
 }
 
@@ -65,7 +65,7 @@ export function createSessionStore(deps: SessionDeps) {
   const state = reactive<SessionState>({
     items: [], currentSession: null, curSessAgent: "claude-code",
     sending: false, streaming: false, waiting: false, ended: null,
-    usage: { tok: 0, cost: 0, hasCost: false }, lastUsage: null, runPrefix: "", error: null,
+    usage: { tok: 0, cost: 0, hasCost: false }, lastUsage: null, runVerb: "", error: null,
   });
 
   // —— 内部簿记(不进响应式状态)——
@@ -248,7 +248,7 @@ export function createSessionStore(deps: SessionDeps) {
       if (isStart) state.curSessAgent = normAgent(ov.agent ?? agent);
       if (pendingTurnEnded) { pendingTurnEnded = false; return; } // 秒败:不进 streaming
       state.streaming = true;
-      state.runPrefix = "会话 " + r.session_id + (isStart ? " 启动" : " 接续"); // pill 秒表/状态行前缀
+      state.runVerb = isStart ? "启动" : "接续"; // 状态行秒表前缀
     } catch (e) {
       // 失败摘除刚上屏的无锚气泡(消息没发出去不留痕;已带 uuid 说明已回流,不动)
       if (fallbackUserIndex >= 0) {
@@ -291,7 +291,7 @@ export function createSessionStore(deps: SessionDeps) {
     discardedSessions.add(oldSid);
     state.currentSession = null;
     opts.onHandedOff?.(); // App:清 switchAgent、curAgent 同步为新引擎(防之后新对话落回旧引擎)
-    state.items.push({ type: "marker", text: "—— 交接给 " + agentLabel(newAgent) + " 继续（上下文为摘要移植）——", err: false });
+    state.items.push({ type: "marker", text: "交接给 " + agentLabel(newAgent) + " 继续（上下文为摘要移植）", err: false });
     state.sending = false; // 交还 re-entry 窗:正式提交由 send() 自管
     try {
       await send(opts.cwd, "【交接上下文】\n" + brief + "\n\n【用户继续】\n" + opts.userText, opts.mode, newAgent, { refs: opts.refs });
@@ -311,7 +311,7 @@ export function createSessionStore(deps: SessionDeps) {
     state.error = null; // handoff 也是新 turn 入口:与 send 对齐清掉旧错误条
     pendingTurnEnded = false;
     state.streaming = true; // 受理前即 streaming(原 :2275)
-    state.runPrefix = "Codex 接续启动中…";
+    state.runVerb = "接续"; // 状态行「接续中 · Ns」
     try {
       const r = (await deps.invoke("coding.start", { cwd, prompt: brief, source: "codex:" + codexSid })) as { session_id?: string };
       const csid = r && r.session_id;
@@ -319,7 +319,6 @@ export function createSessionStore(deps: SessionDeps) {
       state.currentSession = csid; // 旧会话 id 被覆盖;其迟到事件被 currentSession 过滤(同原)
       state.curSessAgent = "claude-code"; // handoff 落 CC 会话(coding.start 缺省引擎)
       if (pendingTurnEnded) { pendingTurnEnded = false; return true; } // 秒败:onSessionEnded 已收场
-      state.runPrefix = "Codex 接续会话 " + csid;
       return true;
     } catch (e) {
       state.error = "Codex 接续启动失败:" + emsg(e);
@@ -359,7 +358,7 @@ export function createSessionStore(deps: SessionDeps) {
     state.error = null;
     state.usage = { tok: 0, cost: 0, hasCost: false };
     state.lastUsage = null;
-    state.runPrefix = "";
+    state.runVerb = "";
     fallbackUserIndex = -1;
     sendQueue = [];
   }
@@ -391,13 +390,13 @@ export function createSessionStore(deps: SessionDeps) {
       discardedSessions.delete(sid); // 关键:目标会话必须出黑名单,否则自己的流被过滤吞掉锁死面板
       if (agent) state.curSessAgent = normAgent(agent);
       state.items = historyToItems(msgs);
-      if (msgs.length) state.items.push({ type: "marker", text: "—— 以上为历史,继续聊 ↓ ——", err: false });
+      if (msgs.length) state.items.push({ type: "marker", text: "以上为历史，继续聊 ↓", err: false });
       state.streaming = false;
       state.ended = null;
       state.error = null;
       state.usage = { tok: 0, cost: 0, hasCost: false };
       state.lastUsage = null;
-      state.runPrefix = "";
+      state.runVerb = "";
       fallbackUserIndex = -1;
       if (r.cwd) deps.onResumedCwd?.(String(r.cwd)); // 对齐原 setCwd(r.cwd):恢复跟随会话落盘目录
       return msgs.length;

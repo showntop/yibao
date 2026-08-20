@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 终止标/提示 marker(对齐 chat.html:1154-1160):居中灰小字 pill,err 红态。
+// 终止标/提示 marker:发丝线分隔(文本居中、两侧横线),err 红态。
 defineProps<{ text: string; err: boolean }>();
 </script>
 
