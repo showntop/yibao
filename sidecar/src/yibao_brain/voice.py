@@ -221,8 +221,12 @@ class _PersistentPlayer:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._cancel = None  # 当前段的 cancel（asyncio.Event.is_set 线程安全）
 
-    async def play(self, pcm, cancel) -> None:
-        """塞一段 float32 24k PCM，等它播完返回。句首尾淡入淡出防数字层 click。"""
+    async def play(self, pcm, cancel, *, fade_in: bool = True, fade_out: bool = True) -> None:
+        """塞一段 float32 24k PCM，等它播完返回。句首尾淡入淡出防数字层 click。
+
+        fade_in/fade_out 供流式分段播放关掉段间衰减：句首段淡入、句尾段淡出、
+        句中段原样直通（每段都淡入淡出会叠出一串 30ms 音量坑，听着扑扑响）。
+        """
         import numpy as np
         import sounddevice as sd
 
@@ -230,7 +234,7 @@ class _PersistentPlayer:
         pcm = np.asarray(pcm, dtype=np.float32)
         if pcm.size == 0:
             return
-        pcm = _fade_edges(pcm, self._sr, fade_sec=0.015)
+        pcm = _fade_edges(pcm, self._sr, fade_sec=0.015, fade_in=fade_in, fade_out=fade_out)
 
         self._cancel = cancel
         self._loop = asyncio.get_running_loop()
@@ -316,7 +320,8 @@ class _PersistentPlayer:
 class StreamingPcmSpeaker:
     """TTS provider 基类：共享流式管道（按句切分→预取下一句→播放→cancel）。
 
-    子类实现 _synth_pcm(一句文本) -> float32 24k PCM | None。
+    子类实现 _synth_pcm(一句文本) -> float32 24k PCM | None；
+    需要边收边播的（edge）覆盖 _synth_pcm_stream(一句文本) -> PCM 片段流。
     speak（同步，4a）：整段合成→阻塞播放。
     speak_stream（4b）：边收文本增量边按句播报；cancel.is_set() 立即停（清队列 + stop 播放）。
     生产者/消费者管道：合成下一句与播放当前句并行，句间不再有完整网络延迟。
@@ -336,7 +341,7 @@ class StreamingPcmSpeaker:
         asyncio.run(self._speak_one(text, _NeverCancel()))
 
     async def speak_stream(self, text_iter: AsyncIterator[str], cancel) -> None:
-        queue: asyncio.Queue = asyncio.Queue()  # 句子 PCM 队列；None=结束哨兵
+        queue: asyncio.Queue = asyncio.Queue()  # (pcm, fade_in, fade_out) 片段队列；None=结束哨兵
         synth_error: list[BaseException] = []
 
         async def produce() -> None:
@@ -353,14 +358,10 @@ class StreamingPcmSpeaker:
                         buf = rest
                         if cancel.is_set():
                             return
-                        pcm = await self._synth_pcm(sentence)
-                        if pcm is not None:
-                            await queue.put(pcm)
+                        await self._produce_sentence(sentence, queue, cancel)
                 tail = buf.strip()
                 if tail and not cancel.is_set():
-                    pcm = await self._synth_pcm(tail)
-                    if pcm is not None:
-                        await queue.put(pcm)
+                    await self._produce_sentence(tail, queue, cancel)
             except asyncio.CancelledError:
                 raise  # 正常取消（打断命中合成中），不是合成错误，必须向上传
             except BaseException as e:
@@ -370,10 +371,11 @@ class StreamingPcmSpeaker:
 
         async def consume() -> None:
             while True:
-                pcm = await queue.get()
-                if pcm is None or cancel.is_set():
+                item = await queue.get()
+                if item is None or cancel.is_set():
                     return
-                await self._play_pcm(pcm, cancel)
+                pcm, fade_in, fade_out = item
+                await self._play_pcm(pcm, cancel, fade_in=fade_in, fade_out=fade_out)
 
         producer = asyncio.create_task(produce())
         try:
@@ -385,16 +387,42 @@ class StreamingPcmSpeaker:
         if synth_error:
             raise synth_error[0]
 
+    async def _produce_sentence(self, sentence: str, queue: asyncio.Queue, cancel) -> None:
+        """一句文本 → 若干 PCM 片段入队：(pcm, fade_in, fade_out)。
+
+        流式合成（edge 边收边解）句内逐段产出：只在句首段淡入、句尾段淡出，
+        段间不衰减——每段都淡入淡出会叠出一串 30ms 音量坑（扑扑声）。
+        句尾标记靠一段前瞻（hold 住上一段、下一段到了再发），代价约一个解码段时长。
+        """
+        prev = None
+        first = True
+        async for pcm in self._synth_pcm_stream(sentence):
+            if cancel.is_set():
+                return
+            if prev is not None:
+                await queue.put((prev, first, False))
+                first = False
+            prev = pcm
+        if prev is not None:
+            await queue.put((prev, first, True))
+
+    async def _synth_pcm_stream(self, text: str):
+        """一句文本 → PCM 片段流。默认整句一次性产出；edge 覆盖为边收边解逐段产出。"""
+        pcm = await self._synth_pcm(text)
+        if pcm is not None:
+            yield pcm
+
     async def _synth_pcm(self, text: str):
         raise NotImplementedError
 
-    async def _play_pcm(self, pcm, cancel) -> None:
+    async def _play_pcm(self, pcm, cancel, *, fade_in: bool = True, fade_out: bool = True) -> None:
         """播放一段 PCM：走常驻单流（_PersistentPlayer），句间不关流。
 
-        - 首尾淡入淡出：消除数字层开关流 click；
+        - 首尾淡入淡出：消除数字层开关流 click；流式分段时由 fade_in/fade_out
+          关掉段间衰减（只留句首淡入、句尾淡出）；
         - 打断：对残留快速淡出后静音待机，流保持打开（无设备层 pop）。
         """
-        await self._player.play(pcm, cancel)
+        await self._player.play(pcm, cancel, fade_in=fade_in, fade_out=fade_out)
 
     async def _speak_one(self, text: str, cancel) -> None:
         if cancel.is_set():
@@ -406,41 +434,134 @@ class StreamingPcmSpeaker:
 
 
 class EdgeTtsSpeaker(StreamingPcmSpeaker):
-    """edge-tts 合成（zh-CN-XiaoxiaoNeural）→ miniaudio 解码 → sounddevice 播放。"""
+    """edge-tts 合成 → miniaudio 流式解码 → sounddevice 播放。
+
+    边收边播（延迟优化）：edge-tts 流式吐 mp3 chunk，旧实现攒满整段才解码播放
+    （起音 = 整段收完 1.22s + 解码 0.13s ≈ 1.35s）；现经字节管道边收边解边播
+    （dr_mp3 流式读、不挑字节边界），首 chunk 到达即起播。
+    连接复用（延迟优化）：同音色连续句子共享一个 keep-alive 连接池，
+    省掉每句 ~0.5s 的 TCP+TLS+WS 建连税；池失效自动丢池重建重试一次。
+    """
 
     name = "edge"
 
     def __init__(self, voice: str = "zh-CN-XiaoxiaoNeural"):
         super().__init__()
         self._voice = voice
+        self._connector = None       # 共享连接池（_pooled_connector_class() 实例，惰性建）
+        self._connector_loop = None  # 池所属事件循环（跨循环必须重建）
 
     async def _synth_pcm(self, text: str):
-        """一句文本 → edge-tts 合成 mp3 → 解码 float32 PCM。
+        """整句一次性合成（speak 同步路径）：复用流式管道，收齐片段拼接。"""
+        import numpy as np
 
-        返回 None 的两种情况（都跳过该句、不杀整段播报）：
-        - 无可播内容（空串 / 纯标点——edge-tts 对「？」这类会 NoAudioReceived）
-        - edge-tts 单句合成失败（NoAudioReceived 等），记 stderr 留痕
+        pieces = [np.asarray(p, dtype=np.float32) async for p in self._synth_pcm_stream(text)]
+        if not pieces:
+            return None
+        pcm = np.concatenate(pieces)
+        return pcm if len(pcm) else None
+
+    async def _synth_pcm_stream(self, text: str):
+        """一句文本 → PCM 片段流（边收边解边产）。
+
+        跳过该句、不杀整段播报的情况（同旧 _synth_pcm 约定）：
+        - 无可播内容（空串 / 纯标点——edge-tts 对「？」这类会 NoAudioReceived），不发请求
+        - 单句合成失败（记 stderr 留痕）
+        未产出任何音频就失败 → 疑似连接池失效：丢池重建重试一次（重连兜底）；
+        已产出片段后失败不重试（重试会把已播片段再念一遍）。
         """
         text = _speech_text(text)
         if not text or not re.search(r"\w", text):
-            return None
-        try:
-            mp3 = await self._fetch_mp3(text)
-        except Exception as e:
-            print(f"[yibao] 句子合成失败（已跳过）：{text!r} {e}", file=sys.stderr)
-            return None
-        pcm = _decode_mp3(mp3)
-        return pcm if len(pcm) else None
+            return
+        for attempt in (0, 1):
+            produced = False
+            try:
+                async for pcm in self._stream_sentence_pcm(text):
+                    if len(pcm):
+                        produced = True
+                        yield pcm
+                return
+            except asyncio.CancelledError:
+                raise  # 正常取消（打断命中合成中），必须向上传
+            except Exception as e:
+                if _is_no_audio_error(e):
+                    print(f"[yibao] 句子无可播音频（已跳过）：{text!r}", file=sys.stderr)
+                    return
+                if not produced and attempt == 0:
+                    print(f"[yibao] 合成失败，重建连接重试：{text!r} {e}", file=sys.stderr)
+                    self._reset_connector()
+                    continue
+                print(f"[yibao] 句子合成失败（已跳过）：{text!r} {e}", file=sys.stderr)
+                return
 
-    async def _fetch_mp3(self, text: str) -> bytes:
+    async def _stream_sentence_pcm(self, text: str):
+        """edge-tts 边收边解：抓取协程把 mp3 chunk 喂进字节管道，
+        解码线程（miniaudio stream_any，dr_mp3 按帧流式解）把 PCM 片段推进 asyncio 队列。
+
+        打断/收尾：管道 close 让解码线程读到 EOF 退出，抓取任务取消；
+        抓取失败在解码排空后透传异常（触发上层重连/跳过语义）。
+        """
+        loop = asyncio.get_running_loop()
+        src = _Mp3PipeSource()
+        pcm_q: asyncio.Queue = asyncio.Queue()
+        self._start_decoder(src, pcm_q, loop)
+        fetch = asyncio.create_task(self._feed_mp3(text, src))
+        try:
+            while True:
+                item = await pcm_q.get()
+                if item is None:
+                    break
+                if isinstance(item, BaseException):
+                    # 解码失败时优先透传抓取异常（NoAudioReceived 等语义给上层判别）
+                    if fetch.done() and not fetch.cancelled() and fetch.exception() is not None:
+                        raise fetch.exception()
+                    raise item
+                yield item
+        finally:
+            src.close()  # 打断：解码线程不再干等字节，当 EOF 收尾
+            if not fetch.done():
+                fetch.cancel()
+            await asyncio.gather(fetch, return_exceptions=True)
+        if not fetch.cancelled() and fetch.exception() is not None:
+            raise fetch.exception()
+
+    def _start_decoder(self, src: "_Mp3PipeSource", pcm_q: asyncio.Queue, loop) -> None:
+        """起解码线程（独立成方法便于测试替换）。"""
+        threading.Thread(target=_decode_mp3_pipe, args=(src, pcm_q, loop), daemon=True).start()
+
+    async def _feed_mp3(self, text: str, src: "_Mp3PipeSource") -> None:
+        """抓 mp3 chunk 喂管道（独立任务：与解码/播放并行）；收尾必喂 EOF 放解码线程出来。"""
+        try:
+            async for chunk in self._fetch_mp3_chunks(text):
+                src.feed(chunk)
+        finally:
+            src.feed_eof()
+
+    async def _fetch_mp3_chunks(self, text: str):
+        """edge-tts 流式抓 mp3：逐 audio chunk yield。连接走共享池（见 _get_connector）。"""
         import edge_tts
 
-        com = edge_tts.Communicate(text, self._voice)
-        chunks: list[bytes] = []
+        com = edge_tts.Communicate(text, self._voice, connector=self._get_connector())
         async for piece in com.stream():
             if piece["type"] == "audio":
-                chunks.append(piece["data"])
-        return b"".join(chunks)
+                yield piece["data"]
+
+    def _get_connector(self):
+        """共享 TLS 连接池（惰性建，随事件循环走）：edge-tts 每句新建的 ClientSession
+        从池里拿 ws 关闭后回收的 keep-alive 连接，省掉每句 ~0.5s TCP+TLS 建连税。"""
+        loop = asyncio.get_running_loop()
+        c = self._connector
+        if c is None or c.closed or self._connector_loop is not loop:
+            self._connector = _pooled_connector_class()(limit=4, keepalive_timeout=60, ttl_dns_cache=300)
+            self._connector_loop = loop
+        return self._connector
+
+    def _reset_connector(self) -> None:
+        """连接池失效兜底：丢弃旧池（连接被服务端掐/网络抖动），下次合成重建。
+
+        旧池不显式 close：它可能正被进行中的请求引用；闲置连接由 keepalive_timeout 自然回收。
+        """
+        self._connector = None
 
 
 class _NeverCancel:
@@ -492,25 +613,124 @@ def _take_sentence(buf: str, max_len: int = 80, min_soft: int = 12):
     return None, buf
 
 
-def _decode_mp3(mp3_bytes: bytes):
-    """miniaudio 解码 mp3 字节 → float32 mono 24k PCM（numpy 数组）。"""
+class _Mp3PipeSource:
+    """边收边解的 mp3 字节管道：feed 喂 chunk、read 阻塞等字节（miniaudio 流式解码源协议）。
+
+    实现 miniaudio.StreamableSource 的鸭子协议（read/seek/close + error_in_readcallback），
+    但不继承它——继承要模块级 import miniaudio，违背惰性加载（大脑启动提速）。
+    dr_mp3 按帧扫描流式解码，任意字节边界喂入都能解（实测：分 chunk 喂与整段喂输出逐位一致）。
+    """
+
+    error_in_readcallback = None  # miniaudio 读回调协议字段（本实现 read 不抛错，恒 None）
+
+    def __init__(self):
+        import queue
+
+        self._q: queue.Queue = queue.Queue()  # bytes 数据 / None=EOF
+        self._buf = bytearray()
+        self._eof = False
+        self.ffi_handle = None  # miniaudio stream_any 会回填
+
+    def feed(self, data: bytes) -> None:
+        self._q.put(data)
+
+    def feed_eof(self) -> None:
+        self._q.put(None)
+
+    def close(self) -> None:
+        """打断/收尾：read 不再干等，按 EOF 处理（幂等）。"""
+        self._eof = True
+        self._q.put(None)
+
+    def seek(self, offset: int, origin) -> bool:
+        return False  # 网络流不可 seek（已给定 MP3 格式，解码器不需要 seek）
+
+    def read(self, num_bytes: int) -> bytes:
+        """有多少给多少（至少等 1 字节），不攒满 num_bytes——dr_mp3 一次要 64KB，
+        攒满才返回等于把整段 mp3 等完，边收边播就废了。短读对解码器合法（非 EOF），
+        它会继续调 read 要后续字节；返回 b"" 才是 EOF。"""
+        while not self._eof and not self._buf:
+            item = self._q.get()
+            if item is None:
+                self._eof = True
+                break
+            self._buf += item
+        out = bytes(self._buf[:num_bytes])
+        del self._buf[:num_bytes]
+        return out
+
+
+def _decode_mp3_pipe(src: _Mp3PipeSource, pcm_q: asyncio.Queue, loop: asyncio.AbstractEventLoop) -> None:
+    """解码线程入口：miniaudio 流式解 mp3 管道 → float32 24k PCM 片段进 asyncio 队列。
+
+    None 哨兵收尾；解码异常也进队列（消费侧转为跳过该句）。
+    frames_to_read=2048（~85ms/段）：是播放器 1024 帧回调块的整数倍，段间不错位。
+    """
     import miniaudio
     import numpy as np
 
-    if not mp3_bytes:
-        return np.zeros(0, dtype=np.float32)
-    dec = miniaudio.decode(
-        mp3_bytes,
-        output_format=miniaudio.SampleFormat.FLOAT32,
-        nchannels=1,
-        sample_rate=24000,
-    )
-    return np.frombuffer(dec.samples, dtype=np.float32)
+    try:
+        stream = miniaudio.stream_any(
+            src,
+            source_format=miniaudio.FileFormat.MP3,
+            output_format=miniaudio.SampleFormat.FLOAT32,
+            nchannels=1,
+            sample_rate=24000,
+            frames_to_read=2048,
+        )
+        for samples in stream:
+            # copy：frombuffer 引用的是 miniaudio 的解码缓冲，下一段会被覆写
+            pcm = np.frombuffer(samples, dtype=np.float32).copy()
+            loop.call_soon_threadsafe(pcm_q.put_nowait, pcm)
+    except Exception as e:
+        loop.call_soon_threadsafe(pcm_q.put_nowait, e)
+    finally:
+        loop.call_soon_threadsafe(pcm_q.put_nowait, None)
 
 
-def _fade_edges(pcm, sr: int, fade_sec: float = 0.015):
+def _is_no_audio_error(e: BaseException) -> bool:
+    """edge-tts NoAudioReceived 判别（惰性 import：edge-tts 未装时不炸）。"""
+    try:
+        from edge_tts.exceptions import NoAudioReceived
+    except Exception:
+        return False
+    return isinstance(e, NoAudioReceived)
+
+
+_pooled_connector_cls = None
+
+
+def _pooled_connector_class():
+    """惰性构造 aiohttp.TCPConnector 子类（类定义依赖 aiohttp，模块级 import 太贵）。
+
+    子类把 close 做成空操作：edge-tts 每句新建 ClientSession，session 关闭会连带
+    connector.close()（connector_owner 默认 True）——不拦住的话池每句都被真关、
+    复用落空。ws 关闭后底层 TCP+TLS 连接回池，下一句省 ~0.5s 建连税（实测 0.8s→0.4s）。
+    真关闭走 force_close（测试清理用；生产上池随 speaker 活到进程退出）。
+    """
+    global _pooled_connector_cls
+    if _pooled_connector_cls is None:
+        import aiohttp
+
+        class _PooledConnector(aiohttp.TCPConnector):
+            def close(self, *, abort_ssl: bool = False):
+                async def _noop() -> None:
+                    pass
+
+                return _noop()  # 不关：保住 keep-alive 池（session 关闭时被连带调用）
+
+            async def force_close(self) -> None:
+                await super().close()
+
+        _pooled_connector_cls = _PooledConnector
+    return _pooled_connector_cls
+
+
+def _fade_edges(pcm, sr: int, fade_sec: float = 0.015, fade_in: bool = True, fade_out: bool = True):
     """首尾各 fade_sec 线性淡入淡出（零交叉），返回新数组：开关流不产生 click。
 
+    fade_in/fade_out 可分别关：流式合成的句内分段只在句首淡入、句尾淡出，
+    段间不衰减（防每段一对 15ms 衰减叠出 30ms 音量坑）。
     音频过短时 fade 长度按样本数折半，首尾区间不相交。
     """
     import numpy as np
@@ -518,11 +738,15 @@ def _fade_edges(pcm, sr: int, fade_sec: float = 0.015):
     n = pcm.size
     if n == 0:
         return pcm
+    if not fade_in and not fade_out:
+        return pcm  # 句中段：原样直通，不复制
     half = max(1, n // 2)
     fade = max(1, min(int(sr * fade_sec), half))
     out = np.array(pcm, dtype=np.float32, copy=True)
-    out[:fade] *= np.linspace(0.0, 1.0, fade, dtype=np.float32)
-    out[-fade:] *= np.linspace(1.0, 0.0, fade, dtype=np.float32)
+    if fade_in:
+        out[:fade] *= np.linspace(0.0, 1.0, fade, dtype=np.float32)
+    if fade_out:
+        out[-fade:] *= np.linspace(1.0, 0.0, fade, dtype=np.float32)
     return out
 
 

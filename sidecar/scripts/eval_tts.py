@@ -38,17 +38,38 @@ def _peak_rss_bytes() -> int:
 
 
 async def measure_provider(speaker, sentences) -> dict:
-    """逐句 _synth_pcm：ok=返回非空 PCM；latency_s=单句合成耗时（≈起音延迟）。"""
+    """逐句合成：ok=产出非空 PCM；latency_s=整句合成耗时；onset_s=首段音频产出耗时（≈感知起音）。
+
+    有 _synth_pcm_stream 的 provider（StreamingPcmSpeaker 全家）一次合成同时量两个数：
+    onset_s 是首个 PCM 片段产出的时刻（边收边播的起音点），latency_s 是收齐整句。
+    无流式接口的旧 fake 回退 _synth_pcm（只有 latency_s）。
+    """
     results = []
     for text in sentences:
         t0 = time.perf_counter()
-        pcm = await speaker._synth_pcm(text)
-        latency = time.perf_counter() - t0
-        results.append({
-            "text": text,
-            "ok": pcm is not None and len(pcm) > 0,
-            "latency_s": round(latency, 3),
-        })
+        stream = getattr(speaker, "_synth_pcm_stream", None)
+        if stream is not None:
+            onset = None
+            got = 0
+            async for piece in stream(text):
+                if piece is not None and len(piece):
+                    got += len(piece)
+                    if onset is None:
+                        onset = time.perf_counter() - t0
+            results.append({
+                "text": text,
+                "ok": got > 0,
+                "latency_s": round(time.perf_counter() - t0, 3),
+                "onset_s": round(onset, 3) if onset is not None else None,
+            })
+        else:
+            pcm = await speaker._synth_pcm(text)
+            latency = time.perf_counter() - t0
+            results.append({
+                "text": text,
+                "ok": pcm is not None and len(pcm) > 0,
+                "latency_s": round(latency, 3),
+            })
     return {"provider": speaker.name, "results": results}
 
 
@@ -97,8 +118,12 @@ async def _main() -> int:
         reports.append(verdict)
         mark = "PASS" if verdict["pass"] else "FAIL"
         lat = " / ".join(f"{r['latency_s']}s" for r in verdict["results"])
+        onsets = [r.get("onset_s") for r in verdict["results"]]
+        onset_text = ""
+        if any(o is not None for o in onsets):
+            onset_text = " 起音 " + " / ".join(f"{o}s" if o is not None else "-" for o in onsets)
         mem_text = f" mem+{mem / 1024**3:.2f}GB" if mem is not None else ""
-        print(f"{mark} {speaker.name}: 延迟 {lat}{mem_text}")
+        print(f"{mark} {speaker.name}: 延迟 {lat}{onset_text}{mem_text}")
         for f in verdict["failures"]:
             print(f"  - {f}")
 

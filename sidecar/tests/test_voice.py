@@ -218,24 +218,24 @@ def test_speaker_stream_pipelines_synth_and_play(monkeypatch):
     """边播边预取：第二句的合成应在第一句播放结束前就开始（句间不再有完整合成延迟）。"""
     import time
 
-    from yibao_brain.voice import EdgeTtsSpeaker
+    from yibao_brain.voice import StreamingPcmSpeaker
 
-    speaker = EdgeTtsSpeaker()
     timeline: dict[str, float] = {}
 
-    async def fake_synth(text):
-        timeline["synth_start_" + text] = time.monotonic()
-        await asyncio.sleep(0.05)  # 模拟网络合成延迟
-        return f"pcm:{text}"
+    class _Fake(StreamingPcmSpeaker):
+        async def _synth_pcm(self, text):
+            timeline["synth_start_" + text] = time.monotonic()
+            await asyncio.sleep(0.05)  # 模拟网络合成延迟
+            return f"pcm:{text}"
 
+    speaker = _Fake()
     played: list[str] = []
 
-    async def fake_play(pcm, cancel):
+    async def fake_play(pcm, cancel, **_kw):
         played.append(pcm)
         await asyncio.sleep(0.1)  # 模拟播放耗时
         timeline["play_end_" + pcm] = time.monotonic()
 
-    monkeypatch.setattr(speaker, "_synth_pcm", fake_synth)
     monkeypatch.setattr(speaker, "_play_pcm", fake_play)
 
     cancel = asyncio.Event()
@@ -248,18 +248,18 @@ def test_speaker_stream_pipelines_synth_and_play(monkeypatch):
 
 def test_speaker_stream_plays_tail(monkeypatch):
     """无终止标点的残句也要播报。"""
-    from yibao_brain.voice import EdgeTtsSpeaker
+    from yibao_brain.voice import StreamingPcmSpeaker
 
-    speaker = EdgeTtsSpeaker()
+    class _Fake(StreamingPcmSpeaker):
+        async def _synth_pcm(self, text):
+            return f"pcm:{text}"
+
+    speaker = _Fake()
     played: list[str] = []
 
-    async def fake_synth(text):
-        return f"pcm:{text}"
-
-    async def fake_play(pcm, cancel):
+    async def fake_play(pcm, cancel, **_kw):
         played.append(pcm)
 
-    monkeypatch.setattr(speaker, "_synth_pcm", fake_synth)
     monkeypatch.setattr(speaker, "_play_pcm", fake_play)
 
     cancel = asyncio.Event()
@@ -269,19 +269,19 @@ def test_speaker_stream_plays_tail(monkeypatch):
 
 def test_speaker_stream_cancel_stops_early(monkeypatch):
     """打断后不再播后续句子。"""
-    from yibao_brain.voice import EdgeTtsSpeaker
+    from yibao_brain.voice import StreamingPcmSpeaker
 
-    speaker = EdgeTtsSpeaker()
+    class _Fake(StreamingPcmSpeaker):
+        async def _synth_pcm(self, text):
+            return f"pcm:{text}"
+
+    speaker = _Fake()
     played: list[str] = []
 
-    async def fake_synth(text):
-        return f"pcm:{text}"
-
-    async def fake_play(pcm, cancel):
+    async def fake_play(pcm, cancel, **_kw):
         played.append(pcm)
         cancel.set()  # 第一句播完即打断
 
-    monkeypatch.setattr(speaker, "_synth_pcm", fake_synth)
     monkeypatch.setattr(speaker, "_play_pcm", fake_play)
 
     cancel = asyncio.Event()
@@ -342,40 +342,42 @@ def test_synth_pcm_skips_punctuation_only_sentence(monkeypatch):
     speaker = EdgeTtsSpeaker()
     calls = []
 
-    async def fake_fetch(text):
+    async def fake_stream(text):
         calls.append(text)
-        return b"mp3"
+        yield b"pcm"
 
-    monkeypatch.setattr(speaker, "_fetch_mp3", fake_fetch)
+    monkeypatch.setattr(speaker, "_stream_sentence_pcm", fake_stream)
     assert asyncio.run(speaker._synth_pcm("？")) is None
     assert asyncio.run(speaker._synth_pcm("…")) is None
     assert calls == []  # 纯标点根本没发请求
 
 
 def test_speak_stream_no_audio_sentence_skipped(monkeypatch):
-    """单句 NoAudioReceived 跳过该句、不杀整段播报（其余句照播）。"""
+    """单句 NoAudioReceived 跳过该句、不杀整段播报（其余句照播），且不触发重连重试。"""
     from edge_tts.exceptions import NoAudioReceived
 
     from yibao_brain.voice import EdgeTtsSpeaker
 
     speaker = EdgeTtsSpeaker()
     played: list[str] = []
+    calls: list[str] = []
 
-    async def fake_fetch(text):
+    async def fake_stream(text):
+        calls.append(text)
         if text == "嗯？":
             raise NoAudioReceived("No audio was received.")
-        return f"pcm:{text}".encode()
+        yield f"pcm:{text}"
 
-    async def fake_play(pcm, cancel):
+    async def fake_play(pcm, cancel, **_kw):
         played.append(pcm)
 
-    monkeypatch.setattr(speaker, "_fetch_mp3", fake_fetch)
+    monkeypatch.setattr(speaker, "_stream_sentence_pcm", fake_stream)
     monkeypatch.setattr(speaker, "_play_pcm", fake_play)
-    monkeypatch.setattr("yibao_brain.voice._decode_mp3", lambda b: b)  # 跳过真解码
 
     cancel = asyncio.Event()
     asyncio.run(speaker.speak_stream(_async_gen(["嗯？", "记好了。"]), cancel))
-    assert played == ["pcm:记好了。".encode()]  # 炸的那句被跳过，播报没死
+    assert played == ["pcm:记好了。"]  # 炸的那句被跳过，播报没死
+    assert calls == ["嗯？", "记好了。"]  # NoAudioReceived 不重试
 
 
 def test_speak_stream_cancel_during_synth_does_not_raise(monkeypatch):
@@ -386,11 +388,12 @@ def test_speak_stream_cancel_during_synth_does_not_raise(monkeypatch):
     speaker = EdgeTtsSpeaker()
     cancel = asyncio.Event()
 
-    async def fake_synth(text):
+    async def fake_stream(text):
         cancel.set()
         raise asyncio.CancelledError  # 模拟 producer.cancel() 击中合成中
+        yield  # pragma: no cover - 让它是 async generator
 
-    monkeypatch.setattr(speaker, "_synth_pcm", fake_synth)
+    monkeypatch.setattr(speaker, "_synth_pcm_stream", fake_stream)
     asyncio.run(speaker.speak_stream(_async_gen(["你好。"]), cancel))  # 不抛即过
 
 
@@ -410,20 +413,23 @@ def test_speech_text_strips_markdown_and_emoji():
 
 
 def test_synth_pcm_speaks_cleaned_text(monkeypatch):
-    """端到端到 _fetch_mp3：合成用的是清洗后的文本。"""
+    """端到端到合成入口：合成用的是清洗后的文本，且整句路径收齐流式片段拼接。"""
+    import numpy as np
+
     from yibao_brain.voice import EdgeTtsSpeaker
 
     speaker = EdgeTtsSpeaker()
     got = []
 
-    async def fake_fetch(text):
+    async def fake_stream(text):
         got.append(text)
-        return b"mp3"
+        yield np.zeros(1200, dtype=np.float32)
+        yield np.zeros(1200, dtype=np.float32)
 
-    monkeypatch.setattr(speaker, "_fetch_mp3", fake_fetch)
-    monkeypatch.setattr("yibao_brain.voice._decode_mp3", lambda b: [0.0])
-    asyncio.run(speaker._synth_pcm("**记好了** ✅"))
+    monkeypatch.setattr(speaker, "_stream_sentence_pcm", fake_stream)
+    pcm = asyncio.run(speaker._synth_pcm("**记好了** ✅"))
     assert got == ["记好了"]
+    assert pcm is not None and len(pcm) == 2400  # 两段拼成一句
 
 
 def test_serve_async_voice_start_without_voice_emits_error(tmp_path):
@@ -712,7 +718,7 @@ def test_streaming_base_pipeline_uses_subclass_synth(monkeypatch):
     s = _Fake()
     played = []
 
-    async def fake_play(pcm, cancel):
+    async def fake_play(pcm, cancel, **_kw):
         played.append(pcm)
 
     monkeypatch.setattr(s, "_play_pcm", fake_play)
@@ -781,7 +787,7 @@ def test_cosyvoice_cloud_synth_uses_client_and_returns_pcm(monkeypatch):
     assert spk.available() is True
     played = []
 
-    async def fake_play(pcm, cancel):
+    async def fake_play(pcm, cancel, **_kw):
         played.append(pcm)
 
     monkeypatch.setattr(spk, "_play_pcm", fake_play)
@@ -799,7 +805,7 @@ def test_cosyvoice_cloud_skip_when_synth_raises(monkeypatch):
 
     spk = CosyVoiceCloudSpeaker(client_factory=lambda: _Boom(), key="k")
     played = []
-    monkeypatch.setattr(spk, "_play_pcm", lambda pcm, c: played.append(pcm))
+    monkeypatch.setattr(spk, "_play_pcm", lambda pcm, c, **_kw: played.append(pcm))
     asyncio.run(spk.speak_stream(_async_gen(["你好。"]), _NoCancel()))  # 合成抛错 → 跳过该句，不杀整段
     assert played == []
 
@@ -831,7 +837,7 @@ def test_cosyvoice_local_sft_when_no_prompt(monkeypatch):
     assert spk.available() is True
     played = []
 
-    async def _play(pcm, c):
+    async def _play(pcm, c, **_kw):
         played.append(pcm)
 
     monkeypatch.setattr(spk, "_play_pcm", _play)
@@ -846,7 +852,7 @@ def test_cosyvoice_local_clones_when_prompt_audio(monkeypatch):
     fake = _FakeLocalClient()
     spk = CosyVoiceSpeaker(client_factory=lambda: fake, prompt_audio="/x.wav", prompt_text="示例台词")
 
-    async def _play(pcm, c):
+    async def _play(pcm, c, **_kw):
         ...
 
     monkeypatch.setattr(spk, "_play_pcm", _play)
@@ -979,3 +985,246 @@ def test_persistent_player_interrupt_keeps_stream_open(monkeypatch):
         player._stream.close()  # 收尾停驱动线程（测试环境清理，非业务路径）
 
     asyncio.run(_go())
+
+
+# ---------- TTS 延迟优化：edge 边收边播（流式解码）+ websocket 连接复用 ----------
+
+
+def test_produce_sentence_marks_fade_edges_for_streamed_pieces(monkeypatch):
+    """流式分段：句首段淡入、句尾段淡出、句中段不衰减（防逐段衰减叠出音量坑）。"""
+    from yibao_brain.voice import EdgeTtsSpeaker
+
+    speaker = EdgeTtsSpeaker()
+    played = []
+
+    async def fake_stream(text):
+        yield "p1"
+        yield "p2"
+        yield "p3"
+
+    async def fake_play(pcm, cancel, *, fade_in=True, fade_out=True):
+        played.append((pcm, fade_in, fade_out))
+
+    monkeypatch.setattr(speaker, "_stream_sentence_pcm", fake_stream)
+    monkeypatch.setattr(speaker, "_play_pcm", fake_play)
+
+    cancel = asyncio.Event()
+    asyncio.run(speaker.speak_stream(_async_gen(["一句。"]), cancel))
+    assert played == [("p1", True, False), ("p2", False, False), ("p3", False, True)]
+
+
+def test_mp3_pipe_source_reads_across_chunk_boundaries():
+    """字节管道：短读（有多少给多少，调用方循环凑）、EOF 收尾、close 放走干等的读（打断路径）。"""
+    from yibao_brain.voice import _Mp3PipeSource
+
+    src = _Mp3PipeSource()
+    src.feed(b"ab")
+    src.feed(b"cdef")
+    got = b""
+    while len(got) < 6:
+        piece = src.read(3)  # 短读：一次可能给不足 3 字节
+        assert piece, "数据没收完不该 EOF"
+        got += piece
+    assert got == b"abcdef"
+    src.feed_eof()
+    assert src.read(1) == b""  # EOF
+
+    src2 = _Mp3PipeSource()
+    src2.close()  # 打断：未喂数据也立即 EOF，解码线程不干等
+    assert src2.read(1) == b""
+
+
+def test_decode_mp3_pipe_pushes_pieces_and_sentinel(monkeypatch):
+    """解码线程：miniaudio 流式输出逐段进 asyncio 队列，None 哨兵收尾。"""
+    import array
+    import sys
+    import types
+
+    import numpy as np
+
+    from yibao_brain import voice as voice_mod
+
+    fake_miniaudio = types.SimpleNamespace(
+        FileFormat=types.SimpleNamespace(MP3="mp3"),
+        SampleFormat=types.SimpleNamespace(FLOAT32="f32"),
+        stream_any=lambda src, **kw: iter([array.array("f", [0.1, 0.2]), array.array("f", [0.3])]),
+    )
+    monkeypatch.setitem(sys.modules, "miniaudio", fake_miniaudio)
+
+    async def _go():
+        q: asyncio.Queue = asyncio.Queue()
+        voice_mod._decode_mp3_pipe(voice_mod._Mp3PipeSource(), q, asyncio.get_running_loop())
+        return [await q.get(), await q.get(), await q.get()]
+
+    items = asyncio.run(_go())
+    assert np.allclose(items[0], [0.1, 0.2]) and np.allclose(items[1], [0.3])
+    assert items[2] is None
+
+
+def test_stream_sentence_pcm_feeds_pipe_and_yields_decoded(monkeypatch):
+    """边收边解管道：抓取的 mp3 chunk 无损进管道，解码片段按序产出。"""
+    import threading
+
+    from yibao_brain.voice import EdgeTtsSpeaker
+
+    speaker = EdgeTtsSpeaker()
+    fed: list[str] = []
+
+    async def fake_fetch(text):
+        fed.append(text)
+        yield b"aa"
+        yield b"bb"
+
+    def fake_start_decoder(src, pcm_q, loop):
+        def _drain():
+            data = b""
+            while True:
+                chunk = src.read(3)  # 跨 chunk 边界读
+                if not chunk:
+                    break
+                data += chunk
+            loop.call_soon_threadsafe(pcm_q.put_nowait, data)
+            loop.call_soon_threadsafe(pcm_q.put_nowait, None)
+
+        threading.Thread(target=_drain, daemon=True).start()
+
+    monkeypatch.setattr(speaker, "_fetch_mp3_chunks", fake_fetch)
+    monkeypatch.setattr(speaker, "_start_decoder", fake_start_decoder)
+
+    async def _go():
+        return [p async for p in speaker._stream_sentence_pcm("你好。")]
+
+    assert asyncio.run(_go()) == [b"aabb"]
+    assert fed == ["你好。"]
+
+
+def test_stream_sentence_pcm_cancel_cleans_up_fetch_and_decoder(monkeypatch):
+    """打断（取消命中合成中）：抓取任务被取消、管道 close 放解码线程退出（不泄漏）。"""
+    import threading
+    import time
+
+    from yibao_brain.voice import EdgeTtsSpeaker
+
+    speaker = EdgeTtsSpeaker()
+    flags = {"fetch_cancelled": False, "decoder_exited": False}
+
+    async def fake_fetch(text):
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            flags["fetch_cancelled"] = True
+            raise
+        yield b"x"  # pragma: no cover
+
+    def fake_start_decoder(src, pcm_q, loop):
+        def _drain():
+            src.read(4096)  # 干等数据；管道 close 后读到 EOF 返回
+            flags["decoder_exited"] = True
+
+        threading.Thread(target=_drain, daemon=True).start()
+
+    monkeypatch.setattr(speaker, "_fetch_mp3_chunks", fake_fetch)
+    monkeypatch.setattr(speaker, "_start_decoder", fake_start_decoder)
+
+    async def _go():
+        gen = speaker._stream_sentence_pcm("你好。")
+        task = asyncio.create_task(gen.__anext__())
+        await asyncio.sleep(0.1)  # 让抓取/解码就位
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        await gen.aclose()
+
+    asyncio.run(_go())
+    assert flags["fetch_cancelled"]
+    for _ in range(100):
+        if flags["decoder_exited"]:
+            break
+        time.sleep(0.02)
+    assert flags["decoder_exited"]
+
+
+def test_edge_connector_reused_across_sentences_and_recycled():
+    """连接池复用：同循环共享同一池；edge-tts 每句 session 关闭连带调的 close 是空操作
+    （池不真关，keep-alive 连接留给下一句）；失效兜底丢池重建。"""
+    from yibao_brain.voice import EdgeTtsSpeaker
+
+    speaker = EdgeTtsSpeaker()
+
+    async def _go():
+        c1 = speaker._get_connector()
+        assert speaker._get_connector() is c1  # 连续句子复用同一池
+        await c1.close()  # edge-tts 每句 ClientSession 关闭时的连带调用：不真关
+        assert not c1.closed
+        assert speaker._get_connector() is c1  # 池还活着，继续用
+        speaker._reset_connector()  # 失效兜底：丢池
+        c2 = speaker._get_connector()
+        assert c2 is not c1 and not c2.closed
+        await c2.force_close()  # 真关闭走 force_close（测试清理）
+        assert c2.closed
+
+    asyncio.run(_go())
+
+
+def test_edge_synth_stream_retries_once_with_fresh_pool(monkeypatch):
+    """未产出音频就失败：丢池重连重试一次（重连兜底）；一直失败则重试一次后跳过该句。"""
+    from yibao_brain.voice import EdgeTtsSpeaker
+
+    speaker = EdgeTtsSpeaker()
+    resets = []
+    monkeypatch.setattr(speaker, "_reset_connector", lambda: resets.append(1))
+
+    attempts = []
+
+    async def flaky(text):
+        attempts.append(text)
+        if len(attempts) == 1:
+            raise RuntimeError("connection reset by peer")
+        yield "pcm"
+
+    monkeypatch.setattr(speaker, "_stream_sentence_pcm", flaky)
+
+    async def _go():
+        return [p async for p in speaker._synth_pcm_stream("你好。")]
+
+    assert asyncio.run(_go()) == ["pcm"]
+    assert attempts == ["你好。", "你好。"] and resets == [1]
+
+    attempts.clear()
+
+    async def always_fail(text):
+        attempts.append(text)
+        raise RuntimeError("down")
+        yield  # pragma: no cover - 让它是 async generator
+
+    monkeypatch.setattr(speaker, "_stream_sentence_pcm", always_fail)
+    assert asyncio.run(_go()) == []  # 重试仍败 → 跳过该句，不无限重试
+    assert len(attempts) == 2
+
+
+def test_edge_synth_stream_no_retry_after_partial_output(monkeypatch):
+    """已产出片段后失败不重试（重试会把已播片段再念一遍），保留已产片段、跳过剩余。"""
+    from yibao_brain.voice import EdgeTtsSpeaker
+
+    speaker = EdgeTtsSpeaker()
+
+    def _no_reset():
+        raise AssertionError("已产出片段后不该重试")
+
+    monkeypatch.setattr(speaker, "_reset_connector", _no_reset)
+    attempts = []
+
+    async def partial_then_fail(text):
+        attempts.append(text)
+        yield "p1"
+        raise RuntimeError("mid-stream reset")
+
+    monkeypatch.setattr(speaker, "_stream_sentence_pcm", partial_then_fail)
+
+    async def _go():
+        return [p async for p in speaker._synth_pcm_stream("你好。")]
+
+    assert asyncio.run(_go()) == ["p1"]
+    assert len(attempts) == 1
