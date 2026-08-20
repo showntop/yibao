@@ -71,6 +71,67 @@ export function runAnswer(bubbles: WorkBubble[], indices: number[]): string {
     .join("\n\n");
 }
 
+/** 会客只摊刚说的几句；过程行、提醒、空正文不进屋里。 */
+export function talkTurns(bubbles: WorkBubble[], limit = 6): number[] {
+  const idxs: number[] = [];
+  for (let i = 0; i < bubbles.length; i += 1) {
+    const b = bubbles[i];
+    if (b.panelLink || b.proc || b.icon) continue;
+    if (b.role !== "user" && b.role !== "ai") continue;
+    if (!b.text.trim()) continue;
+    idxs.push(i);
+  }
+  if (limit <= 0) return [];
+  return idxs.slice(-limit);
+}
+
+/** 把一段长回复切成视觉小说的拍。 */
+export function spokenPlain(text: string): string {
+  return text
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^[*-]\s+/gm, "")
+    .replace(/`+/g, "")
+    .trim();
+}
+
+export function talkBeats(text: string, max = 120): string[] {
+  const clean = spokenPlain(text);
+  if (!clean) return [];
+  const lines = clean.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  const beats: string[] = [];
+  let buf = "";
+  const flush = () => {
+    if (buf) beats.push(buf);
+    buf = "";
+  };
+  const pushLong = (line: string) => {
+    const parts = line.split(/(?<=[。！？!?…])\s*/);
+    for (const part of parts) {
+      if (!part) continue;
+      if (part.length > max) {
+        flush();
+        for (let i = 0; i < part.length; i += max) beats.push(part.slice(i, i + max));
+        continue;
+      }
+      if (buf && buf.length + part.length > max) flush();
+      buf += part;
+    }
+  };
+  for (const line of lines) {
+    if (line.length > max) {
+      flush();
+      pushLong(line);
+      flush();
+      continue;
+    }
+    if (buf && buf.length + 1 + line.length > max) flush();
+    buf = buf ? `${buf}\n${line}` : line;
+  }
+  flush();
+  return beats;
+}
+
 export function runTailIndex(bubbles: WorkBubble[], indices: number[]): number {
   for (let k = indices.length - 1; k >= 0; k -= 1) {
     const b = bubbles[indices[k]];

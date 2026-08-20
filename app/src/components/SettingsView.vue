@@ -678,7 +678,7 @@ onUnmounted(() => {
       <template v-if="cat === 'general'">
         <section class="s-group">
           <div class="s-group-title">外观</div>
-          <div class="s-note">材质、深浅、预设分开：主题管颜色，材质管圆角釉面和阴影，预设管零件落在哪、用哪种摊法。点名字就是换桌。</div>
+          <div class="s-note">材质、深浅、预设分开：主题管颜色，材质管圆角釉面和阴影。三栏、整桌、会客是我们排好的格子；画布才自己拖零件。点名字就是换桌。</div>
           <div class="s-row">
             <span class="s-row-label">材质</span>
             <div class="finish-seg" role="radiogroup" aria-label="材质">
@@ -715,7 +715,7 @@ onUnmounted(() => {
 
         <section class="s-group">
           <div class="s-group-title">主屏零件</div>
-          <div class="s-note">桌上的瓷片可隐藏、改大小、换瓷或玻璃；按住右上角拖动可排序。落在哪一格由当前预设决定。</div>
+          <div class="s-note">桌上的瓷片可隐藏、改大小、换瓷或玻璃。结构预设不拖；画布才拖、磁吸。落点由当前预设决定。</div>
           <div v-for="w in HOME_WIDGETS" :key="w.id" class="s-row widget-row">
             <label class="s-row-label">
               <input
@@ -750,7 +750,12 @@ onUnmounted(() => {
           </div>
           <div class="s-row">
             <span class="s-row-label">布局</span>
-            <button type="button" class="s-mini-btn" @click="homeWidgets.reset()">恢复默认</button>
+            <button
+              type="button"
+              class="s-mini-btn"
+              title="清掉这份预设里拖过的位置；结构预设几乎无框可清"
+              @click="homeWidgets.resetLayout(chromeId)"
+            >恢复默认</button>
           </div>
         </section>
 

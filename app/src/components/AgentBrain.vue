@@ -6,7 +6,7 @@ import NeuralBrain from "./NeuralBrain.vue";
 import Avatar from "./Avatar.vue";
 import HomeWidget from "./HomeWidget.vue";
 import { useLiveAssembly } from "../lib/home-chrome";
-import { faceOf, collapsibleOf, itemOf } from "../lib/home-assembly";
+import { faceOf } from "../lib/home-assembly";
 
 type AgentState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
 type CapabilityKind = "sense" | "think" | "act";
@@ -22,17 +22,18 @@ interface MemoryPoint {
   fresh: boolean;
 }
 
-const props = defineProps<{ state: AgentState; compact?: boolean }>();
-const emit = defineEmits<{ chat: [draft: string]; toggle: [] }>();
+const props = defineProps<{
+  state: AgentState;
+  compact?: boolean;
+  only?: "identity" | "mind" | "today";
+}>();
+const emit = defineEmits<{ chat: [draft: string] }>();
 const assembly = useLiveAssembly();
 const mindFace = computed(() => {
   const face = faceOf(assembly.value, "mind", "map");
   return face === "tile" ? "tile" as const : "map" as const;
 });
-const canFoldLeft = computed(() => {
-  const region = itemOf(assembly.value, "identity")?.region;
-  return !!region && collapsibleOf(assembly.value.preset).includes(region);
-});
+const identityFace = computed(() => faceOf(assembly.value, "identity", "tile"));
 
 const memories = ref<MemItem[]>([]);
 const plugins = ref<PluginInfo[]>([]);
@@ -207,22 +208,17 @@ onUnmounted(() => {
 
 <template>
   <aside class="agent" :class="[state, { compact }]">
-    <HomeWidget id="identity" class="identity-widget">
+    <HomeWidget v-if="!only || only === 'identity'" id="identity" class="identity-widget" :class="{ 'is-seat': identityFace === 'seat' }">
       <button class="identity" type="button" title="和译宝聊聊它的记忆与能力" @click="greet">
-        <span
-          class="identity-avatar"
-          :title="canFoldLeft ? '折叠左栏' : undefined"
-          :class="{ foldable: canFoldLeft }"
-          @click.stop="canFoldLeft && emit('toggle')"
-        ><Avatar :state="state" :size="36" compact /></span>
+        <span class="identity-avatar"><Avatar :state="state" :size="identityFace === 'seat' ? 108 : 36" :compact="identityFace !== 'seat'" /></span>
         <span class="identity-copy">
           <span class="identity-line"><strong>译宝</strong><i class="state-dot" />{{ stateText }}</span>
-          <span>{{ stateDetail }}</span>
+          <span v-if="identityFace !== 'seat'">{{ stateDetail }}</span>
         </span>
       </button>
     </HomeWidget>
 
-    <HomeWidget id="mind" class="mind-widget" aria-label="译宝的记忆、感知和行动能力">
+    <HomeWidget v-if="!only || only === 'mind'" id="mind" class="mind-widget" aria-label="译宝的记忆、感知和行动能力">
       <h2 class="yb-widget-head">认知</h2>
       <div class="mind-well">
         <NeuralBrain
@@ -255,7 +251,7 @@ onUnmounted(() => {
       </Transition>
     </HomeWidget>
 
-    <HomeWidget id="today" class="today-widget" aria-label="今日概要">
+    <HomeWidget v-if="!only || only === 'today'" id="today" class="today-widget" aria-label="今日概要">
       <h2 class="yb-widget-head">今日</h2>
       <div class="today-cells">
         <span class="today-cell"><b>{{ doneDisplay }}</b>完成</span>
@@ -294,12 +290,6 @@ button {
 .identity-avatar {
   flex: none;
 }
-.identity-avatar.foldable {
-  cursor: pointer;
-}
-.identity-avatar.foldable :deep(.av) {
-  cursor: pointer;
-}
 
 .identity-copy {
   min-width: 0;
@@ -308,7 +298,40 @@ button {
   gap: 3px;
   font-size: 11px;
   color: var(--yb-paper-ink-dim);
+  overflow: hidden;
+}
+
+.identity-copy > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+:deep(.is-seat) {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+:deep(.is-seat) .identity {
+  flex-direction: column;
+  align-items: center;
+  padding: 0 4px 0;
+  text-align: center;
+  gap: 6px;
+}
+:deep(.is-seat) .identity-copy {
+  white-space: normal;
+  align-items: center;
+}
+:deep(.is-seat) .identity-copy > span {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+:deep(.is-seat) .identity-line {
+  flex-wrap: wrap;
+  justify-content: center;
 }
 
 .identity-line {

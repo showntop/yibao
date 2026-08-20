@@ -928,14 +928,6 @@ pre {
   min-height: 0;
 }
 
-:root[data-chrome="rails"] .yb-widget--s[data-widget="sessions"] {
-  flex: 0 1 auto;
-  max-height: 156px;
-}
-:root[data-chrome="rails"] .yb-widget--m[data-widget="sessions"] {
-  flex: 0 1 auto;
-  max-height: 248px;
-}
 .yb-widget--s[data-widget="mind"] .density-map .brain-stage { height: 100px; }
 .yb-widget--m[data-widget="mind"] .density-map .brain-stage { height: 132px; }
 .yb-widget--l[data-widget="mind"] .density-map .brain-stage { height: 156px; }

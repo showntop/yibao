@@ -2,6 +2,7 @@
 import type { Component } from "vue";
 import HomeChatThread from "../components/HomeChatThread.vue";
 import HomeChatPaper from "../components/HomeChatPaper.vue";
+import HomeChatTalk from "../components/HomeChatTalk.vue";
 import SessionList from "../components/SessionList.vue";
 import HomeContextPanel from "../components/HomeContextPanel.vue";
 import InputBar from "../components/InputBar.vue";
@@ -10,12 +11,12 @@ import HomeGlance from "../components/HomeGlance.vue";
 import HomePluginGlance from "../components/HomePluginGlance.vue";
 
 export const PART_VIEWS: Record<string, Record<string, Component>> = {
-  chat: { thread: HomeChatThread, paper: HomeChatPaper },
-  sessions: { list: SessionList, spine: SessionList },
+  chat: { thread: HomeChatThread, paper: HomeChatPaper, talk: HomeChatTalk },
+  sessions: { list: SessionList, spine: SessionList, cards: SessionList },
   now: { inspector: HomeContextPanel, note: HomeContextPanel },
   composer: { bar: InputBar },
   mind: { map: AgentBrain, tile: AgentBrain },
-  identity: { tile: AgentBrain },
+  identity: { tile: AgentBrain, seat: AgentBrain },
   today: { tile: AgentBrain },
   need: { tile: HomeGlance },
   tasks: { tile: HomeGlance },

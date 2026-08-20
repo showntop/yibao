@@ -17,15 +17,17 @@ export interface SessionMeta {
 const sessions = ref<SessionMeta[]>([]);
 const activeId = ref(sessionStore.conversation.getActiveConversationId() ?? "");
 
-const props = defineProps<{ variant?: "list" | "spine" }>();
+const props = defineProps<{ variant?: "list" | "spine" | "cards" }>();
 const assembly = useLiveAssembly();
 const face = computed(() =>
-  (props.variant ?? faceOf(assembly.value, "sessions", "list")) as "list" | "spine",
+  (props.variant ?? faceOf(assembly.value, "sessions", "list")) as "list" | "spine" | "cards",
 );
 const shown = computed(() =>
   face.value === "spine"
     ? spineVisible(sessions.value, activeId.value, spineLimitOf(assembly.value))
-    : sessions.value,
+    : face.value === "cards"
+      ? sessions.value.slice(0, 8)
+      : sessions.value,
 );
 
 const emit = defineEmits<{
@@ -103,35 +105,33 @@ function fmtTime(ts: number): string {
 
 <template>
   <aside class="session" :class="face">
-    <header v-if="face !== 'spine'" class="echo-head yb-widget-head">
-      <div>
-        <span>会话</span>
-        <span class="echo-count yb-widget-meta">{{ sessions.length ? `${sessions.length} 条` : "暂无" }}</span>
-      </div>
-      <button class="echo-new" type="button" title="开始一段新对话" aria-label="开始一段新对话" @click="newChat">
-        <span>新对话</span>
-      </button>
-    </header>
+    <h2 v-if="face === 'list'" class="yb-widget-head">
+      <span>会话 <span class="yb-widget-meta">{{ sessions.length ? `${sessions.length} 条` : "暂无" }}</span></span>
+      <button class="echo-new" type="button" title="开始一段新对话" aria-label="开始一段新对话" @click="newChat">新对话</button>
+    </h2>
 
-    <div class="echo-list" role="list" aria-label="最近会话">
+    <div class="echo-list" role="list" :aria-label="face === 'cards' ? '到过的人' : '最近会话'">
       <div v-for="session in shown" :key="session.id" class="echo-row" :class="{ active: session.id === activeId }" role="listitem">
         <button class="echo-main" type="button" :title="session.title" @click="select(session)">
           <span class="echo-line1">
-            <strong>{{ face === "spine" ? spineCaption(session.title, 2) : session.title }}</strong>
-            <time v-if="face !== 'spine'">{{ fmtTime(session.updatedAt) }}</time>
+            <strong>{{ face === "list" ? session.title : spineCaption(session.title, face === "cards" ? 4 : 2) }}</strong>
+            <time v-if="face === 'list'">{{ fmtTime(session.updatedAt) }}</time>
           </span>
-          <span v-if="face !== 'spine' && session.preview" class="echo-preview">{{ session.preview }}</span>
-          <span v-else-if="face !== 'spine'" class="echo-preview quiet">暂无内容</span>
+          <span v-if="face === 'list' && session.preview" class="echo-preview">{{ session.preview }}</span>
+          <span v-else-if="face === 'list'" class="echo-preview quiet">暂无内容</span>
         </button>
-        <button v-if="face !== 'spine'" class="echo-delete" type="button" title="删除这段会话" aria-label="删除这段会话" @click="remove(session.id)">
+        <button v-if="face === 'list'" class="echo-delete" type="button" title="删除这段会话" aria-label="删除这段会话" @click="remove(session.id)">
           <YbIcon name="x" :size="10" />
         </button>
       </div>
 
-      <button v-if="!sessions.length && face !== 'spine'" class="echo-empty" type="button" @click="newChat">
+      <button v-if="!sessions.length && face === 'list'" class="echo-empty" type="button" @click="newChat">
         <span class="empty-ripple"><i /></span>
         <strong>暂无会话</strong>
         <span>开始一段新的对话</span>
+      </button>
+      <button v-if="face === 'cards'" class="echo-new card-new" type="button" title="新的来访" aria-label="新的来访" @click="newChat">
+        <span>+</span>
       </button>
     </div>
 
@@ -146,29 +146,50 @@ function fmtTime(ts: number): string {
   width: 100%;
   box-sizing: border-box;
   height: 100%;
+  min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow-x: hidden;
 }
 
 button { font: inherit; }
 
-.echo-head {
-  flex: none;
-  align-items: center;
+.session.list .echo-list {
+  margin: 2px 8px 8px;
+  padding: 4px;
+  border-radius: calc(var(--yb-widget-radius) - 6px);
+  background: var(--yb-note-mute);
+  box-shadow: var(--yb-press);
 }
 
-.echo-head > div {
-  min-width: 0;
-  display: flex;
-  align-items: baseline;
-  gap: 7px;
-}
-
-.echo-count {
-  font-size: 10px;
+.session.list .echo-new {
+  height: auto;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--yb-paper-ink-dim);
-  opacity: 0.75;
+  font-size: 10px;
+  font-weight: var(--yb-fw-medium);
+  letter-spacing: var(--yb-kicker-track);
+  box-shadow: none;
+}
+
+.session.list .echo-new:hover {
+  transform: none;
+  filter: none;
+  color: var(--yb-paper-ink);
+}
+
+.session.list .echo-row.active .echo-main {
+  background: var(--yb-widget-bg);
+  box-shadow: var(--yb-glaze-hi);
+}
+
+.session.list .echo-empty {
+  margin: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .echo-new {
@@ -195,7 +216,9 @@ button { font: inherit; }
 
 .echo-list {
   flex: 1;
+  min-width: 0;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   padding: 2px 6px 8px;
   display: flex;
@@ -205,6 +228,8 @@ button { font: inherit; }
 
 .echo-row {
   position: relative;
+  min-width: 0;
+  max-width: 100%;
   display: flex;
   align-items: stretch;
 }
@@ -227,7 +252,7 @@ button { font: inherit; }
 }
 
 .echo-row:hover .echo-main {
-  background: var(--yb-row-hover);
+  background: color-mix(in srgb, var(--yb-widget-bg) 70%, transparent);
 }
 
 .echo-row.active .echo-main {
@@ -245,12 +270,13 @@ button { font: inherit; }
 }
 
 .echo-line1 strong {
+  display: block;
   min-width: 0;
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: var(--yb-fw-medium);
   color: var(--yb-paper-ink);
   line-height: 1.3;
@@ -265,6 +291,7 @@ button { font: inherit; }
 
 .echo-preview {
   display: block;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -406,6 +433,89 @@ button { font: inherit; }
   font-weight: var(--yb-fw-medium);
   letter-spacing: 0.08em;
   white-space: nowrap;
+}
+
+.session.cards {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 0;
+  width: 100%;
+  height: auto;
+  padding: 0;
+}
+.session.cards .echo-list {
+  flex: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(4.5rem, 1fr));
+  width: 100%;
+  overflow: hidden;
+  padding: 0;
+  gap: 8px;
+}
+.session.cards .echo-row {
+  width: auto;
+  min-width: 0;
+  margin: 0;
+  transform: none;
+}
+.session.cards .echo-row:hover .echo-main,
+.session.cards .echo-row.active .echo-main {
+  transform: translateY(-2px);
+}
+.session.cards .echo-main {
+  width: 100%;
+  height: 72px;
+  padding: 10px 6px;
+  border-radius: 12px;
+  background:
+    var(--yb-widget-glaze),
+    var(--yb-widget-bg);
+  box-shadow: var(--yb-widget-shadow);
+  border: 1px solid var(--yb-widget-border);
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  transition: transform 160ms var(--yb-ease-out), background 160ms var(--yb-ease-out);
+}
+.session.cards .echo-row.active .echo-main {
+  background: var(--yb-note-accent);
+  box-shadow: var(--yb-press);
+}
+.session.cards .echo-line1 {
+  display: block;
+  width: 100%;
+  text-align: center;
+}
+.session.cards .echo-line1 strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+.session.cards .card-new {
+  flex: none;
+  align-self: stretch;
+  width: auto;
+  min-width: 0;
+  height: 72px;
+  margin: 0;
+  padding: 0;
+  justify-content: center;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--yb-widget-bg) 40%, transparent);
+  color: var(--yb-text-faint);
+  box-shadow: none;
+  font-size: 22px;
+  font-weight: var(--yb-fw-medium);
+  letter-spacing: 0;
+  writing-mode: horizontal-tb;
+}
+.session.cards .card-new:hover {
+  transform: translateY(-2px);
+  color: var(--yb-paper-ink);
 }
 
 @media (prefers-reduced-motion: reduce) {

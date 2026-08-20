@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
+import YbIcon from "./YbIcon.vue";
 import {
   getWidgetsOnce,
   onWidgets,
@@ -7,40 +8,23 @@ import {
   type WidgetPayload,
 } from "../lib/brain";
 import { useLiveAssembly } from "../lib/home-chrome";
-import { useHomeWidgets } from "../lib/home-widgets";
 import {
   isPlaced,
-  isPluginPart,
-  itemsInRegion,
   pluginPartId,
-  stackOrder,
   syncPluginParts,
 } from "../lib/home-assembly";
 
+const props = defineProps<{ panel?: string }>();
 const widgets = ref<WidgetPayload[]>([]);
-const layout = useHomeWidgets();
 const assembly = useLiveAssembly();
 let unWidgets: (() => void) | null = null;
 
-const placed = computed(() =>
-  widgets.value.filter((widget) => isPlaced(assembly.value, pluginPartId(widget.panel))),
-);
-
-const region = computed(() =>
-  assembly.value.items.find((item) => isPluginPart(item.id))?.region,
-);
-
-const hosted = computed(() => {
-  if (!region.value) return false;
-  return !itemsInRegion(assembly.value, region.value).some((item) =>
-    item.kind === "work" || item.kind === "input" || item.kind === "nav" || item.kind === "context",
-  );
-});
-
-const pluginOrder = computed(() => {
-  const first = placed.value[0];
-  if (!first) return 0;
-  return stackOrder(assembly.value, layout.state, pluginPartId(first.panel));
+const canDrag = computed(() => assembly.value.place === "canvas");
+const shown = computed(() => {
+  const rows = props.panel
+    ? widgets.value.filter((widget) => pluginPartId(widget.panel) === props.panel)
+    : widgets.value;
+  return rows.filter((widget) => isPlaced(assembly.value, pluginPartId(widget.panel)));
 });
 
 function applyWidgets(next: WidgetPayload[]) {
@@ -68,54 +52,95 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <aside
-    v-if="placed.length"
-    class="plugin-glance"
-    :class="{ hosted }"
-    :data-glance-stack="hosted ? region : undefined"
-  >
-    <button
-      v-for="widget in placed"
+  <aside v-if="shown.length" class="plugin-glance">
+    <section
+      v-for="widget in shown"
       :key="widget.panel"
       class="yb-widget yb-widget--porcelain yb-widget--m plugin-card"
-      type="button"
       :data-widget="pluginPartId(widget.panel)"
-      :style="{ '--yb-widget-order': pluginOrder }"
-      :disabled="!widget.open"
-      :title="widget.open ? `打开${widget.title}` : widget.title"
-      @click="openWidget(widget)"
     >
-      <span class="yb-widget-head">{{ widget.title }}</span>
-    </button>
+      <button
+        v-if="canDrag"
+        class="plugin-grip"
+        type="button"
+        data-drag-handle
+        title="拖动"
+        aria-label="拖动"
+      >
+        <YbIcon name="grip" :size="11" />
+      </button>
+      <button
+        class="plugin-open"
+        type="button"
+        :disabled="!widget.open"
+        :title="widget.open ? `打开${widget.title}` : widget.title"
+        @click="openWidget(widget)"
+      >
+        <span class="plugin-title">{{ widget.title }}</span>
+      </button>
+    </section>
   </aside>
 </template>
 
 <style scoped>
 .plugin-glance { display: contents; }
-.plugin-glance.hosted {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-width: 0;
-}
 .plugin-card {
-  width: 100%;
   margin: 0;
-  padding: 0 0 8px;
+  padding: 0;
+  width: 100%;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+}
+.plugin-grip {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin-left: 8px;
+  padding: 0;
+  display: grid;
+  place-items: center;
   border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--yb-paper-ink-dim);
+  cursor: grab;
+}
+.plugin-open {
+  flex: 1;
+  min-width: 0;
+  height: 40px;
+  margin: 0;
+  padding: 0 14px;
+  border: 0;
+  display: flex;
+  align-items: center;
   text-align: left;
   cursor: pointer;
   font: inherit;
   color: inherit;
+  background: transparent;
 }
-.plugin-card:disabled {
+.plugin-title {
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--yb-paper-ink);
+  font-size: 12px;
+  font-weight: var(--yb-fw-medium);
+  letter-spacing: 0;
+  line-height: 1.3;
+}
+.plugin-open:disabled {
   cursor: default;
   opacity: 0.72;
 }
-.plugin-card:not(:disabled):hover {
+.plugin-open:not(:disabled):hover {
   filter: brightness(0.98);
 }
-.plugin-card:focus-visible {
+.plugin-open:focus-visible {
   outline: 2px solid var(--yb-accent);
   outline-offset: 1px;
 }

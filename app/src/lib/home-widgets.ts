@@ -33,11 +33,27 @@ function readStored(): string | null {
   try { return localStorage.getItem(KEY); } catch { return null; }
 }
 
+export type FrameBox = {
+  left?: number;
+  top?: number;
+  right?: number;
+  bottom?: number;
+  width?: number;
+  height?: number;
+  z?: number;
+};
+
+export type AttachSpec = { to: string; edge: "start" | "end" | "top" | "bottom"; gap?: number; width?: number; height?: number };
+
 export interface WidgetLayout {
   hidden: WidgetId[];
   size: Partial<Record<WidgetId, WidgetSize>>;
   material: Partial<Record<WidgetId, WidgetMaterial>>;
   order: WidgetId[];
+  layouts: Partial<Record<string, {
+    frames?: Partial<Record<string, FrameBox>>;
+    attach?: Partial<Record<string, AttachSpec | null>>;
+  }>>;
 }
 
 export function isWidgetId(v: unknown): v is WidgetId {
@@ -56,6 +72,7 @@ export function defaultLayout(): WidgetLayout {
     size: {},
     material: {},
     order: HOME_WIDGETS.map((w) => w.id),
+    layouts: {},
   };
 }
 
@@ -79,6 +96,9 @@ export function parseLayout(raw: string | null): WidgetLayout {
       const next = parsed.order.filter(isWidgetId);
       for (const id of base.order) if (!next.includes(id)) next.push(id);
       base.order = next.filter((id, i) => next.indexOf(id) === i);
+    }
+    if (parsed.layouts && typeof parsed.layouts === "object") {
+      base.layouts = parsed.layouts;
     }
     return base;
   } catch {
@@ -122,6 +142,47 @@ export function moveWidget(layout: WidgetLayout, id: WidgetId, before: WidgetId 
   return { ...layout, order };
 }
 
+export function setPartFrame(
+  layout: WidgetLayout,
+  preset: string,
+  id: string,
+  box: FrameBox,
+): WidgetLayout {
+  const prev = layout.layouts[preset] ?? {};
+  return {
+    ...layout,
+    layouts: {
+      ...layout.layouts,
+      [preset]: {
+        ...prev,
+        frames: { ...prev.frames, [id]: { ...prev.frames?.[id], ...box } },
+        attach: { ...prev.attach, [id]: null },
+      },
+    },
+  };
+}
+
+export function clearPartFrame(layout: WidgetLayout, preset: string, id: string): WidgetLayout {
+  const prev = layout.layouts[preset];
+  if (!prev) return layout;
+  const frames = { ...prev.frames };
+  const attach = { ...prev.attach };
+  delete frames[id];
+  delete attach[id];
+  const empty = !Object.keys(frames).length && !Object.keys(attach).length;
+  const layouts = { ...layout.layouts };
+  if (empty) delete layouts[preset];
+  else layouts[preset] = { ...prev, frames, attach };
+  return { ...layout, layouts };
+}
+
+export function clearPresetLayout(layout: WidgetLayout, preset: string): WidgetLayout {
+  if (!layout.layouts[preset]) return layout;
+  const layouts = { ...layout.layouts };
+  delete layouts[preset];
+  return { ...layout, layouts };
+}
+
 const state = reactive<WidgetLayout>(parseLayout(readStored()));
 
 if (typeof watch === "function") {
@@ -135,6 +196,7 @@ function assign(next: WidgetLayout) {
   state.size = next.size;
   state.material = next.material;
   state.order = next.order;
+  state.layouts = next.layouts;
 }
 
 export function useHomeWidgets() {
@@ -145,6 +207,9 @@ export function useHomeWidgets() {
     setSize: (id: WidgetId, size: WidgetSize) => assign(setSize(state, id, size)),
     setMaterial: (id: WidgetId, material: WidgetMaterial) => assign(setMaterial(state, id, material)),
     move: (id: WidgetId, before: WidgetId | null) => assign(moveWidget(state, id, before)),
+    setFrame: (preset: string, id: string, box: FrameBox) => assign(setPartFrame(state, preset, id, box)),
+    resetFrame: (preset: string, id: string) => assign(clearPartFrame(state, preset, id)),
+    resetLayout: (preset: string) => assign(clearPresetLayout(state, preset)),
     reset: () => assign(defaultLayout()),
   };
 }

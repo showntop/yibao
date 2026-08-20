@@ -1,30 +1,33 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, provide, ref } from "vue";
-import Avatar from "./Avatar.vue";
 import YbIcon from "./YbIcon.vue";
 import { HOME_ASSEMBLY_KEY, useHomeChrome } from "../lib/home-chrome";
 import { useHomeWidgets } from "../lib/home-widgets";
 import {
-  collapseGridColumns,
+  DEFAULT_STAGE,
+  SNAP_PITCH,
   collapsibleOf,
-  docksOf,
-  gridStyle,
-  isPluginPart,
-  itemsInRegion,
-  regionSet,
+  foldHandleStyle,
+  frameStyle,
+  gridStageStyle,
   resolveAssembly,
-  stackOrder,
-  type Assembly,
+  settleSnap,
+  snapBox,
+  type AssemblyFold,
+  type HomeDrag,
+  type ResolvedFrame,
   type ResolvedItem,
+  type SnapHit,
 } from "../lib/home-assembly";
 
 type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
-const SLOTTED = new Set(["work", "input", "nav", "context"]);
 
 defineProps<{ thinking?: boolean; state?: AvatarState }>();
 const left = defineModel<boolean>("left", { default: true });
 const peek = defineModel<boolean>("peek", { default: true });
 const compact = ref(false);
+const stageEl = ref<HTMLElement | null>(null);
+const stageSize = ref({ ...DEFAULT_STAGE });
 
 const { id: presetId } = useHomeChrome();
 const widgets = useHomeWidgets();
@@ -34,174 +37,196 @@ onMounted(() => {
   const apply = () => { compact.value = mq.matches; };
   apply();
   mq.addEventListener("change", apply);
-  const preset = collapsibleOf(presetId.value);
-  if (preset.includes("left") && window.innerWidth <= 1180) left.value = false;
-  onUnmounted(() => mq.removeEventListener("change", apply));
+  if (collapsibleOf(presetId.value).includes("left") && window.innerWidth <= 1180) left.value = false;
+  const ro = new ResizeObserver((entries) => {
+    const box = entries[0]?.contentRect;
+    if (!box) return;
+    stageSize.value = { width: Math.max(1, box.width), height: Math.max(1, box.height) };
+  });
+  if (stageEl.value) ro.observe(stageEl.value);
+  onUnmounted(() => {
+    mq.removeEventListener("change", apply);
+    ro.disconnect();
+  });
 });
 
+const collapsed = computed(() => [
+  ...(left.value ? [] : ["left"]),
+  ...(peek.value ? [] : ["right"]),
+]);
+
 const assembly = computed(() =>
-  resolveAssembly(presetId.value, widgets.state, { compact: compact.value }),
+  resolveAssembly(presetId.value, widgets.state, {
+    compact: compact.value,
+    stage: stageSize.value,
+    collapsed: collapsed.value,
+  }),
 );
 provide(HOME_ASSEMBLY_KEY, assembly);
 
-function defaultSlotRegion(a: Assembly): string | null {
-  const regions = new Set(
-    a.items.filter((i) => i.kind === "glance" && i.region).map((i) => i.region!),
-  );
-  for (const r of regions) {
-    if (a.items.some((i) => i.region === r && SLOTTED.has(i.kind))) return r;
-  }
-  return null;
+const isCanvas = computed(() => assembly.value.place === "canvas");
+const grid = computed(() => assembly.value.grid);
+
+const drag = ref<HomeDrag | null>(null);
+const snapping = computed(() => isCanvas.value && drag.value !== null);
+provide("home-snapping", snapping);
+provide("home-stage", stageSize);
+provide("home-drag", drag);
+provide("home-commit-drag", commitFrame);
+
+const areas = computed(() => Object.keys(grid.value?.stacks ?? {}));
+
+function stackOf(area: string): ResolvedItem[] {
+  const ids = grid.value?.stacks[area] ?? [];
+  return ids
+    .map((id) => assembly.value.items.find((item) => item.id === id))
+    .filter((item): item is ResolvedItem => Boolean(item));
 }
 
-const stackRegion = computed(() => defaultSlotRegion(assembly.value));
-
-const structuralRegions = computed(() => {
-  const names: string[] = [];
-  for (const item of assembly.value.items) {
-    if (!item.region || !SLOTTED.has(item.kind)) continue;
-    if (!names.includes(item.region)) names.push(item.region);
-  }
-  return names;
-});
-
-function slottedIn(region: string): ResolvedItem[] {
-  return itemsInRegion(assembly.value, region).filter((i) => SLOTTED.has(i.kind));
+function foldLabel(fold: AssemblyFold): string {
+  const side = fold.side === "start" ? "左栏" : "右栏";
+  return fold.folded ? `展开${side}` : `收起${side}`;
 }
 
-function hostOrder(id: string): number {
-  return stackOrder(assembly.value, widgets.state, id);
+function toggleFold(fold: AssemblyFold) {
+  if (fold.side === "end") peek.value = !peek.value;
+  else left.value = !left.value;
 }
 
-const scatterCss = computed(() => {
-  if (stackRegion.value) return "";
-  const byRegion = new Map<string, ResolvedItem[]>();
-  for (const item of assembly.value.items) {
-    if (item.kind !== "glance" || !item.region) continue;
-    const list = byRegion.get(item.region) ?? [];
-    list.push(item);
-    byRegion.set(item.region, list);
+function hostStyle(item: ResolvedItem) {
+  if (!item.frame) return {};
+  if (drag.value?.id === item.id) return frameStyle(drag.value.frame);
+  return frameStyle(item.frame);
+}
+
+function commitFrame(id: string, hit: SnapHit, origin: ResolvedFrame) {
+  const settled = settleSnap(hit);
+  widgets.setFrame(presetId.value, id, {
+    left: settled.left,
+    top: settled.top,
+    width: origin.width,
+    height: origin.height,
+    z: origin.z + 20,
+  });
+}
+
+function onMoveStart(item: ResolvedItem, e: PointerEvent) {
+  if (!isCanvas.value || !item.frame) return;
+  const t = e.target as HTMLElement;
+  if (t.closest("button, input, textarea, a, [contenteditable]") && !t.closest("[data-drag-handle]")) return;
+  if (item.kind === "work" || item.kind === "input") {
+    const host = e.currentTarget as HTMLElement;
+    if (e.clientY - host.getBoundingClientRect().top > 14) return;
   }
-  const rules: string[] = [];
-  for (const [region, items] of byRegion) {
-    const align = region === "me" ? "end" : "start";
-    const shared = items.length > 1 || items.some((item) => isPluginPart(item.id));
-    if (shared) {
-      rules.push(
-        `[data-home-frame] .stage [data-glance-stack="${region}"]{grid-area:${region};align-self:${align};min-width:0;max-width:100%;overflow:visible;}`,
-      );
-      continue;
-    }
-    const item = items[0];
-    rules.push(
-      `[data-home-frame] .stage [data-widget="${item.id}"]{grid-area:${region};align-self:${align};min-width:0;max-width:100%;overflow:visible;}`,
+  e.preventDefault();
+  const origin = { ...item.frame };
+  const x0 = e.clientX;
+  const y0 = e.clientY;
+  let hold: SnapHit | undefined;
+  drag.value = { id: item.id, frame: { ...origin, z: origin.z + 20 }, xs: [], ys: [] };
+  const onMove = (ev: PointerEvent) => {
+    const others = assembly.value.items
+      .filter((row) => row.id !== item.id && row.frame)
+      .map((row) => row.frame!);
+    const hit = snapBox(
+      {
+        left: origin.left + ev.clientX - x0,
+        top: origin.top + ev.clientY - y0,
+        width: origin.width,
+        height: origin.height,
+      },
+      others,
+      stageSize.value,
+      hold,
     );
-  }
-  return rules.join("");
-});
-
-const stageStyle = computed(() => {
-  const a = assembly.value;
-  const style = gridStyle(a.grid);
-  const regions = regionSet(a.grid.areas);
-  const names = collapsibleOf(a.preset);
-  const collapsed = new Set<string>();
-  if (!left.value && names.includes("left") && regions.has("left")) collapsed.add("left");
-  if (!peek.value && names.includes("right") && regions.has("right")) collapsed.add("right");
-  if (collapsed.size) style.gridTemplateColumns = collapseGridColumns(a.grid, collapsed);
-  return style;
-});
-
-const canCollapseLeft = computed(() => {
-  const a = assembly.value;
-  return collapsibleOf(a.preset).includes("left") && regionSet(a.grid.areas).has("left");
-});
-const canCollapseRight = computed(() => {
-  const a = assembly.value;
-  const named = collapsibleOf(a.preset).some((name) => regionSet(a.grid.areas).has(name) && name !== "left");
-  return named || docksOf(a, "chat", "end").length > 0;
-});
+    hold = hit;
+    drag.value = {
+      id: item.id,
+      frame: { ...hit, width: origin.width, height: origin.height, z: origin.z + 20 },
+      xs: hit.xs,
+      ys: hit.ys,
+    };
+  };
+  const onUp = () => {
+    if (drag.value) {
+      commitFrame(item.id, {
+        left: drag.value.frame.left,
+        top: drag.value.frame.top,
+        xs: drag.value.xs,
+        ys: drag.value.ys,
+      }, origin);
+    }
+    drag.value = null;
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+  };
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+}
 </script>
 
 <template>
   <div
     data-home-frame
     class="frame"
-    :class="{
-      thinking,
-      compact,
-      'peek-on': peek,
-      'left-collapsed': !left,
-      'right-collapsed': !peek,
-    }"
-    :data-preset="assembly.preset"
+    :class="{ thinking, compact }"
+    :data-place="assembly.place"
+    :data-ground="grid?.ground"
   >
-    <component :is="'style'">{{ scatterCss }}</component>
-    <Transition name="rail-fab">
-      <button
-        v-if="canCollapseLeft && !left"
-        class="rail-avatar-reopen"
-        type="button"
-        title="展开左栏"
-        aria-label="展开左栏"
-        @click="left = true"
-      >
-        <Avatar :state="state ?? 'idle'" :size="28" compact />
-      </button>
-    </Transition>
-    <button
-      v-if="canCollapseRight"
-      class="rail-toggle rail-toggle-right"
-      :class="{ collapsed: !peek }"
-      type="button"
-      :aria-pressed="peek"
-      :title="peek ? '隐藏右栏' : '显示右栏'"
-      :aria-label="peek ? '隐藏右栏' : '显示右栏'"
-      @click="peek = !peek"
+    <div
+      ref="stageEl"
+      class="stage"
+      :class="{ snapping, canvas: isCanvas }"
+      :style="grid ? { ...gridStageStyle(grid), '--yb-snap': `${SNAP_PITCH}px`, '--yb-snap-major': `${SNAP_PITCH * 4}px` } : { '--yb-snap': `${SNAP_PITCH}px`, '--yb-snap-major': `${SNAP_PITCH * 4}px` }"
     >
-      <YbIcon name="panel-right" :size="14" />
-    </button>
-    <div class="stage" :style="stageStyle">
-      <div
-        v-for="region in structuralRegions"
-        :key="region"
-        class="cell"
-        :class="{ 'yb-desk': region === stackRegion }"
-        :data-region="region"
-        :style="{ gridArea: region }"
-      >
-        <slot v-if="stackRegion === region" />
-        <template v-for="item in slottedIn(region)" :key="item.id">
+      <template v-if="grid">
+        <div
+          v-for="area in areas"
+          :key="area"
+          class="area"
+          :class="`area-${area}`"
+          :style="{ gridArea: area }"
+        >
           <div
+            v-for="item in stackOf(area)"
+            :key="item.id"
             class="host"
-            :class="[`kind-${item.kind}`, `part-${item.id}`]"
-            :style="{ '--yb-widget-order': hostOrder(item.id) }"
+            :class="[`kind-${item.kind}`, `part-${item.id}`, `face-${item.presentation}`, { grow: item.grow, 'pin-end': item.pinEnd }]"
           >
-            <div v-if="docksOf(assembly, item.id, 'start').length" class="dock-start">
-              <slot
-                v-for="d in docksOf(assembly, item.id, 'start')"
-                :key="d.id"
-                :name="d.id"
-              />
-            </div>
-            <div class="host-body">
-              <slot :name="item.id" />
-            </div>
-            <aside
-              v-if="docksOf(assembly, item.id, 'end').length"
-              v-show="peek"
-              class="dock-end"
-            >
-              <slot
-                v-for="d in docksOf(assembly, item.id, 'end')"
-                :key="d.id"
-                :name="d.id"
-              />
-            </aside>
+            <slot :name="item.id" />
           </div>
-        </template>
+        </div>
+      </template>
+      <template v-else>
+        <div
+          v-for="item in assembly.items"
+          :key="item.id"
+          class="host"
+          :class="[`kind-${item.kind}`, `part-${item.id}`, `face-${item.presentation}`, { 'yb-desk': item.presentation === 'paper' }]"
+          :style="hostStyle(item)"
+          @pointerdown="onMoveStart(item, $event)"
+        >
+          <slot :name="item.id" />
+        </div>
+      </template>
+      <button
+        v-for="fold in grid?.fold ?? []"
+        :key="fold.name"
+        class="fold-handle"
+        :class="[`side-${fold.side}`, { folded: fold.folded }]"
+        type="button"
+        :style="foldHandleStyle(fold, stageSize)"
+        :aria-pressed="!fold.folded"
+        :title="foldLabel(fold)"
+        :aria-label="foldLabel(fold)"
+        @click="toggleFold(fold)"
+      >
+        <YbIcon :name="fold.side === 'start' ? 'panel-left' : 'panel-right'" :size="14" />
+      </button>
+      <div v-if="drag" class="snap-guides" aria-hidden="true">
+        <i v-for="x in drag.xs" :key="`x-${x}`" class="snap-x" :style="{ left: `${x}px` }" />
+        <i v-for="y in drag.ys" :key="`y-${y}`" class="snap-y" :style="{ top: `${y}px` }" />
       </div>
-      <slot v-if="!stackRegion" />
     </div>
   </div>
 </template>
@@ -216,228 +241,208 @@ const canCollapseRight = computed(() => {
   display: flex;
   position: relative;
   overflow: hidden;
-}
-.frame[data-preset="desk"] {
-  padding: 10px 12px 12px;
-  background: var(--yb-desk);
-}
-.frame[data-preset="rails"] {
   background: var(--yb-content-bg);
 }
-.frame.thinking[data-preset="desk"] {
+.frame[data-place="canvas"],
+.frame[data-ground="desk"] {
+  background: var(--yb-desk);
+}
+.frame.thinking {
+  background:
+    radial-gradient(80% 50% at 40% 38%, var(--yb-think-mist), transparent 70%),
+    var(--yb-content-bg);
+}
+.frame.thinking[data-place="canvas"],
+.frame.thinking[data-ground="desk"] {
   background:
     radial-gradient(80% 50% at 40% 38%, var(--yb-think-mist), transparent 70%),
     var(--yb-desk);
 }
-.frame.thinking[data-preset="rails"] {
-  background:
-    radial-gradient(90% 60% at 50% 30%, var(--yb-think-mist), transparent 65%),
-    var(--yb-content-bg);
-}
 .stage {
   box-sizing: border-box;
   position: relative;
+  flex: 1;
   width: 100%;
   height: 100%;
   min-width: 0;
-  display: grid;
-  align-content: stretch;
-  overflow: visible;
-}
-.frame[data-preset="desk"] .stage {
-  column-gap: 12px;
-  row-gap: 12px;
-}
-.cell {
-  min-width: 0;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
   overflow: hidden;
 }
-.frame[data-preset="rails"] .cell[data-region="left"],
-.frame[data-preset="rails"] .cell[data-region="right"] {
-  width: 280px;
-  min-width: 0;
+.frame[data-place="grid"] .stage {
+  overflow: visible;
 }
-/* 跟瓷片同一内容宽。写死 280px 会盖过 .yb-desk 垫，会话宿主比身份/插件宽一圈。 */
-.frame[data-preset="rails"] .cell[data-region="left"] > :deep(*),
-.frame[data-preset="rails"] .cell[data-region="right"] > :deep(*) {
-  box-sizing: border-box;
-  width: 100%;
-  max-width: 100%;
-  min-width: 0;
+.stage.canvas {
+  display: block;
 }
-.frame[data-preset="rails"] .cell[data-region="left"] {
-  box-shadow: 1px 0 0 var(--yb-border-base);
+.stage.canvas .host {
+  overflow: hidden;
+  border-radius: var(--yb-widget-radius);
 }
-.frame[data-preset="rails"] .cell[data-region="right"] {
-  box-shadow: -1px 0 0 var(--yb-border-base);
-}
-.frame.left-collapsed .cell[data-region="left"],
-.frame.right-collapsed .cell[data-region="right"] {
-  width: 0;
-  opacity: 0;
+.stage.snapping::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
   pointer-events: none;
-  box-shadow: none;
+  background-image:
+    linear-gradient(to right, color-mix(in srgb, var(--yb-text-faint) 16%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in srgb, var(--yb-text-faint) 16%, transparent) 1px, transparent 1px),
+    linear-gradient(to right, color-mix(in srgb, var(--yb-text-faint) 28%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in srgb, var(--yb-text-faint) 28%, transparent) 1px, transparent 1px);
+  background-size: var(--yb-snap) var(--yb-snap), var(--yb-snap) var(--yb-snap), var(--yb-snap-major) var(--yb-snap-major), var(--yb-snap-major) var(--yb-snap-major);
+}
+.snap-guides {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+}
+.snap-x,
+.snap-y {
+  position: absolute;
+  background: var(--yb-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--yb-accent) 35%, transparent);
+}
+.snap-x {
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+}
+.snap-y {
+  left: 0;
+  right: 0;
+  height: 2px;
+  margin-top: -1px;
+}
+.area {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  min-height: 0;
+  overflow: visible;
+}
+.area-compose {
+  min-height: min-content;
+  overflow: visible;
 }
 .host {
+  box-sizing: border-box;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  order: var(--yb-widget-order, 0);
+  overflow: visible;
 }
-.host.kind-work {
+.host.grow {
   flex: 1;
-  flex-direction: row;
-  align-items: stretch;
+  overflow: hidden;
+}
+.host.pin-end {
+  margin-top: auto;
 }
 .host.kind-nav,
 .host.kind-context {
+  overflow: hidden;
+  border: 1px solid var(--yb-widget-border);
+  border-radius: var(--yb-widget-radius);
+  background:
+    var(--yb-widget-glaze),
+    var(--yb-widget-bg);
+  box-shadow: var(--yb-widget-shadow);
+}
+.host.kind-nav :deep(.yb-widget),
+.host.kind-context :deep(.yb-widget) {
   flex: 1;
-  min-height: 0;
-}
-.host-body {
-  flex: 1 1 0;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-.host.kind-input {
-  flex: none;
-  min-height: auto;
-}
-.host.kind-input .host-body {
-  flex: none;
-  min-height: auto;
-}
-.dock-start {
-  flex: none;
-  width: 28px;
-  min-width: 28px;
-  min-height: 0;
-  z-index: 2;
-}
-.dock-end {
-  flex: none;
-  width: 176px;
-  min-width: 0;
-  margin-left: 12px;
-  align-self: start;
-  overflow: visible;
-  z-index: 2;
-}
-.frame[data-preset="rails"] .host.kind-input {
-  padding: var(--yb-space-3) var(--yb-space-5) var(--yb-space-4);
-}
-.cell[data-region="compose"] {
-  padding: 2px 8px 4px 36px;
-  overflow: visible;
-  min-height: auto;
-}
-.frame.peek-on .cell[data-region="compose"] {
-  padding-right: 196px;
-}
-.frame[data-preset="desk"] :deep(.skill-row) {
-  display: none;
-}
-.host-body :deep(.paper-wrap) {
-  flex: 1;
-  min-height: 0;
-  width: 100%;
-}
-.host-body :deep(.sheet) {
-  width: 100%;
-  flex: 1;
-  min-height: 0;
-  height: auto;
-}
-.dock-start :deep([data-widget="sessions"]) {
   width: 100%;
   height: 100%;
   min-width: 0;
   min-height: 0;
-  padding: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
-  overflow: visible;
 }
-.dock-start :deep([data-widget="sessions"])::after,
-.dock-start :deep([data-widget="sessions"] .yb-widget-tools),
-.dock-end :deep(.yb-widget-tools) {
+.host.kind-nav :deep(.yb-widget::after),
+.host.kind-context :deep(.yb-widget::after) {
   display: none;
 }
-.stage :deep([data-widget="identity"] .identity) {
-  padding-right: 12px;
+.host.kind-nav.face-spine {
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
-.stage :deep([data-widget="identity"] .identity-copy) {
-  white-space: normal;
+.host.kind-nav.face-spine :deep(.yb-widget) {
+  overflow: visible;
+  border-radius: 0;
 }
-.stage :deep([data-widget="identity"] .identity-copy > span:last-of-type) {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+.host.grow.face-paper {
   overflow: hidden;
 }
-.stage :deep([data-widget="today"] .today-cell) {
-  padding: 6px 2px 7px;
-}
-.frame[data-preset="rails"] .cell[data-region="main"] .host-body {
+.stage.canvas .host :deep(.yb-widget),
+.stage.canvas .host :deep(.plugin-card) {
   flex: 1;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
 }
-.frame[data-preset="rails"] .cell[data-region="main"] {
-  position: relative;
+.stage.canvas .host.kind-work,
+.stage.canvas .host.kind-nav,
+.stage.canvas .host.kind-context {
+  cursor: grab;
 }
-.rail-toggle {
-  position: absolute;
-  top: 8px;
-  z-index: 10;
-  width: 24px;
-  height: 24px;
+.stage.canvas .host.kind-work:active,
+.stage.canvas .host.kind-nav:active,
+.stage.canvas .host.kind-context:active,
+.stage.canvas .host.kind-input:active,
+.stage.canvas .host.kind-glance:active {
+  cursor: grabbing;
+}
+.host.kind-input {
+  overflow: visible;
+  justify-content: flex-end;
+  flex: none;
+  min-height: min-content;
+}
+.host :deep(.paper-wrap),
+.host :deep(.sheet) {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+}
+.fold-handle {
+  box-sizing: border-box;
   display: grid;
   place-items: center;
   padding: 0;
-  border: 1px solid transparent;
-  border-radius: var(--yb-radius-sm);
-  background: color-mix(in srgb, var(--yb-content-bg) 86%, transparent);
+  border: 1px solid var(--yb-widget-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--yb-widget-bg) 88%, transparent);
   color: var(--yb-text-faint);
   cursor: pointer;
-  opacity: 0.74;
+  opacity: 0.42;
+  box-shadow: var(--yb-shadow-1);
+  transition: opacity 140ms var(--yb-ease-out), color 140ms var(--yb-ease-out), background 140ms var(--yb-ease-out);
 }
-.rail-toggle-right { right: 8px; }
-.rail-toggle.collapsed { color: var(--yb-accent); opacity: 0.9; }
-.rail-avatar-reopen {
-  position: absolute;
-  left: 8px;
-  top: 8px;
-  z-index: 10;
-  width: 36px;
-  height: 36px;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border: 1px solid var(--yb-surface-border);
-  border-radius: 50%;
-  background: var(--yb-surface-2);
-  cursor: pointer;
+.stage:hover .fold-handle,
+.fold-handle:focus-visible,
+.fold-handle.folded {
+  opacity: 0.95;
 }
-.rail-fab-enter-active,
-.rail-fab-leave-active {
-  transition: opacity var(--yb-dur) var(--yb-ease-out), transform var(--yb-dur) var(--yb-ease-out);
+.fold-handle:hover,
+.fold-handle:focus-visible {
+  color: var(--yb-paper-ink);
+  background: var(--yb-widget-bg);
 }
-.rail-fab-enter-from,
-.rail-fab-leave-to {
-  opacity: 0;
-  transform: scale(0.86);
+.fold-handle.folded {
+  color: var(--yb-accent);
 }
-@media (max-width: 900px) {
-  .frame[data-preset="rails"] .cell[data-region="right"],
-  .frame[data-preset="rails"] .rail-toggle-right {
-    display: none;
-  }
+@media (prefers-reduced-motion: reduce) {
+  .fold-handle { transition: none; }
 }
 </style>

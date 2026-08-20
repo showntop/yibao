@@ -5,10 +5,9 @@ import {
   useHomeWidgets,
   WIDGET_MATERIALS,
   WIDGET_SIZES,
-  isWidgetId,
   type WidgetId,
 } from "../lib/home-widgets";
-import { useLiveAssembly } from "../lib/home-chrome";
+import { useHomeChrome, useLiveAssembly } from "../lib/home-chrome";
 import { isPlaced } from "../lib/home-assembly";
 
 const props = defineProps<{
@@ -17,30 +16,12 @@ const props = defineProps<{
 }>();
 
 const widgets = useHomeWidgets();
-const assembly = useLiveAssembly();
 const spec = computed(() => widgets.spec(props.id));
+const assembly = useLiveAssembly();
 const placed = computed(() => isPlaced(assembly.value, props.id));
+const { id: presetId } = useHomeChrome();
 const menuOpen = ref(false);
-const dragging = ref(false);
-
-function onDragStart(e: DragEvent) {
-  dragging.value = true;
-  e.dataTransfer?.setData("text/plain", props.id);
-  if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
-}
-function onDragEnd() {
-  dragging.value = false;
-}
-function onDragOver(e: DragEvent) {
-  e.preventDefault();
-  if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-}
-function onDrop(e: DragEvent) {
-  const from = e.dataTransfer?.getData("text/plain");
-  e.preventDefault();
-  if (!isWidgetId(from) || from === props.id) return;
-  widgets.move(from, props.id);
-}
+const canDrag = computed(() => assembly.value.place === "canvas");
 
 function onDoc(e: MouseEvent) {
   const t = e.target as Node | null;
@@ -60,22 +41,19 @@ onUnmounted(() => document.removeEventListener("mousedown", onDoc));
     :class="[
       `yb-widget--${spec.size}`,
       `yb-widget--${spec.material}`,
-      { 'yb-widget-fill': fill && spec.size === 'l', 'is-dragging': dragging },
+      { 'yb-widget-fill': fill && spec.size === 'l' },
     ]"
     :data-widget="id"
-    :style="{ '--yb-widget-order': spec.order }"
-    @dragover="onDragOver"
-    @drop="onDrop"
+    :style="{ '--yb-widget-order': String(spec.order) }"
   >
     <div class="yb-widget-tools">
       <button
+        v-if="canDrag"
         class="yb-widget-tool"
         type="button"
-        title="拖动排序"
-        aria-label="拖动排序"
-        draggable="true"
-        @dragstart="onDragStart"
-        @dragend="onDragEnd"
+        data-drag-handle
+        title="拖动"
+        aria-label="拖动"
       >
         <YbIcon name="grip" :size="11" />
       </button>
@@ -109,6 +87,7 @@ onUnmounted(() => document.removeEventListener("mousedown", onDoc));
           @click="widgets.setMaterial(id, m.id)"
         >{{ m.label }}</button>
       </div>
+      <button v-if="canDrag" class="act" type="button" @click="widgets.resetFrame(presetId, id); menuOpen = false">恢复位置</button>
       <button class="hide" type="button" @click="widgets.hide(id); menuOpen = false">隐藏</button>
     </div>
     <slot />
@@ -140,9 +119,9 @@ onUnmounted(() => document.removeEventListener("mousedown", onDoc));
   border-radius: 7px;
   background: color-mix(in srgb, var(--yb-widget-bg) 72%, transparent);
   color: var(--yb-paper-ink-dim);
-  cursor: grab;
+  cursor: pointer;
 }
-.yb-widget-tool:last-child { cursor: pointer; }
+.yb-widget-tool[data-drag-handle] { cursor: grab; }
 .yb-widget-tool:hover { color: var(--yb-paper-ink); background: var(--yb-note-mute); }
 
 .yb-widget-menu {
@@ -169,6 +148,7 @@ onUnmounted(() => document.removeEventListener("mousedown", onDoc));
   box-shadow: var(--yb-press);
 }
 .row button,
+.act,
 .hide {
   flex: 1;
   height: 22px;
@@ -185,13 +165,13 @@ onUnmounted(() => document.removeEventListener("mousedown", onDoc));
   color: var(--yb-paper-ink);
   box-shadow: var(--yb-glaze-hi);
 }
-.hide {
+.hide,
+.act {
   width: 100%;
   color: var(--yb-text-faint);
 }
+.act:hover { color: var(--yb-paper-ink); }
 .hide:hover { color: var(--yb-danger); }
-
-.is-dragging { opacity: 0.55; }
 
 @media (prefers-reduced-motion: reduce) {
   .yb-widget-tools { opacity: 1; }

@@ -2,15 +2,12 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   HOME_CHROME_DEFAULT,
-  HOME_CHROMES,
   applyChrome,
   bootChrome,
-  chromeGridStyle,
   chromeOf,
   isHomeChromeId,
   spineCaption,
   spineVisible,
-  widgetSlot,
 } from "./home-chrome";
 
 describe("home-chrome adapter", () => {
@@ -18,7 +15,11 @@ describe("home-chrome adapter", () => {
     expect(HOME_CHROME_DEFAULT).toBe("rails");
     expect(isHomeChromeId("rails")).toBe(true);
     expect(isHomeChromeId("desk")).toBe(true);
-    expect(isHomeChromeId("canvas")).toBe(false);
+    expect(isHomeChromeId("canvas")).toBe(true);
+    expect(chromeOf("canvas").surface).toBe("thread");
+    expect(chromeOf("rails").collapsible).toEqual(["left", "right"]);
+    expect(chromeOf("desk").collapsible).toEqual([]);
+    expect(chromeOf("canvas").collapsible).toEqual([]);
     expect(chromeOf("rails").peekDensity).toBe("inspector");
     expect(chromeOf("desk").peekDensity).toBe("note");
     expect(chromeOf("rails").mindDensity).toBe("map");
@@ -27,33 +28,9 @@ describe("home-chrome adapter", () => {
     expect(chromeOf("desk").spineLimit).toBe(4);
     expect(chromeOf("rails").surface).toBe("thread");
     expect(chromeOf("desk").surface).toBe("paper");
-  });
-
-  it("maps rails widgets into named regions; desk docks sessions and now onto chat", () => {
-    expect(widgetSlot("identity", "rails")).toBe("left");
-    expect(widgetSlot("sessions", "rails")).toBe("left");
-    expect(widgetSlot("now", "rails")).toBe("right");
-    expect(widgetSlot("identity", "desk")).toBe("me");
-    expect(widgetSlot("sessions", "desk")).toBe("chat:start");
-    expect(widgetSlot("need", "desk")).toBe("need");
-    expect(widgetSlot("need", "rails")).toBe("");
-    expect(HOME_CHROMES.desk.surfaceSlot.peek).toBe(widgetSlot("now", "desk"));
-    expect(HOME_CHROMES.desk.surfaceSlot.composer).toBe("compose");
-  });
-
-  it("exports CSS grid for both presets; compact desk drops glance areas", () => {
-    expect(chromeGridStyle("rails")?.gridTemplateColumns).toBe(
-      "280px minmax(0, 1fr) 280px",
-    );
-    expect(chromeGridStyle("desk")?.gridTemplateColumns).toBe(
-      "156px minmax(0, 1fr) 156px",
-    );
-    expect(chromeGridStyle("desk")?.gridTemplateAreas).toBe(
-      '"mind book today" "need book tasks" "plug book remind" "me book ." ". compose ."',
-    );
-    expect(chromeGridStyle("desk", { compact: true })?.gridTemplateAreas).toBe(
-      '"book" "compose"',
-    );
+    expect(isHomeChromeId("salon")).toBe(true);
+    expect(chromeOf("salon").surface).toBe("talk");
+    expect(chromeOf("salon").sessionVariant).toBe("cards");
   });
 
   it("shortens spine tabs to two characters", () => {
@@ -75,19 +52,17 @@ describe("home-chrome adapter", () => {
   });
 
   it("boots data-chrome from storage", () => {
-    const mem: Record<string, string> = {};
+    const store = new Map<string, string>();
     vi.stubGlobal("localStorage", {
-      getItem: (k: string) => mem[k] ?? null,
-      setItem: (k: string, v: string) => { mem[k] = v; },
-      removeItem: (k: string) => { delete mem[k]; },
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => { store.set(k, v); },
+      removeItem: (k: string) => { store.delete(k); },
     });
-    applyChrome("desk");
-    expect(document.documentElement.dataset.chrome).toBe("desk");
-    delete document.documentElement.dataset.chrome;
-    bootChrome();
+    store.set("yibao-chrome", "desk");
+    expect(bootChrome()).toBe("desk");
     expect(document.documentElement.dataset.chrome).toBe("desk");
     applyChrome("rails");
-    vi.unstubAllGlobals();
+    expect(document.documentElement.dataset.chrome).toBe("rails");
     delete document.documentElement.dataset.chrome;
   });
 });

@@ -211,7 +211,7 @@ const {
 }
 .paper-stream :deep(.bubble.icon-clock) {
   align-self: center;
-  max-width: min(92%, 28em);
+  max-width: min(100%, 36em);
 }
 .paper-stream :deep(.bubble.plain) {
   max-width: 100%;

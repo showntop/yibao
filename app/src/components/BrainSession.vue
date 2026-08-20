@@ -8,12 +8,11 @@ type AgentState = "idle" | "listen" | "think" | "work" | "say" | "success" | "er
 defineProps<{ state: AgentState }>();
 const emit = defineEmits<{
   chat: [draft: string];
-  toggle: [];
 }>();
 </script>
 
 <template>
-  <AgentBrain :state="state" compact @chat="(d) => emit('chat', d)" @toggle="emit('toggle')" />
+  <AgentBrain :state="state" compact @chat="(d) => emit('chat', d)" />
   <HomeGlance @chat="(d) => emit('chat', d)" />
   <HomePluginGlance />
 </template>

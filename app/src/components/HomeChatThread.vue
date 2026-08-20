@@ -172,7 +172,7 @@ const {
   flex-direction: column;
   gap: var(--yb-space-3);
   overflow-y: auto;
-  padding: var(--yb-space-3) var(--yb-space-5) 0;
+  padding: var(--yb-space-3) var(--yb-space-5) var(--yb-space-4);
   scrollbar-width: thin;
   mask-image: linear-gradient(180deg, transparent, #000 14px);
   -webkit-mask-image: linear-gradient(180deg, transparent, #000 14px);
@@ -182,7 +182,7 @@ const {
 }
 .bubbles :deep(.bubble.icon-clock) {
   align-self: center;
-  max-width: min(92%, 28em);
+  max-width: min(100%, 36em);
 }
 .bubbles :deep(.bubble.plain) {
   max-width: min(100%, 760px);

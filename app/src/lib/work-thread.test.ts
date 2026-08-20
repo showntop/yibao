@@ -8,6 +8,8 @@ import {
   runAnswer,
   runIsLive,
   runTailIndex,
+  talkTurns,
+  talkBeats,
   type WorkBubble,
 } from "./work-thread";
 
@@ -99,5 +101,29 @@ describe("work-thread", () => {
     const bubbles = [user("a"), ai("一"), user("b"), ai("二")];
     const thread = groupThread(bubbles, (i) => i === 2);
     expect(thread.map((t) => t.type)).toEqual(["user", "run", "day", "user", "run"]);
+  });
+
+  it("keeps only the last spoken lines for salon, skipping tools and notices", () => {
+    const bubbles = [
+      user("早"),
+      ai("早。"),
+      proc(true),
+      ai("到点了", { icon: "clock" }),
+      user("下一句"),
+      ai("好。"),
+      user("三"),
+      ai("四"),
+    ];
+    expect(talkTurns(bubbles, 4).map((i) => bubbles[i].text)).toEqual(["下一句", "好。", "三", "四"]);
+    expect(talkTurns(bubbles, 0)).toEqual([]);
+  });
+
+  it("cuts a long salon reply into visual-novel beats", () => {
+    const text = "好，继续深挖。\n\n**第一梯队**综合巨无霸。内置 Python 推荐器。\n\n第二梯队品味向。";
+    const beats = talkBeats(text, 24);
+    expect(beats[0]).toContain("好，继续深挖。");
+    expect(beats.length).toBeGreaterThan(1);
+    expect(beats.some((beat) => beat.includes("第一梯队"))).toBe(true);
+    expect(beats.join("")).not.toContain("**");
   });
 });

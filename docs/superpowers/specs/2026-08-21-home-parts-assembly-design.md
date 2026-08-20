@@ -1,8 +1,7 @@
 # 主屏装配：命名槽 + dock + 预设
 
 日期：2026-08-21  
-状态：已落地  
-取代：`2026-08-20-home-desk-chrome-design.md` 里「加一套骨架 = 再写一个 shell」那条扩展路径。theme / finish / 小窗宠物对话 / 「无限画布不是目标」仍有效。
+状态：已被 `2026-08-21-home-place-engines-design.md` 取代（结构预设用 grid，画布才用框）。kind / 摊法 / 目录仍有效。
 
 ## 一句话
 
@@ -171,11 +170,11 @@ catalog × PRESETS[preset] × prefs
 
 | id         | kind    | 默认大小      | 默认材质 | 能怎么摊                      |
 | ---------- | ------- | --------- | ---- | ------------------------- |
-| `chat`     | work    | （填满 work） | —    | `thread` · `paper`        |
+| `chat`     | work    | （填满 work） | —    | `thread` · `paper` · `talk` |
 | `composer` | input   | （内容高）     | —    | `bar`                     |
-| `sessions` | nav     | l         | 瓷    | `list` · `spine`          |
+| `sessions` | nav     | l         | 瓷    | `list` · `spine` · `cards` |
 | `now`      | context | m         | 瓷    | `inspector` · `note`      |
-| `identity` | glance  | m         | 瓷    | 瓷片                        |
+| `identity` | glance  | m         | 瓷    | `tile` · `seat`（会客坐下）   |
 | `mind`     | glance  | l         | 瓷    | `map`（三栏全图）· `tile`（整桌瓷片） |
 | `today`    | glance  | s         | 瓷    | 瓷片                        |
 | `need`     | glance  | m         | 瓷    | 瓷片                        |
@@ -248,7 +247,7 @@ me        |                                 |  .
 
 加载时只处理**坏引用**：区名在这份格子图里不存在、dock 的对象不在场、零件 id 未登记。那一块跳过（或贴不上就藏），**不要整桌打回出厂**。用户改过的其余部分留下。
 
-## 两份预设（与今天的观感对齐）
+## 三份预设（与今天的观感对齐）
 
 **`rails`（缺省，三栏）**
 
@@ -262,6 +261,13 @@ me        |                                 |  .
 - chat 在 `book`，paper；sessions dock 到 chat.start；now dock 到 chat.end
 - composer 进 `compose`（纸前面的桌，独占一行）
 - glance 进各自的区
+
+**`salon`（会客）**
+
+- 格子是窗正中一席（约 46rem）。四列规整：左列认知/译宝同宽，右三列等分（需要你 / 今日 / 提醒），台词、名片、输入叠在这三列上，左右齐边
+- 区：`mind` / `need` / `today` / `remind` / `seat` / `talk` / `cards` / `say`
+- chat 在 `talk`，只摊刚说的几句，对话框跟译宝对齐；identity 在 `seat` 坐下；sessions 是桌面上的名片，不扇、不盖台词
+- 没有「本次」、没有进行中、没有插件格。输入进 `say`，跟对话框同宽。空是房间四周的气，不是家具之间的洞
 
 没有 chat 时，dock 到它的书脊/便条跟着不画；其余区照常。用户改 glance 的显隐/大小/材质，换预设时这些偏好可留。
 

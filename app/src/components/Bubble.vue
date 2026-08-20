@@ -25,11 +25,11 @@ const html = computed(() => (props.role === "ai" && !props.typing ? renderMarkdo
   <div v-if="typing" class="bubble ai typing" aria-label="正在输入"><i /><i /><i /></div>
   <div
     v-else-if="html !== null"
-    :class="['bubble', role, icon && `icon-${icon}`, plain && 'plain']"
+    :class="['bubble', role, icon && `icon-${icon}`, plain && 'plain', halted && 'is-halted']"
     :role="icon === 'clock' ? 'status' : undefined"
   >
     <YbIcon v-if="icon" class="b-lead" :name="icon" :size="13" />
-    <span v-html="html"></span><YbIcon v-if="halted" class="b-tail" name="stop" :size="13" title="已中止" /><span v-if="streaming" class="cur">▍</span>
+    <span v-html="html"></span><YbIcon v-if="halted && text !== '已打断'" class="b-tail" name="stop" :size="13" title="已中止" /><span v-if="streaming" class="cur">▍</span>
   </div>
   <div v-else :class="['bubble', role, pstate && `is-${pstate}`, icon && `icon-${icon}`]">
     <YbIcon
@@ -49,11 +49,13 @@ const html = computed(() => (props.role === "ai" && !props.typing ? renderMarkdo
   padding: var(--yb-space-2) var(--yb-space-3);
   border-radius: var(--yb-radius-md);
   /* fit-content：短文本按内容收缩不撑满容器（避免窄栏下"打开工具箱"被截成两行）；
-     max-width 仍是长内容的上限。 */
+     max-width 仍是长内容的上限。min-width:0 让 flex 子项真正遵守 max-width。 */
   width: fit-content;
   max-width: 88%;
+  min-width: 0;
   font-size: var(--yb-fs-lg);
   line-height: var(--yb-lh-base);
+  overflow-wrap: anywhere;
   word-break: break-word;
   animation: pop var(--yb-dur-fast) var(--yb-ease-out);
   /* 双击/选中触发 :focus 时浏览器会画 outline: auto（系统 accent 蓝 2-3px 实色），
@@ -121,24 +123,37 @@ const html = computed(() => (props.role === "ai" && !props.typing ? renderMarkdo
   /* 尾巴角：靠左下的角收窄，拟小尾巴 */
   border-radius: var(--yb-radius-md) var(--yb-radius-md) var(--yb-radius-md) var(--yb-radius-xs);
 }
-/* 到期提醒：居中胶囊，不当成一条 AI 对话 */
+/* 到期提醒：居中胶囊，不当成一条 AI 对话。长文必须换行，不能撑破对话栏。 */
 .ai.icon-clock {
-  display: inline-flex;
-  align-items: center;
+  display: flex;
+  align-items: flex-start;
   gap: 10px;
   align-self: center;
-  width: fit-content;
-  max-width: min(92%, 28em);
+  box-sizing: border-box;
+  width: auto;
+  max-width: min(100%, 36em);
+  min-width: 0;
   margin: 6px auto;
   padding: 8px 16px 8px 8px;
-  border-radius: var(--yb-radius-pill);
+  border-radius: 18px;
   background: color-mix(in srgb, var(--yb-accent) 18%, var(--yb-surface-1));
   border: 1px solid color-mix(in srgb, var(--yb-accent) 42%, transparent);
   color: var(--yb-text-strong);
   font-size: var(--yb-fs-lg);
   font-weight: var(--yb-fw-medium);
   line-height: 1.4;
+  white-space: normal;
   box-shadow: var(--yb-glaze-hi), 0 1px 3px rgba(var(--yb-c-sky-rgb), 0.16);
+}
+.ai.icon-clock .b-lead {
+  flex: none;
+  margin-top: 1px;
+}
+.ai.icon-clock > span {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .ai.icon-clock :deep(div) {
   margin: 0;
@@ -153,6 +168,13 @@ const html = computed(() => (props.role === "ai" && !props.typing ? renderMarkdo
 }
 .plain.ai :deep(.md-h) {
   margin-top: 10px;
+}
+.plain.ai.is-halted {
+  color: var(--yb-text-faint);
+  font-size: 13px;
+}
+.plain.ai.is-halted :deep(p) {
+  margin: 0;
 }
 .user {
   /* 纯色：与 ai 气泡统一无渐变（此前 135deg accent→deep 对角渐变会让

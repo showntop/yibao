@@ -4,9 +4,12 @@ import {
   moveWidget,
   parseLayout,
   setMaterial,
+  setPartFrame,
   setSize,
   specOf,
   toggleHidden,
+  clearPartFrame,
+  clearPresetLayout,
 } from "./home-widgets";
 
 describe("home-widgets", () => {
@@ -44,5 +47,18 @@ describe("home-widgets", () => {
     expect(next.order[0]).toBe("sessions");
     expect(setSize(next, "sessions", "s").size.sessions).toBe("s");
     expect(setMaterial(next, "sessions", "glass").material.sessions).toBe("glass");
+  });
+
+  it("stores a canvas frame overlay per preset and detaches attach", () => {
+    const next = setPartFrame(defaultLayout(), "canvas", "mind", { left: 10, top: 20, width: 100, height: 80, z: 3 });
+    expect(next.layouts.canvas?.frames?.mind).toMatchObject({ left: 10, top: 20, width: 100, height: 80 });
+    expect(next.layouts.canvas?.attach?.mind).toBeNull();
+  });
+
+  it("clears a preset's frames back to the factory snapshot", () => {
+    const moved = setPartFrame(defaultLayout(), "canvas", "mind", { left: 10, top: 20, width: 100, height: 80 });
+    const next = clearPresetLayout(moved, "canvas");
+    expect(next.layouts.canvas).toBeUndefined();
+    expect(clearPartFrame(moved, "canvas", "mind").layouts.canvas?.frames?.mind).toBeUndefined();
   });
 });

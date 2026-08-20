@@ -11,6 +11,7 @@ import {
 } from "../lib/brain";
 
 const emit = defineEmits<{ chat: [draft: string] }>();
+defineProps<{ only?: "need" | "tasks" | "remind" }>();
 
 const approvals = ref<PendingConfirm[]>([]);
 const tasks = ref<RunningTask[]>([]);
@@ -61,7 +62,7 @@ onUnmounted(() => {
 
 <template>
   <aside class="glance">
-    <HomeWidget id="need" aria-label="需要你处理的确认">
+    <HomeWidget v-if="!only || only === 'need'" id="need" aria-label="需要你处理的确认">
       <h2 class="yb-widget-head">需要你 <span v-if="approvals.length" class="yb-widget-meta">{{ approvals.length }}</span></h2>
       <button
         v-if="approvals.length"
@@ -73,7 +74,7 @@ onUnmounted(() => {
       <p v-else class="glance-empty">{{ needLine }}</p>
     </HomeWidget>
 
-    <HomeWidget id="tasks" aria-label="正在进行的任务">
+    <HomeWidget v-if="!only || only === 'tasks'" id="tasks" aria-label="正在进行的任务">
       <h2 class="yb-widget-head">进行中 <span v-if="tasks.length" class="yb-widget-meta">{{ tasks.length }}</span></h2>
       <button
         v-if="tasks.length"
@@ -85,7 +86,7 @@ onUnmounted(() => {
       <p v-else class="glance-empty">{{ taskLine }}</p>
     </HomeWidget>
 
-    <HomeWidget id="remind" aria-label="待办提醒">
+    <HomeWidget v-if="!only || only === 'remind'" id="remind" aria-label="待办提醒">
       <h2 class="yb-widget-head">提醒 <span v-if="reminders.length" class="yb-widget-meta">{{ reminders.length }}</span></h2>
       <button
         v-if="reminders.length"

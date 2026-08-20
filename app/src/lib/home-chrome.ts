@@ -1,25 +1,23 @@
 /** 主屏 chrome 适配：预设名仍走 yibao-chrome。布局真相在 home-assembly。 */
 import { computed, inject, ref, type ComputedRef, type InjectionKey } from "vue";
-import type { WidgetId } from "./home-widgets";
-import { HOME_WIDGETS, defaultLayout, useHomeWidgets } from "./home-widgets";
+import { defaultLayout, useHomeWidgets } from "./home-widgets";
 import {
   HOME_PRESET_DEFAULT,
   HOME_PRESETS,
-  gridStyle,
+  collapsibleOf,
   isHomePresetId,
-  itemOf,
   presentationOf,
   resolveAssembly,
   type Assembly,
+  type HomePreset,
   type HomePresetId,
 } from "./home-assembly";
 
 export type HomeChromeId = HomePresetId;
-export type HomeSurfaceKind = "thread" | "paper";
-export type SessionVariant = "list" | "spine";
+export type HomeSurfaceKind = "thread" | "paper" | "talk";
+export type SessionVariant = "list" | "spine" | "cards";
 export type PeekDensity = "inspector" | "note";
 export type MindDensity = "map" | "tile";
-export type HomeSlot = string;
 
 /** 窄书脊两字；maxChars=0 时交整行标题，由 CSS 截断。 */
 export function spineCaption(title: string, maxChars = 2): string {
@@ -48,20 +46,9 @@ export function spineVisible<T extends { id: string }>(
   return [...head.slice(0, limit - 1), active];
 }
 
-function slotName(preset: HomePresetId, id: WidgetId): HomeSlot {
-  const item = itemOf(resolveAssembly(preset, defaultLayout()), id);
-  if (!item) return "";
-  if (item.region) return item.region;
-  if (item.dock) return `${item.dock.to}:${item.dock.edge}`;
-  return "";
-}
-
 function chromeView(id: HomePresetId) {
   const assembly = resolveAssembly(id, defaultLayout());
-  const preset = HOME_PRESETS[id];
-  const widgetSlot = Object.fromEntries(
-    HOME_WIDGETS.map((w) => [w.id, slotName(id, w.id)]),
-  ) as Record<WidgetId, HomeSlot>;
+  const preset: HomePreset = HOME_PRESETS[id];
   return {
     id,
     label: preset.label,
@@ -72,29 +59,26 @@ function chromeView(id: HomePresetId) {
     mindDensity: (presentationOf(assembly, "mind") ?? "map") as MindDensity,
     spineLimit: (presentationOf(assembly, "sessions") === "spine" ? 4 : 0) as 0 | 4,
     spineChars: 2 as const,
-    collapsible: preset.collapsible,
-    widgetSlot,
-    columns: preset.grid.columns,
-    rows: preset.grid.rows,
-    areaRows: preset.grid.areas,
-    surfaceSlot: {
-      book: itemOf(assembly, "chat")?.region ?? "book",
-      paper: "paper",
-      composer: itemOf(assembly, "composer")?.region ?? "compose",
-      peek: slotName(id, "now"),
-    },
+    collapsible: collapsibleOf(id),
   };
 }
 
 export const HOME_CHROMES = {
   rails: chromeView("rails"),
   desk: chromeView("desk"),
+  salon: chromeView("salon"),
+  canvas: chromeView("canvas"),
 } as const;
 
 export type HomeChrome = (typeof HOME_CHROMES)[HomeChromeId];
 
 export const HOME_CHROME_DEFAULT: HomeChromeId = HOME_PRESET_DEFAULT;
-export const HOME_CHROME_LIST: HomeChrome[] = [HOME_CHROMES.rails, HOME_CHROMES.desk];
+export const HOME_CHROME_LIST: HomeChrome[] = [
+  HOME_CHROMES.rails,
+  HOME_CHROMES.desk,
+  HOME_CHROMES.salon,
+  HOME_CHROMES.canvas,
+];
 
 const KEY = "yibao-chrome";
 const chromeId = ref<HomeChromeId>(HOME_CHROME_DEFAULT);
@@ -127,18 +111,6 @@ export function applyChrome(id: HomeChromeId): void {
 
 export function chromeOf(id: HomeChromeId = chromeId.value): HomeChrome {
   return HOME_CHROMES[id];
-}
-
-export function widgetSlot(id: WidgetId, chrome: HomeChromeId = chromeId.value): HomeSlot {
-  return HOME_CHROMES[chrome].widgetSlot[id];
-}
-
-export function chromeGridStyle(
-  id: HomeChromeId,
-  opts?: { peek?: boolean; compact?: boolean },
-): Record<string, string> | null {
-  const assembly = resolveAssembly(id, defaultLayout(), { compact: opts?.compact === true });
-  return gridStyle(assembly.grid);
 }
 
 export function useHomeChrome() {

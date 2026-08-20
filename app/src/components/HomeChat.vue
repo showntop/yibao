@@ -7,13 +7,15 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import InputBar from "./InputBar.vue";
 import PermissionsBanner from "./PermissionsBanner.vue";
 import SetupWizard from "./SetupWizard.vue";
-import BrainSession from "./BrainSession.vue";
+import AgentBrain from "./AgentBrain.vue";
+import HomeGlance from "./HomeGlance.vue";
+import HomePluginGlance from "./HomePluginGlance.vue";
 import HomeContextPanel from "./HomeContextPanel.vue";
 import HomeWidget from "./HomeWidget.vue";
 import SessionList from "./SessionList.vue";
 import HomeFrame from "./HomeFrame.vue";
 import { useLiveAssembly } from "../lib/home-chrome";
-import { defaultPeek, faceOf } from "../lib/home-assembly";
+import { defaultPeek, faceOf, livePluginIds, syncPluginParts } from "../lib/home-assembly";
 import { viewOf } from "../lib/home-assembly-ui";
 import {
   HOME_CHAT_SESSION,
@@ -30,6 +32,8 @@ import {
   runInput,
   voiceStart,
   interrupt,
+  getWidgetsOnce,
+  onWidgets,
   type BrainEvent,
   type BrainPermissions,
   type BrainStatusMsg,
@@ -385,6 +389,7 @@ let unlistenSetup: (() => void) | null = null;
 let unlistenSetupErr: (() => void) | null = null;
 let unlistenSetupCfg: (() => void) | null = null;
 let unlistenUpdated: (() => void) | null = null;
+let unlistenWidgets: (() => void) | null = null;
 
 function onEvent(e: BrainEvent) {
   // 会话分流：面板场景的对话事件只归插件页；panel 事件例外（关联气泡，本页也收）
@@ -600,6 +605,7 @@ function paperShowProc(p: ProcInfo): boolean {
 const assembly = useLiveAssembly();
 const chatFace = computed(() => faceOf(assembly.value, "chat", "thread"));
 const chatView = computed(() => viewOf("chat", chatFace.value));
+const sessionFace = computed(() => faceOf(assembly.value, "sessions", "list"));
 const leftOpen = ref(true);
 
 /** 一次工作合成一条线索：正文与工具按时序穿插，页脚只出现在整轮收束。 */
@@ -884,6 +890,11 @@ onMounted(async () => {
     const cfg = await invoke<{ has_key: boolean }>("get_setup_config");
     if (!cfg.has_key) void onSetupNeeded();
   } catch { /* 忽略，事件路径仍兜底 */ }
+  try {
+    const result = await getWidgetsOnce().catch(() => ({ widgets: [] as { panel: string }[] }));
+    syncPluginParts(result.widgets ?? []);
+    unlistenWidgets = await onWidgets((payload) => syncPluginParts(payload?.widgets ?? []));
+  } catch { /* sidecar unavailable */ }
   emit("state", state.value); // 父级侧边栏团子拿初始态
 });
 onUnmounted(() => {
@@ -895,6 +906,7 @@ onUnmounted(() => {
   unlistenSetupErr?.();
   unlistenSetupCfg?.();
   unlistenUpdated?.();
+  unlistenWidgets?.();
   if (valenceTimer !== null) clearTimeout(valenceTimer);
   if (thinkNoteTimer !== null) clearInterval(thinkNoteTimer);
 });
@@ -911,13 +923,29 @@ onUnmounted(() => {
       v-model:peek="peekOpen"
       v-model:left="leftOpen"
     >
-      <BrainSession
-        :state="state"
-        @chat="onInfoChat"
-        @toggle="leftOpen = !leftOpen"
-      />
+      <template #identity>
+        <AgentBrain :state="state" only="identity" @chat="onInfoChat" />
+      </template>
+      <template #mind>
+        <AgentBrain :state="state" only="mind" @chat="onInfoChat" />
+      </template>
+      <template #today>
+        <AgentBrain :state="state" only="today" @chat="onInfoChat" />
+      </template>
+      <template #need>
+        <HomeGlance only="need" @chat="onInfoChat" />
+      </template>
+      <template #tasks>
+        <HomeGlance only="tasks" @chat="onInfoChat" />
+      </template>
+      <template #remind>
+        <HomeGlance only="remind" @chat="onInfoChat" />
+      </template>
+      <template v-for="id in livePluginIds" :key="id" #[id]>
+        <HomePluginGlance :panel="id" />
+      </template>
       <template #sessions>
-        <HomeWidget id="sessions" fill>
+        <HomeWidget id="sessions" :fill="sessionFace === 'list'">
           <SessionList
             ref="sessionRef"
             @select="onSessionSelect"
@@ -945,7 +973,7 @@ onUnmounted(() => {
 
       <template #composer>
         <div class="input-slot">
-          <div class="skill-row">
+          <div v-if="chatFace === 'thread'" class="skill-row">
             <span class="skill-hint">呼出技能</span>
             <button v-for="c in skillChips" :key="c.key" class="skill-chip" :title="c.draft" @click="onSkillChip(c)">
               <YbIcon :name="c.icon" :size="11" />{{ c.label }}
@@ -966,15 +994,20 @@ onUnmounted(() => {
   flex-direction: column;
 }
 .input-slot {
-  flex-shrink: 0;
-  padding: 0 0 2px;
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 0;
 }
 .skill-row {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 5px;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
   flex-wrap: wrap;
 }
 .skill-hint {
