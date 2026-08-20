@@ -1,4 +1,4 @@
-"""LLM provider 抽象 + GLM(智谱) 实现 + 测试用 Fake。"""
+"""LLM provider 抽象 + OpenAI 兼容端点实现（智谱 GLM / DeepSeek / OpenAI…）+ 测试用 Fake。"""
 from __future__ import annotations
 
 import json
@@ -225,9 +225,11 @@ class FakeProvider:
             yield LLMDelta(usage=self._usage)  # 末尾 usage chunk
 
 
-class GLMProvider:
-    """智谱 GLM，走 OpenAI-兼容端点。client_factory 注入便于测试。
+class OpenAICompatProvider:
+    """通用 OpenAI 兼容端点 provider（智谱 GLM / DeepSeek / OpenAI 等都走它）。
 
+    端点由 YIBAO_LLM_API_KEY / YIBAO_LLM_MODEL / YIBAO_LLM_BASE_URL 配置（旧名
+    YIBAO_GLM_* 仍作回退，见 config.py）。client_factory 注入便于测试。
     chat 走同步 OpenAI；astream 走 AsyncOpenAI（懒加载，首次用时建）。
     """
 
@@ -338,6 +340,10 @@ class GLMProvider:
                     )
                 )
             yield LLMDelta(text=text, tool_call_deltas=tcd)
+
+
+# 旧名别名，新代码用 OpenAICompatProvider
+GLMProvider = OpenAICompatProvider
 
 
 def _vision_create_with_retry(create_fn, *, retries: int = 2, base_delay: float = 0.8):

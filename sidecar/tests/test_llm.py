@@ -2,7 +2,7 @@ import asyncio
 from types import SimpleNamespace
 
 from yibao_brain.llm import (
-    GLMProvider,
+    OpenAICompatProvider,
     FakeProvider,
     LLMResponse,
     ToolCall,
@@ -80,7 +80,7 @@ def test_fake_provider_returns_canned():
     assert resp.tool_calls[0].skill_id == "echo"
 
 
-def test_glm_provider_parses_openai_response():
+def test_openai_compat_provider_parses_openai_response():
     # 用假 client 注入，避免真实联网
     class FakeMsg:
         content = "hello"
@@ -102,13 +102,13 @@ def test_glm_provider_parses_openai_response():
                 def create(**kw):
                     return FakeResp()
 
-    p = GLMProvider(api_key="x", model="glm-4.6", client_factory=FakeClient)
+    p = OpenAICompatProvider(api_key="x", model="glm-4.6", client_factory=FakeClient)
     resp = p.chat(messages=[{"role": "user", "content": "hi"}])
     assert resp.text == "hello"
     assert resp.tool_calls == []
 
 
-def test_glm_chat_forwards_timeout_only_when_given():
+def test_llm_chat_forwards_timeout_only_when_given():
     # Distiller 离线调用显式传 60s 上限；不传时不下发，保持主对话回路 SDK 默认行为
     captured = {}
 
@@ -133,7 +133,7 @@ def test_glm_chat_forwards_timeout_only_when_given():
                     captured.update(kw)
                     return FakeResp()
 
-    p = GLMProvider(api_key="x", model="glm-4.6", client_factory=FakeClient)
+    p = OpenAICompatProvider(api_key="x", model="glm-4.6", client_factory=FakeClient)
     p.chat(messages=[{"role": "user", "content": "hi"}])
     assert "timeout" not in captured
     p.chat(messages=[{"role": "user", "content": "hi"}], timeout=60)
@@ -168,7 +168,7 @@ def test_fake_provider_astream_tool_calls_one_shot():
     assert tcs[0].skill_id == "echo" and tcs[0].params == {"text": "hi"}
 
 
-def test_glm_provider_astream_parses_stream():
+def test_openai_compat_provider_astream_parses_stream():
     # 假 AsyncClient：create(stream=True) 返回异步 chunk 迭代器
     class FakeDelta:
         def __init__(self, content=None, tcs=None):
@@ -218,7 +218,7 @@ def test_glm_provider_astream_parses_stream():
         def __init__(self, **kw):
             self.chat = FakeAsyncChat()
 
-    p = GLMProvider(api_key="x", model="glm-4.6", async_client_factory=FakeAsyncClient)
+    p = OpenAICompatProvider(api_key="x", model="glm-4.6", async_client_factory=FakeAsyncClient)
     deltas = asyncio.run(_collect(p.astream([{"role": "user", "content": "hi"}])))
     text = "".join(d.text for d in deltas)
     all_tcs = merge_tool_call_deltas([d for dl in deltas for d in dl.tool_call_deltas])

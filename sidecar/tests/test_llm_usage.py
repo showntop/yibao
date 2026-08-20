@@ -1,4 +1,4 @@
-"""GLM astream 的 usage 抓取：OpenAI 兼容端点的 usage chunk 带非空 choices 也能抓到。"""
+"""OpenAI 兼容 provider astream 的 usage 抓取：usage chunk 带非空 choices 也能抓到。"""
 import asyncio
 
 import pytest
@@ -51,7 +51,7 @@ def test_usage_chunk_with_nonempty_choices(tmp_path):
     """关键回归：usage chunk 的 choices 是 [{delta:{}, finish_reason:stop}]（非空）——
     旧实现只在 choices 空时查 usage，导致漏抓 → token 恒 0。"""
 
-    from yibao_brain.llm import GLMProvider, LLMDelta
+    from yibao_brain.llm import OpenAICompatProvider, LLMDelta
 
     # 模拟真实 OpenAI 兼容响应：
     #  - 正常文本 chunk（带 choices，无 usage）
@@ -62,7 +62,7 @@ def test_usage_chunk_with_nonempty_choices(tmp_path):
         _Chunk([_Choice(_Delta(), finish_reason="stop")], _Usage(prompt=120, completion=30, total=150)),
     ]
 
-    provider = GLMProvider(api_key="test", model="glm-4.6", base_url="http://test")
+    provider = OpenAICompatProvider(api_key="test", model="glm-4.6", base_url="http://test")
     provider._async_client = _FakeAsyncClient(_Stream(chunks))
     provider._async_creds = ("test", "http://test")
 
@@ -88,14 +88,14 @@ def test_usage_chunk_with_nonempty_choices(tmp_path):
 def test_usage_yielded_only_once(tmp_path):
     """多 chunk 重复带 usage（累计值）→ 只 yield 一次（防 loop 重复累加）。"""
 
-    from yibao_brain.llm import GLMProvider
+    from yibao_brain.llm import OpenAICompatProvider
 
     chunks = [
         _Chunk([_Choice(_Delta(content="a"))], _Usage(prompt=10, completion=5, total=15)),
         _Chunk([_Choice(_Delta(content="b"))], _Usage(prompt=10, completion=5, total=15)),
         _Chunk([_Choice(_Delta(), finish_reason="stop")], _Usage(prompt=10, completion=5, total=15)),
     ]
-    provider = GLMProvider(api_key="test", model="glm-4.6", base_url="http://test")
+    provider = OpenAICompatProvider(api_key="test", model="glm-4.6", base_url="http://test")
     provider._async_client = _FakeAsyncClient(_Stream(chunks))
     provider._async_creds = ("test", "http://test")
 
