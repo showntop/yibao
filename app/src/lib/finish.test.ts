@@ -20,6 +20,7 @@ describe("finish", () => {
 
   it("rejects unknown ids", () => {
     expect(isFinishId("porcelain")).toBe(true);
+    expect(isFinishId("bone")).toBe(true);
     expect(isFinishId("glass")).toBe(false);
   });
 

@@ -314,6 +314,7 @@
   --yb-widget-radius: 22px;
   --yb-widget-bg: #f7f9fc;
   --yb-widget-border: rgba(var(--yb-c-slate-rgb), 0.08);
+  --yb-widget-glaze: linear-gradient(180deg, rgba(255, 255, 255, 0.38), transparent 42%);
   --yb-widget-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.82),
     inset 0 -2px 4px rgba(var(--yb-c-slate-rgb), 0.07),
@@ -651,7 +652,8 @@ pre {
 
 /* ============ finish 覆盖（与 theme 正交） ============
  * porcelain = 缺省，上面 [C]/[D] 已是瓷。这里只写差异。
- * 新 finish：加 lib/finish.ts 的 FINISHES 一行 + 本段一块。 */
+ * 新 finish：加 lib/finish.ts 的 FINISHES 一行 + 本段一块。
+ * bone = 牙白骨瓷（参考图那种暖石灰石底 + 厚卡）。 */
 :root[data-finish="paper"] {
   --yb-glaze-hi: none;
   --yb-glaze-edge: none;
@@ -698,6 +700,176 @@ pre {
     0 10px 24px rgba(var(--yb-c-slate-rgb), 0.12);
 }
 
+:root[data-finish="bone"] {
+  --yb-c-bone-rgb: 72, 62, 52;
+  --yb-c-sky-rgb: 94, 116, 136;
+  --yb-text-strong: #2c2a27;
+  --yb-text: #2c2a27;
+  --yb-text-dim: #7a746c;
+  --yb-text-faint: #9a938a;
+  --yb-border-base: rgba(var(--yb-c-bone-rgb), 0.12);
+  --yb-border-strong: rgba(var(--yb-c-bone-rgb), 0.2);
+  --yb-line: rgba(var(--yb-c-bone-rgb), 0.1);
+  --yb-accent: #5e7488;
+  --yb-accent-deep: #4a5e6e;
+  --yb-accent-soft: rgba(94, 116, 136, 0.12);
+  --yb-bg: #c5bfb6;
+  --yb-surface-1: #f3f0ea;
+  --yb-surface-2: #ebe6de;
+  --yb-surface-3: rgba(var(--yb-c-bone-rgb), 0.06);
+  --yb-surface-solid: #f6f3ee;
+  --yb-shell-bg: #f3f0ea;
+  --yb-glass: rgba(246, 243, 238, 0.94);
+  --yb-content-bg: #f3f0ea;
+  --yb-sidebar-bg: #d2cdc4;
+  --yb-card-bg: #f3f0ea;
+  --yb-card-border: rgba(var(--yb-c-bone-rgb), 0.12);
+  --yb-card-row-line: rgba(var(--yb-c-bone-rgb), 0.1);
+  --yb-card-page-bg: #ebe6de;
+  --yb-row-hover: rgba(var(--yb-c-bone-rgb), 0.05);
+  --yb-row-selected: rgba(94, 116, 136, 0.12);
+  --yb-sticky-bg: rgba(243, 240, 234, 0.88);
+  --yb-segment-track: rgba(var(--yb-c-bone-rgb), 0.08);
+  --yb-segment-thumb: #f7f4ef;
+  --yb-bubble-ai: transparent;
+  --yb-bubble-user: #e4ddd3;
+  --yb-paper-bg: #d4cfc6;
+  --yb-paper-bg-deep: #cbc5bb;
+  --yb-paper-ink: #2c2a27;
+  --yb-paper-ink-dim: #7a746c;
+  --yb-paper-shade-rgb: var(--yb-c-bone-rgb);
+  --yb-note-bg: #f3f0ea;
+  --yb-note-border: rgba(var(--yb-c-bone-rgb), 0.12);
+  --yb-note-mute: #ebe6de;
+  --yb-note-soft: #f0ece6;
+  --yb-note-accent: rgba(94, 116, 136, 0.12);
+  --yb-desk: #c5bfb6;
+  --yb-desk-pad: 20px 18px 24px;
+  --yb-desk-well: none;
+  --yb-widget-gap: 16px;
+  --yb-widget-pad-x: 16px;
+  --yb-widget-bg: #fbfaf7;
+  --yb-widget-border: rgba(255, 255, 255, 0.72);
+  --yb-widget-radius: 14px;
+  --yb-widget-glaze: linear-gradient(158deg, #ffffff 8%, #f8f5f0 48%, #f0ebe4 100%);
+  --yb-widget-grain-opacity: 0;
+  --yb-widget-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    0 0 0 1px rgba(var(--yb-c-bone-rgb), 0.05),
+    0 2px 4px rgba(50, 45, 40, 0.05),
+    0 12px 24px rgba(50, 45, 40, 0.08),
+    0 32px 56px -8px rgba(50, 45, 40, 0.16);
+  --yb-note-shadow:
+    0 2px 4px rgba(50, 45, 40, 0.05),
+    0 12px 24px rgba(50, 45, 40, 0.08),
+    0 28px 48px -8px rgba(50, 45, 40, 0.14);
+  --yb-glaze-hi: inset 0 1px 0 rgba(255, 255, 255, 0.86);
+  --yb-glaze-edge: none;
+  --yb-press: inset 0 1px 2px rgba(var(--yb-c-bone-rgb), 0.12);
+  --yb-radius-sm: 6px;
+  --yb-radius-md: 10px;
+  --yb-radius-lg: 12px;
+  --yb-radius-xl: 14px;
+  --yb-shadow-1: 0 1px 1px rgba(var(--yb-c-bone-rgb), 0.08), 0 2px 6px rgba(var(--yb-c-bone-rgb), 0.08);
+  --yb-shadow-2: 0 2px 4px rgba(var(--yb-c-bone-rgb), 0.08), 0 10px 22px rgba(var(--yb-c-bone-rgb), 0.12);
+  --yb-think-mist: rgba(94, 116, 136, 0.1);
+  --yb-focus-ring: 0 0 0 2px #f3f0ea, 0 0 0 4px rgba(94, 116, 136, 0.45);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"])[data-finish="bone"] {
+    --yb-text-strong: #f0ebe4;
+    --yb-text: #e8e2da;
+    --yb-text-dim: #a39a90;
+    --yb-text-faint: #7d746a;
+    --yb-bg: #1c1a18;
+    --yb-surface-1: #2c2925;
+    --yb-surface-2: #35312c;
+    --yb-surface-solid: #2c2925;
+    --yb-shell-bg: #2c2925;
+    --yb-glass: rgba(44, 41, 37, 0.94);
+    --yb-content-bg: #2c2925;
+    --yb-sidebar-bg: #201e1b;
+    --yb-card-bg: #2c2925;
+    --yb-card-page-bg: #24211e;
+    --yb-desk: #161412;
+    --yb-desk-well: none;
+    --yb-widget-bg: #3a3631;
+    --yb-widget-border: rgba(255, 255, 255, 0.1);
+    --yb-widget-glaze: linear-gradient(158deg, #44403b 0%, #3a3631 48%, #322f2b 100%);
+    --yb-widget-grain-opacity: 0;
+    --yb-widget-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.12),
+      0 0 0 1px rgba(0, 0, 0, 0.35),
+      0 10px 24px rgba(0, 0, 0, 0.32),
+      0 32px 56px -8px rgba(0, 0, 0, 0.48);
+    --yb-c-sky-rgb: 138, 163, 179;
+    --yb-bubble-ai: transparent;
+    --yb-bubble-user: #3f3a34;
+    --yb-paper-bg: #24211e;
+    --yb-paper-bg-deep: #1c1a18;
+    --yb-paper-ink: #f0ebe4;
+    --yb-paper-ink-dim: #a39a90;
+    --yb-note-bg: #2c2925;
+    --yb-note-mute: #3a3631;
+    --yb-note-soft: #322f2b;
+    --yb-accent: #8aa3b3;
+    --yb-accent-deep: #9eb4c2;
+    --yb-accent-soft: rgba(138, 163, 179, 0.18);
+    --yb-sticky-bg: rgba(44, 41, 37, 0.9);
+    --yb-segment-thumb: #3a3631;
+    --yb-glaze-hi: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+    --yb-glaze-edge: none;
+    --yb-focus-ring: 0 0 0 2px #1c1a18, 0 0 0 4px rgba(138, 163, 179, 0.5);
+  }
+}
+
+:root[data-theme="dark"][data-finish="bone"] {
+  --yb-text-strong: #f0ebe4;
+  --yb-text: #e8e2da;
+  --yb-text-dim: #a39a90;
+  --yb-text-faint: #7d746a;
+  --yb-bg: #1c1a18;
+  --yb-surface-1: #2c2925;
+  --yb-surface-2: #35312c;
+  --yb-surface-solid: #2c2925;
+  --yb-shell-bg: #2c2925;
+  --yb-glass: rgba(44, 41, 37, 0.94);
+  --yb-content-bg: #2c2925;
+  --yb-sidebar-bg: #201e1b;
+  --yb-card-bg: #2c2925;
+  --yb-card-page-bg: #24211e;
+  --yb-desk: #161412;
+  --yb-desk-well: none;
+  --yb-widget-bg: #3a3631;
+  --yb-widget-border: rgba(255, 255, 255, 0.1);
+  --yb-widget-glaze: linear-gradient(158deg, #44403b 0%, #3a3631 48%, #322f2b 100%);
+  --yb-widget-grain-opacity: 0;
+  --yb-widget-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 10px 24px rgba(0, 0, 0, 0.32),
+    0 32px 56px -8px rgba(0, 0, 0, 0.48);
+  --yb-c-sky-rgb: 138, 163, 179;
+  --yb-bubble-ai: transparent;
+  --yb-bubble-user: #3f3a34;
+  --yb-paper-bg: #24211e;
+  --yb-paper-bg-deep: #1c1a18;
+  --yb-paper-ink: #f0ebe4;
+  --yb-paper-ink-dim: #a39a90;
+  --yb-note-bg: #2c2925;
+  --yb-note-mute: #3a3631;
+  --yb-note-soft: #322f2b;
+  --yb-accent: #8aa3b3;
+  --yb-accent-deep: #9eb4c2;
+  --yb-accent-soft: rgba(138, 163, 179, 0.18);
+  --yb-sticky-bg: rgba(44, 41, 37, 0.9);
+  --yb-segment-thumb: #3a3631;
+  --yb-glaze-hi: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  --yb-glaze-edge: none;
+  --yb-focus-ring: 0 0 0 2px #1c1a18, 0 0 0 4px rgba(138, 163, 179, 0.5);
+}
+
 /* OS 零件：石面桌 + 厚瓷片。左右栏、以后的插件轨共用。 */
 .yb-desk {
   display: flex;
@@ -720,7 +892,7 @@ pre {
   border: 1px solid var(--yb-widget-border);
   border-radius: var(--yb-widget-radius);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.38), transparent 42%),
+    var(--yb-widget-glaze),
     var(--yb-widget-bg);
   box-shadow: var(--yb-widget-shadow);
 }

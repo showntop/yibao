@@ -23,7 +23,11 @@ const html = computed(() => (props.role === "ai" && !props.typing ? renderMarkdo
 
 <template>
   <div v-if="typing" class="bubble ai typing" aria-label="正在输入"><i /><i /><i /></div>
-  <div v-else-if="html !== null" :class="['bubble', role, icon && `icon-${icon}`, plain && 'plain']">
+  <div
+    v-else-if="html !== null"
+    :class="['bubble', role, icon && `icon-${icon}`, plain && 'plain']"
+    :role="icon === 'clock' ? 'status' : undefined"
+  >
     <YbIcon v-if="icon" class="b-lead" :name="icon" :size="13" />
     <span v-html="html"></span><YbIcon v-if="halted" class="b-tail" name="stop" :size="13" title="已中止" /><span v-if="streaming" class="cur">▍</span>
   </div>
@@ -78,7 +82,15 @@ const html = computed(() => (props.role === "ai" && !props.typing ? renderMarkdo
   margin-right: var(--yb-space-1);
 }
 .icon-clock .b-lead {
-  color: var(--yb-accent);
+  margin: 0;
+  width: 26px;
+  height: 26px;
+  padding: 6px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  background: var(--yb-accent);
+  color: var(--yb-text-on-accent);
+  vertical-align: 0;
 }
 .icon-alert .b-lead {
   color: var(--yb-danger);
@@ -108,6 +120,28 @@ const html = computed(() => (props.role === "ai" && !props.typing ? renderMarkdo
    * 视觉上的"深蓝条"（双击全选时尤甚）。靠 1px 边 + 实色底出"卡"感。 */
   /* 尾巴角：靠左下的角收窄，拟小尾巴 */
   border-radius: var(--yb-radius-md) var(--yb-radius-md) var(--yb-radius-md) var(--yb-radius-xs);
+}
+/* 到期提醒：居中胶囊，不当成一条 AI 对话 */
+.ai.icon-clock {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  align-self: center;
+  width: fit-content;
+  max-width: min(92%, 28em);
+  margin: 6px auto;
+  padding: 8px 16px 8px 8px;
+  border-radius: var(--yb-radius-pill);
+  background: color-mix(in srgb, var(--yb-accent) 18%, var(--yb-surface-1));
+  border: 1px solid color-mix(in srgb, var(--yb-accent) 42%, transparent);
+  color: var(--yb-text-strong);
+  font-size: var(--yb-fs-lg);
+  font-weight: var(--yb-fw-medium);
+  line-height: 1.4;
+  box-shadow: var(--yb-glaze-hi), 0 1px 3px rgba(var(--yb-c-sky-rgb), 0.16);
+}
+.ai.icon-clock :deep(div) {
+  margin: 0;
 }
 /* 无气泡排版：AI 主回复直接落在流里（无底无边），仅保留行距与可读性 */
 .plain.ai {

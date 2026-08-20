@@ -1154,6 +1154,10 @@ onUnmounted(() => {
 .bubbles :deep(.bubble) {
   max-width: min(88%, 720px);
 }
+.bubbles :deep(.bubble.icon-clock) {
+  align-self: center;
+  max-width: min(92%, 28em);
+}
 /* 无气泡 AI 主文：放宽到 760px（主回复更舒展，结构化卡在 plain 层内） */
 .bubbles :deep(.bubble.plain) {
   max-width: min(100%, 760px);

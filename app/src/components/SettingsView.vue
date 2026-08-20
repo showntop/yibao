@@ -1356,6 +1356,8 @@ select option {
 }
 .finish-seg {
   display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   padding: 2px;
   gap: 2px;
   border-radius: var(--yb-radius-sm);
