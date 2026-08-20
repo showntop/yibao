@@ -20,7 +20,7 @@
 修掉 #1：--yb-text: #1e2a38（冷墨蓝黑）、--yb-text-dim: #6b7d91、--yb-body-ink: #24313f、影子改 --yb-shadow-ink
 修掉 #4：新增 --yb-intent-pending（琥珀，待批准/需人工确认）、--yb-intent-danger、--yb-intent-ok，与「天线状态灯」--yb-state-* 彻底分开语义
 修掉 #2/#3：补全 --yb-dur-fast: 0.12s / --yb-dur: 0.2s / --yb-dur-slow: 0.36s；--yb-ease-out（标准出场）/ --yb-ease-spring（弹簧，仅用于形象与入场）/ --yb-ease-inout；补 --yb-fs-xs、--yb-lh-tight/base/loose、--yb-radius-pill、--yb-focus-ring、--yb-shadow-1/2/3
-深色模式（按你的选择，本次不交付）：文件末尾留 /* [data-theme="dark"] { ... } */ 骨架注释 + 明确「只需覆盖语义层」的说明。删掉已过期的「过渡别名」块（--yb-idle 等，注释说明 Task 2 后可删——本次正是那个时机）。
+深色模式 ~~（按你的选择，本次不交付）~~：**已于 slice2c 交付**（tokens.css :402-651 系统跟随 + 显式双通道全量覆盖块，Home 三态切换）；2026-08-20 补齐插件面板层（genpanel/zimeiti editor 天青化 + dark 媒体查询，coding studio 待 R4 收尾落定后补）。删掉已过期的「过渡别名」块（--yb-idle 等，注释说明 Task 2 后可删——本次正是那个时机）。
 
 排版规则（统一到令牌，落到组件）：
 
