@@ -1,7 +1,7 @@
 /* coding:studio 全局样式 —— 移植 chat.html <style> 段(R4 阶段二 T4)。
    选择器与原文件保持一致(#log/.card/.bubble/#errbar…),后续任务增量补段。
    结构差异:#app 顶替 body 做 flex 列容器(Vue 挂载点);markdown 内容包一层 .mdc(v-html 与
-   think-block 分离),原 .bubble.md > :first-child/:last-child 规则同步复制到 .mdc 子层。 */
+   思考折叠块分离),原 .bubble.md > :first-child/:last-child 规则同步复制到 .mdc 子层。 */
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -26,8 +26,6 @@
   --red-bg: #f4dedb; --red: #b6554a; --red-bar: #dca59e;
   --amber: #f2a03c; --amber-bg: #fdf3e6;   /* 对齐宿主 intent-pending，等待审批 */
   --amber-deep: #a86a15;
-  --ai-bg: #f4f7fb;           /* AI 气泡:冷灰蓝壳，不再纯白描边卡 */
-  --user-bg: #3d7aa8;         /* 用户气泡:sky-600，饱和度压过 80% */
   --code-bg: #22303f;         /* ink-900 加深:markdown 代码块底 */
   --code-text: #d9e3ee;       /* 代码块正文 */
   --sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Segoe UI", sans-serif;
@@ -302,21 +300,22 @@ header .title { flex: none; font-size: 13px; font-weight: 600; color: var(--text
 }
 .station-remove:hover { background: var(--surface-2); color: var(--red); }
 
-/* ---- 主区:流式日志(唯一视觉焦点)。消息节奏行距 12,宽屏限 760px 消息带居中;
-   marker 小丸自带 align-self 居中不受影响 ---- */
+/* ---- 主区:流式日志(唯一视觉焦点)。文档流排版(验收样式迭代 v2,对齐 Claude.ai 阅读流):
+   720px 阅读带居中;turn 内消息距 10px,用户消息开新 turn 上沿加 14px(分组靠间距不靠框);
+   marker 分隔线贯通全宽不受影响 ---- */
 #log {
-  flex: 1; overflow-y: auto; padding: 16px 14px 20px;
-  display: flex; flex-direction: column; gap: 12px;
+  flex: 1; overflow-y: auto; padding: 20px 16px 24px;
+  display: flex; flex-direction: column; gap: 10px;
   background: var(--bg);
   background-image: radial-gradient(rgba(40,60,90,0.04) 1px, transparent 1px);
   background-size: 16px 16px;
   scroll-behavior: smooth;
 }
 #log > .row, #log > .card, #log > .tool-result {
-  width: 100%; max-width: 760px; margin-left: auto; margin-right: auto;
+  width: 100%; max-width: 720px; margin-left: auto; margin-right: auto;
 }
 .row { display: flex; width: 100%; }
-.row.user { justify-content: flex-end; }
+.row.user { justify-content: flex-end; margin-top: 14px; }
 .row.ai { justify-content: flex-start; }
 
 .bubble {
@@ -324,18 +323,28 @@ header .title { flex: none; font-size: 13px; font-weight: 600; color: var(--text
   font-size: 13px; line-height: 1.7; word-break: break-word; white-space: pre-wrap;
   text-wrap: pretty;
 }
-.row.user .bubble { background: var(--user-bg); color: #fff; border-bottom-right-radius: var(--r-xs); position: relative; }
-/* 用户气泡 ⏪ 回滚钮(T7,有 CC uuid 才渲染):右上内嵌;:has 加右 padding 防压字(不支持的旧 webview 降级为轻叠) */
+/* 用户消息:浅灰小块(高饱和蓝气泡退役),全圆角小一号;⏪ hover 才现身 */
+.row.user .bubble {
+  background: var(--surface-2); color: var(--text); border-radius: var(--r-lg);
+  max-width: 70%; font-size: 13px; line-height: 1.65; position: relative;
+}
+/* 用户气泡 ⏪ 回滚钮(T7,有 CC uuid 才渲染):右上内嵌,hover 气泡才现身(去常驻图标噪音);
+   :has 加右 padding 防压字(不支持的旧 webview 降级为轻叠) */
 .rewind-btn {
   position: absolute; top: 3px; right: 4px; line-height: 1;
-  border: none; background: transparent; color: #fff; opacity: .6;
+  border: none; background: transparent; color: var(--muted); opacity: 0;
   font-size: 12px; cursor: pointer; padding: 3px 4px; border-radius: 6px;
   transition: opacity .15s ease, background-color .15s ease;
 }
-.rewind-btn:hover { opacity: 1; background: rgba(255, 255, 255, .18); }
-.rewind-btn:disabled { opacity: .3; cursor: default; }
+.row.user .bubble:hover .rewind-btn { opacity: .7; }
+.rewind-btn:hover { opacity: 1 !important; background: rgba(40,60,90,0.08); }
+.rewind-btn:disabled { opacity: .35; cursor: default; }
 .row.user .bubble:has(.rewind-btn) { padding-right: 30px; }
-.row.ai .bubble { background: var(--ai-bg); color: var(--text); border-bottom-left-radius: var(--r-xs); }
+/* AI 回复:去气泡文档流——无底色无圆角,markdown 直接排在阅读带上;14px/1.75 长文阅读 */
+.row.ai .bubble {
+  background: transparent; color: var(--text); padding: 0; border-radius: 0;
+  max-width: 100%; font-size: 14px; line-height: 1.75;
+}
 /* 气泡尾 ✓ 已退役(验收样式收敛:换行成的孤行绿勾像残留物;完成态由 footer 状态行「✓ 完成 · Ns · tok」承载) */
 
 /* ---- AI 气泡 markdown(渲染基座:marked → DOMPurify → hljs;.md 类仅渲染成功时挂上) ---- */
@@ -345,14 +354,14 @@ header .title { flex: none; font-size: 13px; font-weight: 600; color: var(--text
 /* Vue 下 markdown 内容包一层 .mdc(v-html 与 think-block 同级分离),首尾块距规则复制到 .mdc 子层 */
 .bubble.md .mdc > :first-child { margin-top: 0; }
 .bubble.md .mdc > :last-child { margin-bottom: 0; }
-.bubble.md p { margin: 6px 0; }
+.bubble.md p { margin: 8px 0; }
 .bubble.md h1, .bubble.md h2, .bubble.md h3,
 .bubble.md h4, .bubble.md h5, .bubble.md h6 { margin: 12px 0 6px; line-height: 1.4; font-weight: 600; }
 .bubble.md h1 { font-size: 17px; }
 .bubble.md h2 { font-size: 15.5px; }
 .bubble.md h3 { font-size: 14px; }
 .bubble.md h4, .bubble.md h5, .bubble.md h6 { font-size: 13px; }
-.bubble.md ul, .bubble.md ol { margin: 6px 0; padding-left: 22px; }
+.bubble.md ul, .bubble.md ol { margin: 8px 0; padding-left: 22px; }
 .bubble.md li { margin: 2px 0; }
 .bubble.md li > p { margin: 2px 0; }         /* GFM 松散列表内段落不撑双距 */
 .bubble.md li input[type="checkbox"] { margin-right: 5px; vertical-align: -1px; }
@@ -403,10 +412,15 @@ header .title { flex: none; font-size: 13px; font-weight: 600; color: var(--text
 .bubble.md .hljs-deletion { color: #e08a80; }
 .bubble.md .hljs-meta { color: #b493e6; }
 
-/* 文件改动 / 工具调用卡片(v1 单列) */
+/* 文件改动 / 工具调用(文档流 v2:去卡片 chrome——工具调用收成单行日志式,
+   文件改动只留 diff 着色;交接卡例外保留卡面,见下) */
 .card {
   max-width: 85%; background: var(--card);
   border-radius: var(--r-lg); overflow: hidden; box-shadow: var(--shadow-card);
+}
+.card.tooluse, .card.fileedit {
+  max-width: 100%; background: transparent; border-radius: 0;
+  overflow: visible; box-shadow: none;
 }
 .card-head {
   display: flex; align-items: center; gap: 8px;
@@ -416,73 +430,80 @@ header .title { flex: none; font-size: 13px; font-weight: 600; color: var(--text
 .card-head .ic { flex: none; }
 .card-head .lbl { font-weight: 600; color: var(--text); flex: none; }
 .card.tooluse .card-head .ic { color: var(--muted); }
-/* 工具卡单行头:chevron + 图标 + 工具名 + 意图摘要 + 结果计数;整行点击展开详情 */
-.card.tooluse .card-head { cursor: pointer; user-select: none; }
-.card.tooluse .card-head:hover { background: var(--surface-2h); }
+/* 工具卡单行头:chevron + 图标 + 工具名 + 意图摘要 + 结果计数;整行点击展开详情。
+   负 margin 抵消 padding,文字与阅读带正文对齐,hover 浮出浅底给点击 affordance */
+.card.tooluse .card-head {
+  cursor: pointer; user-select: none;
+  background: transparent; border-bottom: none; border-radius: 8px;
+  padding: 3px 8px; margin: 0 -8px;
+}
+.card.tooluse .card-head:hover { background: var(--surface-2); }
 .card-head .chev { flex: none; width: 11px; color: var(--faint); font-size: 10px; }
 .card-head .intent {
   flex: 1; min-width: 0; font: var(--mono); color: var(--muted);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .card-head .tally { flex: none; font: var(--mono); font-size: 11px; color: var(--faint); }
-/* 工具失败标红(卡级 err 态 + 单行尾 ✗,不新增卡片) */
-.card.tooluse.err { box-shadow: inset 3px 0 0 var(--red), var(--shadow-card); }
+/* 工具失败标红(左红边条 + 单行尾 ✗,不新增卡片) */
+.card.tooluse.err { box-shadow: inset 3px 0 0 var(--red); }
 .card.tooluse.err .card-head .ic { color: var(--red); }
 .card.tooluse.err .card-head .tally { color: var(--red); font-weight: 600; }
-.card-body { padding: 0; background: var(--card); }
+.card-body { padding: 0; background: transparent; }
 .card-body.collapsed { display: none; }
 .card-body.open { display: block; }
 .card-body .note {
-  padding: 10px 13px; font-size: 12px; color: var(--muted); font-style: italic;
+  padding: 6px 0 6px 24px; font-size: 12px; color: var(--muted); font-style: italic;
 }
 .card-body .dl {
   font: var(--mono); padding: 1px 12px 1px 18px; white-space: pre-wrap; word-break: break-word;
   min-height: 1.6em;
 }
 .card-body .dl.s { color: var(--muted); }
-/* 工具卡 input JSON(原 chat.html 内联样式的类化:white-space/pre-wrap + 8px 上下 padding) */
-.card-body .tool-input { white-space: pre-wrap; padding: 8px 12px 8px 18px; margin: 0; }
+/* 工具卡 input JSON(原 chat.html 内联样式的类化:white-space/pre-wrap + 缩进挂头行下) */
+.card-body .tool-input { white-space: pre-wrap; padding: 4px 8px 6px 24px; margin: 0; }
 /* diff 行着色:新增绿底 / 删除红底+删除线 / 上下文灰 */
 .card-body .dl.diff-add { background: var(--green-bg); box-shadow: inset 3px 0 var(--green-bar); color: var(--green); }
 .card-body .dl.diff-del { background: var(--red-bg); box-shadow: inset 3px 0 var(--red-bar); color: var(--red); text-decoration: line-through; }
 .card-body .dl.diff-ctx { color: var(--muted); }
 /* MultiEdit 段头(第 N 处) */
 .card-body .seg-head { font: var(--mono); color: var(--muted); padding: 6px 12px 0 18px; }
-/* 文件改动卡头行:✎ path +x -y tool(默认展开无折叠钮;chrome 对齐 card-head) */
+/* 文件改动卡头行:✎ path +x -y tool——去头栏 chrome,纯文本行(diff 体自带着色) */
 .edit-head {
-  padding: 7px 11px; background: var(--surface-2); border-bottom: 1px solid var(--line);
+  padding: 3px 0; background: transparent; border-bottom: none;
   font: var(--mono); font-size: 12px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.edit-head .add { color: var(--green); }
+.edit-head .add { color: var(--green); margin-left: 8px; }
 .edit-head .del { color: var(--red); }
 .edit-head .tool-tag { opacity: .55; font-size: 11px; }
 
-/* 思考块(thinking 事件,验收样式迭代:填充灰块 → 左细边引述式——减重,不再像卡) */
+/* 思考折叠块(thinking 事件;文档流 v2:全部思考收进一个 details——流式自动展开,done 自收,
+   省屏;summary 单行「▸ 思考」幽灵行,展开内容左细边引述式) */
+.think { margin: 0 0 4px; }
+.think > summary {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 8px; margin-left: -8px; border-radius: 6px;
+  font-size: 11.5px; color: var(--faint); cursor: pointer; user-select: none; list-style: none;
+}
+.think > summary::-webkit-details-marker { display: none; }
+.think > summary:hover { background: var(--surface-2); color: var(--muted); }
+.think > summary .chev { font-size: 10px; transition: transform .15s ease; }
+.think[open] > summary .chev { transform: rotate(90deg); }
 .think-block {
-  margin-top: 6px; padding: 1px 0 1px 10px;
+  margin: 4px 0 6px; padding: 1px 0 1px 10px;
   border-left: 2px solid var(--border-strong);
   color: var(--faint); font-size: 12px; font-style: italic;
   white-space: pre-wrap; word-break: break-word;
 }
-.think-block .think-tag {
-  font-style: normal; font-weight: 600; font-size: 10.5px;
-  color: var(--faint); margin-right: 6px; letter-spacing: 0.04em;
-}
 
-/* 工具输出(tool_result):挂工具卡内。≤8 行直接可见(.plain 无 summary),
-   >8 行 details 默认收起、summary 显示「… +N lines」;err 红态 */
+/* 工具输出(tool_result):挂工具卡内,缩进对头行文字(去卡面,软底 pre 保留)。
+   ≤8 行直接可见(.plain 无 summary),>8 行 details 默认收起、summary 显示「… +N lines」;err 红态 */
 .tool-result {
-  max-width: 85%; margin-top: 8px; padding: 6px 11px 8px;
-  border-top: 1px dashed var(--border); font-size: 12px;
-}
-#log > .tool-result {
-  background: var(--card); border: 1px solid var(--border);
-  border-radius: var(--r-md); box-shadow: var(--shadow-card);
+  max-width: 100%; margin-top: 2px; padding: 2px 0 4px 24px; font-size: 12px;
 }
 .tool-result > summary { cursor: pointer; color: var(--muted); font-size: 11.5px; }
 .tool-result > pre {
-  margin-top: 6px; padding: 8px 10px; border-radius: 8px;
+  margin-top: 4px; padding: 8px 10px; border-radius: 8px;
   font: var(--mono); white-space: pre-wrap; word-break: break-word;
   color: var(--muted); background: var(--surface-2);
   max-height: 240px; overflow-y: auto;
@@ -720,13 +741,13 @@ footer { flex: none; background: transparent; padding: 0 10px 10px; }
 }
 #history-picker .hrow .hb.codex { background: var(--card); color: var(--muted); border-color: var(--border-strong); }
 
-/* ---- 交接卡(T7,对齐 chat.html:606-658):session 起点——整宽 + sky 强调色左边条;
+/* ---- 交接卡(T7,对齐 chat.html:606-658):session 起点——阅读带全宽 + sky 强调色左边条;
    封存后(sealed)转绿系,textarea readonly ---- */
 .card.handoff {
-  max-width: 96%; border: 1px solid var(--accent); border-left: 3px solid var(--accent);
+  max-width: 100%; border: 1px solid var(--accent); border-left: 3px solid var(--accent);
   background: var(--card);
 }
-.card.handoff .card-head { background: var(--accent-soft); border-bottom: 1px solid var(--accent-line); }
+.card.handoff .card-head { background: transparent; border-bottom: 1px solid var(--accent-line); }
 .card.handoff .card-head .ic,
 .card.handoff .card-head .lbl { color: var(--accent-deep); }
 .card.handoff .card-head .sid {
