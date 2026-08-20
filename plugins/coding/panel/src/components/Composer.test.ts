@@ -44,6 +44,16 @@ describe("Composer 复刻结构", () => {
     expect(w.emitted("send")?.[0]).toEqual(["hello", []]);
   });
 
+  it("busy(running)期不锁输入:可输入可发送(后端 steer 排队由父级 onSend 处理)", async () => {
+    const w = mount(Composer, { props: { busy: true, cwd: "/x", onStop: vi.fn() } });
+    const ta = w.find("textarea#prompt");
+    expect((ta.element as HTMLTextAreaElement).disabled).toBe(false);
+    (ta.element as HTMLTextAreaElement).value = "督导补充一句";
+    await ta.trigger("input"); // 输入事件正常走(@ 补全检测不炸)
+    await w.find("#send").trigger("click");
+    expect(w.emitted("send")?.[0]).toEqual(["督导补充一句", []]);
+  });
+
   it("@ 补全回归:输入 @ 触发文件菜单(coding.files)", async () => {
     const { invoke } = await import("../lib/bridge");
     (invoke as ReturnType<typeof vi.fn>).mockResolvedValue({ files: [{ rel: "src/main.ts" }] });

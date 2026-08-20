@@ -12,8 +12,9 @@
 //          prefillCwd/autoReplay,仅把 defaultCwd 预填进 cwd(非空才填,不回放);
 //   expose { state, dockH, onData, bindSession, unbindSession, stop, isBusy, hint };
 //   emits  sid-change(sid, agent) / request-focus() / request-remove()。
-// T4 行为修订:busy(sending||streaming)期 onSend 不再静默丢弃——过与空闲同组校验后
-// store.queueInput 入队(终态自动泄放),状态行提示「已排队，本轮结束后自动发送」。
+// T4 行为修订:busy(sending||streaming)期 onSend 不再静默丢弃——过与空闲同组校验后排队。
+// steer 上线后(后端 spec §A):streaming 会话直送 coding.send 入后端督导队列(marker 进流
+// 反馈);本地 store.queueInput 只兜底 sending 窗与跨引擎待定两种情形(见 onSend 注释)。
 // 行为逐条对齐 chat.html:
 //   handoffSend(:1964-1991,chip 跨引擎):占 sending 窗 coding.session_brief;等待期改主意
 //     (currentSession/switchAgent 变)丢弃;成功 → 旧 sid 进 discarded + marker + send 走 start
@@ -430,9 +431,19 @@ async function onSend(text: string, refs: string[]) {
   // cwd 空拦阻并开 cwd 浮层;校验顺序对齐原 send():先 cwd 后 prompt(busy 入队同组校验,拒发不入队)
   if (!cwd.value.trim()) { onComposerStatus("请先选择项目目录", true); openLayer.value = "cwd"; return; }
   if (!prompt) { onComposerStatus("请输入任务描述", true); composerRef.value?.focus(); return; }
-  // busy 排队(T4 修订,原静默丢弃):校验过了才入队,终态由 store 泄放(对齐原 takeover-input
-  // 排队路径:泄放时 cwd/mode/agent/switchAgent 取 queueContext 实时快照,交接守卫 store 侧同判据)
+  // busy 排队:streaming 会话直送后端 steer(spec §A,coding.send 排队 + marker 进流);
+  // 本地 sendQueue 只兜底两种不能 steer 的情形——sending 窗(会话 id 未回填,无 sid 可送)
+  // 与跨引擎待定(泄放路径 T9 交接守卫)。校验拒发不入队,与空闲同组
   if (state.sending || state.streaming) {
+    if (state.streaming && state.currentSession && !switchAgent.value) {
+      try {
+        await store.sendSteer(prompt, refs, curMode.value);
+        composerRef.value?.clear(); // 受理(入队)即消费 prompt+chips;反馈走后端 marker
+      } catch (e) {
+        onComposerStatus("排队失败：" + emsg(e), true); // 失败保留 prompt+refs 可重试
+      }
+      return;
+    }
     store.queueInput(prompt, refs, cwd.value.trim(), curMode.value, dstate.curAgent);
     composerRef.value?.clear(); // 入队即消费 prompt+chips(防滞留被二次发出)
     onComposerStatus("已排队，本轮结束后自动发送", false);

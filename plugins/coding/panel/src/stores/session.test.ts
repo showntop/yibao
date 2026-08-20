@@ -441,6 +441,52 @@ describe("queueInput(busy 排队)", () => {
   });
 });
 
+describe("sendSteer(运行中 steer,后端 spec §A)", () => {
+  it("streaming 会话直送 coding.send;queued 响应正常受理(不报错),不上屏乐观气泡", async () => {
+    const { deps, invoke } = makeDeps();
+    const s = createSessionStore(deps);
+    await s.send("/q", "首轮", "acceptEdits", "claude-code"); // currentSession=s1, streaming
+    expect(s.state.streaming).toBe(true);
+    (invoke as ReturnType<typeof vi.fn>).mockResolvedValue({ session_id: "s1", queued: true, position: 1 });
+    const before = s.state.items.length;
+    await s.sendSteer("补充一句", ["x.ts"], "acceptEdits"); // queued 不视为错误
+    expect(invoke).toHaveBeenLastCalledWith("coding.send", {
+      id: "s1", prompt: "补充一句\n\n引用文件:\n@x.ts", mode: "acceptEdits",
+    });
+    expect(s.state.items).toHaveLength(before); // 无乐观气泡:回流是【督导补充】合并稿,防双份
+    expect(s.state.error).toBeNull();
+    expect(s._test.getQueue()).toHaveLength(0); // 不进本地队列
+  });
+
+  it("非 streaming / 无会话 / sending 窗一律拒(本地 sendQueue 兜底的情形)", async () => {
+    const { deps, invoke } = makeDeps();
+    const s = createSessionStore(deps);
+    await expect(s.sendSteer("hi", [], "acceptEdits")).rejects.toThrow("会话不在运行中");
+    const h = heldInvoke();
+    const s2 = createSessionStore(makeDeps(h.invoke as never).deps);
+    const p = s2.send("/q", "首轮", "acceptEdits", "claude-code"); // sending 窗(streaming 未起)
+    await expect(s2.sendSteer("hi", [], "acceptEdits")).rejects.toThrow("会话不在运行中");
+    h.release({ session_id: "s1" });
+    await p;
+    s2.applyEvent(ev({ kind: "done" })); // 终态后同样拒
+    await expect(s2.sendSteer("hi", [], "acceptEdits")).rejects.toThrow("会话不在运行中");
+    expect(invoke).not.toHaveBeenCalledWith("coding.send", expect.anything());
+  });
+
+  it("失败 rethrow(收尾缝「请稍候」/桥错误):调用方留 prompt 重试,不动状态机", async () => {
+    const failing = vi.fn(async (method: string) => {
+      if (method === "coding.send") throw new Error("会话正在收尾中，请稍候");
+      return { session_id: "s1" };
+    });
+    const { deps } = makeDeps(failing as never);
+    const s = createSessionStore(deps);
+    await s.send("/q", "首轮", "acceptEdits", "claude-code");
+    await expect(s.sendSteer("补充", [], "acceptEdits")).rejects.toThrow("会话正在收尾中");
+    expect(s.state.error).toBeNull(); // 不进 errbar:由调用方状态行提示
+    expect(s.state.streaming).toBe(true); // 状态机不动
+  });
+});
+
 describe("评审回归", () => {
   // send 开窗清 fallbackUserIndex:上一轮残留的无锚引用不得被新一轮 user_msg 误升级
   it("跨轮误升级守卫:turn1 无锚气泡留存,turn2 同文本 user_msg 另起新气泡", async () => {

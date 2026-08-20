@@ -14,8 +14,9 @@
 //     有 el.composing 守卫,裸绑定没有);atInsert/clear/doSend 直读写 DOM,与原一致。
 // refs 由本组件收集,send 事件上抛;发送成功/入队由 App 调 clear() 消费(失败保留 prompt+refs
 // 可重试,对齐原 send() 的清理时机)。busy 仅反映 store 态(中断钮现身),发送不锁——busy 期
-// send 照常上抛,由 App onSend 过同组校验后 store.queueInput 排队(T4:原 takeover-input
-// 排队路径并入 onSend)。多工位:每工位一个本组件实例,聚焦者的 footer 经 CSS 停靠页底。
+// send 照常上抛,由 App onSend 过同组校验后排队(steer 上线后:streaming 直送 coding.send
+// 入后端督导队列;sending 窗/跨引擎待定走 store.queueInput 本地排队)。多工位:每工位一个
+// 本组件实例,聚焦者的 footer 经 CSS 停靠页底。
 // 复刻宿主 InputBar 几何（handoff spec §D）：composer-bar 圆角玻璃容器，
 // 发送/中断圆钮入输入行（InputBar mic/send 槽位），keys-row 退役；样式源头 InputBar.vue，改版需同步。
 import { reactive, ref, watch } from "vue";

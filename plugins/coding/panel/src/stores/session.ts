@@ -5,6 +5,9 @@
 // pendingTurnEnded 秒败竞态、resumeSession 的 discarded 解锁、busy 排队泄放(T9:泄放路径
 // 补跨引擎交接守卫,对齐原 send() 内联分支)、
 // handoffSend 跨引擎交接(:1964-1991)、startHandoffSession Codex→CC(:2268-2319)。
+// 运行中 steer(后端 spec §A 上线):streaming 会话的发送经 sendSteer 直送 coding.send,
+// 后端入督导队列返回 {queued, position} 并发 marker 进流;本地 sendQueue 只兜底
+// sending 窗(sid 未回填)与跨引擎待定(T9 交接守卫在泄放路径)两种不能 steer 的情形。
 // 阶段三:takeover 退役(spec 输入条节)——report/takeoverStop/clearTakeoverQueue 删除,
 // takeoverInput 改名 queueInput(共享输入条 busy 排队复用同一机制)。
 import { reactive } from "vue";
@@ -264,6 +267,20 @@ export function createSessionStore(deps: SessionDeps) {
     }
   }
 
+  /** 运行中 steer(后端 spec §A):streaming 会话直送 coding.send——后端不拒绝,prompt 入
+   *  督导队列返回 {queued, position} 并发 marker 进流(反馈走既有 marker 渲染路径,不亮状态行)。
+   *  check-then-act 缝(后端已收尾,走 resume 直续)返回非 queued:事件流照常,无需特判。
+   *  不上屏乐观用户气泡:续跑回流的 user_msg 是【督导补充】合并稿,文本匹配兜底会认不上成双份。
+   *  失败(收尾缝「请稍候」/桥错误)rethrow 给调用方——prompt+refs 留存可重试(同 send 清空时机)。 */
+  async function sendSteer(prompt: string, refs: string[], mode: string): Promise<void> {
+    const sid = state.currentSession;
+    if (!sid || state.sending || !state.streaming) throw new Error("会话不在运行中");
+    const r = (await deps.invoke("coding.send", {
+      id: sid, prompt: prompt + composeRefs(refs), mode,
+    })) as { session_id?: string } | null;
+    if (!r || !r.session_id) throw new Error("未返回 session_id"); // queued 响应同样带 session_id
+  }
+
   // —— 跨引擎交接发送(chat.html:1964-1991 handoffSend):chip 在老会话上选了另一引擎——
   //    coding.session_brief(DB 消息 + git → LLM 摘要,r.brief 恒有值)→ 旧会话进 discarded →
   //    send 走 coding.start 开新引擎会话(isStart 分支带 mode+agent,对齐原 send() ov 路径)。
@@ -412,6 +429,8 @@ export function createSessionStore(deps: SessionDeps) {
   }
 
   // —— busy 排队(共享输入条在工位忙时入队,终态泄放;原 takeover 队列机制更名沿用)——
+  // 注:streaming 会话的普通发送已改走 sendSteer(后端督导队列);本队列只兜底
+  // sending 窗(会话 id 未回填,无 sid 可 steer)与跨引擎待定(泄放路径 T9 交接守卫)
   function queueInput(text: string, refs: string[], cwd: string, mode: string, agent: string) {
     if (state.sending || state.streaming) {
       sendQueue.push({ text, refs });
@@ -455,7 +474,7 @@ export function createSessionStore(deps: SessionDeps) {
   }
 
   return {
-    state, handleData, applyEvent, send, stop, newChat, resumeSession,
+    state, handleData, applyEvent, send, sendSteer, stop, newChat, resumeSession,
     handoffSend, startHandoffSession, pushHandoffCard, dropHandoffCard,
     queueInput, setQueueContext, historyToItems,
     /** resume 在飞(attach/手动接续/autoReplay)——autoReplay 让位判据:在跑时不得再排候选 */
