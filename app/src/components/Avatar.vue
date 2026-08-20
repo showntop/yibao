@@ -193,21 +193,44 @@ function scheduleBlink() {
     scheduleBlink();
   }, 2200 + Math.random() * 3600);
 }
+// idle 偶发小动作：照抄 scheduleBlink 模式——JS 随机稀疏触发（8–20s），
+// 身体轻摇 / 天线轻晃随机二选一，单次播放不循环；仅 idle 时跑
+const quirk = ref<"" | "sway" | "wiggle">("");
+let quirkTimer: ReturnType<typeof setTimeout> | null = null;
+let quirkOffTimer: ReturnType<typeof setTimeout> | null = null;
+function clearQuirk() {
+  if (quirkTimer) { clearTimeout(quirkTimer); quirkTimer = null; }
+  if (quirkOffTimer) { clearTimeout(quirkOffTimer); quirkOffTimer = null; }
+  quirk.value = "";
+}
+function scheduleIdleQuirk() {
+  quirkTimer = setTimeout(() => {
+    quirk.value = Math.random() < 0.5 ? "sway" : "wiggle";
+    // 动画播完（sway 0.7s / wiggle 0.8s，留 900ms 余量）摘 class 再排下一次，互不重叠
+    quirkOffTimer = setTimeout(() => {
+      quirk.value = "";
+      scheduleIdleQuirk();
+    }, 900);
+  }, 8000 + Math.random() * 12000);
+}
 watch(
   () => props.state,
   (s) => {
-    if (s === "idle") scheduleBlink();
-    else if (blinkTimer) { clearTimeout(blinkTimer); blinkTimer = null; blinking.value = false; }
+    if (s === "idle") { scheduleBlink(); scheduleIdleQuirk(); }
+    else {
+      if (blinkTimer) { clearTimeout(blinkTimer); blinkTimer = null; blinking.value = false; }
+      clearQuirk();
+    }
   },
   { immediate: true },
 );
-onUnmounted(() => { if (blinkTimer) clearTimeout(blinkTimer); });
+onUnmounted(() => { if (blinkTimer) clearTimeout(blinkTimer); clearQuirk(); });
 </script>
 
 <template>
   <div
     class="av"
-    :class="[state, { holding, compact }]"
+    :class="[state, quirk, { holding, compact }]"
     :style="{ width: props.size + 'px', height: props.size + 'px' }"
     role="img"
     :aria-label="label"
@@ -521,6 +544,21 @@ onUnmounted(() => { if (blinkTimer) clearTimeout(blinkTimer); });
 .av.say .dot-grp { animation: glow 1s infinite alternate ease-in-out; }
 .av.success .spark { animation: pop 1.2s ease-out infinite; }
 .av.error .dot-grp { animation: shake 0.5s infinite ease-in-out; }
+
+/* idle 偶发小动作（JS 随机触发，一次性动画；播完摘 class 回落 breathe）：
+   sway 身体轻摇（底部为轴）/ wiggle 天线灯轻晃 */
+.av.sway .body-grp { animation: yb-sway 0.7s var(--yb-ease-out) 1; }
+.av.wiggle .dot-grp { animation: yb-wiggle 0.8s var(--yb-ease-out) 1; }
+@keyframes yb-sway {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(-2.5deg); }
+  75% { transform: rotate(2.5deg); }
+}
+@keyframes yb-wiggle {
+  0%, 100% { transform: rotate(0deg); }
+  30% { transform: rotate(-14deg); }
+  70% { transform: rotate(14deg); }
+}
 
 /* stretch：一次性做操（下蹲蓄力 → 向上伸展 → 回弹），由 flashState 触发，不循环 */
 .av.stretch .body-grp { animation: yb-stretch 1.15s var(--yb-ease-spring) 1; }
