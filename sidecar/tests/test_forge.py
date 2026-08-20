@@ -271,3 +271,129 @@ def test_doc_read_whitelisted(env):
     env
     api = get_api("forge.doc_read")
     assert api is not None and api.direct
+
+
+# ---------- 补缺：写盘/覆盖/边界（风险优先，不为覆盖率凑数） ----------
+
+
+def test_doc_save_prd_does_not_advance_status(env):
+    """prd 落盘只记 prd_path，不动状态机（只有 challenge 会把需求推进到「挑战中」）。"""
+    reg, _, _ = env
+    rid = _add_req(reg)
+    r = _run(reg, "forge.doc_save", {"id": rid, "kind": "prd", "content": "# PRD\n正文"})
+    assert r.success
+    row = _run(reg, "forge.get", {"id": rid}).data["rows"][0]
+    assert row["status"] == "灵感"  # 状态不变
+    assert row["prd_path"].endswith(f"{rid}-prd.md")
+    assert Path(row["prd_path"]).read_text(encoding="utf-8").startswith("# PRD")
+
+
+def test_doc_save_overwrite_same_kind_rewrites_file(env):
+    """同 kind 二次保存覆盖旧文件（修订场景），路径不变、内容更新、不留下两份。"""
+    reg, _, _ = env
+    rid = _add_req(reg)
+    _run(reg, "forge.doc_save", {"id": rid, "kind": "prd", "content": "v1"})
+    r = _run(reg, "forge.doc_save", {"id": rid, "kind": "prd", "content": "v2 修订"})
+    assert r.success
+    path = Path(r.data["path"])
+    assert path.read_text(encoding="utf-8") == "v2 修订"
+    assert len(list(path.parent.glob(f"{rid}-prd*"))) == 1
+
+
+def test_doc_save_rejects_empty_content(env):
+    """空/全空白 content 拒绝落盘（防止一次空调用把已有文档抹成空白）。"""
+    reg, _, _ = env
+    rid = _add_req(reg)
+    _run(reg, "forge.doc_save", {"id": rid, "kind": "prd", "content": "有内容"})
+    assert not _run(reg, "forge.doc_save", {"id": rid, "kind": "prd", "content": ""}).success
+    assert not _run(reg, "forge.doc_save", {"id": rid, "kind": "prd", "content": "   "}).success
+    assert not _run(reg, "forge.doc_save", {"id": rid, "kind": "prd"}).success  # 缺 content
+    # 拒绝后旧文档原样还在
+    row = _run(reg, "forge.get", {"id": rid}).data["rows"][0]
+    assert Path(row["prd_path"]).read_text(encoding="utf-8") == "有内容"
+
+
+def test_doc_read_truncates_overlong_doc(env):
+    """超过 20000 字符的文档截断返回（面板渲染防卡），截断标记可见。"""
+    reg, _, _ = env
+    rid = _add_req(reg)
+    _run(reg, "forge.doc_save", {"id": rid, "kind": "prd", "content": "长" * 25000})
+    r = _run(reg, "forge.doc_read", {"id": rid, "kind": "prd"})
+    assert r.success
+    assert len(r.data["text"]) < 25000 and "截断" in r.data["text"]
+
+
+def test_doc_read_deleted_file_errors_gracefully(env):
+    """库里记着路径但文件已被外部删掉：报错而非抛异常，错误信息可读。"""
+    reg, _, _ = env
+    rid = _add_req(reg)
+    _run(reg, "forge.doc_save", {"id": rid, "kind": "challenge", "content": "正文"})
+    path = Path(_run(reg, "forge.get", {"id": rid}).data["rows"][0]["challenge_path"])
+    path.unlink()
+    r = _run(reg, "forge.doc_read", {"id": rid, "kind": "challenge"})
+    assert not r.success and "读取失败" in r.error
+
+
+def test_verdict_rejects_empty_reason_and_id(env):
+    """reason 落库 verdict_reason 且进长期记忆，空理由必须拒绝（防脏数据进记忆）。"""
+    reg, _, _ = env
+    rid = _add_req(reg)
+    assert not _run(reg, "forge.verdict", {"id": rid, "verdict": "已立项", "reason": ""}).success
+    assert not _run(reg, "forge.verdict", {"id": rid, "verdict": "已立项", "reason": "  "}).success
+    assert not _run(reg, "forge.verdict", {"id": "", "verdict": "已立项", "reason": "r"}).success
+    assert not _run(reg, "forge.verdict", {"id": "不存在", "verdict": "已立项", "reason": "r"}).success
+    row = _run(reg, "forge.get", {"id": rid}).data["rows"][0]
+    assert row["status"] == "灵感" and not row["verdict_reason"]  # 全部拒绝，行没被污染
+
+
+def test_verdict_all_three_values_and_re_verdict(env):
+    """三个合法裁决值都能落库；改判覆盖旧值并刷新 decided_at（允许推翻自己）。"""
+    reg, _, _ = env
+    rid = _add_req(reg)
+    for v in ("已立项", "已搁置", "已否决"):
+        r = _run(reg, "forge.verdict", {"id": rid, "verdict": v, "reason": f"理由-{v}"})
+        assert r.success, v
+        row = _run(reg, "forge.get", {"id": rid}).data["rows"][0]
+        assert row["status"] == v and row["verdict_reason"] == f"理由-{v}"
+
+
+def test_verdict_form_rejects_empty_id(env):
+    reg, _, _ = env
+    assert not _run(reg, "forge.verdict_form", {"id": ""}).success
+
+
+def test_proto_gen_rejects_empty_html(env):
+    """空/全空白 html 拒绝落盘（防止空调用覆盖掉已有原型文件）。"""
+    reg, _, _ = env
+    rid = _add_req(reg)
+    t = reg.get("forge.proto_gen")
+    t._opener = lambda p: None
+    assert not _run(reg, "forge.proto_gen", {"id": rid, "html": ""}).success
+    assert not _run(reg, "forge.proto_gen", {"id": rid, "html": "  "}).success
+    assert not _run(reg, "forge.proto_gen", {"id": rid}).success  # 缺 html
+
+
+def test_proto_gen_opener_failure_still_succeeds(env, monkeypatch):
+    """浏览器拉不起来不算失败：原型已落盘，data 里带 preview_error 告知。"""
+    reg, _, _ = env
+    rid = _add_req(reg)
+
+    def _boom(path):
+        raise RuntimeError("没有浏览器")
+
+    monkeypatch.setattr(reg.get("forge.proto_gen"), "_opener", _boom)
+    r = _run(reg, "forge.proto_gen", {"id": rid, "html": "<html>ok</html>"})
+    assert r.success and "没有浏览器" in r.data["preview_error"]
+    assert Path(r.data["path"]).is_file()  # 文件照常落盘
+
+
+def test_proto_gen_overwrite_keeps_single_file(env, monkeypatch):
+    """同一需求重复生成原型：覆盖同一文件，不在磁盘上堆积版本。"""
+    reg, _, _ = env
+    rid = _add_req(reg)
+    monkeypatch.setattr(reg.get("forge.proto_gen"), "_opener", lambda p: None)
+    _run(reg, "forge.proto_gen", {"id": rid, "html": "v1"})
+    r = _run(reg, "forge.proto_gen", {"id": rid, "html": "v2"})
+    path = Path(r.data["path"])
+    assert path.read_text(encoding="utf-8") == "v2"
+    assert len(list(path.parent.glob(f"{rid}*.html"))) == 1
