@@ -121,10 +121,10 @@ const speech = ref<string | null>(null);
 const speechStreaming = ref(false);
 const speechVisible = ref(false);
 let speechTimer: ReturnType<typeof setTimeout> | null = null;
-/** 团子窗口内 top（CSS 像素）：正常 100（脚下输入条，再下是插件）；
- *  窗口贴近屏幕顶时动态上移（macOS 不允许窗口出屏），让团子贴菜单栏下缘。
- *  团子屏幕 y = 窗口y + petY，min(100, 窗口y+40) 保证接近顶部时连续上贴。 */
-const petY = ref(100);
+/** 团子窗口内 top（CSS 像素）：默认 16（贴窗口顶，下方留给输入条+插件）；
+ *  窗口贴近屏幕顶时继续上移（macOS 不允许窗口出屏），让团子贴菜单栏下缘。
+ *  团子屏幕 y = max(窗口y + 16, 24) → petY = max(16, 24 - 窗口y)。 */
+const petY = ref(16);
 let scaleCached = 1; // Retina 缩放（窗口创建后不变，onMoved 计算用）
 let unlistenMoved: (() => void) | null = null;
 const panelOpen = ref(false); // 面板浮窗当前打开状态
@@ -288,8 +288,8 @@ function syncHotRects() {
  *  热区随 petY 变化实时上报。 */
 function onWindowMoved(p: { x: number; y: number }) {
   const winY = p.y / (scaleCached || 1);
-  const f = Math.max(0, Math.min(100, winY - 24));
-  const target = Math.max(winY + f, 24) - winY;
+  // 默认贴窗口顶（petY=16），窗口贴屏顶时锁团子屏幕 y=24（菜单栏下缘）
+  const target = Math.max(16, 24 - winY);
   if (target !== petY.value) {
     petY.value = target;
     syncHotRects();
@@ -1394,7 +1394,7 @@ onUnmounted(() => {
 .pet {
   position: absolute;
   left: 144px;
-  top: 100px;
+  top: 16px;
   width: 96px;
   height: 96px;
   pointer-events: auto;

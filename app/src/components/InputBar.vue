@@ -14,8 +14,10 @@ const props = withDefaults(
     listening?: boolean;
     draft?: string;
     placeholder?: string;
+    /** 多行展开的最大高度（px）；小窗（桌宠脚下）给更小值防溢出 */
+    growMax?: number;
   }>(),
-  { placeholder: "对译宝说点什么…（shift+回车换行）" },
+  { placeholder: "对译宝说点什么…（shift+回车换行）", growMax: 140 },
 );
 const emit = defineEmits<{
   (e: "submit", text: string, contexts: InputContext[]): void;
@@ -24,17 +26,23 @@ const emit = defineEmits<{
 }>();
 const text = ref("");
 const inputRef = ref<HTMLTextAreaElement | null>(null);
-/** textarea 自适应高度：内容增长时行增高，清空/发送后回落 */
+/** textarea 自适应高度：仅多行（含换行符）随内容增高；单行固定一行高度 */
 function autoGrow() {
   const el = inputRef.value;
   if (!el) return;
+  if (!text.value.includes("\n")) {
+    el.style.height = "";
+    return;
+  }
   el.style.height = "auto";
-  el.style.height = `${Math.min(el.scrollHeight, 140)}px`; // 上限 140px 防过高
+  el.style.height = `${Math.min(el.scrollHeight, props.growMax)}px`; // 上限防过高（小窗更小）
 }
 const fileRef = ref<HTMLInputElement | null>(null);
 const addOpen = ref(false);
 const pendingContexts = ref<InputContext[]>([]);
 const canSend = computed(() => text.value.trim().length > 0);
+/** 多行判定：仅当文本含换行符（shift+回车 手打换行）才展开成两行及以上，否则保持单行 */
+const isMulti = computed(() => text.value.includes("\n"));
 
 // 草稿暂存：写入 SessionStore.conversation（按活动会话），300ms trailing debounce 避免高频写
 let draftTimer: ReturnType<typeof setTimeout> | null = null;
@@ -363,7 +371,7 @@ defineExpose({ focus: () => inputRef.value?.focus(), insertText, takeDraft });
         <button type="button" aria-label="移除内容" @click="removeContext(index)">×</button>
       </span>
     </div>
-    <div class="bar-row">
+    <div class="bar-row" :class="{ multi: isMulti }">
     <div class="add-wrap">
       <button
         type="button"
@@ -409,6 +417,7 @@ defineExpose({ focus: () => inputRef.value?.focus(), insertText, takeDraft });
         ref="inputRef"
         v-model="text"
         rows="1"
+        :class="{ nowrap: !isMulti }"
         :placeholder="placeholder"
         title="Shift+回车换行"
         @keydown.enter.exact.prevent="onEnter"
@@ -481,7 +490,36 @@ defineExpose({ focus: () => inputRef.value?.focus(), insertText, takeDraft });
 .bar-row {
   display: flex;
   gap: 5px;
+  row-gap: 0;                        /* 多行时 textarea 与按钮行零垂直间距，布局更紧凑 */
   align-items: center;
+  flex-wrap: wrap;                   /* 多行时 textarea 占满首行后自然换行；单行不触发 */
+}
+/* 多行（shift+回车后）布局：textarea 用 100% basis 独占首行换到上方，
+ * 按钮行留在下方，+ 号 margin-right:auto 推到左，语音/发送贴右。
+ * align-items: flex-start + text-wrap 显式高度 auto：让每个 item 高度 = 内容高度，
+ * 避免被所在 flex line 拉伸造成 textarea 下方/按钮行上下出现多余空白。 */
+.bar-row.multi {
+  align-items: flex-start;
+}
+.bar-row.multi .text-wrap {
+  flex: 1 1 100%;
+  order: 1;
+  min-width: 0;
+  height: auto;                     /* 锁死内容高度，防止被 line 高度撑开 */
+  align-self: flex-start;
+}
+.bar-row.multi .add-wrap {
+  order: 2;
+  margin-right: auto;               /* 把后续 mic/main 推到行尾 */
+  align-self: center;               /* 按钮在多行时垂直居中（line 高度 = 自身高度，居中即贴满） */
+}
+.bar-row.multi .mic {
+  order: 3;
+  align-self: center;
+}
+.bar-row.multi .main {
+  order: 4;
+  align-self: center;
 }
 .bar:focus-within {
   border-color: var(--yb-accent);
@@ -547,6 +585,8 @@ textarea {
   -webkit-appearance: none;
   appearance: none;
   box-shadow: none;
+  box-sizing: border-box;                       /* height = border-box 总高（含 padding），
+                                                   autoGrow 用 scrollHeight 直接赋值才不会撑高 */
   font-size: 14px;                            /* 13.5 → 14 更清晰 */
   outline: none;
   color: var(--yb-text);
@@ -563,9 +603,16 @@ textarea::placeholder {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* 滚动条细化（多行输入时可见） */
+/* 单行模式：禁软折行，长文本横向滚动查看（保持一行不增高） */
+textarea.nowrap {
+  white-space: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+/* 滚动条细化（多行输入/单行横向滚动时可见） */
 textarea::-webkit-scrollbar {
   width: 4px;
+  height: 4px;
 }
 textarea::-webkit-scrollbar-thumb {
   background: var(--yb-text-faint);
@@ -589,16 +636,17 @@ textarea::-webkit-scrollbar-thumb {
 }
 .add {
   border: 1px solid transparent;
-  background: transparent;
+  background: var(--yb-surface-2);           /* 常驻浅灰圆底，作为可见按钮 */
   color: var(--yb-accent);
 }
 .add:hover,
-.add.open,
-.add.active {
-  background: var(--yb-surface-2);
+.add.open {
+  background: var(--yb-accent-soft);         /* hover/展开淡蓝反馈 */
   color: var(--yb-accent);
 }
 .add.active {
+  background: var(--yb-accent-soft);
+  color: var(--yb-accent-deep);
   box-shadow: inset 0 0 0 1px var(--yb-accent-soft);
 }
 .add-menu {

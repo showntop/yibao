@@ -74,6 +74,10 @@ const stackStyle = computed(() => ({
   top: quickStackTop(props.petY) + "px",
   left: quickStackLeft() + "px",
   width: STACK_W + "px",
+  // 窗口高 = 300（idle/quick 恒 320×300）：给输入条+docks 一个确定高度并禁止超出，
+  // 多行输入时 textarea 由 growMax 限高、插件钮在底部被裁，输入框始终完整可见
+  height: `calc(100% - ${quickStackTop(props.petY) + 10}px)`,
+  overflow: "hidden",
 }));
 </script>
 
@@ -85,6 +89,7 @@ const stackStyle = computed(() => ({
           :busy="props.busy"
           :listening="props.listening"
           placeholder="说点什么…"
+          :grow-max="55"
           @submit="(t, ctx) => emit('submit', t, ctx)"
           @mic="() => emit('mic')"
           @interrupt="() => emit('interrupt')"
@@ -126,6 +131,7 @@ const stackStyle = computed(() => ({
 .wb-input {
   width: 100%;
   pointer-events: auto;
+  flex-shrink: 0; /* 多行时输入条保持完整，插件钮让路被裁 */
 }
 .wb-docks {
   display: flex;

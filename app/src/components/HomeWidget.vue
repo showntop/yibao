@@ -1,10 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import YbIcon from "./YbIcon.vue";
 import {
   useHomeWidgets,
   WIDGET_MATERIALS,
-  WIDGET_SIZES,
   type WidgetId,
 } from "../lib/home-widgets";
 import { useHomeChrome, useLiveAssembly } from "../lib/home-chrome";
@@ -22,10 +21,30 @@ const placed = computed(() => isPlaced(assembly.value, props.id));
 const { id: presetId } = useHomeChrome();
 const menuOpen = ref(false);
 const canDrag = computed(() => assembly.value.place === "canvas");
+const moreBtn = ref<HTMLElement | null>(null);
+const menuEl = ref<HTMLElement | null>(null);
+const menuStyle = ref<Record<string, string>>({});
+
+/** 菜单宽度 = .yb-widget-menu 的 width，与 CSS 保持一致（避免错位） */
+const MENU_WIDTH = 132;
+function placeMenu() {
+  const btn = moreBtn.value;
+  if (!btn) return;
+  const r = btn.getBoundingClientRect();
+  menuStyle.value = {
+    position: "fixed",
+    top: `${Math.round(r.bottom + 6)}px`,
+    left: `${Math.round(r.right - MENU_WIDTH)}px`,
+  };
+}
+watch(menuOpen, (open) => { if (open) nextTick(placeMenu); });
 
 function onDoc(e: MouseEvent) {
   const t = e.target as Node | null;
-  if (t && (root.value?.contains(t))) return;
+  if (!t) return;
+  if (root.value?.contains(t)) return;
+  // menuEl 已被 Teleport 到 body，不再被 root 包含；单独豁免避免点菜单内按钮触发关闭
+  if (menuEl.value?.contains(t)) return;
   menuOpen.value = false;
 }
 const root = ref<HTMLElement | null>(null);
@@ -58,6 +77,7 @@ onUnmounted(() => document.removeEventListener("mousedown", onDoc));
         <YbIcon name="grip" :size="11" />
       </button>
       <button
+        ref="moreBtn"
         class="yb-widget-tool"
         type="button"
         title="零件选项"
@@ -68,28 +88,29 @@ onUnmounted(() => document.removeEventListener("mousedown", onDoc));
         <YbIcon name="more" :size="11" />
       </button>
     </div>
-    <div v-if="menuOpen" class="yb-widget-menu" role="menu">
-      <div class="row">
-        <button
-          v-for="s in WIDGET_SIZES"
-          :key="s.id"
-          type="button"
-          :class="{ on: spec.size === s.id }"
-          @click="widgets.setSize(id, s.id)"
-        >{{ s.label }}</button>
+    <!-- Teleport 到 body：菜单不再受 .yb-widget(overflow:hidden) 裁切，按按钮视口坐标定位 -->
+    <Teleport to="body">
+      <div
+        v-if="menuOpen"
+        ref="menuEl"
+        class="yb-widget-menu"
+        role="menu"
+        :style="menuStyle"
+        @click.stop
+      >
+        <div class="row">
+          <button
+            v-for="m in WIDGET_MATERIALS"
+            :key="m.id"
+            type="button"
+            :class="{ on: spec.material === m.id }"
+            @click="widgets.setMaterial(id, m.id)"
+          >{{ m.label }}</button>
+        </div>
+        <button v-if="canDrag" class="act" type="button" @click="widgets.resetFrame(presetId, id); menuOpen = false">恢复位置</button>
+        <button class="hide" type="button" @click="widgets.hide(id); menuOpen = false">隐藏</button>
       </div>
-      <div class="row">
-        <button
-          v-for="m in WIDGET_MATERIALS"
-          :key="m.id"
-          type="button"
-          :class="{ on: spec.material === m.id }"
-          @click="widgets.setMaterial(id, m.id)"
-        >{{ m.label }}</button>
-      </div>
-      <button v-if="canDrag" class="act" type="button" @click="widgets.resetFrame(presetId, id); menuOpen = false">恢复位置</button>
-      <button class="hide" type="button" @click="widgets.hide(id); menuOpen = false">隐藏</button>
-    </div>
+    </Teleport>
     <slot />
   </section>
 </template>
@@ -125,10 +146,7 @@ onUnmounted(() => document.removeEventListener("mousedown", onDoc));
 .yb-widget-tool:hover { color: var(--yb-paper-ink); background: var(--yb-note-mute); }
 
 .yb-widget-menu {
-  position: absolute;
-  top: 28px;
-  right: 6px;
-  z-index: 6;
+  /* 位置由 inline style（fixed + 视口坐标）控制；只能叠在浮层上，靠 :style 提升层级 */
   width: 132px;
   padding: 6px;
   display: flex;

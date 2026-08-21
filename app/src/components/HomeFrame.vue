@@ -353,8 +353,11 @@ function onMoveStart(item: ResolvedItem, e: PointerEvent) {
     var(--yb-widget-bg);
   box-shadow: var(--yb-widget-shadow);
 }
-.host.kind-nav :deep(.yb-widget),
-.host.kind-context :deep(.yb-widget) {
+/* 让 host 内"透明组件"（AgentBrain / HomeGlance / HomeLife / HomePluginGlance 用 display:contents
+   把内部 .yb-widget 透出到 host 直接子）的瓷片撑满 host。HomeContextPanel 不透明，aside 内的
+   .yb-widget 隔了一层，不再被此规则影响，由 aside 自己负责内部排布。 */
+.host.kind-nav > :deep(.yb-widget),
+.host.kind-context > :deep(.yb-widget) {
   flex: 1;
   width: 100%;
   height: 100%;
@@ -365,8 +368,8 @@ function onMoveStart(item: ResolvedItem, e: PointerEvent) {
   background: transparent;
   box-shadow: none;
 }
-.host.kind-nav :deep(.yb-widget::after),
-.host.kind-context :deep(.yb-widget::after) {
+.host.kind-nav > :deep(.yb-widget::after),
+.host.kind-context > :deep(.yb-widget::after) {
   display: none;
 }
 .host.kind-nav.face-spine {

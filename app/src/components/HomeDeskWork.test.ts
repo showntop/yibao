@@ -13,7 +13,7 @@ describe("HomeDeskWork", () => {
     expect(w.text()).toContain("正在干");
     expect(w.text()).not.toContain("当前任务");
     expect(w.text()).not.toContain("返回");
-    expect(w.get("#yb-desk-work-body").exists()).toBe(true);
+    expect(w.find("#yb-desk-work-body").exists()).toBe(true);
   });
 
   it("译宝脑工位不举行请来仪式", () => {

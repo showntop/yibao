@@ -12,6 +12,11 @@ from abc import ABC, abstractmethod
 # mem0 的 PostHog 遥测默认开（本地产品不该外发），须在 mem0 首次导入前关掉；
 # 顺带压住 mem0 调 sentence-transformers 旧接口的 FutureWarning（第三方噪音）。
 os.environ.setdefault("MEM0_TELEMETRY", "false")
+# fastembed 模型缓存默认在系统临时目录（重启即清空，每次启动重下几十 MB 且国内直连 HF 常被拒）——
+# 固定到数据目录下 models/fastembed（随用户数据走，首启下载一次后离线可用）。
+from . import config as _cfg
+
+os.environ.setdefault("FASTEMBED_CACHE_PATH", os.path.join(_cfg.data_dir(), "models", "fastembed"))
 warnings.filterwarnings("ignore", message=".*get_sentence_embedding_dimension.*", category=FutureWarning)
 # mem0 对未装的可选组件（spaCy 词形/实体、fastembed BM25）每次启动刷 warning——
 # 这些能力我们不用（向量召回已够），压到 ERROR 以下，别污染大脑 stderr。

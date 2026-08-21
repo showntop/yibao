@@ -48,6 +48,8 @@ const identityFace = computed(() => faceOf(assembly.value, "identity", "tile"));
 const memories = ref<MemItem[]>([]);
 const plugins = ref<PluginInfo[]>([]);
 const loaded = ref(false);
+/** 今日概要的数据源是否已就绪（就绪前显示骨架，就绪后无数据则整块隐藏） */
+const todayLoaded = ref(false);
 const memFailed = ref(false);
 const stats = ref<FeedStats>({ pending_reminders: 0, running_tasks: 0, done_24h: 0, unread: 0, ignored: 0 });
 const todayChats = ref(0);
@@ -188,6 +190,7 @@ onMounted(async () => {
     const key = new Date().toISOString().slice(0, 10);
     todayDay.value = days.find((row) => row.day === key) ?? days[0] ?? null;
   } catch { todayDay.value = null; }
+  todayLoaded.value = true;
   memTimer = setInterval(() => { void refreshMem(); void refreshFeedStats(); }, 45000);
   try { unApprovals = onPendingConfirms((list) => { approvals.value = list.length; }); } catch { /* 无确认队列时团子保持原态 */ }
   try {
@@ -252,9 +255,13 @@ onUnmounted(() => {
       </Transition>
     </HomeWidget>
 
-    <HomeWidget v-if="!only || only === 'today'" id="today" class="today-widget" :class="{ empty: stain.empty }" aria-label="今日概要">
-      <div class="stain" aria-hidden="true">
-        <i v-for="(band, index) in stain.values" :key="index" :style="{ opacity: stain.empty ? 0.12 : 0.16 + band * 0.84 }" />
+    <!-- 今日概要：加载中显示骨架；加载完无当日活动数据则整块隐藏（不让空白零件占屏） -->
+    <HomeWidget v-if="!only || only === 'today'" id="today" class="today-widget" :class="{ 'is-loading': !todayLoaded }" aria-label="今日概要">
+      <div v-if="todayLoaded" class="stain" aria-hidden="true">
+        <i v-for="(band, index) in stain.values" :key="index" :style="{ opacity: 0.16 + band * 0.84 }" />
+      </div>
+      <div v-else class="stain skeleton" aria-hidden="true">
+        <i v-for="n in 8" :key="n" />
       </div>
     </HomeWidget>
   </aside>
@@ -445,11 +452,19 @@ button {
   border-radius: 2px 2px 0 0;
   background: var(--yb-accent-deep);
 }
-.today-widget.empty .stain i {
+.stain.skeleton i {
   background: var(--yb-line);
+  animation: stain-skeleton 1.4s var(--yb-ease-out) infinite;
+}
+.stain.skeleton i:nth-child(2n) { animation-delay: 0.22s; }
+.stain.skeleton i:nth-child(3n) { animation-delay: 0.44s; }
+@keyframes stain-skeleton {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 0.8; }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .stain.skeleton i { animation: none; opacity: 0.45; }
   .mind-well { transition: none; }
 }
 

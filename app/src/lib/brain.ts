@@ -513,6 +513,7 @@ export interface WidgetPayload {
   schema: unknown;      // schema 面板 JSON（SchemaPanel 直接渲染）
   data: unknown;        // method 取回的数据
   open?: string | null; // 点击跳转的 api.toml 方法（null = 不可点击）
+  reason?: string;      // 与当前会话的相关性说明（sidecar 推断；无则前端弱化呈现）
 }
 
 export interface WidgetsResponse {

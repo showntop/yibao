@@ -69,7 +69,6 @@ const runningTasks = ref<RunningTask[]>([]);
 const approvals = ref<PendingConfirm[]>([]);
 const widgets = ref<WidgetPayload[]>([]);
 const loaded = ref(false);
-const processOpen = ref(false);
 const historyOpen = ref(false);
 const decidingIds = ref<Set<string>>(new Set());
 const approvalErrors = ref<Record<string, string>>({});
@@ -256,8 +255,8 @@ const relatedWidgets = computed(() => {
   if (widgets.value.length) return widgets.value.slice(0, 3);
   if (!previewDemo) return [];
   return [
-    { panel: "minutes:preview", title: "会议纪要", open: "minutes.open" },
-    { panel: "reminder:preview", title: "提醒", open: "reminder.open" },
+    { panel: "minutes:preview", title: "会议纪要", open: "minutes.open", reason: "本次对话在整理会议" },
+    { panel: "reminder:preview", title: "提醒", open: "reminder.open", reason: "识别到下周二截止的待办" },
   ] as WidgetPayload[];
 });
 
@@ -269,18 +268,8 @@ const outputs = computed<OutputRow[]>(() => {
   ];
 });
 
-const processRows = computed<ProcessEntry[]>(() => {
-  if (props.processes.length) return props.processes;
-  if (!previewDemo) return [];
-  return [
-    { label: "读取会议录音", done: true, ok: true },
-    { label: "识别决定与待办", done: true, ok: true },
-    { label: "整理负责人", done: false },
-  ];
-});
-
 const hasInspectorContent = computed(() =>
-  displayApprovals.value.length || interruptedApprovals.value.length || displayTasks.value.length || contextRows.value.length || relatedWidgets.value.length || outputs.value.length || processedHistory.value.length || processRows.value.length,
+  displayApprovals.value.length || interruptedApprovals.value.length || displayTasks.value.length || contextRows.value.length || relatedWidgets.value.length || outputs.value.length || processedHistory.value.length,
 );
 
 const contextLine = computed(() => {
@@ -515,6 +504,15 @@ onMounted(async () => {
   try { unWidgets = await onWidgets((result) => (widgets.value = result?.widgets ?? [])); } catch { /* sidecar unavailable */ }
 });
 
+/** 上下文行的 mono 短标签：文件取后缀，其他类型给短码（替代单字胶囊） */
+function kindTag(row: ContextRow): string {
+  if (row.kind === "memory") return "mem";
+  if (row.kind === "screen") return "scrn";
+  if (row.kind === "conversation") return "chat";
+  const m = row.title.match(/\.([a-zA-Z0-9]+)$/);
+  return m ? `.${m[1].toLowerCase()}` : "file";
+}
+
 onUnmounted(() => {
   unFeed?.();
   unBrain?.();
@@ -621,7 +619,7 @@ onUnmounted(() => {
         <h2 class="yb-widget-head" id="session-context-title">上下文 <span class="yb-widget-meta">{{ contextRows.length }}</span></h2>
         <div class="row-group">
           <button v-for="row in contextRows" :key="row.id" class="plain-row" type="button" @click="emit('chat', `查看本次会话使用的上下文「${row.title}」`)">
-            <span class="context-kind" :class="`kind-${row.kind}`" aria-hidden="true">{{ row.kind === "memory" ? "忆" : row.kind === "screen" ? "屏" : row.kind === "conversation" ? "话" : "文" }}</span>
+            <span class="context-kind" :class="`kind-${row.kind}`" aria-hidden="true">{{ kindTag(row) }}</span>
             <span>{{ row.title }}</span><small>{{ row.meta }}</small>
           </button>
         </div>
@@ -631,7 +629,12 @@ onUnmounted(() => {
         <h2 class="yb-widget-head" id="session-capability-title">关联能力</h2>
         <div class="row-group">
           <button v-for="widget in relatedWidgets" :key="widget.panel" class="plain-row capability-row" type="button" :disabled="!widget.open" @click="openWidget(widget, $event)">
-            <i class="ability-dot" /><span>{{ widget.title }}</span><span class="row-arrow">›</span>
+            <i class="ability-dot" />
+            <span class="capability-main">
+              <span class="capability-title">{{ widget.title }}</span>
+              <small v-if="widget.reason" class="capability-reason">{{ widget.reason }}</small>
+            </span>
+            <svg class="capability-arrow" viewBox="0 0 12 12" aria-hidden="true"><path d="M4 2 L8 6 L4 10" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round" /></svg>
           </button>
         </div>
       </section>
@@ -657,37 +660,32 @@ onUnmounted(() => {
         </div>
       </section>
 
-      <section v-if="processRows.length" class="yb-widget process-section">
-        <button class="process-toggle" type="button" :aria-expanded="processOpen" @click="processOpen = !processOpen">
-          <span>过程记录</span><small>{{ processRows.length }}</small><span class="process-chevron" :class="{ open: processOpen }">⌄</span>
-        </button>
-        <div v-if="processOpen" class="process-list">
-          <span v-for="(row, index) in processRows" :key="`${row.label}-${index}`" class="process-row">
-            <i :class="{ done: row.done, failed: row.done && row.ok === false }" />{{ row.label }}
-          </span>
-        </div>
-      </section>
     </template>
-
-    <div v-else-if="loaded && peekDensity === 'inspector'" class="yb-widget inspector-empty">
-      <i />
-      <strong>尚未加入上下文</strong>
-      <span>文件、屏幕、记忆和执行状态会随本次会话出现在这里</span>
-    </div>
   </aside>
 </template>
 
 <style scoped>
 .session-inspector {
+  flex: 1;
   width: 100%;
-  height: 100%;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--yb-widget-gap);
+  gap: 6px;
   overflow-y: auto;
   scrollbar-width: thin;
   color: var(--yb-paper-ink);
+}
+/* 去掉内部 .yb-widget 的套娃瓷片视觉：host.kind-context 已经是瓷片了，
+   内部子瓷片不再叠边框/背景/阴影/圆角，由 host 整体承担视觉。 */
+.session-inspector :deep(.yb-widget) {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.session-inspector :deep(.yb-widget::after) {
+  display: none;
 }
 
 .session-inspector.note {
@@ -723,8 +721,9 @@ button { font: inherit; }
 
 .now-body strong {
   color: var(--yb-paper-ink);
-  font-size: 14px;
+  font-size: 15px;
   font-weight: var(--yb-fw-bold);
+  letter-spacing: -0.01em;
   line-height: 1.35;
 }
 
@@ -732,16 +731,16 @@ button { font: inherit; }
   margin: 0;
   color: var(--yb-paper-ink-dim);
   font-size: 11px;
-  line-height: 1.45;
+  line-height: 1.5;
 }
 
 .session-state {
-  margin-top: 3px;
+  margin-top: 4px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   color: var(--yb-text-faint);
-  font-size: 10px;
+  font-size: 10.5px;
 }
 
 .session-state i {
@@ -986,7 +985,41 @@ button { font: inherit; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.row-arrow { flex: none; color: var(--yb-text-faint); font-size: 14px; }
+.capability-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.capability-title {
+  overflow: hidden;
+  color: var(--yb-paper-ink);
+  font-size: 11px;
+  font-weight: var(--yb-fw-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.capability-reason {
+  margin-left: 0;
+  overflow: hidden;
+  color: var(--yb-text-faint);
+  font-size: 9px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.capability-arrow {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  color: var(--yb-text-faint);
+  opacity: 0.7;
+}
+.capability-row:hover .capability-arrow {
+  color: var(--yb-accent-deep);
+  opacity: 1;
+}
 .task-stop { width: 8px; height: 8px; flex: none; border-radius: 2px; background: var(--yb-text-faint); opacity: 0.55; }
 
 .row-group {
@@ -1012,16 +1045,19 @@ button { font: inherit; }
 .plain-row:disabled { opacity: 0.48; cursor: default; }
 
 .context-kind {
-  width: 18px;
-  height: 18px;
   flex: none;
-  display: grid;
-  place-items: center;
-  border-radius: 6px;
-  background: rgba(var(--yb-c-sky-rgb), 0.08);
-  color: var(--yb-accent-deep);
+  padding: 1px 5px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 4px;
+  background: rgba(var(--yb-paper-shade-rgb), 0.07);
+  color: var(--yb-text-faint);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 9px;
-  font-weight: var(--yb-fw-bold);
+  font-weight: var(--yb-fw-medium);
+  letter-spacing: 0.01em;
+  line-height: 1.4;
+  text-transform: lowercase;
 }
 .kind-memory { color: var(--yb-accent-deep); background: rgba(var(--yb-c-sky-rgb), 0.08); }
 .kind-screen { color: #567d95; }
@@ -1031,7 +1067,6 @@ button { font: inherit; }
 .ability-dot { width: 2px; height: 12px; flex: none; border-radius: 1px; background: var(--yb-border-strong); align-self: center; }
 .output-mark { width: 6px; height: 6px; flex: none; border-radius: 2px; background: var(--yb-surface-2); }
 
-.process-section,
 .history-section { padding-bottom: 4px; }
 .process-toggle {
   width: 100%;
@@ -1051,11 +1086,6 @@ button { font: inherit; }
 .process-toggle small { font-size: 9px; }
 .process-chevron { margin-left: auto; transition: transform 160ms var(--yb-ease-out); }
 .process-chevron.open { transform: rotate(180deg); }
-.process-list { padding: 2px var(--yb-widget-pad-x) 10px; display: flex; flex-direction: column; gap: 5px; }
-.process-row { display: flex; align-items: center; gap: 8px; color: var(--yb-text-dim); font-size: 11px; }
-.process-row i { width: 2px; height: 12px; flex: none; border-radius: 1px; background: var(--yb-border-strong); align-self: center; }
-.process-row i.done { background: var(--yb-intent-ok); }
-.process-row i.failed { background: var(--yb-danger); }
 
 .processed-list {
   padding: 1px var(--yb-widget-pad-x) 8px;
@@ -1105,18 +1135,6 @@ button { font: inherit; }
 }
 
 .processed-row small { color: var(--yb-text-faint); font-size: 9px; }
-
-.inspector-empty {
-  padding: 22px 14px 18px;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  color: var(--yb-paper-ink-dim);
-}
-.inspector-empty i { width: 8px; height: 8px; border-radius: 50%; background: rgba(var(--yb-paper-shade-rgb), 0.22); }
-.inspector-empty strong { color: var(--yb-paper-ink); font-size: 12px; }
-.inspector-empty span { max-width: 190px; font-size: 10px; line-height: 1.5; }
 
 @media (prefers-reduced-motion: reduce) {
   .row-node.running { animation: none; }
