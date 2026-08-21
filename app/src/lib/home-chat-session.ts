@@ -51,6 +51,7 @@ export type HomeChatSession = {
   paperLabel: ComputedRef<string>;
   stampLabels: ComputedRef<string[]>;
   peekOpen: Ref<boolean>;
+  livePathLine: ComputedRef<string | null>;
   threadKey: (item: ThreadItem) => string;
   submit: (text: string) => void;
   fmtDay: (ts?: number) => string;

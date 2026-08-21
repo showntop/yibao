@@ -4,6 +4,7 @@ import Bubble from "./Bubble.vue";
 import HomePaper from "./HomePaper.vue";
 import YbIcon from "./YbIcon.vue";
 import { HOME_CHAT_SESSION } from "../lib/home-chat-session";
+import { isDeskPathOpenLine } from "../lib/home-desk-presence";
 import { runTailIndex } from "../lib/work-thread";
 
 const chat = inject(HOME_CHAT_SESSION);
@@ -26,6 +27,7 @@ const {
   paperLabel,
   stampLabels,
   peekOpen,
+  livePathLine,
   submit,
   openPanel,
   procOk,
@@ -36,7 +38,6 @@ const {
   toggleRunRefs,
   runShowFooter,
   runHalted,
-  copyRun,
   copyText,
   regenerate,
   onEditMessage,
@@ -45,6 +46,34 @@ const {
   flipPage,
   noticeFor,
 } = chat;
+
+/** 整页文本：用户的话 + 一轮工作 + 杂项，按序拼接。 */
+function pageText(): string {
+  const p = page.value;
+  if (!p) return "";
+  const parts: string[] = [];
+  const push = (i: number) => {
+    const t = bubbles.value[i]?.text;
+    if (t) parts.push(t);
+  };
+  if (p.userIndex !== null) push(p.userIndex);
+  for (const i of p.runIndices) push(i);
+  for (const i of p.miscIndices) push(i);
+  return parts.join("\n\n");
+}
+
+/** 复制这一页（用户问题 + 回答）。 */
+function copyPage() {
+  copyText(pageText());
+}
+
+/** 重发这一页的用户问题（走正常提交，会截断其后内容由大脑重跑）。 */
+function resendPage() {
+  const p = page.value;
+  if (!p || p.userIndex === null) return;
+  const text = bubbles.value[p.userIndex]?.text;
+  if (text) void submit(text);
+}
 </script>
 
 <template>
@@ -76,9 +105,14 @@ const {
       <template v-if="stampLabels.length" #stamps>
         <span v-for="(label, si) in stampLabels" :key="si">{{ label }}</span>
       </template>
-      <template v-if="page && page.runIndices.length && runShowFooter(page.runIndices)" #foot-actions>
-        <button type="button" @click="copyRun(page.runIndices)">复制</button>
-        <button type="button" @click="regenerate(runTailIndex(bubbles, page.runIndices))">
+      <template v-if="page" #foot-actions>
+        <button type="button" @click="copyPage">复制</button>
+        <button v-if="page.userIndex !== null" type="button" @click="resendPage">重发</button>
+        <button
+          v-if="page.runIndices.length && runShowFooter(page.runIndices)"
+          type="button"
+          @click="regenerate(runTailIndex(bubbles, page.runIndices))"
+        >
           {{ runHalted(page.runIndices) ? "重试" : "重写" }}
         </button>
       </template>
@@ -151,7 +185,15 @@ const {
         </div>
 
         <template v-for="i in page?.miscIndices ?? []" :key="`misc-${i}`">
-          <button v-if="bubbles[i].panelLink" class="assoc" @click="openPanel">
+          <button
+            v-if="isDeskPathOpenLine(bubbles[i].text)"
+            class="path-print"
+            :class="{ live: bubbles[i].text === livePathLine }"
+            @click="openPanel"
+          >
+            {{ bubbles[i].text }}
+          </button>
+          <button v-else-if="bubbles[i].panelLink" class="assoc" @click="openPanel">
             {{ bubbles[i].text }}<span class="assoc-arrow">展开 ›</span>
           </button>
           <template v-else-if="bubbles[i].halted">
@@ -195,7 +237,18 @@ const {
   min-width: 0;
   min-height: 0;
   display: flex;
+  flex-direction: column;
   position: relative;
+  overflow: hidden;
+}
+/* 纸张撑满工位高度：纵向布局下 flex:1 为主轴（高度），不再依赖 height:100% 的百分比解析。
+   内容超高在 .paper-stream 内部滚动，footer 永远是纸张底部最后一个 flex 子，不会被顶出。 */
+.paper-wrap > :deep(.sheet) {
+  flex: 1;
+  min-height: 0;
+  width: auto;
+  height: auto;
+  overflow: hidden;
 }
 .paper-stream {
   flex: 1;

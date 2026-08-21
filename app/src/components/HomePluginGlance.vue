@@ -13,8 +13,11 @@ import {
   pluginPartId,
   syncPluginParts,
 } from "../lib/home-assembly";
+import { pluginGlanceLine, pluginHasGlance } from "../lib/home-glance-faces";
+import { isDeskLivePlugin, setDeskOrigin, type DeskKind } from "../lib/home-desk-presence";
 
-const props = defineProps<{ panel?: string }>();
+const props = defineProps<{ panel?: string; livePanel?: string | null; liveKind?: DeskKind }>();
+const emit = defineEmits<{ fold: [] }>();
 const widgets = ref<WidgetPayload[]>([]);
 const assembly = useLiveAssembly();
 let unWidgets: (() => void) | null = null;
@@ -24,7 +27,10 @@ const shown = computed(() => {
   const rows = props.panel
     ? widgets.value.filter((widget) => pluginPartId(widget.panel) === props.panel)
     : widgets.value;
-  return rows.filter((widget) => isPlaced(assembly.value, pluginPartId(widget.panel)));
+  // 插件卡是否显示由预设决定：只有预设 stacks 里显式声明的 widget 才渲染
+  return rows.filter(
+    (widget) => isPlaced(assembly.value, pluginPartId(widget.panel)) && pluginHasGlance(widget),
+  );
 });
 
 function applyWidgets(next: WidgetPayload[]) {
@@ -32,8 +38,18 @@ function applyWidgets(next: WidgetPayload[]) {
   syncPluginParts(next);
 }
 
-function openWidget(widget: WidgetPayload) {
+function live(widget: WidgetPayload) {
+  return isDeskLivePlugin(widget.panel, props.livePanel);
+}
+
+function openWidget(widget: WidgetPayload, event?: MouseEvent) {
+  if (live(widget)) {
+    emit("fold");
+    return;
+  }
   if (!widget.open) return;
+  const card = (event?.currentTarget as HTMLElement | null)?.closest?.(".plugin-card");
+  setDeskOrigin(card ?? (event?.currentTarget as Element | null));
   const pluginId = widget.panel.split(":")[0];
   void panelAction(widget.open, {}, undefined, `panel:${pluginId}`).catch(() => {});
 }
@@ -58,6 +74,7 @@ onUnmounted(() => {
       :key="widget.panel"
       class="yb-widget yb-widget--porcelain yb-widget--m plugin-card"
       :data-widget="pluginPartId(widget.panel)"
+      :data-live="live(widget) || undefined"
     >
       <button
         v-if="canDrag"
@@ -72,11 +89,12 @@ onUnmounted(() => {
       <button
         class="plugin-open"
         type="button"
-        :disabled="!widget.open"
-        :title="widget.open ? `打开${widget.title}` : widget.title"
-        @click="openWidget(widget)"
+        :disabled="!widget.open && !live(widget)"
+        :title="live(widget) ? `收起${widget.title}` : widget.open ? `摊开${widget.title}` : widget.title"
+        @click="openWidget(widget, $event)"
       >
         <span class="plugin-title">{{ widget.title }}</span>
+        <span class="plugin-line">{{ live(widget) && props.liveKind !== "tool" ? "正在用" : pluginGlanceLine(widget.schema, widget.data) }}</span>
       </button>
     </section>
   </aside>
@@ -88,12 +106,13 @@ onUnmounted(() => {
   margin: 0;
   padding: 0;
   width: 100%;
-  min-height: 40px;
+  min-height: 52px;
   display: flex;
-  align-items: center;
+  align-items: stretch;
 }
 .plugin-grip {
   flex: none;
+  align-self: center;
   width: 20px;
   height: 20px;
   margin-left: 8px;
@@ -109,12 +128,13 @@ onUnmounted(() => {
 .plugin-open {
   flex: 1;
   min-width: 0;
-  height: 40px;
   margin: 0;
-  padding: 0 14px;
+  padding: 8px 14px;
   border: 0;
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
   text-align: left;
   cursor: pointer;
   font: inherit;
@@ -127,11 +147,21 @@ onUnmounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--yb-paper-ink-dim);
+  font-size: 10px;
+  font-weight: var(--yb-fw-medium);
+  letter-spacing: 0.04em;
+  line-height: 1.3;
+}
+.plugin-line {
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--yb-paper-ink);
   font-size: 12px;
-  font-weight: var(--yb-fw-medium);
-  letter-spacing: 0;
-  line-height: 1.3;
+  line-height: 1.35;
 }
 .plugin-open:disabled {
   cursor: default;
@@ -143,5 +173,11 @@ onUnmounted(() => {
 .plugin-open:focus-visible {
   outline: 2px solid var(--yb-accent);
   outline-offset: 1px;
+}
+.plugin-card[data-live] {
+  box-shadow: inset 0 0 0 1px rgba(var(--yb-c-sky-rgb), 0.34);
+}
+.plugin-card[data-live] .plugin-line {
+  color: var(--yb-accent);
 }
 </style>

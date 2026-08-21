@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import brainShellUrl from "../assets/brain-shell.png";
 
 type AgentState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
 type CapabilityKind = "sense" | "think" | "act";
@@ -41,11 +40,27 @@ let height = 0;
 let reducedMotion = false;
 
 const memoryPositions = [
-  { x: 22, y: 45 },
-  { x: 30, y: 65 },
-  { x: 43, y: 78 },
-  { x: 18, y: 72 },
+  { x: 36, y: 22 },
+  { x: 32, y: 78 },
+  { x: 64, y: 24 },
+  { x: 70, y: 86 },
 ];
+
+/** DOM 功能节点对应的 graph 索引（感知/思考/行动 ≈ 图 0/2/3）。 */
+const FUNCTIONAL_GRAPH_INDEX = { sense: 0, think: 2, act: 3 } as const;
+const memoryGraphIndex = (i: number) => 4 + i;
+
+const hoverIndex = ref<number | null>(null);
+
+function hoverNode(index: number | null) {
+  hoverIndex.value = index;
+}
+
+/** 节点是否处于"淡出"态：有 hover 焦点、自己不是焦点、也不与焦点相邻。 */
+function dimmed(index: number) {
+  const focus = hoverIndex.value;
+  return focus !== null && focus !== index && !(adjacency.get(focus)?.has(index) ?? false);
+}
 
 const visibleMemories = computed(() => {
   if (props.density === "tile") return [];
@@ -84,6 +99,15 @@ const activeRoute = [0, 4, 12, 2, 14, 15, 3] as const;
 // 旁路脉冲：另一条活跃路径（跨感知→行动的记忆链路），让网络更"活"，不只一条干线发光
 const ambientRoute = [22, 9, 13, 5, 16, 17, 26] as const;
 
+/** 邻接表：hover 某节点时，"相邻边"保持高亮，其余全部淡出（Obsidian 式距离淡出）。 */
+const adjacency = new Map<number, Set<number>>();
+for (const [a, b] of graphEdges) {
+  if (!adjacency.has(a)) adjacency.set(a, new Set());
+  if (!adjacency.has(b)) adjacency.set(b, new Set());
+  adjacency.get(a)!.add(b);
+  adjacency.get(b)!.add(a);
+}
+
 function nodePoint(index: number) {
   const point = graphPoints[index];
   return { x: point[0] * width, y: point[1] * height };
@@ -116,7 +140,7 @@ function drawCurve(aIndex: number, bIndex: number, alpha: number, lineWidth = 0.
   context.beginPath();
   context.moveTo(a.x, a.y);
   context.quadraticCurveTo(control.x, control.y, b.x, b.y);
-  context.strokeStyle = `rgba(77, 144, 196, ${alpha})`;
+  context.strokeStyle = `rgba(61, 122, 168, ${alpha})`;
   context.lineWidth = lineWidth;
   context.stroke();
 }
@@ -143,8 +167,8 @@ function pulseAlong(route: readonly number[], count: number, speed: number, alph
     const control = curveControl(a, b, route[segment] * 31 + route[segment + 1] * 17);
     const point = quadraticPoint(a, control, b, local);
     const gradient = context.createRadialGradient(point.x, point.y, 0, point.x, point.y, 4);
-    gradient.addColorStop(0, `rgba(77, 144, 196, ${alpha})`);
-    gradient.addColorStop(1, "rgba(77, 144, 196, 0)");
+    gradient.addColorStop(0, `rgba(61, 122, 168, ${alpha})`);
+    gradient.addColorStop(1, "rgba(61, 122, 168, 0)");
     context.beginPath();
     context.arc(point.x, point.y, 4, 0, Math.PI * 2);
     context.fillStyle = gradient;
@@ -152,28 +176,104 @@ function pulseAlong(route: readonly number[], count: number, speed: number, alph
   }
 }
 
+/** 沿贝塞尔曲线画一个流动的光段（从 a 流向 b）。 */
+function flowSegment(a: { x: number; y: number }, c: { x: number; y: number }, b: { x: number; y: number }, t: number, len: number, alpha: number, width: number) {
+  if (!context) return;
+  const t0 = Math.max(0, t - len);
+  const start = quadraticPoint(a, c, b, t0);
+  const end = quadraticPoint(a, c, b, t);
+  const gradient = context.createLinearGradient(start.x, start.y, end.x, end.y);
+  gradient.addColorStop(0, "rgba(61, 122, 168, 0)");
+  gradient.addColorStop(0.5, `rgba(61, 122, 168, ${alpha})`);
+  gradient.addColorStop(1, "rgba(61, 122, 168, 0)");
+  context.beginPath();
+  context.moveTo(start.x, start.y);
+  context.lineTo(end.x, end.y);
+  context.strokeStyle = gradient;
+  context.lineWidth = width;
+  context.lineCap = "round";
+  context.stroke();
+}
+
 function draw(time: number) {
   if (!context || !width || !height) return;
   context.clearRect(0, 0, width, height);
   context.lineCap = "round";
 
-  graphEdges.forEach(([a, b], index) => drawCurve(a, b, 0.08 + (index % 4) * 0.01, index % 7 === 0 ? 0.85 : 0.62));
+  const focus = hoverIndex.value;
+  const dimOthers = focus !== null;
+  // Obsidian 式：hover 时非相邻边降到 15% 透明度（焦点相关的边保持原样）
+  const edgeAlpha = (a: number, b: number, base: number) =>
+    dimOthers && a !== focus && b !== focus ? base * 0.15 : base;
+
+  // 1. 静态底网
+  graphEdges.forEach(([a, b], index) => drawCurve(a, b, edgeAlpha(a, b, 0.08 + (index % 4) * 0.01), index % 7 === 0 ? 0.85 : 0.62));
   for (let index = 0; index < activeRoute.length - 1; index += 1) {
-    drawCurve(activeRoute[index], activeRoute[index + 1], props.state === "idle" ? 0.14 : 0.22, 0.9);
+    const a = activeRoute[index];
+    const b = activeRoute[index + 1];
+    drawCurve(a, b, edgeAlpha(a, b, props.state === "idle" ? 0.14 : 0.22), 0.9);
   }
 
-  graphPoints.forEach((_, index) => {
-    const point = nodePoint(index);
-    const important = index < 8;
-    context!.beginPath();
-    context!.arc(point.x, point.y, important ? 1.45 : 0.9, 0, Math.PI * 2);
-    context!.fillStyle = important ? "rgba(77, 144, 196, 0.36)" : "rgba(77, 144, 196, 0.16)";
-    context!.fill();
-  });
-
   if (!reducedMotion) {
-    pulseAlong(activeRoute, props.state === "idle" ? 2 : 3, stateSpeed(), 0.45, time);
-    pulseAlong(ambientRoute, 1, stateSpeed() * 0.68, 0.28, time);
+    const speed = stateSpeed();
+    const breathe = 1 + 0.05 * Math.sin(time * 0.0018);
+
+    // 2. 流动的光：所有边按不同相位沿贝塞尔线"流动"
+    graphEdges.forEach(([a, b], index) => {
+      const phase = (index * 0.017) % 1;
+      const t = (time * speed * 0.55 + phase) % 1;
+      const aP = nodePoint(a);
+      const bP = nodePoint(b);
+      const c = curveControl(aP, bP, a * 31 + b * 17);
+      flowSegment(aP, c, bP, t, 0.09, edgeAlpha(a, b, 0.28), 1.0);
+      // 反向微流（弱）
+      const t2 = (time * speed * 0.3 + 1 - phase) % 1;
+      flowSegment(aP, c, bP, t2, 0.05, edgeAlpha(a, b, 0.12), 0.7);
+    });
+
+    // 3. 节点呼吸
+    graphPoints.forEach((_, index) => {
+      const point = nodePoint(index);
+      const important = index < 8;
+      const dim = dimOthers && index !== focus && !(adjacency.get(focus!)?.has(index) ?? false);
+      const tw = important ? 1.25 + 0.22 * Math.sin(time * 0.0024 + index * 0.8) : 1 + 0.14 * Math.sin(time * 0.0019 + index * 1.3);
+      context!.beginPath();
+      context!.arc(point.x, point.y, (important ? 1.6 : 1.0) * tw * breathe, 0, Math.PI * 2);
+      context!.fillStyle = important
+        ? `rgba(61, 122, 168, ${dim ? 0.05 : 0.42})`
+        : `rgba(61, 122, 168, ${dim ? 0.02 : 0.2})`;
+      context!.fill();
+      // 重要节点外层微光晕
+      if (important && !dim) {
+        const glow = 2.6 + 0.4 * Math.sin(time * 0.002 + index * 0.5);
+        const g = context!.createRadialGradient(point.x, point.y, 0, point.x, point.y, glow);
+        g.addColorStop(0, "rgba(61, 122, 168, 0.14)");
+        g.addColorStop(1, "rgba(61, 122, 168, 0)");
+        context!.beginPath();
+        context!.arc(point.x, point.y, glow, 0, Math.PI * 2);
+        context!.fillStyle = g;
+        context!.fill();
+      }
+    });
+
+    // 4. 三路脉冲：主链（快） + 旁路（中） + 记忆链（慢）
+    const count = props.state === "idle" ? 2 : 3;
+    pulseAlong(activeRoute, count, speed, 0.45, time);
+    pulseAlong(ambientRoute, 2, speed * 0.68, 0.3, time);
+    pulseAlong(ambientRoute, 1, speed * 0.4, 0.2, time);
+  } else {
+    // reduced-motion：只画静态点
+    graphPoints.forEach((_, index) => {
+      const point = nodePoint(index);
+      const important = index < 8;
+      const dim = dimOthers && index !== focus && !(adjacency.get(focus!)?.has(index) ?? false);
+      context!.beginPath();
+      context!.arc(point.x, point.y, important ? 1.6 : 1.0, 0, Math.PI * 2);
+      context!.fillStyle = important
+        ? `rgba(61, 122, 168, ${dim ? 0.05 : 0.38})`
+        : `rgba(61, 122, 168, ${dim ? 0.02 : 0.18})`;
+      context!.fill();
+    });
   }
 
   if (!reducedMotion) frame = requestAnimationFrame(draw);
@@ -215,7 +315,6 @@ onUnmounted(() => {
   <div
     class="neural-brain"
     :class="[`state-${state}`, `density-${density}`]"
-    :style="{ '--brain-mask': `url(${brainShellUrl})` }"
   >
     <div ref="stage" class="brain-stage">
       <div class="brain-glaze" aria-hidden="true" />
@@ -224,10 +323,14 @@ onUnmounted(() => {
       <button
         class="synapse functional sense-node"
         type="button"
-        :class="{ active: activeCapability === 'sense' }"
+        :class="[{ active: activeCapability === 'sense' }, { 'is-dim': dimmed(FUNCTIONAL_GRAPH_INDEX.sense) }]"
         :aria-expanded="activeCapability === 'sense'"
         :tabindex="density === 'tile' ? -1 : 0"
         :aria-hidden="density === 'tile'"
+        @mouseenter="hoverNode(FUNCTIONAL_GRAPH_INDEX.sense)"
+        @mouseleave="hoverNode(null)"
+        @focus="hoverNode(FUNCTIONAL_GRAPH_INDEX.sense)"
+        @blur="hoverNode(null)"
         @click="emit('capability', 'sense')"
       >
         <i /><span>感知 <b>{{ senseCount }}</b></span>
@@ -236,10 +339,14 @@ onUnmounted(() => {
       <button
         class="synapse functional think-node"
         type="button"
-        :class="{ active: activeCapability === 'think' }"
+        :class="[{ active: activeCapability === 'think' }, { 'is-dim': dimmed(FUNCTIONAL_GRAPH_INDEX.think) }]"
         :aria-expanded="activeCapability === 'think'"
         :tabindex="density === 'tile' ? -1 : 0"
         :aria-hidden="density === 'tile'"
+        @mouseenter="hoverNode(FUNCTIONAL_GRAPH_INDEX.think)"
+        @mouseleave="hoverNode(null)"
+        @focus="hoverNode(FUNCTIONAL_GRAPH_INDEX.think)"
+        @blur="hoverNode(null)"
         @click="emit('capability', 'think')"
       >
         <i /><span>思考 <b>{{ thinkCount }}</b></span>
@@ -248,35 +355,47 @@ onUnmounted(() => {
       <button
         class="synapse functional act-node"
         type="button"
-        :class="{ active: activeCapability === 'act' }"
+        :class="[{ active: activeCapability === 'act' }, { 'is-dim': dimmed(FUNCTIONAL_GRAPH_INDEX.act) }]"
         :aria-expanded="activeCapability === 'act'"
         :tabindex="density === 'tile' ? -1 : 0"
         :aria-hidden="density === 'tile'"
+        @mouseenter="hoverNode(FUNCTIONAL_GRAPH_INDEX.act)"
+        @mouseleave="hoverNode(null)"
+        @focus="hoverNode(FUNCTIONAL_GRAPH_INDEX.act)"
+        @blur="hoverNode(null)"
         @click="emit('capability', 'act')"
       >
         <i /><span>行动 <b>{{ actCount }}</b></span>
       </button>
 
       <button
-        v-for="memory in visibleMemories"
+        v-for="(memory, index) in visibleMemories"
         :key="memory.id"
         class="synapse memory-node"
-        :class="{ fresh: memory.fresh }"
+        :class="[{ fresh: memory.fresh }, { 'is-dim': dimmed(memoryGraphIndex(index)) }]"
         type="button"
         :style="{ left: `${memory.x}%`, top: `${memory.y}%` }"
         :title="memory.full"
         :aria-label="`记忆：${memory.full}`"
+        @mouseenter="hoverNode(memoryGraphIndex(index))"
+        @mouseleave="hoverNode(null)"
+        @focus="hoverNode(memoryGraphIndex(index))"
+        @blur="hoverNode(null)"
         @click="emit('memory', memory)"
       >
-        <i /><span>{{ memory.text }}</span>
-        <em class="mem-tip">{{ memory.full }}</em>
+        <i />
       </button>
 
       <button
         v-if="density === 'map' && loaded && !visibleMemories.length"
         class="synapse memory-node memory-placeholder"
+        :class="{ 'is-dim': dimmed(memoryGraphIndex(0)) }"
         type="button"
         :aria-label="memFailed ? '记忆暂时离线' : '暂无记忆'"
+        @mouseenter="hoverNode(memoryGraphIndex(0))"
+        @mouseleave="hoverNode(null)"
+        @focus="hoverNode(memoryGraphIndex(0))"
+        @blur="hoverNode(null)"
         @click="emit('capability', 'think')"
       >
         <i /><span>{{ memFailed ? '记忆离线' : '记忆 0' }}</span>
@@ -316,7 +435,9 @@ onUnmounted(() => {
 .brain-stage {
   position: relative;
   width: 100%;
-  height: 156px;
+  height: auto;
+  min-height: 168px;
+  aspect-ratio: 640 / 505; /* 与原脑图比例一致，节点自然分布 */
   overflow: hidden;
 }
 
@@ -327,14 +448,6 @@ onUnmounted(() => {
   width: 100%;
   height: 100%;
   pointer-events: none;
-  -webkit-mask-image: var(--brain-mask);
-  -webkit-mask-size: 100% 100%;
-  -webkit-mask-position: center;
-  -webkit-mask-repeat: no-repeat;
-  mask-image: var(--brain-mask);
-  mask-size: 100% 100%;
-  mask-position: center;
-  mask-repeat: no-repeat;
 }
 
 /* 釉下彩：轮廓只当遮罩，不再贴雾状 PNG */
@@ -367,6 +480,18 @@ onUnmounted(() => {
   color: var(--yb-text-dim);
   cursor: pointer;
   transform: translate(-50%, -50%);
+  transition: opacity 220ms var(--yb-ease-out);
+}
+/* 真实分层：思考始终在最上、感知/行动次之、记忆最下（默认就互不挡） */
+.sense-node,
+.act-node { z-index: 5; }
+.think-node { z-index: 7; }
+.memory-node { z-index: 2; }
+
+/* Obsidian 式距离淡出：非焦点、非相邻节点整体沉底 */
+.synapse.is-dim {
+  opacity: 0.14;
+  filter: saturate(0.65);
 }
 
 .synapse i {
@@ -384,13 +509,15 @@ onUnmounted(() => {
 
 .synapse span {
   position: absolute;
-  left: 11px;
-  top: -8px;
+  left: 13px;
+  top: -7px;
   white-space: nowrap;
   color: var(--yb-paper-ink-dim);
   font-size: 10px;
   font-weight: var(--yb-fw-medium);
   line-height: 16px;
+  z-index: 5;
+  transition: color 180ms var(--yb-ease-out);
 }
 
 .synapse b {
@@ -398,6 +525,10 @@ onUnmounted(() => {
   color: var(--yb-accent-deep);
   font-size: 9px;
   font-variant-numeric: tabular-nums;
+}
+.synapse:hover span,
+.synapse:focus-visible span {
+  color: var(--yb-text-strong);
 }
 
 .synapse:hover i,
@@ -418,18 +549,22 @@ onUnmounted(() => {
     0 0 0 5px rgba(var(--yb-c-sky-rgb), 0.55);
 }
 
-.sense-node { left: 23%; top: 22%; }
-.think-node { left: 52%; top: 49%; }
-.act-node { left: 73%; top: 74%; }
-.memory-placeholder { left: 23%; top: 50%; }
+.sense-node   { left: 16%; top: 24%; }
+.think-node   { left: 50%; top: 50%; }
+.act-node     { left: 80%; top: 72%; }
+.memory-placeholder { left: 50%; top: 88%; }
 
 .functional i { width: 8px; height: 8px; }
 .think-node { width: 28px; height: 28px; }
 .think-node i {
   width: 10px;
   height: 10px;
-  background: var(--yb-accent);
-  box-shadow: 0 0 0 3px rgba(var(--yb-c-sky-rgb), 0.10);
+  background: var(--yb-state-think, #3d7aa8);
+  box-shadow:
+    inset 0 0 4px rgba(255, 255, 255, 0.7),
+    0 0 0 3px rgba(var(--yb-c-sky-rgb), 0.16),
+    0 0 14px rgba(var(--yb-c-sky-rgb), 0.38);
+  animation: node-breathe 3.4s var(--yb-ease-out) infinite;
 }
 .think-node span {
   left: 13px;
@@ -440,42 +575,7 @@ onUnmounted(() => {
 }
 
 .memory-node i { width: 6px; height: 6px; }
-.memory-node span {
-  max-width: 76px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  opacity: 0.78;
-}
-/* hover 浮层：完整记忆（截断标签的补全）。
- * 关键：必须显式 width——父 .memory-node 有 transform 形成 containing block，
- * 中文 max-content=1ch 会让 shrink-to-fit 把绝对定位子元素压到单字宽竖排。 */
-.mem-tip {
-  position: absolute;
-  left: 50%;
-  bottom: 15px;
-  width: 192px;
-  padding: 6px 9px;
-  border: 1px solid rgba(var(--yb-c-sky-rgb), 0.16);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.97);
-  box-shadow: 0 10px 26px rgba(var(--yb-c-slate-rgb), 0.13);
-  color: var(--yb-text);
-  font-size: 10px;
-  font-weight: var(--yb-fw-medium);
-  line-height: 1.45;
-  white-space: normal;
-  word-break: break-word;
-  opacity: 0;
-  pointer-events: none;
-  transform: translate(-50%, 3px);
-  transition: opacity 150ms var(--yb-ease-out), transform 150ms var(--yb-ease-out);
-  z-index: 12;
-}
 .memory-node:hover { z-index: 7; }
-.memory-node:hover span,
-.memory-node:focus-visible span { color: var(--yb-text-strong); opacity: 1; }
-.memory-node:hover .mem-tip,
-.memory-node:focus-visible .mem-tip { opacity: 1; transform: translate(-50%, 0); }
 .memory-node.fresh i { animation: synapse-arrive 900ms var(--yb-ease-out) both; }
 
 .state-think .think-node i {
@@ -495,6 +595,16 @@ onUnmounted(() => {
   0% { transform: scale(0.8); opacity: 0.8; }
   100% { transform: scale(1.9); opacity: 0; }
 }
+@keyframes node-breathe {
+  0%, 100% { box-shadow:
+    inset 0 0 4px rgba(255, 255, 255, 0.65),
+    0 0 0 3px rgba(var(--yb-c-sky-rgb), 0.10),
+    0 0 12px rgba(var(--yb-c-sky-rgb), 0.32); }
+  50%      { box-shadow:
+    inset 0 0 5px rgba(255, 255, 255, 0.85),
+    0 0 0 4px rgba(var(--yb-c-sky-rgb), 0.18),
+    0 0 18px rgba(var(--yb-c-sky-rgb), 0.55); }
+}
 .state-work .act-node i { background: var(--yb-state-work); }
 .state-listen .sense-node i { background: var(--yb-state-listen); }
 .state-success .act-node i { background: var(--yb-state-success); }
@@ -507,13 +617,13 @@ onUnmounted(() => {
 }
 
 .density-tile .brain-stage {
-  height: 72px;
+  aspect-ratio: 640 / 505;
+  min-height: 168px;
 }
 .density-tile .synapse.functional {
   pointer-events: none;
 }
-.density-tile .synapse span,
-.density-tile .mem-tip {
+.density-tile .synapse span {
   display: none;
 }
 

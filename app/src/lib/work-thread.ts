@@ -1,4 +1,5 @@
 /** 一次工作（用户一句之后、模型边说边调用工具）在对话流里合成一条线索。 */
+import { isDeskPathCloseLine } from "./home-desk-presence";
 
 export type WorkBubble = {
   role: "user" | "ai" | "sys";
@@ -24,9 +25,15 @@ export type PaperPage = {
   miscIndices: number[];
 };
 
-/** 过程行、或普通 AI 正文（提醒/告警/协作卡不算进同一轮工作）。 */
-export function isWorkPiece(b: WorkBubble): boolean {
+/** 过程行、或普通 AI 正文（提醒/告警/委派卡不算进同一轮工作）。 */
+export function isOrphanDeskStamp(b: WorkBubble): boolean {
   if (b.panelLink) return false;
+  const text = b.text.trim();
+  return /^(已请|已走|摊开|收起|用了)\s/.test(text) && text.includes("·");
+}
+
+export function isWorkPiece(b: WorkBubble): boolean {
+  if (b.panelLink || /^(已请|已走|摊开|收起|用了)\s/.test(b.text.trim())) return false;
   if (b.proc) return true;
   return b.role === "ai" && !b.icon;
 }
@@ -40,6 +47,10 @@ export function groupThread(
   while (i < bubbles.length) {
     if (isNewDay(i)) items.push({ type: "day", index: i });
     const b = bubbles[i];
+    if (isOrphanDeskStamp(b) || isDeskPathCloseLine(b.text)) {
+      i += 1;
+      continue;
+    }
     if (b.role === "user") {
       items.push({ type: "user", index: i });
       i += 1;
@@ -76,7 +87,7 @@ export function talkTurns(bubbles: WorkBubble[], limit = 6): number[] {
   const idxs: number[] = [];
   for (let i = 0; i < bubbles.length; i += 1) {
     const b = bubbles[i];
-    if (b.panelLink || b.proc || b.icon) continue;
+    if (b.panelLink || b.proc || b.icon || isOrphanDeskStamp(b) || isDeskPathCloseLine(b.text)) continue;
     if (b.role !== "user" && b.role !== "ai") continue;
     if (!b.text.trim()) continue;
     idxs.push(i);

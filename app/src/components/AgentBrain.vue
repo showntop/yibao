@@ -1,7 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { getMemListOnce, onBrainEvent, type MemItem, type FeedStats } from "../lib/brain";
+import {
+  getDistillTimelineOnce,
+  getMemListOnce,
+  onBrainEvent,
+  onPendingConfirms,
+  type DistillDay,
+  type MemItem,
+  type FeedStats,
+} from "../lib/brain";
+import { todayBands } from "../lib/home-glance-faces";
 import NeuralBrain from "./NeuralBrain.vue";
 import Avatar from "./Avatar.vue";
 import HomeWidget from "./HomeWidget.vue";
@@ -9,6 +18,7 @@ import { useLiveAssembly } from "../lib/home-chrome";
 import { faceOf } from "../lib/home-assembly";
 
 type AgentState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
+type AvatarFace = AgentState | "notify";
 type CapabilityKind = "sense" | "think" | "act";
 
 interface PluginInfo { id: string; name: string }
@@ -41,6 +51,8 @@ const loaded = ref(false);
 const memFailed = ref(false);
 const stats = ref<FeedStats>({ pending_reminders: 0, running_tasks: 0, done_24h: 0, unread: 0, ignored: 0 });
 const todayChats = ref(0);
+const todayDay = ref<DistillDay | null>(null);
+const approvals = ref(0);
 const activeCapability = ref<CapabilityKind | null>(null);
 const freshIds = ref<Set<string>>(new Set());
 let lastMemIds = new Set<string>();
@@ -118,29 +130,17 @@ const todayNewMems = computed(() => {
   return memories.value.filter((item) => item.created_at && Math.floor(new Date(item.created_at).getTime() / 1000) >= today).length;
 });
 
-function useCountUp(target: () => number) {
-  const display = ref(0);
-  watch(target, (value) => {
-    const from = display.value;
-    const to = Number(value) || 0;
-    if (from === to || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      display.value = to;
-      return;
-    }
-    const start = performance.now();
-    const tick = (now: number) => {
-      const progress = Math.min(1, (now - start) / 520);
-      display.value = Math.round(from + (to - from) * (1 - Math.pow(1 - progress, 3)));
-      if (progress < 1) requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
-  }, { immediate: true });
-  return display;
-}
+const stain = computed(() => todayBands({
+  done: stats.value.done_24h,
+  chats: todayChats.value,
+  mems: todayNewMems.value,
+  appSeconds: todayDay.value?.stats?.app_seconds,
+}));
 
-const doneDisplay = useCountUp(() => stats.value.done_24h);
-const chatsDisplay = useCountUp(() => todayChats.value);
-const memsDisplay = useCountUp(() => todayNewMems.value);
+const avatarState = computed<AvatarFace>(() => {
+  if (approvals.value && (props.state === "idle" || props.state === "success")) return "notify";
+  return props.state;
+});
 
 const STATE_LINES: Record<AgentState, string> = {
   idle: "安静待命",
@@ -151,14 +151,7 @@ const STATE_LINES: Record<AgentState, string> = {
   success: "刚刚完成",
   error: "需要留意",
 };
-const stateText = computed(() => STATE_LINES[props.state]);
-const stateDetail = computed(() => {
-  if (props.state === "listen") return "耳与眼正在接收上下文";
-  if (props.state === "think") return "记忆与计划正在连接";
-  if (props.state === "work") return "正在调用能力完成任务";
-  if (props.state === "error") return "有一步没有按预期完成";
-  return "记忆、感知与行动保持连接";
-});
+const stateText = computed(() => avatarState.value === "notify" ? "有事找你" : STATE_LINES[props.state]);
 
 const capabilityGroups = computed(() => [
   { id: "sense" as const, label: "感知", count: 3, detail: "屏幕 · 语音 · 上下文" },
@@ -185,11 +178,18 @@ function launchSkill(plugin: PluginInfo) {
 
 let memTimer: ReturnType<typeof setInterval> | null = null;
 let unBrain: (() => void) | null = null;
+let unApprovals: (() => void) | null = null;
 onMounted(async () => {
   try { await refreshMem(); } catch { loaded.value = true; }
   try { plugins.value = await invoke<PluginInfo[]>("list_plugins").catch(() => []); } catch { plugins.value = []; }
   await refreshFeedStats();
+  try {
+    const days = await getDistillTimelineOnce(2);
+    const key = new Date().toISOString().slice(0, 10);
+    todayDay.value = days.find((row) => row.day === key) ?? days[0] ?? null;
+  } catch { todayDay.value = null; }
   memTimer = setInterval(() => { void refreshMem(); void refreshFeedStats(); }, 45000);
+  try { unApprovals = onPendingConfirms((list) => { approvals.value = list.length; }); } catch { /* 无确认队列时团子保持原态 */ }
   try {
     unBrain = await onBrainEvent((event) => {
       if (event.kind === "final_reply" || event.kind === "action_result") {
@@ -203,6 +203,7 @@ onMounted(async () => {
 onUnmounted(() => {
   if (memTimer) clearInterval(memTimer);
   unBrain?.();
+  unApprovals?.();
 });
 </script>
 
@@ -210,16 +211,16 @@ onUnmounted(() => {
   <aside class="agent" :class="[state, { compact }]">
     <HomeWidget v-if="!only || only === 'identity'" id="identity" class="identity-widget" :class="{ 'is-seat': identityFace === 'seat' }">
       <button class="identity" type="button" title="和译宝聊聊它的记忆与能力" @click="greet">
-        <span class="identity-avatar"><Avatar :state="state" :size="identityFace === 'seat' ? 108 : 36" :compact="identityFace !== 'seat'" /></span>
+        <span class="identity-avatar">
+          <Avatar :state="avatarState" :size="identityFace === 'seat' ? 108 : 52" :compact="false" />
+        </span>
         <span class="identity-copy">
-          <span class="identity-line"><strong>译宝</strong><i class="state-dot" />{{ stateText }}</span>
-          <span v-if="identityFace !== 'seat'">{{ stateDetail }}</span>
+          <span class="identity-line"><strong>译宝</strong><i class="state-dot" :class="avatarState" />{{ stateText }}</span>
         </span>
       </button>
     </HomeWidget>
 
     <HomeWidget v-if="!only || only === 'mind'" id="mind" class="mind-widget" aria-label="译宝的记忆、感知和行动能力">
-      <h2 class="yb-widget-head">认知</h2>
       <div class="mind-well">
         <NeuralBrain
           :state="state"
@@ -251,12 +252,9 @@ onUnmounted(() => {
       </Transition>
     </HomeWidget>
 
-    <HomeWidget v-if="!only || only === 'today'" id="today" class="today-widget" aria-label="今日概要">
-      <h2 class="yb-widget-head">今日</h2>
-      <div class="today-cells">
-        <span class="today-cell"><b>{{ doneDisplay }}</b>完成</span>
-        <span class="today-cell"><b>{{ chatsDisplay }}</b>对话</span>
-        <span class="today-cell"><b>{{ memsDisplay }}</b>记忆</span>
+    <HomeWidget v-if="!only || only === 'today'" id="today" class="today-widget" :class="{ empty: stain.empty }" aria-label="今日概要">
+      <div class="stain" aria-hidden="true">
+        <i v-for="(band, index) in stain.values" :key="index" :style="{ opacity: stain.empty ? 0.12 : 0.16 + band * 0.84 }" />
       </div>
     </HomeWidget>
   </aside>
@@ -354,23 +352,44 @@ button {
   background: var(--yb-state-idle);
 }
 
-.listen .state-dot { background: var(--yb-state-listen); }
-.think .state-dot { background: var(--yb-state-think); }
-.work .state-dot { background: var(--yb-state-work); }
-.say .state-dot { background: var(--yb-state-say); }
-.success .state-dot { background: var(--yb-state-success); }
-.error .state-dot { background: var(--yb-state-error); }
+.listen .state-dot,
+.state-dot.listen { background: var(--yb-state-listen); }
+.think .state-dot,
+.state-dot.think { background: var(--yb-state-think); }
+.work .state-dot,
+.state-dot.work { background: var(--yb-state-work); }
+.say .state-dot,
+.state-dot.say { background: var(--yb-state-say); }
+.success .state-dot,
+.state-dot.success { background: var(--yb-state-success); }
+.error .state-dot,
+.state-dot.error { background: var(--yb-state-error); }
+.state-dot.notify { background: var(--yb-intent-pending); }
 
 .mind-widget {
   flex: none;
 }
 
 .mind-well {
-  margin: 0 8px 8px;
+  margin: 8px;
   overflow: hidden;
   border-radius: calc(var(--yb-widget-radius) - 6px);
-  background: var(--yb-note-mute);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--yb-widget-bg) 70%, transparent), var(--yb-note-mute)),
+    var(--yb-widget-bg);
   box-shadow: var(--yb-press);
+  opacity: 0.82;
+  filter: saturate(0.92);
+  transition: opacity 420ms var(--yb-ease-out), filter 420ms var(--yb-ease-out);
+}
+.think .mind-well,
+.work .mind-well,
+.listen .mind-well {
+  opacity: 1;
+  filter: saturate(1.06);
+}
+.mind-well :deep(.density-tile .brain-legend) {
+  display: none;
 }
 
 .capability-detail {
@@ -408,36 +427,30 @@ button {
 .cap-detail-enter-from,
 .cap-detail-leave-to { opacity: 0; transform: translateY(-5px); }
 
-.today-cells {
+.stain {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  margin: 2px 8px 8px;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 3px;
+  margin: 10px 8px;
+  height: 28px;
+  padding: 6px;
   overflow: hidden;
-  border-radius: calc(var(--yb-widget-radius) - 6px);
+  border-radius: calc(var(--yb-widget-radius) - 8px);
   background: var(--yb-note-mute);
   box-shadow: var(--yb-press);
 }
-
-.today-cell {
-  padding: 8px 4px 9px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  font-size: 10px;
-  color: var(--yb-paper-ink-dim);
+.stain i {
+  display: block;
+  height: 100%;
+  border-radius: 2px 2px 0 0;
+  background: var(--yb-accent-deep);
+}
+.today-widget.empty .stain i {
+  background: var(--yb-line);
 }
 
-.today-cell + .today-cell {
-  box-shadow: inset 1px 0 0 var(--yb-line);
-}
-
-.today-cell b {
-  color: var(--yb-accent-deep);
-  font-size: 15px;
-  font-weight: var(--yb-fw-bold);
-  font-variant-numeric: tabular-nums;
-  line-height: 1.1;
+@media (prefers-reduced-motion: reduce) {
+  .mind-well { transition: none; }
 }
 
 </style>

@@ -29,6 +29,10 @@ describe("home-widgets", () => {
     expect(layout.order).toContain("need");
     expect(layout.order).toContain("tasks");
     expect(layout.order).toContain("remind");
+    expect(layout.order).toContain("spark");
+    expect(layout.order).toContain("glimpse");
+    expect(layout.order).toContain("catch");
+    expect(layout.order).toContain("scratch");
   });
 
   it("falls back on garbage json", () => {

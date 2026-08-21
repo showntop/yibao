@@ -20,6 +20,14 @@ describe("home frame place engines", () => {
     expect(frame).toMatch(/\[data-place="grid"\] \.stage \{[\s\S]*?overflow: visible;/);
   });
 
+  it("stretches desk workstation like the chat paper", () => {
+    expect(frame).toMatch(/\.host :deep\(\.paper-wrap\),[\s\S]*?\.desk-work/);
+  });
+
+  it("collapses empty glance hosts so vacant tiles leave the desk", () => {
+    expect(frame).toMatch(/\.host\.kind-glance:not\(:has\(\.yb-widget, \.plugin-card\)\) \{[\s\S]*?display: none;/);
+  });
+
   it("only snaps and drags on the canvas engine", () => {
     expect(frame).toMatch(/if \(!isCanvas\.value \|\| !item\.frame\) return/);
     expect(frame).toMatch(/snapBox\(/);

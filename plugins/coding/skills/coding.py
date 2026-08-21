@@ -286,26 +286,8 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
     # failed 路径（state["error"] 由重试的 error 事件重立，无循环）。
     if (agent == "codex" and resume_session_id and cc_sid is None
             and state["error"] and not cancel.is_set() and llm is not None):
-        # 摘要生成同 SessionBriefSkill：messages 尾 40 条（seq DESC LIMIT 40 再反转回正序）
-        # → _build_brief；LLM 失败/空历史退化为最近消息原文节选（兜底恒有交接上下文）
-        try:
-            msgs = db.query("messages", where={"session_id": sid}, order="seq DESC", limit=40)
-            msgs.reverse()
-            turns = [{"role": m["role"], "text": m["text"]} for m in msgs]
-        except Exception as e:
-            print(f"[yibao/coding] session {sid} fallback 查历史失败（按空历史续）：{e}",
-                  file=sys.stderr)
-            turns = []
-        brief = None
-        if turns:
-            try:
-                git = _codex.git_summary(cwd) if cwd else ""
-            except Exception:
-                git = ""   # git 摘要失败不挡路（非 git 目录等），brief 仍有对话内容
-            brief = _build_brief(llm, turns, git, "Codex", "Codex")
-        if not brief:
-            excerpt = "\n".join(f"{t['role']}: {str(t['text'])[:500]}" for t in turns[-10:]) or "（无历史消息）"
-            brief = f"（摘要生成失败，以下为最近对话节选）\n{excerpt}"
+        # 摘要生成统一走 _session_brief（messages 尾 40 条 → LLM 凝练 → 原文节选兜底，恒有值）
+        brief = _session_brief(db, sid, llm, "Codex", "Codex")
         on_event({"kind": "marker", "text": "resume 失败，已用交接摘要新开会话续跑"})
         state["error"] = False   # 复位，让重试自行定终态（再败由 on_event 的 error 分支重立）
         # 新会话沿用同一 session_entry：先清旧 thread 的 usage 差分基准，
@@ -447,6 +429,37 @@ def _persist_marker(db, sid: str, text: str) -> None:
         })
     except Exception as e:
         print(f"[yibao/coding] marker 落库失败（跳过）：{e}", file=sys.stderr)
+
+
+def _session_brief(db, sid: str, llm, src: str, dst: str) -> str:
+    """会话库任一会话的交接 Brief（三处共用：SessionBriefSkill / _stream 的 codex
+    resume fallback / SendSkill 的 cc_session_id 空降级续跑）。
+
+    取 messages 尾 40 条（seq DESC LIMIT 40 再反转回正序）→ git 摘要 → LLM 凝练；
+    llm 缺失/失败/空历史退化为最近消息原文节选——恒有交接上下文，不被 LLM 故障挡路。
+    src/dst 是引擎展示名（_build_brief 的 wording 入参）。
+    """
+    try:
+        msgs = db.query("messages", where={"session_id": sid}, order="seq DESC", limit=40)
+        msgs.reverse()
+        turns = [{"role": m["role"], "text": m["text"]} for m in msgs]
+    except Exception as e:
+        print(f"[yibao/coding] session {sid} 查历史失败（按空历史续）：{e}", file=sys.stderr)
+        turns = []
+    brief = None
+    if llm is not None and turns:
+        git = ""
+        try:
+            rows = db.query("sessions", where={"id": sid})
+            cwd = str(rows[0].get("cwd") or "") if rows else ""
+            git = _codex.git_summary(cwd) if cwd else ""
+        except Exception:
+            git = ""   # git 摘要失败不挡路（非 git 目录等），brief 仍有对话内容
+        brief = _build_brief(llm, turns, git, src, dst)
+    if not brief:
+        excerpt = "\n".join(f"{t['role']}: {str(t['text'])[:500]}" for t in turns[-10:]) or "（无历史消息）"
+        brief = f"（摘要生成失败，以下为最近对话节选）\n{excerpt}"
+    return brief
 
 
 def _stop_session(db, registry, sid: str) -> bool:
@@ -617,15 +630,20 @@ class SendSkill(Skill):
             # check-then-act 缝：stop 落 stopped 但 runner 线程未退（长工具中）→ 同样拒
             return ActionResult(success=False, error="会话正在收尾中，请稍候")
         cc = row.get("cc_session_id") or ""
-        if not cc:
-            return ActionResult(
-                success=False,
-                error="该会话尚未建立上下文（cc_session_id 为空），请先用首条消息开始",
-            )
         cwd = row.get("cwd") or ""
         # mode 跨轮沿用：send 不带 mode → 用库值（start/coding.mode 落的）；带 → 覆盖回写
         mode = str(params.get("mode") or row.get("mode") or "acceptEdits")
         agent = str(row.get("agent") or "claude-code")   # 按会话落库引擎选驱动（codex 行走 exec resume）
+        if not cc:
+            # 首条消息未建立上下文（cc_session_id 为空）：runner 未捕获会话 id——常见于
+            # codex 新会话/CC→codex 交接首轮失败（CLI 启动异常、stdout 零事件等）。
+            # 不再一刀切拒绝（否则上下文/历史全丢，用户只能开新对话）——自动降级：
+            # 以交接摘要在同一 sid 上重跑新会话（SessionBriefSkill 手动补救的自动化，
+            # 同 _stream 的 codex resume fallback 模式），前端无感、消息流连贯；
+            # 重跑成功后 cc_session_id 自动更新为新 thread_id。llm 缺失/失败用原文节选兜底。
+            src = dst = "Codex" if agent == "codex" else "Claude Code"
+            brief = _session_brief(ctx.db, sid, getattr(ctx, "llm", None), src, dst)
+            prompt = f"【交接上下文】\n{brief}\n\n【用户继续】\n{prompt}"
         try:
             runner = _runner_for(agent)
         except ValueError as e:
@@ -633,12 +651,13 @@ class SendSkill(Skill):
         # 重置 running 状态：resume 是新一轮流式，finished_at 归零；mode 一并回写
         ctx.db.update("sessions", sid, {"status": "running", "finished_at": 0, "mode": mode})
         _spawn_stream(ctx.db, sid, cwd, prompt, runner, ctx.emit_event,
-                      resume_session_id=cc, permission_mode=mode, agent=agent,
+                      resume_session_id=cc or None, permission_mode=mode, agent=agent,
                       llm=getattr(ctx, "llm", None))   # codex resume 失败 fallback 摘要用；无则不补救
         return ActionResult(success=True, data={
             "session_id": sid,
             "panel": "coding:studio",
-            "human": f"已接续会话 {sid}，面板实时回显",
+            "human": (f"已为会话 {sid} 重建上下文（交接摘要续跑），面板实时回显"
+                      if not cc else f"已接续会话 {sid}，面板实时回显"),
         })
 
 
@@ -944,22 +963,7 @@ class SessionBriefSkill(Skill):
         target = str(params.get("target") or "").strip()
         dst = ("Codex" if target == "codex" else "Claude Code") if target \
             else ("Claude Code" if src == "Codex" else "Codex")
-        # 同 HistorySkill 的取尾窗口：seq DESC LIMIT 40 再反转回正序
-        msgs = ctx.db.query("messages", where={"session_id": sid}, order="seq DESC", limit=40)
-        msgs.reverse()
-        turns = [{"role": m["role"], "text": m["text"]} for m in msgs]
-        brief = None
-        if getattr(ctx, "llm", None) is not None and turns:
-            cwd = str(row.get("cwd") or "")
-            try:
-                git = _codex.git_summary(cwd) if cwd else ""
-            except Exception:
-                git = ""   # git 摘要失败不挡路（非 git 目录等），brief 仍有对话内容
-            brief = _build_brief(ctx.llm, turns, git, src, dst)
-        if not brief:
-            # 兜底：LLM 未配置/失败/空历史 → 原文节选，前端恒有交接上下文可用
-            excerpt = "\n".join(f"{t['role']}: {str(t['text'])[:500]}" for t in turns[-10:]) or "（无历史消息）"
-            brief = f"（摘要生成失败，以下为最近对话节选）\n{excerpt}"
+        brief = _session_brief(ctx.db, sid, getattr(ctx, "llm", None), src, dst)
         return ActionResult(success=True, data={"brief": brief, "session_id": sid})
 
 

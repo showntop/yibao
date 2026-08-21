@@ -371,16 +371,46 @@ def test_send_skill_missing_row_errors(monkeypatch):
     assert called["n"] == 0
 
 
-def test_send_skill_empty_cc_session_id_errors(monkeypatch):
-    """cc_session_id 为空 → 友好错误，提示先首条开始，不调 _spawn_stream。"""
+def test_send_skill_empty_cc_session_id_rebuilds_context(monkeypatch):
+    """cc_session_id 为空（首条未建立上下文，如 codex 交接首轮失败）→ 不再拒绝：
+    自动以交接摘要续跑（_spawn_stream resume_session_id=None 重开新会话），success 受理，
+    prompt 带【交接上下文】前缀；llm 缺失时摘要退化为原文节选（不炸）。"""
     db = _FakeDB()
-    db.rows["s2"] = {"id": "s2", "cwd": "/tmp/p", "cc_session_id": ""}
-    called = {"n": 0}
+    db.rows["s2"] = {"id": "s2", "cwd": "/tmp/p", "cc_session_id": "", "agent": "codex"}
+    captured = {}
     monkeypatch.setattr(codingmod, "_spawn_stream",
-                        lambda *a, **k: called.__setitem__("n", called["n"] + 1))
-    res = SendSkill().run({"id": "s2", "prompt": "x"}, _Ctx(db))
-    assert res.success is False and "尚未建立" in res.error
-    assert called["n"] == 0
+                        lambda *a, **k: captured.update({"args": a, "kwargs": k}))
+    res = SendSkill().run({"id": "s2", "prompt": "继续"}, _Ctx(db))
+    assert res.success is True
+    assert res.data["session_id"] == "s2"
+    assert captured["kwargs"].get("resume_session_id") is None   # 降级走新会话而非 resume
+    assert "【交接上下文】" in captured["args"][3] and "【用户继续】" in captured["args"][3]
+    assert "继续" in captured["args"][3]
+    # 落 running 待重跑（finished_at 归零，同正常 resume 路径）
+    reset = next((u for u in db.updates if u[0] == "s2" and u[1].get("status") == "running"), None)
+    assert reset is not None and reset[1].get("finished_at") == 0
+
+
+def test_send_skill_empty_cc_rebuild_uses_llm_brief(monkeypatch):
+    """cc_session_id 为空且 llm 可用 → 摘要经 _build_brief（src/dst=会话引擎名）进续跑 prompt。"""
+    db = _FakeDB()
+    db.rows["s2"] = {"id": "s2", "cwd": "/tmp/p", "cc_session_id": "", "agent": "codex"}
+    db.insert("messages", {"session_id": "s2", "role": "user", "text": "老任务",
+                           "ts": 1, "seq": 1, "uuid": ""})
+    captured = {}
+    monkeypatch.setattr(codingmod, "_spawn_stream",
+                        lambda *a, **k: captured.update({"args": a, "kwargs": k}))
+    monkeypatch.setattr(codingmod, "_build_brief",
+                        lambda llm, turns, git, src, dst: f"摘要:{src}->{dst}")
+    monkeypatch.setattr(codingmod._codex, "git_summary", lambda cwd: "")
+
+    class _CtxLLM(_Ctx):
+        llm = object()
+
+    res = SendSkill().run({"id": "s2", "prompt": "继续"}, _CtxLLM(db))
+    assert res.success is True
+    assert "摘要:Codex->Codex" in captured["args"][3]
+    assert captured["kwargs"].get("resume_session_id") is None
 
 
 def test_send_skill_missing_prompt_errors(monkeypatch):

@@ -334,6 +334,7 @@ function onMoveStart(item: ResolvedItem, e: PointerEvent) {
   display: flex;
   flex-direction: column;
   overflow: visible;
+  position: relative;
 }
 .host.grow {
   flex: 1;
@@ -402,6 +403,9 @@ function onMoveStart(item: ResolvedItem, e: PointerEvent) {
 .stage.canvas .host.kind-glance:active {
   cursor: grabbing;
 }
+.host.kind-glance:not(:has(.yb-widget, .plugin-card)) {
+  display: none;
+}
 .host.kind-input {
   overflow: visible;
   justify-content: flex-end;
@@ -409,11 +413,12 @@ function onMoveStart(item: ResolvedItem, e: PointerEvent) {
   min-height: min-content;
 }
 .host :deep(.paper-wrap),
-.host :deep(.sheet) {
+.host :deep(.sheet),
+.host :deep(.desk-work) {
   flex: 1;
   min-height: 0;
   width: 100%;
-  height: 100%;
+  height: auto;
 }
 .fold-handle {
   box-sizing: border-box;

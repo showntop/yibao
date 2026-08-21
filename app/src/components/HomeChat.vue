@@ -9,14 +9,19 @@ import PermissionsBanner from "./PermissionsBanner.vue";
 import SetupWizard from "./SetupWizard.vue";
 import AgentBrain from "./AgentBrain.vue";
 import HomeGlance from "./HomeGlance.vue";
+import HomeLife from "./HomeLife.vue";
 import HomePluginGlance from "./HomePluginGlance.vue";
 import HomeContextPanel from "./HomeContextPanel.vue";
 import HomeWidget from "./HomeWidget.vue";
 import SessionList from "./SessionList.vue";
 import HomeFrame from "./HomeFrame.vue";
+import HomeDeskWork from "./HomeDeskWork.vue";
+import HomeHostAsk from "./HomeHostAsk.vue";
+import HomeFloatNotes from "./HomeFloatNotes.vue";
 import { useLiveAssembly } from "../lib/home-chrome";
 import { defaultPeek, faceOf, livePluginIds, syncPluginParts } from "../lib/home-assembly";
 import { viewOf } from "../lib/home-assembly-ui";
+import { deskKind, deskPathOpen, isResumeDeskWork, shouldStampDeskPath, type DeskKind, type DeskWork } from "../lib/home-desk-presence";
 import {
   HOME_CHAT_SESSION,
   type BubbleMsg,
@@ -126,13 +131,21 @@ const emit = defineEmits<{
   state: [AvatarState];
   openPanel: [];
   reminder: [];
+  closeWork: [];
+  focusWork: [];
+  workBody: [el: HTMLElement | null];
 }>();
 const props = defineProps<{
   draft?: string;
+  workstation?: { panel?: string; title: string; plugin: string; objectTitle?: string } | null;
+  lendEar?: boolean;
+  workBusy?: boolean;
+  workFocus?: boolean;
 }>();
 
 // 本地草稿：父级 draft 单向同步；右侧信息面板点动态也经此填入（强制重置触发 InputBar watch）
 const draftRef = ref<string | undefined>(undefined);
+const hostAskOpen = ref(false);
 watch(
   () => props.draft,
   (d) => {
@@ -146,6 +159,13 @@ watch(
 function onInfoChat(d: string) {
   draftRef.value = "";
   void nextTick(() => (draftRef.value = d));
+}
+function onIdentityChat(d: string) {
+  if (props.workstation && props.lendEar) {
+    hostAskOpen.value = true;
+    return;
+  }
+  onInfoChat(d);
 }
 
 // ---- 会话（左复合栏）：标题/预览随对话更新；切换会话保存/恢复气泡（SessionStore.conversation 权威）----
@@ -199,6 +219,53 @@ function onSessionSelect(id: string) {
 const state = ref<AvatarState>("idle");
 const bubbles = ref<BubbleMsg[]>([]);
 const streamingIdx = ref<number | null>(null); // 正在接收 chunk 的 bubble 下标
+
+function stampDeskOpen(kind: DeskKind, work: DeskWork) {
+  const line = deskPathOpen(kind, work);
+  const b: BubbleMsg = { role: "ai", text: line, panelLink: true, ts: Date.now() };
+  bubbles.value.push(b);
+  persistBubble(b);
+}
+
+const workKind = computed(() =>
+  props.workstation
+    ? deskKind(props.workstation.plugin, props.lendEar ? "handoff" : undefined)
+    : "host",
+);
+const livePathLine = computed(() =>
+  props.workstation ? deskPathOpen(workKind.value, props.workstation) : null,
+);
+let deskSurface: { kind: DeskKind; work: DeskWork } | null = null;
+let lastFootprint: DeskWork | null = null;
+let lastFootprintIndex = -1;
+
+function closeDeskSurface() {
+  deskSurface = null;
+}
+
+watch(
+  () => [props.workstation, props.lendEar] as const,
+  ([next, handoff]) => {
+    const kind = next ? deskKind(next.plugin, handoff ? "handoff" : undefined) : null;
+    if (deskSurface && (!next || !kind || deskSurface.kind !== kind || !isResumeDeskWork(deskSurface.work, next))) {
+      closeDeskSurface();
+    }
+    if (!next) {
+      hostAskOpen.value = false;
+      return;
+    }
+    if (!kind) return;
+    const since = lastFootprintIndex >= 0 ? bubbles.value.slice(lastFootprintIndex + 1) : bubbles.value;
+    if (!shouldStampDeskPath(deskSurface?.work ?? null, lastFootprint, next, since)) {
+      deskSurface = { kind, work: next };
+      return;
+    }
+    stampDeskOpen(kind, next);
+    lastFootprint = next;
+    lastFootprintIndex = bubbles.value.length - 1;
+    deskSurface = { kind, work: next };
+  },
+);
 const brainDown = ref(false); // 大脑掉线/重启中（守护在恢复）
 const panelOpen = ref(false); // 面板协作会话进行中（关联气泡只插一次）
 const perms = ref<BrainPermissions | null>(null); // macOS 权限状态（null=未收到）
@@ -566,22 +633,6 @@ function onEvent(e: BrainEvent) {
       state.value = "say";
       break;
     case "panel": {
-      // 面板先成为当前任务的可恢复能力；不主动抢页面，用户从关联卡/活动胶囊展开。
-      // 查重：最近一条「⇢ 协作」气泡存在（含重启恢复的旧气泡）→ 原地更新文案，不新增（修重启重复 push bug）
-      const title = e.payload?.title || e.payload?.panel || "插件面板";
-      const text = `⇢ 正在和「${title}」协作`;
-      const existing = [...bubbles.value].reverse().find((b) => b.panelLink);
-      if (existing) {
-        existing.text = text;
-        if (currentSessionId.value) sessionStore.conversation.upsertPanelLink(currentSessionId.value, text);
-      } else {
-        const linkBubble: BubbleMsg = { role: "ai", text, panelLink: true, ts: Date.now() };
-        bubbles.value.push(linkBubble);
-        if (currentSessionId.value) {
-          const stored = sessionStore.conversation.upsertPanelLink(currentSessionId.value, text);
-          linkBubble.id = stored.id; // 与 domain 消息 id 对齐，后续 syncMessage 可命中
-        }
-      }
       panelOpen.value = true;
       break;
     }
@@ -651,6 +702,15 @@ watch(
   (n, prev) => {
     pageIndex.value = Math.max(0, n - 1);
     if (chatFace.value === "paper" && n > (prev ?? 0) && n > 0) peekOpen.value = true;
+  },
+);
+watch(
+  () => props.workFocus,
+  (focused) => {
+    if (focused) {
+      leftOpen.value = false;
+      peekOpen.value = false;
+    }
   },
 );
 function flipPage(delta: number) {
@@ -765,6 +825,21 @@ async function submit(text: string, contexts: InputContext[] = []) {
   }
 }
 
+function onHostAsk(text: string) {
+  void submit(text);
+}
+
+const hostAskNotes = computed(() =>
+  bubbles.value.slice(-5).map((bubble) => ({ role: bubble.role, text: bubble.text })),
+);
+
+function onHostAskEsc(e: KeyboardEvent) {
+  if (e.key !== "Escape" || !hostAskOpen.value) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  hostAskOpen.value = false;
+}
+
 function onMic() {
   // 不乐观置 listen：等大脑 listening 事件确认（语音栈不可用时大脑会回 error，别自欺卡死）
   void voiceStart("pet", false, currentSessionId.value).catch((err) => {
@@ -810,6 +885,7 @@ provide(HOME_CHAT_SESSION, {
   paperLabel,
   stampLabels,
   peekOpen,
+  livePathLine,
   threadKey,
   submit,
   fmtDay,
@@ -836,6 +912,7 @@ provide(HOME_CHAT_SESSION, {
 
 
 onMounted(async () => {
+  window.addEventListener("keydown", onHostAskEsc, true);
   // SessionStore 恢复编排：hydrate 三域后按活跃会话恢复气泡（与小窗镜面共用同一条会话）
   await sessionStore.restore().catch(() => {});
   let activeId = sessionStore.conversation.getActiveConversationId();
@@ -859,9 +936,7 @@ onMounted(async () => {
   unlistenPanelClosed = await onPanelClosed(() => {
     if (!panelOpen.value) return;
     panelOpen.value = false;
-    const b: BubbleMsg = { role: "ai", text: "⇠ 协作结束", ts: Date.now() };
-    bubbles.value.push(b);
-    persistBubble(b);
+    closeDeskSurface();
   });
   // 首启引导（生产打包首跑：装 Python 环境/下模型，大脑还没起来，走 Tauri 事件直推）
   unlistenSetup = await listen<{ stage: string; detail: string }>("setup-progress", (e) => {
@@ -898,6 +973,7 @@ onMounted(async () => {
   emit("state", state.value); // 父级侧边栏团子拿初始态
 });
 onUnmounted(() => {
+  window.removeEventListener("keydown", onHostAskEsc, true);
   unlisten?.();
   unlistenStatus?.();
   unlistenPerms?.();
@@ -913,7 +989,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="chat-page">
+  <div class="chat-page" :class="{ 'lend-ear': props.lendEar, 'at-work': Boolean(props.workstation) }">
     <SetupWizard v-if="setupNeeded" :model="setupCfg.model" :base-url="setupCfg.baseUrl" :voice="setupCfg.voice" @saved="onSetupSaved" />
 
     <HomeFrame
@@ -924,7 +1000,7 @@ onUnmounted(() => {
       v-model:left="leftOpen"
     >
       <template #identity>
-        <AgentBrain :state="state" only="identity" @chat="onInfoChat" />
+        <AgentBrain :state="state" only="identity" @chat="onIdentityChat" />
       </template>
       <template #mind>
         <AgentBrain :state="state" only="mind" @chat="onInfoChat" />
@@ -941,8 +1017,25 @@ onUnmounted(() => {
       <template #remind>
         <HomeGlance only="remind" @chat="onInfoChat" />
       </template>
+      <template #spark>
+        <HomeLife only="spark" @chat="onInfoChat" />
+      </template>
+      <template #glimpse>
+        <HomeLife only="glimpse" @chat="onInfoChat" />
+      </template>
+      <template #catch>
+        <HomeLife only="catch" @chat="onInfoChat" />
+      </template>
+      <template #scratch>
+        <HomeLife only="scratch" @chat="onInfoChat" />
+      </template>
       <template v-for="id in livePluginIds" :key="id" #[id]>
-        <HomePluginGlance :panel="id" />
+        <HomePluginGlance
+          :panel="id"
+          :live-panel="props.workstation?.panel"
+          :live-kind="workKind"
+          @fold="emit('closeWork')"
+        />
       </template>
       <template #sessions>
         <HomeWidget id="sessions" :fill="sessionFace === 'list'">
@@ -956,8 +1049,25 @@ onUnmounted(() => {
       </template>
 
       <template #chat>
-        <PermissionsBanner v-if="missingPerms && perms" :perms="perms" />
-        <component :is="chatView" />
+        <HomeDeskWork
+          v-if="props.workstation"
+          :plugin="props.workstation.plugin"
+          :title="props.workstation.title"
+          :object-title="props.workstation.objectTitle"
+          :busy="props.workBusy"
+          :focused="props.workFocus"
+          :lend-ear="props.lendEar"
+          :kind="workKind"
+          @close="emit('closeWork')"
+          @focus="emit('focusWork')"
+          @ask="hostAskOpen = true"
+          @body="emit('workBody', $event)"
+        />
+        <template v-else>
+          <PermissionsBanner v-if="missingPerms && perms" :perms="perms" />
+          <component :is="chatView" />
+        </template>
+        <HomeFloatNotes />
       </template>
 
       <template #now>
@@ -972,7 +1082,7 @@ onUnmounted(() => {
       </template>
 
       <template #composer>
-        <div class="input-slot">
+        <div v-if="!props.lendEar" class="input-slot">
           <div v-if="chatFace === 'thread'" class="skill-row">
             <span class="skill-hint">呼出技能</span>
             <button v-for="c in skillChips" :key="c.key" class="skill-chip" :title="c.draft" @click="onSkillChip(c)">
@@ -983,6 +1093,15 @@ onUnmounted(() => {
         </div>
       </template>
     </HomeFrame>
+    <div v-if="hostAskOpen && props.workstation" class="host-ask-slot">
+      <HomeHostAsk
+        :busy="busy"
+        :listening="state === 'listen'"
+        :notes="hostAskNotes"
+        @submit="onHostAsk"
+        @close="hostAskOpen = false"
+      />
+    </div>
   </div>
 </template>
 
@@ -992,6 +1111,17 @@ onUnmounted(() => {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  position: relative;
+}
+.chat-page.lend-ear :deep(.host.kind-input) {
+  display: none;
+}
+.host-ask-slot {
+  position: absolute;
+  z-index: 8;
+  left: 16px;
+  bottom: 16px;
+  max-width: calc(100% - 32px);
 }
 .input-slot {
   box-sizing: border-box;

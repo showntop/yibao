@@ -18,6 +18,7 @@ import {
 } from "../lib/brain";
 import HomeWidget from "./HomeWidget.vue";
 import { useLiveAssembly } from "../lib/home-chrome";
+import { setDeskOrigin } from "../lib/home-desk-presence";
 import { faceOf } from "../lib/home-assembly";
 
 type AgentState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
@@ -308,9 +309,10 @@ function openTasks() {
   void panelAction("agents.task_list", {}, undefined, "panel:agents").catch(() => {});
 }
 
-function openWidget(widget: WidgetPayload) {
+function openWidget(widget: WidgetPayload, event?: MouseEvent) {
   if (!widget.open) return;
   if (browserPreview) return;
+  setDeskOrigin((event?.currentTarget as Element | null) ?? null);
   const pluginId = widget.panel.split(":")[0];
   void panelAction(widget.open, {}, undefined, `panel:${pluginId}`).catch(() => {});
 }
@@ -628,7 +630,7 @@ onUnmounted(() => {
       <section v-if="relatedWidgets.length" class="yb-widget" aria-labelledby="session-capability-title">
         <h2 class="yb-widget-head" id="session-capability-title">关联能力</h2>
         <div class="row-group">
-          <button v-for="widget in relatedWidgets" :key="widget.panel" class="plain-row capability-row" type="button" :disabled="!widget.open" @click="openWidget(widget)">
+          <button v-for="widget in relatedWidgets" :key="widget.panel" class="plain-row capability-row" type="button" :disabled="!widget.open" @click="openWidget(widget, $event)">
             <i class="ability-dot" /><span>{{ widget.title }}</span><span class="row-arrow">›</span>
           </button>
         </div>

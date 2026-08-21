@@ -67,4 +67,27 @@ describe("大窗 handoff", () => {
     await nextTick();
     expect(w.find(".bench-bar").exists()).toBe(true);
   });
+
+  it("桌上工位：页头让位，面板留在原树（不搬 iframe）", async () => {
+    const w = mount(HomePlugins, {
+      props: { scene: true },
+      global: {
+        stubs: {
+          SchemaPanel: { template: "<div class='schema-stub' />" },
+          WebviewPanel: { template: "<div class='webview-stub' />" },
+          InputBar: { template: "<div />", setup(_: any, { expose }: any) { expose({ focus() {}, insertText() {} }); return {}; } },
+          Avatar: { template: "<button v-bind='$attrs' />" },
+          YbIcon: { template: "<i />" },
+        },
+      },
+    });
+    await flushPromises();
+    firePanel("notes:list");
+    await nextTick();
+    expect(w.find(".page-head").exists()).toBe(false);
+    expect(w.find(".bench").exists()).toBe(false);
+    expect(w.find(".panel-grow").exists()).toBe(true);
+    expect(w.text()).not.toContain("当前任务");
+    w.unmount();
+  });
 });

@@ -83,7 +83,49 @@ const capability = ref<CapabilityRailSurface | null>(null);
 const surfaceVisible = ref(false);
 const presentation = ref<Presentation>("stage");
 const sceneActive = computed(() => tab.value === "home" && surfaceVisible.value && capability.value !== null);
+const deskWork = computed(() => sceneActive.value && !qaMode);
+const pluginHandoff = ref(false);
 const activityBusy = computed(() => panelState.value !== "idle");
+const workHost = ref<HTMLElement | null>(null);
+const workBox = ref({ top: 0, left: 0, width: 0, height: 0 });
+const workStyle = computed(() => ({
+  "--yb-work-top": `${workBox.value.top}px`,
+  "--yb-work-left": `${workBox.value.left}px`,
+  "--yb-work-w": `${workBox.value.width}px`,
+  "--yb-work-h": `${workBox.value.height}px`,
+}));
+let workBody: HTMLElement | null = null;
+let workRo: ResizeObserver | null = null;
+function syncWorkBox() {
+  if (!workBody || !workHost.value) {
+    workBox.value = { top: 0, left: 0, width: 0, height: 0 };
+    return;
+  }
+  const r = workBody.getBoundingClientRect();
+  const h = workHost.value.getBoundingClientRect();
+  workBox.value = {
+    top: r.top - h.top,
+    left: r.left - h.left,
+    width: Math.max(0, r.width),
+    height: Math.max(0, r.height),
+  };
+}
+watch(deskWork, (on) => {
+  if (on) void nextTick(syncWorkBox);
+});
+function onWorkBody(el: HTMLElement | null) {
+  workRo?.disconnect();
+  workRo = null;
+  workBody = el;
+  if (!el) {
+    syncWorkBox();
+    return;
+  }
+  workRo = new ResizeObserver(() => syncWorkBox());
+  workRo.observe(el);
+  if (workHost.value) workRo.observe(workHost.value);
+  void nextTick(syncWorkBox);
+}
 // 场景布局（scene）持久化在 surface 域：hydrate 完成后 onMounted 读入，watch 写回
 let savedScene: { panel: string; visible: boolean; presentation: Presentation } | null = null;
 let restorePending = false;
@@ -326,6 +368,7 @@ let unApprovals: (() => void) | null = null;
 onMounted(async () => {
   if (!qaMode) unApprovals = onPendingConfirms((l) => (approvalCount.value = l.length));
   window.addEventListener("keydown", onGlobalKeydown);
+  window.addEventListener("resize", syncWorkBox);
   // 启动恢复：hydrate 后按 surface 域 scene 设置布局恢复窗口
   try {
     clearLegacySessionKeys();
@@ -342,6 +385,8 @@ onMounted(async () => {
 onUnmounted(() => {
   unApprovals?.();
   window.removeEventListener("keydown", onGlobalKeydown);
+  window.removeEventListener("resize", syncWorkBox);
+  workRo?.disconnect();
 });
 
 function close() {
@@ -383,7 +428,7 @@ function close() {
             v-if="capability"
             class="activity-pill"
             :class="{ active: sceneActive, busy: activityBusy }"
-            :title="sceneActive ? '收起工作面' : '恢复工作面'"
+            :title="sceneActive ? '收起工位' : '恢复工位'"
             @click="sceneActive ? hideSurface() : showSurface()"
           >
             <span class="activity-icon"><YbIcon name="plug" :size="12" /></span>
@@ -409,20 +454,37 @@ function close() {
     </header>
 
     <!-- 内容区：各页常驻挂载，切页只切显隐。
-         主屏 = 对话 + 信息面板融合体（AI 交互主入口）；插件面板打开 → 自动切插件页 -->
-    <main class="content" :class="{ 'capability-scene': sceneActive, 'capability-focus': sceneActive && presentation === 'focus' }">
+         主屏桌子常在；插件工位长在纸上，不切走。 -->
+    <main
+      ref="workHost"
+      class="content"
+      :class="{ 'capability-scene': sceneActive && !deskWork, 'capability-focus': sceneActive && presentation === 'focus' && !deskWork, 'desk-work': deskWork }"
+      :style="deskWork ? workStyle : undefined"
+    >
       <Transition name="view-fade">
-        <div v-show="tab === 'home' && !sceneActive" class="view-host chat-host">
-          <HomeChat v-if="!qaMode" @state="chatState = $event" @open-panel="showSurface" @reminder="navigate('home')" />
+        <div v-show="tab === 'home' && (!sceneActive || deskWork)" class="view-host chat-host">
+          <HomeChat
+            v-if="!qaMode"
+            :workstation="deskWork ? capability : null"
+            :lend-ear="deskWork && pluginHandoff"
+            :work-busy="activityBusy"
+            :work-focus="deskWork && presentation === 'focus'"
+            @state="chatState = $event"
+            @open-panel="showSurface"
+            @reminder="navigate('home')"
+            @close-work="hideSurface"
+            @focus-work="toggleFocus"
+            @work-body="onWorkBody"
+          />
         </div>
       </Transition>
       <Transition name="scene-rail">
-        <div v-show="sceneActive && presentation === 'stage'" class="capability-rail-host">
+        <div v-show="sceneActive && !deskWork && presentation === 'stage'" class="capability-rail-host">
           <CapabilityConversationRail :surface="capability" :active="sceneActive" @close="hideSurface" @focus="toggleFocus" />
         </div>
       </Transition>
-      <Transition :name="sceneActive ? 'scene-panel' : 'view-fade'">
-        <div v-show="tab === 'plugins' || sceneActive" class="view-host plugin-host">
+      <Transition :name="sceneActive && !deskWork ? 'scene-panel' : 'view-fade'">
+        <div v-show="tab === 'plugins' || sceneActive" class="view-host plugin-host" :class="{ 'on-desk': deskWork }">
         <HomePlugins
           ref="pluginHost"
           :scene="sceneActive"
@@ -430,6 +492,7 @@ function close() {
           @state="panelState = $event"
           @panel="onPanelAvailable"
           @surface="onSurface"
+          @handoff="pluginHandoff = $event"
           @close="sceneActive ? hideSurface() : closeCapability()"
           @focus="toggleFocus"
         />
@@ -767,6 +830,22 @@ function close() {
   grid-column: 2;
   min-width: 0;
   min-height: 0;
+}
+.content.desk-work {
+  position: relative;
+}
+.content.desk-work .chat-host {
+  z-index: 0;
+}
+.content.desk-work .plugin-host.on-desk {
+  position: absolute;
+  top: var(--yb-work-top, 0px);
+  left: var(--yb-work-left, 0px);
+  width: var(--yb-work-w, 0px);
+  height: var(--yb-work-h, 0px);
+  z-index: 2;
+  overflow: hidden;
+  pointer-events: auto;
 }
 .content.capability-focus { grid-template-columns: minmax(0, 1fr); }
 .capability-focus .plugin-host { grid-column: 1; }

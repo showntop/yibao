@@ -10,3 +10,4 @@ sidecar/scripts/eval_scenarios/*.png
 # 插件 module 面板构建产物(scripts/panel-build 生成;打包管线阶段五接入,产物不入库)
 plugins/*/panel/dist/
 plugins/*/panel/node_modules/
+.claude/

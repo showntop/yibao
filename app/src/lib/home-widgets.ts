@@ -8,6 +8,10 @@ export const HOME_WIDGETS = [
   { id: "need", label: "需要你", defaultSize: "m", defaultMaterial: "porcelain" },
   { id: "tasks", label: "进行中", defaultSize: "m", defaultMaterial: "porcelain" },
   { id: "remind", label: "提醒", defaultSize: "s", defaultMaterial: "porcelain" },
+  { id: "spark", label: "想起", defaultSize: "m", defaultMaterial: "porcelain" },
+  { id: "glimpse", label: "余光", defaultSize: "s", defaultMaterial: "glass" },
+  { id: "catch", label: "接到", defaultSize: "m", defaultMaterial: "porcelain" },
+  { id: "scratch", label: "草稿", defaultSize: "m", defaultMaterial: "porcelain" },
   { id: "sessions", label: "会话", defaultSize: "l", defaultMaterial: "porcelain" },
   { id: "now", label: "本次", defaultSize: "m", defaultMaterial: "porcelain" },
 ] as const;

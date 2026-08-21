@@ -188,15 +188,16 @@ const emit = defineEmits<{
   font-size: 10.5px;
 }
 .foot {
+  flex: none;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  margin-top: 8px;
-  padding-top: 12px;
-  border-top: 1px solid var(--yb-line);
-  color: var(--yb-text-faint);
-  font-size: 11px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--yb-border-base);
+  color: var(--yb-text-dim);
+  font-size: 12px;
 }
 .foot-nav {
   display: flex;
@@ -205,15 +206,21 @@ const emit = defineEmits<{
 }
 .foot-nav button {
   height: auto;
-  padding: 0;
+  padding: 2px 6px;
   border: 0;
+  border-radius: 6px;
   background: transparent;
   color: var(--yb-text-dim);
   font: inherit;
   cursor: pointer;
+  transition: color 140ms var(--yb-ease-out), background 140ms var(--yb-ease-out);
+}
+.foot-nav button:hover:not(:disabled) {
+  background: var(--yb-accent-soft);
+  color: var(--yb-accent-deep);
 }
 .foot-nav button:disabled {
-  opacity: 0.35;
+  opacity: 0.55;
   cursor: default;
 }
 .text-btn {

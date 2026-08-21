@@ -8,6 +8,7 @@ import HomeContextPanel from "../components/HomeContextPanel.vue";
 import InputBar from "../components/InputBar.vue";
 import AgentBrain from "../components/AgentBrain.vue";
 import HomeGlance from "../components/HomeGlance.vue";
+import HomeLife from "../components/HomeLife.vue";
 import HomePluginGlance from "../components/HomePluginGlance.vue";
 
 export const PART_VIEWS: Record<string, Record<string, Component>> = {
@@ -21,6 +22,10 @@ export const PART_VIEWS: Record<string, Record<string, Component>> = {
   need: { tile: HomeGlance },
   tasks: { tile: HomeGlance },
   remind: { tile: HomeGlance },
+  spark: { tile: HomeLife },
+  glimpse: { tile: HomeLife },
+  catch: { tile: HomeLife },
+  scratch: { tile: HomeLife },
 };
 
 export function viewOf(partId: string, presentation: string): Component | undefined {

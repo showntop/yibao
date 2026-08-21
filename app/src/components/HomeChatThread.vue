@@ -5,6 +5,7 @@ import Bubble from "./Bubble.vue";
 import YbIcon from "./YbIcon.vue";
 import UsageBar from "./UsageBar.vue";
 import { HOME_CHAT_SESSION } from "../lib/home-chat-session";
+import { isDeskPathOpenLine } from "../lib/home-desk-presence";
 import { runTailIndex } from "../lib/work-thread";
 
 const chat = inject(HOME_CHAT_SESSION);
@@ -21,6 +22,7 @@ const {
   showJump,
   bubblesRef,
   threadKey,
+  livePathLine,
   submit,
   fmtDay,
   openPanel,
@@ -58,6 +60,14 @@ const {
       <template v-for="item in thread" :key="threadKey(item)">
         <div v-if="item.type === 'day'" class="date-divider"><span>{{ fmtDay(bubbles[item.index].ts) }}</span></div>
 
+        <button
+          v-else-if="item.type === 'misc' && isDeskPathOpenLine(bubbles[item.index].text)"
+          class="path-print"
+          :class="{ live: bubbles[item.index].text === livePathLine }"
+          @click="openPanel"
+        >
+          {{ bubbles[item.index].text }}
+        </button>
         <button v-else-if="item.type === 'misc' && bubbles[item.index].panelLink" class="assoc" @click="openPanel">
           {{ bubbles[item.index].text }}<span class="assoc-arrow">展开 ›</span>
         </button>

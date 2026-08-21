@@ -27,6 +27,25 @@
   font-size: var(--yb-fs-md);
   white-space: nowrap;
 }
+.path-print {
+  align-self: center;
+  margin: 0;
+  padding: 0 var(--yb-space-3);
+  border: none;
+  background: none;
+  color: var(--yb-text-dim);
+  font-size: var(--yb-fs-sm);
+  font-family: inherit;
+  line-height: var(--yb-lh-base);
+  cursor: pointer;
+}
+.path-print.live {
+  color: var(--yb-text);
+  opacity: 0.72;
+}
+.path-print:hover {
+  color: var(--yb-accent-deep);
+}
 .work-run {
   display: flex;
   align-items: flex-start;

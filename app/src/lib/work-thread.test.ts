@@ -30,6 +30,11 @@ describe("work-thread", () => {
     expect(isWorkPiece(user("hi"))).toBe(false);
     expect(isWorkPiece(ai("到点了", { icon: "clock" }))).toBe(false);
     expect(isWorkPiece(ai("⇢ 协作", { panelLink: true }))).toBe(false);
+    expect(isWorkPiece(ai("已请 改登录", { panelLink: true }))).toBe(false);
+    expect(isWorkPiece({ role: "sys", text: "已走 改登录" })).toBe(false);
+    expect(isWorkPiece(ai("摊开 闪念盘"))).toBe(false);
+    expect(isWorkPiece(ai("用了 工具箱"))).toBe(false);
+    expect(isWorkPiece({ role: "sys", text: "收起 闪念盘" })).toBe(false);
   });
 
   it("groups a turn of text and tools into one run", () => {
@@ -72,6 +77,20 @@ describe("work-thread", () => {
   it("keeps a reminder-only stream as a duty page", () => {
     expect(groupPages([ai("该开战会了", { icon: "clock" })])).toEqual([
       { userIndex: null, runIndices: [], miscIndices: [0] },
+    ]);
+  });
+
+  it("does not pile orphan 已请/已走 lines onto the paper", () => {
+    const bubbles = [
+      ai("已走 notes · 闪念盘 · 闪念列表"),
+      ai("已走 agents · 智能体调度 · 任务列表"),
+      ai("该开战会了", { icon: "clock" }),
+      ai("已请 改登录", { panelLink: true }),
+      { role: "sys" as const, text: "已走 改登录" },
+      { role: "sys" as const, text: "收起 闪念盘" },
+    ];
+    expect(groupPages(bubbles)).toEqual([
+      { userIndex: null, runIndices: [], miscIndices: [2, 3] },
     ]);
   });
 

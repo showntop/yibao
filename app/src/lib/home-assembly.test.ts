@@ -31,10 +31,14 @@ describe("home-assembly catalog", () => {
     expect(ids).toContain("chat");
     expect(ids).toContain("composer");
     expect(ids).toContain("sessions");
+    expect(ids).toContain("spark");
+    expect(ids).toContain("glimpse");
+    expect(ids).toContain("catch");
+    expect(ids).toContain("scratch");
     expect(HOME_PARTS.find((p) => p.id === "chat")?.kind).toBe("work");
     expect(HOME_PARTS.find((p) => p.id === "composer")?.kind).toBe("input");
     expect(HOME_PARTS.find((p) => p.id === "chat")?.presentations).toEqual(["thread", "paper", "talk"]);
-    expect(HOME_PARTS.find((p) => p.id === "sessions")?.presentations).toEqual(["list", "spine", "cards"]);
+    expect(HOME_PARTS.find((p) => p.id === "spark")?.kind).toBe("glance");
   });
 });
 
@@ -81,7 +85,16 @@ describe("resolveAssembly", () => {
     expect(presentationOf(rails, "mind")).toBe("map");
     expect(rails.items.find((i) => i.id === "chat")?.area).toBe("main");
     expect(rails.items.find((i) => i.id === "chat")?.frame).toBeUndefined();
+    // 三栏左栏精简：信息卡（need/tasks/remind/glimpse/catch）不在 rails 渲染，会话列表才有空间
     expect(rails.items.find((i) => i.id === "need")).toBeUndefined();
+    expect(rails.items.find((i) => i.id === "tasks")).toBeUndefined();
+    expect(rails.items.find((i) => i.id === "remind")).toBeUndefined();
+    expect(rails.items.find((i) => i.id === "glimpse")).toBeUndefined();
+    expect(rails.items.find((i) => i.id === "catch")).toBeUndefined();
+    expect(rails.items.find((i) => i.id === "spark")?.area).toBe("left");
+    expect(rails.items.find((i) => i.id === "mind")?.area).toBe("left");
+    expect(rails.items.find((i) => i.id === "today")?.area).toBe("left");
+    expect(rails.items.find((i) => i.id === "scratch")).toBeUndefined();
     expect(collapsibleOf("rails")).toEqual(["left", "right"]);
 
     const desk = resolveAssembly("desk", defaultLayout());
@@ -94,6 +107,8 @@ describe("resolveAssembly", () => {
     expect(desk.items.find((i) => i.id === "now")?.area).toBe("note");
     expect(desk.items.find((i) => i.id === "now")?.attach).toBeUndefined();
     expect(desk.items.find((i) => i.id === "need")?.area).toBe("start");
+    expect(desk.items.find((i) => i.id === "spark")?.area).toBe("start");
+    expect(desk.items.find((i) => i.id === "scratch")?.area).toBe("end");
     expect(desk.items.find((i) => i.id === "identity")?.pinEnd).toBe(true);
     expect(collapsibleOf("desk")).toEqual([]);
 
@@ -105,12 +120,16 @@ describe("resolveAssembly", () => {
     expect(salon.items.find((i) => i.id === "chat")?.area).toBe("chat");
     expect(salon.items.find((i) => i.id === "now")).toBeUndefined();
     expect(salon.items.find((i) => i.id === "tasks")).toBeUndefined();
+    expect(salon.items.find((i) => i.id === "spark")?.area).toBe("identity");
+    expect(salon.items.find((i) => i.id === "glimpse")).toBeUndefined();
     expect(salon.grid?.justify).toBe("center");
   });
 
   it("keeps rails columns stacked in named areas, with chat and sessions growing", () => {
     const rails = resolveAssembly("rails", defaultLayout());
-    expect(rails.grid?.stacks.left).toEqual(["identity", "mind", "today", "sessions"]);
+    expect(rails.grid?.stacks.left).toEqual([
+      "identity", "spark", "mind", "today", "sessions",
+    ]);
     expect(rails.grid?.stacks.main).toEqual(["chat", "composer"]);
     expect(rails.grid?.stacks.right).toEqual(["now"]);
     expect(rails.items.find((i) => i.id === "sessions")?.grow).toBe(true);
@@ -275,19 +294,15 @@ describe("resolveAssembly", () => {
 describe("plugin glances", () => {
   afterEach(() => resetPluginParts());
 
-  it("places plugin cards in the preset plugin area, or on the canvas plugin frame", () => {
+  it("grid presets only carry plugin cards explicitly listed in stacks; sidecar alone never forces them in", () => {
     syncPluginParts([{ panel: "notes:widget" }, { panel: "weather:now" }]);
+    // 预设 stacks 没声明 → 不上桌面
     const rails = resolveAssembly("rails", defaultLayout());
-    const plugins = rails.items.filter((i) => i.id.startsWith("plugin:"));
-    expect(plugins).toHaveLength(2);
-    expect(plugins.every((p) => p.area === "left")).toBe(true);
-    expect(rails.grid?.stacks.left?.slice(-2)).toEqual([
-      pluginPartId("notes:widget"),
-      pluginPartId("weather:now"),
-    ]);
+    expect(rails.items.find((i) => i.id === pluginPartId("notes:widget"))).toBeUndefined();
+    expect(rails.grid?.stacks.left).not.toContain(pluginPartId("notes:widget"));
 
     const desk = resolveAssembly("desk", defaultLayout());
-    expect(desk.items.find((i) => i.id === pluginPartId("notes:widget"))?.area).toBe("start");
+    expect(desk.items.find((i) => i.id === pluginPartId("notes:widget"))).toBeUndefined();
 
     const compact = resolveAssembly("desk", defaultLayout(), { compact: true });
     expect(compact.items.find((i) => i.id === pluginPartId("notes:widget"))).toBeUndefined();
@@ -299,7 +314,7 @@ describe("plugin glances", () => {
     expect(canvas.items.find((i) => i.id === pluginPartId("notes:widget"))?.frame).toBeTruthy();
   });
 
-  it("hides left-column plugins with the left group", () => {
+  it("grid presets never force plugin cards in, folded or not", () => {
     syncPluginParts([{ panel: "notes:widget" }]);
     const folded = resolveAssembly("rails", defaultLayout(), {
       stage: { width: 1280, height: 800 },

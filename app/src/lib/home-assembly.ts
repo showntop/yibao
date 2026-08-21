@@ -16,6 +16,10 @@ export const HOME_PARTS = [
   { id: "need", kind: "glance" as const, presentations: ["tile"] as const },
   { id: "tasks", kind: "glance" as const, presentations: ["tile"] as const },
   { id: "remind", kind: "glance" as const, presentations: ["tile"] as const },
+  { id: "spark", kind: "glance" as const, presentations: ["tile"] as const },
+  { id: "glimpse", kind: "glance" as const, presentations: ["tile"] as const },
+  { id: "catch", kind: "glance" as const, presentations: ["tile"] as const },
+  { id: "scratch", kind: "glance" as const, presentations: ["tile"] as const },
 ] as const;
 
 export type CorePartId = (typeof HOME_PARTS)[number]["id"];
@@ -275,8 +279,14 @@ export const HOME_PRESETS = {
       identity: "tile",
       composer: "bar",
       today: "tile",
+      need: "tile",
+      tasks: "tile",
+      remind: "tile",
+      spark: "tile",
+      glimpse: "tile",
+      catch: "tile",
     },
-    absent: ["need", "tasks", "remind"],
+    absent: ["scratch"],
     grid: {
       pad: 8,
       gap: 8,
@@ -286,7 +296,8 @@ export const HOME_PRESETS = {
         { area: "right", size: RAIL, fold: true },
       ],
       stacks: {
-        left: ["identity", "mind", "today", "sessions"],
+        // 三栏左栏：保留核心可视化（脑图/今日/余光）+ 会话；去掉信息卡（提醒/动态/需要/刚复制），会话列表才有空间
+        left: ["identity", "spark", "mind", "today", "sessions"],
         main: ["chat", "composer"],
         right: ["now"],
       },
@@ -310,6 +321,10 @@ export const HOME_PRESETS = {
       need: "tile",
       tasks: "tile",
       remind: "tile",
+      spark: "tile",
+      glimpse: "tile",
+      catch: "tile",
+      scratch: "tile",
     },
     grid: {
       pad: 12,
@@ -320,11 +335,11 @@ export const HOME_PRESETS = {
       rows: "minmax(0,1fr) minmax(min-content, auto)",
       areas: `"start . spine paper . note . end" "start . . compose . . . end"`,
       stacks: {
-        start: ["mind", "need", "identity"],
+        start: ["mind", "need", "spark", "glimpse", "identity"],
         spine: ["sessions"],
         paper: ["chat"],
         note: ["now"],
-        end: ["today", "tasks", "remind"],
+        end: ["today", "tasks", "remind", "catch", "scratch"],
         compose: ["composer"],
       },
       grow: ["chat"],
@@ -364,8 +379,9 @@ export const HOME_PRESETS = {
       today: "tile",
       need: "tile",
       remind: "tile",
+      spark: "tile",
     },
-    absent: ["now", "tasks"],
+    absent: ["now", "tasks", "glimpse", "catch", "scratch"],
     grid: {
       pad: 24,
       gap: 12,
@@ -379,7 +395,7 @@ export const HOME_PRESETS = {
         need: ["need"],
         today: ["today"],
         remind: ["remind"],
-        identity: ["identity"],
+        identity: ["identity", "spark"],
         chat: ["chat"],
         sessions: ["sessions"],
         composer: ["composer"],
@@ -414,20 +430,28 @@ export const HOME_PRESETS = {
       need: "tile",
       tasks: "tile",
       remind: "tile",
+      spark: "tile",
+      glimpse: "tile",
+      catch: "tile",
+      scratch: "tile",
     },
     frames: {
       mind: { left: 40, top: 40, width: 200, height: 176, z: 1 },
-      need: { left: 256, top: 40, width: 180, height: 100, z: 1 },
-      identity: { left: 40, top: 232, width: 200, height: 120, z: 2 },
-      today: { left: 256, top: 156, width: 180, height: 88, z: 1 },
-      tasks: { left: 256, top: 260, width: 180, height: 88, z: 1 },
-      remind: { left: 40, top: 368, width: 200, height: 80, z: 1 },
+      spark: { left: 72, top: 228, width: 168, height: 92, z: 3 },
+      need: { left: 256, top: 40, width: 180, height: 108, z: 1 },
+      identity: { left: 40, top: 332, width: 200, height: 120, z: 2 },
+      today: { left: 256, top: 164, width: 180, height: 72, z: 1 },
+      tasks: { left: 256, top: 252, width: 180, height: 88, z: 1 },
+      glimpse: { left: 256, top: 356, width: 180, height: 72, z: 1 },
+      remind: { left: 40, top: 468, width: 200, height: 80, z: 1 },
+      catch: { left: 256, top: 444, width: 180, height: 88, z: 1 },
+      scratch: { left: 72, top: 564, width: 200, height: 120, z: 2 },
       chat: { left: 460, top: 40, width: 520, height: 400, z: 1 },
       composer: { left: 460, top: 456, width: 520, height: 72, z: 3 },
       sessions: { left: 1000, top: 40, width: 220, height: 280, z: 1 },
       now: { left: 1000, top: 336, width: 220, height: 192, z: 1 },
     },
-    pluginFrame: { left: 40, top: 464, width: 200, height: 40, z: 2 },
+    pluginFrame: { left: 1000, top: 548, width: 220, height: 48, z: 2 },
     compact: {
       presentations: { chat: "thread", composer: "bar" },
       frames: {
@@ -627,13 +651,7 @@ function resolveGrid(
   for (const [area, ids] of Object.entries(src.stacks)) {
     stacks[area] = ids.filter((id) => present.has(id));
   }
-  if (src.pluginArea) {
-    const well = stacks[src.pluginArea] ?? (stacks[src.pluginArea] = []);
-    for (const id of livePluginIds.value) {
-      if (!present.has(id) || well.includes(id)) continue;
-      well.push(id);
-    }
-  }
+  // 插件卡不再自动塞进预设列（sidecar 的 widget 由 HomeChat 的独立 plugin-well 槽渲染）
   const visibleStacks: Record<string, string[]> = {};
   for (const [area, ids] of Object.entries(stacks)) {
     if (folded.has(area)) continue;

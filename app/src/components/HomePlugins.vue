@@ -26,6 +26,7 @@ import { procLabel, procSkip, procResultSuffix } from "../lib/proc";
 import { sessionStore } from "../state/store";
 import type { Attention, Presentation } from "../lib/surface-policy";
 import type { WebviewPayload } from "../lib/webview-source";
+import { takeDeskOrigin } from "../lib/home-desk-presence";
 
 type AvatarState = "idle" | "listen" | "think" | "work" | "say";
 const props = withDefaults(defineProps<{
@@ -52,6 +53,7 @@ const emit = defineEmits<{
   surface: [surface: SurfaceMeta];
   close: [];
   focus: [];
+  handoff: [active: boolean];
 }>();
 
 // ---- 插件列表 ----
@@ -95,7 +97,9 @@ function growIn() {
   if (!el || prefersReducedMotion()) return;
   const to = el.getBoundingClientRect();
   if (to.width < 2 || to.height < 2) return; // 宿主还不可见（主屏挂载收到 panel）时跳过，进入场景由 scene-panel 承接
-  const from = originRect.value ?? collapseAnchor.value ?? fallbackOrigin(to);
+  const glance = originRect.value ?? takeDeskOrigin();
+  const from = glance ?? collapseAnchor.value ?? fallbackOrigin(to);
+  if (glance) originRect.value = glance;
   el.animate(
     [
       { clipPath: rectToInset(from, to), opacity: 0.55, transform: "scale(0.985)" },
@@ -237,6 +241,7 @@ const handoff = computed(() => {
   const m = current.value?.input;
   return m === "handoff" || m === "none";
 });
+watch(handoff, (active) => emit("handoff", active), { immediate: true });
 // ---- 对话浮层（工作台条上方）：输入/回复都留痕成时间线；一轮结束几秒后自动收起，角标可重开 ----
 // proc = 过程展示行（工具调用，样式同 hint 淡色小字）
 // pstate 驱动图标与颜色，不再把状态符号拼进 text——文案与呈现分离，图标才能统一走 YbIcon
@@ -637,9 +642,9 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="plugins-page" :class="{ 'in-scene': props.scene, 'is-focus': props.presentation === 'focus' }">
-    <!-- 页头：列表态是页标题（留红绿灯安全区），面板态是返回 + 面板名的层级导航 -->
-    <header class="page-head" :class="{ 'in-panel': !viewingList }" data-tauri-drag-region>
+  <div class="plugins-page" :class="{ 'in-scene': props.scene, 'is-focus': props.presentation === 'focus', 'on-desk': props.scene && !viewingList }">
+    <!-- 页头：列表态是页标题；插件 tab 里的面板是层级导航。桌上工位把页头让给 HomeDeskWork。 -->
+    <header v-if="!(props.scene && !viewingList)" class="page-head" :class="{ 'in-panel': !viewingList }" data-tauri-drag-region>
       <template v-if="viewingList">
         <div class="head-text" data-tauri-drag-region>
           <h1 class="pg-title" data-tauri-drag-region>插件</h1>
@@ -714,9 +719,8 @@ onUnmounted(() => {
           />
         </div>
 
-        <!-- 工作台条：对话浮层（输入/回复时间线）+ 团子 + 上下文 chip + 输入条。
-             handoff 时 bench-bar 让位,is-handoff 清容器垂直 padding/分隔线,不留空缝 -->
-        <div class="bench" :class="{ 'is-handoff': handoff }">
+        <!-- 工作台条：插件 tab 里保留。桌上工位用译宝桌沿 / 工人自带 Composer，这里不再养第二套助手。 -->
+        <div v-if="!props.scene" class="bench" :class="{ 'is-handoff': handoff }">
           <transition name="pop">
             <div v-if="layerVisible && (msgs.length || listeningHint)" ref="layerRef" class="thread">
               <button class="thread-x" title="收起" @click="layerVisible = false">×</button>
@@ -766,6 +770,9 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   background: var(--yb-content-bg);
+}
+.plugins-page.on-desk {
+  background: transparent;
 }
 /* 页头：列表态留红绿灯安全区 + 页标题；面板态压缩成一行层级导航。整条兼作拖动区 */
 .page-head {
@@ -1043,7 +1050,14 @@ onUnmounted(() => {
   flex: 1;
   min-height: 0;
   margin: 0;
+  display: flex;
+  flex-direction: column;
   background: var(--yb-content-bg);
+}
+.on-desk .content :deep(.webview) {
+  flex: 1;
+  min-height: 0;
+  border-radius: 0;
 }
 .in-scene .content {
   background:
