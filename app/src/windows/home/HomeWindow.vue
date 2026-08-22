@@ -17,7 +17,7 @@ import { sessionStore, clearLegacySessionKeys } from "../../state/store";
 import type { SurfacePanel } from "../../state/types";
 import DataView from "../../views/settings/DataView.vue";
 import SettingsView from "../../views/settings/SettingsView.vue";
-import appLogo from "./assets/logo.png";
+import appLogo from "../../assets/logo.png";
 import { onPendingConfirms, closeHomeWindow } from "../../lib/brain";
 import { decideSurface, type Attention, type Presentation } from "../../lib/surface/surface-policy";
 import type { AvatarState } from "../../protocol/brain-types";
