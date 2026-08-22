@@ -1,16 +1,17 @@
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, onUnmounted } from "vue";
+import { ref, computed, watch, watchEffect, nextTick, onMounted, onUnmounted } from "vue";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import Avatar from "./components/Avatar.vue";
 import InputBar from "./components/InputBar.vue";
 import QuickPanel from "./components/QuickPanel.vue";
-import Bubble from "./components/Bubble.vue";
 import SpeechBubble from "./components/SpeechBubble.vue";
 import PermissionsBanner from "./components/PermissionsBanner.vue";
 import SetupWizard from "./components/SetupWizard.vue";
-import SurfaceLine from "./components/SurfaceLine.vue";
+import PluginLauncher from "./components/pet/PluginLauncher.vue";
+import BubbleFlow from "./components/pet/BubbleFlow.vue";
+import PendingConfirmCard from "./components/pet/PendingConfirmCard.vue";
 import {
   onBrainEvent,
   onBrainStatus,
@@ -39,7 +40,6 @@ import {
   type BrainEvent,
   type BrainStatusMsg,
   type BrainPermissions,
-  rememberLabelForSkill,
 } from "./lib/brain";
 import { formatContextPrefix, type InputContext } from "./lib/at-mention";
 import {
@@ -53,7 +53,6 @@ import { matchExplicitOpen } from "./lib/explicit-intent";
 import { decideSurface, type Attention, type Presentation } from "./lib/surface-policy";
 import { deactivateAll, petFormOf, surfaceCount, type SurfaceAttr } from "./lib/pet-surface";
 import { procLabel, procSkip, procResultSuffix } from "./lib/proc";
-import { iconStyle, initial } from "./lib/icons";
 import { squashSpaces, truncate } from "./lib/text";
 import { sessionStore, clearLegacySessionKeys } from "./state/store";
 import { usePetState } from "./composables/usePetState";
@@ -96,6 +95,12 @@ const {
   restoreBubbleScroll,
   resetScroll,
 } = usePetBubbles({ expanded, expand });
+// 气泡流滚动容器桥接：BubbleFlow 子组件 expose 的元素 → usePetBubbles.bubblesRef
+//（v-if 切插件视图时容器重建，watchEffect 持续同步）
+const bubbleFlowRef = ref<InstanceType<typeof BubbleFlow> | null>(null);
+watchEffect(() => {
+  bubblesRef.value = bubbleFlowRef.value?.el ?? null;
+});
 /** 快捷面板（单窗三态 quick 内容层）：hover 团子显示 3 圆 + 输入条，同窗渲染零 resize */
 const quick = ref(false);
 // 收起态回复气泡域（内容/流式/显隐 + 自动收起定时器）独立成 composable
@@ -1049,46 +1054,20 @@ onUnmounted(() => {
       <PermissionsBanner v-if="missingPerms && perms" :perms="perms" />
 
       <!-- 插件启动器视图（双击团子进来）：列出插件，点击直达它的主面板 -->
-      <div v-if="view === 'plugins'" class="bubbles">
-        <div class="pl-head">
-          <span class="pl-title">插件</span>
-          <span class="pl-subtitle">选择一个能力继续</span>
-        </div>
-        <div v-if="pluginErr" class="pl-err"><YbIcon name="alert" :size="14" />{{ pluginErr }}</div>
-        <div class="pl-grid">
-          <button v-for="p in plugins" :key="p.id" class="pl-card" @click="launchPlugin(p)">
-            <span class="pl-card-ico" :style="iconStyle(p.id)">{{ initial(p.name) }}</span>
-            <span class="pl-card-name">{{ p.name }}</span>
-            <span class="pl-card-id">{{ p.id }}</span>
-          </button>
-        </div>
-        <div v-if="!plugins.length && !pluginErr" class="pl-empty">没有发现插件</div>
-      </div>
+      <PluginLauncher v-if="view === 'plugins'" :plugins="plugins" :err="pluginErr" @launch="launchPlugin" />
 
-      <div v-else class="bubbles" ref="bubblesRef">
-        <div v-if="!bubbles.length && !showTyping" class="empty-hint">
-          <Avatar :state="petState" :size="56" />
-          <p>说一件事</p>
-          <div class="chips">
-            <button v-for="c in suggestions" :key="c" class="chip" @click="submit(c)">{{ c }}</button>
-          </div>
-        </div>
-        <template v-for="(b, i) in bubbles" :key="i">
-          <SurfaceLine v-if="b.surface" :attr="b.surface" @open="openPanelWindow()" />
-          <Bubble
-            v-else
-            :role="b.role"
-            :text="b.text"
-            :streaming="i === streamingIdx"
-            :pstate="b.pstate"
-            :halted="b.halted"
-            :icon="b.icon"
-            :class="{ 'recap-clickable': !!b.recap }"
-            @click="onRecapClick(b.recap)"
-          />
-        </template>
-        <Bubble v-if="showTyping" role="ai" text="" typing />
-      </div>
+      <BubbleFlow
+        v-else
+        ref="bubbleFlowRef"
+        :bubbles="bubbles"
+        :streaming-idx="streamingIdx"
+        :show-typing="showTyping"
+        :pet-state="petState"
+        :suggestions="suggestions"
+        @submit="submit"
+        @recap-click="onRecapClick"
+        @surface-open="openPanelWindow()"
+      />
 
       <div v-if="view === 'chat'" class="input-slot">
         <!-- 划词上下文 chip：⌘⇧U 抓到选中文字后等待指示，可 × 掉；发送后自消 -->
@@ -1108,31 +1087,16 @@ onUnmounted(() => {
           <span>{{ approvalGuard === "allowed" ? "已允许，正在继续" : "已拒绝" }}</span>
         </div>
         <InputBar v-else-if="!pending" ref="inputBarRef" :busy="busy" :listening="state === 'listen'" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
-        <div v-else-if="pendingConfirms.length > 1" class="batch-confirm-notice">
-          <div class="batch-copy">
-            <strong>{{ pendingConfirms.length }} 项待批准</strong>
-            <span>逐项核对或分别记住选择，请打开收件箱。</span>
-          </div>
-          <div class="batch-actions">
-            <button class="quick-deny" @click="decideAllPending(false)">全部拒绝</button>
-            <button class="quick-allow" @click="decideAllPending(true)">全部批准</button>
-            <button class="confirm-open" @click="openHome">打开收件箱</button>
-          </div>
-        </div>
-        <div v-else class="quick-confirm">
-          <div class="quick-copy">
-            <strong><YbIcon class="qc-ic" name="alert" :size="14" />{{ pending.label || pending.skill }}</strong>
-            <span v-if="pending.desc">{{ pending.desc }}</span>
-          </div>
-          <label v-if="pendingCanRemember" class="quick-remember">
-            <input v-model="rememberPending" type="checkbox" />
-            {{ rememberLabelForSkill(pending.skill) }}
-          </label>
-          <div class="quick-actions">
-            <button class="quick-deny" @click="decide(false)">拒绝</button>
-            <button class="quick-allow" @click="decide(true, rememberPending)">允许</button>
-          </div>
-        </div>
+        <PendingConfirmCard
+          v-else
+          :pending="pending"
+          :count="pendingConfirms.length"
+          :can-remember="pendingCanRemember"
+          v-model:remember="rememberPending"
+          @decide="decide"
+          @decide-all="decideAllPending"
+          @open-home="openHome"
+        />
       </div>
       </template>
       </div>
@@ -1261,103 +1225,26 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 6px;
 }
-.quick-confirm,
-.batch-confirm-notice,
+/* 审批结果反馈条（已允许/已拒绝）：确认卡本身在 components/pet/PendingConfirmCard */
 .approval-guard {
   display: flex;
   align-items: center;
   gap: var(--yb-space-2);
   padding: 9px 10px;
   margin: 0 2px 10px;
-  border: 1px solid rgba(var(--yb-c-amber-rgb), 0.32);
-  border-radius: var(--yb-radius-md);
-  background: var(--yb-intent-pending-soft);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
-}
-.approval-guard {
   min-height: 34px;
   box-sizing: border-box;
   justify-content: center;
   color: var(--yb-text-dim);
+  border: 1px solid var(--yb-border-base);
+  border-radius: var(--yb-radius-md);
   background: var(--yb-surface-solid);
-  border-color: var(--yb-border-base);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
   pointer-events: auto;
   user-select: none;
 }
 .approval-guard .yb-icon {
   color: var(--yb-intent-ok);
-}
-.quick-copy,
-.batch-copy {
-  min-width: 0;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  line-height: var(--yb-lh-ui);
-}
-.quick-copy strong,
-.batch-confirm-notice strong {
-  overflow: hidden;
-  color: var(--yb-text);
-  font-size: var(--yb-fs-md);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* 快批条行首图标：待批准意图琥珀，与收件箱同语言 */
-.qc-ic {
-  color: var(--yb-intent-pending-ink);
-  margin-right: var(--yb-space-1);
-}
-.quick-copy span,
-.batch-confirm-notice span {
-  overflow: hidden;
-  color: var(--yb-text-dim);
-  font-size: var(--yb-fs-sm);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.quick-remember {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--yb-text-dim);
-  font-size: var(--yb-fs-sm);
-  white-space: nowrap;
-}
-.quick-remember input {
-  margin: 0;
-  accent-color: var(--yb-accent);
-}
-.quick-actions,
-.batch-actions {
-  display: flex;
-  gap: 5px;
-}
-.quick-actions button,
-.batch-actions button,
-.confirm-open {
-  min-height: 32px;
-  padding: 6px 10px;
-  border: 0;
-  border-radius: var(--yb-radius-sm);
-  cursor: pointer;
-  font: inherit;
-  white-space: nowrap;
-}
-.quick-deny {
-  color: var(--yb-text-dim);
-  background: var(--yb-btn-neutral);
-}
-.quick-allow,
-.confirm-open {
-  color: var(--yb-text-on-accent);
-  background: var(--yb-accent);
-}
-.quick-actions button:focus-visible,
-.batch-actions button:focus-visible,
-.confirm-open:focus-visible {
-  outline: none;
-  box-shadow: var(--yb-focus-ring);
 }
 .ctx-chip {
   align-self: flex-start;
@@ -1511,67 +1398,6 @@ onUnmounted(() => {
   width: 14px;
   height: 14px;
 }
-.bubbles :deep(.bubble.ai) {
-  background: var(--yb-bubble-ai);
-  border-color: rgba(var(--yb-c-slate-rgb), 0.15);
-  box-shadow: none;
-}
-.bubbles {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: var(--yb-space-2);
-  overflow-y: auto;
-  padding: 4px 2px 0;
-  scrollbar-width: thin;
-  /* 顶部渐隐：滚出视口的消息柔和淡出。原先 mask 在 macOS WKWebView luminance 模式
-   * 下可能误渲染为深色伪影（与 ::selection 叠加形成"深蓝条"），先关掉。 */
-  /* mask-image: linear-gradient(180deg, transparent, #000 14px);
-  -webkit-mask-image: linear-gradient(180deg, transparent, #000 14px); */
-}
-/* morning_recap 气泡可点击 deep-link 到回顾（class 经 fallthrough 落到 Bubble 根 div） */
-.recap-clickable {
-  cursor: pointer;
-  transition: filter var(--yb-dur-fast) var(--yb-ease-out);
-}
-.recap-clickable:hover {
-  filter: brightness(0.96);
-}
-/* 空状态：气泡区占位引导（小号团子 + 一句招呼 + 建议 chip） */
-.empty-hint {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  color: var(--yb-text-dim);
-  font-size: var(--yb-fs-lg);
-}
-.empty-hint p {
-  margin: 0 0 2px;
-}
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: var(--yb-space-2);
-}
-.chip {
-  padding: 5px 12px;
-  border: 1px solid var(--yb-surface-border);
-  border-radius: var(--yb-radius-pill);
-  background: var(--yb-surface-solid);
-  color: var(--yb-accent-deep);
-  font-size: var(--yb-fs-lg);
-  cursor: pointer;
-  transition: all var(--yb-dur-fast) var(--yb-ease-out);
-}
-.chip:hover {
-  background: var(--yb-accent-soft);
-  border-color: var(--yb-accent);
-  color: var(--yb-accent-deep);
-}
 /* 划词上下文 chip：淡 accent 底胶囊，贴在输入条上方 */
 .ctx-chip {
   display: flex;
@@ -1612,96 +1438,5 @@ onUnmounted(() => {
 }
 .ctx-x:hover {
   background: rgba(var(--yb-c-sky-rgb), 0.18);
-}
-/* ---- 插件启动器 ---- */
-.pl-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 2px 4px;
-}
-.pl-title {
-  font-size: var(--yb-fs-lg);
-  font-weight: var(--yb-fw-bold);
-}
-.pl-subtitle {
-  color: var(--yb-text-dim);
-  font-size: var(--yb-fs-sm);
-}
-.pl-err {
-  display: flex;
-  align-items: center;
-  gap: var(--yb-space-1);
-  padding: 6px var(--yb-space-3);
-  border-radius: var(--yb-radius-sm);
-  background: var(--yb-danger-soft);
-  color: var(--yb-danger);
-  font-size: var(--yb-fs-md);
-}
-/* 插件 grid（Launchpad 式）：2 列网格卡，上大 icon + 下名字/id，hover 上浮 */
-.pl-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 10px;
-  padding: 2px;
-}
-.pl-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 5px;
-  padding: 14px 8px 12px;
-  border: 1px solid var(--yb-surface-border);
-  border-radius: var(--yb-radius-md);
-  background: var(--yb-card-bg);
-  box-shadow: var(--yb-shadow-1);
-  cursor: pointer;
-  font-family: inherit;
-  transition: all var(--yb-dur-fast) var(--yb-ease-out);
-}
-.pl-card:hover {
-  border-color: var(--yb-accent);
-  background: var(--yb-surface-solid);
-  transform: translateY(-2px);
-  box-shadow: var(--yb-shadow-2);
-}
-.pl-card:active {
-  transform: scale(0.97);
-}
-.pl-card-ico {
-  width: 42px;
-  height: 42px;
-  display: grid;
-  place-items: center;
-  border-radius: var(--yb-radius-md);
-  font-size: 18px;
-  font-weight: var(--yb-fw-bold);
-  font-family: var(--yb-font);
-}
-.pl-card-name {
-  font-size: var(--yb-fs-lg);
-  font-weight: var(--yb-fw-medium);
-  color: var(--yb-text);
-  line-height: 1.3;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.pl-card-id {
-  font-size: var(--yb-fs-xs);
-  color: var(--yb-text-dim);
-  line-height: 1.2;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.pl-empty {
-  flex: 1;
-  display: grid;
-  place-items: center;
-  color: var(--yb-text-dim);
-  font-size: var(--yb-fs-lg);
 }
 </style>
