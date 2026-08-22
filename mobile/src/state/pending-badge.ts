@@ -1,5 +1,7 @@
 import { ref, type Ref } from "vue";
 import type { ConnConfig } from "../api/connection";
+import type { StreamLike } from "../api/events";
+import { getJson } from "../api/http";
 
 /**
  * 待批角标（M2 从 useChat 上移）：TabBar 审批项与 Chat/Approvals 页是兄弟组件，
@@ -8,20 +10,11 @@ import type { ConnConfig } from "../api/connection";
  */
 export const pendingCount: Ref<number> = ref(0);
 
-/** 事件流的最小面：只订阅 confirmation_needed（与 approvals.ts 同款） */
-interface StreamLike {
-  on(kind: string, fn: (d: any) => void): unknown;
-}
-
 async function pull(conn: ConnConfig, fetchImpl: typeof fetch): Promise<void> {
-  try {
-    const r = await fetchImpl(`${conn.host}/v1/state`, {
-      headers: { "X-Yibao-Token": conn.token },
-    });
-    if (!r.ok) return;
-    const body = (await r.json()) as { pending?: unknown[] };
-    pendingCount.value = body.pending?.length ?? 0;
-  } catch { /* 拉取失败不动计数：角标宁可滞后不误清 */ }
+  const body = await getJson(conn, "/v1/state", fetchImpl);
+  if (!body) return; // 拉取失败不动计数：角标宁可滞后不误清
+  const data = body as { pending?: unknown[] };
+  pendingCount.value = data.pending?.length ?? 0;
 }
 
 // debounce 状态放模块级：usePendingBadge 每次页面挂载都会重挂帧监听（Chat/Approvals

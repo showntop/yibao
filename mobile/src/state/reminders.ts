@@ -1,5 +1,6 @@
 import { ref, type Ref } from "vue";
 import type { ConnConfig } from "../api/connection";
+import { getJson, postJsonResult } from "../api/http";
 
 /**
  * 待触发提醒（服务端 /v1/reminders 的 items；plugins/reminders/tools/list.py 的 rows）。
@@ -21,33 +22,21 @@ export function useReminders(conn: ConnConfig, fetchImpl: typeof fetch = fetch) 
   const error = ref("");
 
   async function refresh(): Promise<void> {
-    try {
-      const r = await fetchImpl(`${conn.host}/v1/reminders`, {
-        headers: { "X-Yibao-Token": conn.token },
-      });
-      if (!r.ok) return;
-      const body = (await r.json()) as { items?: ReminderItem[] };
-      items.value = body.items ?? [];
-    } catch { /* 断线/超时：保留旧列表 */ }
+    const body = await getJson(conn, "/v1/reminders", fetchImpl);
+    if (!body) return; // 断线/非 200：保留旧列表
+    const data = body as { items?: ReminderItem[] };
+    items.value = data.items ?? [];
   }
 
   async function cancel(id: string): Promise<void> {
     error.value = "";
-    try {
-      const r = await fetchImpl(`${conn.host}/v1/reminders/cancel`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Yibao-Token": conn.token },
-        body: JSON.stringify({ id }),
-      });
-      if (!r.ok) {
-        const body = (await r.json().catch(() => ({}))) as { error?: string };
-        error.value = `取消失败：${body.error || r.status}`;
-        return; // 失败不动列表，靠再次 refresh 收敛
-      }
-      items.value = items.value.filter((i) => i.id !== id); // 成功即除，不等 refresh
-    } catch (e) {
-      error.value = `取消失败：${e instanceof Error ? e.message : "网络错误"}`;
+    const res = await postJsonResult(conn, "/v1/reminders/cancel", { id }, fetchImpl);
+    if (res.error) {
+      // 失败（服务端 error 详情 / 状态码 / 断线）：亮错误，条目保留靠再次 refresh 收敛
+      error.value = `取消失败：${res.error}`;
+      return;
     }
+    items.value = items.value.filter((i) => i.id !== id); // 成功即除，不等 refresh
   }
 
   return { items, error, refresh, cancel };

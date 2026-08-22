@@ -1,5 +1,6 @@
 import { ref, type Ref } from "vue";
 import type { ConnConfig } from "../api/connection";
+import { getJson } from "../api/http";
 
 /** 动态条目（服务端 /v1/feed 的 items；feed.py recent() 逐字段透传，倒序） */
 export interface FeedItem {
@@ -48,16 +49,12 @@ export function useFeed(
   const running: Ref<RunningTask[]> = ref([]);
 
   async function refresh(): Promise<void> {
-    try {
-      const r = await fetchImpl(`${conn.host}/v1/feed?limit=60`, {
-        headers: { "X-Yibao-Token": conn.token },
-      });
-      if (!r.ok) return; // 非 200（含 503 未接线）：保留旧值
-      const body = (await r.json()) as { items?: FeedItem[]; stats?: FeedStats; running_tasks?: RunningTask[] };
-      items.value = body.items ?? [];
-      stats.value = body.stats ?? null;
-      running.value = body.running_tasks ?? [];
-    } catch { /* 断线/超时：保留旧值 */ }
+    const body = await getJson(conn, "/v1/feed?limit=60", fetchImpl);
+    if (!body) return; // 断线/非 200（含 503 未接线）：保留旧值
+    const data = body as { items?: FeedItem[]; stats?: FeedStats; running_tasks?: RunningTask[] };
+    items.value = data.items ?? [];
+    stats.value = data.stats ?? null;
+    running.value = data.running_tasks ?? [];
   }
 
   const POLL_MS = 30_000;

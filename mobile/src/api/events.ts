@@ -14,6 +14,11 @@ export interface EventSourceLike {
   onerror: (() => void) | null;
 }
 
+/** 事件流最小面：只有 on()（useEventStream 的返回对象；state 页面只依赖这一面） */
+export interface StreamLike {
+  on(kind: string, fn: (data: any, seq: number) => void): () => void;
+}
+
 export function buildEventsUrl(c: ConnConfig, lastEventId = 0): string {
   // token 走 query：EventSource 不能设自定义 header（P1 协议决定，TLS/局域网下可接受）
   const base = `${c.host}/v1/events?token=${encodeURIComponent(c.token)}`;

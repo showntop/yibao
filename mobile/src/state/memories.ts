@@ -1,5 +1,6 @@
 import { ref, type Ref } from "vue";
 import type { ConnConfig } from "../api/connection";
+import { getJsonResult } from "../api/http";
 
 /**
  * 记忆条目（服务端 /v1/memories 的 items；_mem_list 的底座+插件命名空间分组平铺）。
@@ -27,22 +28,15 @@ export function useMemories(conn: ConnConfig, fetchImpl: typeof fetch = fetch) {
   async function refresh(): Promise<void> {
     loading.value = true;
     error.value = "";
-    try {
-      const r = await fetchImpl(`${conn.host}/v1/memories`, {
-        headers: { "X-Yibao-Token": conn.token },
-      });
-      if (!r.ok) {
-        // 非 200（含 503 未接线）：亮错误态，items 保留旧值
-        error.value = `加载失败：${r.status}（大脑版本过旧或未接线？）`;
-        return;
-      }
-      const body = (await r.json()) as { items?: MemoryItem[] };
-      items.value = body.items ?? [];
-    } catch (e) {
-      error.value = `加载失败：${e instanceof Error ? e.message : "网络错误"}`;
-    } finally {
-      loading.value = false;
+    const res = await getJsonResult(conn, "/v1/memories", fetchImpl);
+    if (res.error) {
+      // 非 200（含 503 未接线）/断线：亮错误态，items 保留旧值
+      error.value = `加载失败：${res.error}（大脑版本过旧或未接线？）`;
+    } else {
+      const body = res.data as { items?: MemoryItem[] } | null;
+      items.value = body?.items ?? [];
     }
+    loading.value = false;
   }
 
   return { items, loading, error, refresh };

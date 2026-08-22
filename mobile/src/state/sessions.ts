@@ -1,5 +1,6 @@
 import { ref, type Ref } from "vue";
 import type { ConnConfig } from "../api/connection";
+import { getJsonResult } from "../api/http";
 
 // 会话列表条目（服务端 /v1/conversations 的 items 形状；preview=末条 assistant 文本前 50 字）
 export interface SessionItem {
@@ -27,40 +28,25 @@ export function useSessions(conn: ConnConfig, fetchImpl: typeof fetch = fetch) {
   async function refresh(): Promise<void> {
     loading.value = true;
     error.value = "";
-    try {
-      const r = await fetchImpl(`${conn.host}/v1/conversations`, {
-        headers: { "X-Yibao-Token": conn.token },
-      });
-      if (!r.ok) {
-        // 非 200（含 503 未接线）：亮错误态，保留旧列表
-        error.value = `拉取会话列表失败（${r.status}）`;
-        return;
-      }
-      const body = (await r.json()) as { items?: SessionItem[] };
-      list.value = body.items ?? [];
-    } catch {
-      // 断线/超时：保留旧列表（抽屉非关键路径，不弹错打扰），错误位供空列表时提示
-      error.value = "拉取会话列表失败（网络错误）";
-    } finally {
-      loading.value = false;
+    const res = await getJsonResult(conn, "/v1/conversations", fetchImpl);
+    if (res.error) {
+      // 非 200（含 503 未接线）/断线：亮错误态，保留旧列表（抽屉非关键路径，不弹错打扰）
+      error.value = `拉取会话列表失败（${res.error}）`;
+    } else {
+      const body = res.data as { items?: SessionItem[] } | null;
+      list.value = body?.items ?? [];
     }
+    loading.value = false;
   }
 
   // 取某会话的历史轮；cid 为空 = 服务端默认桶。失败（非 200/断线）返回 null——
   // 与「真·空桶 []」分开（M3）：空历史可静默重建，失败若冒充空会清掉当前消息，
   // 调用方（pickSession）据此亮错误保留现场，不切换。
   async function open(cid: string): Promise<HistoryItem[] | null> {
-    try {
-      const r = await fetchImpl(
-        `${conn.host}/v1/history?conversation_id=${encodeURIComponent(cid)}`,
-        { headers: { "X-Yibao-Token": conn.token } },
-      );
-      if (!r.ok) return null;
-      const body = (await r.json()) as { items?: HistoryItem[] };
-      return body.items ?? [];
-    } catch {
-      return null;
-    }
+    const res = await getJsonResult(conn, `/v1/history?conversation_id=${encodeURIComponent(cid)}`, fetchImpl);
+    if (res.error) return null;
+    const body = res.data as { items?: HistoryItem[] } | null;
+    return body?.items ?? [];
   }
 
   return { list, loading, error, refresh, open };

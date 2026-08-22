@@ -1,6 +1,7 @@
 import { computed, ref, type Ref } from "vue";
 import { buildEventsUrl, useEventStream, type EventSourceLike } from "../api/events";
 import type { ConnConfig } from "../api/connection";
+import { postJson, postJsonResult } from "../api/http";
 
 export interface Msg {
   role: "user" | "assistant";
@@ -42,7 +43,8 @@ export function useChat(
   // 叠加 conversation_id 归属过滤（并发对话）：帧带了会话 id 且不是当前会话 → 丢弃，
   // 修掉「另一台手机/另一会话的同 surface 帧串进本气泡」的串台风险（帧无会话 id 的
   // 旧 sidecar/无归属广播照常放行，由 run_done 的 myRunId 比对兜底）。
-  const mine = (d: { surface?: string; conversation_id?: string }) =>
+  // 事件帧归属守卫：本会话（surface=mobile 且 conversation_id 匹配）的帧才消费
+  const isFromThisSession = (d: { surface?: string; conversation_id?: string }) =>
     d.surface === "mobile" && (!d.conversation_id || d.conversation_id === conversationId.value);
 
   // 当前 pending 气泡对应的 run_id（send 响应取回）：桌面轮结束广播的 run_done id 不同，不误收口
@@ -80,18 +82,18 @@ export function useChat(
   };
 
   stream.on("final_reply_chunk", (d, seq) => {
-    if (!fresh(seq) || !mine(d) || !d.text) return;
+    if (!fresh(seq) || !isFromThisSession(d) || !d.text) return;
     const last = messages.value[messages.value.length - 1];
     if (last && last.role === "assistant" && !last.done) last.text += d.text;
   });
   stream.on("final_reply", (d, seq) => {
-    if (!fresh(seq) || !mine(d)) return;
+    if (!fresh(seq) || !isFromThisSession(d)) return;
     if (historyMode) return; // 历史浏览中：旧轮迟到的 final_reply 不覆写历史消息
     const last = messages.value[messages.value.length - 1];
     if (last && last.role === "assistant") last.text = d.text ?? last.text;
   });
   stream.on("interrupted", (d, seq) => {
-    if (!fresh(seq) || !mine(d)) return;
+    if (!fresh(seq) || !isFromThisSession(d)) return;
     const last = messages.value[messages.value.length - 1];
     if (last && last.role === "assistant") last.interrupted = true;
   });
@@ -104,12 +106,12 @@ export function useChat(
     if (last && last.role === "assistant") last.done = true;
   });
   stream.on("error", (d, seq) => {
-    if (!fresh(seq) || !mine(d)) return;
+    if (!fresh(seq) || !isFromThisSession(d)) return;
     error.value = d.text ?? "大脑出错";
   });
   // 排队 notice（手机跨 surface 时 server 发「另一个窗口还在说…」）：写入提示位，气泡 pending 才有解释
   stream.on("notice", (d, seq) => {
-    if (!fresh(seq) || !mine(d) || !d.text) return;
+    if (!fresh(seq) || !isFromThisSession(d) || !d.text) return;
     error.value = d.text;
   });
   // 新待批到达的帧驱动已上移 usePendingBadge（M2 TabBar 角标），此处不再消费
@@ -120,32 +122,27 @@ export function useChat(
     historyMode = false; // 本会话首个新 send：退出历史浏览模式，帧恢复正常消费
     error.value = "";
     messages.value.push({ role: "user", text: t, done: true }, { role: "assistant", text: "", done: false });
-    try {
-      const r = await fetchImpl(`${conn.host}/v1/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Yibao-Token": conn.token },
-        body: JSON.stringify({ text: t, conversation_id: conversationId.value }),
-      });
-      if (!r.ok) throw new Error(`chat ${r.status}`);
-      const body = (await r.json().catch(() => ({}))) as { run_id?: string };
-      myRunId = body.run_id ?? "";
-    } catch (e) {
+    const res = await postJsonResult(
+      conn,
+      "/v1/chat",
+      { text: t, conversation_id: conversationId.value },
+      fetchImpl,
+    );
+    if (res.error) {
       myRunId = "";
-      error.value = `发送失败：${e instanceof Error ? e.message : "网络错误"}`;
+      error.value = `发送失败：${res.error}`;
       const last = messages.value[messages.value.length - 1];
       if (last?.role === "assistant") last.done = true;
+    } else {
+      const body = res.data as { run_id?: string } | null;
+      myRunId = body?.run_id ?? "";
     }
   }
 
   async function interrupt(): Promise<void> {
-    try {
-      await fetchImpl(`${conn.host}/v1/interrupt`, {
-        method: "POST",
-        headers: { "X-Yibao-Token": conn.token, "Content-Type": "application/json" },
-        // 定向打断（并发对话 spec §E）：只停本会话槽，不误伤桌面/其他会话的在跑轮
-        body: JSON.stringify({ conversation_id: conversationId.value }),
-      });
-    } catch { /* 状态由 interrupted/run_done 帧收敛 */ }
+    // 定向打断（并发对话 spec §E）：只停本会话槽，不误伤桌面/其他会话的在跑轮；
+    // 失败静默——状态由 interrupted/run_done 帧收敛
+    await postJson(conn, "/v1/interrupt", { conversation_id: conversationId.value }, fetchImpl);
   }
 
   // 新开对话：busy 时拒绝（最小方案，不自动 interrupt）——清空会撕掉 pending 气泡、

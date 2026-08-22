@@ -1,5 +1,7 @@
 import { ref, type Ref } from "vue";
 import type { ConnConfig } from "../api/connection";
+import type { StreamLike } from "../api/events";
+import { getJsonResult } from "../api/http";
 
 /** 服务端 /v1/state 的待批项（confirm_meta 逐字段透传） */
 export interface PendingConfirm {
@@ -8,11 +10,6 @@ export interface PendingConfirm {
   summary: string;
   risk: number;
   created_at: number;
-}
-
-/** 事件流的最小面：useApprovals 只需要 on() 订阅 confirmation_needed */
-interface StreamLike {
-  on(kind: string, fn: (d: any) => void): unknown;
 }
 
 /**
@@ -34,18 +31,14 @@ export function useApprovals(
   async function refresh(): Promise<void> {
     loading.value = true;
     error.value = "";
-    try {
-      const r = await fetchImpl(`${conn.host}/v1/state`, {
-        headers: { "X-Yibao-Token": conn.token },
-      });
-      if (!r.ok) throw new Error(`state ${r.status}`);
-      const body = (await r.json()) as { pending?: PendingConfirm[] };
-      pendings.value = body.pending ?? [];
-    } catch (e) {
-      error.value = `拉取待批失败：${e instanceof Error ? e.message : "网络错误"}`;
-    } finally {
-      loading.value = false;
+    const res = await getJsonResult(conn, "/v1/state", fetchImpl);
+    if (res.error) {
+      error.value = `拉取待批失败：${res.error}`;
+    } else {
+      const body = res.data as { pending?: PendingConfirm[] } | null;
+      pendings.value = body?.pending ?? [];
     }
+    loading.value = false;
   }
 
   async function decide(id: string, approved: boolean, remember: boolean): Promise<"ok" | "gone" | "fail"> {
