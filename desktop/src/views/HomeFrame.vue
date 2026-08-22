@@ -8,6 +8,7 @@ import {
   DEFAULT_STAGE,
   SNAP_PITCH,
   collapsibleOf,
+  collapsibleSidesOf,
   foldHandleStyle,
   frameStyle,
   gridStageStyle,
@@ -51,10 +52,15 @@ onMounted(() => {
   });
 });
 
-const collapsed = computed(() => [
-  ...(left.value ? [] : ["left"]),
-  ...(peek.value ? [] : ["right"]),
-]);
+const foldSides = computed(() => collapsibleSidesOf(presetId.value));
+const collapsed = computed(() => {
+  const areas: string[] = [];
+  for (const [area, side] of Object.entries(foldSides.value)) {
+    const open = side === "start" ? left.value : peek.value;
+    if (!open) areas.push(area);
+  }
+  return areas;
+});
 
 const assembly = computed(() =>
   resolveAssembly(presetId.value, widgets.state, {

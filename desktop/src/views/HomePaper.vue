@@ -202,9 +202,10 @@ const emit = defineEmits<{
 .foot {
   flex: none;
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
-  gap: 12px;
+  gap: 8px 12px;
   margin-top: 14px;
   padding-top: 12px;
   border-top: 1px solid color-mix(in srgb, var(--yb-border-base) 80%, transparent);
@@ -213,8 +214,10 @@ const emit = defineEmits<{
 }
 .foot-nav {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
-  gap: 8px;
+  gap: 4px 8px;
 }
 .foot-nav button {
   height: auto;
@@ -224,6 +227,7 @@ const emit = defineEmits<{
   background: transparent;
   color: var(--yb-text-dim);
   font: inherit;
+  white-space: nowrap;
   cursor: pointer;
   transition: color 140ms var(--yb-ease-out), background 140ms var(--yb-ease-out);
 }

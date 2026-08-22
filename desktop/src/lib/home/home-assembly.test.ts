@@ -22,6 +22,7 @@ import {
   syncPluginParts,
   defaultPeek,
   collapsibleOf,
+  collapsibleSidesOf,
   gridStageStyle,
 } from "./home-assembly.ts";
 
@@ -129,7 +130,7 @@ describe("resolveAssembly", () => {
     expect(desk.items.find((i) => i.id === "chat")?.grow).toBe(true);
     expect(desk.items.find((i) => i.id === "now")?.grow).toBe(true);
     expect(desk.items.find((i) => i.id === "sessions")?.grow).toBe(true);
-    expect(collapsibleOf("desk")).toEqual([]);
+    expect(collapsibleOf("desk")).toEqual(["note"]);
 
     const salon = resolveAssembly("salon", defaultLayout());
     expect(salon.place).toBe("grid");
@@ -180,6 +181,25 @@ describe("resolveAssembly", () => {
     expect(folded.grid?.stacks.right).toBeUndefined();
     expect(folded.grid?.areas).toBe('"left main"');
     expect(folded.grid?.fold.find((g) => g.name === "right")?.side).toBe("end");
+  });
+
+  it("folds the desk note column and lets the paper take its space", () => {
+    const open = resolveAssembly("desk", defaultLayout());
+    const folded = resolveAssembly("desk", defaultLayout(), { collapsed: ["note"] });
+    expect(open.items.find((i) => i.id === "now")?.area).toBe("note");
+    expect(folded.items.find((i) => i.id === "now")).toBeUndefined();
+    expect(folded.items.find((i) => i.id === "chat")?.area).toBe("paper");
+    expect(folded.grid?.stacks.note).toBeUndefined();
+    expect(folded.grid?.columns).toBe("164px 12px 40px minmax(0,1fr) 12px 164px");
+    expect(folded.grid?.areas).toBe('"start . spine paper . end" "ident . . compose . ."');
+    expect(open.grid?.areas).toContain("note");
+  });
+
+  it("maps collapsible areas to start/end sides for fold handles and peek", () => {
+    expect(collapsibleSidesOf("rails")).toEqual({ left: "start", right: "end" });
+    expect(collapsibleSidesOf("desk")).toEqual({ note: "end" });
+    expect(collapsibleSidesOf("salon")).toEqual({});
+    expect(collapsibleSidesOf("canvas")).toEqual({});
   });
 
   it("parks fold handles in the stage corners", () => {

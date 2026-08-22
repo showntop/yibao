@@ -18,7 +18,7 @@ describe("home-chrome adapter", () => {
     expect(isHomeChromeId("canvas")).toBe(true);
     expect(chromeOf("canvas").surface).toBe("thread");
     expect(chromeOf("rails").collapsible).toEqual(["left", "right"]);
-    expect(chromeOf("desk").collapsible).toEqual([]);
+    expect(chromeOf("desk").collapsible).toEqual(["note"]);
     expect(chromeOf("canvas").collapsible).toEqual([]);
     expect(chromeOf("rails").peekDensity).toBe("inspector");
     expect(chromeOf("desk").peekDensity).toBe("note");

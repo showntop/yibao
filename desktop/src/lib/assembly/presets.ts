@@ -23,6 +23,8 @@ export type GridTemplate = {
   justify?: "stretch" | "center";
   align?: "stretch" | "center";
   tracks?: readonly GridTrack[];
+  /** columns/areas 字符串预设的可折叠区域名（如 desk 的 note 便条）。 */
+  fold?: readonly string[];
   columns?: string;
   rows?: string;
   areas?: string;
@@ -134,6 +136,7 @@ export const HOME_PRESETS = {
       rowGap: 12,
       columnGap: 0,
       ground: "desk",
+      fold: ["note"],
       columns: `${TILE} 12px ${SPINE_W} minmax(0,1fr) 12px ${NOTE_W} 12px ${TILE}`,
       rows: "minmax(0,1fr) minmax(min-content, auto)",
       areas: `"start . spine paper . note . end" "ident . . compose . . . ."`,

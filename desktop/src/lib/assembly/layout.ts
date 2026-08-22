@@ -146,7 +146,31 @@ export function collapsibleOf(presetId: HomePresetId): readonly string[] {
   const grid = preset.grid;
   if (!grid) return [];
   if (grid.tracks) return grid.tracks.filter((track) => track.fold).map((track) => track.area);
-  return [];
+  return grid.fold ?? [];
+}
+
+/** 可折叠区域 → 侧别（start=起始侧，end=结束侧）。tracks 按位置均分；columns/areas 按列位置判定。 */
+export function collapsibleSidesOf(presetId: HomePresetId): Record<string, FoldSide> {
+  const preset: HomePreset = HOME_PRESETS[presetId];
+  const grid = preset.grid;
+  if (!grid) return {};
+  if (grid.tracks) {
+    const tracks = grid.tracks.filter((track) => track.fold);
+    const mid = tracks.length / 2;
+    const out: Record<string, FoldSide> = {};
+    tracks.forEach((track, index) => {
+      out[track.area] = index < mid ? "start" : "end";
+    });
+    return out;
+  }
+  const cols = (grid.columns ?? "").split(" ").filter(Boolean).length;
+  const row0 = parseAreas(grid.areas)[0] ?? [];
+  const out: Record<string, FoldSide> = {};
+  for (const name of grid.fold ?? []) {
+    const idx = row0.indexOf(name);
+    out[name] = idx >= 0 && cols > 0 && idx >= cols / 2 ? "end" : "start";
+  }
+  return out;
 }
 
 export function groupOf(presetId: HomePresetId, name: string): readonly string[] {
@@ -167,6 +191,46 @@ function presentIds(
     present.add(id);
   }
   return present;
+}
+
+/** 解析 areas 字符串（`"a b c" "d . f"`）为行 × 单元格的二维数组。 */
+function parseAreas(areas?: string): string[][] {
+  if (!areas) return [];
+  const rows: string[][] = [];
+  for (const m of areas.matchAll(/"([^"]*)"/g)) {
+    const cells = m[1].trim().split(/\s+/).filter(Boolean);
+    if (cells.length) rows.push(cells);
+  }
+  return rows;
+}
+
+/** 从 columns/areas 字符串预设中移除已折叠的区域列（连同相邻纯间隙列，避免留下双空隙）。 */
+function foldColumnAreas(
+  src: NonNullable<Snapshot["grid"]>,
+  folded: ReadonlySet<string>,
+): { columns?: string; areas?: string } {
+  const cols = (src.columns ?? "").split(" ").filter(Boolean);
+  const rows = parseAreas(src.areas);
+  if (!cols.length || !rows.length) return {};
+  let removed = false;
+  for (const name of folded) {
+    const idx = rows[0].indexOf(name);
+    if (idx < 0) continue;
+    const pureGap = (i: number) => rows.every((r) => r[i] === ".");
+    const del = [idx];
+    if (pureGap(idx + 1)) del.push(idx + 1);
+    else if (pureGap(idx - 1)) del.push(idx - 1);
+    for (const i of del.sort((a, b) => b - a)) {
+      cols.splice(i, 1);
+      for (const row of rows) row.splice(i, 1);
+    }
+    removed = true;
+  }
+  if (!removed) return {};
+  return {
+    columns: cols.join(" "),
+    areas: rows.map((row) => `"${row.join(" ")}"`).join(" "),
+  };
 }
 
 function makeItem(
@@ -235,6 +299,8 @@ function resolveGrid(
       if (i >= 0) fold[i] = { ...fold[i], side };
     }
   }
+  // 非 tracks 预设（columns/areas 字符串，如 desk 的 note 便条）：把折叠区域的列移出网格
+  const foldedAreas = !src.tracks && folded.size > 0 ? foldColumnAreas(src, folded) : {};
   const grid: ResolvedGrid = {
     pad: src.pad ?? 8,
     gap: src.gap ?? 8,
@@ -243,9 +309,9 @@ function resolveGrid(
     ground: src.ground,
     justify: src.justify ?? "stretch",
     align: src.align ?? "stretch",
-    columns: tracks ? tracks.map((track) => track.size).join(" ") : (src.columns ?? "minmax(0,1fr)"),
+    columns: tracks ? tracks.map((track) => track.size).join(" ") : (foldedAreas.columns ?? src.columns ?? "minmax(0,1fr)"),
     rows: tracks ? "minmax(0,1fr)" : (src.rows ?? "minmax(0,1fr)"),
-    areas: tracks ? `"${tracks.map((track) => track.area).join(" ")}"` : (src.areas ?? "."),
+    areas: tracks ? `"${tracks.map((track) => track.area).join(" ")}"` : (foldedAreas.areas ?? src.areas ?? "."),
     stacks: visibleStacks,
     fold,
   };
