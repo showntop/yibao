@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { ref, computed, watch, watchEffect, onMounted, onBeforeUnmount, nextTick } from "vue";
+import { ref, computed, watch, watchEffect, onMounted, nextTick } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import YbIcon from "./YbIcon.vue";
 import { sessionStore } from "../../state/store";
-import { panelAction, onBrainEvent, listPlugins, type BrainEvent } from "../../lib/brain";
+import { getConversationMessages, searchFiles, pickFolder } from "../../services/brainClient";
+import { listPlugins } from "../../lib/brain";
 import { parseAtTrigger, stripAtTrigger, type InputContext } from "../../lib/at-mention";
+import type { ConversationMeta } from "../../state/types";
 import {
   parseSlashTrigger,
   stripSlashTrigger,
@@ -68,23 +70,14 @@ function persistDraft(v: string) {
     if (id) sessionStore.conversation.setDraft(id, v);
   }, 300);
 }
-let unmounted = false;
 onMounted(() => {
   const id = sessionStore.conversation.getActiveConversationId();
   if (id) {
     const saved = sessionStore.conversation.getUIState(id).draft;
     if (saved) text.value = saved;
   }
-  // @ 文件搜索的回包通道（pa_<rid> 关联）；注册慢于卸载则立即退订，防监听泄漏
-  void onBrainEvent(onBrainEv).then((un) => { if (unmounted) un(); else unlistenBrain = un; });
   // / 命令的插件动作项（list_plugins 的 commands）
   void loadPluginCommands();
-});
-onBeforeUnmount(() => {
-  unmounted = true;
-  unlistenBrain?.();
-  for (const p of pendingCalls.values()) clearTimeout(p.timer);
-  pendingCalls.clear();
 });
 // takeDraft 清屏也会触发本 watch——那次由 takeDraft 写穿落库,这里跳过一次,避免重排 debounce 二次写
 let skipDraftPersist = false;
@@ -94,18 +87,25 @@ watch(text, (v) => {
 });
 
 // ---- @ 文件引用（chips 化）：输入 @ 触发文件搜索浮层，选中成 file chip 进 pendingContexts。
-//      搜索通道 = panelAction + onBrainEvent 关联 pa_<rid>（WebviewPanel 既有模式）；
-//      搜索根 = sticky 上次 @ 目录（localStorage）→ 缺省最近 coding 会话 cwd（quiet 别名
-//      coding.sessions——coding.list 本体带 panel 事件，会把插件页顶成 coding 面板）→ 空态提示 ----
+//      搜索 = 原生命令 search_files（Rust 侧，与 coding 插件彻底解耦）；
+//      搜索根 = sticky 上次 @ 目录（localStorage）→ 无则引导 pick_folder 原生目录选择器选一次。
+//      产品语义：@ = 选一个目录，在里面搜文件引用；与编码会话零关系。 ----
 const AT_ROOT_KEY = "yibao.atRoot";
 const atOpen = ref(false);
 const atItems = ref<{ rel: string }[]>([]);
 const atIdx = ref(0);
 const atRoot = ref("");
-let atRootResolved = false; // 负缓存：无 coding 会话时避免逐键重查（组件重挂/选中写 sticky 后重置）
+let atRootResolved = false; // 已尝试解析过（含无记忆）：避免每次输入 @ 都重查/弹目录选择器
 let atStart = -1;
 let atCaret = 0;
 let atSeq = 0; // 防乱序：逐键查询的慢响应到达时已过期则丢弃
+
+// ---- 最近会话引用浮层（加号菜单「引用」）：从 SessionStore 列出最近会话（排除当前活跃），
+//      选中成 reference chip；发送时 InputBar 拉取该会话消息展开成上下文前缀 ----
+const refOpen = ref(false);
+const refItems = ref<ConversationMeta[]>([]);
+const refIdx = ref(0);
+let refSeq = 0;
 
 // ---- / 命令菜单（与 @ 文件引用同款浮层范式）：内置注册表 + 插件动作（list_plugins commands）----
 const slashOpen = ref(false);
@@ -165,45 +165,25 @@ function pickSlash(cmd: SlashCmd) {
   else if (cmd.kind === "plugin") emit("slash-plugin", { pluginId: cmd.pluginId ?? "", method: cmd.pluginMethod ?? "" });
 }
 
-let ridBase = Math.floor(Math.random() * 1e9);
-const pendingCalls = new Map<number, { resolve: (data: unknown) => void; timer: ReturnType<typeof setTimeout> }>();
-let unlistenBrain: (() => void) | null = null;
-
-function callSkill(method: string, params: Record<string, unknown>): Promise<unknown> {
-  return new Promise((resolve) => {
-    const rid = (ridBase = (ridBase + 1) % 2 ** 31);
-    const timer = setTimeout(() => { pendingCalls.delete(rid); resolve(null); }, 8000);
-    pendingCalls.set(rid, { resolve, timer });
-    panelAction(method, params, rid).catch(() => {
-      const p = pendingCalls.get(rid);
-      if (p) { clearTimeout(p.timer); pendingCalls.delete(rid); }
-      resolve(null);
-    });
-  });
-}
-
-function onBrainEv(e: BrainEvent) {
-  const aid = e.action?.id ?? "";
-  if (!aid) return;
-  if (e.kind !== "action_result" && e.kind !== "error") return;
-  for (const [rid, p] of [...pendingCalls]) {
-    if (aid === `pa_${rid}`) {
-      pendingCalls.delete(rid);
-      clearTimeout(p.timer);
-      // error（白名单外/DENY/skill 异常）同样立即结算为 null——不挂满 8s 超时再误导「无匹配」
-      p.resolve(e.kind === "action_result" && e.result?.success ? (e.result.data ?? null) : null);
-    }
-  }
-}
-
 async function ensureAtRoot(): Promise<string> {
   if (atRootResolved) return atRoot.value;
-  const sticky = localStorage.getItem(AT_ROOT_KEY) || "";
-  if (sticky) { atRoot.value = sticky; atRootResolved = true; return sticky; }
-  const data = (await callSkill("coding.sessions", {})) as { sessions?: { cwd?: string }[] } | null;
-  atRoot.value = data?.sessions?.[0]?.cwd ?? "";
+  atRoot.value = localStorage.getItem(AT_ROOT_KEY) || "";
   atRootResolved = true;
   return atRoot.value;
+}
+
+/** @ 无搜索根时点「选择目录」：弹原生目录选择器选一次，选中写 sticky 并立即按当前 @ 片段重搜。
+ *  取消 → 收起浮层（不反复弹）。 */
+async function pickAtRoot() {
+  const dir = await pickFolder().catch(() => null);
+  if (!dir) { closeAt(); return; }
+  atRoot.value = dir;
+  localStorage.setItem(AT_ROOT_KEY, dir);
+  const el = inputRef.value;
+  const caret = el?.selectionStart ?? text.value.length;
+  const atT = parseAtTrigger(text.value, caret);
+  if (atT) { atStart = atT.start; atCaret = caret; void atQuery(atT.query); }
+  else closeAt();
 }
 
 async function atQuery(q: string) {
@@ -211,7 +191,7 @@ async function atQuery(q: string) {
   const cwd = await ensureAtRoot();
   if (seq !== atSeq) return;
   if (!cwd) { atItems.value = []; atIdx.value = 0; updateMenuMaxH(); atOpen.value = true; return; }
-  const data = (await callSkill("coding.files", { cwd, q })) as { files?: { rel: string }[] } | null;
+  const data = await searchFiles(cwd, q).catch(() => null);
   if (seq !== atSeq) return;
   atItems.value = (data?.files ?? []).slice(0, 12);
   atIdx.value = 0;
@@ -261,9 +241,9 @@ function updateMenuMaxH() {
 }
 
 // 派生共享的"菜单打开"状态（任一菜单开着 = true）：桌宠 QuickPanel 用它暂停 hover 自动收起。
-// 用 watchEffect 自动派生，避免 slashQuery/atQuery/closeSlash/closeAt 多处手动同步。
+// 用 watchEffect 自动派生，避免 slashQuery/atQuery/closeSlash/closeAt/closeRef 多处手动同步。
 watchEffect(() => {
-  inputMenuOpen.value = slashOpen.value || atOpen.value;
+  inputMenuOpen.value = slashOpen.value || atOpen.value || refOpen.value;
   addMenuOpen.value = addOpen.value;
 });
 
@@ -275,6 +255,7 @@ watch([slashOpen, atOpen], ([s, a]) => {
 function onTextInput() {
   autoGrow();
   if (addOpen.value) addOpen.value = false; // 输入文字（含 /、@ 触发）即收加号菜单
+  if (refOpen.value) closeRef(); // 引用会话浮层同理
   const el = inputRef.value;
   const caret = el?.selectionStart ?? text.value.length;
   const atT = parseAtTrigger(text.value, caret);
@@ -312,6 +293,15 @@ function onMenuKeydown(e: KeyboardEvent) {
       if (!atItems.value.length) return;
       atIdx.value = (atIdx.value + (e.key === "ArrowDown" ? 1 : -1) + atItems.value.length) % atItems.value.length;
     }
+    return;
+  }
+  if (refOpen.value) {
+    if (e.key === "Escape") { closeRef(); e.stopPropagation(); return; }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!refItems.value.length) return;
+      refIdx.value = (refIdx.value + (e.key === "ArrowDown" ? 1 : -1) + refItems.value.length) % refItems.value.length;
+    }
   }
 }
 
@@ -330,50 +320,92 @@ watch(
   },
 );
 
-function send() {
-  const t = text.value.trim();
-  if (t) {
-    closeAt();   // @ 浮层随发送收敛（Enter 已被浮层拦截，这里管发送钮路径）
-    closeSlash(); // / 命令浮层同理
-    // AI 正在生成/播报（stopping）时发送 = 先打断再发新消息（不必手动"停止"）
-    if (stopping.value) emit("interrupt");
-    emit("submit", t, pendingContexts.value.slice());
-    text.value = "";
-    pendingContexts.value = [];
-    persistDraft("");
-    nextTick(() => autoGrow()); // 清空后高度回落（nextTick 等 v-model 生效）
-  }
+/** 展开引用会话内容：拉取该会话消息拼成上下文前缀（AI 真正读到被引用会话的对话）。
+ *  拉取失败/无消息 → 降级为仅标注标题，不阻断发送。 */
+async function expandRefContent(c: InputContext): Promise<string> {
+  const title = c.label || "最近会话";
+  const id = c.refId;
+  if (!id) return `【引用：${title}】`;
+  const rows = await getConversationMessages(id, 30).catch(() => null);
+  if (!rows?.length) return `【引用会话「${title}」（无内容）】`;
+  const body = rows
+    .filter((m) => m.payload?.text)
+    .map((m) => `${m.role === "user" ? "用户" : "助手"}：${m.payload.text}`)
+    .join("\n")
+    .slice(0, 4000); // 防超长会话把上下文撑爆
+  return `【引用会话「${title}」】\n${body}`;
 }
 
-/** 加号菜单 toggle：与 @ / 命令菜单互斥——打开加号前收掉命令/文件菜单 */
+async function send() {
+  const t = text.value.trim();
+  if (!t) return;
+  closeAt();   // @ 浮层随发送收敛（Enter 已被浮层拦截，这里管发送钮路径）
+  closeSlash(); // / 命令浮层同理
+  closeRef();  // 引用会话浮层同理
+  // AI 正在生成/播报（stopping）时发送 = 先打断再发新消息（不必手动"停止"）
+  if (stopping.value) emit("interrupt");
+  // 先同步清空输入与 chips（引用内容展开是异步的，防止展开期间再点发送造成重复提交）
+  const contexts = pendingContexts.value.slice();
+  text.value = "";
+  pendingContexts.value = [];
+  persistDraft("");
+  nextTick(() => autoGrow()); // 清空后高度回落（nextTick 等 v-model 生效）
+  // 引用会话在 InputBar 内展开成上下文前缀（不留给父组件 formatContextPrefix——
+  // 那只是标题标注，AI 读不到内容）；附件/@文件照常交给父组件拼路径前缀
+  let refPrefix = "";
+  const rest: InputContext[] = [];
+  for (const c of contexts) {
+    if (c.kind === "reference") refPrefix += `\n${await expandRefContent(c)}`;
+    else rest.push(c);
+  }
+  emit("submit", refPrefix.trimStart() + t, rest);
+}
+
+/** 加号菜单 toggle：与 @ / 命令/引用浮层互斥——打开加号前收掉其余浮层 */
 function onAddToggle() {
   if (!addOpen.value) {
     closeSlash();
     closeAt();
+    closeRef();
   }
   addOpen.value = !addOpen.value;
 }
 
-function openAdd(kind: InputContext["kind"]) {
+/** 加号菜单动作（v2 收敛）：附件=本地文件/图片；引用=最近会话（项目文件统一走 @ 手势） */
+function openAdd(kind: "attachment" | "reference") {
   addOpen.value = false;
   if (kind === "attachment") {
     fileRef.value?.click();
     return;
-  }  if (kind === "file") {
-    // 项目文件：往输入框补一个 @ 触发内联浮层（与手打 @ 同一路径；程序赋值不发 input 事件，手动触发解析）
-    const cur = text.value;
-    text.value = cur && !/\s$/.test(cur) ? `${cur} @` : `${cur}@`;
-    nextTick(() => {
-      const el = inputRef.value;
-      el?.focus();
-      el?.setSelectionRange(text.value.length, text.value.length);
-      onTextInput();
-    });
-    return;
   }
-  if (!pendingContexts.value.some((item) => item.kind === "reference")) {
-    pendingContexts.value.push({ kind: "reference", label: "当前会话" });
+  // 引用最近会话：列出会话浮层（排除当前活跃；会话 id 发送时展开内容）
+  // store 可能未 hydrate（如桌宠 QuickPanel 首开）：先兜底 restore 再列
+  void sessionStore.restore().catch(() => {}).then(() => {
+    const seq = ++refSeq;
+    const activeId = sessionStore.conversation.getActiveConversationId();
+    refItems.value = sessionStore.conversation
+      .listConversations()
+      .filter((c) => c.id !== activeId)
+      .slice(0, 12);
+    if (seq !== refSeq) return;
+    refIdx.value = 0;
+    updateMenuMaxH();
+    refOpen.value = true;
+  });
+}
+
+function closeRef() {
+  refOpen.value = false;
+  refSeq++; // 作废在途
+}
+
+function pickRef(c: ConversationMeta) {
+  const label = c.title?.trim() || "新对话";
+  if (!pendingContexts.value.some((item) => item.kind === "reference" && item.refId === c.id)) {
+    pendingContexts.value.push({ kind: "reference", label, refId: c.id });
   }
+  closeRef();
+  nextTick(() => { autoGrow(); inputRef.value?.focus(); });
 }
 
 function onFileChange(event: Event) {
@@ -480,7 +512,13 @@ function onEnter(e: KeyboardEvent) {
     else closeAt();
     return;
   }
-  send();
+  // 引用会话浮层打开时 Enter = 选中会话（无候选则关浮层），不发送
+  if (refOpen.value) {
+    if (refItems.value.length) pickRef(refItems.value[refIdx.value]);
+    else closeRef();
+    return;
+  }
+  void send();
 }
 
 /** 外部注入文本（编码会话引用、快捷指令等）：追加到末尾，与已有文字间补一个空格 */
@@ -538,20 +576,45 @@ defineExpose({ focus: () => inputRef.value?.focus(), insertText, takeDraft });
         <button type="button" role="menuitem" @click="openAdd('attachment')">
           <strong>附件</strong><small>文件或图片</small>
         </button>
-        <button type="button" role="menuitem" @click="openAdd('file')">
-          <strong>项目文件</strong><small>@ 搜索引用（也可直接打 @）</small>
-        </button>
         <button type="button" role="menuitem" @click="openAdd('reference')">
-          <strong>引用</strong><small>当前会话上下文</small>
+          <strong>引用</strong><small>最近会话（带上它的内容）</small>
         </button>
+        <div class="add-hint">文件引用：输入 <b>@</b> 搜索</div>
       </div>
       <input ref="fileRef" class="file-input" type="file" @change="onFileChange" />
     </div>
     <!-- @ 文件引用浮层：锚定 .bar 向上展开（绝对定位），↑↓ 导航 / Enter 选中 / Esc 关闭 -->
     <!-- / 命令浮层：同 @ 浮层范式，绝对定位在 .bar 上方；内置命令 + 插件动作 -->
+    <!-- 引用最近会话浮层：同浮层范式，列出最近会话（排除当前活跃） -->
+    <div v-if="refOpen" class="at-menu" :class="menuPlacement" :style="{ maxHeight: menuMaxH + 'px' }" role="listbox" aria-label="引用最近会话">
+      <div v-if="!refItems.length" class="at-empty">暂无其他会话可引用</div>
+      <div
+        v-for="(c, i) in refItems"
+        :key="c.id"
+        class="at-item ref-item"
+        :class="{ sel: i === refIdx }"
+        role="option"
+        :aria-selected="i === refIdx"
+        @mousedown.prevent="pickRef(c)"
+      >
+        <YbIcon name="chat" :size="12" />
+        <span class="ref-title">{{ c.title?.trim() || "新对话" }}</span>
+        <span class="ref-preview">{{ c.preview }}</span>
+      </div>
+    </div>
     <div v-if="atOpen" class="at-menu" :class="menuPlacement" :style="{ maxHeight: menuMaxH + 'px' }" role="listbox" aria-label="文件引用候选">
+      <!-- 搜索根栏：显示当前引用目录（可更换）——@ 是目录内搜索，根必须可见可改 -->
+      <div v-if="atRoot" class="at-root">
+        <YbIcon name="doc" :size="12" />
+        <span class="at-root-path" :title="atRoot">{{ atRoot }}</span>
+        <button type="button" class="at-root-switch" @mousedown.prevent="pickAtRoot">更换</button>
+      </div>
       <div v-if="!atItems.length" class="at-empty">
-        {{ atRoot ? "无匹配" : "请先在 coding 面板选择项目目录" }}
+        <template v-if="atRoot">无匹配</template>
+        <template v-else>
+          <span>还没有选择目录</span>
+          <button type="button" class="at-pick" @mousedown.prevent="pickAtRoot">选择目录…</button>
+        </template>
       </div>
       <div
         v-for="(f, i) in atItems"
@@ -756,6 +819,55 @@ defineExpose({ focus: () => inputRef.value?.focus(), insertText, takeDraft });
   font-size: 11px;
   color: var(--yb-text-faint);
 }
+/* 无搜索根时的「选择目录」引导按钮（@ 首次使用；用户显式选根） */
+.at-empty .at-pick {
+  margin-left: 6px;
+  padding: 2px 9px;
+  border: none;
+  border-radius: var(--yb-radius-pill);
+  background: var(--yb-accent-soft);
+  color: var(--yb-accent-deep);
+  font-size: 11px;
+  cursor: pointer;
+}
+.at-empty .at-pick:hover {
+  background: var(--yb-accent);
+  color: var(--yb-text-on-accent);
+}
+/* 搜索根栏：@ 浮层顶部显示当前引用目录（可见、可更换） */
+.at-root {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px 4px;
+  border-bottom: 1px solid var(--yb-surface-border);
+  margin-bottom: 3px;
+  color: var(--yb-text-faint);
+  font-size: 10px;
+}
+.at-root-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl; /* 长路径从末尾显示（文件名在右，更可读） */
+  text-align: left;
+  color: var(--yb-text-dim);
+}
+.at-root .at-root-switch {
+  flex: none;
+  padding: 1px 8px;
+  border: none;
+  border-radius: var(--yb-radius-pill);
+  background: transparent;
+  color: var(--yb-accent-deep);
+  font-size: 10px;
+  cursor: pointer;
+}
+.at-root .at-root-switch:hover {
+  background: var(--yb-accent-soft);
+}
 /* / 命令菜单项：图标 + 命令词（高亮）+ 标签 + 说明（淡化），与文件候选视觉区分；
  * 紧凑行高：桌宠小窗可用空间有限，压薄让更多命令可见 */
 .slash-item {
@@ -904,8 +1016,42 @@ textarea::-webkit-scrollbar-thumb {
   color: var(--yb-text-faint);
   font-size: 10px;
 }
+/* 加号菜单底部提示：项目文件统一走 @ 手势（菜单不重复入口） */
+.add-hint {
+  margin-top: 3px;
+  padding: 6px 9px 3px;
+  border-top: 1px solid var(--yb-surface-border);
+  color: var(--yb-text-faint);
+  font-size: 10px;
+}
+.add-hint b {
+  color: var(--yb-accent-deep);
+  font-weight: 600;
+}
 .file-input {
   display: none;
+}
+/* 引用最近会话项：图标 + 标题 + 预览（复用 at-item 的基础行高） */
+.ref-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ref-item .ref-title {
+  flex: none;
+  max-width: 45%;
+  color: var(--yb-text);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ref-item .ref-preview {
+  color: var(--yb-text-faint);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .context-list {
   display: flex;

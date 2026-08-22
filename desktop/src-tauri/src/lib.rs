@@ -19,6 +19,7 @@ use system::{expand_chat, grab_selected_text, reveal_app_in_finder, set_main_siz
 use commands::{
     close_home_window, close_panel_window, hide_invoke_bar, open_data_dir, open_home_window,
     open_panel_window, open_url, pick_folder, restore_after_home, save_attachment, save_file,
+    search_files,
     set_bubble_on, set_hot_rects, set_interactive_full, set_pet_expanded, run_input,
     invoke_context,
     confirm_batch,
@@ -506,7 +507,8 @@ pub fn run() {
             set_pet_expanded,
             pick_folder,
             save_attachment,
-            save_file
+            save_file,
+            search_files
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

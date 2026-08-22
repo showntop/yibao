@@ -6,7 +6,7 @@ import { ref } from "vue";
  *  菜单打开期间暂停 hover 收起，菜单关闭后再按热区逻辑正常收起。 */
 export const inputMenuOpen = ref(false);
 
-/** 加号菜单（附件/项目文件）是否打开。
+/** 加号菜单（附件/引用）是否打开。
  *  桌宠下 Rust 只放行前端上报的热区矩形，超出 .wb-input 几何的加号菜单需单独上报
  *  让 macOS 不忽略该区域的鼠标事件。 */
 export const addMenuOpen = ref(false);

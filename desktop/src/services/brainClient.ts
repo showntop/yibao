@@ -153,6 +153,18 @@ export function getConversationHistory(limit = 80): Promise<ConversationHistoryM
   return invoke("get_conversation_history", { limit });
 }
 
+/** 目录内文件模糊搜索（输入条 @ 引用用）：原生能力，与 coding 插件解耦——
+ *  cwd=搜索根（用户 pick_folder 显式选择 + sticky 记忆），q=文件名关键词。
+ *  返回相对路径列表（限深 6 层、限 200 条、排除依赖/构建/隐藏目录）。 */
+export function searchFiles(cwd: string, q: string): Promise<{ files?: { rel: string }[] }> {
+  return invoke("search_files", { cwd, q });
+}
+
+/** 原生文件夹选择器：返回所选绝对路径；用户取消返回 null。 */
+export function pickFolder(): Promise<string | null> {
+  return invoke("pick_folder");
+}
+
 // ---- 守护状态 + 权限引导 ----
 
 /** 请求 sidecar 重新检测权限（结果经 brain-permissions 事件回来）。 */

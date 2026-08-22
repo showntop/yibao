@@ -52,6 +52,10 @@ describe("formatContextPrefix", () => {
     ];
     expect(formatContextPrefix(ctx)).toBe("【附件：a.png】\n【引用：当前会话】\n\n");
   });
+  it("reference 带 refId（最近会话引用）格式不变", () => {
+    expect(formatContextPrefix([{ kind: "reference", label: "帮我改首页", refId: "conv-1" }]))
+      .toBe("【引用：帮我改首页】\n\n");
+  });
   it("attachment 有 path 落路径（粘贴截图落盘后 AI 可按路径读图）", () => {
     expect(formatContextPrefix([{ kind: "attachment", label: "截图 x.png", path: "/tmp/att-1.png" }]))
       .toBe("【附件：/tmp/att-1.png】\n\n");

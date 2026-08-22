@@ -87,6 +87,68 @@ pub async fn pick_folder(window: tauri::Window) -> Result<Option<String>, String
         .map(|p| p.to_string_lossy().into_owned()))
 }
 
+/// 目录内文件模糊搜索（输入条 @ 引用用）：在指定 cwd 下按文件名模糊匹配。
+/// 与 coding 插件完全解耦的原生能力——搜索根由用户用 pick_folder 显式选择并 sticky 记忆，
+/// 不依赖任何 coding 会话。限深 6 层、限 200 条、排除依赖/构建/隐藏目录（对齐原 coding.files 语义）。
+/// async + spawn_blocking：文件遍历可能涉及大目录，避免阻塞 IPC 线程。
+#[tauri::command]
+pub async fn search_files(cwd: String, q: String) -> Result<serde_json::Value, String> {
+    const EXCLUDE: &[&str] = &[
+        ".git", "node_modules", "dist", "target", ".venv", "build", "out",
+        "__pycache__", ".next", ".cache",
+    ];
+    tokio::task::spawn_blocking(move || {
+        let root = std::path::PathBuf::from(cwd);
+        let query = q.trim().to_lowercase();
+        let mut out: Vec<serde_json::Value> = Vec::new();
+        if !root.is_dir() {
+            return Ok(serde_json::json!({ "files": [] }));
+        }
+        // 显式栈式 DFS（不随依赖版本走）：depth ≤ 6 层，root 自身 depth=0
+        let mut stack: Vec<(std::path::PathBuf, usize)> = vec![(root.clone(), 0)];
+        while let Some((dir, depth)) = stack.pop() {
+            if depth > 6 || out.len() >= 200 {
+                continue;
+            }
+            let entries = match std::fs::read_dir(&dir) {
+                Ok(e) => e,
+                Err(_) => continue, // 无权限/不存在子目录跳过，不炸整体
+            };
+            let mut dirs: Vec<(std::path::PathBuf, usize)> = Vec::new();
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let name = match path.file_name().and_then(|n| n.to_str()) {
+                    Some(n) => n.to_string(),
+                    None => continue,
+                };
+                if name.starts_with('.') || EXCLUDE.contains(&name.as_str()) {
+                    continue;
+                }
+                if path.is_dir() {
+                    dirs.push((path, depth + 1));
+                    continue;
+                }
+                let rel = match path.strip_prefix(&root) {
+                    Ok(r) => r.to_string_lossy().into_owned(),
+                    Err(_) => continue,
+                };
+                if !query.is_empty() && !rel.to_lowercase().contains(&query) {
+                    continue;
+                }
+                out.push(serde_json::json!({ "rel": rel }));
+                if out.len() >= 200 {
+                    break;
+                }
+            }
+            // 目录入栈：先收集后推栈，保证同级顺序稳定（可选；数量有限无顺序要求）
+            stack.extend(dirs.into_iter().rev());
+        }
+        Ok(serde_json::json!({ "files": out }))
+    })
+    .await
+    .map_err(|e| format!("搜索文件失败：{e}"))?
+}
+
 /// 粘贴图片/附件落盘（输入条 chips 化）：base64 → runtime_root()/attachments/<毫秒>-<rand>.<ext>，
 /// 返回绝对路径。InputBar paste 直调；coding iframe 经 WebviewPanel `native:` 白名单旁路。
 /// 同步命令即可：纯内存解码 + 一次小文件写，无对话框无主线程阻塞（对照 pick_folder 必须 async 的注释）。

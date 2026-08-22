@@ -23,12 +23,15 @@ export function stripAtTrigger(text: string, caret: number, start: number): stri
 }
 
 /** 输入条待发送上下文：attachment=本地文件/粘贴图片（path=落盘绝对路径，preview=内存预览 dataURL），
- *  reference=当前会话引用，file=@ 项目文件（path=相对搜索根路径）。 */
+ *  reference=最近会话引用（refId=被引用会话 id，发送时展开其消息内容作上下文），
+ *  file=@ 目录内文件（path=相对搜索根路径；搜索根由用户选目录，与 coding 会话无关）。 */
 export interface InputContext {
   kind: "attachment" | "reference" | "file";
   label: string;
   path?: string;
   preview?: string;
+  /** reference 专用：被引用会话 id（发送时 InputBar 拉取该会话消息展开成前缀） */
+  refId?: string;
 }
 
 /** contexts → 发送文本前缀（每行一条【kind：label】；file/attachment 有 path 落路径，AI 能据此定位文件）。 */

@@ -209,7 +209,7 @@ function syncHotRects() {
           }
         });
       }
-      // 加号菜单（附件/项目文件）：桌宠下改成向下展开——超 .wb-input 几何也需放行
+      // 加号菜单（附件/引用）：桌宠下改成向下展开——超 .wb-input 几何也需放行
       if (addMenuOpen.value) {
         document.querySelectorAll<HTMLElement>(".add-menu").forEach((n) => {
           const r = n.getBoundingClientRect();
