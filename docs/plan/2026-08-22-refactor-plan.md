@@ -23,6 +23,7 @@
 | ✅ 完成 | **R-21b Rust 通信契约化（决策落定 2026-08-22）**：采用方案 (b) 变体——**字符串分发完全单点化**：write_to_brain 25 处调用点全部收敛至 `brain_cmd`/`brain_cmd_with` 双辅助（write_to_brain 仅被辅助函数内部调用），全部 type 字面量集中在调用参数上一览无余，等价于命令注册表。**显式放弃 CommandKind 枚举**，理由：payload 本质动态 JSON（Option 解包/条件字段），枚举只能约束 type 字符串一层管不了 payload 字段，工程量与回归风险不成比例；协议契约由 protocol-contract.md 文档锁定。验收标准第 6 条同步修订 |
 | ✅ 完成 | **R-25 跨端协议契约（含 R-29 收口 2026-08-22）**：protocol-contract.md（通道/kind 对照/命名映射/漂移清单）+ **app 内部单源化**——RunMetrics 唯一定义于 protocol/brain-types.ts（state/types.ts re-export 兼容）、AvatarState（7 态共享集）单源（Home/HomeFrame/HomePlugins/PanelApp/usePetState/useHomeChatSession 全部引用）；双端类型显式决策「各自维护 + 契约文档对照 + 变更同步纪律」（protocol-contract.md §3.2.1） |
 | 🟡 部分完成 | **R-08 App.vue 拆分（阶段一完成 2026-08-22）**：1711→1442 行。已拆出 `components/pet/` 三组件——PluginLauncher（插件启动器视图+样式）、BubbleFlow（气泡流视图+滚动容器 expose 桥接）、PendingConfirmCard（审批卡+批量快批条）；App.vue 保留：装配/窗口管理/事件流（onEvent 224 行）/composables 编排。**剩余（可选）**：onEvent 事件流抽 `composables/usePetEvents.ts`（依赖注入面大，行为等价性验证成本高，收益边际递减——组件级拆分目标已达成） |
+| ✅ 完成 | **R-30 HomePlugins 拆分（2026-08-22）**：1210→933 行——动效域迁 `composables/usePanelGrow.ts`（93 行）、对话浮层迁 `composables/usePluginOverlay.ts`（71 行）、列表视图迁 `components/plugins/PluginGrid.vue`（202 行，样式随迁）；顺带收敛 2 处漏网 invoke 直调（list_plugins/get_current_panel → brainClient.getCurrentPanel）；桌上工位守护测试断言更新至新位置 |
 
 ⚠️ **提交纪律（立即生效）**：当前工作区堆积 73 文件 +779/−9196 未提交改动，已违反「每项任务独立可合入、可回滚」原则。**任何后续任务开工前，先按域分批提交现有改动**（重构提交与 feat/fix 提交分开，不混一个 commit）；此后每完成一项任务立即 commit。
 

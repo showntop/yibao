@@ -2,6 +2,7 @@
 // 组件不得直接 invoke，一律走这里的函数（错误处理在此收敛）。
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen, once, type UnlistenFn } from "@tauri-apps/api/event";
+import type { WebviewPayload } from "../lib/webview-source";
 import {
   EMPTY_DOCK,
   EMPTY_FEED,
@@ -245,6 +246,18 @@ export function getConversationMessages(id: string, limit = 500): Promise<PetMes
 /** 插件清单（id/name/panels；插件启动器与技能 chip 数据源，与左栏技能同源）。 */
 export function listPlugins(): Promise<{ id: string; name: string }[]> {
   return invoke("list_plugins");
+}
+
+/** 最近一次 panel 事件载荷缓存（Rust 内存态，重启即失）：面板窗/大窗插件页首开竞态下补拉渲染。 */
+export function getCurrentPanel(): Promise<{
+  panel: string;
+  title?: string;
+  schema: unknown;
+  webview: WebviewPayload | null;
+  data: Record<string, unknown>;
+  input?: "inherit" | "coexist" | "handoff" | "none";
+} | null> {
+  return invoke("get_current_panel");
 }
 
 /** 截图确认：overlay 把选区交给大脑（截图即问）。 */

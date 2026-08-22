@@ -4,9 +4,9 @@
 //   ① 面板嵌在主区不弹窗，「返回插件列表」≈ 浮窗的关闭（清焦点上下文）；
 //   ② 与 HomeChat 同窗共享 JS 上下文，surface 一律显式传参（不走模块级 setSurface）。
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import { invoke } from "@tauri-apps/api/core";
 import { emit as emitTauri } from "@tauri-apps/api/event";
 import SchemaPanel from "./SchemaPanel.vue";
+import PluginGrid from "./plugins/PluginGrid.vue";
 import WebviewPanel from "./WebviewPanel.vue";
 import Avatar from "./Avatar.vue";
 import InputBar from "./InputBar.vue";
@@ -18,6 +18,8 @@ import {
   voiceStart,
   interrupt,
   reportPanelContext,
+  listPlugins,
+  getCurrentPanel,
   type BrainEvent,
   type PanelFocus,
 } from "../lib/brain";
@@ -26,8 +28,8 @@ import { procLabel, procSkip, procResultSuffix } from "../lib/proc";
 import { sessionStore } from "../state/store";
 import type { Attention, Presentation } from "../lib/surface-policy";
 import type { WebviewPayload } from "../lib/webview-source";
-import { takeDeskOrigin } from "../lib/home-desk-presence";
-import { iconStyle, initial } from "../lib/icons";
+import { usePanelGrow } from "../composables/usePanelGrow";
+import { usePluginOverlay } from "../composables/usePluginOverlay";
 import type { AvatarState } from "../protocol/brain-types";
 
 const props = withDefaults(defineProps<{
@@ -67,95 +69,32 @@ let requestedPlugin = "";
 let requestedUntil = 0;
 
 // ---- 面板"从来源长出"动效：记录触发插件卡的位置，面板用 clip-path 从卡片矩形生长/缩回（同源缩回） ----
-const originRect = ref<DOMRect | null>(null);
-/** 收起时实际使用的目标锚点（用户卡片 / fallbackOrigin），供恢复时对称长回。 */
-const collapseAnchor = ref<DOMRect | null>(null);
-const panelViewEl = ref<HTMLElement | null>(null);
-let animLock = false;
-function captureOrigin(event?: Event): void {
-  const card = (event?.currentTarget as HTMLElement | null)?.closest?.(".pcard");
-  originRect.value = card?.getBoundingClientRect() ?? null;
-}
-function rectToInset(from: DOMRect, to: DOMRect): string {
-  return `inset(${Math.max(0, from.top - to.top)}px ${Math.max(0, to.right - from.right)}px ${Math.max(0, to.bottom - from.bottom)}px ${Math.max(0, from.left - to.left)}px)`;
-}
-function prefersReducedMotion(): boolean {
-  return window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
-}
-/** 无来源（模型自动展开/挂载补拉）时的默认生长起点：面板区域右中偏上的小块，不抢中心。 */
-function fallbackOrigin(to: DOMRect): DOMRect {
-  const w = Math.min(200, to.width * 0.45);
-  const h = Math.min(120, to.height * 0.3);
-  return new DOMRect(to.left + to.width * 0.72 - w / 2, to.top + to.height * 0.4 - h / 2, w, h);
-}
-/** 面板就位后：从来源矩形"长"满自身区域（matched-geometry，240ms 弹性）。
- *  锚点优先级：用户点击的插件卡 > 上次收起用的锚点 > 右中偏上 fallback（模型自动展开/QA 模式）
- *  fill:forwards 关键：collapseOut 用了 fill:forwards 保持缩回末态，若 growIn 不带 fill，
- *  跑完会"弹回"到旧 fill-forwards 的缩回态——这里 forwards 让全屏末态持续压过。 */
-function growIn() {
-  if (animLock) return;
-  const el = panelViewEl.value;
-  if (!el || prefersReducedMotion()) return;
-  const to = el.getBoundingClientRect();
-  if (to.width < 2 || to.height < 2) return; // 宿主还不可见（主屏挂载收到 panel）时跳过，进入场景由 scene-panel 承接
-  const glance = originRect.value ?? takeDeskOrigin();
-  const from = glance ?? collapseAnchor.value ?? fallbackOrigin(to);
-  if (glance) originRect.value = glance;
-  el.animate(
-    [
-      { clipPath: rectToInset(from, to), opacity: 0.55, transform: "scale(0.985)" },
-      { clipPath: "inset(0px)", opacity: 1, transform: "scale(1)" },
-    ],
-    { duration: 240, easing: "cubic-bezier(0.22, 0.61, 0.36, 1)", fill: "forwards" },
-  );
-  collapseAnchor.value = null; // 临时锚点用完即弃，避免下次误用
-}
-/** 收起时反向：缩回来源锚点（同源缩回，卡片或默认锚点）。
- *  keepOrigin=true 时保留来源矩形（用户意图），但无论 keepOrigin 都记录实际目标锚点供恢复对称。 */
-async function collapseOut(keepOrigin = false): Promise<void> {
-  if (animLock) return;
-  if (prefersReducedMotion()) return; // 减少动效时直接收起
-  animLock = true;
-  try {
-    const el = panelViewEl.value;
-    if (el) {
-      const from = el.getBoundingClientRect();
-      if (from.width < 2 || from.height < 2) return;
-      const to = originRect.value ?? fallbackOrigin(from);
-      collapseAnchor.value = to; // 记住收起到的锚点，恢复时从同处长回
-      const inset = rectToInset(to, from);
-      const anim = el.animate(
-        [
-          { clipPath: "inset(0px)", opacity: 1, transform: "scale(1)" },
-          { clipPath: inset, opacity: 0.45, transform: "scale(0.985)" },
-        ],
-        { duration: 200, easing: "cubic-bezier(0.4, 0, 0.2, 1)", fill: "forwards" },
-      );
-      await anim.finished.catch(() => {});
-    }
-  } finally {
-    if (!keepOrigin) originRect.value = null;
-    animLock = false;
-  }
-}
+const { originRect, collapseAnchor, panelViewEl, captureOrigin, growIn, collapseOut } = usePanelGrow();
+// ---- 对话浮层（composables/usePluginOverlay）：输入/回复留痕时间线 + 自动收起 ----
+const {
+  msgs,
+  procIdx,
+  streamingIdx,
+  layerVisible,
+  listeningHint,
+  layerRef,
+  openLayer,
+  scheduleCollapse,
+  pushMsg,
+  scrollSoon,
+  dispose: overlayDispose,
+} = usePluginOverlay();
+
 /** 场景收起：让面板先"缩回"（布局保持场景，避免瞬切），保留锚点供恢复时对称长回。 */
 function collapseScene(): Promise<void> {
   if (!current.value) return Promise.resolve();
   return collapseOut(true);
 }
 
-// 搜索过滤（按名字或 id，与主屏/小窗的插件网格同一视觉语言）
-const query = ref("");
-const filtered = computed(() => {
-  const q = query.value.trim().toLowerCase();
-  if (!q) return plugins.value;
-  return plugins.value.filter((p) => p.name.toLowerCase().includes(q) || p.id.toLowerCase().includes(q));
-});
-
 async function loadPlugins() {
   pluginErr.value = "";
   try {
-    plugins.value = await invoke<PluginInfo[]>("list_plugins");
+    plugins.value = await listPlugins();
   } catch (err) {
     plugins.value = [];
     pluginErr.value = String(err);
@@ -221,54 +160,6 @@ const handoff = computed(() => {
   return m === "handoff" || m === "none";
 });
 watch(handoff, (active) => emit("handoff", active), { immediate: true });
-// ---- 对话浮层（工作台条上方）：输入/回复都留痕成时间线；一轮结束几秒后自动收起，角标可重开 ----
-// proc = 过程展示行（工具调用，样式同 hint 淡色小字）
-// pstate 驱动图标与颜色，不再把状态符号拼进 text——文案与呈现分离，图标才能统一走 YbIcon
-type ThreadMsg = {
-  role: "user" | "ai" | "hint" | "proc";
-  text: string;
-  pstate?: "run" | "ok" | "fail";
-  halted?: boolean; // 被打断：行尾显示中止图标
-};
-const msgs = ref<ThreadMsg[]>([]);
-// 过程展示：action.id → 过程行下标，结果回来原地更新
-const procIdx = new Map<string, number>();
-const streamingIdx = ref<number | null>(null); // 正在接收 chunk 的 ai 气泡下标
-const layerVisible = ref(false);
-const listeningHint = ref(false); // 聆听占位行（识别完替换为用户气泡）
-const layerRef = ref<HTMLElement | null>(null);
-let collapseTimer: ReturnType<typeof setTimeout> | null = null;
-
-function openLayer() {
-  layerVisible.value = true;
-  if (collapseTimer !== null) {
-    clearTimeout(collapseTimer);
-    collapseTimer = null;
-  }
-}
-
-/** 一轮结束后自动收起：浮层是干活时的环境反馈，不是常驻聊天窗。 */
-function scheduleCollapse(ms: number) {
-  if (collapseTimer !== null) clearTimeout(collapseTimer);
-  collapseTimer = setTimeout(() => {
-    layerVisible.value = false;
-    collapseTimer = null;
-  }, ms);
-}
-
-function pushMsg(role: ThreadMsg["role"], text: string) {
-  msgs.value.push({ role, text });
-  openLayer();
-  scrollSoon();
-}
-
-function scrollSoon() {
-  void nextTick(() => {
-    const el = layerRef.value;
-    if (el) el.scrollTop = el.scrollHeight;
-  });
-}
-
 /** 面板内容 → 焦点：rows 恰好一条 = 选中条目（详情页）；多条/没有 = 只有面板。 */
 function computeFocus(cur: typeof current.value): PanelFocus | null {
   if (!cur?.panel) return null;
@@ -537,14 +428,7 @@ function focusInput() {
  *  重启后据此恢复「正在和 xxx 协作中」的工作面（快照回填给 Rust，多窗一致）。 */
 async function pullCache() {
   try {
-    const cached = await invoke<{
-      panel: string;
-      title?: string;
-      schema: any;
-      webview: WebviewPayload | null;
-      data: Record<string, unknown>;
-      input?: "inherit" | "coexist" | "handoff" | "none";
-    } | null>("get_current_panel");
+    const cached = await getCurrentPanel();
     if (cached && current.value === null) {
       setCurrent({ ...cached, title: cached.title ?? cached.panel }, true);
       return;
@@ -616,7 +500,7 @@ onMounted(async () => {
 });
 onUnmounted(() => {
   unlisten?.();
-  if (collapseTimer !== null) clearTimeout(collapseTimer);
+  overlayDispose();
 });
 </script>
 
@@ -647,31 +531,13 @@ onUnmounted(() => {
     </header>
 
     <!-- 插件列表：Launchpad 式网格（图标按 id 哈希配色），顶部搜索过滤 -->
-    <div v-if="viewingList" class="plist">
-      <div v-if="pluginErr" class="pl-err"><YbIcon name="alert" :size="14" />{{ pluginErr }}</div>
-      <label v-if="plugins.length" class="pl-search">
-        <input v-model="query" placeholder="搜插件名或 id…" />
-      </label>
-      <div v-if="filtered.length" class="pgrid">
-        <button v-for="p in filtered" :key="p.id" class="pcard" @click="launchPlugin(p, $event)">
-          <span class="pcard-ic" :style="iconStyle(p.id)">{{ initial(p.name) }}</span>
-          <span class="pcard-name">{{ p.name }}</span>
-          <span class="pcard-id">{{ p.id }}</span>
-          <!-- 面板级入口（manifest [[panel]] open 声明，如素材库/热点雷达）；stop 防触发卡片主入口 -->
-          <span v-if="p.panels?.length" class="pcard-subs">
-            <span v-for="panel in p.panels" :key="panel.name" class="pcard-sub" @click.stop="openPluginPanel(p, panel, $event)">{{ panel.label }}</span>
-          </span>
-        </button>
-      </div>
-      <div v-else-if="plugins.length" class="pl-empty">
-        <YbIcon name="plug" :size="26" :stroke="1.4" />
-        <p>没找到「{{ query }}」<br /><span>换个关键词试试</span></p>
-      </div>
-      <div v-else-if="!pluginErr" class="pl-empty">
-        <YbIcon name="plug" :size="26" :stroke="1.4" />
-        <p>还没装插件<br /><span>插件放在 plugins/ 目录，重启大脑后出现在这里</span></p>
-      </div>
-    </div>
+    <PluginGrid
+      v-if="viewingList"
+      :plugins="plugins"
+      :err="pluginErr"
+      @launch="launchPlugin"
+      @open-panel="openPluginPanel"
+    />
 
     <!-- 面板视图：确认统一进主屏收件箱；这里只保留错误细条 / 面板内容 / 工作台条。
          外层宿主承载"从来源长出"动效：clip-path 从插件卡矩形展开到全面板，收起时同源缩回 -->
@@ -855,149 +721,6 @@ onUnmounted(() => {
 }
 
 /* ---- 插件列表：macOS 图标网格 ---- */
-.plist {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 0 var(--yb-space-5) var(--yb-space-4);
-  scrollbar-width: thin;
-}
-.pl-err {
-  display: flex;
-  align-items: center;
-  gap: var(--yb-space-1);
-  margin-bottom: var(--yb-space-3);
-  padding: 6px var(--yb-space-3);
-  border-radius: var(--yb-radius-xs);
-  background: var(--yb-danger-soft);
-  color: var(--yb-danger);
-  font-size: var(--yb-fs-md);
-}
-/* 搜索框 */
-.pl-search {
-  display: block;
-  width: 100%;
-  max-width: 260px;
-  margin-bottom: var(--yb-space-4);
-}
-.pl-search input {
-  width: 100%;
-  padding: 7px 12px;
-  border: 1px solid var(--yb-card-border);
-  border-radius: var(--yb-radius-md);
-  background: var(--yb-card-bg);
-  box-shadow: var(--yb-shadow-1);
-  color: var(--yb-text);
-  font-size: var(--yb-fs-md);
-  font-family: inherit;
-  outline: none;
-  transition: border-color var(--yb-dur-fast) var(--yb-ease-out), box-shadow var(--yb-dur-fast) var(--yb-ease-out);
-}
-.pl-search input::placeholder {
-  color: var(--yb-text-faint);
-}
-.pl-search input:focus {
-  border-color: var(--yb-accent);
-  /* 用软外环代替全局 --yb-focus-ring（双环内白覆盖了 1px accent border） */
-  box-shadow: 0 0 0 3px rgba(var(--yb-c-sky-rgb), 0.22);
-}
-
-/* 自适应网格：窄窗自动减列，卡片不拉伸变形 */
-.pgrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: var(--yb-space-3);
-}
-/* 插件卡：Launchpad 式（图标 + 名字 + id 垂直居中），hover 上浮 + 图标微放大 */
-.pcard {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  gap: var(--yb-space-1);
-  padding: var(--yb-space-4) var(--yb-space-2);
-  border: 1px solid var(--yb-card-border);
-  border-radius: var(--yb-card-radius);
-  background: var(--yb-card-bg);
-  font-family: inherit;
-  cursor: pointer;
-  transition: all var(--yb-dur-fast) var(--yb-ease-out);
-}
-.pcard:hover {
-  border-color: var(--yb-accent);
-  box-shadow: var(--yb-shadow-2);
-  transform: translateY(-2px);
-}
-.pcard:active {
-  transform: scale(0.97);
-}
-/* 图标：按 id 哈希到 5 色调色板（iconStyle 内联 background/color），首字承担 */
-.pcard-ic {
-  width: 46px;
-  height: 46px;
-  margin-bottom: var(--yb-space-2);
-  display: grid;
-  place-items: center;
-  border-radius: var(--yb-radius-md);
-  font-size: 19px;
-  font-weight: var(--yb-fw-bold);
-  transition: transform var(--yb-dur-fast) var(--yb-ease-out);
-}
-.pcard:hover .pcard-ic {
-  transform: scale(1.07);
-}
-.pcard-name {
-  font-size: var(--yb-fs-lg);
-  font-weight: var(--yb-fw-medium);
-  color: var(--yb-text);
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.pcard-id {
-  font-family: var(--yb-mono);
-  font-size: var(--yb-fs-xs);
-  color: var(--yb-text-faint);
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.pcard-subs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--yb-space-2);
-  margin-top: var(--yb-space-1);
-}
-.pcard-sub {
-  font-size: var(--yb-fs-xs);
-  color: var(--yb-accent);
-  cursor: pointer;
-}
-.pcard-sub:hover {
-  text-decoration: underline;
-}
-.pl-empty {
-  height: 100%;
-  min-height: 200px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--yb-space-2);
-  color: var(--yb-text-faint);
-}
-.pl-empty p {
-  margin: 0;
-  text-align: center;
-  font-size: var(--yb-fs-lg);
-  line-height: var(--yb-lh-base);
-}
-.pl-empty span {
-  font-size: var(--yb-fs-md);
-}
-
 /* ---- 面板视图（与浮窗同款） ---- */
 .error-bar {
   display: flex;

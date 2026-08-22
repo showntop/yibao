@@ -8,6 +8,7 @@ const paper = readFileSync(resolve(import.meta.dirname, "../components/HomeChatP
 const thread = readFileSync(resolve(import.meta.dirname, "../components/HomeChatThread.vue"), "utf8");
 const faces = readFileSync(resolve(import.meta.dirname, "../components/home-chat-faces.css"), "utf8");
 const plugins = readFileSync(resolve(import.meta.dirname, "../components/HomePlugins.vue"), "utf8");
+const panelGrow = readFileSync(resolve(import.meta.dirname, "../composables/usePanelGrow.ts"), "utf8");
 const glance = readFileSync(resolve(import.meta.dirname, "../components/HomePluginGlance.vue"), "utf8");
 
 describe("plugin host stays on the desk", () => {
@@ -26,7 +27,8 @@ describe("plugin host stays on the desk", () => {
     expect(chat).toMatch(/shouldStampDeskPath/);
     expect(chat).not.toMatch(/stampDeskClose/);
     expect(chat).toMatch(/HomeHostAsk/);
-    expect(plugins).toMatch(/takeDeskOrigin/);
+    // 桌上工位动效锚点：takeDeskOrigin 已随动效域迁 composables/usePanelGrow.ts（R-30）
+    expect(panelGrow).toMatch(/takeDeskOrigin/);
     expect(plugins).toMatch(/v-if="!props\.scene" class="bench"/);
     expect(glance).toMatch(/setDeskOrigin/);
     expect(glance).toMatch(/摊开/);
