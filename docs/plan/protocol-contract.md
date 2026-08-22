@@ -1,0 +1,89 @@
+# 跨端协议契约（app / mobile / extension ↔ sidecar 大脑）
+
+> 日期：2026-08-22
+> 目的：让同一大脑的三类前端（Tauri 桌面 app、Capacitor mobile、Chrome extension）共享**同一事件与数据形状**的单一事实源，消除手写双份类型的漂移（现状：`RunMetrics`/`FeedItem`/`PendingConfirm`/`MemItem` 在 app 与 mobile 各定义一份，snake/camel 混用）。
+
+## 1. 传输通道
+
+| 端 | 通道 | 协议 |
+|---|---|---|
+| app（Tauri） | Rust IPC `invoke`（壳→脑）+ 事件 `brain-event`（脑→壳） | sidecar stdio JSON 行；Rust 桥转发 |
+| mobile（Capacitor） | HTTP `POST /v1/*`（请求）+ SSE `GET /v1/events`（事件流） | `X-Yibao-Token` / `?token=`；`last_event_id` 断点续传 |
+| extension（Chrome） | HTTP `POST /v1/*`（`X-Yibao-Token`） | 与 mobile 同侧 |
+
+## 2. 事件 kind（三端一致，命名建议统一）
+
+| kind | 含义 | app（brain-event） | mobile/extension（SSE） |
+|---|---|---|---|
+| `thought` | 推理过程（不展示） | ✅ | — |
+| `action_proposed` | 提议工具调用 | ✅ | — |
+| `confirmation_needed` | 待批确认（攒批） | ✅ | ✅ |
+| `action_result` | 工具结果（含 `proc` 状态） | ✅ | — |
+| `final_reply_chunk` | 流式正文 | ✅ | ✅ |
+| `final_reply` | 终态回复（可带 `metrics`） | ✅ | ✅ |
+| `interrupted` | 被打断 | ✅ | ✅ |
+| `error` | 错误 | ✅ | ✅ |
+| `listening` / `listening_done` | 语音状态 | ✅ | — |
+| `speaking` / `speaking_done` | 播报状态 | ✅ | ✅ |
+| `reminder` | 主动提醒（`type`/`day`/`task` 语义载荷） | ✅ | ✅ |
+| `notice` | 排队提示 | ✅ | ✅ |
+| `panel` / `panel_data` | 面板事件 | ✅ | — |
+| `run_done` | 一轮 run 收口 | — | ✅ |
+| `thinking` | 思考占位 | — | ✅ |
+
+> 差异原因：app 经 Rust 桥收到完整 brain-event；mobile/extension 只订阅 SSE 白名单 kinds（`KNOWN_KINDS`）。**建议**：SSE 侧补齐 `panel`/`action_proposed`，让 mobile 也能跟进桌面进行中的工具过程（现状 mobile 只显示最终回复）。
+
+## 3. 数据形状与命名映射
+
+### 3.1 命名规范映射表（sidecar snake_case ↔ 前端 camelCase）
+
+sidecar/Rust 落盘与 IPC 用 snake_case；app 前端协议层（`protocol/brain-types.ts`）保持 snake_case 透传（`conversationId` 除外——事件信封已用 camel）；mobile 端建议以 snake_case 直收（与 HTTP 载荷对齐）。
+
+| 概念 | sidecar/Rust | app 前端 | 说明 |
+|---|---|---|---|
+| 会话 id | `conversation_id` | `conversationId` | brain-event 信封字段（后端 emit 时即 camel） |
+| 任务 id | `task_id` | `task_id` | brain-event 顶层 |
+| 退出码 | `exit_code` | `exit_code` | brain-event 顶层 |
+| 面板引用 | `panel` | `panel` | PanelPayload |
+| 感知来源 | `source` | `source` | PerceptionItem |
+| 敏感级 | `sensitivity` | `sensitivity` | PerceptionItem |
+| Base URL | `base_url` | `base_url`（SetupConfig） | 前端组件展示层转 camel（HomeChat 曾误映射，已修） |
+| 运行统计 | `prompt_tokens`/`cost`/`elapsed_ms` | 同（snake） | RunMetrics |
+| 记忆命名空间 | `ns` | `ns` | MemItem |
+| 待批表面 | `surface` | `surface` | PendingConfirm |
+
+### 3.2 需要合并的类型（现状双份，收敛到单一事实源）
+
+| 类型 | app 定义处 | mobile 定义处 | 差异 |
+|---|---|---|---|
+| `FeedItem` | `protocol/brain-types.ts` | `mobile/src/state/feed.ts` | mobile 的 `status: string`（app `"none"\|"follow"\|"ignore"`） |
+| `FeedStats` | 同上 | 同上 | mobile 字段全可选（防御旧版） |
+| `RunningTask` | 同上 | 同上 | mobile 无 `kind` 联合收窄 |
+| `PendingConfirm` | 同上 | `mobile/src/state/approvals.ts` | app 有 `skill/label/desc`，mobile 有 `skill_id/summary`（`skill_id` vs `skill` 命名漂移！） |
+| `MemItem` | 同上 | `mobile/src/state/memories.ts` | mobile `created_at` 必选字符串 |
+| `RunMetrics` | 同上 | —（mobile 无） | — |
+
+> **重点漂移**：`PendingConfirm` 的 `skill_id`（mobile）vs `skill`（app）——同一字段两个名字。收敛方向：统一 `skill_id`（与 sidecar 落盘一致），app 侧补别名兼容。
+
+### 3.3 HTTP 端点（mobile/extension 侧，请求形状）
+
+| 端点 | 用途 | 请求体 |
+|---|---|---|
+| `GET /v1/health` | 连接测试 | — |
+| `GET /v1/feed?limit=60` | 动态流 | — |
+| `GET /v1/conversations` | 会话列表 | — |
+| `GET /v1/history?conversation_id=` | 单桶历史 | — |
+| `GET /v1/state` | 待批 + 状态 | — |
+| `POST /v1/confirm` | 裁决 `{id, approved, remember}`；404=已处理 | — |
+| `POST /v1/chat` | 发消息 `{text, conversation_id}` → `{run_id}` | — |
+| `POST /v1/interrupt` | 打断 `{conversation_id}` | — |
+| `GET /v1/memories` | 记忆库 | — |
+| `GET /v1/reminders` | 提醒列表 | — |
+| `POST /v1/reminders/cancel` | 取消 `{id}` | — |
+| `POST /v1/save` | 素材入库（extension） | — |
+
+## 4. 落地建议（后续迭代）
+
+1. **第一步（低风险）**：以 `protocol/brain-types.ts` 为基准，把 mobile 的 `feed.ts`/`approvals.ts`/`memories.ts` 类型改为 `import type`（跨包引用或复制 + 标注来源），先消除 `skill_id`/`skill` 漂移。
+2. **第二步**：建 `shared/protocol/`（仓库根）放 TypeScript 类型源，app/mobile 双端 import；sidecar 侧经 `docs/` 此契约文档对齐字段名。
+3. **第三步**：SSE 事件 kind 补齐（mobile 订阅 `panel` 等），让移动端与桌面能力对齐。
