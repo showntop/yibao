@@ -9,6 +9,10 @@ import InputBar from "../components/common/InputBar.vue";
 import AgentBrain from "../views/brain/AgentBrain.vue";
 import HomeGlance from "../views/HomeGlance.vue";
 import HomeLife from "../views/HomeLife.vue";
+import HomeWhen from "../views/HomeWhen.vue";
+import HomeLine from "../views/HomeLine.vue";
+import HomeJot from "../views/HomeJot.vue";
+import HomeBench from "../views/HomeBench.vue";
 import HomePluginGlance from "../views/plugins/HomePluginGlance.vue";
 
 export const PART_VIEWS: Record<string, Record<string, Component>> = {
@@ -18,6 +22,10 @@ export const PART_VIEWS: Record<string, Record<string, Component>> = {
   composer: { bar: InputBar },
   mind: { map: AgentBrain, tile: AgentBrain },
   identity: { tile: AgentBrain, seat: AgentBrain },
+  when: { tile: HomeWhen },
+  line: { tile: HomeLine },
+  jot: { tile: HomeJot },
+  bench: { tile: HomeBench },
   today: { tile: AgentBrain },
   need: { tile: HomeGlance },
   tasks: { tile: HomeGlance },

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import YbIcon from "../../components/common/YbIcon.vue";
 import { spineCaption, spineVisible, useLiveAssembly } from "../../lib/home/home-chrome.ts";
 import { fmtClockToday } from "../../lib/time";
@@ -30,6 +30,16 @@ const shown = computed(() =>
       ? sessions.value.slice(0, 8)
       : sessions.value,
 );
+const listEl = ref<HTMLElement | null>(null);
+
+watch([activeId, face], async () => {
+  if (face.value !== "spine") return;
+  await nextTick();
+  listEl.value?.querySelector<HTMLElement>(".echo-row.active")?.scrollIntoView({
+    block: "nearest",
+    inline: "nearest",
+  });
+});
 
 const emit = defineEmits<{
   select: [id: string];
@@ -101,15 +111,18 @@ defineExpose({ updateCurrent, newChat, sessions, sync });
       <button class="echo-new" type="button" title="开始一段新对话" aria-label="开始一段新对话" @click="newChat">新对话</button>
     </h2>
 
-    <div class="echo-list" role="list" :aria-label="face === 'cards' ? '到过的人' : '最近会话'">
+    <div ref="listEl" class="echo-list" role="list" :aria-label="face === 'cards' ? '到过的人' : '会话'">
       <div v-for="session in shown" :key="session.id" class="echo-row" :class="{ active: session.id === activeId }" role="listitem">
         <button class="echo-main" type="button" :title="session.title" @click="select(session)">
-          <span class="echo-line1">
-            <strong>{{ face === "list" ? session.title : spineCaption(session.title, face === "cards" ? 4 : 2) }}</strong>
-            <time v-if="face === 'list'">{{ fmtClockToday(session.updatedAt) }}</time>
-          </span>
-          <span v-if="face === 'list' && session.preview" class="echo-preview">{{ session.preview }}</span>
-          <span v-else-if="face === 'list'" class="echo-preview quiet">暂无内容</span>
+          <template v-if="face === 'spine'">{{ spineCaption(session.title) }}</template>
+          <template v-else>
+            <span class="echo-line1">
+              <strong>{{ face === "list" ? session.title : spineCaption(session.title, 4) }}</strong>
+              <time v-if="face === 'list'">{{ fmtClockToday(session.updatedAt) }}</time>
+            </span>
+            <span v-if="face === 'list' && session.preview" class="echo-preview">{{ session.preview }}</span>
+            <span v-else-if="face === 'list'" class="echo-preview quiet">暂无内容</span>
+          </template>
         </button>
         <button v-if="face === 'list'" class="echo-delete" type="button" title="删除这段会话" aria-label="删除这段会话" @click="remove(session.id)">
           <YbIcon name="x" :size="10" />
@@ -356,74 +369,109 @@ button { font: inherit; }
 .echo-empty > span:last-child { font-size: 10px; }
 
 .session.spine {
+  position: relative;
+  z-index: 1;
   width: 100%;
   height: 100%;
-  justify-content: flex-end;
-  gap: 3px;
-  padding: 48px 0 12px;
+  justify-content: stretch;
+  gap: 8px;
+  padding: 10px 0 8px;
+  overflow: visible;
+}
+.session.spine::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  border: 1px solid var(--yb-widget-border);
+  border-right: 0;
+  border-radius: var(--yb-widget-radius) 0 0 var(--yb-widget-radius);
+  background: var(--yb-spine-board);
+}
+.session.spine .echo-new,
+.session.spine .echo-main {
+  position: relative;
+  box-sizing: border-box;
+  overflow: hidden;
+  writing-mode: vertical-rl;
+  letter-spacing: 0.14em;
+  border: 1px solid var(--yb-widget-border);
+  border-right: 0;
+  border-radius: 8px 0 0 8px;
 }
 .session.spine .echo-new {
   flex: none;
-  width: 100%;
-  height: 56px;
-  margin-right: -1px;
+  z-index: 1;
+  align-self: stretch;
+  height: 52px;
+  margin: 0 0 0 7px;
   padding: 0;
   justify-content: center;
-  border-radius: 6px 0 0 6px;
-  background: color-mix(in srgb, var(--yb-widget-bg) 88%, var(--yb-desk));
-  color: var(--yb-text-faint);
-  box-shadow: var(--yb-glaze-hi);
-  writing-mode: vertical-rl;
-  letter-spacing: 0.08em;
-  font-size: 10.5px;
-  opacity: 0.7;
+  background: var(--yb-spine-leaf);
+  color: var(--yb-accent-deep);
+  box-shadow: none;
+  font-size: 11px;
+  font-weight: var(--yb-fw-medium);
 }
 .session.spine .echo-new:hover {
-  transform: none;
+  transform: translateX(2px);
   filter: none;
-  color: var(--yb-text-strong);
-  opacity: 1;
+  color: var(--yb-paper-ink);
+  background: var(--yb-widget-bg);
 }
 .session.spine .echo-list {
-  flex: 0 1 auto;
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-height: 0;
   padding: 0;
-  justify-content: flex-end;
-  gap: 3px;
+  justify-content: flex-start;
+  align-items: stretch;
+  gap: 0;
+  overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
 }
-.session.spine .echo-row { min-height: 0; }
+.session.spine .echo-list::-webkit-scrollbar { display: none; }
+.session.spine .echo-row {
+  flex: 0 0 52px;
+  min-height: 0;
+  overflow: hidden;
+}
+.session.spine .echo-row + .echo-row {
+  margin-top: -1px;
+}
 .session.spine .echo-main {
-  height: 64px;
-  margin-right: -1px;
+  flex: none;
+  width: calc(100% - 7px);
+  height: 52px;
+  min-height: 0;
+  max-height: 52px;
+  margin: 0 0 0 7px;
   padding: 0;
-  border: 1px solid var(--yb-widget-border);
-  border-right: 0;
-  border-radius: 6px 0 0 6px;
-  background: color-mix(in srgb, var(--yb-widget-bg) 88%, var(--yb-desk));
-  box-shadow: var(--yb-glaze-hi);
-  color: var(--yb-text-faint);
-  writing-mode: vertical-rl;
+  background: var(--yb-spine-leaf);
+  box-shadow: none;
+  color: var(--yb-paper-ink);
   justify-content: center;
-  letter-spacing: 0.08em;
+  font-size: 12px;
+  font-weight: var(--yb-fw-medium);
+  transition:
+    transform var(--yb-dur) var(--yb-ease-spring),
+    color var(--yb-dur) var(--yb-ease-out),
+    background var(--yb-dur) var(--yb-ease-out);
+}
+.session.spine .echo-row:hover .echo-main {
+  transform: translateX(3px);
+  background: var(--yb-widget-bg);
 }
 .session.spine .echo-row.active .echo-main {
-  height: 80px;
+  z-index: 2;
+  transform: translateX(5px);
   background: var(--yb-widget-bg);
-  color: var(--yb-text-strong);
-  box-shadow: var(--yb-glaze-hi);
-}
-.session.spine .echo-line1 {
-  display: block;
-  writing-mode: vertical-rl;
-}
-.session.spine .echo-line1 strong {
-  flex: none;
-  overflow: visible;
-  text-overflow: clip;
-  font-size: 10.5px;
-  font-weight: var(--yb-fw-medium);
-  letter-spacing: 0.08em;
-  white-space: nowrap;
+  color: var(--yb-paper-ink);
+  box-shadow: none;
 }
 
 .session.cards {
@@ -513,5 +561,7 @@ button { font: inherit; }
   .echo-new,
   .echo-main,
   .echo-delete { transition: none; }
+  .session.spine .echo-row .echo-main,
+  .session.spine .echo-new:hover { transform: none; }
 }
 </style>

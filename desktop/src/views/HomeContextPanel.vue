@@ -390,9 +390,39 @@ onUnmounted(() => {
 }
 
 .session-inspector.note {
-  height: auto;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
   gap: 8px;
-  overflow: visible;
+  overflow: hidden;
+}
+.session-inspector.note .now-widget {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.session-inspector.note .now-body {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-wrap: anywhere;
+}
+.session-inspector.note .now-body::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0 21px,
+      color-mix(in srgb, var(--yb-line) 72%, transparent) 21px 22px
+    );
+  mask-image: linear-gradient(180deg, transparent 0 36%, #000 52%, #000 78%, transparent);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0 36%, #000 52%, #000 78%, transparent);
 }
 .now-k {
   margin: 8px 0 0;

@@ -517,7 +517,7 @@ defineExpose({ focus: () => inputRef.value?.focus(), insertText, takeDraft });
     <div v-if="pendingContexts.length" class="context-list" aria-label="待发送的附件和引用">
       <span v-for="(context, index) in pendingContexts" :key="`${context.kind}-${context.label}-${index}`" class="context-chip">
         <img v-if="context.preview" :src="context.preview" class="chip-thumb" alt="" />
-        {{ kindLabel(context) }} · {{ context.label }}
+        <span class="chip-label" :data-full="`${kindLabel(context)} · ${context.label}`">{{ kindLabel(context) }} · {{ context.label }}</span>
         <button type="button" aria-label="移除内容" @click="removeContext(index)">×</button>
       </span>
     </div>
@@ -914,6 +914,8 @@ textarea::-webkit-scrollbar-thumb {
   gap: 4px;
   padding: 2px 4px 6px;
 }
+/* 长文件名（如超长 .md 附件）不能因 max-width + overflow:hidden 把末尾的 × 移除钮裁掉：
+ * chip 本体只做收缩容器，文本由内部 .chip-label 单独省略号收缩，× 钮 flex:none 恒可见 */
 .context-chip {
   display: inline-flex;
   align-items: center;
@@ -924,11 +926,35 @@ textarea::-webkit-scrollbar-thumb {
   background: var(--yb-accent-soft);
   color: var(--yb-accent-deep);
   font-size: 10px;
+}
+.chip-label {
+  position: relative;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* hover 悬停显示完整名（省略号看不清时）：attr(data-full) 自带 chip 前缀，贴在 chip 上方 */
+.chip-label:hover::after {
+  content: attr(data-full);
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  max-width: 360px;
+  padding: 5px 9px;
+  border-radius: var(--yb-radius-sm);
+  background: var(--yb-surface-solid);
+  color: var(--yb-text);
+  font-size: 11px;
+  line-height: 1.4;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  box-shadow: var(--yb-shadow-2);
+  z-index: 10;
+  pointer-events: none;
 }
 .context-chip button {
+  flex: none;
   padding: 0;
   border: none;
   background: transparent;

@@ -216,10 +216,14 @@ onUnmounted(() => {
     <HomeWidget v-if="!only || only === 'identity'" id="identity" class="identity-widget" :class="{ 'is-seat': identityFace === 'seat' }">
       <button class="identity" type="button" title="和译宝聊聊它的记忆与能力" @click="greet">
         <span class="identity-avatar">
-          <Avatar :state="avatarState" :size="identityFace === 'seat' ? 108 : 52" :compact="false" />
+          <Avatar :state="avatarState" :size="identityFace === 'seat' ? 108 : 40" :compact="false" />
         </span>
         <span class="identity-copy">
-          <span class="identity-line"><strong>译宝</strong><i class="state-dot" :class="avatarState" />{{ stateText }}</span>
+          <span class="identity-line">
+            <strong>译宝</strong>
+            <i class="state-dot" :class="avatarState" />
+            <em class="identity-state">{{ stateText }}</em>
+          </span>
         </span>
       </button>
     </HomeWidget>
@@ -279,15 +283,20 @@ button {
   font: inherit;
 }
 
+:deep(.identity-widget) {
+  display: flex;
+}
+
 .identity {
+  flex: 1;
   width: 100%;
   min-width: 0;
-  padding: 10px 40px 10px 12px;
+  padding: 8px 28px 8px 10px;
   border: 0;
   background: transparent;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   color: inherit;
   text-align: left;
   cursor: pointer;
@@ -344,13 +353,26 @@ button {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  max-width: 100%;
   color: var(--yb-paper-ink-dim);
 }
 
 .identity-line strong {
+  flex: none;
   margin-right: 2px;
   font-size: 13px;
+  font-style: normal;
   color: var(--yb-paper-ink);
+}
+
+.identity-state {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-style: normal;
+  font-weight: inherit;
 }
 
 .state-dot {
@@ -379,7 +401,7 @@ button {
 }
 
 .mind-well {
-  margin: 8px;
+  margin: 6px 8px 8px;
   overflow: hidden;
   border-radius: calc(var(--yb-widget-radius) - 6px);
   background:

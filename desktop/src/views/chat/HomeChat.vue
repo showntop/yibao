@@ -10,6 +10,10 @@ import SetupWizard from "../../components/pet/SetupWizard.vue";
 import AgentBrain from "../brain/AgentBrain.vue";
 import HomeGlance from "../HomeGlance.vue";
 import HomeLife from "../HomeLife.vue";
+import HomeWhen from "../HomeWhen.vue";
+import HomeLine from "../HomeLine.vue";
+import HomeJot from "../HomeJot.vue";
+import HomeBench from "../HomeBench.vue";
 import HomePluginGlance from "../plugins/HomePluginGlance.vue";
 import HomeContextPanel from "../HomeContextPanel.vue";
 import HomeWidget from "../HomeWidget.vue";
@@ -691,6 +695,18 @@ onUnmounted(() => {
       </template>
       <template #mind>
         <AgentBrain :state="state" only="mind" @chat="onInfoChat" />
+      </template>
+      <template #when>
+        <HomeWhen />
+      </template>
+      <template #line>
+        <HomeLine />
+      </template>
+      <template #jot>
+        <HomeJot />
+      </template>
+      <template #bench>
+        <HomeBench />
       </template>
       <template #today>
         <AgentBrain :state="state" only="today" @chat="onInfoChat" />

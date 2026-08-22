@@ -35,7 +35,7 @@ export function spineCaption(title: string, maxChars = 2): string {
   return chars.slice(0, maxChars).join("") || "页";
 }
 
-/** 书脊只露出最近几页；当前页不在窗口里时换掉最旧的一张。limit=0 表示全部。 */
+/** 书脊可滚完全部会话。limit=0 表示全部；非 0 时只留窗口，当前页不在窗口里则换掉最旧的一张。 */
 export function spineVisible<T extends { id: string }>(
   sessions: readonly T[],
   activeId: string,
@@ -60,7 +60,7 @@ function chromeView(id: HomePresetId) {
     sessionVariant: (presentationOf(assembly, "sessions") ?? "list") as SessionVariant,
     peekDensity: (presentationOf(assembly, "now") ?? "inspector") as PeekDensity,
     mindDensity: (presentationOf(assembly, "mind") ?? "map") as MindDensity,
-    spineLimit: (presentationOf(assembly, "sessions") === "spine" ? 4 : 0) as 0 | 4,
+    spineLimit: 0 as const,
     spineChars: 2 as const,
     collapsible: collapsibleOf(id),
   };

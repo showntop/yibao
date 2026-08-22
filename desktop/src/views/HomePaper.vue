@@ -68,17 +68,29 @@ const emit = defineEmits<{
 
 <style scoped>
 .sheet {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 28px 32px 20px;
+  padding: 28px 32px 20px 28px;
   border-radius: 0 var(--yb-widget-radius) var(--yb-widget-radius) 0;
   background:
     var(--yb-widget-glaze, linear-gradient(158deg, #fff 8%, var(--yb-surface-1) 100%)),
     var(--yb-widget-bg);
   border: 1px solid var(--yb-widget-border);
-  box-shadow: var(--yb-widget-shadow);
+  border-left-color: color-mix(in srgb, var(--yb-widget-border) 55%, transparent);
+  box-shadow: none;
+}
+.sheet::before {
+  content: "";
+  position: absolute;
+  top: 18px;
+  bottom: 18px;
+  left: 12px;
+  width: 1px;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--yb-widget-border) 80%, transparent);
 }
 .sheet.write {
   position: relative;
@@ -119,11 +131,11 @@ const emit = defineEmits<{
   flex: 0 1 auto;
   min-width: 0;
   max-width: 22ch;
-  margin: 6px 0 14px;
-  font-size: 20px;
+  margin: 4px 0 12px;
+  font-size: 22px;
   font-weight: var(--yb-fw-medium);
-  letter-spacing: -0.03em;
-  line-height: 1.3;
+  letter-spacing: -0.036em;
+  line-height: 1.28;
   color: var(--yb-text-strong);
   text-wrap: pretty;
 }
@@ -193,11 +205,11 @@ const emit = defineEmits<{
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid var(--yb-border-base);
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--yb-border-base) 80%, transparent);
   color: var(--yb-text-dim);
-  font-size: 12px;
+  font-size: 11.5px;
 }
 .foot-nav {
   display: flex;

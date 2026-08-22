@@ -25,7 +25,7 @@ describe("home-chrome adapter", () => {
     expect(chromeOf("rails").mindDensity).toBe("map");
     expect(chromeOf("desk").mindDensity).toBe("tile");
     expect(chromeOf("rails").spineLimit).toBe(0);
-    expect(chromeOf("desk").spineLimit).toBe(4);
+    expect(chromeOf("desk").spineLimit).toBe(0);
     expect(chromeOf("rails").surface).toBe("thread");
     expect(chromeOf("desk").surface).toBe("paper");
     expect(isHomeChromeId("salon")).toBe(true);

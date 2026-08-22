@@ -35,6 +35,10 @@ describe("home-assembly catalog", () => {
     expect(ids).toContain("glimpse");
     expect(ids).toContain("catch");
     expect(ids).toContain("scratch");
+    expect(ids).toContain("when");
+    expect(ids).toContain("line");
+    expect(ids).toContain("jot");
+    expect(ids).toContain("bench");
     expect(HOME_PARTS.find((p) => p.id === "chat")?.kind).toBe("work");
     expect(HOME_PARTS.find((p) => p.id === "composer")?.kind).toBe("input");
     expect(HOME_PARTS.find((p) => p.id === "chat")?.presentations).toEqual(["thread", "paper", "talk"]);
@@ -106,10 +110,25 @@ describe("resolveAssembly", () => {
     expect(desk.items.find((i) => i.id === "sessions")?.area).toBe("spine");
     expect(desk.items.find((i) => i.id === "now")?.area).toBe("note");
     expect(desk.items.find((i) => i.id === "now")?.attach).toBeUndefined();
-    expect(desk.items.find((i) => i.id === "need")?.area).toBe("start");
+    expect(desk.items.find((i) => i.id === "when")?.area).toBe("start");
+    expect(desk.items.find((i) => i.id === "line")?.area).toBe("start");
+    expect(desk.items.find((i) => i.id === "jot")?.area).toBe("start");
+    expect(desk.items.find((i) => i.id === "bench")?.area).toBe("start");
     expect(desk.items.find((i) => i.id === "spark")?.area).toBe("start");
+    expect(desk.items.find((i) => i.id === "need")?.area).toBe("start");
+    expect(desk.items.find((i) => i.id === "tasks")?.area).toBe("start");
+    expect(desk.items.find((i) => i.id === "catch")?.area).toBe("start");
+    expect(desk.items.find((i) => i.id === "glimpse")?.area).toBe("start");
+    expect(desk.items.find((i) => i.id === "today")?.area).toBe("end");
     expect(desk.items.find((i) => i.id === "scratch")?.area).toBe("end");
-    expect(desk.items.find((i) => i.id === "identity")?.pinEnd).toBe(true);
+    expect(desk.items.find((i) => i.id === "remind")?.area).toBe("end");
+    expect(desk.items.find((i) => i.id === "identity")?.area).toBe("ident");
+    expect(desk.items.find((i) => i.id === "identity")?.pinEnd).toBeFalsy();
+    expect(desk.items.find((i) => i.id === "mind")?.grow).toBeFalsy();
+    expect(desk.items.find((i) => i.id === "scratch")?.grow).toBe(true);
+    expect(desk.items.find((i) => i.id === "chat")?.grow).toBe(true);
+    expect(desk.items.find((i) => i.id === "now")?.grow).toBe(true);
+    expect(desk.items.find((i) => i.id === "sessions")?.grow).toBe(true);
     expect(collapsibleOf("desk")).toEqual([]);
 
     const salon = resolveAssembly("salon", defaultLayout());
@@ -220,9 +239,11 @@ describe("resolveAssembly", () => {
     expect(desk.grid?.ground).toBe("desk");
     expect(desk.grid?.columnGap).toBe(0);
     expect(desk.grid?.rows).toBe("minmax(0,1fr) minmax(min-content, auto)");
-    expect(desk.grid?.areas).toContain("spine paper");
-    expect(desk.grid?.areas).toMatch(/"start \. \. compose/);
-    expect(desk.grid?.areas).not.toMatch(/spine compose/);
+    expect(desk.grid?.areas).toBe('"start . spine paper . note . end" "ident . . compose . . . ."');
+    expect(desk.grid?.columns).toContain("40px");
+    expect(desk.grid?.columns).toContain("164px");
+    expect(desk.grid?.columns).toContain("188px");
+    expect(desk.grid?.columns.split("164px")).toHaveLength(3);
   });
 
   it("drops glance tiles in compact desk but keeps paper, compose, and spine", () => {
@@ -259,7 +280,7 @@ describe("resolveAssembly", () => {
     expect(faceOf(rails, "chat")).toBe("thread");
     expect(faceOf(rails, "need", "tile")).toBe("tile");
     expect(spineLimitOf(rails)).toBe(0);
-    expect(spineLimitOf(resolveAssembly("desk", defaultLayout()))).toBe(4);
+    expect(spineLimitOf(resolveAssembly("desk", defaultLayout()))).toBe(0);
   });
 
   it("opens peek when now is independently present", () => {

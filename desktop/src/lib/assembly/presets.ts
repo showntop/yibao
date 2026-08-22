@@ -55,9 +55,9 @@ export type PlaceItem = {
   presentation?: string;
 };
 
-const SPINE_W = "28px";
-const NOTE_W = "176px";
-const TILE = "156px";
+const SPINE_W = "40px";
+const NOTE_W = "188px";
+const TILE = "164px";
 const RAIL = "264px";
 
 export const HOME_PRESETS = {
@@ -73,6 +73,10 @@ export const HOME_PRESETS = {
       mind: "map",
       identity: "tile",
       composer: "bar",
+      when: "tile",
+      line: "tile",
+      jot: "tile",
+      bench: "tile",
       today: "tile",
       need: "tile",
       tasks: "tile",
@@ -112,6 +116,10 @@ export const HOME_PRESETS = {
       mind: "tile",
       identity: "tile",
       composer: "bar",
+      when: "tile",
+      line: "tile",
+      jot: "tile",
+      bench: "tile",
       today: "tile",
       need: "tile",
       tasks: "tile",
@@ -128,17 +136,17 @@ export const HOME_PRESETS = {
       ground: "desk",
       columns: `${TILE} 12px ${SPINE_W} minmax(0,1fr) 12px ${NOTE_W} 12px ${TILE}`,
       rows: "minmax(0,1fr) minmax(min-content, auto)",
-      areas: `"start . spine paper . note . end" "start . . compose . . . end"`,
+      areas: `"start . spine paper . note . end" "ident . . compose . . . ."`,
       stacks: {
-        start: ["mind", "need", "spark", "glimpse", "identity"],
+        start: ["mind", "when", "line", "jot", "bench", "spark", "glimpse", "need", "tasks", "catch"],
         spine: ["sessions"],
         paper: ["chat"],
         note: ["now"],
-        end: ["today", "tasks", "remind", "catch", "scratch"],
         compose: ["composer"],
+        ident: ["identity"],
+        end: ["today", "remind", "scratch"],
       },
-      grow: ["chat"],
-      pinEnd: ["identity"],
+      grow: ["chat", "now", "scratch", "sessions"],
       pluginArea: "start",
     },
     compact: {
@@ -156,7 +164,7 @@ export const HOME_PRESETS = {
           paper: ["chat"],
           compose: ["composer"],
         },
-        grow: ["chat"],
+        grow: ["chat", "sessions"],
       },
     },
   },
@@ -221,6 +229,10 @@ export const HOME_PRESETS = {
       mind: "map",
       identity: "tile",
       composer: "bar",
+      when: "tile",
+      line: "tile",
+      jot: "tile",
+      bench: "tile",
       today: "tile",
       need: "tile",
       tasks: "tile",
@@ -232,15 +244,19 @@ export const HOME_PRESETS = {
     },
     frames: {
       mind: { left: 40, top: 40, width: 200, height: 176, z: 1 },
-      spark: { left: 72, top: 228, width: 168, height: 92, z: 3 },
+      when: { left: 40, top: 228, width: 200, height: 80, z: 1 },
+      line: { left: 40, top: 320, width: 200, height: 108, z: 1 },
+      jot: { left: 40, top: 440, width: 200, height: 88, z: 1 },
+      bench: { left: 40, top: 540, width: 200, height: 88, z: 1 },
+      spark: { left: 72, top: 320, width: 168, height: 92, z: 3 },
       need: { left: 256, top: 40, width: 180, height: 108, z: 1 },
-      identity: { left: 40, top: 332, width: 200, height: 120, z: 2 },
+      identity: { left: 40, top: 428, width: 200, height: 120, z: 2 },
       today: { left: 256, top: 164, width: 180, height: 72, z: 1 },
       tasks: { left: 256, top: 252, width: 180, height: 88, z: 1 },
       glimpse: { left: 256, top: 356, width: 180, height: 72, z: 1 },
-      remind: { left: 40, top: 468, width: 200, height: 80, z: 1 },
+      remind: { left: 40, top: 564, width: 200, height: 80, z: 1 },
       catch: { left: 256, top: 444, width: 180, height: 88, z: 1 },
-      scratch: { left: 72, top: 564, width: 200, height: 120, z: 2 },
+      scratch: { left: 72, top: 660, width: 200, height: 120, z: 2 },
       chat: { left: 460, top: 40, width: 520, height: 400, z: 1 },
       composer: { left: 460, top: 456, width: 520, height: 72, z: 3 },
       sessions: { left: 1000, top: 40, width: 220, height: 280, z: 1 },

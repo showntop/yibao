@@ -173,7 +173,10 @@ export function catchFace(
 }
 
 export const SCRATCH_KEY = "yibao-scratch";
+export const SCRATCH_TINT_KEY = "yibao-scratch-tint";
 export const SPARK_DISMISS_KEY = "yibao-spark-dismissed";
+export const SCRATCH_TINTS = ["amber", "moss", "rose"] as const;
+export type ScratchTint = (typeof SCRATCH_TINTS)[number];
 
 export function readScratch(storage: Pick<Storage, "getItem"> | null): string {
   try { return storage?.getItem(SCRATCH_KEY) ?? ""; } catch { return ""; }
@@ -181,6 +184,23 @@ export function readScratch(storage: Pick<Storage, "getItem"> | null): string {
 
 export function writeScratch(text: string, storage: Pick<Storage, "setItem"> | null): void {
   try { storage?.setItem(SCRATCH_KEY, text); } catch { /* ignore quota */ }
+}
+
+export function isScratchTint(v: unknown): v is ScratchTint {
+  return v === "amber" || v === "moss" || v === "rose";
+}
+
+export function readScratchTint(storage: Pick<Storage, "getItem"> | null): ScratchTint {
+  try {
+    const raw = storage?.getItem(SCRATCH_TINT_KEY);
+    return isScratchTint(raw) ? raw : "amber";
+  } catch {
+    return "amber";
+  }
+}
+
+export function writeScratchTint(tint: ScratchTint, storage: Pick<Storage, "setItem"> | null): void {
+  try { storage?.setItem(SCRATCH_TINT_KEY, tint); } catch { /* ignore quota */ }
 }
 
 export function readSparkDismiss(storage: Pick<Storage, "getItem"> | null, day: string): string | null {

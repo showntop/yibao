@@ -240,6 +240,7 @@ function resendPage() {
   flex-direction: column;
   position: relative;
   overflow: hidden;
+  border-radius: 0 var(--yb-widget-radius) var(--yb-widget-radius) 0;
 }
 /* 纸张撑满工位高度：纵向布局下 flex:1 为主轴（高度），不再依赖 height:100% 的百分比解析。
    内容超高在 .paper-stream 内部滚动，footer 永远是纸张底部最后一个 flex 子，不会被顶出。 */

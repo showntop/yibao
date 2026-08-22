@@ -6,12 +6,14 @@ import {
   pluginGlanceLine,
   pluginHasGlance,
   readScratch,
+  readScratchTint,
   readSparkDismiss,
   remindFaces,
   remindTight,
   taskFaces,
   todayBands,
   writeScratch,
+  writeScratchTint,
   writeSparkDismiss,
 } from "./home-glance-faces.ts";
 import type { FeedItem, MemItem, PerceptionItem, PendingConfirm, RunningTask } from "../brain";
@@ -137,6 +139,9 @@ describe("local scratch and spark dismiss", () => {
     };
     writeScratch("先扔着", storage);
     expect(readScratch(storage)).toBe("先扔着");
+    writeScratchTint("moss", storage);
+    expect(readScratchTint(storage)).toBe("moss");
+    expect(readScratchTint({ getItem: () => "nope" })).toBe("amber");
     writeSparkDismiss("m2", "2026-08-21", storage);
     expect(readSparkDismiss(storage, "2026-08-21")).toBe("m2");
     expect(readSparkDismiss(storage, "2026-08-22")).toBeNull();

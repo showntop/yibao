@@ -16,18 +16,26 @@ import {
   pickSpark,
   pluginGlanceLine,
   readScratch,
+  readScratchTint,
   readSparkDismiss,
   writeScratch,
+  writeScratchTint,
   writeSparkDismiss,
+  SCRATCH_TINTS,
+  type ScratchTint,
 } from "../lib/home/home-glance-faces.ts";
+import { useLiveAssembly } from "../lib/home/home-chrome.ts";
 
 defineProps<{ only?: "spark" | "glimpse" | "catch" | "scratch" }>();
 const emit = defineEmits<{ chat: [draft: string] }>();
+const assembly = useLiveAssembly();
+const deskRest = computed(() => assembly.value.preset === "desk");
 
 const memories = ref<MemItem[]>([]);
 const perception = ref<PerceptionItem[]>([]);
 const widgets = ref<WidgetPayload[]>([]);
 const scratch = ref("");
+const tint = ref<ScratchTint>("amber");
 const dismissed = ref<string | null>(null);
 let timer: ReturnType<typeof setInterval> | null = null;
 let unWidgets: (() => void) | null = null;
@@ -85,6 +93,11 @@ function persistScratch() {
   writeScratch(scratch.value, window.localStorage);
 }
 
+function setTint(next: ScratchTint) {
+  tint.value = next;
+  writeScratchTint(next, window.localStorage);
+}
+
 async function refresh() {
   const [mem, seen, cards] = await Promise.all([
     getMemListOnce().catch(() => ({ items: [] as MemItem[] })),
@@ -98,6 +111,7 @@ async function refresh() {
 
 onMounted(async () => {
   scratch.value = readScratch(window.localStorage);
+  tint.value = readScratchTint(window.localStorage);
   dismissed.value = readSparkDismiss(window.localStorage, day.value);
   await refresh();
   timer = setInterval(() => { void refresh(); }, 12000);
@@ -117,13 +131,14 @@ watch(scratch, persistScratch);
 <template>
   <aside class="life">
     <HomeWidget
-      v-if="(!only || only === 'spark') && (glimpse || spark)"
+      v-if="(!only || only === 'spark') && (spark || deskRest || (!only && glimpse))"
       id="spark"
-      class="is-fog"
-      aria-label="余光 · 刚想起的"
+      aria-label="刚想起的"
     >
-      <article class="combo">
-        <button v-if="glimpse" class="fog" type="button" @click="talkGlimpse">
+      <p v-if="!spark && !(glimpse && !only)" class="rest spark-rest">还没想起什么</p>
+      <article v-else class="spark-face">
+        <i class="spark-sheen" aria-hidden="true" />
+        <button v-if="glimpse && only !== 'spark'" class="fog" type="button" @click="talkGlimpse">
           <span class="fog-head">
             <span class="fog-dots" aria-hidden="true"><i></i><i></i><i></i></span>
             <span class="kicker">余光</span>
@@ -132,6 +147,7 @@ watch(scratch, persistScratch);
           <span v-if="glimpse.title" class="fog-title">{{ glimpse.title }}</span>
         </button>
         <section v-if="spark" class="spark-body">
+          <span class="kicker spark-kicker">回忆</span>
           <p class="spark-text" v-html="sparkHtml"></p>
           <div class="note-acts">
             <button type="button" @click="talkSpark">接着说</button>
@@ -141,6 +157,21 @@ watch(scratch, persistScratch);
       </article>
     </HomeWidget>
 
+    <HomeWidget
+      v-if="(!only || only === 'glimpse') && glimpse"
+      id="glimpse"
+      aria-label="余光"
+    >
+      <button class="fog" type="button" @click="talkGlimpse">
+        <span class="fog-head">
+          <span class="fog-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span class="kicker">余光</span>
+        </span>
+        <span class="fog-app">{{ glimpse.app }}</span>
+        <span v-if="glimpse.title" class="fog-title">{{ glimpse.title }}</span>
+      </button>
+    </HomeWidget>
+
     <HomeWidget v-if="(!only || only === 'catch') && caught" id="catch" aria-label="刚接到的东西">
       <button class="catch" type="button" @click="talkCatch">
         <span class="kicker">{{ caught.kind === "note" ? "闪念" : "刚复制" }}</span>
@@ -148,12 +179,36 @@ watch(scratch, persistScratch);
       </button>
     </HomeWidget>
 
-    <HomeWidget v-if="!only || only === 'scratch'" id="scratch" class="is-scratch" aria-label="草稿纸">
+    <HomeWidget
+      v-if="!only || only === 'scratch'"
+      id="scratch"
+      class="is-scratch"
+      :class="`tint-${tint}`"
+      :fill="deskRest"
+      aria-label="草稿纸"
+    >
+      <div class="slip-head">
+        <div class="tabs" role="tablist" aria-label="便签颜色">
+          <button
+            v-for="chip in SCRATCH_TINTS"
+            :key="chip"
+            type="button"
+            role="tab"
+            class="tab"
+            :class="chip"
+            :aria-selected="tint === chip"
+            :title="chip === 'amber' ? '黄' : chip === 'moss' ? '绿' : '红'"
+            @click="setTint(chip)"
+          />
+        </div>
+        <span class="kicker">草稿</span>
+      </div>
       <textarea
         v-model="scratch"
         class="pad"
-        rows="4"
-        placeholder="先扔一句…"
+        rows="5"
+        cols="8"
+        placeholder="写一句，先扔在桌上…"
         spellcheck="false"
       />
     </HomeWidget>
@@ -162,6 +217,13 @@ watch(scratch, persistScratch);
 
 <style scoped>
 .life { display: contents; }
+
+.rest {
+  margin: 10px 12px 12px;
+  color: var(--yb-paper-ink-dim);
+  font-size: 11px;
+  line-height: 1.4;
+}
 
 .combo {
   display: flex;
@@ -199,12 +261,14 @@ watch(scratch, persistScratch);
 }
 
 .note,
-.catch,
-.pad {
+.catch {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  width: calc(100% - 16px);
+  box-sizing: border-box;
+  width: auto;
+  align-self: stretch;
+  min-width: 0;
   margin: 8px;
   padding: 8px 10px 10px;
   border: 0;
@@ -315,36 +379,92 @@ watch(scratch, persistScratch);
   font-size: 11px;
 }
 
-.spark-body {
+.spark-face {
   position: relative;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 6px 14px 12px;
-  border-top: 1px solid color-mix(in srgb, var(--yb-paper-ink) 8%, transparent);
-  background:
-    linear-gradient(180deg, transparent, color-mix(in srgb, var(--yb-accent-soft) 40%, transparent) 100%);
-  animation: spark-in 360ms var(--yb-ease-out) both;
+  margin: 10px 12px 12px;
+  overflow: hidden;
 }
-.spark-body::before {
+
+.spark-face::before {
   content: "";
   position: absolute;
-  top: -0.5px;
-  left: 14px;
-  right: 14px;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--yb-accent) 50%, transparent), transparent);
+  inset: -10px -6px -8px;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(90% 70% at 6% 0%, color-mix(in srgb, var(--yb-accent) 20%, transparent), transparent 64%),
+    radial-gradient(80% 55% at 100% 110%, color-mix(in srgb, var(--yb-accent-soft) 88%, transparent), transparent 60%);
+  animation: spark-drift 16s ease-in-out infinite alternate;
+}
+
+.spark-face::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.28;
+  mix-blend-mode: multiply;
+  background: var(--yb-widget-grain);
+  background-size: 140px 140px;
+}
+
+.spark-sheen {
+  position: absolute;
+  top: -20%;
+  bottom: -20%;
+  left: -30%;
+  width: 42%;
+  z-index: 0;
+  pointer-events: none;
+  background: linear-gradient(100deg, transparent 20%, color-mix(in srgb, #fff 48%, transparent) 48%, transparent 72%);
+  animation: spark-sheen 11s var(--yb-ease-out) infinite;
+}
+
+.spark-body {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 .spark-body p {
   margin: 0;
+  color: color-mix(in srgb, var(--yb-paper-ink) 88%, var(--yb-accent-deep));
   font-size: 12.5px;
   line-height: 1.55;
-  color: var(--yb-text);
-  letter-spacing: -0.005em;
 }
 .spark-text {
-  mask-image: linear-gradient(180deg, #000 88%, transparent);
-  -webkit-mask-image: linear-gradient(180deg, #000 88%, transparent);
+  margin: 0;
+}
+.spark-kicker {
+  letter-spacing: 0.14em;
+  color: color-mix(in srgb, var(--yb-accent-deep) 72%, var(--yb-paper-ink-dim));
+}
+.spark-rest {
+  position: relative;
+  color: color-mix(in srgb, var(--yb-paper-ink-dim) 82%, var(--yb-accent-deep));
+}
+
+@keyframes spark-drift {
+  from { transform: translate3d(-3%, -2%, 0) scale(1.02); }
+  to { transform: translate3d(4%, 3%, 0) scale(1.06); }
+}
+
+@keyframes spark-sheen {
+  0% { transform: translateX(0); opacity: 0; }
+  18% { opacity: 0.45; }
+  42% { transform: translateX(220%); opacity: 0; }
+  100% { transform: translateX(220%); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spark-face::before,
+  .spark-sheen { animation: none; }
 }
 .hl {
   background: color-mix(in srgb, var(--yb-accent-soft) 78%, transparent);
@@ -355,11 +475,6 @@ watch(scratch, persistScratch);
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
   box-shadow: 0 1px 0 color-mix(in srgb, var(--yb-accent) 22%, transparent);
-}
-
-@keyframes spark-in {
-  from { opacity: 0; transform: translateY(4px); filter: blur(2px); }
-  to   { opacity: 1; transform: translateY(0);   filter: blur(0); }
 }
 
 .catch {
@@ -386,29 +501,93 @@ watch(scratch, persistScratch);
 }
 
 .pad {
-  min-height: 88px;
+  box-sizing: border-box;
+  display: block;
+  flex: 1;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 112px;
+  margin: 0;
+  padding: 4px 12px 14px;
+  border: 0;
+  border-radius: 0;
   resize: none;
-  border-radius: 2px;
   background:
-    repeating-linear-gradient(
-      to bottom,
-      transparent 0 21px,
-      color-mix(in srgb, var(--yb-line) 80%, transparent) 21px 22px
-    );
-  box-shadow: var(--yb-press);
+    radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--yb-paper-ink) 14%, transparent) 1px, transparent 1.4px)
+      10px 4px / 12px 18px;
+  box-shadow: none;
   color: var(--yb-paper-ink);
-  font-size: 12px;
-  line-height: 22px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 18px;
 }
 
-.pad::placeholder { color: var(--yb-text-faint); }
+.pad::placeholder { color: color-mix(in srgb, var(--yb-paper-ink) 38%, transparent); }
 
-:deep(.is-note),
-:deep(.is-fog),
-:deep(.is-scratch) {
+.slip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 16px 12px 2px;
+}
+
+.tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 5px;
+}
+
+.tab {
+  width: 18px;
+  height: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 2px 2px 0 0;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+
+.tab.amber { background: #e2c15a; }
+.tab.moss { background: #7d9a62; }
+.tab.rose { background: #c56b63; }
+.tab[aria-selected="true"] {
+  height: 11px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), 0 1px 0 color-mix(in srgb, var(--yb-paper-ink) 10%, transparent);
+}
+
+:deep(.is-note) {
   background: transparent;
   box-shadow: none;
   border-color: transparent;
+}
+:deep(.is-scratch) {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 3px 14px 8px 4px;
+  border-color: color-mix(in srgb, var(--scratch-tab, #e2c15a) 35%, var(--yb-widget-border));
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.28), transparent 28%),
+    var(--scratch-paper, #f4edd4);
+  box-shadow:
+    var(--yb-widget-shadow),
+    inset 0 10px 0 var(--scratch-tab, #e2c15a);
+}
+:deep(.is-scratch.tint-amber) {
+  --scratch-paper: #f3edd2;
+  --scratch-tab: #e2c15a;
+}
+:deep(.is-scratch.tint-moss) {
+  --scratch-paper: #e7eedd;
+  --scratch-tab: #7d9a62;
+}
+:deep(.is-scratch.tint-rose) {
+  --scratch-paper: #f3e4e1;
+  --scratch-tab: #c56b63;
 }
 
 .fog:focus-visible,

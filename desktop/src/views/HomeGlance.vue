@@ -126,12 +126,13 @@ onUnmounted(() => {
     </HomeWidget>
 
     <HomeWidget
-      v-if="(!only || only === 'remind') && reminds.length"
+      v-if="only === 'remind' || (!only && reminds.length)"
       id="remind"
       class="remind-card"
       :class="{ tight: reminds[0]?.tight }"
       aria-label="待办提醒"
     >
+      <p v-if="!reminds.length" class="rest">今天没有钟点</p>
       <button
         v-for="row in reminds"
         :key="`${row.text}-${row.when}`"
@@ -149,6 +150,13 @@ onUnmounted(() => {
 
 <style scoped>
 .glance { display: contents; }
+
+.rest {
+  margin: 10px 12px 12px;
+  color: var(--yb-paper-ink-dim);
+  font-size: 11px;
+  line-height: 1.4;
+}
 
 .slip,
 .pulse,

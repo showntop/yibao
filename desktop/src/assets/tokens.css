@@ -310,6 +310,11 @@
   --yb-desk: #e6ebf2;
   --yb-desk-pad: 14px 12px 16px;
   --yb-desk-well: none;
+  /* 整桌书脊：底板跟纸同色，签条比纸沉半档，能看见又不另起色。 */
+  --yb-spine-board: var(--yb-widget-bg);
+  --yb-spine-leaf: var(--yb-note-mute);
+  --yb-spine-leaf-edge: rgba(var(--yb-c-slate-rgb), 0.16);
+  --yb-spine-gutter: rgba(var(--yb-c-slate-rgb), 0.10);
   --yb-widget-gap: 12px;
   --yb-widget-radius: 22px;
   --yb-widget-bg: #f7f9fc;
@@ -512,6 +517,10 @@ pre {
 
     --yb-desk: #121820;
     --yb-desk-well: none;
+    --yb-spine-board: var(--yb-widget-bg);
+    --yb-spine-leaf: var(--yb-note-mute);
+    --yb-spine-leaf-edge: rgba(255, 255, 255, 0.08);
+    --yb-spine-gutter: rgba(0, 0, 0, 0.28);
     --yb-widget-bg: #1c252f;
     --yb-widget-border: rgba(255, 255, 255, 0.08);
     --yb-widget-shadow:
@@ -632,6 +641,10 @@ pre {
 
   --yb-desk: #121820;
   --yb-desk-well: none;
+  --yb-spine-board: var(--yb-widget-bg);
+  --yb-spine-leaf: var(--yb-note-mute);
+  --yb-spine-leaf-edge: rgba(255, 255, 255, 0.08);
+  --yb-spine-gutter: rgba(0, 0, 0, 0.28);
   --yb-widget-bg: #1c252f;
   --yb-widget-border: rgba(255, 255, 255, 0.08);
   --yb-widget-shadow:
@@ -746,6 +759,10 @@ pre {
   --yb-desk: #c5bfb6;
   --yb-desk-pad: 20px 18px 24px;
   --yb-desk-well: none;
+  --yb-spine-board: var(--yb-widget-bg);
+  --yb-spine-leaf: var(--yb-note-mute);
+  --yb-spine-leaf-edge: rgba(var(--yb-c-bone-rgb), 0.18);
+  --yb-spine-gutter: rgba(50, 45, 40, 0.12);
   --yb-widget-gap: 16px;
   --yb-widget-pad-x: 16px;
   --yb-widget-bg: #fbfaf7;
@@ -794,6 +811,10 @@ pre {
     --yb-card-page-bg: #24211e;
     --yb-desk: #161412;
     --yb-desk-well: none;
+    --yb-spine-board: var(--yb-widget-bg);
+    --yb-spine-leaf: var(--yb-note-mute);
+    --yb-spine-leaf-edge: rgba(255, 255, 255, 0.08);
+    --yb-spine-gutter: rgba(0, 0, 0, 0.32);
     --yb-widget-bg: #3a3631;
     --yb-widget-border: rgba(255, 255, 255, 0.1);
     --yb-widget-glaze: linear-gradient(158deg, #44403b 0%, #3a3631 48%, #322f2b 100%);
@@ -841,6 +862,10 @@ pre {
   --yb-card-page-bg: #24211e;
   --yb-desk: #161412;
   --yb-desk-well: none;
+  --yb-spine-board: var(--yb-widget-bg);
+  --yb-spine-leaf: var(--yb-note-mute);
+  --yb-spine-leaf-edge: rgba(255, 255, 255, 0.08);
+  --yb-spine-gutter: rgba(0, 0, 0, 0.32);
   --yb-widget-bg: #3a3631;
   --yb-widget-border: rgba(255, 255, 255, 0.1);
   --yb-widget-glaze: linear-gradient(158deg, #44403b 0%, #3a3631 48%, #322f2b 100%);

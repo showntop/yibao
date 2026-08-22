@@ -33,6 +33,10 @@ describe("home-widgets", () => {
     expect(layout.order).toContain("glimpse");
     expect(layout.order).toContain("catch");
     expect(layout.order).toContain("scratch");
+    expect(layout.order).toContain("when");
+    expect(layout.order).toContain("line");
+    expect(layout.order).toContain("jot");
+    expect(layout.order).toContain("bench");
   });
 
   it("falls back on garbage json", () => {

@@ -60,7 +60,7 @@ onUnmounted(() => document.removeEventListener("mousedown", onDoc));
     :class="[
       `yb-widget--${spec.size}`,
       `yb-widget--${spec.material}`,
-      { 'yb-widget-fill': fill && spec.size === 'l' },
+      { 'yb-widget-fill': fill },
     ]"
     :data-widget="id"
     :style="{ '--yb-widget-order': String(spec.order) }"

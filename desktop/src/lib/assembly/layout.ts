@@ -380,8 +380,8 @@ export function faceOf(assembly: Assembly, id: PartId, fallback = ""): string {
   return presentationOf(assembly, id) ?? fallback;
 }
 
-export function spineLimitOf(assembly: Assembly): number {
-  return faceOf(assembly, "sessions") === "spine" ? 4 : 0;
+export function spineLimitOf(_assembly: Assembly): number {
+  return 0;
 }
 
 export function itemOf(assembly: Assembly, id: PartId): ResolvedItem | undefined {

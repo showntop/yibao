@@ -325,9 +325,31 @@ function onMoveStart(item: ResolvedItem, e: PointerEvent) {
   min-height: 0;
   overflow: visible;
 }
+.area-start,
+.area-end {
+  gap: 8px;
+  min-width: 0;
+}
+.area-ident {
+  justify-content: center;
+  min-width: 0;
+}
+.area-ident .host,
+.area-ident :deep(.yb-widget) {
+  flex: 0 0 auto;
+  width: 100%;
+}
+.area-note {
+  min-height: 0;
+  min-width: 0;
+}
 .area-compose {
+  justify-content: center;
   min-height: min-content;
   overflow: visible;
+}
+.area-compose .host.kind-input {
+  justify-content: center;
 }
 .host {
   box-sizing: border-box;
@@ -342,12 +364,28 @@ function onMoveStart(item: ResolvedItem, e: PointerEvent) {
   flex: 1;
   overflow: hidden;
 }
+.host.part-scratch.grow {
+  overflow: visible;
+}
+.host.part-scratch.grow :deep(.yb-widget) {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
 .host.pin-end {
   margin-top: auto;
+}
+.host.kind-context.grow :deep(.session-inspector) {
+  flex: 1;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
 }
 .host.kind-nav,
 .host.kind-context {
   overflow: hidden;
+  min-width: 0;
   border: 1px solid var(--yb-widget-border);
   border-radius: var(--yb-widget-radius);
   background:
@@ -381,12 +419,27 @@ function onMoveStart(item: ResolvedItem, e: PointerEvent) {
   background: transparent;
   box-shadow: none;
 }
+.host.kind-nav.face-spine.grow {
+  overflow: visible;
+  min-height: 0;
+}
 .host.kind-nav.face-spine :deep(.yb-widget) {
   overflow: visible;
   border-radius: 0;
+  display: flex;
+  flex-direction: column;
 }
 .host.grow.face-paper {
+  overflow: visible;
+  border-radius: 0 var(--yb-widget-radius) var(--yb-widget-radius) 0;
+}
+.host.grow.face-paper :deep(.paper-wrap) {
+  border-radius: inherit;
   overflow: hidden;
+  box-shadow: var(--yb-widget-shadow);
+}
+.host.grow.face-paper :deep(.sheet) {
+  box-shadow: none;
 }
 .stage.canvas .host :deep(.yb-widget),
 .stage.canvas .host :deep(.plugin-card) {

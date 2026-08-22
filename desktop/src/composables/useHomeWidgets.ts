@@ -4,6 +4,10 @@ import { reactive, watch } from "vue";
 export const HOME_WIDGETS = [
   { id: "identity", label: "身份", defaultSize: "m", defaultMaterial: "porcelain" },
   { id: "mind", label: "认知", defaultSize: "l", defaultMaterial: "porcelain" },
+  { id: "when", label: "此刻", defaultSize: "s", defaultMaterial: "porcelain" },
+  { id: "line", label: "一句", defaultSize: "m", defaultMaterial: "porcelain" },
+  { id: "jot", label: "闪念", defaultSize: "m", defaultMaterial: "porcelain" },
+  { id: "bench", label: "工位", defaultSize: "m", defaultMaterial: "porcelain" },
   { id: "today", label: "今日", defaultSize: "s", defaultMaterial: "porcelain" },
   { id: "need", label: "需要你", defaultSize: "m", defaultMaterial: "porcelain" },
   { id: "tasks", label: "进行中", defaultSize: "m", defaultMaterial: "porcelain" },
