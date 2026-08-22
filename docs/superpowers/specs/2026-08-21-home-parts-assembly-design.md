@@ -288,8 +288,8 @@ me        |                                 |  .
 
 | 职责 | 文件 |
 |---|---|
-| 目录 / 预设 / 合成 | `app/src/lib/home-assembly.ts` |
-| chrome 适配（旧 API） | `app/src/lib/home-chrome.ts` |
+| 目录 / 预设 / 合成 | `desktop/src/lib/home-assembly.ts` |
+| chrome 适配（旧 API） | `desktop/src/lib/home-chrome.ts` |
 | 框架 | `HomeFrame.vue` |
 | 视图登记 | `home-assembly-ui.ts`（`PART_VIEWS`） |
 | 会话宿主 | `HomeChat.vue`（只提供 `#chat` / `#sessions` / `#now` / `#composer`） |

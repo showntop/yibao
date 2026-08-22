@@ -4,7 +4,7 @@
 
 **Goal:** 把译宝的桌面形象从「扁平暖色团子」重塑为「天青鹅蛋小手办 + 天线状态灯」，并补齐收起态对话气泡 peek 与透明窗鼠标穿透。
 
-**Architecture:** 全部在 Tauri 壳的 Vue 前端（`app/src`）+ 一处 Rust（`app/src-tauri`）。token 驱动：先迁移 `tokens.css` 配色（暖→天青），再重写 `Avatar.vue`（立体 SVG + 七态），新增 `PeekBubble.vue` 并接入 `App.vue`，`window.ts` 加鼠标穿透，`lib.rs` 修托盘图标。不改大脑事件协议、插件架构、sidecar。
+**Architecture:** 全部在 Tauri 壳的 Vue 前端（`desktop/src`）+ 一处 Rust（`desktop/src-tauri`）。token 驱动：先迁移 `tokens.css` 配色（暖→天青），再重写 `Avatar.vue`（立体 SVG + 七态），新增 `PeekBubble.vue` 并接入 `App.vue`，`window.ts` 加鼠标穿透，`lib.rs` 修托盘图标。不改大脑事件协议、插件架构、sidecar。
 
 **Tech Stack:** Vue 3 (`<script setup>` + TS)、SVG + CSS 动画、Tauri v2 window API、Rust。
 
@@ -16,7 +16,7 @@
 - **七态状态灯色板**（天线灯）：idle `#aab8c8` / listen `#2fb0b5` / think `#8e7cf0` / work `#f2a03c` / say `#58b368` / success `#3e8e5a` / error `#e5484d`。**work 必须与主色脱钩**（琥珀 ≠ 天青）。
 - **保留接口**：`Avatar.vue` props `{ state: AvatarState; size?: number }`、emits `click`/`longpress`，以及现有 click/longpress/drag 手势状态机（`Avatar.vue:32-63` 的指针逻辑原样保留）。
 - **Live2D 不做**（属 v2）；本次只在 SVG 内升级。
-- **无前端单测框架**：仓库无 vitest/jest。每个任务的验证 = (1) `cd app && npx vue-tsc --noEmit` 通过；(2) `npm run dev` 后在 `http://localhost:1420/design.html` 目测；(3) 涉及行为的任务（穿透/气泡）在真机 `npm run tauri dev` 手动验证。不要为本次引入 vitest。
+- **无前端单测框架**：仓库无 vitest/jest。每个任务的验证 = (1) `cd desktop && npx vue-tsc --noEmit` 通过；(2) `npm run dev` 后在 `http://localhost:1420/design.html` 目测；(3) 涉及行为的任务（穿透/气泡）在真机 `npm run tauri dev` 手动验证。不要为本次引入 vitest。
 - **commit 规范**：中文 conventional，每任务结束 commit；末尾加 `Co-Authored-By: Claude <noreply@anthropic.com>`。
 
 ---
@@ -25,26 +25,26 @@
 
 | 文件 | 责任 | 动作 |
 |---|---|---|
-| `app/src/assets/tokens.css` | 全局设计令牌（配色/圆角/动效/状态灯） | 改：暖→天青 + 新增状态灯令牌 + 过渡别名 |
-| `app/src/components/Avatar.vue` | 角色渲染 + 手势 | 改：整体重写（立体鹅蛋+小手+天线+七态） |
-| `app/src/DesignPreview.vue` | 设计走查页 | 改：状态数组加 success/error |
-| `app/src/components/PeekBubble.vue` | 收起态回复气泡 | 新建 |
-| `app/src/App.vue` | 宠物窗编排 | 改：接入 PeekBubble + success/error 态 + busy 修正 |
-| `app/src/lib/window.ts` | 窗口控制 | 改：新增鼠标穿透切换 |
-| `app/src-tauri/src/lib.rs` | Rust 壳 | 改：托盘 `icon_as_template(true)` |
-| `app/src-tauri/icons/icon-tray.png` | 托盘单色图标 | 新建（单色 template 用） |
+| `desktop/src/assets/tokens.css` | 全局设计令牌（配色/圆角/动效/状态灯） | 改：暖→天青 + 新增状态灯令牌 + 过渡别名 |
+| `desktop/src/components/Avatar.vue` | 角色渲染 + 手势 | 改：整体重写（立体鹅蛋+小手+天线+七态） |
+| `desktop/src/DesignPreview.vue` | 设计走查页 | 改：状态数组加 success/error |
+| `desktop/src/components/PeekBubble.vue` | 收起态回复气泡 | 新建 |
+| `desktop/src/App.vue` | 宠物窗编排 | 改：接入 PeekBubble + success/error 态 + busy 修正 |
+| `desktop/src/lib/window.ts` | 窗口控制 | 改：新增鼠标穿透切换 |
+| `desktop/src-tauri/src/lib.rs` | Rust 壳 | 改：托盘 `icon_as_template(true)` |
+| `desktop/src-tauri/icons/icon-tray.png` | 托盘单色图标 | 新建（单色 template 用） |
 
 ---
 
 ## Task 1: 配色令牌迁移到天青 Sky
 
 **Files:**
-- Modify: `app/src/assets/tokens.css`（整文件替换 `:root` 内容）
+- Modify: `desktop/src/assets/tokens.css`（整文件替换 `:root` 内容）
 
 **Interfaces:**
 - Produces: 所有 `--yb-*` 令牌的天青取值；新增 `--yb-state-*`（七态灯）、`--yb-body-*`（身体）；保留别名 `--yb-idle/listen/think/work/say`、`--yb-dumpling-*` 指向新令牌，避免 Avatar 重写前（Task 2）其它组件引用断裂。
 
-- [ ] **Step 1: 用天青版整体替换 `app/src/assets/tokens.css`**
+- [ ] **Step 1: 用天青版整体替换 `desktop/src/assets/tokens.css`**
 
 ```css
 /* 设计令牌：宠物窗与面板窗共用（main.ts / panel.ts 各 import 一次）。
@@ -142,18 +142,18 @@
 
 - [ ] **Step 2: 类型检查 + 构建**
 
-Run: `cd app && npx vue-tsc --noEmit`
+Run: `cd desktop && npx vue-tsc --noEmit`
 Expected: 无错误（CSS 改动不影响 TS，但确认未误改其它文件）。
 
 - [ ] **Step 3: 目测全局配色切换**
 
-Run: `cd app && npm run dev`，浏览器开 `http://localhost:1420/design.html`。
+Run: `cd desktop && npm run dev`，浏览器开 `http://localhost:1420/design.html`。
 Expected: 整页底色变清爽冷白偏蓝，accent 变天青蓝；聊天气泡/看板/输入条都跟着切到天青，无残留杏色。再开 `http://localhost:1420/`（宠物窗）确认收起态底色一致。
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add app/src/assets/tokens.css
+git add desktop/src/assets/tokens.css
 git commit -m "feat(avatar): tokens 暖奶油→天青 Sky，新增身体/状态灯令牌" -m "Co-Authored-By: Claude <noreply@anthropic.com>"
 ```
 
@@ -162,14 +162,14 @@ git commit -m "feat(avatar): tokens 暖奶油→天青 Sky，新增身体/状态
 ## Task 2: 重写 Avatar.vue（立体鹅蛋 + 小手 + 天线 + 七态）
 
 **Files:**
-- Modify: `app/src/components/Avatar.vue`（整体替换）
-- Modify: `app/src/DesignPreview.vue`（状态数组 + 标签加 success/error）
+- Modify: `desktop/src/components/Avatar.vue`（整体替换）
+- Modify: `desktop/src/DesignPreview.vue`（状态数组 + 标签加 success/error）
 
 **Interfaces:**
 - Consumes: Task 1 的 `--yb-body-*`、`--yb-state-*`、`--yb-accent`。
 - Produces: `Avatar` props `{ state: "idle"|"listen"|"think"|"work"|"say"|"success"|"error"; size?: number }`、emits `click`/`longpress`（与旧版兼容，App.vue 无需改调用）。`state` 联合类型扩展了 `success`/`error`（Task 3 接入触发）。
 
-- [ ] **Step 1: 整体替换 `app/src/components/Avatar.vue` 为下述内容**
+- [ ] **Step 1: 整体替换 `desktop/src/components/Avatar.vue` 为下述内容**
 
 > 保留原有指针状态机（click/longpress/drag 消歧）；重写 `<template>` 为立体 SVG；`<style>` 重写。`state` 类型扩到七态。
 
@@ -494,7 +494,7 @@ const BLUSH = "var(--yb-body-blush)";
 
 - [ ] **Step 2: DesignPreview 加 success/error 两态**
 
-Modify `app/src/DesignPreview.vue`：把 `states` 数组与 `stateLabel` 改为：
+Modify `desktop/src/DesignPreview.vue`：把 `states` 数组与 `stateLabel` 改为：
 
 ```ts
 const states = ["idle", "listen", "think", "work", "say", "success", "error"] as const;
@@ -506,18 +506,18 @@ const stateLabel: Record<string, string> = {
 
 - [ ] **Step 3: 类型检查**
 
-Run: `cd app && npx vue-tsc --noEmit`
+Run: `cd desktop && npx vue-tsc --noEmit`
 Expected: 无错误。注意 `App.vue` 仍把 `state` 传成五态字符串字面量——TS 会因 `AvatarState` 在 App.vue 里仍是旧五态定义而**可能不报错**（App.vue 自有 `type AvatarState`），但 Task 3 会同步 App.vue 的类型。若报错涉及 App.vue 传 `state`，先在 Task 3 修。
 
 - [ ] **Step 4: 目测七态**
 
-Run: `cd app && npm run dev`，开 `http://localhost:1420/design.html`。
+Run: `cd desktop && npm run dev`，开 `http://localhost:1420/design.html`。
 Expected: 七个团子并排，全部天青瓷白 + 立体光影 + 小手 + 天线；天线灯颜色依次为 灰蓝/青/紫/琥珀/绿/深绿/红；think 有旋转虚线环、listen/say 有声波、success 有星星、error 有汗滴；work 是琥珀（≠ 天青主色）。
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add app/src/components/Avatar.vue app/src/DesignPreview.vue
+git add desktop/src/components/Avatar.vue desktop/src/DesignPreview.vue
 git commit -m "feat(avatar): 重写角色——天青鹅蛋+立体光影+小手+天线状态灯+七态" -m "Co-Authored-By: Claude <noreply@anthropic.com>"
 ```
 
@@ -526,14 +526,14 @@ git commit -m "feat(avatar): 重写角色——天青鹅蛋+立体光影+小手+
 ## Task 3: 收起态对话气泡 PeekBubble + App 接入（含 success/error 触发）
 
 **Files:**
-- Create: `app/src/components/PeekBubble.vue`
-- Modify: `app/src/App.vue`（类型扩七态、busy 修正、peek 状态 + 计时、onEvent 触发、模板渲染 PeekBubble）
+- Create: `desktop/src/components/PeekBubble.vue`
+- Modify: `desktop/src/App.vue`（类型扩七态、busy 修正、peek 状态 + 计时、onEvent 触发、模板渲染 PeekBubble）
 
 **Interfaces:**
 - Consumes: Task 2 的 `Avatar`（七态）。复用现有 `expand()`（`App.vue:56`）与 `window.ts` 的展开方向（`dir`）。
 - Produces: `PeekBubble` props `{ text: string; preview?: string; long?: boolean }`、emit `expand`。
 
-- [ ] **Step 1: 新建 `app/src/components/PeekBubble.vue`**
+- [ ] **Step 1: 新建 `desktop/src/components/PeekBubble.vue`**
 
 ```vue
 <script setup lang="ts">
@@ -595,7 +595,7 @@ defineEmits<{ (e: "expand"): void; (e: "hover"): void; (e: "leave"): void }>();
 
 - [ ] **Step 2: 改 `App.vue` —— 类型扩七态 + busy 修正**
 
-Modify `app/src/App.vue`。
+Modify `desktop/src/App.vue`。
 
 把 `type AvatarState`（约 `App.vue:32`）改为：
 ```ts
@@ -734,12 +734,12 @@ function flashValence(v: "success" | "error") {
 
 - [ ] **Step 6: 类型检查**
 
-Run: `cd app && npx vue-tsc --noEmit`
+Run: `cd desktop && npx vue-tsc --noEmit`
 Expected: 无错误。
 
 - [ ] **Step 7: 手动验证（真机）**
 
-Run: `cd app && npm run tauri dev`。
+Run: `cd desktop && npm run tauri dev`。
 验证：
 1. 对译宝说句话，回复到达 → 团子左侧升起气泡，显示回复文本（短）或摘要+「点开看」（长，如让它列看板）。
 2. 约 6 秒气泡自动消失；鼠标悬停期间冻结不消失，移开后按剩余时间继续倒计时（hover 暂停由 Step 3/5 实现）。
@@ -749,7 +749,7 @@ Run: `cd app && npm run tauri dev`。
 - [ ] **Step 8: Commit**
 
 ```bash
-git add app/src/components/PeekBubble.vue app/src/App.vue
+git add desktop/src/components/PeekBubble.vue desktop/src/App.vue
 git commit -m "feat(avatar): 收起态对话气泡 peek + success/error 情绪 + busy 修正" -m "Co-Authored-By: Claude <noreply@anthropic.com>"
 ```
 
@@ -758,8 +758,8 @@ git commit -m "feat(avatar): 收起态对话气泡 peek + success/error 情绪 +
 ## Task 4: 透明窗鼠标穿透（setIgnoreMouseEvents）
 
 **Files:**
-- Modify: `app/src/lib/window.ts`（新增 `setClickThrough`）
-- Modify: `app/src/App.vue`（收起态 mousemove 监听切换穿透）
+- Modify: `desktop/src/lib/window.ts`（新增 `setClickThrough`）
+- Modify: `desktop/src/App.vue`（收起态 mousemove 监听切换穿透）
 
 **Interfaces:**
 - Consumes: Tauri `getCurrentWindow().setIgnoreMouseEvents(ignore, {forward:true})`。
@@ -769,7 +769,7 @@ git commit -m "feat(avatar): 收起态对话气泡 peek + success/error 情绪 +
 
 - [ ] **Step 1: `window.ts` 新增 setClickThrough**
 
-在 `app/src/lib/window.ts` 末尾追加：
+在 `desktop/src/lib/window.ts` 末尾追加：
 
 ```ts
 /** 鼠标穿透开关：on=true 透明区穿透（仍转发 mousemove），on=false 团子区可交互。 */
@@ -815,12 +815,12 @@ function onPetHover(e: MouseEvent) {
 
 - [ ] **Step 3: 类型检查**
 
-Run: `cd app && npx vue-tsc --noEmit`
+Run: `cd desktop && npx vue-tsc --noEmit`
 Expected: 无错误。
 
 - [ ] **Step 4: 手动验证（真机，关键）**
 
-Run: `cd app && npm run tauri dev`。
+Run: `cd desktop && npm run tauri dev`。
 验证：
 1. 收起态：把团子拖到一个桌面图标/另一窗口上方，点团子**旁边透明区** → 应点中下面的图标/窗口（穿透生效），不再被 132×140 透明窗吞掉。
 2. 光标移到团子上 → 团子可点击/长按/拖（hover 切回可交互）。
@@ -830,7 +830,7 @@ Run: `cd app && npm run tauri dev`。
 - [ ] **Step 5: Commit**
 
 ```bash
-git add app/src/lib/window.ts app/src/App.vue
+git add desktop/src/lib/window.ts desktop/src/App.vue
 git commit -m "feat(avatar): 透明窗鼠标穿透——透明区点击直达桌面，团子区可交互" -m "Co-Authored-By: Claude <noreply@anthropic.com>"
 ```
 
@@ -839,8 +839,8 @@ git commit -m "feat(avatar): 透明窗鼠标穿透——透明区点击直达桌
 ## Task 5: 托盘图标 template 化（macOS 暗色菜单栏适配）
 
 **Files:**
-- Modify: `app/src-tauri/src/lib.rs`（`icon_as_template(false)` → `true`）
-- Create: `app/src-tauri/icons/icon-tray.png`（单色剪影，透明背景）
+- Modify: `desktop/src-tauri/src/lib.rs`（`icon_as_template(false)` → `true`）
+- Create: `desktop/src-tauri/icons/icon-tray.png`（单色剪影，透明背景）
 
 **Interfaces:**
 - 无前端接口；仅 Rust 托盘构建参数。
@@ -849,12 +849,12 @@ git commit -m "feat(avatar): 透明窗鼠标穿透——透明区点击直达桌
 
 - [ ] **Step 1: 准备单色托盘图标**
 
-用任意工具把译宝天线鹅蛋剪影导出为 **单色（纯黑主体 + 透明背景）PNG，32×32 与 128×128**，存为 `app/src-tauri/icons/icon-tray.png`（128 优先，macOS 会缩放）。
-> 若无现成剪影，可临时用现有 `icons/icon.png` 做灰度+阈值处理得到单色版；或先跳过本任务的视觉，仅在 Step 2 改参数并验证不崩，图标视觉后补。本步产物：`app/src-tauri/icons/icon-tray.png` 存在。
+用任意工具把译宝天线鹅蛋剪影导出为 **单色（纯黑主体 + 透明背景）PNG，32×32 与 128×128**，存为 `desktop/src-tauri/icons/icon-tray.png`（128 优先，macOS 会缩放）。
+> 若无现成剪影，可临时用现有 `icons/icon.png` 做灰度+阈值处理得到单色版；或先跳过本任务的视觉，仅在 Step 2 改参数并验证不崩，图标视觉后补。本步产物：`desktop/src-tauri/icons/icon-tray.png` 存在。
 
 - [ ] **Step 2: 改 `lib.rs` 托盘构建**
 
-Modify `app/src-tauri/src/lib.rs`（约 `lib.rs:512-516`）：
+Modify `desktop/src-tauri/src/lib.rs`（约 `lib.rs:512-516`）：
 
 把
 ```rust
@@ -875,18 +875,18 @@ TrayIconBuilder::with_id("main-tray")
 
 - [ ] **Step 3: 构建验证**
 
-Run: `cd app/src-tauri && cargo build`
+Run: `cd desktop/src-tauri && cargo build`
 Expected: 编译通过（确认 `icon-tray.png` 被 `include_bytes!` 找到、无路径错误）。
 
 - [ ] **Step 4: 手动验证（macOS）**
 
-Run: `cd app && npm run tauri dev`。
+Run: `cd desktop && npm run tauri dev`。
 切系统到深色菜单栏 → 托盘图标应自适应变白可见（template 生效）；浅色下变深。不再出现「彩色图标在深色菜单栏上糊成一团」。
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add app/src-tauri/src/lib.rs app/src-tauri/icons/icon-tray.png
+git add desktop/src-tauri/src/lib.rs desktop/src-tauri/icons/icon-tray.png
 git commit -m "feat(avatar): 托盘图标 template 化，适配 macOS 暗色菜单栏" -m "Co-Authored-By: Claude <noreply@anthropic.com>"
 ```
 

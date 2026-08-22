@@ -11,7 +11,7 @@
 二、当前问题清单（已核实）
 #问题证据1暖棕文字色留在冷天青表面tokens.css --yb-text: #3f372e、--yb-body-ink: #3f372e；Avatar.vue:133 影子 fill="#3f372e"。奶油主题遗留，与 --yb-text-dim: #8a9aac（冷调）同屏冲突2动效令牌形同虚设--yb-dur/--yb-ease 已定义，但组件内 transition: transform 0.15s ease（Avatar.vue:355）等硬编码遍布 15 个文件3圆角/字号硬编码全量统计 167 处 border-radius:/font-size:/transition: 字面量4待批准琥珀色未进 token--yb-state-work: #f2a03c 被当作装饰色借用（Avatar.vue:261 spark 直接写 #f2a03c），无语义层5团子双重变换.av{transform:scaleY(0.78)} 压全局，.face 再用 matrix(1,0,0,1.282,0,-16.9) 反向拉回 → 描边粗细不均、天线被压扁6光晕过大aura 是 r=58 满幅圆（几乎等于 viewBox 半径），侧边栏 36px 下糊成蓝雾7小尺寸九态难辨状态信息集中在 3.4px 的天线灯点上8UI emoji 当图标⏰💬🔐📌🍡👋📄⚠️（HomeFeed 262/264/503/709、PanelApp 378、SetupWizard 50、PermissionsBanner 27、App 701）跨平台字形不可控、与线性 UI 割裂
 
-三、令牌层重构（app/src/assets/tokens.css）
+三、令牌层重构（desktop/src/assets/tokens.css）
 全量重写为语义分层。组件只消费语义名，不再消费原始色值——这是深色模式免改组件的前提。
 结构：
 
@@ -31,7 +31,7 @@
 
 
 四、图标系统（替换全部 UI emoji，问题 #8）
-新增 app/src/components/YbIcon.vue：单文件内联 SVG sprite，viewBox 0 0 24 24，stroke-width 1.75、currentColor、stroke-linecap round。统一线性风格，尺寸经 size prop（默认 16）。
+新增 desktop/src/components/YbIcon.vue：单文件内联 SVG sprite，viewBox 0 0 24 24，stroke-width 1.75、currentColor、stroke-linecap round。统一线性风格，尺寸经 size prop（默认 16）。
 
 首批图标：clock（提醒）、chat、lock（权限）、pin、doc（上下文附文）、wrench（过程行进行中）、check、x、stop（打断）、alert（待批准）、inbox、sparkle、wave（欢迎）、plug（技能）、settings
 替换点：HomeFeed.vue:262/264/503/709、PanelApp.vue:378（🍡 空态占位改用团子剪影而非 emoji）、SetupWizard.vue:50、PermissionsBanner.vue:27、App.vue:701/719、PanelApp.vue:349

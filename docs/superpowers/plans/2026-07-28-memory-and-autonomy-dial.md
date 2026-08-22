@@ -25,10 +25,10 @@
 - Modify `sidecar/src/yibao_brain/server.py`: `mem_edit` IPC；`_reminder_loop`/`_on_plugin_event` 按 `proactive.level` 过滤与标注。
 - Modify `sidecar/src/yibao_brain/config.py`: `proactive.level` 默认值。
 - Modify `sidecar/tests/test_memory.py`、`test_server.py`、`test_mem_settings.py`、`test_reminders.py`: 对应覆盖。
-- Modify `app/src-tauri/src/lib.rs`: `mem_edit` command 与 `brain-mem-edited` 转发。
-- Modify `app/src/lib/brain.ts`: `editMem()` 一次性接口；`SettingsValues` 加键；reminder 事件 DTO 加 `level`。
-- Modify `app/src/components/SettingsView.vue`: 记忆行内编辑 + 命名空间筛选 chips + 全文展开；「主动行为」组三档旋钮。
-- Modify `app/src/App.vue`: reminder case 按 `level` 决定亮窗。
+- Modify `desktop/src-tauri/src/lib.rs`: `mem_edit` command 与 `brain-mem-edited` 转发。
+- Modify `desktop/src/lib/brain.ts`: `editMem()` 一次性接口；`SettingsValues` 加键；reminder 事件 DTO 加 `level`。
+- Modify `desktop/src/components/SettingsView.vue`: 记忆行内编辑 + 命名空间筛选 chips + 全文展开；「主动行为」组三档旋钮。
+- Modify `desktop/src/App.vue`: reminder case 按 `level` 决定亮窗。
 - Modify `docs/research/2026-07-27-os-feel-design.md`: §4.4 实装记录。
 
 ## Task 1: sidecar 记忆编辑能力
@@ -77,8 +77,8 @@ git commit -m "feat(memory): 支持编辑单条长期记忆"
 ## Task 2: Rust 与 TypeScript 编辑链路
 
 **Files:**
-- Modify: `app/src-tauri/src/lib.rs`
-- Modify: `app/src/lib/brain.ts`
+- Modify: `desktop/src-tauri/src/lib.rs`
+- Modify: `desktop/src/lib/brain.ts`
 
 - [x] **Step 1: Rust command 与转发**
 
@@ -90,20 +90,20 @@ sidecar reader 将 `mem_edited` emit 为 `brain-mem-edited`；新增 `mem_edit(i
 
 - [x] **Step 3: 类型与编译验证**
 
-Run: `cd app && npx vue-tsc --noEmit && cargo check --manifest-path src-tauri/Cargo.toml`
+Run: `cd desktop && npx vue-tsc --noEmit && cargo check --manifest-path src-tauri/Cargo.toml`
 Expected: exit 0。
 
 Commit:
 
 ```bash
-git add app/src-tauri/src/lib.rs app/src/lib/brain.ts
+git add desktop/src-tauri/src/lib.rs desktop/src/lib/brain.ts
 git commit -m "feat(shell): 记忆编辑 IPC 桥"
 ```
 
 ## Task 3: 前端记忆管理增强
 
 **Files:**
-- Modify: `app/src/components/SettingsView.vue`
+- Modify: `desktop/src/components/SettingsView.vue`
 
 - [x] **Step 1: 行内编辑**
 
@@ -119,13 +119,13 @@ git commit -m "feat(shell): 记忆编辑 IPC 桥"
 
 - [x] **Step 4: 前端验证**
 
-Run: `cd app && npx vue-tsc --noEmit && npm run build`
+Run: `cd desktop && npx vue-tsc --noEmit && npm run build`
 Expected: exit 0。
 
 Commit:
 
 ```bash
-git add app/src/components/SettingsView.vue
+git add desktop/src/components/SettingsView.vue
 git commit -m "feat(settings): 记忆可编辑、按命名空间筛选、展开全文"
 ```
 
@@ -175,9 +175,9 @@ git commit -m "feat(settings): 自主权三档旋钮挂接主动推送"
 ## Task 5: 前端旋钮 UI 与呈现分级
 
 **Files:**
-- Modify: `app/src/lib/brain.ts`
-- Modify: `app/src/components/SettingsView.vue`
-- Modify: `app/src/App.vue`
+- Modify: `desktop/src/lib/brain.ts`
+- Modify: `desktop/src/components/SettingsView.vue`
+- Modify: `desktop/src/App.vue`
 
 - [x] **Step 1: 类型与设置读写**
 
@@ -193,13 +193,13 @@ reminder case（`App.vue:374-392`）：`e.level === "bubble"` 时只 push 气泡
 
 - [x] **Step 4: 前端验证**
 
-Run: `cd app && npx vue-tsc --noEmit && npm run build`
+Run: `cd desktop && npx vue-tsc --noEmit && npm run build`
 Expected: exit 0。
 
 Commit:
 
 ```bash
-git add app/src/lib/brain.ts app/src/components/SettingsView.vue app/src/App.vue
+git add desktop/src/lib/brain.ts desktop/src/components/SettingsView.vue desktop/src/App.vue
 git commit -m "feat(settings): 主动行为三档旋钮与呈现分级"
 ```
 
@@ -215,7 +215,7 @@ Expected: all tests pass，记录数量。
 
 - [x] **Step 2: 前端与 Rust 全量**
 
-Run: `cd app && npx vue-tsc --noEmit && npm run build && cargo check --manifest-path src-tauri/Cargo.toml && cargo test --manifest-path src-tauri/Cargo.toml`
+Run: `cd desktop && npx vue-tsc --noEmit && npm run build && cargo check --manifest-path src-tauri/Cargo.toml && cargo test --manifest-path src-tauri/Cargo.toml`
 Expected: exit 0。
 
 - [x] **Step 3: 更新 os-feel-design §4.4 实装记录**

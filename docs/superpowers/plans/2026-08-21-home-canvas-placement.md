@@ -22,11 +22,11 @@
 ### Task 1: 装配数据改成框
 
 **Files:**
-- Modify: `app/src/lib/home-assembly.ts`
-- Modify: `app/src/lib/home-assembly.test.ts`
-- Modify: `app/src/lib/home-widgets.ts`（`layouts` 偏好）
-- Modify: `app/src/lib/home-chrome.ts` 及 `home-chrome.test.ts`（去掉区名 slot）
-- Modify: `app/src/lib/home-frame.test.ts`
+- Modify: `desktop/src/lib/home-assembly.ts`
+- Modify: `desktop/src/lib/home-assembly.test.ts`
+- Modify: `desktop/src/lib/home-widgets.ts`（`layouts` 偏好）
+- Modify: `desktop/src/lib/home-chrome.ts` 及 `home-chrome.test.ts`（去掉区名 slot）
+- Modify: `desktop/src/lib/home-frame.test.ts`
 
 **Produces:** `FrameBox`, `resolveAssembly` 返回 `items[].frame`；三份预设有出厂框；无 `grid.areas`。
 
@@ -38,8 +38,8 @@
 ### Task 2: Frame 只当舞台
 
 **Files:**
-- Modify: `app/src/components/HomeFrame.vue`
-- Modify: `app/src/lib/home-frame.test.ts`
+- Modify: `desktop/src/components/HomeFrame.vue`
+- Modify: `desktop/src/lib/home-frame.test.ts`
 
 **Produces:** 零件按 `frame` 绝对定位；删除 salon/desk/rails 布局 CSS。
 
@@ -51,9 +51,9 @@
 ### Task 3: 拖与拖边写回偏好
 
 **Files:**
-- Modify: `app/src/lib/home-widgets.ts`
-- Modify: `app/src/components/HomeFrame.vue`（或小的 `HomePartHost.vue`）
-- Test: `app/src/lib/home-widgets.test.ts`
+- Modify: `desktop/src/lib/home-widgets.ts`
+- Modify: `desktop/src/components/HomeFrame.vue`（或小的 `HomePartHost.vue`）
+- Test: `desktop/src/lib/home-widgets.test.ts`
 
 **Produces:** 移动改 left/top；拖边改 width/height；卸贴；刷新仍在。
 
@@ -64,7 +64,7 @@
 ### Task 4: 出厂三间房对齐
 
 **Files:**
-- Modify: `app/src/lib/home-assembly.ts` 里三份 `frames`
+- Modify: `desktop/src/lib/home-assembly.ts` 里三份 `frames`
 - 目测 rails / desk / salon
 
 **Produces:** 出厂快照看起来仍是三栏、整桌、会客一席，但已是画布。

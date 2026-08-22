@@ -20,8 +20,8 @@
 - Modify `sidecar/src/yibao_brain/perception.py`: window queries, timeline builder, `LoadUserActivitySkill`.
 - Modify `sidecar/src/yibao_brain/config.py`: default-off model access setting.
 - Modify `sidecar/src/yibao_brain/server.py`: register the tool against the live perception store/settings.
-- Modify `app/src/lib/brain.ts`: type the new setting.
-- Modify `app/src/components/SettingsView.vue`: add the explicit outbound-data toggle and copy.
+- Modify `desktop/src/lib/brain.ts`: type the new setting.
+- Modify `desktop/src/components/SettingsView.vue`: add the explicit outbound-data toggle and copy.
 - Modify tests in `sidecar/tests/test_invoker.py`, `test_loop.py`, `test_history.py`, `test_perception.py`, `test_mem_settings.py`, and `test_server.py`.
 - Modify `docs/research/2026-07-27-perception-design.md`: record the implemented consumption slice and validation evidence.
 
@@ -429,8 +429,8 @@ git commit -m "feat(perception): 接入模型活动访问授权"
 ### Task 4: Add the explicit model-access control to Settings
 
 **Files:**
-- Modify: `app/src/lib/brain.ts`
-- Modify: `app/src/components/SettingsView.vue`
+- Modify: `desktop/src/lib/brain.ts`
+- Modify: `desktop/src/components/SettingsView.vue`
 
 - [x] **Step 1: Extend the TypeScript settings contract**
 
@@ -479,16 +479,16 @@ Change the opening note to distinguish encrypted local storage from this optiona
 
 - [x] **Step 4: Run frontend verification and commit**
 
-Run: `cd app && npx vue-tsc --noEmit`
+Run: `cd desktop && npx vue-tsc --noEmit`
 
-Run: `cd app && npm run build`
+Run: `cd desktop && npm run build`
 
 Expected: both commands exit 0.
 
 Commit:
 
 ```bash
-git add app/src/lib/brain.ts app/src/components/SettingsView.vue
+git add desktop/src/lib/brain.ts desktop/src/components/SettingsView.vue
 git commit -m "feat(settings): 增加感知模型访问开关"
 ```
 
@@ -511,13 +511,13 @@ Expected: all tests pass; record the exact count in the research doc.
 
 - [x] **Step 3: Run all desktop static/build checks**
 
-Run: `cd app && npx vue-tsc --noEmit`
+Run: `cd desktop && npx vue-tsc --noEmit`
 
-Run: `cd app && npm run build`
+Run: `cd desktop && npm run build`
 
-Run: `cd app && cargo check --manifest-path src-tauri/Cargo.toml`
+Run: `cd desktop && cargo check --manifest-path src-tauri/Cargo.toml`
 
-Run: `cd app && cargo test --manifest-path src-tauri/Cargo.toml`
+Run: `cd desktop && cargo test --manifest-path src-tauri/Cargo.toml`
 
 Expected: every command exits 0.
 

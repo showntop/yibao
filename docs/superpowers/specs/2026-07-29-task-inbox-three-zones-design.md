@@ -157,7 +157,7 @@ export interface RunningTask {
 3. 前端结构测试：Home 存在三区标题；completed/activity 按 `kind` 分流；running task 点击进入 agents 面板。
 4. 前端：`node --test tests/inbox-ui.test.mjs`、`npx vue-tsc --noEmit`、`npm run build`。
 5. sidecar 全量：`cd sidecar && uv run --extra dev pytest -q`。
-6. Rust：`cargo check --manifest-path app/src-tauri/Cargo.toml` 与 `cargo test --manifest-path app/src-tauri/Cargo.toml`。
+6. Rust：`cargo check --manifest-path desktop/src-tauri/Cargo.toml` 与 `cargo test --manifest-path desktop/src-tauri/Cargo.toml`。
 
 ### 最小真机路径
 

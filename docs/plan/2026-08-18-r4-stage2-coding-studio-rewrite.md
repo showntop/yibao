@@ -15,7 +15,7 @@
 ## Global Constraints
 
 - 全程在 worktree `/Users/denny/Work/yibao/.worktrees/r4-stage1`(branch feat/r4-module-panel-runtime)施工;sidecar venv 是 worktree 独立环境(uv sync 重建过,editable 指向 worktree src)
-- 测试命令:插件面板 `cd plugins/coding/panel && pnpm test`(vitest);sidecar `cd sidecar && .venv/bin/pytest`;app `cd app && pnpm test && pnpm build`;Rust `cd app/src-tauri && cargo test`
+- 测试命令:插件面板 `cd plugins/coding/panel && pnpm test`(vitest);sidecar `cd sidecar && .venv/bin/pytest`;desktop `cd desktop && pnpm test && pnpm build`;Rust `cd desktop/src-tauri && cargo test`
 - 中文注释/提交信息,conventional 前缀;每 Task 独立 commit
 - **桥契约不变**:window.yibao.invoke/onInit/onMessage/emitEvent;takeover-input/takeover-stop 消息、takeover-state 上报形状 `{state, session}` 与现状逐字一致(PanelApp 依赖)
 - **协议容缺红线**(侦察 §1.3/§2):panel_data.data.agent 可缺(rewind/stop 兜底事件);done.usage 可整体缺、cost_usd 恒 null(codex);history fallback 消息无 uuid 键;drivers 的 claude-code 项无 version 键;codex 会话无 permission/user_msg/rewind_ok 事件;decide 对已结局 rid 报「不存在或已超时」是正常幂等
@@ -34,11 +34,11 @@
 ### Task 1: 阶段一终审跟进项 + 面板测试基建
 
 **Files:**
-- Modify: `app/src-tauri/src/plugin_proto.rs`(CSP 按 pid 收窄 + form-action)
-- Modify: `app/src/lib/webview-source.ts`(导出共享类型)+ `app/src/components/PanelApp.vue`、`HomePlugins.vue`、`PeekSurface.vue`(引用共享类型替换三处内联)
+- Modify: `desktop/src-tauri/src/plugin_proto.rs`(CSP 按 pid 收窄 + form-action)
+- Modify: `desktop/src/lib/webview-source.ts`(导出共享类型)+ `desktop/src/components/PanelApp.vue`、`HomePlugins.vue`、`PeekSurface.vue`(引用共享类型替换三处内联)
 - Modify: `scripts/panel-build/package.json`(vue pin 到 vendored runtime 同版)+ 重新 vendor 对齐
 - Create: `plugins/coding/panel/package.json`、`plugins/coding/panel/vitest.config.ts`、`plugins/coding/panel/tsconfig.json`
-- Test: `app/src-tauri/src/plugin_proto.rs` 内 #[cfg(test)] 增补;`app/src/lib/webview-source.test.ts` 不动
+- Test: `desktop/src-tauri/src/plugin_proto.rs` 内 #[cfg(test)] 增补;`desktop/src/lib/webview-source.test.ts` 不动
 
 **Interfaces:**
 - Produces: `WebviewPayload` 共享类型(三处宿主组件统一引用);CSP 形如 `script-src yibao-plugin://<pid> 'unsafe-inline'`(按 pid 收窄);面板项目 vitest 可跑(`pnpm --dir plugins/coding/panel test`)
@@ -59,7 +59,7 @@ fn csp_is_scoped_per_pid() {
 }
 ```
 
-Run: `cd app/src-tauri && cargo test plugin_proto` → 新测试 FAIL
+Run: `cd desktop/src-tauri && cargo test plugin_proto` → 新测试 FAIL
 
 - [ ] **Step 2: 实现——CSP_META 从常量改函数**
 
@@ -81,17 +81,17 @@ Run: `cargo test plugin_proto` → 全绿(6 旧 + 1 新)
 
 - [ ] **Step 3: WebviewPayload 共享类型**
 
-`app/src/lib/webview-source.ts`:文件已有 `export interface WebviewPayload`(若已是 export 则跳过)。三处宿主组件把内联 `webview: { html?: string; url?: string; v?: number } | null` 替换为 `webview: WebviewPayload | null` 并 import。PanelApp.vue 两处(:34/:362 附近)、HomePlugins.vue 两处、PeekSurface.vue 一处,共五处。
+`desktop/src/lib/webview-source.ts`:文件已有 `export interface WebviewPayload`(若已是 export 则跳过)。三处宿主组件把内联 `webview: { html?: string; url?: string; v?: number } | null` 替换为 `webview: WebviewPayload | null` 并 import。PanelApp.vue 两处(:34/:362 附近)、HomePlugins.vue 两处、PeekSurface.vue 一处,共五处。
 
-Run: `cd app && pnpm build && pnpm test` → 绿
+Run: `cd desktop && pnpm build && pnpm test` → 绿
 
 - [ ] **Step 4: panel-build 的 vue 与 vendored runtime 对齐**
 
 ```bash
-grep '"version"' app/node_modules/vue/package.json   # 记下版本,如 3.5.40
+grep '"version"' desktop/node_modules/vue/package.json   # 记下版本,如 3.5.40
 ```
 
-`scripts/panel-build/package.json` 的 `vue` 依赖改为该精确版本(去 `^`);`cd scripts/panel-build && pnpm install`;重新 vendor:`cp app/node_modules/vue/dist/vue.runtime.esm-browser.prod.js app/src-tauri/resources/sdk/vue.esm-browser.js`(若版本已一致则跳过,`cmp` 验证)。
+`scripts/panel-build/package.json` 的 `vue` 依赖改为该精确版本(去 `^`);`cd scripts/panel-build && pnpm install`;重新 vendor:`cp desktop/node_modules/vue/dist/vue.runtime.esm-browser.prod.js desktop/src-tauri/resources/sdk/vue.esm-browser.js`(若版本已一致则跳过,`cmp` 验证)。
 
 - [ ] **Step 5: 面板测试基建**
 
@@ -151,10 +151,10 @@ export default defineConfig({
 
 - [ ] **Step 6: 全量闸门 + commit**
 
-Run: `cd app/src-tauri && cargo test` 绿;`cd app && pnpm test && pnpm build` 绿
+Run: `cd desktop/src-tauri && cargo test` 绿;`cd desktop && pnpm test && pnpm build` 绿
 
 ```bash
-git add app/src-tauri/src/plugin_proto.rs app/src-tauri/resources/sdk/vue.esm-browser.js app/src/lib/webview-source.ts app/src/components/PanelApp.vue app/src/components/HomePlugins.vue app/src/components/PeekSurface.vue scripts/panel-build plugins/coding/panel/package.json plugins/coding/panel/vitest.config.ts plugins/coding/panel/tsconfig.json plugins/coding/panel/pnpm-lock.yaml
+git add desktop/src-tauri/src/plugin_proto.rs desktop/src-tauri/resources/sdk/vue.esm-browser.js desktop/src/lib/webview-source.ts desktop/src/components/PanelApp.vue desktop/src/components/HomePlugins.vue desktop/src/components/PeekSurface.vue scripts/panel-build plugins/coding/panel/package.json plugins/coding/panel/vitest.config.ts plugins/coding/panel/tsconfig.json plugins/coding/panel/pnpm-lock.yaml
 git commit -m "chore: 终审跟进——CSP 按 pid 收窄 + form-action、WebviewPayload 共享类型、vue 版本对齐、面板测试基建"
 ```
 
@@ -861,8 +861,8 @@ git commit -m "feat: studio 渲染纯函数库(markdown/diff/format)"
 - Modify: `plugins/coding/api.toml`(start/send/list/attach 的 `panel = "coding:chat"` → `"coding:studio"`)
 - Modify: `plugins/coding/manifest.toml`(删 chat 的 [[panel]] webview 声明)
 - Delete: `plugins/coding/panel/chat.html`、`plugins/coding/panel/vendor/`(三库已走 npm)
-- Modify: `app/src/components/PanelApp.vue`(isCoding 泛化:`panel.startsWith("coding:")` 且 (webviewHtml||webviewUrl))
-- Modify: `app/src/components/HomePlugins.vue`(:387 wall 刷新守卫等 coding:chat 字面引用排查)
+- Modify: `desktop/src/components/PanelApp.vue`(isCoding 泛化:`panel.startsWith("coding:")` 且 (webviewHtml||webviewUrl))
+- Modify: `desktop/src/components/HomePlugins.vue`(:387 wall 刷新守卫等 coding:chat 字面引用排查)
 - Modify: `sidecar/src/yibao_brain/server.py`(如有 coding:chat 字面引用,如任务卡路由)→ 改 coding:studio
 - Test: `sidecar/tests/` 引用 coding:chat 面板名的用例更新(grep 全仓 `coding:chat`)
 
@@ -870,7 +870,7 @@ git commit -m "feat: studio 渲染纯函数库(markdown/diff/format)"
 - grep `coding:chat` 全仓,逐一裁定:运行时引用改 coding:studio;历史文档不改
 - 关键裁决点(先查再改):loop.py 任务卡点击路由、HomeFeed 收件箱、server.py _fulfill_coding_perm 的 surface 文案、feed 任务卡 meta.plugin==="coding" 的 attach 路由( panel 事件 data.attach 流不变)
 - isCoding 泛化后:takeover 输入条路由对 studio 生效;ChatPanel 旧 ref 不再有面板注册(残留引用给清晰空态)
-- sidecar 全量 + app 全量 + 面板测试 + cargo 全绿
+- sidecar 全量 + desktop 全量 + 面板测试 + cargo 全绿
 - 真机验收清单(报告记录):既有 P1/P2/R3 验收全过(对话/回放/引擎/交接/rewind/mode/chips/截图/takeover/逃生口/后台任务卡);studio 在面板窗与大窗都能开
 
 - [ ] **Step 1-4:改 → grep 复查 → 全量闸门 → commit `feat: coding:studio 上线——panel ref 切换与 chat.html 退役`**
@@ -881,5 +881,5 @@ git commit -m "feat: studio 渲染纯函数库(markdown/diff/format)"
 
 A. studio 单工位能力与 chat.html 现状逐条对齐(侦察 13 项清单逐条过)
 B. P1/P2/R3 既有验收不回归(takeover/逃生口/审批 L2/后台任务卡/会话墙)
-C. 全量测试绿:sidecar pytest、app vitest+build、cargo test、panel vitest
+C. 全量测试绿:sidecar pytest、desktop vitest+build、cargo test、panel vitest
 D. 真机:studio 在面板窗(经 coding.start/list 等触发)与大窗(子入口)均可用;热加载仍有效

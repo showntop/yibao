@@ -328,7 +328,7 @@ def test_handoff_brief_skill(tmp_path, monkeypatch):
 - [ ] **Step 2: handoff() 流程** — `invoke("coding.handoff_list",{cwd})` → 0 个：setStatus 提示；1 个：直接 `handoffBrief(sid)`；N 个：渲染选择器（浮层，时间+first_line）→ 选 → `handoffBrief(sid)`。
 - [ ] **Step 3: handoffBrief(sid)** — `invoke("coding.handoff_brief",{session_id:sid, cwd})` → 返 `{brief, session_id, incomplete}` → 渲染**交接卡**插入 #log：头（`↩ 来自 Codex · <sid短> · <时间>` + incomplete 标注）+ 可编辑 textarea（brief 或空+占位"自动生成失败，手动粘贴"）+ `[取消]` `[用它开始]`。
 - [ ] **Step 4: 「用它开始」** — 取 textarea 值（brief）→ 移除卡片的编辑态/封存为只读起点标记（头改"↩ 已从 Codex 接续"）→ `invoke("coding.start",{cwd, prompt:brief, source:"codex:"+sid})` → 设 currentSession → 后续走现有流式渲染（CC 带 brief 接续）。「取消」→ 移除卡片。
-- [ ] **Step 5: build** — `cd app && npx vite build` exit 0。
+- [ ] **Step 5: build** — `cd desktop && npx vite build` exit 0。
 - [ ] **Step 6: commit** — `feat(coding): 交接卡——顶栏按钮/选择器/可编辑卡片/封存`
 
 ---

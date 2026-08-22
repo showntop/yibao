@@ -14,7 +14,7 @@
 - **`presentation` 是建议不是命令**：最终形态由宿主裁决器决定
 - **失败结果不带表面建议**：与既有「失败不放 panel 引用」共用同一 `if result.success`
 - **窄规则宁缺毋滥**：漏报退化为可点行加一次点击（语义仍通顺），误报的代价是抢屏，因此宁可漏
-- **不改 `app/src/lib/surface-policy.ts`**：其 11 条既有单测是本阶段的回归防线
+- **不改 `desktop/src/lib/surface-policy.ts`**：其 11 条既有单测是本阶段的回归防线
 - **不动大窗**：`InlineReceipt.vue` / `PeekSurface.vue` / `ActivityShelf.vue` / `Home.vue` 一律不改
 - **小窗不做卡、不做 ActivityShelf**
 - sidecar pytest 基线 **905** 全绿；`vue-tsc --noEmit` / `vite build` / `npm test`（基线 **70**）exit 0
@@ -23,17 +23,17 @@
 ## File Structure
 
 **新建**
-- `app/src/lib/pet-surface.ts` —— 形态映射 + 计数提取 + 失活，纯函数
-- `app/src/lib/pet-surface.test.ts`
-- `app/src/lib/explicit-intent.ts` —— 窄规则文本匹配，纯函数
-- `app/src/lib/explicit-intent.test.ts`
-- `app/src/components/SurfaceLine.vue` —— 带表面属性的行
+- `desktop/src/lib/pet-surface.ts` —— 形态映射 + 计数提取 + 失活，纯函数
+- `desktop/src/lib/pet-surface.test.ts`
+- `desktop/src/lib/explicit-intent.ts` —— 窄规则文本匹配，纯函数
+- `desktop/src/lib/explicit-intent.test.ts`
+- `desktop/src/components/SurfaceLine.vue` —— 带表面属性的行
 
 **修改**
 - `sidecar/src/yibao_brain/plugins.py` —— `DeclarativeTool.__init__`（:130）读声明、`run()`（:172-184）注入
 - `plugins/notes/manifest.toml` —— `keep` 声明 `presentation = "inline"`
 - `sidecar/tests/test_plugins.py` —— 4 条新测
-- `app/src/App.vue` —— `BubbleMsg`（:54）、`submit`（:770）、`launchPlugin`（:449）、`action_proposed`（:558-565）、`case "panel"`（:727-738）、气泡渲染（:1155）
+- `desktop/src/App.vue` —— `BubbleMsg`（:54）、`submit`（:770）、`launchPlugin`（:449）、`action_proposed`（:558-565）、`case "panel"`（:727-738）、气泡渲染（:1155）
 
 ---
 
@@ -236,8 +236,8 @@ git commit -m "feat(surface): 声明式 tool 可声明 presentation/attention—
 ## Task 2: 窄规则 explicit 匹配器
 
 **Files:**
-- Create: `app/src/lib/explicit-intent.ts`
-- Test: `app/src/lib/explicit-intent.test.ts`
+- Create: `desktop/src/lib/explicit-intent.ts`
+- Test: `desktop/src/lib/explicit-intent.test.ts`
 
 **Interfaces:**
 - Produces: `matchExplicitOpen(text: string, plugins: { id: string; name: string }[]): string | null` —— 命中返回插件 id，否则 `null`
@@ -247,7 +247,7 @@ git commit -m "feat(surface): 声明式 tool 可声明 presentation/attention—
 - [ ] **Step 1: 写失败测试**
 
 ```ts
-// app/src/lib/explicit-intent.test.ts
+// desktop/src/lib/explicit-intent.test.ts
 import { describe, expect, it } from "vitest";
 import { matchExplicitOpen } from "./explicit-intent";
 
@@ -287,13 +287,13 @@ describe("matchExplicitOpen", () => {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `cd app && npx vitest run src/lib/explicit-intent.test.ts`
+Run: `cd desktop && npx vitest run src/lib/explicit-intent.test.ts`
 Expected: FAIL —— `Failed to resolve import "./explicit-intent"`
 
 - [ ] **Step 3: 实现**
 
 ```ts
-// app/src/lib/explicit-intent.ts
+// desktop/src/lib/explicit-intent.ts
 /**
  * 窄规则：从用户消息里识别「明确要求打开某个插件」。
  *
@@ -327,13 +327,13 @@ export function matchExplicitOpen(text: string, plugins: { id: string; name: str
 
 - [ ] **Step 4: 跑测试确认通过**
 
-Run: `cd app && npx vitest run src/lib/explicit-intent.test.ts`
+Run: `cd desktop && npx vitest run src/lib/explicit-intent.test.ts`
 Expected: PASS（6 条）
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add app/src/lib/explicit-intent.ts app/src/lib/explicit-intent.test.ts
+git add desktop/src/lib/explicit-intent.ts desktop/src/lib/explicit-intent.test.ts
 git commit -m "feat(surface): 窄规则识别明确打开意图——宁缺毋滥，漏报退化为一次点击"
 ```
 
@@ -342,11 +342,11 @@ git commit -m "feat(surface): 窄规则识别明确打开意图——宁缺毋�
 ## Task 3: 形态映射与表面属性
 
 **Files:**
-- Create: `app/src/lib/pet-surface.ts`
-- Test: `app/src/lib/pet-surface.test.ts`
+- Create: `desktop/src/lib/pet-surface.ts`
+- Test: `desktop/src/lib/pet-surface.test.ts`
 
 **Interfaces:**
-- Consumes: `Presentation` 类型（`app/src/lib/surface-policy.ts` 导出，值为 `"inline" | "peek" | "stage" | "focus"`）
+- Consumes: `Presentation` 类型（`desktop/src/lib/surface-policy.ts` 导出，值为 `"inline" | "peek" | "stage" | "focus"`）
 - Produces:
   - `interface SurfaceAttr { panel: string; title: string; count: number | null; live: boolean }`
   - `petFormOf(d: { presentation: Presentation | null; show: boolean }): "window" | "line"`
@@ -356,7 +356,7 @@ git commit -m "feat(surface): 窄规则识别明确打开意图——宁缺毋�
 - [ ] **Step 1: 写失败测试**
 
 ```ts
-// app/src/lib/pet-surface.test.ts
+// desktop/src/lib/pet-surface.test.ts
 import { describe, expect, it } from "vitest";
 import { deactivateAll, petFormOf, surfaceCount, type SurfaceAttr } from "./pet-surface";
 
@@ -423,13 +423,13 @@ describe("deactivateAll", () => {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `cd app && npx vitest run src/lib/pet-surface.test.ts`
+Run: `cd desktop && npx vitest run src/lib/pet-surface.test.ts`
 Expected: FAIL —— `Failed to resolve import "./pet-surface"`
 
 - [ ] **Step 3: 实现**
 
 ```ts
-// app/src/lib/pet-surface.ts
+// desktop/src/lib/pet-surface.ts
 import type { Presentation } from "./surface-policy";
 
 /**
@@ -475,13 +475,13 @@ export function deactivateAll(rows: { surface?: SurfaceAttr }[]): void {
 
 - [ ] **Step 4: 跑测试确认通过**
 
-Run: `cd app && npx vitest run src/lib/pet-surface.test.ts`
+Run: `cd desktop && npx vitest run src/lib/pet-surface.test.ts`
 Expected: PASS（11 条）
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add app/src/lib/pet-surface.ts app/src/lib/pet-surface.test.ts
+git add desktop/src/lib/pet-surface.ts desktop/src/lib/pet-surface.test.ts
 git commit -m "feat(surface): 小窗形态映射二值化——stage/focus 才开窗，其余落行"
 ```
 
@@ -490,7 +490,7 @@ git commit -m "feat(surface): 小窗形态映射二值化——stage/focus 才�
 ## Task 4: 表面行组件
 
 **Files:**
-- Create: `app/src/components/SurfaceLine.vue`
+- Create: `desktop/src/components/SurfaceLine.vue`
 
 **Interfaces:**
 - Consumes: `SurfaceAttr`（Task 3）
@@ -499,7 +499,7 @@ git commit -m "feat(surface): 小窗形态映射二值化——stage/focus 才�
 - [ ] **Step 1: 建组件**
 
 ```vue
-<!-- app/src/components/SurfaceLine.vue -->
+<!-- desktop/src/components/SurfaceLine.vue -->
 <script setup lang="ts">
 // 带表面属性的行（Phase 1.5）：可点时是入口，失活后是历史。
 // 小窗不做卡——卡不承载撤销，多提供的信息接近于零，却在 360px 里顶满一整块。
@@ -560,13 +560,13 @@ function onOpen(): void {
 
 - [ ] **Step 2: 类型与构建闸门**
 
-Run: `cd app && npx vue-tsc --noEmit && npx vite build`
+Run: `cd desktop && npx vue-tsc --noEmit && npx vite build`
 Expected: 两者 exit 0
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add app/src/components/SurfaceLine.vue
+git add desktop/src/components/SurfaceLine.vue
 git commit -m "feat(surface): 表面行组件——可点是入口，失活是历史"
 ```
 
@@ -575,10 +575,10 @@ git commit -m "feat(surface): 表面行组件——可点是入口，失活是�
 ## Task 5: 小窗接线
 
 **Files:**
-- Modify: `app/src/App.vue` —— `BubbleMsg`（:54-62）、`launchPlugin`（:449-456）、`action_proposed`（:558-565）、`case "panel"`（:727-738）、`submit`（:770）、气泡渲染（:1155-1166）
+- Modify: `desktop/src/App.vue` —— `BubbleMsg`（:54-62）、`launchPlugin`（:449-456）、`action_proposed`（:558-565）、`case "panel"`（:727-738）、`submit`（:770）、气泡渲染（:1155-1166）
 
 **Interfaces:**
-- Consumes: `matchExplicitOpen`（Task 2）、`petFormOf` / `surfaceCount` / `deactivateAll` / `SurfaceAttr`（Task 3）、`SurfaceLine.vue`（Task 4）、`decideSurface`（`app/src/lib/surface-policy.ts`，不改动）
+- Consumes: `matchExplicitOpen`（Task 2）、`petFormOf` / `surfaceCount` / `deactivateAll` / `SurfaceAttr`（Task 3）、`SurfaceLine.vue`（Task 4）、`decideSurface`（`desktop/src/lib/surface-policy.ts`，不改动）
 
 - [ ] **Step 1: 扩 BubbleMsg 与导入**
 
@@ -745,13 +745,13 @@ function openPanelWindow(): void {
 
 - [ ] **Step 7: 类型、构建与单测闸门**
 
-Run: `cd app && npx vue-tsc --noEmit && npx vite build && npx vitest run`
+Run: `cd desktop && npx vue-tsc --noEmit && npx vite build && npx vitest run`
 Expected: 三者 exit 0，vitest **94 passed**（基线 70 + Task 2 实际落地 13 + Task 3 的 11）
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add app/src/App.vue
+git add desktop/src/App.vue
 git commit -m "feat(surface): 小窗接裁决器——面板落成过程行的表面属性，不再无条件弹浮窗"
 ```
 
@@ -767,7 +767,7 @@ git commit -m "feat(surface): 小窗接裁决器——面板落成过程行的�
 
 ```bash
 cd sidecar && uv run pytest
-cd ../app && npx vue-tsc --noEmit && npx vite build && npx vitest run
+cd ../desktop && npx vue-tsc --noEmit && npx vite build && npx vitest run
 cd src-tauri && cargo check
 ```
 Expected: pytest 909 passed；vitest 94 passed；vue-tsc / vite build / cargo check 全 exit 0

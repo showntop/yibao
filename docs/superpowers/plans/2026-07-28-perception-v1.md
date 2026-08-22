@@ -18,9 +18,9 @@
 - Modify `sidecar/src/yibao_brain/config.py`: 感知 settings 默认值与数据库路径。
 - Modify `sidecar/src/yibao_brain/server.py`: 生命周期挂载和三类 IPC 请求。
 - Modify `sidecar/tests/test_server.py`: 感知 IPC 往返测试。
-- Modify `app/src-tauri/src/lib.rs`: 感知消息转发及 Tauri commands。
-- Modify `app/src/lib/brain.ts`: 感知 DTO 和一次性查询/删除/清空接口。
-- Modify `app/src/components/SettingsView.vue`: 感知开关、状态、日志、删除与清空 UI。
+- Modify `desktop/src-tauri/src/lib.rs`: 感知消息转发及 Tauri commands。
+- Modify `desktop/src/lib/brain.ts`: 感知 DTO 和一次性查询/删除/清空接口。
+- Modify `desktop/src/components/SettingsView.vue`: 感知开关、状态、日志、删除与清空 UI。
 - Modify `docs/research/2026-07-27-perception-design.md`: 记录最终加密决策和实装状态。
 
 ### Task 1: 加密 Observation Store
@@ -139,8 +139,8 @@ Expected: all tests pass。
 ### Task 4: Rust 与 TypeScript IPC 桥
 
 **Files:**
-- Modify: `app/src-tauri/src/lib.rs`
-- Modify: `app/src/lib/brain.ts`
+- Modify: `desktop/src-tauri/src/lib.rs`
+- Modify: `desktop/src/lib/brain.ts`
 
 - [x] **Step 1: 增加 Rust 转发与 commands**
 
@@ -152,13 +152,13 @@ sidecar reader 将 `perception`/`perception_deleted`/`perception_cleared` 分别
 
 - [x] **Step 3: 类型与 Rust 编译验证**
 
-Run: `cd app && npx vue-tsc --noEmit && cargo check --manifest-path src-tauri/Cargo.toml`
+Run: `cd desktop && npx vue-tsc --noEmit && cargo check --manifest-path src-tauri/Cargo.toml`
 Expected: exit 0。
 
 ### Task 5: 设置页感知控制与日志
 
 **Files:**
-- Modify: `app/src/components/SettingsView.vue`
+- Modify: `desktop/src/components/SettingsView.vue`
 
 - [x] **Step 1: 接入状态和动作**
 
@@ -170,7 +170,7 @@ onMounted 并行读取 settings 和首屏 50 条观察；总开关关闭时子�
 
 - [x] **Step 3: 前端验证**
 
-Run: `cd app && npx vue-tsc --noEmit && npm run build`
+Run: `cd desktop && npx vue-tsc --noEmit && npm run build`
 Expected: exit 0。
 
 ### Task 6: 全量验证与实装记录
@@ -185,7 +185,7 @@ Expected: all tests pass, 0 failures。
 
 - [x] **Step 2: 前端与 Rust 验证**
 
-Run: `cd app && npx vue-tsc --noEmit && npm run build && cargo test --manifest-path src-tauri/Cargo.toml`
+Run: `cd desktop && npx vue-tsc --noEmit && npm run build && cargo test --manifest-path src-tauri/Cargo.toml`
 Expected: all commands exit 0。
 
 - [x] **Step 3: 安全回归检查**

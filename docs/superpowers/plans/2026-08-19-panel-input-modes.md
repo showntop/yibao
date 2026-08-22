@@ -123,9 +123,9 @@ git commit -m "feat(brain): 面板输入模式声明——[[panel]].input 解析
 ### Task 2: app 类型 + PanelApp 声明化(收编硬编码)
 
 **Files:**
-- Modify: `app/src/lib/brain.ts`(PanelPayload :44-65)
-- Modify: `app/src/components/PanelApp.vue`(current 类型 :35-41;onEvent panel 构造;pullCache 泛型 :350-366;handoff computed;setCurrent entering 判定)
-- Test: `app/src/components/PanelApp.handoff.test.ts`(firePanel 载荷补 input + 新增「无声明不让位」用例)
+- Modify: `desktop/src/lib/brain.ts`(PanelPayload :44-65)
+- Modify: `desktop/src/components/PanelApp.vue`(current 类型 :35-41;onEvent panel 构造;pullCache 泛型 :350-366;handoff computed;setCurrent entering 判定)
+- Test: `desktop/src/components/PanelApp.handoff.test.ts`(firePanel 载荷补 input + 新增「无声明不让位」用例)
 
 **Interfaces:**
 - Consumes: Task 1 的载荷 `input` 键
@@ -186,7 +186,7 @@ function firePanel(panel: string, input?: string) {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `cd app && pnpm vitest run src/components/PanelApp.handoff.test.ts`
+Run: `cd desktop && pnpm vitest run src/components/PanelApp.handoff.test.ts`
 Expected: FAIL(旧三例:无 input 字段不再让位;新两例同理)
 
 - [ ] **Step 3: 实现**
@@ -226,22 +226,22 @@ setCurrent 的 entering 判定(现 `v?.panel === "coding:studio"`)改为:
 - [ ] **Step 4: 跑测试确认通过 + 全量 + 提交**
 
 ```bash
-cd app && pnpm vitest run src/components/PanelApp.handoff.test.ts && pnpm test && pnpm build
-git add app/src/lib/brain.ts app/src/components/PanelApp.vue app/src/components/PanelApp.handoff.test.ts
+cd desktop && pnpm vitest run src/components/PanelApp.handoff.test.ts && pnpm test && pnpm build
+git add desktop/src/lib/brain.ts desktop/src/components/PanelApp.vue desktop/src/components/PanelApp.handoff.test.ts
 git commit -m "refactor(panel): handoff 判定声明制——读 [[panel]].input,收编 coding:studio 硬编码"
 ```
 
 ### Task 3: HomePlugins 大窗让位
 
 **Files:**
-- Modify: `app/src/components/HomePlugins.vue`(current 类型 :212-219;onEvent panel 构造 :395-407;pullCache 泛型 :545-569;bench-bar :735;样式如需要)
-- Test: `app/src/components/HomePlugins.handoff.test.ts`(新建)
+- Modify: `desktop/src/components/HomePlugins.vue`(current 类型 :212-219;onEvent panel 构造 :395-407;pullCache 泛型 :545-569;bench-bar :735;样式如需要)
+- Test: `desktop/src/components/HomePlugins.handoff.test.ts`(新建)
 
 **Interfaces:**
 - Consumes: Task 2 的 `PanelPayload["input"]` 类型与判定规则(`input ∈ {handoff, none}` 让位)
 - Produces: 无新接口
 
-- [ ] **Step 1: 写失败测试** `app/src/components/HomePlugins.handoff.test.ts`
+- [ ] **Step 1: 写失败测试** `desktop/src/components/HomePlugins.handoff.test.ts`
 
 ```ts
 // @vitest-environment happy-dom
@@ -317,7 +317,7 @@ describe("大窗 handoff", () => {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `cd app && pnpm vitest run src/components/HomePlugins.handoff.test.ts`
+Run: `cd desktop && pnpm vitest run src/components/HomePlugins.handoff.test.ts`
 Expected: FAIL(input=handoff 时 bench-bar 仍在)
 
 - [ ] **Step 3: 实现** `HomePlugins.vue`
@@ -340,8 +340,8 @@ const handoff = computed(() => {
 - [ ] **Step 4: 跑测试确认通过 + 全量 + 提交**
 
 ```bash
-cd app && pnpm vitest run src/components/HomePlugins.handoff.test.ts && pnpm test && pnpm build
-git add app/src/components/HomePlugins.vue app/src/components/HomePlugins.handoff.test.ts
+cd desktop && pnpm vitest run src/components/HomePlugins.handoff.test.ts && pnpm test && pnpm build
+git add desktop/src/components/HomePlugins.vue desktop/src/components/HomePlugins.handoff.test.ts
 git commit -m "feat(home): 大窗输入条 handoff——插件页读 [[panel]].input 让位,主屏导航即逃生口"
 ```
 
@@ -364,7 +364,7 @@ input = "handoff"
 
 ```bash
 cd sidecar && uv run --extra dev pytest -x -q
-cd app && pnpm test && pnpm build
+cd desktop && pnpm test && pnpm build
 cd plugins/coding/panel && pnpm test   # 零改动,兜底跑
 ```
 

@@ -61,7 +61,7 @@ R4 退役 takeover 转发层后,面板窗内回到两个输入框上下叠放(st
 
 ### F. 测试与验收
 
-- app vitest:handoff 判定、bench-bar 显隐、随迁消息发出 + 草稿双侧清空、标题栏团子渲染与点击、mini 输入提交走 runInput。
+- desktop vitest:handoff 判定、bench-bar 显隐、随迁消息发出 + 草稿双侧清空、标题栏团子渲染与点击、mini 输入提交走 runInput。
 - panel vitest:Composer 收 `handoff-draft` 填草稿 + 聚焦;发送/排队/中断/@/粘贴截图行为不回归(现有用例兜底)。
 - 视觉:截图自查器过 handoff 前/后两态。
 

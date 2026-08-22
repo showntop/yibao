@@ -27,7 +27,7 @@
 - `plugins/coding/api.toml`（history quiet 条目）
 - `plugins/coding/panel/chat.html`（stopped/禁用/渲染/diff/历史/📁）
 - `sidecar/tests/test_coding_plugin.py`、`sidecar/tests/test_coding_handoff.py`
-- `app/src-tauri/Cargo.toml`、`app/package.json`、`app/src-tauri/src/lib.rs`、`app/src-tauri/capabilities/*.json`、`app/src/components/WebviewPanel.vue`
+- `desktop/src-tauri/Cargo.toml`、`desktop/package.json`、`desktop/src-tauri/src/lib.rs`、`desktop/src-tauri/capabilities/*.json`、`desktop/src/components/WebviewPanel.vue`
 - `sidecar/src/yibao_brain/loop.py`（SYSTEM_PROMPT steer）+ `sidecar/tests/test_loop.py`（或既有断言文件）
 
 ---
@@ -423,7 +423,7 @@ def _tool_result_events(msg: Any) -> list[dict]:
 
 - [ ] **Step 4: 跑测试 + 全量回归 + 构建**
 
-Run: `cd sidecar && uv run pytest tests/test_coding_plugin.py -q && uv run pytest -q && cd ../app && npx vite build`
+Run: `cd sidecar && uv run pytest tests/test_coding_plugin.py -q && uv run pytest -q && cd ../desktop && npx vite build`
 Expected: 全绿
 
 - [ ] **Step 5: Commit**
@@ -474,7 +474,7 @@ git commit -m "feat(coding): 透明渲染——thinking/工具输出/耗时token
 
 - [ ] **Step 3: 构建**
 
-Run: `cd app && npx vite build`
+Run: `cd desktop && npx vite build`
 Expected: exit 0
 
 - [ ] **Step 4: Commit**
@@ -742,7 +742,7 @@ header（:290-291 「↩ 从 Codex 接续」「新对话」旁）加 `<button id
 
 - [ ] **Step 4: 跑测试 + 全量回归 + 构建**
 
-Run: `cd sidecar && uv run pytest tests/test_coding_handoff.py -q && uv run pytest -q && cd ../app && npx vite build`
+Run: `cd sidecar && uv run pytest tests/test_coding_handoff.py -q && uv run pytest -q && cd ../desktop && npx vite build`
 Expected: 全绿
 
 - [ ] **Step 5: Commit**
@@ -779,7 +779,7 @@ git commit -m "feat(coding): 会话历史抽屉——列表/读回 transcript/�
 
 ```bash
 cd sidecar && uv run pytest -q
-cd ../app && npx vue-tsc --noEmit && npx vite build && cargo check --manifest-path src-tauri/Cargo.toml
+cd ../desktop && npx vue-tsc --noEmit && npx vite build && cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
 - [ ] **Step 2: 真机（人工）验收清单**

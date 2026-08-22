@@ -18,8 +18,8 @@
 
 ## File Structure
 **改：**
-- `app/src-tauri/Cargo.toml`（加 tauri-plugin-dialog）、`app/package.json`（@tauri-apps/plugin-dialog）、`app/src-tauri/src/lib.rs`（注册插件 + `pick_folder` 命令）、`app/src-tauri/capabilities/*.json`（dialog:allow-open 权限）。
-- `app/src/components/WebviewPanel.vue`（`native:` 旁路）。
+- `desktop/src-tauri/Cargo.toml`（加 tauri-plugin-dialog）、`desktop/package.json`（@tauri-apps/plugin-dialog）、`desktop/src-tauri/src/lib.rs`（注册插件 + `pick_folder` 命令）、`desktop/src-tauri/capabilities/*.json`（dialog:allow-open 权限）。
+- `desktop/src/components/WebviewPanel.vue`（`native:` 旁路）。
 - `plugins/coding/panel/chat.html`（药丸点击 → picker）。
 - `sidecar/src/yibao_brain/loop.py`（SYSTEM_PROMPT steer）。
 
@@ -27,9 +27,9 @@
 
 ### Task FP1: Tauri dialog 插件 + pick_folder 命令
 
-**Files:** `app/src-tauri/Cargo.toml`、`app/package.json`、`app/src-tauri/src/lib.rs`、`app/src-tauri/capabilities/*.json`
+**Files:** `desktop/src-tauri/Cargo.toml`、`desktop/package.json`、`desktop/src-tauri/src/lib.rs`、`desktop/src-tauri/capabilities/*.json`
 
-- [ ] **Step 1: 装插件** —— `cd app && npm install @tauri-apps/plugin-dialog` + `cd app/src-tauri && cargo add tauri-plugin-dialog`。
+- [ ] **Step 1: 装插件** —— `cd desktop && npm install @tauri-apps/plugin-dialog` + `cd desktop/src-tauri && cargo add tauri-plugin-dialog`。
 - [ ] **Step 2: 注册 + 命令（lib.rs）** —— 在 tauri builder `.plugin(tauri_plugin_dialog::init())`；加命令：
 ```rust
 #[tauri::command]
@@ -42,15 +42,15 @@ fn pick_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
 }
 ```
   注册 `pick_folder` 进 `generate_handler!`。
-- [ ] **Step 3: 权限** —— 找到 `app/src-tauri/capabilities/` 下的能力文件（如 `main.json`/`home.json`），加 `"dialog:allow-open"` 到 permissions（否则运行时拒）。先 `ls app/src-tauri/capabilities/` 看结构。
-- [ ] **Step 4: 验证** —— `cd app && cargo check --manifest-path src-tauri/Cargo.toml` exit 0。
+- [ ] **Step 3: 权限** —— 找到 `desktop/src-tauri/capabilities/` 下的能力文件（如 `main.json`/`home.json`），加 `"dialog:allow-open"` 到 permissions（否则运行时拒）。先 `ls desktop/src-tauri/capabilities/` 看结构。
+- [ ] **Step 4: 验证** —— `cd desktop && cargo check --manifest-path src-tauri/Cargo.toml` exit 0。
 - [ ] **Step 5: commit** —— `feat(coding): Tauri dialog 插件 + pick_folder 命令`
 
 ---
 
 ### Task FP2: WebviewPanel native: 旁路
 
-**Files:** `app/src/components/WebviewPanel.vue`（onMessage，~L98-120）
+**Files:** `desktop/src/components/WebviewPanel.vue`（onMessage，~L98-120）
 
 - [ ] **Step 1: 加 native 旁路** —— 在 `onMessage` 里、命名空间校验**之前**，加：
 ```typescript
@@ -64,7 +64,7 @@ if (typeof method === "string" && NATIVE.has(method)) {
 }
 ```
 （`invoke` 从 `@tauri-apps/api/core` import；白名单 Set 只放 `native:pick_folder`。）
-- [ ] **Step 2: 验证** —— `cd app && npx vue-tsc --noEmit && npx vite build` exit 0。
+- [ ] **Step 2: 验证** —— `cd desktop && npx vue-tsc --noEmit && npx vite build` exit 0。
 - [ ] **Step 3: commit** —— `feat(panel): WebviewPanel native: 命令旁路（白名单 pick_folder）`
 
 ---
@@ -83,7 +83,7 @@ async function pickCwd() {
 }
 ```
   绑到药丸上的一个 📁 按钮（`#cwd-pick`）。
-- [ ] **Step 2: build** —— `cd app && npx vite build` exit 0。
+- [ ] **Step 2: build** —— `cd desktop && npx vite build` exit 0。
 - [ ] **Step 3: commit** —— `feat(coding): cwd 药丸加文件夹选择器（native:pick_folder）`
 
 ---

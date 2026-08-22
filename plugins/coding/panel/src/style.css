@@ -40,7 +40,7 @@
 }
 
 /* 深色:跟随系统(沙箱吃不到 tokens.css,无法读 data-theme)——语义色逐一移植
-   app/src/assets/tokens.css :402-533 系统跟随块(范式同 plugins/toolbox/panel/tools.html:24-44)。
+   desktop/src/assets/tokens.css :402-533 系统跟随块(范式同 plugins/toolbox/panel/tools.html:24-44)。
    accent 两档语义反转:浅色 accent-deep=加深(hover/文字);深色下填充钮白字保对比需 accent 不下潜,
    文字/描边场景反而要提亮——故 accent 保持 #4d90c4,accent-deep 提亮为 #5ea0d2(hover=变亮)。
    --code-bg/--code-text 本身深底浅字,两色通用不覆盖。 */
@@ -548,7 +548,7 @@ header .title { flex: none; font-size: 13px; font-weight: 600; color: var(--text
 .marker.err { color: var(--red); }
 .marker.err::before, .marker.err::after { background: var(--red-bar); }
 
-/* ---- Composer（handoff 复刻宿主 InputBar；样式源头 app/src/components/InputBar.vue .bar，
+/* ---- Composer（handoff 复刻宿主 InputBar；样式源头 desktop/src/components/InputBar.vue .bar，
    改版需同步——沙箱吃不到 tokens.css，字面值写死，同 :root 注释先例）----
    footer 透明让位，圆角玻璃条浮在工位底（视觉=壳译宝条原槽位） */
 footer { flex: none; background: transparent; padding: 0 10px 10px; }

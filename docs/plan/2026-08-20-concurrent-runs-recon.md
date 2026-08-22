@@ -29,7 +29,7 @@
 
 ## 3. 会话模型
 
-- 壳端会话一等公民：`app/src/state/domains/conversation.ts:171 createConversation`，消息按 conversationId 分桶（:268-282）；Rust `session_db.rs:74-83` 按 conversation_id 持久化；`SessionList.vue:46` 新建；pet 窗固定 `petConvId`（`App.vue:98,1010-1012`）。
+- 壳端会话一等公民：`desktop/src/state/domains/conversation.ts:171 createConversation`，消息按 conversationId 分桶（:268-282）；Rust `session_db.rs:74-83` 按 conversation_id 持久化；`SessionList.vue:46` 新建；pet 窗固定 `petConvId`（`App.vue:98,1010-1012`）。
 - 大脑不生成会话 id，全由发起方带：壳 `run_input`（`lib.rs:982-1021`，:1018 透传）；手机 `chat.ts:30` uuid、`newChat` 换 id（:152），POST `/v1/chat` 带 conversation_id（`chat.ts:123` → `http_api.py:263-271`）。
 - 桌面 run 的 `id` 恒 0（`lib.rs:1017`），rid 不构成 demux 键；手机 rid 是 `mob_N`（:1286-1291）。
 

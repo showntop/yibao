@@ -9,7 +9,7 @@
 
 ## 1. 背景
 
-译宝是 Tauri v2 + Vue 3 桌面 AI agent，差异化定位是「**操作电脑 / 盯桌面工作流**」（区别于纯陪伴型桌宠）。当前形象是纯内联 SVG 团子（`app/src/components/Avatar.vue`），配治愈系暖奶油 + 杏子橙（`app/src/assets/tokens.css`）。
+译宝是 Tauri v2 + Vue 3 桌面 AI agent，差异化定位是「**操作电脑 / 盯桌面工作流**」（区别于纯陪伴型桌宠）。当前形象是纯内联 SVG 团子（`desktop/src/components/Avatar.vue`），配治愈系暖奶油 + 杏子橙（`desktop/src/assets/tokens.css`）。
 
 设计 review 结论：形象「可爱，但匿名」。三宗罪：
 
@@ -109,12 +109,12 @@
 
 ## 4. 文件影响
 
-- `app/src/assets/tokens.css` —— 暖色组 → 天青组；新增状态灯色板（`--yb-state-idle/listen/think/work/say/success/error`）。
-- `app/src/components/Avatar.vue` —— 重写：鹅蛋身体 + 立体光影 + 小手 + 天线 + 状态灯 + 七态表情 / 动效；**保留**对 click / longpress / drag 的 pointer 状态机（`Avatar.vue:32-63`）。
-- `app/src/components/PeekBubble.vue` —— 新增（收起态气泡）；现有 `Bubble.vue` 继续用于展开态聊天气泡。
-- `app/src/App.vue` —— 收起态接入 PeekBubble（`onEvent` 的 `final_reply` / `reminder` 触发；自动收起计时；点击 `expand`）。
-- `app/src/lib/window.ts` —— 新增 mouseenter / leave 切 `setIgnoreMouseEvents`；气泡定位随 `dir`。
-- `app/src-tauri/src/lib.rs` —— 托盘 `icon_as_template(true)` + 单色图标（顺带修 macOS 暗色菜单栏）。
+- `desktop/src/assets/tokens.css` —— 暖色组 → 天青组；新增状态灯色板（`--yb-state-idle/listen/think/work/say/success/error`）。
+- `desktop/src/components/Avatar.vue` —— 重写：鹅蛋身体 + 立体光影 + 小手 + 天线 + 状态灯 + 七态表情 / 动效；**保留**对 click / longpress / drag 的 pointer 状态机（`Avatar.vue:32-63`）。
+- `desktop/src/components/PeekBubble.vue` —— 新增（收起态气泡）；现有 `Bubble.vue` 继续用于展开态聊天气泡。
+- `desktop/src/App.vue` —— 收起态接入 PeekBubble（`onEvent` 的 `final_reply` / `reminder` 触发；自动收起计时；点击 `expand`）。
+- `desktop/src/lib/window.ts` —— 新增 mouseenter / leave 切 `setIgnoreMouseEvents`；气泡定位随 `dir`。
+- `desktop/src-tauri/src/lib.rs` —— 托盘 `icon_as_template(true)` + 单色图标（顺带修 macOS 暗色菜单栏）。
 - 不改：大脑事件协议、插件架构、sidecar。
 
 ## 5. 风险 / 待验证

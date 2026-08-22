@@ -8,7 +8,7 @@
 
 ## 目录约定
 
-- 大脑 sidecar 在仓库根 `../sidecar`（相对 `app/src-tauri`）。dev 期由 Rust 拉起 `sidecar/.venv/bin/python -u -m yibao_brain.server`。
+- 大脑 sidecar 在仓库根 `../sidecar`（相对 `desktop/src-tauri`）。dev 期由 Rust 拉起 `sidecar/.venv/bin/python -u -m yibao_brain.server`。
 - 前端在 `src/`（Vue3 + TS，Vite）；Rust 在 `src-tauri/`。
 
 ## 开发

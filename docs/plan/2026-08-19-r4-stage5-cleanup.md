@@ -14,7 +14,7 @@
 - 施工目录：worktree `/Users/denny/Work/yibao/.worktrees/r4-stage1`，**绝不碰主检出**。
 - 中文注释全角标点，与所在文件风格一致。
 - 用户明示：不要考虑兼容、不要考虑改动量——wall 退役走彻底路线。
-- 闸门：后端任务 `cd sidecar && .venv/bin/pytest tests/ -q`（基线 1092）；面板/前端任务 `cd plugins/coding/panel && pnpm test && pnpm build && pnpm typecheck`（基线 133）/ `cd app && pnpm test && pnpm build`（基线 115）。
+- 闸门：后端任务 `cd sidecar && .venv/bin/pytest tests/ -q`（基线 1092）；面板/前端任务 `cd plugins/coding/panel && pnpm test && pnpm build && pnpm typecheck`（基线 133）/ `cd desktop && pnpm test && pnpm build`（基线 115）。
 - commit message 中文，对齐 git log 风格。
 
 ## 留档小修四件处置总表
@@ -177,8 +177,8 @@ git commit -m "fix: 手机端 coding 待批卡——_mobile_state 只读合并 _
 - Modify: `plugins/coding/api.toml`（删 wall_data/wall_stop 两段）
 - Modify: `plugins/coding/skills/coding.py`（删 WallDataSkill/_LIVE_TEXT/_rel_time/_emit_sessions_changed 及 7 调用点 + make_tools 注册 + 注释改道）
 - Modify: `sidecar/src/yibao_brain/proactive.py`（三元组去 coding_sessions + 注释）
-- Modify: `app/src/components/HomePlugins.vue`（删 wallTimer/scheduleWallRefresh/coding_sessions case/清理点）
-- Modify: `app/src/lib/brain.ts`（类型联合去 coding_sessions）
+- Modify: `desktop/src/components/HomePlugins.vue`（删 wallTimer/scheduleWallRefresh/coding_sessions case/清理点）
+- Modify: `desktop/src/lib/brain.ts`（类型联合去 coding_sessions）
 - Modify: `sidecar/tests/test_coding_plugin.py`（删 P2 B4 整段 6 用例 + make_tools 断言去 wall_data、「二十件」→「十九件」）
 - Delete: `sidecar/tests/test_coding_sessions_events.py`
 - Modify（注释同步）: `sidecar/tests/test_coding_plugin.py:539`、`sidecar/tests/test_codex_runner.py:511`
@@ -188,13 +188,13 @@ git commit -m "fix: 手机端 coding 待批卡——_mobile_state 只读合并 _
 - [x] **Step 1: 按上列清单删除/修改**，逐处注意：
   - `_emit_sessions_changed` 7 个调用点（coding.py:155/:295/:396/:468/:511/:1367/:1548）——:295 处注意保留 reminder 发射本体（只删 emit_sessions_changed 行）
   - coding.py 注释改道：AttachSkill docstring（:568/:578）、StudioSkill docstring（:669）的「会话墙/wall_data」措辞改指 studio 左栏
-  - HomePlugins.vue 删除后 grep `wall` 与 `coding_sessions` 全 app/src 应零命中
+  - HomePlugins.vue 删除后 grep `wall` 与 `coding_sessions` 全 desktop/src 应零命中
   - 全仓 grep `wall_data|wall_stop|coding:wall|wall.schema|coding_sessions|_rel_time|_LIVE_TEXT|WallDataSkill` 收尾（命中只允许出现在 docs/ 历史文档与台账）
 - [x] **Step 2: 全闸 + Commit**
 
 ```bash
 cd sidecar && .venv/bin/pytest tests/ -q
-cd app && pnpm test && pnpm build
+cd desktop && pnpm test && pnpm build
 git add -A
 git commit -m "refactor: 会话墙退役——wall.schema.json/wall_data/wall_stop/coding_sessions 事件链整拆(R4 阶段五 T4)"
 ```
@@ -205,8 +205,8 @@ git commit -m "refactor: 会话墙退役——wall.schema.json/wall_data/wall_st
 
 **Files:**
 - Modify: `sidecar/src/yibao_brain/instance.py` + Test: `sidecar/tests/test_instance.py`
-- Modify: `app/src/lib/at-mention.ts` + Test: `app/src/lib/at-mention.test.ts`
-- Modify: `app/src/components/PanelApp.vue`
+- Modify: `desktop/src/lib/at-mention.ts` + Test: `desktop/src/lib/at-mention.test.ts`
+- Modify: `desktop/src/components/PanelApp.vue`
 - Modify: `plugins/coding/panel/src/App.vue` + `plugins/coding/panel/src/lib/format.ts`（+ 其测试）
 
 **逐项：**
@@ -220,7 +220,7 @@ git commit -m "refactor: 会话墙退役——wall.schema.json/wall_data/wall_st
 **闸门：**
 ```bash
 cd sidecar && .venv/bin/pytest tests/ -q          # instance 用例
-cd app && pnpm test && pnpm build                 # at-mention/PanelApp
+cd desktop && pnpm test && pnpm build                 # at-mention/PanelApp
 cd plugins/coding/panel && pnpm test && pnpm build && pnpm typecheck  # format/App
 ```
 
@@ -233,7 +233,7 @@ git commit -m "fix: 累积小修包——大脑孤儿回收入口点匹配/死�
 
 ### Task 6: 全闸 + R4 全分支终审 + 总验收清单
 
-- [x] **Step 1: 四闸全跑**（panel / app / sidecar / cargo + prepare-dist）
+- [x] **Step 1: 四闸全跑**（panel / desktop / sidecar / cargo + prepare-dist）
 - [x] **Step 2: 全分支终审**（阶段五范围 737e582..HEAD；并回看全分支 Minor backlog 终局分诊）
 - [x] **Step 3: 总验收清单交付用户**（阶段三/四/五合一）
 

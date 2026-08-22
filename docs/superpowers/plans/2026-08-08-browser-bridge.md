@@ -31,8 +31,8 @@
 - `plugins/zimeiti/api.toml`（invoke_add_topic quiet 条目）
 - `sidecar/src/yibao_brain/config.py`（_SETTINGS_DEFAULTS 加 http.token；http_port()）
 - `sidecar/src/yibao_brain/server.py`（_ensure_bridge_token/_make_bridge_route/_start_bridge + serve_async http_enabled 参数 + 挂载/关闭）
-- `app/src/lib/brain.ts`（SettingsValues 加 "http.token"）
-- `app/src/components/SettingsView.vue`（「浏览器扩展」区）
+- `desktop/src/lib/brain.ts`（SettingsValues 加 "http.token"）
+- `desktop/src/components/SettingsView.vue`（「浏览器扩展」区）
 
 ---
 
@@ -787,8 +787,8 @@ git commit -m "feat(bridge): zimeiti.invoke_add_topic quiet 条目（扩展存�
 ### Task 5: 设置页「浏览器扩展」区
 
 **Files:**
-- Modify: `app/src/lib/brain.ts`（SettingsValues 加 `"http.token": string;`——:717-745 区域）
-- Modify: `app/src/components/SettingsView.vue`（「启动与快捷键」s-group 后加新 s-group，:745 附近）
+- Modify: `desktop/src/lib/brain.ts`（SettingsValues 加 `"http.token": string;`——:717-745 区域）
+- Modify: `desktop/src/components/SettingsView.vue`（「启动与快捷键」s-group 后加新 s-group，:745 附近）
 
 **Interfaces:**
 - Consumes: settings 线自动携带新键（server.py:1281 `{**settings, ...}` 全量下发；Task 3 已把 `http.token` 加进 _SETTINGS_DEFAULTS）；`getSettingsOnce`（brain.ts:748）；SettingsView 既有 s-group/s-row/s-row-label/s-row-value 结构与 `s-note` 样式
@@ -866,13 +866,13 @@ async function copyToken() {
 
 - [ ] **Step 3: 验证**
 
-Run: `cd app && npx vue-tsc --noEmit && npx vite build`
+Run: `cd desktop && npx vue-tsc --noEmit && npx vite build`
 Expected: 全 exit 0
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add app/src/lib/brain.ts app/src/components/SettingsView.vue
+git add desktop/src/lib/brain.ts desktop/src/components/SettingsView.vue
 git commit -m "feat(bridge): 设置页「浏览器扩展」区——token 显示/复制 + 端口与安装指引"
 ```
 
@@ -1130,7 +1130,7 @@ git commit -m "feat(bridge): Chromium MV3 扩展——popup 双动作 + 右键�
 
 ```bash
 cd sidecar && uv run pytest -q          # 831 + 新增 ≈ 846 passed
-cd ../app && npx vue-tsc --noEmit && npx vite build && cargo check --manifest-path src-tauri/Cargo.toml
+cd ../desktop && npx vue-tsc --noEmit && npx vite build && cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
 - [ ] **Step 2: 真机（人工）验收清单**

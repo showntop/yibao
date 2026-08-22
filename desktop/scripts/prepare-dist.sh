@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# 打包前置：把 uv 单二进制下载到 app/src-tauri/resources/bin/uv（随包带走，首启引导用它建 Python 运行时）；
+# 打包前置：把 uv 单二进制下载到 desktop/src-tauri/resources/bin/uv（随包带走，首启引导用它建 Python 运行时）；
 # 并硬检查 coding:studio 面板产物（plugins/*/panel/dist/ 不进 git，干净机器必须现构建，缺失则面板 iframe 全 404，
 # chat.html 已退役、无兜底）。
-# 用法：bash app/scripts/prepare-dist.sh   （npm run tauri build 之前跑一次即可，已存在则跳过）
+# 用法：bash desktop/scripts/prepare-dist.sh   （npm run tauri build 之前跑一次即可，已存在则跳过）
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"

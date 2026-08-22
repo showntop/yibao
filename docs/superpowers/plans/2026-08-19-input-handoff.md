@@ -6,14 +6,14 @@
 
 **Architecture:** 纯前端、零后端/零新协议。壳侧(PanelApp)`current.panel === "coding:studio"` 判定 handoff → bench-bar `v-if` 移除;随迁复用现有 `postToIframe`(宿主→iframe,WebviewPanel 加就绪暂存);面板侧 Composer/StationView/App 逐级暴露 `fillDraft`。依据 spec:`docs/superpowers/specs/2026-08-19-input-handoff-design.md`。
 
-**Tech Stack:** Vue 3.5 + TypeScript;app 仓 vitest(新增组件测试基建);panel 仓 vitest + @vue/test-utils + happy-dom(已有)。
+**Tech Stack:** Vue 3.5 + TypeScript;desktop 仓 vitest(新增组件测试基建);panel 仓 vitest + @vue/test-utils + happy-dom(已有)。
 
 ## Global Constraints
 
 - **零后端改动**:sidecar/Rust/api.toml 一律不碰;不新开桥协议通道(只用现有 `postToIframe` 宿主→iframe)。
 - **依赖**:不新增运行时依赖;app 新增 devDeps 仅 `@vue/test-utils@^2.4.11` + `happy-dom@^20.11.2`(与 panel 仓同版本,组件测试基建)。
 - **诚实差异**:Composer 不放语音钮;目标工位/引擎/cwd 家具保留可见。
-- **样式同源标注**:Composer 复刻块的样式字面值抄自 `app/src/components/InputBar.vue`,注释互为指针(沙箱 iframe 吃不到 tokens.css,字面值写死是既定先例)。
+- **样式同源标注**:Composer 复刻块的样式字面值抄自 `desktop/src/components/InputBar.vue`,注释互为指针(沙箱 iframe 吃不到 tokens.css,字面值写死是既定先例)。
 - **panel dist 必须重建随提交**:`plugins/coding/panel` 的 `pnpm build` 产物 `dist/` 在仓库内,面板从 dist 现读。
 - 注释中文、风格同既有文件;TDD 先败后成;每任务一 commit。
 - 易踩的坑(已核实,勿再踩):
@@ -26,9 +26,9 @@
 ### Task 1: app 组件测试基建 + 壳让位 + 标题栏团子
 
 **Files:**
-- Modify: `app/package.json`(devDependencies 加两条)
-- Modify: `app/src/components/PanelApp.vue`(:60 附近加 handoff computed;模板 titlebar 与 bench-bar;样式 .name/.titlebar-pet/.bench/.bench-bar)
-- Test: `app/src/components/PanelApp.handoff.test.ts`(新建)
+- Modify: `desktop/package.json`(devDependencies 加两条)
+- Modify: `desktop/src/components/PanelApp.vue`(:60 附近加 handoff computed;模板 titlebar 与 bench-bar;样式 .name/.titlebar-pet/.bench/.bench-bar)
+- Test: `desktop/src/components/PanelApp.handoff.test.ts`(新建)
 
 **Interfaces:**
 - Consumes: 无(本任务自给)
@@ -37,10 +37,10 @@
 - [ ] **Step 1: 装组件测试基建**
 
 ```bash
-cd app && pnpm add -D @vue/test-utils@^2.4.11 happy-dom@^20.11.2
+cd desktop && pnpm add -D @vue/test-utils@^2.4.11 happy-dom@^20.11.2
 ```
 
-- [ ] **Step 2: 写失败测试** `app/src/components/PanelApp.handoff.test.ts`
+- [ ] **Step 2: 写失败测试** `desktop/src/components/PanelApp.handoff.test.ts`
 
 ```ts
 // @vitest-environment happy-dom
@@ -114,7 +114,7 @@ describe("输入条 handoff", () => {
 
 - [ ] **Step 3: 跑测试确认失败**
 
-Run: `cd app && pnpm vitest run src/components/PanelApp.handoff.test.ts`
+Run: `cd desktop && pnpm vitest run src/components/PanelApp.handoff.test.ts`
 Expected: FAIL(`.titlebar .pet` 不存在;bench-bar 未隐藏)
 
 - [ ] **Step 4: 实现**
@@ -178,22 +178,22 @@ const handoff = computed(() => current.value?.panel === "coding:studio");
 
 - [ ] **Step 5: 跑测试确认通过**
 
-Run: `cd app && pnpm vitest run src/components/PanelApp.handoff.test.ts`
+Run: `cd desktop && pnpm vitest run src/components/PanelApp.handoff.test.ts`
 Expected: PASS(1 passed)
 
 - [ ] **Step 6: 回归 + 提交**
 
 ```bash
-cd app && pnpm test
-git add app/package.json app/pnpm-lock.yaml app/src/components/PanelApp.vue app/src/components/PanelApp.handoff.test.ts
+cd desktop && pnpm test
+git add desktop/package.json desktop/pnpm-lock.yaml desktop/src/components/PanelApp.vue desktop/src/components/PanelApp.handoff.test.ts
 git commit -m "feat(panel): 输入条 handoff——coding:studio 期间译宝条让位+团子搬标题栏"
 ```
 
 ### Task 2: 逃生口——浮层 mini 输入直问大脑
 
 **Files:**
-- Modify: `app/src/components/PanelApp.vue`(script 加 askText/submitBrain/onAskEnter;模板 thread 内 ask-row;样式 .ask-*)
-- Test: `app/src/components/PanelApp.handoff.test.ts`(追加用例)
+- Modify: `desktop/src/components/PanelApp.vue`(script 加 askText/submitBrain/onAskEnter;模板 thread 内 ask-row;样式 .ask-*)
+- Test: `desktop/src/components/PanelApp.handoff.test.ts`(追加用例)
 
 **Interfaces:**
 - Consumes: Task 1 的 `handoff` computed、`mountApp()`/`firePanel()` 脚手架
@@ -230,7 +230,7 @@ git commit -m "feat(panel): 输入条 handoff——coding:studio 期间译宝条
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `cd app && pnpm vitest run src/components/PanelApp.handoff.test.ts`
+Run: `cd desktop && pnpm vitest run src/components/PanelApp.handoff.test.ts`
 Expected: FAIL(`.ask-row` 不存在)
 
 - [ ] **Step 3: 实现**(复活 30dd8c9 的逃生口,isCoding 路由已随 takeover 退役,只剩直问大脑一条路径)
@@ -341,20 +341,20 @@ thread 内聆听行之后、`</div>` 收尾之前加:
 - [ ] **Step 4: 跑测试确认通过 + 全量回归 + 提交**
 
 ```bash
-cd app && pnpm vitest run src/components/PanelApp.handoff.test.ts && pnpm test
-git add app/src/components/PanelApp.vue app/src/components/PanelApp.handoff.test.ts
+cd desktop && pnpm vitest run src/components/PanelApp.handoff.test.ts && pnpm test
+git add desktop/src/components/PanelApp.vue desktop/src/components/PanelApp.handoff.test.ts
 git commit -m "feat(panel): handoff 逃生口——标题栏团子开浮层 mini 输入直问大脑(复活 30dd8c9)"
 ```
 
 ### Task 3: 草稿随迁(壳侧)——takeDraft + 桥就绪暂存 + setCurrent 接线
 
 **Files:**
-- Modify: `app/src/components/InputBar.vue`(:332 defineExpose 加 takeDraft)
-- Modify: `app/src/components/WebviewPanel.vue`(loaded/stashed/onIframeLoad;两个 iframe `@load`)
-- Modify: `app/src/components/PanelApp.vue`(webviewRef;setCurrent 随迁)
-- Test: `app/src/components/InputBar.test.ts`(新建)
-- Test: `app/src/components/WebviewPanel.test.ts`(新建)
-- Test: `app/src/components/PanelApp.handoff.test.ts`(追加)
+- Modify: `desktop/src/components/InputBar.vue`(:332 defineExpose 加 takeDraft)
+- Modify: `desktop/src/components/WebviewPanel.vue`(loaded/stashed/onIframeLoad;两个 iframe `@load`)
+- Modify: `desktop/src/components/PanelApp.vue`(webviewRef;setCurrent 随迁)
+- Test: `desktop/src/components/InputBar.test.ts`(新建)
+- Test: `desktop/src/components/WebviewPanel.test.ts`(新建)
+- Test: `desktop/src/components/PanelApp.handoff.test.ts`(追加)
 
 **Interfaces:**
 - Consumes: Task 1 的 `handoff` 与测试脚手架
@@ -362,7 +362,7 @@ git commit -m "feat(panel): handoff 逃生口——标题栏团子开浮层 mini
 
 - [ ] **Step 1: 写失败测试**
 
-新建 `app/src/components/InputBar.test.ts`:
+新建 `desktop/src/components/InputBar.test.ts`:
 
 ```ts
 // @vitest-environment happy-dom
@@ -413,7 +413,7 @@ describe("InputBar takeDraft", () => {
 });
 ```
 
-新建 `app/src/components/WebviewPanel.test.ts`:
+新建 `desktop/src/components/WebviewPanel.test.ts`:
 
 ```ts
 // @vitest-environment happy-dom
@@ -480,7 +480,7 @@ describe("WebviewPanel postToIframe 就绪暂存", () => {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `cd app && pnpm vitest run src/components/InputBar.test.ts src/components/WebviewPanel.test.ts src/components/PanelApp.handoff.test.ts`
+Run: `cd desktop && pnpm vitest run src/components/InputBar.test.ts src/components/WebviewPanel.test.ts src/components/PanelApp.handoff.test.ts`
 Expected: FAIL(takeDraft 不存在;load 前 postMessage 直发;随迁未触发)
 
 - [ ] **Step 3: 实现**
@@ -561,9 +561,9 @@ function setCurrent(v: typeof current.value) {
 - [ ] **Step 4: 跑测试确认通过 + 全量回归 + 提交**
 
 ```bash
-cd app && pnpm test && pnpm build
-git add app/src/components/InputBar.vue app/src/components/WebviewPanel.vue app/src/components/PanelApp.vue \
-  app/src/components/InputBar.test.ts app/src/components/WebviewPanel.test.ts app/src/components/PanelApp.handoff.test.ts
+cd desktop && pnpm test && pnpm build
+git add desktop/src/components/InputBar.vue desktop/src/components/WebviewPanel.vue desktop/src/components/PanelApp.vue \
+  desktop/src/components/InputBar.test.ts desktop/src/components/WebviewPanel.test.ts desktop/src/components/PanelApp.handoff.test.ts
 git commit -m "feat(panel): 草稿随迁——译宝条草稿单向移交聚焦工位 Composer(takeDraft+桥就绪暂存)"
 ```
 
@@ -850,7 +850,7 @@ Expected: FAIL(`.composer-bar` 不存在)
 `style.css` 替换「底栏」整段(现 :444-463 注释+footer+#prompt 块)为:
 
 ```css
-/* ---- Composer(handoff 复刻宿主 InputBar;样式源头 app/src/components/InputBar.vue .bar,
+/* ---- Composer(handoff 复刻宿主 InputBar;样式源头 desktop/src/components/InputBar.vue .bar,
    改版需同步——沙箱吃不到 tokens.css,字面值写死,同 :root 注释先例)----
    footer 透明让位,圆角玻璃条浮在工位底(视觉=壳译宝条原槽位) */
 footer { flex: none; background: transparent; padding: 0 10px 10px; }
@@ -913,12 +913,12 @@ git commit -m "refactor(coding): Composer 复刻宿主 InputBar 几何——圆�
 - [ ] **Step 1: 四闸**
 
 ```bash
-cd app && pnpm test && pnpm build
+cd desktop && pnpm test && pnpm build
 cd plugins/coding/panel && pnpm test && pnpm typecheck && pnpm build
 cd sidecar && uv run pytest -x -q
 ```
 
-Expected: 全绿(sidecar 无改动,跑闸防共享文件误碰——`app/src/shared/bridge.js` 被 Rust include_bytes,本方案未动它;Rust 侧无改动,cargo 不跑)
+Expected: 全绿(sidecar 无改动,跑闸防共享文件误碰——`desktop/src/shared/bridge.js` 被 Rust include_bytes,本方案未动它;Rust 侧无改动,cargo 不跑)
 
 - [ ] **Step 2: 视觉自查**
 

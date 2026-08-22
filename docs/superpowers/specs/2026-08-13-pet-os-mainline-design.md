@@ -55,7 +55,7 @@
 
 ### 2.1 SessionState 分层快照：已完成，且比原设计更进一步
 
-commit `f6ba072` 那段 8 行 TODO（scene/panel/chat/interact 四层、逐层容错、不重放工具）曾写在 `app/src/lib/capability-snapshot.ts` 里，该文件后来在 `3b831e6` 被删——**不是丢失，是被 `app/src/state/` 这套模块取代**。四层现状：
+commit `f6ba072` 那段 8 行 TODO（scene/panel/chat/interact 四层、逐层容错、不重放工具）曾写在 `desktop/src/lib/capability-snapshot.ts` 里，该文件后来在 `3b831e6` 被删——**不是丢失，是被 `desktop/src/state/` 这套模块取代**。四层现状：
 
 | 层 | 落点 | 容错配置 |
 |---|---|---|
@@ -234,7 +234,7 @@ Phase 1.5 是 Phase 1 的必要收尾而非可选增强：表面模型建好了�
 
 **manifest 声明（`_load_panels`）：** `[[panel]]` 新增 `surfaces`（合法值 inline/peek/stage/focus，非法值静默过滤、全非法回落全档）与 `min_width`（非正数忽略）；解析结果随 `panel_payload` 顶层透传（`surfaces`/`min_width`），供宿主裁决回落。
 
-**裁决器硬规则（`app/src/lib/surface-policy.ts`）：** 模型/插件**自动最多展开到 peek**——stage/focus 必须有用户明确意图（explicit）；attention=quiet 一律只进活动轨不展开；面板不支持的档位向下回落，**连最低支持档都超过自动上限时不自动展开、只记账进活动轨**；已开着的 stage/focus 不因新结果降级，但降级豁免不得越过面板支持范围。11 条单测固化。
+**裁决器硬规则（`desktop/src/lib/surface-policy.ts`）：** 模型/插件**自动最多展开到 peek**——stage/focus 必须有用户明确意图（explicit）；attention=quiet 一律只进活动轨不展开；面板不支持的档位向下回落，**连最低支持档都超过自动上限时不自动展开、只记账进活动轨**；已开着的 stage/focus 不因新结果降级，但降级豁免不得越过面板支持范围。11 条单测固化。
 
 > **Review 修正（`ab19488`）：** 首版存在三处击穿。① `supported` 回落的兜底会把档位抬回 stage/focus，而自动上限在回落**之前**施加、不再复查——面板声明 `surfaces=["stage","focus"]`（coding 类面板的自然声明）时，模型自作主张即可开 stage/focus，正是本阶段要根治的「结果一回来就跳页」；且兜底取的是未排序原数组首元素，结果依赖 manifest 里的声明顺序。② `current` 抬升绕过 `supported`，会给只支持 inline/peek 的面板返回 focus。③ Inline「展开」/ 活动轨点开硬编码 stage、不查 `supported`。
 > 修正要点：支持范围先升序规整（消除顺序依赖）；**自动上限挪到回落之后施加**；explicit 路径统一走裁决器。该缺陷当时未触发——`_load_panels` 未声明时默认全档，而当时无插件声明 `surfaces`；但它会在该特性首次被真正使用时立刻发作。

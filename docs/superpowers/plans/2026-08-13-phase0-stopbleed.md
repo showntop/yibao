@@ -24,7 +24,7 @@
 
 ## Task 1: 修复 vue-tsc 类型错误
 
-**Files:** Modify `app/src/components/SettingsView.vue`
+**Files:** Modify `desktop/src/components/SettingsView.vue`
 
 **根因：** `KEY_PROVIDERS: SearchProvider[]`（:150）的 `.includes()` 返回 `boolean`，不产生类型收窄；模板 :658 用它做 `v-if` 后，:664-666 仍以完整的 6 值联合 `SearchProvider` 去索引只有 3 个键的 `searchKeys`（:153）。
 
@@ -78,21 +78,21 @@ function updateSearchKey(p: SearchProvider, v: string): void {
 - [ ] **Step 3: 验证**
 
 ```bash
-cd app && npx vue-tsc --noEmit && npm run build
+cd desktop && npx vue-tsc --noEmit && npm run build
 ```
 Expected: 两条均 exit 0，`vue-tsc` 零输出
 
 - [ ] **Step 4: 真机打包验证（本任务的真正验收）**
 
 ```bash
-cd app && npm run tauri -- build --debug
+cd desktop && npm run tauri -- build --debug
 ```
 Expected: 产出 `src-tauri/target/debug/bundle/macos/译宝.app`
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add app/src/components/SettingsView.vue
+git add desktop/src/components/SettingsView.vue
 git commit -m "fix(settings): 搜索 key 类型收窄——修 vue-tsc 三错，恢复 release 打包链"
 ```
 
@@ -135,7 +135,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: app/package-lock.json
+          cache-dependency-path: desktop/package-lock.json
       - run: npm ci
         working-directory: app
       - run: npx vue-tsc --noEmit
@@ -153,12 +153,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: app/src-tauri
+          workspaces: desktop/src-tauri
       # tauri.conf.json 的 bundle.resources 引用 resources/bin/uv，缺失会让配置校验失败
       - run: ./scripts/prepare-dist.sh
         working-directory: app
-      - run: cargo check --manifest-path app/src-tauri/Cargo.toml
-      - run: cargo test --manifest-path app/src-tauri/Cargo.toml
+      - run: cargo check --manifest-path desktop/src-tauri/Cargo.toml
+      - run: cargo test --manifest-path desktop/src-tauri/Cargo.toml
 ```
 
 - [ ] **Step 2: 本地预演三个 job 的命令**
@@ -186,7 +186,7 @@ git commit -m "ci: 建 GitHub Actions——pytest/vue-tsc/vitest/cargo 四道闸
 
 ```bash
 cd sidecar && uv run pytest -q
-cd ../app && npx vue-tsc --noEmit && npx vite build && npm test
+cd ../desktop && npx vue-tsc --noEmit && npx vite build && npm test
 cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
@@ -216,7 +216,7 @@ git branch -d codex/plugin-app-os-shell ui-polish visual-polish feature/rust-ses
 
 - [ ] **处理 `feature/session-state`**
 
-唯一 commit 是 `ab4b064 tmp`，其引入的 `app/src/state/domains/*` 在 main 上已有并行实现（`3b831e6` 修复了 rebase 丢文件问题）。确认无独有价值后：
+唯一 commit 是 `ab4b064 tmp`，其引入的 `desktop/src/state/domains/*` 在 main 上已有并行实现（`3b831e6` 修复了 rebase 丢文件问题）。确认无独有价值后：
 
 ```bash
 git branch -D feature/session-state

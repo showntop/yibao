@@ -23,10 +23,10 @@
 **改：**
 - `sidecar/src/yibao_brain/watch.py`（LateNightNudge + build_behaviors 注册）
 - `sidecar/tests/test_watch.py`（LateNightNudge 用例）
-- `app/src/components/Avatar.vue`（stretch 态：union/label/脸/双臂/keyframes/reduced-motion）
-- `app/src/assets/tokens.css`（--yb-state-stretch 语义灯色一行）
-- `app/src/App.vue`（AvatarState 加 stretch；flashState 泛化；reminder 反应分支）
-- `app/src/lib/brain.ts`（BrainEvent 补 task?/status?/exit_code?）
+- `desktop/src/components/Avatar.vue`（stretch 态：union/label/脸/双臂/keyframes/reduced-motion）
+- `desktop/src/assets/tokens.css`（--yb-state-stretch 语义灯色一行）
+- `desktop/src/App.vue`（AvatarState 加 stretch；flashState 泛化；reminder 反应分支）
+- `desktop/src/lib/brain.ts`（BrainEvent 补 task?/status?/exit_code?）
 
 ---
 
@@ -175,8 +175,8 @@ git commit -m "feat(reactive): LateNightNudge 深夜劝睡行为（静默时段�
 ### Task 2: Avatar stretch 态（唯一新美术）
 
 **Files:**
-- Modify: `app/src/components/Avatar.vue`（:31 union、:57-67 label、:314-343 脸组、:442-450 灯色、:487-519 动画区、:582-586 reduced-motion）
-- Modify: `app/src/assets/tokens.css`（--yb-state-* 语义层加一行）
+- Modify: `desktop/src/components/Avatar.vue`（:31 union、:57-67 label、:314-343 脸组、:442-450 灯色、:487-519 动画区、:582-586 reduced-motion）
+- Modify: `desktop/src/assets/tokens.css`（--yb-state-* 语义层加一行）
 
 **Interfaces:**
 - Consumes: 既有 face 组坐标（success :315-319）、`INK`/`BLUSH` 常量、`.body-grp`（transform-box: fill-box; origin 50% 92%）、`--yb-ease-spring`
@@ -184,7 +184,7 @@ git commit -m "feat(reactive): LateNightNudge 深夜劝睡行为（静默时段�
 
 - [ ] **Step 1: tokens.css 灯色**
 
-`app/src/assets/tokens.css` 的 `--yb-state-*` 语义组（--yb-state-drowsy 附近）加：
+`desktop/src/assets/tokens.css` 的 `--yb-state-*` 语义组（--yb-state-drowsy 附近）加：
 
 ```css
   --yb-state-stretch: var(--yb-c-sky-500); /* 久坐做操：活力青 */
@@ -230,7 +230,7 @@ git commit -m "feat(reactive): LateNightNudge 深夜劝睡行为（静默时段�
 
 - [ ] **Step 3: 验证**
 
-Run: `cd app && npx vue-tsc --noEmit && npx vite build`
+Run: `cd desktop && npx vue-tsc --noEmit && npx vite build`
 Expected: 全 exit 0
 
 - [ ] **Step 4: 视觉自验 + Commit**
@@ -238,7 +238,7 @@ Expected: 全 exit 0
 `design.html` 走查页（DesignPreview.vue）若有九态矩阵区，把 stretch 加进去同款一格（读 DesignPreview.vue 的状态列表数组，追加 `"stretch"`）；`npx vite build` 复绿。然后：
 
 ```bash
-git add app/src/components/Avatar.vue app/src/assets/tokens.css app/src/DesignPreview.vue
+git add desktop/src/components/Avatar.vue desktop/src/assets/tokens.css desktop/src/DesignPreview.vue
 git commit -m "feat(reactive): Avatar stretch 态——弯眼笑 + 双臂上举 + squash-stretch 一次性动画（含 reduced-motion 停用）"
 ```
 
@@ -249,8 +249,8 @@ git commit -m "feat(reactive): Avatar stretch 态——弯眼笑 + 双臂上举 
 ### Task 3: 壳侧反应渲染（flashState 泛化 + reminder 分支 + BrainEvent 字段）
 
 **Files:**
-- Modify: `app/src/lib/brain.ts`（BrainEvent :51-63 区域补字段）
-- Modify: `app/src/App.vue`（AvatarState :50；flashValence :764-773 泛化；reminder case :587-615 插反应分支）
+- Modify: `desktop/src/lib/brain.ts`（BrainEvent :51-63 区域补字段）
+- Modify: `desktop/src/App.vue`（AvatarState :50；flashValence :764-773 泛化；reminder case :587-615 插反应分支）
 
 **Interfaces:**
 - Consumes: Task 2 的 stretch 态；既有 reminder 事件字段（`e.type`/`e.level`/`e.day`）；agents 事件 `task.status`（done/failed/stopped）；watch_command 事件 `status`（completed/failed/timed_out/cancelled）+ `exit_code`
@@ -315,13 +315,13 @@ App.vue `case "reminder"`（:587-615）：在 `bubbles.value.push(...)` 之后�
 
 - [ ] **Step 4: 验证**
 
-Run: `cd app && npx vue-tsc --noEmit && npx vite build`
+Run: `cd desktop && npx vue-tsc --noEmit && npx vite build`
 Expected: 全 exit 0
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add app/src/lib/brain.ts app/src/App.vue
+git add desktop/src/lib/brain.ts desktop/src/App.vue
 git commit -m "feat(reactive): reminder 反应渲染——flashState 泛化 + 久坐做操/深夜哈欠/任务欢呼叹气闪现"
 ```
 
@@ -333,7 +333,7 @@ git commit -m "feat(reactive): reminder 反应渲染——flashState 泛化 + �
 
 ```bash
 cd sidecar && uv run pytest -q          # 858 + 新增 ≈ 864
-cd ../app && npx vue-tsc --noEmit && npx vite build && cargo check --manifest-path src-tauri/Cargo.toml
+cd ../desktop && npx vue-tsc --noEmit && npx vite build && cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
 - [ ] **Step 2: 真机（人工）验收清单**

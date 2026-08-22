@@ -6,7 +6,7 @@
 
 **Architecture:** sidecar 注册 module 面板只登记入口路径(不读全文),panel_payload 下发 `{url, v=mtime}` 引用;Rust 注册 `yibao-plugin://` 协议从 plugins/ 只读服务文件(防穿越 + CSP/SDK 注入 + CORS 头);前端 WebviewPanel 按 payload 分叉(url→iframe src / html→srcdoc);插件面板为多文件工程,共享构建脚本外置 Vue(importmap 由协议层注入)。
 
-**Tech Stack:** Python(sidecar, pytest)、Rust(Tauri 2, cargo test)、Vue 3.5 + Vite 6 + TS(app, pnpm + vitest)。
+**Tech Stack:** Python(sidecar, pytest)、Rust(Tauri 2, cargo test)、Vue 3.5 + Vite 6 + TS(desktop, pnpm + vitest)。
 
 **Spec:** docs/superpowers/specs/2026-08-17-coding-studio-r4-design.md(本计划只覆盖落地顺序第 1 步;后续阶段各自出计划)
 
@@ -14,7 +14,7 @@
 
 ## Global Constraints
 
-- 包管理/测试命令:app 用 pnpm(`pnpm test` = vitest run,`pnpm build` = vue-tsc --noEmit && vite build);sidecar 用 `cd sidecar && .venv/bin/pytest`;Rust 用 `cd app/src-tauri && cargo test`
+- 包管理/测试命令:desktop 用 pnpm(`pnpm test` = vitest run,`pnpm build` = vue-tsc --noEmit && vite build);sidecar 用 `cd sidecar && .venv/bin/pytest`;Rust 用 `cd desktop/src-tauri && cargo test`
 - 旧 srcdoc 链路(webview/schema/widget 面板、gen 面板)行为不许变:tools.html/editor.html/各 schema 面板零回归
 - 安全模型不变:sandbox iframe(仅 `allow-scripts`)+ 方法调用经 api.toml 白名单裁决;module 面板 CSP 禁网络(`connect-src 'none'`)
 - Vue 由宿主在协议源共享:serve 的是 **runtime-only** 构建(`vue.runtime.esm-browser.prod.js`,SFC 预编译,无 runtime compiler → CSP 不需要 unsafe-eval)
@@ -227,16 +227,16 @@ git commit -m "feat: module 面板注册与引用式 payload(sidecar,R4 插件�
 ### Task 2: 桥 SDK 单源化(抽出 bridge.js)
 
 **Files:**
-- Create: `app/src/shared/bridge.js`
-- Modify: `app/src/components/WebviewPanel.vue`(:28-70 BRIDGE_JS 内联常量 → import)
+- Create: `desktop/src/shared/bridge.js`
+- Modify: `desktop/src/components/WebviewPanel.vue`(:28-70 BRIDGE_JS 内联常量 → import)
 
 **Interfaces:**
 - Consumes: 无(纯搬移,行为零变化)
-- Produces: `app/src/shared/bridge.js`——Task 3 的 Rust 协议层 `include_bytes!` 同一文件(单一事实源);文件内导出 `window.yibao`(invoke/onInit/emitEvent/onMessage)+ `window.YIBAO_BRIDGE_VERSION = 1`
+- Produces: `desktop/src/shared/bridge.js`——Task 3 的 Rust 协议层 `include_bytes!` 同一文件(单一事实源);文件内导出 `window.yibao`(invoke/onInit/emitEvent/onMessage)+ `window.YIBAO_BRIDGE_VERSION = 1`
 
 - [ ] **Step 1: 抽出 bridge.js**
 
-新建 `app/src/shared/bridge.js`(内容 = WebviewPanel.vue 现有 BRIDGE_JS 字符串原文,顶部加版本号;注意本文件是独立 JS 不再是 Vue SFC 内字符串,可含任意字面量):
+新建 `desktop/src/shared/bridge.js`(内容 = WebviewPanel.vue 现有 BRIDGE_JS 字符串原文,顶部加版本号;注意本文件是独立 JS 不再是 Vue SFC 内字符串,可含任意字面量):
 
 ```js
 // 译宝插件面板桥 SDK(单一事实源)。
@@ -289,27 +289,27 @@ git commit -m "feat: module 面板注册与引用式 payload(sidecar,R4 插件�
 `WebviewPanel.vue` 删除 :31-70 的 `const BRIDGE_JS = \`...\`` 内联常量(含 :28-30 的注释),替换为:
 
 ```ts
-// 注入 iframe 的桥 JS(?raw 读 app/src/shared/bridge.js,与 Rust 协议层 include_bytes! 同一文件)。
+// 注入 iframe 的桥 JS(?raw 读 desktop/src/shared/bridge.js,与 Rust 协议层 include_bytes! 同一文件)。
 // 必须出现在插件自有脚本之前——注入到 <head> 之后(无 <head> 则放最前),见 srcdoc computed。
 import bridgeJs from "../shared/bridge.js?raw";
 ```
 
 `srcdoc` computed(:80-86)里 `BRIDGE_JS` 引用改为 `bridgeJs`。
 
-若 `vue-tsc` 报 `Cannot find module '..../bridge.js?raw'`:确认 `app/src/vite-env.d.ts` 有 `/// <reference types="vite/client" />`(没有就新建该行)。
+若 `vue-tsc` 报 `Cannot find module '..../bridge.js?raw'`:确认 `desktop/src/vite-env.d.ts` 有 `/// <reference types="vite/client" />`(没有就新建该行)。
 
 - [ ] **Step 3: 验证(类型检查 + 既有测试全绿)**
 
-Run: `cd app && pnpm build`
+Run: `cd desktop && pnpm build`
 Expected: vue-tsc 无错,vite build 成功
 
-Run: `cd app && pnpm test`
+Run: `cd desktop && pnpm test`
 Expected: 全绿(本任务无新行为,不新增测试;桥行为由 Task 5 端到端验收覆盖)
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add app/src/shared/bridge.js app/src/components/WebviewPanel.vue app/src/vite-env.d.ts
+git add desktop/src/shared/bridge.js desktop/src/components/WebviewPanel.vue desktop/src/vite-env.d.ts
 git commit -m "refactor: 桥 SDK 抽成单源 bridge.js(srcdoc 内联与协议层共用)"
 ```
 
@@ -318,26 +318,26 @@ git commit -m "refactor: 桥 SDK 抽成单源 bridge.js(srcdoc 内联与协议�
 ### Task 3: Rust — yibao-plugin:// 自定义协议 + plugins_dir prod 修复
 
 **Files:**
-- Create: `app/src-tauri/src/plugin_proto.rs`
-- Create: `app/src-tauri/resources/sdk/vue.esm-browser.js`(vendor 自 app/node_modules/vue/dist/vue.runtime.esm-browser.prod.js)
-- Modify: `app/src-tauri/src/lib.rs`(注册协议 + setup 里 plugins_dir 修复)
+- Create: `desktop/src-tauri/src/plugin_proto.rs`
+- Create: `desktop/src-tauri/resources/sdk/vue.esm-browser.js`(vendor 自 desktop/node_modules/vue/dist/vue.runtime.esm-browser.prod.js)
+- Modify: `desktop/src-tauri/src/lib.rs`(注册协议 + setup 里 plugins_dir 修复)
 
 **Interfaces:**
-- Consumes: `app/src/shared/bridge.js`(Task 2);`plugins_dir()`(lib.rs:1214)
+- Consumes: `desktop/src/shared/bridge.js`(Task 2);`plugins_dir()`(lib.rs:1214)
 - Produces: `plugin_proto::handle(request: &tauri::http::Request<Vec<u8>>, plugins_root: &Path) -> tauri::http::Response<Cow<'static, [u8]>>`;URL 约定 `yibao-plugin://<pid>/<相对路径>`;保留路径 `/<pid>/__yibao__/bridge.js`、`/<pid>/__yibao__/vue.esm-browser.js`(宿主 SDK,任意 pid 下都可访问);importmap 约定 `{"imports":{"vue":"/__yibao__/vue.esm-browser.js"}}`(Task 5 插件工程依赖)
 
 - [ ] **Step 1: vendor Vue runtime**
 
 ```bash
-mkdir -p app/src-tauri/resources/sdk
-cp app/node_modules/vue/dist/vue.runtime.esm-browser.prod.js app/src-tauri/resources/sdk/vue.esm-browser.js
+mkdir -p desktop/src-tauri/resources/sdk
+cp desktop/node_modules/vue/dist/vue.runtime.esm-browser.prod.js desktop/src-tauri/resources/sdk/vue.esm-browser.js
 ```
 
 (选 runtime-only 构建:插件 SFC 经构建链预编译,无 runtime compiler → CSP 不需要 unsafe-eval。URL 名保持 vue.esm-browser.js 通用,内容与 app 的 vue 版本同源。)
 
 - [ ] **Step 2: 写 plugin_proto.rs(含 #[cfg(test)] 失败测试先行)**
 
-新建 `app/src-tauri/src/plugin_proto.rs`,先只写测试部分,`cargo test` 确认编译失败/测试失败,再补实现。完整文件内容(实现+测试)如下,TDD 顺序:先粘 `#[cfg(test)]` 块 + 空函数签名跑失败,再填实现体:
+新建 `desktop/src-tauri/src/plugin_proto.rs`,先只写测试部分,`cargo test` 确认编译失败/测试失败,再补实现。完整文件内容(实现+测试)如下,TDD 顺序:先粘 `#[cfg(test)]` 块 + 空函数签名跑失败,再填实现体:
 
 ```rust
 //! yibao-plugin:// 自定义协议:运行时从 plugins/ 目录只读服务 module 面板静态资源。
@@ -566,7 +566,7 @@ mod tests {
 
 - [ ] **Step 3: 跑 Rust 测试**
 
-Run: `cd app/src-tauri && cargo test plugin_proto`
+Run: `cd desktop/src-tauri && cargo test plugin_proto`
 Expected: 5 passed(若 closure/类型与 tauri 2 小版本有出入,按编译器提示微调;纯函数与协议逻辑不许动语义)
 
 - [ ] **Step 4: lib.rs 注册协议 + plugins_dir prod 修复**
@@ -601,13 +601,13 @@ Expected: 5 passed(若 closure/类型与 tauri 2 小版本有出入,按编译器
 
 - [ ] **Step 5: 编译 + 全量测试**
 
-Run: `cd app/src-tauri && cargo test`
+Run: `cd desktop/src-tauri && cargo test`
 Expected: 全绿(plugin_proto 5 个 + 既有 1 个)
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add app/src-tauri/src/plugin_proto.rs app/src-tauri/src/lib.rs app/src-tauri/resources/sdk/vue.esm-browser.js app/src/shared/bridge.js
+git add desktop/src-tauri/src/plugin_proto.rs desktop/src-tauri/src/lib.rs desktop/src-tauri/resources/sdk/vue.esm-browser.js desktop/src/shared/bridge.js
 git commit -m "feat: yibao-plugin:// 协议——module 面板静态资源运行时服务 + plugins_dir prod 修复"
 ```
 
@@ -618,11 +618,11 @@ git commit -m "feat: yibao-plugin:// 协议——module 面板静态资源运行
 ### Task 4: WebviewPanel url 分叉 + PanelApp/HomePlugins 接线
 
 **Files:**
-- Create: `app/src/lib/webview-source.ts`
-- Test: `app/src/lib/webview-source.test.ts`
-- Modify: `app/src/components/WebviewPanel.vue`(props + 模板分叉)
-- Modify: `app/src/components/PanelApp.vue`(:38 与 :366 类型、:379 computed、:487-503 模板)
-- Modify: `app/src/components/HomePlugins.vue`(:215 与 :566 类型、:587 computed、:698-712 模板)
+- Create: `desktop/src/lib/webview-source.ts`
+- Test: `desktop/src/lib/webview-source.test.ts`
+- Modify: `desktop/src/components/WebviewPanel.vue`(props + 模板分叉)
+- Modify: `desktop/src/components/PanelApp.vue`(:38 与 :366 类型、:379 computed、:487-503 模板)
+- Modify: `desktop/src/components/HomePlugins.vue`(:215 与 :566 类型、:587 computed、:698-712 模板)
 
 **Interfaces:**
 - Consumes: Task 1 的 payload 形状 `webview: {url, v}`;Task 3 的协议
@@ -630,7 +630,7 @@ git commit -m "feat: yibao-plugin:// 协议——module 面板静态资源运行
 
 - [ ] **Step 1: 写失败测试**
 
-新建 `app/src/lib/webview-source.test.ts`:
+新建 `desktop/src/lib/webview-source.test.ts`:
 
 ```ts
 import { describe, expect, it } from "vitest";
@@ -664,12 +664,12 @@ describe("resolveWebviewSource", () => {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `cd app && pnpm test -- webview-source`
+Run: `cd desktop && pnpm test -- webview-source`
 Expected: FAIL(`Cannot find module './webview-source'`)
 
 - [ ] **Step 3: 实现 webview-source.ts**
 
-新建 `app/src/lib/webview-source.ts`:
+新建 `desktop/src/lib/webview-source.ts`:
 
 ```ts
 // webview 面板载荷分流:module 面板(url,R4 插件运行时)优先,旧 html 面板走 srcdoc。
@@ -698,7 +698,7 @@ export function resolveWebviewSource(w: WebviewPayload | null | undefined): Webv
 
 - [ ] **Step 4: 跑测试确认通过**
 
-Run: `cd app && pnpm test -- webview-source`
+Run: `cd desktop && pnpm test -- webview-source`
 Expected: 5 passed
 
 - [ ] **Step 5: WebviewPanel 分叉**
@@ -780,13 +780,13 @@ const webviewV = computed(() => current.value?.webview?.v ?? 0);
 
 - [ ] **Step 7: 验证**
 
-Run: `cd app && pnpm build && pnpm test`
+Run: `cd desktop && pnpm build && pnpm test`
 Expected: vue-tsc 无错,vitest 全绿
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add app/src/lib/webview-source.ts app/src/lib/webview-source.test.ts app/src/components/WebviewPanel.vue app/src/components/PanelApp.vue app/src/components/HomePlugins.vue
+git add desktop/src/lib/webview-source.ts desktop/src/lib/webview-source.test.ts desktop/src/components/WebviewPanel.vue desktop/src/components/PanelApp.vue desktop/src/components/HomePlugins.vue
 git commit -m "feat: WebviewPanel url 分叉——module 面板走 yibao-plugin:// iframe src"
 ```
 
@@ -1048,7 +1048,7 @@ git commit -m "feat: coding:studio 骨架面板 + 插件面板共享构建链(R4
 - [ ] **Step 1: 起 dev**
 
 ```bash
-cd app && pnpm tauri dev
+cd desktop && pnpm tauri dev
 ```
 
 - [ ] **Step 2: 全链路验收(spec 验收 A)**
@@ -1074,7 +1074,7 @@ cd app && pnpm tauri dev
 
 - [ ] **Step 6: 全量测试收尾 + commit(如有修补)**
 
-Run: `cd sidecar && .venv/bin/pytest tests/ -q` ; `cd app && pnpm test` ; `cd app/src-tauri && cargo test`
+Run: `cd sidecar && .venv/bin/pytest tests/ -q` ; `cd desktop && pnpm test` ; `cd desktop/src-tauri && cargo test`
 Expected: 三处全绿。验收发现问题就修,修复随本任务 commit:
 
 ```bash

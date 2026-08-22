@@ -153,7 +153,7 @@ server 收到 → 对每个 item 设其 future 的 result（或存 early_answer 
 - server 多槽（同时多个 future、early_answer 命中、confirm_batch IPC 往返）
 - 回归（单 CONFIRM 走 batch size=1；AUTO/DENY 不变；reminders/feed 不受影响）
 
-**前端/壳：** `cd app && npx vue-tsc --noEmit && npm run build && cargo check --manifest-path src-tauri/Cargo.toml`。
+**前端/壳：** `cd desktop && npx vue-tsc --noEmit && npm run build && cargo check --manifest-path src-tauri/Cargo.toml`。
 
 **真机：**
 1. 派"给 A 和 B 各发一封邮件"（2 独立高风险）→ 大窗收件箱一次出现 2 条 →「全部批准」一次批 → 顺序执行。

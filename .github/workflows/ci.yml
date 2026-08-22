@@ -26,15 +26,15 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: app/package-lock.json
+          cache-dependency-path: desktop/package-lock.json
       - run: npm ci
-        working-directory: app
+        working-directory: desktop
       - run: npx vue-tsc --noEmit
-        working-directory: app
+        working-directory: desktop
       - run: npx vite build
-        working-directory: app
+        working-directory: desktop
       - run: npm test
-        working-directory: app
+        working-directory: desktop
 
   panel:
     name: panel vitest
@@ -66,9 +66,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: app/src-tauri
+          workspaces: desktop/src-tauri
       # tauri.conf.json 的 bundle.resources 引用 resources/bin/uv，缺失会让配置校验失败
       - run: ./scripts/prepare-dist.sh
-        working-directory: app
-      - run: cargo check --manifest-path app/src-tauri/Cargo.toml
-      - run: cargo test --manifest-path app/src-tauri/Cargo.toml
+        working-directory: desktop
+      - run: cargo check --manifest-path desktop/src-tauri/Cargo.toml
+      - run: cargo test --manifest-path desktop/src-tauri/Cargo.toml

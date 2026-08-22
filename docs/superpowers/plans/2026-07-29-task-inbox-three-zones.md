@@ -25,11 +25,11 @@
 
 - `sidecar/src/yibao_brain/server.py` — 查询并归一化 running tasks，扩展 feed 回包。
 - `sidecar/tests/test_feed.py` — running tasks 过滤、排序、归一化与失败降级集成测试。
-- `app/src/lib/brain.ts` — `RunningTask` 与 `FeedResponse.running_tasks` 类型契约。
-- `app/src/components/HomeFeed.vue` — 三区布局、Feed 分流、刷新时机和样式。
-- `app/tests/task-inbox-ui.test.mjs` — 前端类型与三区结构测试。
+- `desktop/src/lib/brain.ts` — `RunningTask` 与 `FeedResponse.running_tasks` 类型契约。
+- `desktop/src/components/HomeFeed.vue` — 三区布局、Feed 分流、刷新时机和样式。
+- `desktop/tests/task-inbox-ui.test.mjs` — 前端类型与三区结构测试。
 
-**No Rust changes:** `app/src-tauri/src/lib.rs` 已把 sidecar 的 feed JSON 整体转发为 `brain-feed`。
+**No Rust changes:** `desktop/src-tauri/src/lib.rs` 已把 sidecar 的 feed JSON 整体转发为 `brain-feed`。
 
 ---
 
@@ -233,12 +233,12 @@ git commit -m "feat(inbox): feed 返回进行中任务"
 
 **Files:**
 
-- Modify: `app/src/lib/brain.ts`
-- Create: `app/tests/task-inbox-ui.test.mjs`
+- Modify: `desktop/src/lib/brain.ts`
+- Create: `desktop/tests/task-inbox-ui.test.mjs`
 
 - [ ] **Step 1: Write the failing contract test**
 
-创建 `app/tests/task-inbox-ui.test.mjs`：
+创建 `desktop/tests/task-inbox-ui.test.mjs`：
 
 ```js
 import assert from "node:assert/strict";
@@ -260,7 +260,7 @@ test("feed response carries normalized running tasks", () => {
 Run:
 
 ```bash
-cd app && node --test tests/task-inbox-ui.test.mjs
+cd desktop && node --test tests/task-inbox-ui.test.mjs
 ```
 
 Expected: FAIL at `export interface RunningTask` because the contract does not exist.
@@ -301,7 +301,7 @@ const EMPTY_FEED: FeedResponse = {
 Run:
 
 ```bash
-cd app && node --test tests/task-inbox-ui.test.mjs && npx vue-tsc --noEmit
+cd desktop && node --test tests/task-inbox-ui.test.mjs && npx vue-tsc --noEmit
 ```
 
 Expected: PASS。
@@ -309,7 +309,7 @@ Expected: PASS。
 - [ ] **Step 5: Commit**
 
 ```bash
-git add app/src/lib/brain.ts app/tests/task-inbox-ui.test.mjs
+git add desktop/src/lib/brain.ts desktop/tests/task-inbox-ui.test.mjs
 git commit -m "feat(brain): 增加进行中任务类型"
 ```
 
@@ -319,12 +319,12 @@ git commit -m "feat(brain): 增加进行中任务类型"
 
 **Files:**
 
-- Modify: `app/src/components/HomeFeed.vue`
-- Modify: `app/tests/task-inbox-ui.test.mjs`
+- Modify: `desktop/src/components/HomeFeed.vue`
+- Modify: `desktop/tests/task-inbox-ui.test.mjs`
 
 - [ ] **Step 1: Append failing UI structure tests**
 
-向 `app/tests/task-inbox-ui.test.mjs` 追加：
+向 `desktop/tests/task-inbox-ui.test.mjs` 追加：
 
 ```js
 test("home inbox renders running pending and completed zones", () => {
@@ -354,7 +354,7 @@ test("home refreshes task inbox when agent tasks start or finish", () => {
 Run:
 
 ```bash
-cd app && node --test tests/task-inbox-ui.test.mjs
+cd desktop && node --test tests/task-inbox-ui.test.mjs
 ```
 
 Expected: contract test PASS，三个新 UI 测试因 running ref、三区和分流不存在而 FAIL。
@@ -646,7 +646,7 @@ function scheduleFeedRefresh() {
 Run:
 
 ```bash
-cd app && node --test tests/task-inbox-ui.test.mjs tests/inbox-ui.test.mjs && npx vue-tsc --noEmit && npm run build
+cd desktop && node --test tests/task-inbox-ui.test.mjs tests/inbox-ui.test.mjs && npx vue-tsc --noEmit && npm run build
 ```
 
 Expected: 三区与 Inbox A 测试全部 PASS；type check 和 Vite build exit 0。
@@ -654,7 +654,7 @@ Expected: 三区与 Inbox A 测试全部 PASS；type check 和 Vite build exit 0
 - [ ] **Step 7: Commit**
 
 ```bash
-git add app/src/components/HomeFeed.vue app/tests/task-inbox-ui.test.mjs
+git add desktop/src/components/HomeFeed.vue desktop/tests/task-inbox-ui.test.mjs
 git commit -m "feat(home): 任务收件箱统一为三区"
 ```
 
@@ -675,7 +675,7 @@ Expected: all tests PASS with zero failures.
 - [ ] **Step 2: Run all frontend checks**
 
 ```bash
-cd app && node --test tests/*.test.mjs && npx vue-tsc --noEmit && npm run build
+cd desktop && node --test tests/*.test.mjs && npx vue-tsc --noEmit && npm run build
 ```
 
 Expected: all Node tests PASS; type check and build exit 0.
@@ -683,8 +683,8 @@ Expected: all Node tests PASS; type check and build exit 0.
 - [ ] **Step 3: Run Rust checks**
 
 ```bash
-cargo check --manifest-path app/src-tauri/Cargo.toml
-cargo test --manifest-path app/src-tauri/Cargo.toml
+cargo check --manifest-path desktop/src-tauri/Cargo.toml
+cargo test --manifest-path desktop/src-tauri/Cargo.toml
 ```
 
 Expected: both commands exit 0.

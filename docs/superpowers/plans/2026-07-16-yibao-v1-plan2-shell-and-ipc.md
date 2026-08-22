@@ -4,7 +4,7 @@
 
 **Goal:** 给 Plan 1 的 Python 大脑套上桌面壳——全局快捷键唤起、置顶透明形象窗、文字输入条；经 stdio JSON-RPC 把大脑的事件流接进来，UI 渲染对话与形象状态，高风险操作弹窗确认。
 
-**Architecture:** 两阶段。**Phase A（Python，可在本服务器 TDD）**：新增 `sidecar/src/yibao_brain/server.py`——行分隔 JSON 的 stdio 服务，包住 `AgentLoop`，把 `confirmer` 变成「向壳发通知→阻塞读壳的回答」的往返。**Phase B（Tauri，在 Win/Mac 上做）**：`app/` 下 Tauri v2 + Vue 壳，`tauri-plugin-shell` 拉起 sidecar 进程并桥接 stdio，`tauri-plugin-global-shortcut` 注册全局热键，Vue 前端做形象/输入/确认。
+**Architecture:** 两阶段。**Phase A（Python，可在本服务器 TDD）**：新增 `sidecar/src/yibao_brain/server.py`——行分隔 JSON 的 stdio 服务，包住 `AgentLoop`，把 `confirmer` 变成「向壳发通知→阻塞读壳的回答」的往返。**Phase B（Tauri，在 Win/Mac 上做）**：`desktop/` 下 Tauri v2 + Vue 壳，`tauri-plugin-shell` 拉起 sidecar 进程并桥接 stdio，`tauri-plugin-global-shortcut` 注册全局热键，Vue 前端做形象/输入/确认。
 
 **Tech Stack:** Python 3.12（Phase A）；Tauri v2 + Rust + Vue 3 + Vite + `@tauri-apps/api`（Phase B）。
 
@@ -46,7 +46,7 @@ sidecar/src/yibao_brain/
 └── server.py                  # [Phase A] stdio JSON 服务 + serve()（可测）
 sidecar/tests/
 └── test_server.py             # [Phase A]
-app/                           # [Phase B] Tauri 工程（仓库根新建）
+desktop/                             # [Phase B] Tauri 工程（仓库根新建）
 ├── package.json               # Vue + @tauri-apps/cli + api
 ├── index.html
 ├── src/                       # Vue 前端
@@ -329,8 +329,8 @@ git commit -m "feat(sidecar): expose yibao-brain-server entrypoint"
 ### Task B1: Tauri + Vue 工程脚手架与窗口配置
 
 **Files:**
-- Create: `app/package.json`、`app/index.html`、`app/src/main.ts`、`app/src/App.vue`（占位）
-- Create: `app/src-tauri/Cargo.toml`、`app/src-tauri/tauri.conf.json`、`app/src-tauri/src/main.rs`、`app/src-tauri/capabilities/default.json`
+- Create: `desktop/package.json`、`desktop/index.html`、`desktop/src/main.ts`、`desktop/src/App.vue`（占位）
+- Create: `desktop/src-tauri/Cargo.toml`、`desktop/src-tauri/tauri.conf.json`、`desktop/src-tauri/src/main.rs`、`desktop/src-tauri/capabilities/default.json`
 
 - [ ] **Step 1: 用官方脚手架初始化（推荐，省去手写）**
 
@@ -338,15 +338,15 @@ git commit -m "feat(sidecar): expose yibao-brain-server entrypoint"
 ```bash
 npm create tauri-app@latest -- --template vue-ts --manager npm app
 ```
-进入 `app/`，安装依赖：
+进入 `desktop/`，安装依赖：
 ```bash
-cd app && npm install && npm install @tauri-apps/api
+cd desktop && npm install && npm install @tauri-apps/api
 ```
 
 - [ ] **Step 2: 安装用到的 Tauri 插件**
 
 ```bash
-cd app
+cd desktop
 npm run tauri -- add shell
 npm run tauri -- add global-shortcut
 ```
@@ -354,7 +354,7 @@ npm run tauri -- add global-shortcut
 
 - [ ] **Step 3: 配置 `src-tauri/tauri.conf.json` 的窗口与私有 API**
 
-把 `app` 对象改为（关键字段）：
+把 `desktop` 对象改为（关键字段）：
 ```json
 {
   "productName": "译宝",
@@ -402,13 +402,13 @@ npm run tauri -- add global-shortcut
 
 - [ ] **Step 5: 构建验证**
 
-Run: `cd app && npm run tauri build -- --debug` （或 `npm run tauri dev`）
+Run: `cd desktop && npm run tauri build -- --debug` （或 `npm run tauri dev`）
 Expected: 编译通过、弹出一个透明置顶无边框空窗（可能仍空白——B3 再做内容）。macOS 首次会请求权限。
 
 - [ ] **Step 6: 提交**
 
 ```bash
-git add app/
+git add desktop/
 git commit -m "feat(app): scaffold tauri v2 + vue shell with transparent always-on-top window"
 ```
 
@@ -417,7 +417,7 @@ git commit -m "feat(app): scaffold tauri v2 + vue shell with transparent always-
 ### Task B2: Rust 侧——拉起 sidecar + stdio 桥 + 全局热键
 
 **Files:**
-- Modify: `app/src-tauri/src/lib.rs`
+- Modify: `desktop/src-tauri/src/lib.rs`
 
 **Interfaces:**
 - Consumes: Plan A 的 `yibao-brain-server`（stdio 行分隔 JSON）。
@@ -426,7 +426,7 @@ git commit -m "feat(app): scaffold tauri v2 + vue shell with transparent always-
 - [ ] **Step 1: 在 `lib.rs` 写 sidecar 拉起 + stdio 桥 + 热键**
 
 ```rust
-// app/src-tauri/src/lib.rs
+// desktop/src-tauri/src/lib.rs
 use std::sync::Mutex;
 use tauri::{Manager, Emitter};
 use tauri_plugin_shell::process::CommandChild;
@@ -538,13 +538,13 @@ fn main() { yibao_app_lib::run(); }
 
 - [ ] **Step 3: 构建并手动验证**
 
-Run: `cd app && npm run tauri dev`
+Run: `cd desktop && npm run tauri dev`
 Expected: 启动后 sidecar 进程被拉起；按 `Super+Shift+Y` 窗口显隐切换；终端能看到 brain stderr/心跳。先不接前端，确认进程与热键活着。
 
 - [ ] **Step 4: 提交**
 
 ```bash
-git add app/src-tauri/
+git add desktop/src-tauri/
 git commit -m "feat(app): spawn brain sidecar + stdio ipc bridge + global hotkey"
 ```
 
@@ -553,8 +553,8 @@ git commit -m "feat(app): spawn brain sidecar + stdio ipc bridge + global hotkey
 ### Task B3: Vue 前端——形象 / 输入 / 确认 / 事件流
 
 **Files:**
-- Create: `app/src/App.vue`、`app/src/components/{Avatar,InputBar,ConfirmDialog,Bubble}.vue`、`app/src/lib/brain.ts`
-- Modify: `app/src/main.ts`（挂载 App）、`app/index.html`（透明背景）
+- Create: `desktop/src/App.vue`、`desktop/src/components/{Avatar,InputBar,ConfirmDialog,Bubble}.vue`、`desktop/src/lib/brain.ts`
+- Modify: `desktop/src/main.ts`（挂载 App）、`desktop/index.html`（透明背景）
 
 - [ ] **Step 1: `src/lib/brain.ts`——封装通信**
 
@@ -666,14 +666,14 @@ onUnmounted(() => unlisten?.());
 
 - [ ] **Step 4: 构建并端到端验证（本机，GLM fake 或真实 key）**
 
-Run: `cd app && npm run tauri dev`
+Run: `cd desktop && npm run tauri dev`
 操作：按热键唤出窗 → 输入框敲「请回显 hi」→ 期望看到 ⚙️ 工作 → 气泡出现结果/最终回复；构造一个 L3 技能（临时把某技能 default_risk 设 L3_HIGH）→ 期望弹确认框 → 拒绝/允许各试一次。
 Expected: 事件流贯通、形象状态切换、确认往返正常。
 
 - [ ] **Step 5: 提交**
 
 ```bash
-git add app/src app/index.html
+git add desktop/src desktop/index.html
 git commit -m "feat(app): vue ui (avatar/input/confirm/bubbles) wired to brain events"
 ```
 
@@ -682,26 +682,26 @@ git commit -m "feat(app): vue ui (avatar/input/confirm/bubbles) wired to brain e
 ### Task B4: 打包与平台适配记录
 
 **Files:**
-- Modify: `app/src-tauri/tauri.conf.json`（bundle 标识/签名占位）
-- Modify: `app/README.md`（记录平台踩坑）
+- Modify: `desktop/src-tauri/tauri.conf.json`（bundle 标识/签名占位）
+- Modify: `desktop/README.md`（记录平台踩坑）
 
 - [ ] **Step 1: 填 bundle 标识**
 
 `tauri.conf.json` 的 `bundle`：设 `"identifier": "com.dennyxiao.yibao"`、`"active": true`。
 
-- [ ] **Step 2: 记录平台踩坑到 `app/README.md`**
+- [ ] **Step 2: 记录平台踩坑到 `desktop/README.md`**
 
 至少记录：macOS 需在「系统设置→隐私与安全」授予辅助功能/屏幕录制；`macOSPrivateApi` 致无法上 App Store、需开发者签名+公证后站外分发；Windows 透明窗黑底/白闪的处理；sidecar 路径在 dev 与打包后的差异（生产用 PyInstaller 打包 + `externalBin`）。
 
 - [ ] **Step 3: 打包验证（各平台）**
 
-Run: `cd app && npm run tauri build`
+Run: `cd desktop && npm run tauri build`
 Expected: 产出平台安装包/可执行；首次运行权限引导正常。
 
 - [ ] **Step 4: 提交**
 
 ```bash
-git add app/
+git add desktop/
 git commit -m "chore(app): bundle id + platform gotchas doc"
 ```
 

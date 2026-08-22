@@ -2,14 +2,14 @@
 
 > 日期：2026-08-22
 > 分支：`refactor/review-plan`（worktree：`../yibao-refactor`）
-> 范围：`app/`（Tauri 前端 Vue3+TS 与 Rust 后端）、`sidecar/`（Python 大脑服务）、`plugins/`（Python/TS 插件）、`mobile/`（Capacitor 移动端）、`extension/`（Chrome 扩展）
+> 范围：`desktop/`（Tauri 前端 Vue3+TS 与 Rust 后端）、`sidecar/`（Python 大脑服务）、`plugins/`（Python/TS 插件）、`mobile/`（Capacitor 移动端）、`extension/`（Chrome 扩展）
 > 原则：单一职责、单一事实源、依赖方向统一、可测试性、渐进式重构（每步行为不变、可独立合入）
 
 ## 执行状态（2026-08-22 二次复核修订）
 
 > **完成口径**：标「✅ 完成」须同时满足 *任务描述的架构目标落地* + *验收标准对应项达成*；仅行数下降、结构未建者标「🟡 部分完成」并注明剩余项（对应收口任务）。首轮状态表存在的「降级交付记完成」问题已按此口径修正。
 >
-> **复核基线（全绿）**：app vitest 241 / sidecar pytest 1142 / Rust cargo test 25（R-12b 后实测；早期记录 11 为阶段 0 基线）/ mobile vitest 83；`vue-tsc --noEmit` 零错误。Rust 编译环境已修复（`resources/bin/uv` 软链就位）。
+> **复核基线（全绿）**：desktop vitest 241 / sidecar pytest 1142 / Rust cargo test 25（R-12b 后实测；早期记录 11 为阶段 0 基线）/ mobile vitest 83；`vue-tsc --noEmit` 零错误。Rust 编译环境已修复（`resources/bin/uv` 软链就位）。
 
 | 状态 | 任务 |
 |---|---|
@@ -22,7 +22,7 @@
 | ✅ 完成 | **R-15 coding.py 拆分（2026-08-22 收口）**：1687→798 行——会话核心域 sessions.py / 转录域 transcript.py / 摘要域 _brief.py / 读取域 _cc_reader·_codex_reader / 执行域 _runner·_codex_runner 之上，再拆**会话生命周期技能域** `_session_skills.py`（341 行：start/send/stop/list/attach 五技能 + start_session/_live_state）；经 `_c()` 动态解析 coding 主模块符号，测试 monkeypatch codingmod.* 约定原样生效（双模块名兼容：生产 yibao_plugin_coding_coding / 测试 coding）；sidecar 1142 全绿。**附带项已收口（R-35，8de7f92）**：`_sibling` 6 处重复实现 → agents/coding 各一份 `_common.py` `load_sibling` + 入口薄委托 |
 | ✅ 完成 | **R-20 invoke 收敛（收尾 2026-08-22）**：App.vue/HomeChat.vue 的 `get_setup_config`（含泛型形式共 3 处）、`ensure_active_conversation`×2、`ensure_pet_conversation`、`get_conversation_messages`、`list_plugins`×2、`expand_chat`、`set_pet_expanded`、`hide_invoke_bar`、`close_home_window` 全部改走 brainClient（新增 expandChat/setPetExpanded/closeHomeWindow/hideInvokeBar/ensureActiveConversation/ensurePetConversation/getConversationMessages/listPlugins 封装 + PetMessage 入 protocol）；顺带修复 setupCfg snake/camel 映射 bug（baseUrl 此前恒为 undefined）。**显式豁免**：WebviewPanel.vue iframe 原生桥白名单（注释声明的设计，非大脑通信） |
 | ✅ 完成 | **R-21b Rust 通信契约化（决策落定 2026-08-22）**：采用方案 (b) 变体——**字符串分发完全单点化**：write_to_brain 25 处调用点全部收敛至 `brain_cmd`/`brain_cmd_with` 双辅助（write_to_brain 仅被辅助函数内部调用），全部 type 字面量集中在调用参数上一览无余，等价于命令注册表。**显式放弃 CommandKind 枚举**，理由：payload 本质动态 JSON（Option 解包/条件字段），枚举只能约束 type 字符串一层管不了 payload 字段，工程量与回归风险不成比例；协议契约由 protocol-contract.md 文档锁定。验收标准第 6 条同步修订 |
-| ✅ 完成 | **R-25 跨端协议契约（含 R-29 收口 2026-08-22）**：protocol-contract.md（通道/kind 对照/命名映射/漂移清单）+ **app 内部单源化**——RunMetrics 唯一定义于 protocol/brain-types.ts（state/types.ts re-export 兼容）、AvatarState（7 态共享集）单源（Home/HomeFrame/HomePlugins/PanelApp/usePetState/useHomeChatSession 全部引用）；双端类型显式决策「各自维护 + 契约文档对照 + 变更同步纪律」（protocol-contract.md §3.2.1） |
+| ✅ 完成 | **R-25 跨端协议契约（含 R-29 收口 2026-08-22）**：protocol-contract.md（通道/kind 对照/命名映射/漂移清单）+ **desktop 内部单源化**——RunMetrics 唯一定义于 protocol/brain-types.ts（state/types.ts re-export 兼容）、AvatarState（7 态共享集）单源（Home/HomeFrame/HomePlugins/PanelApp/usePetState/useHomeChatSession 全部引用）；双端类型显式决策「各自维护 + 契约文档对照 + 变更同步纪律」（protocol-contract.md §3.2.1） |
 | ✅ 完成 | **R-08 App.vue/PetWindow.vue 拆分（2026-08-22 完成）**：1711→**1208 行**。① 组件级拆分（R-08 阶段一）：`components/pet/` 三组件——PluginLauncher（插件启动器视图+样式）、BubbleFlow（气泡流视图+滚动容器 expose 桥接）、PendingConfirmCard（审批卡+批量快批条）；② **事件流抽离（R-08 收口）**：onEvent（224 行）/onStatus/onPerms → `composables/usePetEvents.ts`（闭包依赖面 ~25 符号经 PetEventsCtx 透传，`typeof` 继承签名零维护类型安全；PetWindow 只留装配层 880 行交互编排 + 模板 150 + 样式 170）。vue-tsc 零错误 + vitest 241 + vite build 全过。**PetWindow 1208 行 = 窗口装配终态**（显式决策：职责内聚的窗口编排层，与 serve_async 956 行 handler 薄层同款判断，不再机械拆） |
 | ✅ 完成 | **R-30 HomePlugins 拆分（2026-08-22）**：1210→933 行——动效域迁 `composables/usePanelGrow.ts`（93 行）、对话浮层迁 `composables/usePluginOverlay.ts`（71 行）、列表视图迁 `components/plugins/PluginGrid.vue`（202 行，样式随迁）；顺带收敛 2 处漏网 invoke 直调（list_plugins/get_current_panel → brainClient.getCurrentPanel）；桌上工位守护测试断言更新至新位置 |
 | ✅ 完成 | **R-31 目录重组收口（2026-08-22，v2 完整版）**：**窗口级根**——windows/{pet,home,panel,invoke,snip}/；**views/ 页面层落地**（chat/feed/plugins/settings/brain 域包 + 平铺页面件，Home* 系按引用实测归位）；**components 收敛**为 pet/panel/common 三域复用件（无平铺残留）；**lib/home/** 域归拢（8 件 home-* 族）。3.1 蓝图同步修订为 v2（chat/ 分类取消等差异见 3.1 修订说明）。期间教训：批量路径重写须处理**无扩展名 import**（`../lib/brain` 不带 `.ts`，映射表 miss 导致多轮返工，最终以「从 HEAD 干净内容重放 + 扩展名补全」确定性收敛）；**目录重组的验证必须含 `vite build`**——`vue-tsc` 对 asset import 不校验存在性（ambient `*.png` 声明通配吃掉），`./assets/logo.png` 深度错位逃过了 tsc+vitest，仅 vite 真解析可捕获（后续 hotfix 修正 HomeWindow.vue:20，289 模块/5 入口 build 通过） |
@@ -31,6 +31,8 @@
 | ✅ 完成 | **R-33 commands.rs（2026-08-22 显式放弃）**：871 行/61 命令不拆目录——与 3.2 形态决策一致（平铺即层）。理由：① 61 命令中约 80% 是同模式转发薄命令（`State<Brain>` → brain_cmd_with → Result），按用户视角分组拆分后大脑域仍占大头，文件变小但职责未减；② Tauri `generate_handler!` 宏要求全部命令名集中注册，拆分让命令清单散落 5 个文件，可读性不升反降；③ 与 transport.py（stdio 单文件协议）同构——单一注册表 + 同类模式，平铺合理。R-31 悬置尾巴据此关闭 |
 
 ✅ **提交纪律已恢复（2026-08-22）**：原 73 文件堆积改动已分批提交完毕（R-31/R-13 系列等各自独立 commit），工作区干净。纪律持续有效——每完成一项任务立即 commit。
+
+✅ **目录重命名 app/ → desktop/（2026-08-22）**：全仓目录名对齐（`app/` → `desktop/`），CI 路径、`tauri.conf.json` 资源引用、`Cargo.toml` name（app→desktop）、Cargo.lock、docs 批量同步；重命名后需 `rm -rf desktop/src-tauri/target` 清旧构建缓存——否则 `tauri-build` 增量构建会读已删除的 `app/src-tauri/target/.../permissions/` 报错（CI 全新构建不受影响）。
 
 ---
 
@@ -47,8 +49,8 @@
 
 | 子项目 | 技术栈 | 源文件数 | 最大文件（行数） |
 |---|---|---|---|
-| `app/src` | Vue3 + TS | 70 ts + 45 vue | `App.vue` 1924、`SettingsView.vue` 1751、`HomeFeed.vue` 1550 |
-| `app/src-tauri` | Rust (Tauri 2) | 5 个源文件 | `lib.rs` 2594 |
+| `desktop/src` | Vue3 + TS | 70 ts + 45 vue | `App.vue` 1924、`SettingsView.vue` 1751、`HomeFeed.vue` 1550 |
+| `desktop/src-tauri` | Rust (Tauri 2) | 5 个源文件 | `lib.rs` 2594 |
 | `sidecar/src` | Python (asyncio) | 43 py | `server.py` 1696 |
 | `plugins/*` | Python + TS + Vue | 33 py + 32 ts + 19 vue | `coding/skills/coding.py` 1687 |
 | `mobile/src` | Vue3 + TS + Capacitor | 26 ts + 10 vue | `StationView.vue` 637、`session.ts` 485 |
@@ -65,23 +67,23 @@
 
 ## 2. 问题详单
 
-### 2.1 app 前端（Vue3 + TS）
+### 2.1 desktop 前端（Vue3 + TS）
 
 #### 2.1.1 大文件
 
 | 文件 | 行数 | 混杂职责 |
 |---|---|---|
-| `app/src/App.vue` | 1924 | 桌宠小窗根 + Avatar 状态机 + 气泡流 + 审批确认 + 插件启动器 + 语音/打断 + 划词截图唤起 + 窗口热区 + 深链恢复 + Setup 向导，`<script setup>` 内 18 个 unlisten 事件监听 |
-| `app/src/components/SettingsView.vue` | 1751 | 外观/模型/语音/快捷键/搜索/浏览器扩展/手机伴生/健康节律/感知开关/系统权限/统计 8+ 个互不相干的设置域 |
-| `app/src/components/HomeFeed.vue` | 1550 | 问候条 + 时间线 + 待批收件箱 + 插件 widget + coding 会话路由 + 误报反馈 |
-| `app/src/components/HomePlugins.vue` | 1238 | 插件列表 + 面板宿主（SchemaPanel/WebviewPanel）+ 动画 + 工作台条 |
-| `app/src/components/HomeChat.vue` | 1172 | 气泡流 + 会话恢复 + 技能 chips + 权限 + 跨窗镜面 + 过程行 |
-| `app/src/components/HomeContextPanel.vue` | 1143 | 上下文面板 + 过程行时间线 + 快批 |
-| `app/src/lib/brain.ts` | 1018 | 类型库 + 事件订阅 + 待批队列状态机（`_pc`）+ 8+ 个 `XxxOnce` 样板 |
-| `app/src/components/PanelApp.vue` | 933 | 面板窗根 + SchemaPanel 宿主 + 输入条 |
-| `app/src/Home.vue` | 871 | 大窗根 + 主题 + surface 裁决 + ⌘K 命令面板 + 全局快捷键 |
-| `app/src/lib/home-assembly.ts` | 859 | 零件目录 + 4 套预设常量 + 吸附算法 + 布局解析，且 `import { ref } from "vue"` 耦合运行时 |
-| `app/src/components/InputBar.vue` | 831 | 输入 + 附件 + @ 引用 + 麦克风 |
+| `desktop/src/App.vue` | 1924 | 桌宠小窗根 + Avatar 状态机 + 气泡流 + 审批确认 + 插件启动器 + 语音/打断 + 划词截图唤起 + 窗口热区 + 深链恢复 + Setup 向导，`<script setup>` 内 18 个 unlisten 事件监听 |
+| `desktop/src/components/SettingsView.vue` | 1751 | 外观/模型/语音/快捷键/搜索/浏览器扩展/手机伴生/健康节律/感知开关/系统权限/统计 8+ 个互不相干的设置域 |
+| `desktop/src/components/HomeFeed.vue` | 1550 | 问候条 + 时间线 + 待批收件箱 + 插件 widget + coding 会话路由 + 误报反馈 |
+| `desktop/src/components/HomePlugins.vue` | 1238 | 插件列表 + 面板宿主（SchemaPanel/WebviewPanel）+ 动画 + 工作台条 |
+| `desktop/src/components/HomeChat.vue` | 1172 | 气泡流 + 会话恢复 + 技能 chips + 权限 + 跨窗镜面 + 过程行 |
+| `desktop/src/components/HomeContextPanel.vue` | 1143 | 上下文面板 + 过程行时间线 + 快批 |
+| `desktop/src/lib/brain.ts` | 1018 | 类型库 + 事件订阅 + 待批队列状态机（`_pc`）+ 8+ 个 `XxxOnce` 样板 |
+| `desktop/src/components/PanelApp.vue` | 933 | 面板窗根 + SchemaPanel 宿主 + 输入条 |
+| `desktop/src/Home.vue` | 871 | 大窗根 + 主题 + surface 裁决 + ⌘K 命令面板 + 全局快捷键 |
+| `desktop/src/lib/home-assembly.ts` | 859 | 零件目录 + 4 套预设常量 + 吸附算法 + 布局解析，且 `import { ref } from "vue"` 耦合运行时 |
+| `desktop/src/components/InputBar.vue` | 831 | 输入 + 附件 + @ 引用 + 麦克风 |
 
 #### 2.1.2 重复代码
 
@@ -116,16 +118,16 @@
 - **入口碎片**：根目录遗留 `home.ts`/`panel.ts`/`snip.ts`/`invoke.ts` 与 `main.ts`、`lib/`、`state/` 并存，疑似废弃入口。
 - **模块级副作用**：`brain.ts:674-719` 被 import 即执行 `listen(...)`，有隐性时序风险。
 
-### 2.2 app Rust 后端（src-tauri）
+### 2.2 desktop Rust 后端（src-tauri）
 
 #### 2.2.1 大文件
 
 | 文件 | 行数 | 混杂职责 |
 |---|---|---|
-| `app/src-tauri/src/lib.rs` | 2594 | ~80 个 Tauri command + sidecar 守护（spawn/watchdog/backoff）+ 配置管理 + 前端桥事件转发（30+ `app.emit` 分支）+ 窗口管理 + 系统集成（剪贴板/CGEvent/热键/托盘）+ 插件 manifest 手写解析 + 全局静态状态 + 内联测试 |
-| `app/src-tauri/src/session_db.rs` | 542 | SQLite 会话存储 + 145 行测试内联 |
-| `app/src-tauri/src/event_recorder.rs` | 452 | 事件落库状态机 + 185 行测试内联（实现与测试近 1:1） |
-| `app/src-tauri/src/plugin_proto.rs` | 241 | 相对单一 |
+| `desktop/src-tauri/src/lib.rs` | 2594 | ~80 个 Tauri command + sidecar 守护（spawn/watchdog/backoff）+ 配置管理 + 前端桥事件转发（30+ `app.emit` 分支）+ 窗口管理 + 系统集成（剪贴板/CGEvent/热键/托盘）+ 插件 manifest 手写解析 + 全局静态状态 + 内联测试 |
+| `desktop/src-tauri/src/session_db.rs` | 542 | SQLite 会话存储 + 145 行测试内联 |
+| `desktop/src-tauri/src/event_recorder.rs` | 452 | 事件落库状态机 + 185 行测试内联（实现与测试近 1:1） |
+| `desktop/src-tauri/src/plugin_proto.rs` | 241 | 相对单一 |
 
 #### 2.2.2 重复代码
 
@@ -179,7 +181,7 @@
 
 ### 2.5 mobile（Capacitor 移动端）
 
-- 文件规模整体健康（最大 `StationView.vue` 637、`session.ts` 485），但存在与 app **双端重复类型**：`FeedItem/FeedStats/RunningTask`（`state/feed.ts:5-32` vs `app/src/lib/brain.ts:326-357`）、`PendingConfirm`、`MemoryItem`，字段命名风格（snake vs camel）都不一致，手工维护易漂移。
+- 文件规模整体健康（最大 `StationView.vue` 637、`session.ts` 485），但存在与 desktop **双端重复类型**：`FeedItem/FeedStats/RunningTask`（`state/feed.ts:5-32` vs `desktop/src/lib/brain.ts:326-357`）、`PendingConfirm`、`MemoryItem`，字段命名风格（snake vs camel）都不一致，手工维护易漂移。
 - **请求样板重复**：`useFeed/useMemories/useReminders/useSessions/useApprovals` 各自重复「fetch → error → loading → finally」。
 - **状态管理**：跨组件共享靠模块级单例 `ref`（如 `pending-badge.ts`），缺 Pinia/provide-inject；`Chat.vue` 多层 `ref` 解包耦合紧。
 - **事件订阅生命周期样板重复**：多个页面重复 `onMounted → start / onUnmounted → stop` + `disposed` 竞态守卫。
@@ -195,12 +197,12 @@
 
 ## 3. 目标架构
 
-### 3.1 前端（app/src）目标分层（v2 修订，2026-08-22 落地版）
+### 3.1 前端（desktop/src）目标分层（v2 修订，2026-08-22 落地版）
 
 > **v2 修订说明**：原蓝图的 `views/` 语义在执行时被确认为「Home 窗的 tab/装配页面组件」（Home* 系只被 HomeWindow/homeAssemblyUi 引用），原 `components/chat/` 分类与实际复用关系不符（InputBar/Bubble 等跨三窗复用应进 common）。v2 按引用实测修订并已落地：
 
 ```
-app/src/
+desktop/src/
 ├── main.ts / home.ts / panel.ts / invoke.ts / snip.ts   # 窗口入口（一窗一文件）
 ├── windows/                # 窗口级根（✅ 已落地）
 │   ├── pet/PetWindow.vue   #   桌宠窗（原 App.vue）
@@ -302,9 +304,9 @@ sidecar/src/yibao_brain/
 
 ### 3.4 跨端协议契约（P3）
 
-app（Tauri IPC）与 mobile/extension（HTTP `/v1/*`）共用同一大脑，但**事件 kind 与数据形状相同、类型定义双份手写**。建议新增 `shared/protocol/`（TypeScript 类型 + 命名规范映射表 snake→camel），由 `docs/` 中维护协议 schema 文档，两端 import 或生成，消除漂移。
+desktop（Tauri IPC）与 mobile/extension（HTTP `/v1/*`）共用同一大脑，但**事件 kind 与数据形状相同、类型定义双份手写**。建议新增 `shared/protocol/`（TypeScript 类型 + 命名规范映射表 snake→camel），由 `docs/` 中维护协议 schema 文档，两端 import 或生成，消除漂移。
 
-> **执行注记（2026-08-22）**：本蓝图**按替代方案达成（有决策记录）**——`shared/protocol/` 代码单源显式放弃，落地形态为：`docs/plan/protocol-contract.md`（通道/kind 对照/命名映射/漂移清单）+ app 内部单源（RunMetrics/AvatarState 唯一定义于 `protocol/brain-types.ts`）+ 双端类型显式决策「各自维护 + 契约对照 + 变更同步纪律」（§3.2.1 记录在案）。见执行状态 R-25 行。
+> **执行注记（2026-08-22）**：本蓝图**按替代方案达成（有决策记录）**——`shared/protocol/` 代码单源显式放弃，落地形态为：`docs/plan/protocol-contract.md`（通道/kind 对照/命名映射/漂移清单）+ desktop 内部单源（RunMetrics/AvatarState 唯一定义于 `protocol/brain-types.ts`）+ 双端类型显式决策「各自维护 + 契约对照 + 变更同步纪律」（§3.2.1 记录在案）。见执行状态 R-25 行。
 
 ---
 
@@ -316,45 +318,45 @@ app（Tauri IPC）与 mobile/extension（HTTP `/v1/*`）共用同一大脑，但
 
 | 编号 | 任务 | 说明 |
 |---|---|---|
-| R-00 | 建立回归基线 | 跑通现有测试：`app`（vitest）、`sidecar`（pytest 63 文件）、Rust `cargo test`；记录覆盖率基线；确认 CI 或本地命令。所有后续任务合入前必须全绿。 |
+| R-00 | 建立回归基线 | 跑通现有测试：`desktop`（vitest）、`sidecar`（pytest 63 文件）、Rust `cargo test`；记录覆盖率基线；确认 CI 或本地命令。所有后续任务合入前必须全绿。 |
 
 ### 阶段 1：P0 低风险清理（可随改随合）
 
 | 编号 | 任务 | 目标 / 动作 | 涉及文件 |
 |---|---|---|---|
-| R-01 | 抽取 `lib/time.ts` | 统一 HH:MM、相对时间、时长格式化；替换 `HomeFeed.vue`/`SessionList.vue`/`DataView.vue`/`schema.ts` 等 ≥4 处手写 `padStart` 与 5+ 处相对时间实现 | app/src 前端 |
-| R-02 | 复用 `truncate` | 用 `lib/proc.ts` 现有 `truncate` 替换 4 处 `slice(0,N)+"…"` 与单行化逻辑；补齐导出 | app/src |
-| R-03 | 抽取 `lib/icons.ts` | 收敛 `djb2`/`ICON_PALETTE`/`initial` 三份实现（App.vue、HomePlugins.vue、QuickPanel.vue） | app/src |
-| R-04 | 入口文件核实与清理 | **修正**：`home.ts`/`panel.ts`/`snip.ts`/`invoke.ts` 是 Tauri 多窗口正式入口（`vite.config.ts` 多页配置 + 各 `.html` 引用），**保留**；任务改为核实各入口文件内无死代码/冗余导入 | app/src |
+| R-01 | 抽取 `lib/time.ts` | 统一 HH:MM、相对时间、时长格式化；替换 `HomeFeed.vue`/`SessionList.vue`/`DataView.vue`/`schema.ts` 等 ≥4 处手写 `padStart` 与 5+ 处相对时间实现 | desktop/src 前端 |
+| R-02 | 复用 `truncate` | 用 `lib/proc.ts` 现有 `truncate` 替换 4 处 `slice(0,N)+"…"` 与单行化逻辑；补齐导出 | desktop/src |
+| R-03 | 抽取 `lib/icons.ts` | 收敛 `djb2`/`ICON_PALETTE`/`initial` 三份实现（App.vue、HomePlugins.vue、QuickPanel.vue） | desktop/src |
+| R-04 | 入口文件核实与清理 | **修正**：`home.ts`/`panel.ts`/`snip.ts`/`invoke.ts` 是 Tauri 多窗口正式入口（`vite.config.ts` 多页配置 + 各 `.html` 引用），**保留**；任务改为核实各入口文件内无死代码/冗余导入 | desktop/src |
 | R-05 | 统一日志 | sidecar 用 `logging` 替代 `print(f"[yibao]…")`（18 模块），保留行为 | sidecar |
 | R-06 | extension 去重 | 错误判定逻辑下沉 `shared.js`；统一 `fetch` 封装（`request` 函数）；补 JSDoc | extension |
-| R-07 | 命名清理（安全项） | 单字母/缩写局部变量改语义化命名（`b`→`bubble`、`d`→`distance`、`n`→`items` 等），仅限无行为影响的局部重命名；`XxxOnce` 统一为明确语义（见 R-14） | app/src、mobile |
+| R-07 | 命名清理（安全项） | 单字母/缩写局部变量改语义化命名（`b`→`bubble`、`d`→`distance`、`n`→`items` 等），仅限无行为影响的局部重命名；`XxxOnce` 统一为明确语义（见 R-14） | desktop/src、mobile |
 
 ### 阶段 2：P1 大文件拆分（行为不变，拆一验一）
 
 | 编号 | 任务 | 目标 / 动作 | 涉及文件 |
 |---|---|---|---|
-| R-08 | 拆 `App.vue`（1924） | 按功能域抽子组件：`pet/PetWindow.vue`（壳）、`Avatar.vue`（已有）、气泡流 → `chat/BubbleFlow.vue`、审批确认 → `composables/usePendingConfirms.ts` + 组件、插件启动器 → `components/PluginLauncher.vue`、唤起/热区 → composables；根组件只留装配与路由 | app/src |
-| R-09 | 拆 `SettingsView.vue`（1751） | 按设置域拆 8 个子组件：`AppearanceSection`/`ModelSection`/`VoiceSection`/`ShortcutSection`/`CompanionSection`/`PermissionsSection`/`DataSection`/`PerceptionSection`；共享 `s-*` 样式抽 `assets/settings.css` | app/src |
-| R-10 | 拆 `HomeFeed.vue`（1550） | 拆 `FeedTimeline`/`InboxView`/`PluginWidgets`/`RecapView`；审批卡与 App.vue 的审批 UI 合并复用 | app/src |
-| R-11 | 拆 `HomeChat.vue`（1172）与 `HomeContextPanel.vue`（1143） | 气泡/过程行/技能 chips 抽 `chat/` 组件；跨窗镜面逻辑进 composables | app/src |
-| R-12 | 拆 `lib.rs`（2594） | 按 3.2 分层：`commands/`（按域拆 5~6 个模块）、`services/brain`（spawn/watchdog/backoff）、`services/config`、`services/windows`、`domain/`（强类型请求枚举）；commands 层保留薄壳 | app/src-tauri |
+| R-08 | 拆 `App.vue`（1924） | 按功能域抽子组件：`pet/PetWindow.vue`（壳）、`Avatar.vue`（已有）、气泡流 → `chat/BubbleFlow.vue`、审批确认 → `composables/usePendingConfirms.ts` + 组件、插件启动器 → `components/PluginLauncher.vue`、唤起/热区 → composables；根组件只留装配与路由 | desktop/src |
+| R-09 | 拆 `SettingsView.vue`（1751） | 按设置域拆 8 个子组件：`AppearanceSection`/`ModelSection`/`VoiceSection`/`ShortcutSection`/`CompanionSection`/`PermissionsSection`/`DataSection`/`PerceptionSection`；共享 `s-*` 样式抽 `assets/settings.css` | desktop/src |
+| R-10 | 拆 `HomeFeed.vue`（1550） | 拆 `FeedTimeline`/`InboxView`/`PluginWidgets`/`RecapView`；审批卡与 App.vue 的审批 UI 合并复用 | desktop/src |
+| R-11 | 拆 `HomeChat.vue`（1172）与 `HomeContextPanel.vue`（1143） | 气泡/过程行/技能 chips 抽 `chat/` 组件；跨窗镜面逻辑进 composables | desktop/src |
+| R-12 | 拆 `lib.rs`（2594） | 按 3.2 分层：`commands/`（按域拆 5~6 个模块）、`services/brain`（spawn/watchdog/backoff）、`services/config`、`services/windows`、`domain/`（强类型请求枚举）；commands 层保留薄壳 | desktop/src-tauri |
 | R-13 | 拆 `server.py`（1696） | `serve_async` 拆为 `router/`（kind→handler 表）+ `handlers/*.py`；stdio 协议入 `transport/`；HTTP 路由职责移入 `http_api.py` 统一 | sidecar |
-| R-14 | 拆 `brain.ts`（1018） | 拆为 `protocol/types.ts`（类型，唯一事实源）+ `services/brainClient.ts`（IPC + `onceWithTimeout` 通用工具替代 8+ `XxxOnce` 样板）+ `state/pending.ts`（`_pc` 队列状态机迁入 state 域） | app/src |
+| R-14 | 拆 `brain.ts`（1018） | 拆为 `protocol/types.ts`（类型，唯一事实源）+ `services/brainClient.ts`（IPC + `onceWithTimeout` 通用工具替代 8+ `XxxOnce` 样板）+ `state/pending.ts`（`_pc` 队列状态机迁入 state 域） | desktop/src |
 | R-15 | 拆 `coding.py`（1687） | 按技能域拆模块（edit/search/run/…），统一 `_runner` 与 `_codex_runner` 为一个 runner 抽象；合并 `_sibling` 到插件公共工具 | plugins/coding |
 | R-16 | 拆 `loop.py`（654）双实现 | 同步 `run` 改为薄封装调用唯一异步实现，或抽公共协程 | sidecar |
-| R-16b | 拆 `home-assembly.ts`（859）——零件独立成域 | 按 3.1 拆为 `assembly/parts.ts`（零件目录+注册表+插件零件注册）、`presets.ts`（4 套预设+几何常量）、`snap.ts`（吸附算法）、`layout.ts`（解析/渲染几何）；`livePluginIds` 等响应式状态迁入 `composables/useAssembly.ts`，`home-chrome.ts` 收编为装配编排入口 | app/src/lib |
+| R-16b | 拆 `home-assembly.ts`（859）——零件独立成域 | 按 3.1 拆为 `assembly/parts.ts`（零件目录+注册表+插件零件注册）、`presets.ts`（4 套预设+几何常量）、`snap.ts`（吸附算法）、`layout.ts`（解析/渲染几何）；`livePluginIds` 等响应式状态迁入 `composables/useAssembly.ts`，`home-chrome.ts` 收编为装配编排入口 | desktop/src/lib |
 
 ### 阶段 3：P2 分层收敛
 
 | 编号 | 任务 | 目标 / 动作 | 涉及文件 |
 |---|---|---|---|
-| R-17 | 统一错误处理 | `brainClient` 增加统一错误类型（`BrainOffline`/`Timeout`/`Rejected`）与 fallback；收敛 SettingsView 6 个错误 ref → 一个 composable + 统一文案；组件内 `.catch(()=>{})` 改为显式处理 | app/src |
-| R-18 | 收敛状态真源 | 待批队列、bubbles 迁入 `state/` domains；`brain.ts` 模块级 `_pc` 移除；明确唯一真源 | app/src |
-| R-19 | 切断 lib 对 Vue 的耦合 | R-16b 拆出后，`home-chrome.ts`/`home-widgets.ts` 残留的 `ref`/`reactive` 状态全部上移到 composables/state，lib/ 保持纯函数 | app/src |
-| R-20 | 组件直调 invoke 收敛 | 所有组件改走 `brainClient`；禁止绕过 | app/src |
-| R-21 | Rust 通信契约化 | `write_to_brain` 样板 35 处替换为 `send_to_brain(CommandKind::X, payload)` 强类型枚举；DB 样板抽 `with_db(state, f)` 助手 | app/src-tauri |
-| R-22 | 测试移出源码 | `session_db.rs`/`event_recorder.rs` 内联测试迁至 `src-tauri/tests/` | app/src-tauri |
+| R-17 | 统一错误处理 | `brainClient` 增加统一错误类型（`BrainOffline`/`Timeout`/`Rejected`）与 fallback；收敛 SettingsView 6 个错误 ref → 一个 composable + 统一文案；组件内 `.catch(()=>{})` 改为显式处理 | desktop/src |
+| R-18 | 收敛状态真源 | 待批队列、bubbles 迁入 `state/` domains；`brain.ts` 模块级 `_pc` 移除；明确唯一真源 | desktop/src |
+| R-19 | 切断 lib 对 Vue 的耦合 | R-16b 拆出后，`home-chrome.ts`/`home-widgets.ts` 残留的 `ref`/`reactive` 状态全部上移到 composables/state，lib/ 保持纯函数 | desktop/src |
+| R-20 | 组件直调 invoke 收敛 | 所有组件改走 `brainClient`；禁止绕过 | desktop/src |
+| R-21 | Rust 通信契约化 | `write_to_brain` 样板 35 处替换为 `send_to_brain(CommandKind::X, payload)` 强类型枚举；DB 样板抽 `with_db(state, f)` 助手 | desktop/src-tauri |
+| R-22 | 测试移出源码 | `session_db.rs`/`event_recorder.rs` 内联测试迁至 `src-tauri/tests/` | desktop/src-tauri |
 | R-23 | mobile 请求收敛 | 请求样板收敛到 `api/` 层统一封装；事件流订阅抽象公共 hook（`useEventStream`） | mobile |
 | R-24 | mobile 状态管理 | 模块级单例 ref → provide/inject 或 Pinia；消除 `StreamLike` 重复接口 | mobile |
 
@@ -362,10 +364,10 @@ app（Tauri IPC）与 mobile/extension（HTTP `/v1/*`）共用同一大脑，但
 
 | 编号 | 任务 | 目标 / 动作 | 涉及文件 |
 |---|---|---|---|
-| R-25 | 跨端协议契约 | 建立 `shared/protocol`（事件 kind + payload 类型 + snake/camel 映射）；app/mobile/extension 引用同一来源；消除 FeedItem/PendingConfirm/MemoryItem/RunMetrics 双份漂移 | app、mobile、sidecar |
+| R-25 | 跨端协议契约 | 建立 `shared/protocol`（事件 kind + payload 类型 + snake/camel 映射）；desktop/mobile/extension 引用同一来源；消除 FeedItem/PendingConfirm/MemoryItem/RunMetrics 双份漂移 | desktop、mobile、sidecar |
 | R-26 | HTTP 客户端统一（Python） | 抽 `common/http_client.py`，替换 skills_composite/plugins/zimeiti 四处 urllib 封装 | sidecar |
 | R-27 | 配置统一注入 | sidecar 各模块改为注入 config 对象，去掉散落的 `import config` 直接读 | sidecar |
-| R-28 | CSS 体系收敛 | 抽取公共样式（scrollbar、segmented、`s-*` settings、`--yb-*` token 完整清单）；组件样式瘦身，只留差异 | app/src |
+| R-28 | CSS 体系收敛 | 抽取公共样式（scrollbar、segmented、`s-*` settings、`--yb-*` token 完整清单）；组件样式瘦身，只留差异 | desktop/src |
 
 ### 阶段 5：补账与收口（2026-08-22 复核新增）
 
@@ -374,11 +376,11 @@ app（Tauri IPC）与 mobile/extension（HTTP `/v1/*`）共用同一大脑，但
 
 | 编号 | 任务 | 目标 / 动作 | 涉及文件 | 优先级 |
 |---|---|---|---|---|
-| R-12b | lib.rs 分层收口（R-12 剩余） | 按 3.2 落地：sidecar 守护域（spawn_brain/spawn_bridge/spawn_watchdog/restart_with_backoff/on_brain_down/boot_brain/ensure_runtime）→ `services/`；配置域（read_env_file/merged_env/get_setup_config/save_setup_config/emit_setup）→ 独立模块；窗口/热区/剪贴板系统集成（set_main_size/expand_chat/spawn_click_through/grab_selected_text/pb_* 等）→ 独立模块；lib.rs 收敛为装配（run + setup + 命令注册）。每拆一域 `cargo test` | app/src-tauri | 高（架构实质） |
-| R-21b | Rust 通信强类型化（R-21 剩余） | 二选一并记录决策：(a) write_to_brain 25 处 → `CommandKind` 强类型枚举 + payload 结构体（domain/），与 protocol-contract.md 对齐；(b) 显式接受「字符串分发集中在 write_to_brain 单点 + brain_cmd 辅助」现状，同步修订第 7 节验收标准第 6 条 | app/src-tauri | 中 |
-| R-29 | 类型单源化（R-25 剩余 + 原清单遗漏） | `RunMetrics` 二合一（state/types.ts 改 re-export protocol/brain-types）；`AvatarState` 4 处定义收敛到 protocol/——**注意枚举成员不一致**（Home.vue/HomeFrame.vue 7 态含 success/error vs HomePlugins.vue/PanelApp.vue 5 态），统一前先裁决缺态组件是否需补齐；`FeedItem`/`PendingConfirm` app 与 mobile 双端收敛方案落地，或显式记录「双端各自维护 + protocol-contract.md 对照」决策 | app/src、mobile/src | 高 |
-| R-30 | 拆 HomePlugins.vue（1210） | 问题详单 2.1.1 列为上帝组件（插件列表 + 面板宿主 + 动画 + 工作台条）但原清单漏配任务：按域拆子组件，面板宿主与 PanelApp 的宿主逻辑评估复用 | app/src | 中 |
-| R-31 | 目录重组收口（物理形态，最后做） | 纯机械 mv + import 修正，单独 PR、零行为变化：App.vue/Home.vue/PanelApp.vue → `windows/{pet,home,panel}/`；components 平铺 47 文件四分 `pet/chat/panel/common`（settings/feed 保持）；Rust commands.rs → `commands/` 目录（可并入 R-12b 顺势做）；lib/ 的 pet-surface/surface-policy → `lib/surface/`。**前置：R-08/R-12b/R-13/R-15 全部完成后执行**，否则路径变更会叠加进后续逻辑拆分 diff | app/src、app/src-tauri | 低（视觉一致） |
+| R-12b | lib.rs 分层收口（R-12 剩余） | 按 3.2 落地：sidecar 守护域（spawn_brain/spawn_bridge/spawn_watchdog/restart_with_backoff/on_brain_down/boot_brain/ensure_runtime）→ `services/`；配置域（read_env_file/merged_env/get_setup_config/save_setup_config/emit_setup）→ 独立模块；窗口/热区/剪贴板系统集成（set_main_size/expand_chat/spawn_click_through/grab_selected_text/pb_* 等）→ 独立模块；lib.rs 收敛为装配（run + setup + 命令注册）。每拆一域 `cargo test` | desktop/src-tauri | 高（架构实质） |
+| R-21b | Rust 通信强类型化（R-21 剩余） | 二选一并记录决策：(a) write_to_brain 25 处 → `CommandKind` 强类型枚举 + payload 结构体（domain/），与 protocol-contract.md 对齐；(b) 显式接受「字符串分发集中在 write_to_brain 单点 + brain_cmd 辅助」现状，同步修订第 7 节验收标准第 6 条 | desktop/src-tauri | 中 |
+| R-29 | 类型单源化（R-25 剩余 + 原清单遗漏） | `RunMetrics` 二合一（state/types.ts 改 re-export protocol/brain-types）；`AvatarState` 4 处定义收敛到 protocol/——**注意枚举成员不一致**（Home.vue/HomeFrame.vue 7 态含 success/error vs HomePlugins.vue/PanelApp.vue 5 态），统一前先裁决缺态组件是否需补齐；`FeedItem`/`PendingConfirm` app 与 mobile 双端收敛方案落地，或显式记录「双端各自维护 + protocol-contract.md 对照」决策 | desktop/src、mobile/src | 高 |
+| R-30 | 拆 HomePlugins.vue（1210） | 问题详单 2.1.1 列为上帝组件（插件列表 + 面板宿主 + 动画 + 工作台条）但原清单漏配任务：按域拆子组件，面板宿主与 PanelApp 的宿主逻辑评估复用 | desktop/src | 中 |
+| R-31 | 目录重组收口（物理形态，最后做） | 纯机械 mv + import 修正，单独 PR、零行为变化：App.vue/Home.vue/PanelApp.vue → `windows/{pet,home,panel}/`；components 平铺 47 文件四分 `pet/chat/panel/common`（settings/feed 保持）；Rust commands.rs → `commands/` 目录（可并入 R-12b 顺势做）；lib/ 的 pet-surface/surface-policy → `lib/surface/`。**前置：R-08/R-12b/R-13/R-15 全部完成后执行**，否则路径变更会叠加进后续逻辑拆分 diff | desktop/src、desktop/src-tauri | 低（视觉一致） |
 
 ### 阶段 6：蓝图收口（2026-08-22 立项）
 
@@ -388,7 +390,7 @@ app（Tauri IPC）与 mobile/extension（HTTP `/v1/*`）共用同一大脑，但
 | 编号 | 任务 | 目标 / 动作 | 涉及文件 | 优先级 |
 |---|---|---|---|---|
 | R-32 | sidecar 3.3 实质收口（分 3 步独立提交） | **(a)** `DistillerStore` → `distiller_store.py`（distiller.py 留编排，存储与编排分离）；**(b)** vision 四件（`ComputerUseClient`/`describe_screen`/`summarize_screen`/`answer_image_query`）→ `llm_vision.py`，`llm.py` 留 re-export 保 monkeypatch 路径（test_image_attachments patch `llm.answer_image_query`）；**(c)** perception.py（1027 行三合一）先出域地图（照 R-13 交接文档先例：行号域清单/拆分序/陷阱清单/验证口径）再分步拆 store/sensors/skills | sidecar | 高（架构实质） |
-| R-33 | Rust commands.rs 目录化 | ✅ 2026-08-22 **显式放弃**（决策记录见执行状态表 R-33 行）：与 3.2 形态决策一致——61 命令 80% 为同模式转发薄命令，`generate_handler!` 宏需集中注册，拆分使命令清单散落且可读性不升；R-31 悬置尾巴据此关闭 | app/src-tauri | 中（已关闭） |
+| R-33 | Rust commands.rs 目录化 | ✅ 2026-08-22 **显式放弃**（决策记录见执行状态表 R-33 行）：与 3.2 形态决策一致——61 命令 80% 为同模式转发薄命令，`generate_handler!` 宏需集中注册，拆分使命令清单散落且可读性不升；R-31 悬置尾巴据此关闭 | desktop/src-tauri | 中（已关闭） |
 | R-34 | mobile 收口（R-23b/R-24b） | ✅ 2026-08-22（决策记录见执行状态表 R-34 行）：useEventStream **实质已达成**（api/events.ts）；**补 Approvals/Chat 竞态守卫**（与 Feed 对齐，修真实泄漏）；view 生命周期组装与模块级 ref **显式放弃**。vitest 83 全绿 | mobile | 中（已关闭） |
 | R-35 | `_sibling` 归一 | plugins 下 6 处重复定义（agents/sandbox/coding/sessions/transcript/_session_skills 各一份）→ 插件公共件；先查测试锁定的 import 路径。R-15 附带项收口 | plugins | 高（正在恶化：原 3 处拆分后扩散至 6 处） |
 | R-36 | 文档补账 | R-23/R-24/R-15 状态降级标注；验收标准勾选/修订；3.2/3.3/3.4 蓝图执行注记（形态决策 + 实质缺口指向收口任务）；放弃清单落档 | docs | ✅ 2026-08-22 完成 |
@@ -449,9 +451,9 @@ app（Tauri IPC）与 mobile/extension（HTTP `/v1/*`）共用同一大脑，但
 
 ## 7. 验收标准（2026-08-22 复核标注现状）
 
-- [x] 全库（app/sidecar/plugins/mobile/extension）测试通过，无 lint error。（241/1142/11/83 全绿，vue-tsc 零错误）
+- [x] 全库（desktop/sidecar/plugins/mobile/extension）测试通过，无 lint error。（241/1142/11/83 全绿，vue-tsc 零错误）
 - [x] （2026-08-22 按决策口径达成）所有 >1000 行的源文件拆分完毕（前端组件、`lib.rs`、`server.py`、`coding.py`、`brain.ts`）。（brain.ts ✅ 8 行；coding.py ✅ 798、HomePlugins.vue ✅ 933、perception.py ✅ 1027→390（R-32c 三分）；server.py ✅ 1334（R-13 查表化 + 四闭包域拆 runtime/，serve_async 956 行 handler 薄层为显式决策）；PetWindow.vue ✅ 1711→1208（R-08 拆 3 组件 + usePetEvents 后 = 窗口装配终态，显式决策见 R-08 行——与 serve_async 同款判断，不再机械拆））
-- [x] （2026-08-22 按决策口径达成）跨端类型：app 内单源（`RunMetrics`/`AvatarState` 唯一定义于 `protocol/brain-types.ts`，R-29）；双端类型显式决策「各自维护 + protocol-contract.md 对照 + 变更同步纪律」（§3.2.1）——不以跨端代码单源为验收。
+- [x] （2026-08-22 按决策口径达成）跨端类型：desktop 内单源（`RunMetrics`/`AvatarState` 唯一定义于 `protocol/brain-types.ts`，R-29）；双端类型显式决策「各自维护 + protocol-contract.md 对照 + 变更同步纪律」（§3.2.1）——不以跨端代码单源为验收。
 - [x] 前端 `lib/` 与 `protocol/` 不再 import Vue 运行时。（复核确认零残留）
 - [x] （2026-08-22 复核实测）组件不再直接 `invoke`：原列 4 处（App.vue:143、HomeChat.vue:209、Home.vue:394）已在 R-20 收尾时清除。残留全部在封装层/豁免清单：`WebviewPanel.vue:104` iframe 原生桥（显式豁免，见 R-20 状态行）、`lib/window.ts`（本地窗口命令封装层，非大脑通信）、`state/domains/conversation-backend.ts`（本地会话 DB 封装层，非大脑通信）。
 - [x] （2026-08-22 修订）Rust 侧字符串 type 分发完全单点化：所有命令经 brain_cmd/brain_cmd_with 双辅助，write_to_brain 仅被辅助内部调用；type 字面量集中于调用参数等价注册表。~~强类型枚举~~ 显式放弃（决策记录见执行状态 R-21b 行）。

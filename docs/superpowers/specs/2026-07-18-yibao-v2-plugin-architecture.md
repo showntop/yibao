@@ -191,7 +191,7 @@ name = "sync_done"
 ### 实装记录（设计语言统一，2026-07-22）
 
 - **面板/webview 设计标杆**：`plugins/toolbox/panel/tools.html`——卡片式布局（白卡 14px 圆角 + `0 1px 2px rgba(90,70,50,.04), 0 6px 16px rgba(90,70,50,.05)`）、分段控制器页签、徽章统计、toast 反馈、主/ghost 两级按钮（`#ff8a5c`/`#f2703f` + `#e3d7c4` 边）。新 webview 面板照抄其 `:root` token 块。
-- **已对齐**：SchemaPanel（list/board/detail/form 全部卡片化 + 两级按钮）、主对话框（Bubble/InputBar/头部/启动器）、zimeiti 编辑器；`app/src/assets/tokens.css` 关键值已回填（`--yb-text #3f372e`、`--yb-bg #f6f1ea`、默认圆角 14px、新增 `--yb-accent-deep`）。
+- **已对齐**：SchemaPanel（list/board/detail/form 全部卡片化 + 两级按钮）、主对话框（Bubble/InputBar/头部/启动器）、zimeiti 编辑器；`desktop/src/assets/tokens.css` 关键值已回填（`--yb-text #3f372e`、`--yb-bg #f6f1ea`、默认圆角 14px、新增 `--yb-accent-deep`）。
 - **空态规范**：双行结构（主句 600 次要色 + 引导句淡色），引导用户回对话（如「去跟译宝说一句试试」），不硬编码插件名；webview 面板可用 `:placeholder-shown` 纯 CSS 做空态显隐（editor.html 先例）。
 - **提醒**：底座技能 `reminder_set/list/cancel`（下划线命名——底座 id 禁点号），`reminders.json` 落盘，serve 调度循环 10s 一拍，到期亮窗 + 气泡 + 空闲 TTS；LLM 时间语义靠 loop 注入的当前时间 system 消息。
 
@@ -208,7 +208,7 @@ name = "sync_done"
 ### 实装记录（过程展示，2026-07-27）
 
 - **技能短标签 `label`**：Skill 基类加 `label = ""` 类属性（中文短名如「运行沙箱脚本」），所有底座/插件技能已填；声明式 tool 从 manifest `[[tool]] label` 读（可选）。`Action.label` 由 invoker.propose 填（回退 skill_id），随 `action_proposed`/`action_result` 事件到前端。description 是长路由文案，不能当标题用。
-- **过程气泡行**：工具调用在对话流留痕——`action_proposed` 插一行淡色小字「🔧 标签」（sys/hint 同款调性），`action_result` 原地更新 ✅/❌（失败带 error 摘要，60 字截断）。四个对话场景同款逻辑：宠物窗（App.vue，sys 气泡）、大窗对话页（HomeChat.vue，可点「详情」展开参数 pretty JSON + 结果，各截 800 字）、面板浮窗（PanelApp.vue）与大窗插件页（HomePlugins.vue）（t-row.proc 时间线行）。共享小工具 `app/src/lib/proc.ts`。
+- **过程气泡行**：工具调用在对话流留痕——`action_proposed` 插一行淡色小字「🔧 标签」（sys/hint 同款调性），`action_result` 原地更新 ✅/❌（失败带 error 摘要，60 字截断）。四个对话场景同款逻辑：宠物窗（App.vue，sys 气泡）、大窗对话页（HomeChat.vue，可点「详情」展开参数 pretty JSON + 结果，各截 800 字）、面板浮窗（PanelApp.vue）与大窗插件页（HomePlugins.vue）（t-row.proc 时间线行）。共享小工具 `desktop/src/lib/proc.ts`。
 - **规则**：`use_plugin` 不插行（成功有 notice 轻提示，重复；失败由 LLM 下一句转告）；`action_result` 无匹配过程行（面板直调只发 result 不发 proposed）不补行，失败仍走原 errorText 细条。思考过程不另做：模型调工具前的文本本就流式进气泡。
 - 顺带修：PanelApp.vue 重复 `case "action_result"`（JS switch 首个匹配生效，后一个死代码——「看 PRD」类直调失败无反馈的根因），已合并。
 
@@ -307,7 +307,7 @@ name = "sync_done"
 
 ### 实装踩坑记录（Tauri 侧）
 
-- **新窗口必须配 capability**：Tauri v2 里窗口无匹配 capability = 无任何 IPC 权限（`listen`/`invoke` 插件与 core 命令全拒，自定义命令除外）。窗口事件订阅需 `core:event:allow-listen/unlisten`，标题栏拖动需 `core:window:allow-start-dragging`（见 `app/src-tauri/capabilities/panel.json`）。
+- **新窗口必须配 capability**：Tauri v2 里窗口无匹配 capability = 无任何 IPC 权限（`listen`/`invoke` 插件与 core 命令全拒，自定义命令除外）。窗口事件订阅需 `core:event:allow-listen/unlisten`，标题栏拖动需 `core:window:allow-start-dragging`（见 `desktop/src-tauri/capabilities/panel.json`）。
 - **事件先发、窗口后开的竞态**：`app.emit` 只送达当时已存在的窗口；后创建的窗口要靠 Rust 侧缓存载荷 + 窗口挂载后 `invoke` 补拉（`get_current_panel`）。
 
 

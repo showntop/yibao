@@ -24,8 +24,8 @@
 - `sidecar/src/yibao_brain/voice.py`（改）：抽 `StreamingPcmSpeaker` 基类；`EdgeTtsSpeaker` 改继承；新增 `CosyVoiceCloudSpeaker`、`CosyVoiceSpeaker`、`build_speaker()`。
 - `sidecar/src/yibao_brain/config.py`（改）：`tts_provider()` + 8 个 cosyvoice 参数函数。
 - `sidecar/tests/test_voice.py`（改/加）：选择+兜底、两新 provider 的 fake-client 单测。
-- `app/src/components/SettingsView.vue`（改）：provider 选择 + 条件字段。
-- `app/src/lib/brain.ts`（改，按需）：若 settings 走 IPC 新键。
+- `desktop/src/components/SettingsView.vue`（改）：provider 选择 + 条件字段。
+- `desktop/src/lib/brain.ts`（改，按需）：若 settings 走 IPC 新键。
 - `sidecar/.env.example`（改）：新 env 样例。
 
 ---
@@ -418,10 +418,10 @@ class CosyVoiceSpeaker(StreamingPcmSpeaker):
 ### Task 5: 设置页 provider 选择
 
 **Files:**
-- Modify: `app/src/components/SettingsView.vue`（语音区加 provider 下拉 + 条件字段）
-- Modify: `app/src/lib/brain.ts`（若新 settings 键走 IPC；复用现有 saveSettings）
+- Modify: `desktop/src/components/SettingsView.vue`（语音区加 provider 下拉 + 条件字段）
+- Modify: `desktop/src/lib/brain.ts`（若新 settings 键走 IPC；复用现有 saveSettings）
 
-- [ ] **Step 1: 写前端组件测（若 app 测试基建支持；否则手测）** — `app/tests/` 已有 `.mjs`。仿 `input-permission-ui.test.mjs` 断言：选「云」显示 voice 字段、选「本地」显示参考音频字段、edge 都不显示。
+- [ ] **Step 1: 写前端组件测（若 app 测试基建支持；否则手测）** — `desktop/tests/` 已有 `.mjs`。仿 `input-permission-ui.test.mjs` 断言：选「云」显示 voice 字段、选「本地」显示参考音频字段、edge 都不显示。
 - [ ] **Step 2-4: 实现 UI** — 加 `<select v-model="ttsProvider">` 三选项；`v-if` 条件字段；改动经现有 settings IPC 落盘（`tts.provider` 加入 `_SETTINGS_DEFAULTS`/`_SETTINGS_ENUMS`，config.py）。
 - [ ] **Step 5: 手测/commit** — `git commit -m "feat(tts): 设置页 provider 选择 UI"`
 

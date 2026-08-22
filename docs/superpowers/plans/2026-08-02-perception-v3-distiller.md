@@ -6,7 +6,7 @@
 
 **Architecture:** 新增 `sidecar/src/yibao_brain/distiller.py`（store + 预聚合 + LLM 提炼 + 投影 + 互斥编排，纯同步、可独立测试）；`server.py` 接入每日 04:17 asyncio 调度循环、`distill_now` IPC、purge 并入现有每小时清理；Rust/TS 透明转发；设置页加 `perception.distill` 开关（行内两段确认）+「立即提炼昨日」按钮。设计依据：`docs/superpowers/specs/2026-08-02-perception-v3-distiller-design.md`。
 
-**Tech Stack:** Python 3.11+ / sqlite3 / pytest（sidecar）；Rust / Tauri command（src-tauri）；Vue 3 + TypeScript（app）。
+**Tech Stack:** Python 3.11+ / sqlite3 / pytest（sidecar）；Rust / Tauri command（src-tauri）；Vue 3 + TypeScript（desktop）。
 
 ## Global Constraints
 
@@ -1126,8 +1126,8 @@ git commit -m "feat(distiller): server 接线——perception.distill 设置键 
 ### Task 6: Rust + TS 转发 distill_now
 
 **Files:**
-- Modify: `app/src-tauri/src/lib.rs`（feed 桥接 :449-451 后；get_feed 命令 :782-789 后；invoke_handler :1531+）
-- Modify: `app/src/lib/brain.ts`（`fetchFeed` :279-281 后；`SettingsValues` :659）
+- Modify: `desktop/src-tauri/src/lib.rs`（feed 桥接 :449-451 后；get_feed 命令 :782-789 后；invoke_handler :1531+）
+- Modify: `desktop/src/lib/brain.ts`（`fetchFeed` :279-281 后；`SettingsValues` :659）
 
 **Interfaces:**
 - Consumes: Task 5 的 IPC 协议；`write_to_brain`（lib.rs:376-381）；`app.emit`；TS `invoke` / `once`（@tauri-apps/api）。
@@ -1138,7 +1138,7 @@ git commit -m "feat(distiller): server 接线——perception.distill 设置键 
 
 - [ ] **Step 1: Rust 桥接事件**
 
-`app/src-tauri/src/lib.rs` 在 `Some("feed") => { let _ = app.emit("brain-feed", v); }` 块之后加：
+`desktop/src-tauri/src/lib.rs` 在 `Some("feed") => { let _ = app.emit("brain-feed", v); }` 块之后加：
 
 ```rust
                             // 手动提炼响应（distill_now）：整体转发，设置页一次性取用
@@ -1170,12 +1170,12 @@ fn distill_now(state: tauri::State<Brain>) -> Result<(), String> {
 
 - [ ] **Step 3: cargo check**
 
-Run: `cd app/src-tauri && cargo check`
+Run: `cd desktop/src-tauri && cargo check`
 Expected: exit 0
 
 - [ ] **Step 4: TS 封装 + 设置类型**
 
-`app/src/lib/brain.ts` 在 `fetchFeed` 函数（:279-281）之后加：
+`desktop/src/lib/brain.ts` 在 `fetchFeed` 函数（:279-281）之后加：
 
 ```ts
 /** 手动提炼回包（distill_now 的响应，经 brain-distill-now 事件回来）。 */
@@ -1216,13 +1216,13 @@ export async function distillNow(timeoutMs = 90000): Promise<DistillNowResponse>
 
 - [ ] **Step 5: 类型检查 + 构建**
 
-Run: `cd app && npx vue-tsc --noEmit && npx vite build`
+Run: `cd desktop && npx vue-tsc --noEmit && npx vite build`
 Expected: exit 0
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add app/src-tauri/src/lib.rs app/src/lib/brain.ts
+git add desktop/src-tauri/src/lib.rs desktop/src/lib/brain.ts
 git commit -m "feat(distiller): Rust/TS 转发 distill_now（brain-distill-now 事件）+ 设置类型"
 ```
 
@@ -1231,7 +1231,7 @@ git commit -m "feat(distiller): Rust/TS 转发 distill_now（brain-distill-now �
 ### Task 7: 设置页开关 + 行内确认 + 立即提炼按钮
 
 **Files:**
-- Modify: `app/src/components/SettingsView.vue`（ref 声明区；`syncPerceptionSettings` :295-305；`setPerceptionSetting` :307-344；感知组模板 :783-794 后）
+- Modify: `desktop/src/components/SettingsView.vue`（ref 声明区；`syncPerceptionSettings` :295-305；`setPerceptionSetting` :307-344；感知组模板 :783-794 后）
 
 **Interfaces:**
 - Consumes: Task 6 的 `distillNow` / `DistillNowResponse`；现有 `setPerceptionSetting` / `perceptionScreen` / `screenConfirming` 模式（:307-358）。
@@ -1326,13 +1326,13 @@ import 区把 `distillNow` 加进从 `../lib/brain`（或现有 brain.ts import 
 
 - [ ] **Step 3: 类型检查 + 构建**
 
-Run: `cd app && npx vue-tsc --noEmit && npx vite build`
+Run: `cd desktop && npx vue-tsc --noEmit && npx vite build`
 Expected: exit 0
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add app/src/components/SettingsView.vue
+git add desktop/src/components/SettingsView.vue
 git commit -m "feat(distiller): 设置页每日提炼开关（行内两段确认）+ 立即提炼昨日按钮"
 ```
 
@@ -1350,12 +1350,12 @@ Expected: 751 passed
 
 - [ ] **Step 2: 前端全量检查**
 
-Run: `cd app && npx vue-tsc --noEmit && npx vite build`
+Run: `cd desktop && npx vue-tsc --noEmit && npx vite build`
 Expected: exit 0
 
 - [ ] **Step 3: Rust 全量检查**
 
-Run: `cd app/src-tauri && cargo check && cargo test`
+Run: `cd desktop/src-tauri && cargo check && cargo test`
 Expected: exit 0
 
 - [ ] **Step 4: 真机验收（手动，对照规格 §7）**

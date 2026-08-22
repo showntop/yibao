@@ -350,7 +350,7 @@ git commit -m "feat: 统一 review 栏壳集成——demux tap/挂载快照/右�
 ```bash
 cd plugins/coding/panel && pnpm test && pnpm build && pnpm typecheck
 cd sidecar && .venv/bin/pytest tests/ -q
-cd app && pnpm test && pnpm build   # 回归确认(本阶段 app 侧零改动预期)
+cd desktop && pnpm test && pnpm build   # 回归确认(本阶段 app 侧零改动预期)
 ```
 - [ ] **Step 2: 阶段四全分支终审**（范围：f4dcd98..HEAD），验收 E 逐条对证：
   - 两会话同时挂起 → review 栏按会话分组 ✓

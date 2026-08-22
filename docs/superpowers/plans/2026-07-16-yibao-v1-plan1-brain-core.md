@@ -24,7 +24,7 @@
 ## 开发环境说明
 
 - 仓库根：`/data/dennyxiao/yibao`（已 `git init`）。
-- Python 代码置于 `sidecar/` 子目录（后续 Plan 2 的 Tauri 壳置于仓库根的 `app/`）。
+- Python 代码置于 `sidecar/` 子目录（后续 Plan 2 的 Tauri 壳置于仓库根的 `desktop/`）。
 - 用 `uv` 管理 Python 项目与虚拟环境（已确认 `uv 0.8.14` 可用）。
 - 测试一律在 `sidecar/` 下用 `pytest` 运行；本服务器可运行全部单测。
 

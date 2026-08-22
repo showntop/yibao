@@ -4,9 +4,9 @@
 状态：方向已确认；独立交互原型 v2 已通过；主屏生产接入已实现并完成核心验收  
 范围：译宝大窗主屏内的插件、外部应用与复杂工作台调用；不改变现有 L0–L4 风险闸门
 
-原型入口：`app/capability-surface.html`。v2 已验证“主屏内展开选题工作面、对象进入同一输入框作用域、对话与能力活动混合记录、刷新后恢复、收起后状态可恢复”。当前持久化使用版本化 `localStorage` 快照，只是交互验证；生产版必须接任务级持久化服务，不能把用户真实对话长期散落在 WebView 本地存储中。
+原型入口：`desktop/capability-surface.html`。v2 已验证“主屏内展开选题工作面、对象进入同一输入框作用域、对话与能力活动混合记录、刷新后恢复、收起后状态可恢复”。当前持久化使用版本化 `localStorage` 快照，只是交互验证；生产版必须接任务级持久化服务，不能把用户真实对话长期散落在 WebView 本地存储中。
 
-生产入口：`app/home.html`。主屏现在将真实 `panel` 事件收束为任务级能力活动：模型触发只产生关联卡与活动胶囊，不自动抢页；插件库中的用户明确点击直接进入 Stage。Stage 复用现有 `SchemaPanel` / `WebviewPanel`、风险闸门、`panel_action` 与焦点上报，不复制插件运行时。协作轨通过只读 Tauri 命令投影 sidecar 的 `history.json`，刷新仅恢复 UI，不重放工具；原始工具参数不会透给渲染层。`localStorage` 只保留 panel ref、展开态和 Stage / Focus 布局偏好，不保存真实对话正文。
+生产入口：`desktop/home.html`。主屏现在将真实 `panel` 事件收束为任务级能力活动：模型触发只产生关联卡与活动胶囊，不自动抢页；插件库中的用户明确点击直接进入 Stage。Stage 复用现有 `SchemaPanel` / `WebviewPanel`、风险闸门、`panel_action` 与焦点上报，不复制插件运行时。协作轨通过只读 Tauri 命令投影 sidecar 的 `history.json`，刷新仅恢复 UI，不重放工具；原始工具参数不会透给渲染层。`localStorage` 只保留 panel ref、展开态和 Stage / Focus 布局偏好，不保存真实对话正文。
 
 ## 0. 最终建议
 

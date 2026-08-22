@@ -13,7 +13,7 @@
 - 桌面 IPC 全走既有模式：sidecar dispatch → Rust `write_to_brain`/事件转发 → brain.ts `once/listen` → Vue
 - `settings_set` 只落已知键（http.bind 已在默认表）；bind 改动重启大脑生效（UI 注明）；token 重置经热生效修复后即时生效
 - 二维码内容 v1 = 手机浏览器配对 URL（`http://<lan_ip>:5173/?host=&token=#/pairing`；原生 App 上线后换 `yibao://pair` 同码位）
-- 测试：sidecar pytest 函数级 + asyncio.run；桌面 app vitest；Rust `cargo check` 过；中文注释文案
+- 测试：sidecar pytest 函数级 + asyncio.run；桌面 desktop vitest；Rust `cargo check` 过；中文注释文案
 
 ---
 
@@ -110,17 +110,17 @@ def _lan_ip() -> str:
 ### Task 2:（desktop）Rust 命令 + brain.ts + 设置区块 + 二维码
 
 **Files:**
-- Modify: `app/src-tauri/src/lib.rs`（:639 settings 转发旁加 http_pair_info → brain-http-pair-info；get_settings 旁加命令 + invoke_handler 注册）
-- Modify: `app/src/lib/brain.ts`（getSettingsOnce 旁加 HttpPairInfo + getHttpPairInfoOnce）
-- Create: `app/src/lib/pair.ts` + `app/src/lib/pair.test.ts`（配对 URL 纯函数）
-- Modify: `app/src/components/SettingsView.vue`（浏览器扩展区块（:690-706）后加「手机伴生端」section）
-- Modify: `app/package.json`（+`qrcode`、devDep `@types/qrcode`）
+- Modify: `desktop/src-tauri/src/lib.rs`（:639 settings 转发旁加 http_pair_info → brain-http-pair-info；get_settings 旁加命令 + invoke_handler 注册）
+- Modify: `desktop/src/lib/brain.ts`（getSettingsOnce 旁加 HttpPairInfo + getHttpPairInfoOnce）
+- Create: `desktop/src/lib/pair.ts` + `desktop/src/lib/pair.test.ts`（配对 URL 纯函数）
+- Modify: `desktop/src/components/SettingsView.vue`（浏览器扩展区块（:690-706）后加「手机伴生端」section）
+- Modify: `desktop/package.json`（+`qrcode`、devDep `@types/qrcode`）
 
 **Interfaces:**
 - Consumes: Task 1 的 `{"type":"http_pair_info"}` IPC；既有 settings_get/set 通道（token 与 bind 都从 settings 快照走）
 - Produces: `buildPairUrl(lanIp: string, port: number, token: string): string`（`http://<ip>:5173/?host=<enc>&token=<enc>#/pairing`，host 为 `http://<ip>:<port>`）；设置页区块三件套
 
-- [ ] **Step 1: 失败测试**：app/src/lib/pair.test.ts——
+- [ ] **Step 1: 失败测试**：desktop/src/lib/pair.test.ts——
 
 ```typescript
 import { describe, expect, it } from "vitest";
@@ -185,14 +185,14 @@ export async function getHttpPairInfoOnce(timeoutMs = 3000): Promise<HttpPairInf
 - [ ] **Step 4: SettingsView.vue 区块**（:706 浏览器扩展 section 后插入，样式类全部复用现有 s-* 体系）：
   - script：`mobileToken`（从 settings 快照 http.mobile_token，:533 旁同法）、`lanInfo = ref<HttpPairInfo | null>`（onMounted getHttpPairInfoOnce + 每次分类切入刷新）、`pairQr = ref("")`、`buildQr()`（QRCode.toDataURL(buildPairUrl(...)) → pairQr；qrcode import：`import QRCode from "qrcode"`）；「重置」= `setSettings({"http.mobile_token": <32位随机hex>})`（`crypto.randomUUID().replace(/-/g,"")`）后刷新快照 + 提示「已重置并即时生效，旧手机需重新配对」；「局域网」switch：`setSettings({"http.bind": on ? "0.0.0.0" : "127.0.0.1"})` + 提示「重启大脑后生效」
   - template：三行——token（masked/显示/复制/重置，照抄 bridgeToken 那行的结构）、局域网开关（照抄 watchEnabled switch 行）、二维码（`<img v-if="pairQr" :src="pairQr" />` 120px + 说明「手机与电脑同一 WiFi，扫码直达配对」；lanInfo 为 null 或 lan_ip 空时显示提示行不显示码）
-  - `cd app && pnpm add qrcode && pnpm add -D @types/qrcode`
+  - `cd desktop && pnpm add qrcode && pnpm add -D @types/qrcode`
 
-- [ ] **Step 5: 验证 + 提交**：`cd app && pnpm test && npx vue-tsc --noEmit && cd src-tauri && cargo check` 全绿 → `feat(desktop): 设置页手机伴生端区块——token 热重置/局域网开关/配对二维码`
+- [ ] **Step 5: 验证 + 提交**：`cd desktop && pnpm test && npx vue-tsc --noEmit && cd src-tauri && cargo check` 全绿 → `feat(desktop): 设置页手机伴生端区块——token 热重置/局域网开关/配对二维码`
 
 ---
 
 ## 验收
 
 - [ ] sidecar 全量 pytest 绿（含热生效 + pair_info 两新用例）
-- [ ] app vitest 绿（pair.test 2 用例）+ vue-tsc + cargo check 净
+- [ ] desktop vitest 绿（pair.test 2 用例）+ vue-tsc + cargo check 净
 - [ ] 真机（手机浏览器）扫设置页二维码 → 直达配对页预填好 → 保存进入（用户验收）

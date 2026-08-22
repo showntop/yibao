@@ -36,8 +36,8 @@
 
 | 职责 | 文件 |
 |---|---|
-| 登记表 / 持久化 | `app/src/lib/home-chrome.ts`（`yibao-chrome`，缺省 `rails`） |
-| shell 映射 | `app/src/lib/home-chrome-ui.ts` |
+| 登记表 / 持久化 | `desktop/src/lib/home-chrome.ts`（`yibao-chrome`，缺省 `rails`） |
+| shell 映射 | `desktop/src/lib/home-chrome-ui.ts` |
 | 三栏壳 | `HomeRails.vue` |
 | 整桌壳 | `HomeDesk.vue` |
 | 纸面 | `HomePaper.vue` |

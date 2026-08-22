@@ -17,9 +17,9 @@
    `sidecar/tests/test_instance.py` 加 3 用例（mock subprocess.run 伪造 ps 输出）：
    `-m yibao_brain.server` 形态 True、`.venv/bin/python .../yibao-brain-server` 入口点形态
    True（uv run 常驻进程即此形态）、无关进程（node 撞名 / 裸 python http.server）False。
-2. **fileRefPaths 死导出**（`app/src/lib/at-mention.ts`）：grep 确认 app/src 仅测试引用，
+2. **fileRefPaths 死导出**（`desktop/src/lib/at-mention.ts`）：grep 确认 desktop/src 仅测试引用，
    删导出 + at-mention.test.ts 对应 describe 块与 import（InputContext 仍被其他用例用，保留）。
-3. **PanelApp focusInput 误中**（`app/src/components/PanelApp.vue`）：
+3. **PanelApp focusInput 误中**（`desktop/src/components/PanelApp.vue`）：
    `querySelector("input")` 会命中 InputBar 隐藏 file-input；改经 `inputBarRef` 调 InputBar
    已 expose 的 `focus()`（defineExpose { focus, insertText }，:337）。随之失效的 `barRef`
    （仅 focusInput 使用）声明与模板 ref 一并删。
@@ -44,14 +44,14 @@
 ## 验证（闸门全绿）
 
 - `cd sidecar && .venv/bin/pytest tests/ -q` → **1090 passed**（基线 1086 + instance 3 + codex fallback 1）
-- `cd app && pnpm test` → **114 passed**（基线 115 − at-mention 删块 1）；`pnpm build` ✓
+- `cd desktop && pnpm test` → **114 passed**（基线 115 − at-mention 删块 1）；`pnpm build` ✓
 - `cd plugins/coding/panel && pnpm test` → **138 passed**（基线 134 + permPublicParams 4）；
   `pnpm build` ✓、`pnpm typecheck`（vue-tsc --noEmit）✓
 
 ## 未入库
 
 - `sidecar/uv.lock` 既有本地改动（pypi → 清华镜像源），与本任务无关，未 stage。
-- `app/src-tauri/target` 未跟踪构建产物，未 stage。
+- `desktop/src-tauri/target` 未跟踪构建产物，未 stage。
 
 ## concerns
 

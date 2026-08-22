@@ -127,13 +127,13 @@ ALTER TABLE runs ADD COLUMN stats TEXT;   -- JSON: {"app_seconds":{"VSCode":1152
   - `_SETTINGS_DEFAULTS` 加 `perception.recap: False`。
 - 复用：`ProactiveDispatcher.emit`（reminder 路径，含 level 闸 / 降频 / Feed 记账）、`DistillerStore.day_items`、`FeedStore`。
 
-### 前端（`app/src/`）
+### 前端（`desktop/src/`）
 
 - `lib/brain.ts`：`recapCheck()`（invoke `recap_check`）；`fetchDistillTimeline(days)` / `getDistillTimelineOnce()`（命令 → `brain-distill-timeline` 事件）；类型 `DistillDay{day,status,stats,items}`。
 - `components/HomeFeed.vue`：顶部加 toggle「动态｜回顾」（macOS Segmented Control，复用现有 `.segmented` 样式）；回顾 mode 渲染按天卡片（数字条 app 时长 + 活跃段 + 洞察/事件列表 + 提炼状态徽章：已提炼/未提炼/失败）。
 - `App.vue`：主窗 show 检测（`getCurrentWindow` 可见性事件）→ `recapCheck()`（每窗 show 一次）；`onBrainEvent` 收 `morning_recap` → 团子气泡；气泡点击 → 切动态页 + 回顾 mode + 滚到 `event.day`。
 
-### Rust（`app/src-tauri/src/lib.rs`）
+### Rust（`desktop/src-tauri/src/lib.rs`）
 
 - IPC 桥接：sidecar 出的 `distill_timeline` 行 → `app.emit("brain-distill-timeline", v)`（仿现有 `brain-distill-now` / `brain-feed-stats`）。
 - recap 走现有 `brain-event` 通道（已是 reminder 事件），无需新通道。

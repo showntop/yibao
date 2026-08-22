@@ -6,7 +6,7 @@
 
 **Architecture:** 判定集中在 `home-desk-presence`（误触 / 开行 / 关行）。`HomeChat` 只在打开时 `append`，关只清内存。`work-thread` 把历史关行从纸上拿掉。纸面/线索把 `panelLink` 开行画成 `.path-print`。
 
-**Tech Stack:** Vue 3 + TypeScript；app 仓 vitest。
+**Tech Stack:** Vue 3 + TypeScript；desktop 仓 vitest。
 
 ## Global Constraints
 
@@ -21,8 +21,8 @@
 ### Task 1: 误触判定 + 关行识别
 
 **Files:**
-- Modify: `app/src/lib/home-desk-presence.ts`
-- Test: `app/src/lib/home-desk-presence.test.ts`
+- Modify: `desktop/src/lib/home-desk-presence.ts`
+- Test: `desktop/src/lib/home-desk-presence.test.ts`
 
 **Interfaces:**
 - Produces: `isDeskPathOpenLine(text: string): boolean`；`isDeskPathCloseLine(text: string): boolean`；`isDeskPathBounce(last: DeskWork | null | undefined, next: DeskWork, since: readonly PathTalkBubble[]): boolean`；`shouldStampDeskPath(current: DeskWork | null, last: DeskWork | null, next: DeskWork, since: readonly PathTalkBubble[]): boolean`
@@ -53,7 +53,7 @@ describe("desk path bounce", () => {
 
 - [ ] **Step 2: Run tests, confirm they fail**
 
-Run: `cd app && npx vitest run src/lib/home-desk-presence.test.ts`
+Run: `cd desktop && npx vitest run src/lib/home-desk-presence.test.ts`
 
 - [ ] **Step 3: Implement bounce / open / close line helpers**
 
@@ -64,8 +64,8 @@ Run: `cd app && npx vitest run src/lib/home-desk-presence.test.ts`
 ### Task 2: 纸上藏关行
 
 **Files:**
-- Modify: `app/src/lib/work-thread.ts`
-- Test: `app/src/lib/work-thread.test.ts`
+- Modify: `desktop/src/lib/work-thread.ts`
+- Test: `desktop/src/lib/work-thread.test.ts`
 
 **Interfaces:**
 - Consumes: `isDeskPathCloseLine` from `home-desk-presence`
@@ -82,12 +82,12 @@ Run: `cd app && npx vitest run src/lib/home-desk-presence.test.ts`
 ### Task 3: 只在打开时 stamp + 脚印脸
 
 **Files:**
-- Modify: `app/src/components/HomeChat.vue`
-- Modify: `app/src/lib/home-chat-session.ts`（`livePathLine`）
-- Modify: `app/src/components/HomeChatPaper.vue`
-- Modify: `app/src/components/HomeChatThread.vue`
-- Modify: `app/src/components/home-chat-faces.css`
-- Test: `app/src/lib/home-desk-work.test.ts`
+- Modify: `desktop/src/components/HomeChat.vue`
+- Modify: `desktop/src/lib/home-chat-session.ts`（`livePathLine`）
+- Modify: `desktop/src/components/HomeChatPaper.vue`
+- Modify: `desktop/src/components/HomeChatThread.vue`
+- Modify: `desktop/src/components/home-chat-faces.css`
+- Test: `desktop/src/lib/home-desk-work.test.ts`
 
 **Interfaces:**
 - Consumes: `shouldStampDeskPath`, `deskPathOpen`, `isDeskPathOpenLine`

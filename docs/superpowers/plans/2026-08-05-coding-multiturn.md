@@ -126,7 +126,7 @@ def test_runner_resume_passes_session_id(monkeypatch):
 - [ ] **Step 1: 发送逻辑** — `send()`：若 `currentSession` 为空 → `coding.start({cwd, prompt})`（新会话，回填 currentSession）；否则 → `coding.send({id: currentSession, prompt})`（接续）。两路径都：appendUser → invoke → currentBubble=null → 流式 onInit 累加。
 - [ ] **Step 2: 会话保持** — done/error 不清空 currentSession（会话可继续）；加「新对话」按钮 → 清 currentSession + 清 #log（开新 CC 会话）。
 - [ ] **Step 3: 中断** — stop 仍调 coding.stop（取消当前 turn；currentSession 保留，可继续 send）。
-- [ ] **Step 4: build** — `cd app && npx vite build` exit 0。
+- [ ] **Step 4: build** — `cd desktop && npx vite build` exit 0。
 - [ ] **Step 5: commit** — `feat(coding): 面板多轮——首条 start / 后续 send + 新对话`
 
 ---

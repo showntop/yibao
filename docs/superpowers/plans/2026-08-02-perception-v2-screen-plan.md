@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- sidecar 测试：`cd sidecar && uv run --extra dev pytest -q`（必须带 `--extra dev`）；前端 `cd app && npm run build`；Rust `cd app/src-tauri && cargo check`。
+- sidecar 测试：`cd sidecar && uv run --extra dev pytest -q`（必须带 `--extra dev`）；前端 `cd desktop && npm run build`；Rust `cd desktop/src-tauri && cargo check`。
 - 提交信息：中文 conventional commit，每任务一提交。
 - 感知纪律：payload 一律 Fernet 加密（禁明文降级）；写失败只 print 不抛；secure input 当帧弃；a11y 树文本永不出站。
 - `query_window` 默认源集合保持 `('app','activity')` 不变（load_user_activity 语义不动），新参数 `sources` 按需传。
@@ -507,10 +507,10 @@ git commit -m "feat(perception): load_screen_content 消费工具——屏幕内
 ### Task 4: 前端（开关+行内确认 + 日志徽章 + Avatar 观察中）
 
 **Files:**
-- Modify: `app/src/components/SettingsView.vue`（screen 开关 + 行内两段确认 + 日志 source/text 分支）
-- Modify: `app/src/components/Avatar.vue`（observing prop + 青白点）
-- Modify: `app/src/App.vue`、`app/src/Home.vue`（宿主传 observing：getSettingsOnce + brain-settings 监听）
-- Modify: `app/src/lib/brain.ts`（SettingsValues 加 perception.screen）
+- Modify: `desktop/src/components/SettingsView.vue`（screen 开关 + 行内两段确认 + 日志 source/text 分支）
+- Modify: `desktop/src/components/Avatar.vue`（observing prop + 青白点）
+- Modify: `desktop/src/App.vue`、`desktop/src/Home.vue`（宿主传 observing：getSettingsOnce + brain-settings 监听）
+- Modify: `desktop/src/lib/brain.ts`（SettingsValues 加 perception.screen）
 
 **Interfaces:**
 - Consumes: `perception.screen` settings 键；`brain-settings` 事件。
@@ -532,10 +532,10 @@ App.vue / Home.vue：refs 加 `observing = ref(false)`；onMounted `getSettingsO
 
 - [ ] **Step 3: 验证 + Commit**
 
-`cd app && npm run build` 通过。
+`cd desktop && npm run build` 通过。
 
 ```bash
-git add app/src/components/SettingsView.vue app/src/components/Avatar.vue app/src/App.vue app/src/Home.vue app/src/lib/brain.ts
+git add desktop/src/components/SettingsView.vue desktop/src/components/Avatar.vue desktop/src/App.vue desktop/src/Home.vue desktop/src/lib/brain.ts
 git commit -m "feat(perception): B 源前端——screen 开关行内确认 + 日志徽章 + 团子观察中点"
 ```
 

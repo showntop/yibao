@@ -60,28 +60,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
-name = "app"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "core-graphics",
- "device_query",
- "rusqlite",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-autostart",
- "tauri-plugin-dialog",
- "tauri-plugin-global-shortcut",
- "tauri-plugin-opener",
- "tauri-plugin-shell",
- "tauri-plugin-single-instance",
- "tokio",
- "uuid",
-]
-
-[[package]]
 name = "async-broadcast"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -750,6 +728,28 @@ dependencies = [
  "quote",
  "rustc_version",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "desktop"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "core-graphics",
+ "device_query",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-autostart",
+ "tauri-plugin-dialog",
+ "tauri-plugin-global-shortcut",
+ "tauri-plugin-opener",
+ "tauri-plugin-shell",
+ "tauri-plugin-single-instance",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

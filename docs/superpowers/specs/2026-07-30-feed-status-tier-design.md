@@ -26,9 +26,9 @@
 ## 4. 接口/数据流变更
 - `feed.py`：`status` 列（幂等迁移 ALTER）+ `mark_follow/ignore/none(id)` + `count_by_status(status)`。
 - `server.py`：3 个 `feed_mark_*` IPC 分发 + `_feed_stats` 加 `ignored`。
-- `app/src-tauri/src/lib.rs`：3 个 `feed_mark_follow/ignore/none` 命令 + 回包事件转发。
-- `app/src/lib/brain.ts`：`FeedItem.status` + `markFollow/Ignore/None(id)` + tier 推导 helper（kind→tier）。
-- `app/src/components/HomeFeed.vue`：跟进/忽略按钮 + 忽略折叠 + status 筛选 + tier 着色。
+- `desktop/src-tauri/src/lib.rs`：3 个 `feed_mark_follow/ignore/none` 命令 + 回包事件转发。
+- `desktop/src/lib/brain.ts`：`FeedItem.status` + `markFollow/Ignore/None(id)` + tier 推导 helper（kind→tier）。
+- `desktop/src/components/HomeFeed.vue`：跟进/忽略按钮 + 忽略折叠 + status 筛选 + tier 着色。
 
 ## 5. 验证
 - sidecar `pytest`：status 列迁移（幂等）、`mark_follow/ignore/none`、`count_by_status`、3 IPC 往返、`_feed_stats.ignored`。

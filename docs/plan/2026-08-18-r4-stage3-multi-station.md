@@ -23,7 +23,7 @@
 - 不新增组件 DOM 测试基建（阶段二既定缺口，保持惯例）；逻辑全在 store 层用 vitest 覆盖。
 - 闸门（每个 Task 末必跑，全绿才 commit）：
   - `cd plugins/coding/panel && pnpm test && pnpm build && pnpm typecheck`（基线 126 绿）
-  - takeover 任务加：`cd app && pnpm test && pnpm build`（基线 115 绿）
+  - takeover 任务加：`cd desktop && pnpm test && pnpm build`（基线 115 绿）
 - commit message：中文，`<type>: <摘要>` 格式对齐 git log 既有风格（feat/fix/chore/refactor）。
 
 ## 文件结构
@@ -46,10 +46,10 @@
 - `plugins/coding/panel/src/components/Composer.vue` — 头注一行（T3）
 
 **app 侧（T7，takeover 退役）：**
-- `app/src/components/PanelApp.vue` — 删 isCoding 分支/takeover-state 处理/submitBrain 逃生口/:takeover 传递
-- `app/src/components/InputBar.vue` — 删 takeover prop 与 stopping 特例
-- `app/src/components/WebviewPanel.vue` — 删 takeover prop 与 init 载荷字段
-- `app/src/lib/at-mention.ts`、`app/src/shared/bridge.js` — 注释措辞
+- `desktop/src/components/PanelApp.vue` — 删 isCoding 分支/takeover-state 处理/submitBrain 逃生口/:takeover 传递
+- `desktop/src/components/InputBar.vue` — 删 takeover prop 与 stopping 特例
+- `desktop/src/components/WebviewPanel.vue` — 删 takeover prop 与 init 载荷字段
+- `desktop/src/lib/at-mention.ts`、`desktop/src/shared/bridge.js` — 注释措辞
 
 ---
 
@@ -786,11 +786,11 @@ git commit -m "feat: 多工位壳——demux/左栏编排/聚焦停靠/窄窗自
 ### Task 7: takeover 转发层退役（app 侧）
 
 **Files:**
-- Modify: `app/src/components/PanelApp.vue`
-- Modify: `app/src/components/InputBar.vue`
-- Modify: `app/src/components/WebviewPanel.vue`
-- Modify: `app/src/lib/at-mention.ts`（注释）
-- Modify: `app/src/shared/bridge.js`（注释）
+- Modify: `desktop/src/components/PanelApp.vue`
+- Modify: `desktop/src/components/InputBar.vue`
+- Modify: `desktop/src/components/WebviewPanel.vue`
+- Modify: `desktop/src/lib/at-mention.ts`（注释）
+- Modify: `desktop/src/shared/bridge.js`（注释）
 
 **Interfaces:**
 - Consumes: T3/T4 后面板侧已不消费 takeover-input/stop、不再发 takeover-state
@@ -804,7 +804,7 @@ git commit -m "feat: 多工位壳——demux/左栏编排/聚焦停靠/窄窗自
 4. `PanelApp.vue:405-407+` `onPanelEvent` 的 `takeover-state` 分支删除（团子 avatar/上报大脑上下文随之不再有 coding 态——spec 退役语义）；`insert-draft` 等其他分支保留。
 5. `submitBrain`（307-318）逃生口及其 UI 入口删除（takeover 消失后 submit 恒为大脑路径，逃生口无对象）。
 6. `InputBar.vue:11` 头注、`:19-21` `takeover` prop 及默认值、`:292-293` stopping 特例（恢复 `props.busy && !props.listening`）删除。
-7. `WebviewPanel.vue:8` 协议注释 takeover 段、`:23` prop、`:149` init 载荷 takeover 字段、`:153` 注释例子改中性（如 `{type:"takeover-input"}` → 保留 onMessage 通道说明，举例改 `{type:"ping"}`）；`app/src/shared/bridge.js:25` 注释同步改中性。
+7. `WebviewPanel.vue:8` 协议注释 takeover 段、`:23` prop、`:149` init 载荷 takeover 字段、`:153` 注释例子改中性（如 `{type:"takeover-input"}` → 保留 onMessage 通道说明，举例改 `{type:"ping"}`）；`desktop/src/shared/bridge.js:25` 注释同步改中性。
 8. `at-mention.ts:45` 注释「coding takeover 转发」改为「coding 面板 @refs 组装用」。
 
 **不删**：`fileRefPaths`（@ 文件 chips 主输入条自用）、`postToIframe`、桥 `onMessage` 通道。
@@ -812,13 +812,13 @@ git commit -m "feat: 多工位壳——demux/左栏编排/聚焦停靠/窄窗自
 - [ ] **Step 1: 逐点删除**
 - [ ] **Step 2: 闸门**
 
-Run: `cd app && pnpm test && pnpm build`
+Run: `cd desktop && pnpm test && pnpm build`
 Expected: 115 绿、构建干净（无组件测试覆盖这些文件，靠构建 + typecheck via build）
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add app/src/components/PanelApp.vue app/src/components/InputBar.vue app/src/components/WebviewPanel.vue app/src/lib/at-mention.ts app/src/shared/bridge.js
+git add desktop/src/components/PanelApp.vue desktop/src/components/InputBar.vue desktop/src/components/WebviewPanel.vue desktop/src/lib/at-mention.ts desktop/src/shared/bridge.js
 git commit -m "refactor: takeover 转发层退役——studio 共享输入条为唯一编码输入路径(R4 阶段三 T7)"
 ```
 
@@ -830,18 +830,18 @@ git commit -m "refactor: takeover 转发层退役——studio 共享输入条为
 
 ```bash
 cd plugins/coding/panel && pnpm test && pnpm build && pnpm typecheck   # 面板
-cd app && pnpm test && pnpm build                                      # 前端
+cd desktop && pnpm test && pnpm build                                      # 前端
 cd sidecar && .venv/bin/pytest tests/ -q                               # 后端(本阶段零改动,回归确认)
-cd app/src-tauri && cargo test                                         # Rust(零改动,回归确认)
+cd desktop/src-tauri && cargo test                                         # Rust(零改动,回归确认)
 ```
-Expected: 面板 126+8 绿 / app 115 绿 / sidecar 1089 绿 / cargo 40 绿
+Expected: 面板 126+8 绿 / desktop 115 绿 / sidecar 1089 绿 / cargo 40 绿
 
-- [ ] **Step 2: prepare-dist 同步**（面板 dist 随包管线）：`cd app && bash scripts/prepare-dist.sh`（阶段二已加 panel 硬检查）确认通过。
+- [ ] **Step 2: prepare-dist 同步**（面板 dist 随包管线）：`cd desktop && bash scripts/prepare-dist.sh`（阶段二已加 panel 硬检查）确认通过。
 
 - [ ] **Step 3: 真机验收清单（交付用户）**
 
 ```
-cd .worktrees/r4-stage1/app && pnpm tauri dev
+cd .worktrees/r4-stage1/desktop && pnpm tauri dev
 ```
 1. 插件页点「多工位」：默认 2 工位并排，主工位自动回放最近会话（阶段二行为保留）
 2. 左栏列表 = 会话墙内容（标题/引擎/活体/相对时间）；点未绑行加入空工位；点已绑行聚焦

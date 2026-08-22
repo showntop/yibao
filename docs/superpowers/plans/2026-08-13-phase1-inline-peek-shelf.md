@@ -24,9 +24,9 @@
 
 ## File Structure
 
-**改：** `sidecar/src/yibao_brain/ipc.py`（ActionResult 扩字段）、`sidecar/src/yibao_brain/loop.py`（`_panel_payload` 透传，:196-226 附近 + :325/:510 两个 yield 点）、`sidecar/src/yibao_brain/plugins.py`（manifest panel 的 surfaces 声明）、`app/src/Home.vue`（presentation 类型扩四档 + 接裁决器）、`app/src/components/HomePlugins.vue`（:305-319 改为读 payload）
+**改：** `sidecar/src/yibao_brain/ipc.py`（ActionResult 扩字段）、`sidecar/src/yibao_brain/loop.py`（`_panel_payload` 透传，:196-226 附近 + :325/:510 两个 yield 点）、`sidecar/src/yibao_brain/plugins.py`（manifest panel 的 surfaces 声明）、`desktop/src/Home.vue`（presentation 类型扩四档 + 接裁决器）、`desktop/src/components/HomePlugins.vue`（:305-319 改为读 payload）
 
-**新建：** `app/src/lib/surface-policy.ts`（裁决器纯函数）、`app/src/lib/surface-policy.test.ts`、`app/src/components/InlineReceipt.vue`、`app/src/components/PeekSurface.vue`、`app/src/components/ActivityShelf.vue`
+**新建：** `desktop/src/lib/surface-policy.ts`（裁决器纯函数）、`desktop/src/lib/surface-policy.test.ts`、`desktop/src/components/InlineReceipt.vue`、`desktop/src/components/PeekSurface.vue`、`desktop/src/components/ActivityShelf.vue`
 
 ---
 
@@ -153,7 +153,7 @@ git commit -m "feat(surface): manifest 面板声明 surfaces/min_width（非法�
 
 ## Task 3: 宿主裁决器（纯函数 + 单测）
 
-**Files:** Create `app/src/lib/surface-policy.ts`、`app/src/lib/surface-policy.test.ts`；Modify `app/vitest.config.ts`（include 扩到 `src/lib`）
+**Files:** Create `desktop/src/lib/surface-policy.ts`、`desktop/src/lib/surface-policy.test.ts`；Modify `desktop/vitest.config.ts`（include 扩到 `src/lib`）
 
 **这是本阶段的核心逻辑**，也是唯一能被自动化验证的部分——调研 §15 的验收条 3/4（简单动作不开面板、模型建议不自动展开）就是这个函数的行为约定。
 
@@ -199,14 +199,14 @@ describe("decideSurface", () => {
 - [ ] **Step 2: 跑测试确认失败**
 
 ```bash
-cd app && npm test
+cd desktop && npm test
 ```
 Expected: FAIL（模块不存在）
 
 - [ ] **Step 3: 实现**
 
 ```ts
-// app/src/lib/surface-policy.ts
+// desktop/src/lib/surface-policy.ts
 /**
  * 能力表面裁决：把「插件建议 + 注意力级别 + 用户是否明确要求 + 当前表面」裁决为实际展示级别。
  *
@@ -248,13 +248,13 @@ export function decideSurface(input: {
 
 - [ ] **Step 4: 扩 vitest 覆盖范围**
 
-`app/vitest.config.ts` 的 `include` 从只含 `src/state/**/*.test.ts` 扩为同时含 `src/lib/**/*.test.ts`。
+`desktop/vitest.config.ts` 的 `include` 从只含 `src/state/**/*.test.ts` 扩为同时含 `src/lib/**/*.test.ts`。
 
 - [ ] **Step 5: 验证 + Commit**
 
 ```bash
-cd app && npm test && npx vue-tsc --noEmit
-git add app/src/lib/surface-policy.ts app/src/lib/surface-policy.test.ts app/vitest.config.ts
+cd desktop && npm test && npx vue-tsc --noEmit
+git add desktop/src/lib/surface-policy.ts desktop/src/lib/surface-policy.test.ts desktop/vitest.config.ts
 git commit -m "feat(surface): 宿主裁决器——模型最多自动展开到 peek，stage/focus 需明确意图"
 ```
 
@@ -262,11 +262,11 @@ git commit -m "feat(surface): 宿主裁决器——模型最多自动展开到 p
 
 ## Task 4: 接线——Home/HomePlugins 改用裁决器
 
-**Files:** Modify `app/src/Home.vue`（:76-179 区域）、`app/src/components/HomePlugins.vue`（:305-319）
+**Files:** Modify `desktop/src/Home.vue`（:76-179 区域）、`desktop/src/components/HomePlugins.vue`（:305-319）
 
 - [ ] **Step 1: 扩类型**
 
-`Home.vue:77` 的 `CapabilityPresentation` 从 `"stage" | "focus"` 扩为 `Presentation`（从 `lib/surface-policy` 导入）。注意 `surface` 域的 scene schema 校验（`app/src/state/domains/surface.ts:20-26`）也要放行新值，**并升 `surface:scene` 的 version**（`surface.ts:54`），否则旧快照带着 `presentation:"stage"` 恢复没问题、新值写回后旧版本前端会校验失败。
+`Home.vue:77` 的 `CapabilityPresentation` 从 `"stage" | "focus"` 扩为 `Presentation`（从 `lib/surface-policy` 导入）。注意 `surface` 域的 scene schema 校验（`desktop/src/state/domains/surface.ts:20-26`）也要放行新值，**并升 `surface:scene` 的 version**（`surface.ts:54`），否则旧快照带着 `presentation:"stage"` 恢复没问题、新值写回后旧版本前端会校验失败。
 
 - [ ] **Step 2: HomePlugins 改为透传后端提示**
 
@@ -298,7 +298,7 @@ git commit -m "feat(surface): 宿主裁决器——模型最多自动展开到 p
 - [ ] **Step 4: 验证 + Commit**
 
 ```bash
-cd app && npx vue-tsc --noEmit && npx vite build && npm test
+cd desktop && npx vue-tsc --noEmit && npx vite build && npm test
 git commit -m "feat(surface): Home/HomePlugins 接裁决器——表面级别改由后端建议 + 宿主裁决"
 ```
 
@@ -306,7 +306,7 @@ git commit -m "feat(surface): Home/HomePlugins 接裁决器——表面级别改
 
 ## Task 5: Inline 回执与 Peek 探窗
 
-**Files:** Create `app/src/components/InlineReceipt.vue`、`app/src/components/PeekSurface.vue`；Modify `app/src/components/CapabilityConversationRail.vue`（过程行收束锚点）
+**Files:** Create `desktop/src/components/InlineReceipt.vue`、`desktop/src/components/PeekSurface.vue`；Modify `desktop/src/components/CapabilityConversationRail.vue`（过程行收束锚点）
 
 **设计约束（调研 §3.1/§3.2）：**
 - Inline：过程行原地收束为宿主原生卡，最多两个动作（撤销/展开）。视觉骨架、间距、按钮、风险提示**全部由宿主控制**，插件只提供图标与 accent
@@ -331,7 +331,7 @@ props：`{ provider, title, summary, object?, actions? }`。渲染一张紧凑�
 - [ ] **Step 4: 验证 + Commit**
 
 ```bash
-cd app && npx vue-tsc --noEmit && npx vite build
+cd desktop && npx vue-tsc --noEmit && npx vite build
 git commit -m "feat(surface): Inline 回执卡 + Peek 探窗（复用 Slice 1 matched-geometry 时序）"
 ```
 
@@ -339,7 +339,7 @@ git commit -m "feat(surface): Inline 回执卡 + Peek 探窗（复用 Slice 1 ma
 
 ## Task 6: 活动轨 Activity Shelf
 
-**Files:** Create `app/src/components/ActivityShelf.vue`；Modify `app/src/Home.vue`
+**Files:** Create `desktop/src/components/ActivityShelf.vue`；Modify `desktop/src/Home.vue`
 
 **设计约束（调研 §4）：** 常态只显示最重要的三类状态；点击胶囊恢复上次表面、滚动位置与对象焦点；完成后停留一个短周期再收束为 Feed。**用户正在操作时，活动只改变状态，不抢键盘焦点、不自动展开、不做补偿点击。**
 
@@ -360,7 +360,7 @@ git commit -m "feat(surface): Inline 回执卡 + Peek 探窗（复用 Slice 1 ma
 - [ ] **Step 4: 验证 + Commit**
 
 ```bash
-cd app && npx vue-tsc --noEmit && npx vite build && npm test
+cd desktop && npx vue-tsc --noEmit && npx vite build && npm test
 git commit -m "feat(surface): 活动轨——运行中/待批准/已完成胶囊，点击恢复表面（持久化留 Phase 2）"
 ```
 
@@ -372,7 +372,7 @@ git commit -m "feat(surface): 活动轨——运行中/待批准/已完成胶囊
 
 ```bash
 cd sidecar && uv run pytest -q
-cd ../app && npx vue-tsc --noEmit && npx vite build && npm test
+cd ../desktop && npx vue-tsc --noEmit && npx vite build && npm test
 cargo check --manifest-path src-tauri/Cargo.toml
 ```
 

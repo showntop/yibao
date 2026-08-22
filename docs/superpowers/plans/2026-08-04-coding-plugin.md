@@ -31,7 +31,7 @@
 
 **修改（底座，最小）：**
 - `sidecar/pyproject.toml` — 加 `claude-agent-sdk` 依赖。
-- `app/src/components/PanelApp.vue` — 加 `panel_data` 流式事件分支（~3 行，泛用，非 coding 专属）。
+- `desktop/src/components/PanelApp.vue` — 加 `panel_data` 流式事件分支（~3 行，泛用，非 coding 专属）。
 
 ---
 
@@ -77,14 +77,14 @@ git commit -m "feat(coding): 加 claude-agent-sdk 依赖"
 ### Task 2: 底座 panel_data 流式通道（PanelApp.vue）
 
 **Files:**
-- Modify: `app/src/components/PanelApp.vue`（事件路由，~L128-139）
+- Modify: `desktop/src/components/PanelApp.vue`（事件路由，~L128-139）
 
 **Interfaces:**
 - Produces: sidecar emit `{"kind":"panel_data","panel":"<plugin>:<name>","data":{...}}` → 经 `proactive.py` 透传 → `brain-event` → PanelApp 把 `data` 合并进 `current.data`（不动 webview/html，iframe 不重载）→ `WebviewPanel` 的 `watch(props.data)` → iframe `onInit` 收到新 data。
 
 - [ ] **Step 1: 实现（在 PanelApp 的 onEvent 事件处理里加 panel_data 分支）**
 
-先读 `app/src/components/PanelApp.vue` 的 `onEvent`（约 L128-139，处理 `kind=="panel"` 的地方）。在处理 panel 的逻辑旁，加一段：当 `e.kind === "panel_data"` 且 `current.value?.panel === e.panel` 时，把 `e.data` 合并进 `current.value.data`（响应式，触发 WebviewPanel 的 props.data watch）。示例（贴合现有代码风格，变量名以实际为准）：
+先读 `desktop/src/components/PanelApp.vue` 的 `onEvent`（约 L128-139，处理 `kind=="panel"` 的地方）。在处理 panel 的逻辑旁，加一段：当 `e.kind === "panel_data"` 且 `current.value?.panel === e.panel` 时，把 `e.data` 合并进 `current.value.data`（响应式，触发 WebviewPanel 的 props.data watch）。示例（贴合现有代码风格，变量名以实际为准）：
 ```typescript
       if (e.kind === "panel_data" && current.value?.panel === e.panel) {
         current.value = { ...current.value, data: { ...(current.value.data ?? {}), ...(e.data ?? {}) } };
@@ -104,7 +104,7 @@ Expected: exit 0
 
 - [ ] **Step 3: commit**
 ```bash
-git add app/src/components/PanelApp.vue
+git add desktop/src/components/PanelApp.vue
 git commit -m "feat(panel): panel_data 流式事件通道（webview 面板增量数据推送）"
 ```
 

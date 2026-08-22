@@ -28,7 +28,7 @@
 ### B. 透传链(最小改动)
 
 - sidecar `plugins.py`:`_load_panels` module 分支保留 `input`(现状 module 分支只留 type/entry,其余字段丢弃);`_surface_decl_from` 透传(与 surfaces/min_width 同先例)——一处改,5 个发送点(loop.py×2、server.py×3)全带上。Rust 零改动(payload 整体缓存透传)。
-- `app/src/lib/brain.ts` `PanelPayload` 加 `input?: "inherit"|"coexist"|"handoff"|"none"`;PanelApp/HomePlugins 的 current 类型、panel 事件构造、pullCache 泛型同步补字段(PanelApp 现状连 hints 都没挑,是显式挑字段截断,必须主动加)。
+- `desktop/src/lib/brain.ts` `PanelPayload` 加 `input?: "inherit"|"coexist"|"handoff"|"none"`;PanelApp/HomePlugins 的 current 类型、panel 事件构造、pullCache 泛型同步补字段(PanelApp 现状连 hints 都没挑,是显式挑字段截断,必须主动加)。
 
 ### C. 两个宿主表面
 
@@ -39,7 +39,7 @@
 ### D. 测试
 
 - sidecar pytest:合法值解析/缺省回退/非法值 warn+回退/载荷透传。
-- app vitest:PanelApp 读声明让位(原 handoff 测试载荷补 `input` 字段——现有用例不带字段会红,必须同步改);HomePlugins 让位/恢复用例。
+- desktop vitest:PanelApp 读声明让位(原 handoff 测试载荷补 `input` 字段——现有用例不带字段会红,必须同步改);HomePlugins 让位/恢复用例。
 - panel 工程零改动。
 
 ## 非目标
@@ -53,4 +53,4 @@
 A. coding manifest 声明 `input = "handoff"` 后,面板窗与大窗打开 studio 都只剩 Composer 一个输入框;切走/回主屏壳条原样恢复
 B. 不声明 input 的面板(tools 等)行为零变化;非法值 warn 且按 inherit 处理
 C. PanelApp 无 coding:studio 硬编码残留(handoff 判定只读声明)
-D. sidecar pytest / app vitest / panel vitest 全绿
+D. sidecar pytest / desktop vitest / panel vitest 全绿

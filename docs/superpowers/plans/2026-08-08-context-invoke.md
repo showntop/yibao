@@ -22,8 +22,8 @@
 ## File Structure
 
 **新建：**
-- `app/invoke.html`、`app/src/invoke.ts`、`app/src/components/InvokeBar.vue`（动作条窗）
-- `app/snip.html`、`app/src/snip.ts`、`app/src/components/SnipOverlay.vue`（截图 overlay 窗）
+- `desktop/invoke.html`、`desktop/src/invoke.ts`、`desktop/src/components/InvokeBar.vue`（动作条窗）
+- `desktop/snip.html`、`desktop/src/snip.ts`、`desktop/src/components/SnipOverlay.vue`（截图 overlay 窗）
 
 **改：**
 - `sidecar/src/yibao_brain/host.py`（Screenshotter Protocol 加 capture_region）
@@ -32,11 +32,11 @@
 - `sidecar/src/yibao_brain/server.py`（snip_ctx/_peek_snip + snip_capture/vision_query 分支 + serve_async vision_client 注入）
 - `sidecar/src/yibao_brain/plugins.py`（ApiMethod.quiet + _load_api 解析）
 - `plugins/zimeiti/api.toml`（invoke_mat_save 条目）
-- `app/src-tauri/src/lib.rs`（两新窗 + 两命令组 + ⌘⇧I 注册 + clamp_bar_pos/snip_abs_rect 纯函数 + cargo 单测）
-- `app/vite.config.ts`（invoke/snip 入口）
-- `app/src/lib/brain.ts`（onInvokeAction/onSnipCaptured/visionQuery）
-- `app/src/App.vue`（onInvokeAction、mat_save 回执气泡、snipCtx chip + submit 分支、onPetInvokeSelection 不再强制展开）
-- `app/src/components/SettingsView.vue`（热键清单补两行）
+- `desktop/src-tauri/src/lib.rs`（两新窗 + 两命令组 + ⌘⇧I 注册 + clamp_bar_pos/snip_abs_rect 纯函数 + cargo 单测）
+- `desktop/vite.config.ts`（invoke/snip 入口）
+- `desktop/src/lib/brain.ts`（onInvokeAction/onSnipCaptured/visionQuery）
+- `desktop/src/App.vue`（onInvokeAction、mat_save 回执气泡、snipCtx chip + submit 分支、onPetInvokeSelection 不再强制展开）
+- `desktop/src/components/SettingsView.vue`（热键清单补两行）
 - `sidecar/tests/test_host_mac.py`（或既有文件追加）、`sidecar/tests/test_llm.py`、`sidecar/tests/test_server.py`
 
 ---
@@ -605,8 +605,8 @@ git commit -m "feat(invoke): api quiet 抑制 panel 事件 + zimeiti.invoke_mat_
 ### Task 5: Rust invoke-bar 窗口 + 落位 + ⌘⇧U 展示
 
 **Files:**
-- Modify: `app/src-tauri/src/lib.rs`（新命令、setup 预创建窗、⌘⇧U 分支扩展、注册热键处不动、纯函数 + `#[cfg(test)]` 单测）
-- Modify: `app/vite.config.ts`（加 invoke 入口——Task 6 需要 html 存在才能 build，本任务先建占位 html）
+- Modify: `desktop/src-tauri/src/lib.rs`（新命令、setup 预创建窗、⌘⇧U 分支扩展、注册热键处不动、纯函数 + `#[cfg(test)]` 单测）
+- Modify: `desktop/vite.config.ts`（加 invoke 入口——Task 6 需要 html 存在才能 build，本任务先建占位 html）
 
 **Interfaces:**
 - Consumes: 现有 ⌘⇧U 分支（lib.rs:1317-1330）、`device_query::DeviceState`（:1189）、窗口 builder 模式（:1420-1433）
@@ -618,7 +618,7 @@ git commit -m "feat(invoke): api quiet 抑制 panel 事件 + zimeiti.invoke_mat_
 
 - [ ] **Step 1: 写失败测试（cargo）**
 
-`app/src-tauri/src/lib.rs` 文件末尾（既有 `#[cfg(test)]` mod 内追加，或新建 `#[cfg(test)] mod invoke_tests`）：
+`desktop/src-tauri/src/lib.rs` 文件末尾（既有 `#[cfg(test)]` mod 内追加，或新建 `#[cfg(test)] mod invoke_tests`）：
 
 ```rust
 #[cfg(test)]
@@ -660,12 +660,12 @@ mod invoke_tests {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `cd app && cargo test --manifest-path src-tauri/Cargo.toml invoke_tests`
+Run: `cd desktop && cargo test --manifest-path src-tauri/Cargo.toml invoke_tests`
 Expected: FAIL（`clamp_bar_pos`/`snip_abs_rect` 未定义，编译错误）
 
 - [ ] **Step 3: 实现**
 
-`app/src-tauri/src/lib.rs`：
+`desktop/src-tauri/src/lib.rs`：
 
 ① `grab_selected_text` 之后（:1307 附近）加纯函数：
 
@@ -763,13 +763,13 @@ fn hide_invoke_bar(app: AppHandle) -> Result<(), String> {
 
 ⑤ `hide_invoke_bar` 注册进 `tauri::generate_handler![…]`（在 lib.rs 内搜索 `generate_handler`，与 `close_panel_window` 同列追加 `hide_invoke_bar`）。
 
-⑥ `app/vite.config.ts` 的 `build.rollupOptions.input` 加一行（:19 design 之后）：
+⑥ `desktop/vite.config.ts` 的 `build.rollupOptions.input` 加一行（:19 design 之后）：
 
 ```typescript
         invoke: fileURLToPath(new URL("./invoke.html", import.meta.url)),
 ```
 
-⑦ 占位 `app/invoke.html`（Task 6 会替换为完整入口；本任务先让 build 过）：
+⑦ 占位 `desktop/invoke.html`（Task 6 会替换为完整入口；本任务先让 build 过）：
 
 ```html
 <!doctype html>
@@ -779,7 +779,7 @@ fn hide_invoke_bar(app: AppHandle) -> Result<(), String> {
 </html>
 ```
 
-并建占位 `app/src/invoke.ts`：
+并建占位 `desktop/src/invoke.ts`：
 
 ```typescript
 // 唤起条入口（Task 6 替换为完整实现）
@@ -790,7 +790,7 @@ import "./assets/tokens.css";
 createApp(InvokeBar).mount("#app");
 ```
 
-占位 `app/src/components/InvokeBar.vue`（Task 6 替换）：
+占位 `desktop/src/components/InvokeBar.vue`（Task 6 替换）：
 
 ```vue
 <template><div /></template>
@@ -798,13 +798,13 @@ createApp(InvokeBar).mount("#app");
 
 - [ ] **Step 4: 验证**
 
-Run: `cd app && cargo test --manifest-path src-tauri/Cargo.toml invoke_tests && cargo check --manifest-path src-tauri/Cargo.toml && npx vite build`
+Run: `cd desktop && cargo test --manifest-path src-tauri/Cargo.toml invoke_tests && cargo check --manifest-path src-tauri/Cargo.toml && npx vite build`
 Expected: 4 个 invoke_tests PASS（含 snip_rect——本任务顺带实现了 snip_abs_rect，Task 8 复用）；cargo check exit 0；vite build exit 0
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add app/src-tauri/src/lib.rs app/vite.config.ts app/invoke.html app/src/invoke.ts app/src/components/InvokeBar.vue
+git add desktop/src-tauri/src/lib.rs desktop/vite.config.ts desktop/invoke.html desktop/src/invoke.ts desktop/src/components/InvokeBar.vue
 git commit -m "feat(invoke): invoke-bar 窗口 + 光标旁落位（clamp_bar_pos 纯函数单测）+ ⌘⇧U 弹动作条"
 ```
 
@@ -813,8 +813,8 @@ git commit -m "feat(invoke): invoke-bar 窗口 + 光标旁落位（clamp_bar_pos
 ### Task 6: InvokeBar.vue 完整实现（按钮/自隐/Esc/blur）
 
 **Files:**
-- Modify: `app/src/components/InvokeBar.vue`（替换 Task 5 占位）
-- Modify: `app/invoke.html`（窗口级 reset，对齐 panel.html 结构）
+- Modify: `desktop/src/components/InvokeBar.vue`（替换 Task 5 占位）
+- Modify: `desktop/invoke.html`（窗口级 reset，对齐 panel.html 结构）
 
 **Interfaces:**
 - Consumes: Task 5 的 `invoke-bar` 窗/入口；`Avatar.vue`（:state/:size props）；`YbIcon.vue`（name prop，可用名：clock/chat/lock/pin/doc/wrench/check/x/stop/alert/inbox/sparkle/wave/plug/settings）
@@ -962,17 +962,17 @@ onUnmounted(() => {
 
 - [ ] **Step 3: capabilities 验证**
 
-`ls app/src-tauri/capabilities/` 看现有能力文件：确认 `windows` 字段覆盖新 label（`"invoke-bar"`）或被 `"*"` 通配；invoke-bar 窗需要 `core:event:default`（emit/listen）与 `core:window:default`（hide/set_focus）级别权限，对照 panel/home 窗现有条目补。若现有文件是全局 `windows: ["*"]` 则无需改。
+`ls desktop/src-tauri/capabilities/` 看现有能力文件：确认 `windows` 字段覆盖新 label（`"invoke-bar"`）或被 `"*"` 通配；invoke-bar 窗需要 `core:event:default`（emit/listen）与 `core:window:default`（hide/set_focus）级别权限，对照 panel/home 窗现有条目补。若现有文件是全局 `windows: ["*"]` 则无需改。
 
 - [ ] **Step 4: 验证**
 
-Run: `cd app && npx vue-tsc --noEmit && npx vite build`
+Run: `cd desktop && npx vue-tsc --noEmit && npx vite build`
 Expected: 两者 exit 0
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add app/src/components/InvokeBar.vue app/invoke.html app/src-tauri/capabilities/
+git add desktop/src/components/InvokeBar.vue desktop/invoke.html desktop/src-tauri/capabilities/
 git commit -m "feat(invoke): InvokeBar 动作条（团子探出 + 三动作广播 + Esc/blur 自隐）"
 ```
 
@@ -983,8 +983,8 @@ git commit -m "feat(invoke): InvokeBar 动作条（团子探出 + 三动作广�
 ### Task 7: 主窗动作处理（解释/翻译/存素材 + 回执气泡 + 静默化）
 
 **Files:**
-- Modify: `app/src/lib/brain.ts`（加 onInvokeAction）
-- Modify: `app/src/App.vue`（:300-326 onPetInvokeSelection 不再强制展开；新增 handleInvokeAction；onEvent 的 action_result 分支加 mat_save 回执；onMounted 挂监听）
+- Modify: `desktop/src/lib/brain.ts`（加 onInvokeAction）
+- Modify: `desktop/src/App.vue`（:300-326 onPetInvokeSelection 不再强制展开；新增 handleInvokeAction；onEvent 的 action_result 分支加 mat_save 回执；onMounted 挂监听）
 
 **Interfaces:**
 - Consumes: Task 4 `zimeiti.invoke_mat_save`（quiet 直调）、Task 5 `hide_invoke_bar`、Task 6 `invoke-action` 事件；现有 `selectionCtx`/`submit`/`expand`/`flashValence`/`pushWarn`/`panelAction`
@@ -1070,13 +1070,13 @@ async function handleInvokeAction(action: string) {
 
 - [ ] **Step 5: 验证**
 
-Run: `cd app && npx vue-tsc --noEmit && npx vite build`
+Run: `cd desktop && npx vue-tsc --noEmit && npx vite build`
 Expected: 两者 exit 0
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add app/src/lib/brain.ts app/src/App.vue
+git add desktop/src/lib/brain.ts desktop/src/App.vue
 git commit -m "feat(invoke): 主窗动作处理——解释/翻译走 run、存素材 quiet 直调 + 回执气泡、划词唤起静默化"
 ```
 
@@ -1085,8 +1085,8 @@ git commit -m "feat(invoke): 主窗动作处理——解释/翻译走 run、存�
 ### Task 8: Rust snip overlay 窗口 + ⌘⇧I + finish_snip/cancel_snip/vision_query
 
 **Files:**
-- Modify: `app/src-tauri/src/lib.rs`（snip 窗预创建、⌘⇧I 注册 + 分支、三命令、generate_handler 注册）
-- Modify: `app/vite.config.ts`（加 snip 入口 + 占位 html/ts/vue，同 Task 5 模式）
+- Modify: `desktop/src-tauri/src/lib.rs`（snip 窗预创建、⌘⇧I 注册 + 分支、三命令、generate_handler 注册）
+- Modify: `desktop/vite.config.ts`（加 snip 入口 + 占位 html/ts/vue，同 Task 5 模式）
 
 **Interfaces:**
 - Consumes: Task 5 `snip_abs_rect`（已带单测）、窗口 builder 模式、`write_to_brain`
@@ -1099,7 +1099,7 @@ git commit -m "feat(invoke): 主窗动作处理——解释/翻译走 run、存�
 
 - [ ] **Step 1: 实现（本任务 Rust 逻辑已在 Task 5 备好纯函数 + 单测，直接写窗口与命令）**
 
-`app/src-tauri/src/lib.rs`：
+`desktop/src-tauri/src/lib.rs`：
 
 ① `hide_invoke_bar` 之后加三命令：
 
@@ -1221,13 +1221,13 @@ fn vision_query(state: tauri::State<Brain>, question: String) -> Result<(), Stri
 
 ⑤ `finish_snip`/`cancel_snip`/`vision_query` 注册进 `tauri::generate_handler![…]`。
 
-⑥ `app/vite.config.ts` input 加：
+⑥ `desktop/vite.config.ts` input 加：
 
 ```typescript
         snip: fileURLToPath(new URL("./snip.html", import.meta.url)),
 ```
 
-⑦ 占位 `app/snip.html`（同 Task 5 invoke.html 结构，src 改 `/src/snip.ts`）、占位 `app/src/snip.ts`：
+⑦ 占位 `desktop/snip.html`（同 Task 5 invoke.html 结构，src 改 `/src/snip.ts`）、占位 `desktop/src/snip.ts`：
 
 ```typescript
 // 截图框选层入口（Task 9 替换为完整实现）
@@ -1238,7 +1238,7 @@ import "./assets/tokens.css";
 createApp(SnipOverlay).mount("#app");
 ```
 
-占位 `app/src/components/SnipOverlay.vue`（Task 9 替换）：
+占位 `desktop/src/components/SnipOverlay.vue`（Task 9 替换）：
 
 ```vue
 <template><div /></template>
@@ -1246,13 +1246,13 @@ createApp(SnipOverlay).mount("#app");
 
 - [ ] **Step 2: 验证**
 
-Run: `cd app && cargo check --manifest-path src-tauri/Cargo.toml && cargo test --manifest-path src-tauri/Cargo.toml && npx vite build`
+Run: `cd desktop && cargo check --manifest-path src-tauri/Cargo.toml && cargo test --manifest-path src-tauri/Cargo.toml && npx vite build`
 Expected: 全 exit 0（invoke_tests 4 个仍 PASS）
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add app/src-tauri/src/lib.rs app/vite.config.ts app/snip.html app/src/snip.ts app/src/components/SnipOverlay.vue
+git add desktop/src-tauri/src/lib.rs desktop/vite.config.ts desktop/snip.html desktop/src/snip.ts desktop/src/components/SnipOverlay.vue
 git commit -m "feat(invoke): snip overlay 窗口 + ⌘⇧I + finish_snip/cancel_snip/vision_query 命令"
 ```
 
@@ -1261,10 +1261,10 @@ git commit -m "feat(invoke): snip overlay 窗口 + ⌘⇧I + finish_snip/cancel_
 ### Task 9: SnipOverlay.vue + 主窗 snipCtx + visionQuery + 设置页热键清单
 
 **Files:**
-- Modify: `app/src/components/SnipOverlay.vue`（替换占位）、`app/snip.html`（窗口级 reset）
-- Modify: `app/src/lib/brain.ts`（onSnipCaptured + visionQuery）
-- Modify: `app/src/App.vue`（snipCtx chip + submit 分支 + onSnipCaptured 挂载）
-- Modify: `app/src/components/SettingsView.vue`（:733-736 热键清单补两行）
+- Modify: `desktop/src/components/SnipOverlay.vue`（替换占位）、`desktop/snip.html`（窗口级 reset）
+- Modify: `desktop/src/lib/brain.ts`（onSnipCaptured + visionQuery）
+- Modify: `desktop/src/App.vue`（snipCtx chip + submit 分支 + onSnipCaptured 挂载）
+- Modify: `desktop/src/components/SettingsView.vue`（:733-736 热键清单补两行）
 
 **Interfaces:**
 - Consumes: Task 8 命令与事件（`finish_snip`/`cancel_snip`/`vision_query`/`snip-start`/`snip-captured`）、Task 3 sidecar vision_query 分支；现有 `selectionCtx` chip 样式（ctx-chip，App.vue:749-754）
@@ -1380,7 +1380,7 @@ onUnmounted(() => {
 </style>
 ```
 
-`app/snip.html` 窗口级 reset 同 invoke.html（title 改「框选」，src 改 `/src/snip.ts`）。
+`desktop/snip.html` 窗口级 reset 同 invoke.html（title 改「框选」，src 改 `/src/snip.ts`）。
 
 capabilities 验证同 Task 6 Step 3（label `snip`，需 invoke 命令权限——`core:default` 覆盖则无需改）。
 
@@ -1462,13 +1462,13 @@ chip UI：`ctx-chip` 块（:749-754）之后加：
 
 - [ ] **Step 5: 验证**
 
-Run: `cd app && npx vue-tsc --noEmit && npx vite build && cargo check --manifest-path src-tauri/Cargo.toml`
+Run: `cd desktop && npx vue-tsc --noEmit && npx vite build && cargo check --manifest-path src-tauri/Cargo.toml`
 Expected: 全 exit 0
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add app/src/components/SnipOverlay.vue app/snip.html app/src/lib/brain.ts app/src/App.vue app/src/components/SettingsView.vue
+git add desktop/src/components/SnipOverlay.vue desktop/snip.html desktop/src/lib/brain.ts desktop/src/App.vue desktop/src/components/SettingsView.vue
 git commit -m "feat(invoke): 框选层拖拽选区 + 主窗 snipCtx 提问通道 + 设置页热键清单"
 ```
 
@@ -1480,7 +1480,7 @@ git commit -m "feat(invoke): 框选层拖拽选区 + 主窗 snipCtx 提问通道
 
 ```bash
 cd sidecar && uv run pytest -q          # 821 + 新增 ≈ 831 passed
-cd ../app && npx vue-tsc --noEmit && npx vite build && cargo check --manifest-path src-tauri/Cargo.toml && cargo test --manifest-path src-tauri/Cargo.toml
+cd ../desktop && npx vue-tsc --noEmit && npx vite build && cargo check --manifest-path src-tauri/Cargo.toml && cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
 Expected: 全 exit 0

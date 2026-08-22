@@ -2,7 +2,7 @@
 
 ## Fix 1 - cold-start explicit open matching
 
-- File: `app/src/App.vue`
+- File: `desktop/src/App.vue`
 - Locations: plugin refs and loading around `allPlugins` / `plugins`, `loadPlugins()`, `submit()`, and `onMounted()`.
 - Change: `loadPlugins()` now stores the full `list_plugins` result in `allPlugins` and derives the existing capped launcher view with `plugins = allPlugins.slice(0, 8)`.
 - Change: `onMounted()` awaits `loadPlugins()`, matching the existing mount-time `list_plugins` pattern in `HomeChat.vue` and `AgentBrain.vue`.
@@ -11,7 +11,7 @@
 
 ## Fix 2 - explicit window lifecycle
 
-- File: `app/src/App.vue`
+- File: `desktop/src/App.vue`
 - Locations: `markExplicit()`, new `clearExplicit()`, `launchPlugin()`, `submit()`, and the `onEvent()` switch.
 - Change: `markExplicit(pluginId)` records only `requestedPlugin`; the wall-clock `requestedUntil` deadline was removed.
 - Change: `submit()` clears stale explicit state at the start of each submission, then marks the matched plugin immediately before `runInput()`.
@@ -28,7 +28,7 @@ I did not use `speaking_done` because it is a speech playback state transition r
 
 ## Fix 3 - surface title prefix stripping
 
-- File: `app/src/App.vue`
+- File: `desktop/src/App.vue`
 - Location: `case "panel"` before constructing `SurfaceAttr`.
 - Change: the sidecar title is split on `" · "`, trimmed, filtered, and the last usable segment is used as the surface title; if no usable segment exists, the original title is preserved.
 - Result: a sidecar title like `闪念盘 · 闪念列表` renders through `SurfaceLine.vue` as `闪念列表 · N 条`, without changing `SurfaceLine.vue`.
@@ -38,7 +38,7 @@ I did not use `speaking_done` because it is a speech playback state transition r
 Command:
 
 ```sh
-cd /Users/denny/Work/yibao/app && npx vue-tsc --noEmit
+cd /Users/denny/Work/yibao-refactor/desktop && npx vue-tsc --noEmit
 ```
 
 Output:
@@ -53,20 +53,20 @@ Exit code: 0
 
 ### Fix 1 - run_done 清理显式打开标记
 
-- File: `app/src/App.vue`
+- File: `desktop/src/App.vue`
 - Locations: import 列表新增 `onRunDone`；显式标记注释在 `requestedPlugin` 声明处更新；`onMounted()` 的 brain 事件订阅旁新增 `unlistenRunDone = await onRunDone(() => clearExplicit())`；`onUnmounted()` 新增 `unlistenRunDone?.()`。
 - Change: 成功的插件视图直调路径现在会在 sidecar 写入 `brain-run-done` 后清理 `requestedPlugin`，避免标记泄漏到后续 panel 事件或语音会话。
 - Matched cleanup pattern: 复用本文件已有的 `let unlistenX: (() => void) | null = null` 变量、`onMounted()` 中保存订阅返回值、`onUnmounted()` 中用 `unlistenX?.()` 释放的模式，位置紧邻 `onBrainEvent` / `onBrainStatus` 订阅。
 
 ### Fix 2 - error 不再清理显式标记
 
-- File: `app/src/App.vue`
+- File: `desktop/src/App.vue`
 - Location: `onEvent()` switch 的 `case "error"`。
 - Change: 移除 `clearExplicit()`，保留 `final_reply`、`interrupted`、`submit()` 起始处、发起失败路径和新增 `run_done` 的清理。
 
 ### Fix 3 - 插件加载不阻塞事件订阅
 
-- File: `app/src/App.vue`
+- File: `desktop/src/App.vue`
 - Location: `onMounted()`。
 - Change: `await loadPlugins()` 改为 `void loadPlugins()`；`loadPlugins()` 自带 try/catch，挂载流程不再等待插件 IPC 后才注册 brain 事件监听。
 
@@ -75,7 +75,7 @@ Exit code: 0
 Command:
 
 ```sh
-cd /Users/denny/Work/yibao/app && npx vue-tsc --noEmit
+cd /Users/denny/Work/yibao-refactor/desktop && npx vue-tsc --noEmit
 ```
 
 Output:
@@ -89,7 +89,7 @@ Exit code: 0
 Command:
 
 ```sh
-cd /Users/denny/Work/yibao/app && npx vite build
+cd /Users/denny/Work/yibao-refactor/desktop && npx vite build
 ```
 
 Output:
@@ -143,13 +143,13 @@ Exit code: 0
 Command:
 
 ```sh
-cd /Users/denny/Work/yibao/app && npx vitest run
+cd /Users/denny/Work/yibao-refactor/desktop && npx vitest run
 ```
 
 Output:
 
 ```text
-RUN  v4.1.10 /Users/denny/Work/yibao/app
+RUN  v4.1.10 /Users/denny/Work/yibao-refactor/desktop
 
 
 Test Files  9 passed (9)
@@ -163,7 +163,7 @@ Exit code: 0
 Command:
 
 ```sh
-cd /Users/denny/Work/yibao/app && npx vite build
+cd /Users/denny/Work/yibao-refactor/desktop && npx vite build
 ```
 
 Output:
@@ -217,13 +217,13 @@ Exit code: 0
 Command:
 
 ```sh
-cd /Users/denny/Work/yibao/app && npx vitest run
+cd /Users/denny/Work/yibao-refactor/desktop && npx vitest run
 ```
 
 Output:
 
 ```text
- RUN  v4.1.10 /Users/denny/Work/yibao/app
+ RUN  v4.1.10 /Users/denny/Work/yibao-refactor/desktop
 
 
  Test Files  9 passed (9)

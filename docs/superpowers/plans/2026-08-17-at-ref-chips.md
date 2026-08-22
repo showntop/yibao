@@ -27,9 +27,9 @@
 - send()：prompt = userText + "\n\n引用文件：\n@p1\n@p2"；发送后清 atRefs；newChat/resumeSession 清。
 - onHostMessage takeover-input 消息增加可选 refs 数组 → 同样组装进 prompt。
 
-### B. InputBar.vue（app/src/components/InputBar.vue）
+### B. InputBar.vue（desktop/src/components/InputBar.vue）
 - `InputContext` 增加 kind "file"（label=文件名，path=相对路径）。
-- textarea @ 触发内联浮层：纯函数抽 `app/src/lib/at-mention.ts`（解析 @ 起锚点/query、
+- textarea @ 触发内联浮层：纯函数抽 `desktop/src/lib/at-mention.ts`（解析 @ 起锚点/query、
   组装 refs 后缀），vitest 覆盖。
 - 文件搜索：`panelAction("coding.files", {cwd, q}, rid)` + onBrainEvent 关联 `pa_<rid>`
   （WebviewPanel 既有模式）；cwd = sticky（localStorage `yibao.atRoot`）→ 缺省最近 coding cwd
@@ -45,7 +45,7 @@
 
 ## 验证
 
-- `cd app && pnpm install && ./node_modules/.bin/vitest run`（含新增 at-mention 测试）
+- `cd desktop && pnpm install && ./node_modules/.bin/vitest run`（含新增 at-mention 测试）
 - `./node_modules/.bin/vue-tsc --noEmit`
 - chat.html：python3 提取 script 块 + node --check
 - `cd sidecar && uv run pytest -q`（确认零回归）

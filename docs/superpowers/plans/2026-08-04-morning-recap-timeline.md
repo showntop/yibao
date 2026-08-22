@@ -6,7 +6,7 @@
 
 **Architecture:** 反刍与回顾都是 `distillations` 表的只读消费者。反刍开窗触发、零 LLM 拼装（建议在凌晨 Distiller 调用里生成、存库），经现有 `ProactiveDispatcher`（reminder 路径）复用气泡/语音/降频。回顾把 `gather_summary` 本就计算的 app 时长/活跃段存进 `runs.stats`，按天展示。server.py 拆分是纯搬运、不改逻辑、756 测试兜底。
 
-**Tech Stack:** Python 3.12（sidecar，pytest），Vue 3 + TS + Vite（app/src），Rust + Tauri v2（app/src-tauri），SQLite。
+**Tech Stack:** Python 3.12（sidecar，pytest），Vue 3 + TS + Vite（desktop/src），Rust + Tauri v2（desktop/src-tauri），SQLite。
 
 ## Global Constraints
 
@@ -15,7 +15,7 @@
 - **TDD**：每个 sidecar 任务先写失败测试 → 实现 → 通过 → commit。测试加进 `sidecar/tests/`，随现有 756 体系跑。
 - **测试入口约定**：测试文件顶部 `sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))`，从 `yibao_brain` 导入（见 `tests/test_distiller.py`）。
 - **sidecar 测试命令**：`cd sidecar && .venv/bin/python -m pytest tests/<file>::<test> -v`；全量 `.venv/bin/python -m pytest -q`。
-- **前端命令**：`cd app && npx vue-tsc --noEmit && npx vite build`；Rust：`cd app && cargo check --manifest-path src-tauri/Cargo.toml` + `cargo test --manifest-path src-tauri/Cargo.toml`。
+- **前端命令**：`cd desktop && npx vue-tsc --noEmit && npx vite build`；Rust：`cd desktop && cargo check --manifest-path src-tauri/Cargo.toml` + `cargo test --manifest-path src-tauri/Cargo.toml`。
 - **闸门语义**：反刍出站需 `perception.master AND perception.distill AND perception.recap` 全开（与 Distiller 对齐 master 从属）。
 - **命名**：IPC rtype 用 snake_case（`recap_check` / `distill_timeline`）；Rust 事件名 `brain-<rtype>`（`brain-distill-timeline`）；前端 `brain.ts` 方法 camelCase。
 - **commit 粒度**：每个任务一个 commit，消息中文 + scope，如 `feat(recap): ...`。仅提交本任务相关文件。
@@ -32,13 +32,13 @@
 - `sidecar/src/yibao_brain/server.py` — 加 `recap_check`/`distill_timeline` IPC 分支；循环搬出后改为从 background 导入。
 
 **修改（前端）：**
-- `app/src/lib/brain.ts` — `recapCheck()` / `fetchDistillTimeline` / `getDistillTimelineOnce` / `DistillDay` 类型 / `onRecapOpen`。
-- `app/src/components/HomeFeed.vue` — 顶部 toggle「动态｜回顾」；回顾 mode 渲染；recap_check 开窗触发；`recap-open` 监听 deep-link。
-- `app/src/App.vue` — recap（morning_recap）气泡点击 deep-link。
-- `app/src/components/SettingsView.vue` — `perception.recap` 开关（distill 之下，依赖提示）。
+- `desktop/src/lib/brain.ts` — `recapCheck()` / `fetchDistillTimeline` / `getDistillTimelineOnce` / `DistillDay` 类型 / `onRecapOpen`。
+- `desktop/src/components/HomeFeed.vue` — 顶部 toggle「动态｜回顾」；回顾 mode 渲染；recap_check 开窗触发；`recap-open` 监听 deep-link。
+- `desktop/src/App.vue` — recap（morning_recap）气泡点击 deep-link。
+- `desktop/src/components/SettingsView.vue` — `perception.recap` 开关（distill 之下，依赖提示）。
 
 **修改（Rust）：**
-- `app/src-tauri/src/lib.rs` — `recap_check`/`get_distill_timeline` 命令；`distill_timeline` 桥接 arm；`generate_handler!` 注册。
+- `desktop/src-tauri/src/lib.rs` — `recap_check`/`get_distill_timeline` 命令；`distill_timeline` 桥接 arm；`generate_handler!` 注册。
 
 ---
 
@@ -692,7 +692,7 @@ git commit -m "refactor(server): 后台循环与纯 helper 拆到 background.py�
 ### Task 9: 前端 brain.ts — IPC 方法与类型
 
 **Files:**
-- Modify: `app/src/lib/brain.ts`
+- Modify: `desktop/src/lib/brain.ts`
 
 **Interfaces:**
 - Produces: `recapCheck(): Promise<void>`（invoke `recap_check`）；`DistillDay` 类型；`fetchDistillTimeline(days?)`/`getDistillTimelineOnce(days?, timeoutMs?)`（命令 → `brain-distill-timeline` 事件）；`onRecapOpen(cb)`（监听全局 `recap-open` 事件，deep-link 用）；`emitRecapOpen(day)`（pet 窗发出 deep-link）。
@@ -738,12 +738,12 @@ export function onRecapOpen(cb: (day: string) => void): Promise<UnlistenFn> {
 
 - [ ] **Step 2: 类型 + 构建验证**
 
-Run: `cd app && npx vue-tsc --noEmit && npx vite build`
+Run: `cd desktop && npx vue-tsc --noEmit && npx vite build`
 Expected: exit 0
 
 - [ ] **Step 3: commit**
 ```bash
-git add app/src/lib/brain.ts
+git add desktop/src/lib/brain.ts
 git commit -m "feat(recap): brain.ts recap/distill-timeline IPC + deep-link 事件"
 ```
 
@@ -752,7 +752,7 @@ git commit -m "feat(recap): brain.ts recap/distill-timeline IPC + deep-link 事�
 ### Task 10: Rust — recap_check/get_distill_timeline 命令 + 桥接
 
 **Files:**
-- Modify: `app/src-tauri/src/lib.rs`（命令 ~L797 后、桥接 ~L458 后、`generate_handler!` ~L1551）
+- Modify: `desktop/src-tauri/src/lib.rs`（命令 ~L797 后、桥接 ~L458 后、`generate_handler!` ~L1551）
 
 **Interfaces:**
 - Produces: `#[tauri::command] recap_check` / `get_distill_timeline`（`write_to_brain` 转发）；桥接 arm `Some("distill_timeline") => app.emit("brain-distill-timeline", v)`；两命令注册进 `generate_handler!`。
@@ -793,12 +793,12 @@ fn get_distill_timeline(state: tauri::State<Brain>, days: Option<u32>) -> Result
 
 - [ ] **Step 2: 编译验证**
 
-Run: `cd app && cargo check --manifest-path src-tauri/Cargo.toml`
+Run: `cd desktop && cargo check --manifest-path src-tauri/Cargo.toml`
 Expected: exit 0
 
 - [ ] **Step 3: commit**
 ```bash
-git add app/src-tauri/src/lib.rs
+git add desktop/src-tauri/src/lib.rs
 git commit -m "feat(recap): Rust recap_check/get_distill_timeline 命令 + 桥接"
 ```
 
@@ -807,7 +807,7 @@ git commit -m "feat(recap): Rust recap_check/get_distill_timeline 命令 + 桥�
 ### Task 11: HomeFeed.vue — 回顾 toggle + 回顾视图 + recap_check 触发 + deep-link
 
 **Files:**
-- Modify: `app/src/components/HomeFeed.vue`
+- Modify: `desktop/src/components/HomeFeed.vue`
 
 **Interfaces:**
 - Consumes: Task 9 的 `recapCheck`/`getDistillTimelineOnce`/`onRecapOpen`/`DistillDay`。
@@ -932,12 +932,12 @@ watch(view, (v) => { if (v === "recap" && !recapLoaded.value) void loadRecap(); 
 
 - [ ] **Step 4: 类型 + 构建验证**
 
-Run: `cd app && npx vue-tsc --noEmit && npx vite build`
+Run: `cd desktop && npx vue-tsc --noEmit && npx vite build`
 Expected: exit 0
 
 - [ ] **Step 5: commit**
 ```bash
-git add app/src/components/HomeFeed.vue
+git add desktop/src/components/HomeFeed.vue
 git commit -m "feat(recap): HomeFeed 动态|回顾 toggle + 回顾视图 + 开窗 recap_check"
 ```
 
@@ -946,7 +946,7 @@ git commit -m "feat(recap): HomeFeed 动态|回顾 toggle + 回顾视图 + 开�
 ### Task 12: App.vue — recap 气泡 deep-link
 
 **Files:**
-- Modify: `app/src/App.vue`（`case "reminder":` ~L398）
+- Modify: `desktop/src/App.vue`（`case "reminder":` ~L398）
 
 **Interfaces:**
 - Consumes: Task 9 的 `emitRecapOpen`。
@@ -974,12 +974,12 @@ function onRecapClick(day?: string) {
 
 - [ ] **Step 2: 类型 + 构建验证**
 
-Run: `cd app && npx vue-tsc --noEmit && npx vite build`
+Run: `cd desktop && npx vue-tsc --noEmit && npx vite build`
 Expected: exit 0
 
 - [ ] **Step 3: commit**
 ```bash
-git add app/src/App.vue
+git add desktop/src/App.vue
 git commit -m "feat(recap): morning_recap 气泡点击 deep-link 到回顾"
 ```
 
@@ -988,7 +988,7 @@ git commit -m "feat(recap): morning_recap 气泡点击 deep-link 到回顾"
 ### Task 13: SettingsView.vue — perception.recap 开关
 
 **Files:**
-- Modify: `app/src/components/SettingsView.vue`
+- Modify: `desktop/src/components/SettingsView.vue`
 
 **Interfaces:**
 - Produces: 设置页「感知」组、`perception.distill` 之下新增 `perception.recap` 行内确认开关；distill 关时 recap 禁用 + 依赖提示文案。
@@ -999,12 +999,12 @@ git commit -m "feat(recap): morning_recap 气泡点击 deep-link 到回顾"
 
 - [ ] **Step 2: 类型 + 构建验证**
 
-Run: `cd app && npx vue-tsc --noEmit && npx vite build`
+Run: `cd desktop && npx vue-tsc --noEmit && npx vite build`
 Expected: exit 0
 
 - [ ] **Step 3: commit**
 ```bash
-git add app/src/components/SettingsView.vue
+git add desktop/src/components/SettingsView.vue
 git commit -m "feat(recap): 设置页 perception.recap 开关（依赖 distill）"
 ```
 
@@ -1021,7 +1021,7 @@ Expected: 全绿（756 + Task 1-7 新增）
 
 - [ ] **Step 2: 前端 + Rust 构建**
 
-Run: `cd app && npx vue-tsc --noEmit && npx vite build && cargo check --manifest-path src-tauri/Cargo.toml && cargo test --manifest-path src-tauri/Cargo.toml`
+Run: `cd desktop && npx vue-tsc --noEmit && npx vite build && cargo check --manifest-path src-tauri/Cargo.toml && cargo test --manifest-path src-tauri/Cargo.toml`
 Expected: 全 exit 0
 
 - [ ] **Step 3: 真机验收清单（留人工，回写 spec §7）**

@@ -67,14 +67,14 @@ cwd/文本校验(:1879-1880)与跨引擎交接分支(:1884-1887);重写后 `stor
 | 10 | `plugins/coding/api.toml:5,11,22,29` start/send/list/attach `panel=` | 运行时配置 | 改(4 处) |
 | 11 | `api.toml:24,119` 注释 | 注释 | 改 |
 | 12 | `plugins/coding/manifest.toml` chat [[panel]] webview 声明 | 运行时注册 | **删除**(studio module 声明保留) |
-| 13 | `app/src/components/PanelApp.vue:389` isCoding | 运行时 | **泛化**:`panel.startsWith("coding:") && (webviewHtml \|\| webviewUrl)`;coding:wall 是 schema 面板天然排除 |
+| 13 | `desktop/src/components/PanelApp.vue:389` isCoding | 运行时 | **泛化**:`panel.startsWith("coding:") && (webviewHtml \|\| webviewUrl)`;coding:wall 是 schema 面板天然排除 |
 | 14 | `PanelApp.vue:415` takeover-state focus 上报 `panel:"chat"` 硬编码 | 运行时 | 改取 `current.panel.split(":")[1]`(兜底 "studio") |
-| 15 | `app/src/components/HomeFeed.vue:392,397` 任务卡路由注释 | 注释 | 改(coding.attach 行为不变,api.toml panel 声明决定开哪个面板) |
+| 15 | `desktop/src/components/HomeFeed.vue:392,397` 任务卡路由注释 | 注释 | 改(coding.attach 行为不变,api.toml panel 声明决定开哪个面板) |
 | 16 | `sidecar/tests/test_coding_plugin.py:525,1316` 断言 + 884/1309 注释 | 测试 | 改(4 处) |
 | 17 | `test_coding_plugin.py:1400` docstring chat.html init 判别 | 测试注释 | 改 |
 | 18 | `sidecar/tests/test_codex_runner.py:459` docstring | 测试注释 | 改 |
 | 19 | `sidecar/tests/test_plugins_inject.py::test_placeholder_replaced_with_real_vendor_files` | 测试素材依赖真 vendor 三库 | **重写**:自造 fixture(仿真 marked/DOMPurify/hljs 标志名),不再依赖已删目录;改名 `..._with_vendor_files` |
-| 20 | `app/src/components/InputBar.vue:143,307`、`app/src/lib/at-mention.ts:2` chat.html 字样注释 | 注释 | 改指 coding 面板新出处(refs.ts/Composer.vue) |
+| 20 | `desktop/src/components/InputBar.vue:143,307`、`desktop/src/lib/at-mention.ts:2` chat.html 字样注释 | 注释 | 改指 coding 面板新出处(refs.ts/Composer.vue) |
 | 21 | `HomePlugins.vue:387/399` | 排查 | **无需改**:只有 `coding:wall` 字面量(墙刷新守卫),无 coding:chat |
 | 22 | `sidecar/src/yibao_brain/server.py`(`_fulfill_coding_perm`/后台任务卡) | 排查 | **无需改**:无任何 `coding:` 面板字面量;任务卡只带 `kind:"coding"`,attach 路由与 panel 名解耦 |
 | 23 | `sidecar/src/yibao_brain/loop.py` | 排查 | **无需改**:`result.panel` 通用透传(panel_payload),无字面量 |
@@ -102,11 +102,11 @@ isCoding 不命中(无 webviewHtml/webviewUrl)→ 输入条不接管,行为安�
 | 闸门 | 命令 | 结果 |
 |------|------|------|
 | sidecar 全量 | `cd sidecar && .venv/bin/python -m pytest -q` | **1089 passed**(35.8s) |
-| app 测试 | `cd app && pnpm test` | **115 passed**(12 文件) |
-| app 构建 | `cd app && pnpm build` | OK |
+| app 测试 | `cd desktop && pnpm test` | **115 passed**(12 文件) |
+| app 构建 | `cd desktop && pnpm build` | OK |
 | 面板测试 | `cd plugins/coding/panel && pnpm test` | **126 passed**(9 文件;session.test.ts 27→29) |
 | 面板构建 | `cd plugins/coding/panel && pnpm build` | OK(dist 经 scripts/panel-build 产出) |
-| cargo | `cd app/src-tauri && cargo test` | **40 passed, 0 failed** |
+| cargo | `cd desktop/src-tauri && cargo test` | **40 passed, 0 failed** |
 
 注:worktree 的 `sidecar/.venv` 缺 dev extra,补装了 pytest(`uv pip install --python
 .venv/bin/python "pytest>=8.0"` → pytest 9.1.1);`sidecar/uv.lock` 在我开工前已是
@@ -149,5 +149,5 @@ dirty(625 行重写),非本次改动,未纳入提交。
   建议终审时定夺是否改回「编码对话」(用户可见文案,需产品确认)。
 - `plugins/coding/panel/src/**` 的「对齐 chat.html:行号」谱系注释指向已删文件,
   行号只能在 git 历史(本提交之前)查阅;保留是有意为之。
-- `sidecar/uv.lock` 开工前已 dirty(非本任务改动),未提交;`app/src-tauri/target`
+- `sidecar/uv.lock` 开工前已 dirty(非本任务改动),未提交;`desktop/src-tauri/target`
   为本地构建产物,未跟踪。

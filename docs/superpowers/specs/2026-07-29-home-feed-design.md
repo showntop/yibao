@@ -4,7 +4,7 @@
 
 `os-feel-design §4.2` 的 Home 主屏化，Feed 流先行。**关键现状更正**：§4.2 写的「大窗 = 对话页 + 插件列表，chatbot 结构」**已过时**——代码已实装完整主屏：
 
-- `app/src/components/HomeFeed.vue` 是完整主屏（问候条 / 待批准队列 / widget 卡片区 / Feed 动态列表 / 插件 Dock / 常驻输入条 5 区）；
+- `desktop/src/components/HomeFeed.vue` 是完整主屏（问候条 / 待批准队列 / widget 卡片区 / Feed 动态列表 / 插件 Dock / 常驻输入条 5 区）；
 - `sidecar/src/yibao_brain/feed.py` FeedStore 完备（append-only SQLite，`_KINDS = task/reminder/event`，`{"type":"feed"}` 协议 + Rust 桥 + `brain-feed` 事件 + 8 个测试）；
 - 大窗 `Home.vue` 是侧边栏 + 4 页结构，**主屏是默认落地页**；
 - 已接 **2 路真实数据**：agents 长任务完成（`plugins/agents/skills/_common.py` → `server.py:476`）、提醒触发（`server.py:358`）；
@@ -112,7 +112,7 @@
 - 全量 `uv run --extra dev pytest -q` 绿。
 
 **前端 / 壳：**
-- `cd app && npx vue-tsc --noEmit && npm run build` exit 0；`cargo check` / `cargo test`。
+- `cd desktop && npx vue-tsc --noEmit && npm run build` exit 0；`cargo check` / `cargo test`。
 
 **真机：**
 1. 派一个 agents 长任务完成 → Feed 出现「任务完成」；一个短 code_exec → 同样进 Feed。

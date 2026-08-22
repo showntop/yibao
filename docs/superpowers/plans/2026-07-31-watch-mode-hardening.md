@@ -191,10 +191,10 @@ Expected: all pass.
 ### Task 5: Product settings and accessibility
 
 **Files:**
-- Modify: `app/src/components/SettingsView.vue`
-- Modify: `app/src/lib/brain.ts`
-- Create: `app/tests/watch-settings-ui.test.mjs`
-- Modify: `app/package.json`
+- Modify: `desktop/src/components/SettingsView.vue`
+- Modify: `desktop/src/lib/brain.ts`
+- Create: `desktop/tests/watch-settings-ui.test.mjs`
+- Modify: `desktop/package.json`
 
 - [x] **Step 1: Write failing source-contract test**
 
@@ -237,7 +237,7 @@ Expected: all pass.
 
 Run: `npm run tauri -- build --debug`
 
-Expected: bundle succeeds at `app/src-tauri/target/debug/bundle/macos/译宝.app`.
+Expected: bundle succeeds at `desktop/src-tauri/target/debug/bundle/macos/译宝.app`.
 
 - [x] **Step 4: Execute the four-step manual acceptance from the design**
 

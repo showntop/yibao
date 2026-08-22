@@ -1,19 +1,19 @@
-# 跨端协议契约（app / mobile / extension ↔ sidecar 大脑）
+# 跨端协议契约（desktop / mobile / extension ↔ sidecar 大脑）
 
 > 日期：2026-08-22
-> 目的：让同一大脑的三类前端（Tauri 桌面 app、Capacitor mobile、Chrome extension）共享**同一事件与数据形状**的单一事实源，消除手写双份类型的漂移（现状：`RunMetrics`/`FeedItem`/`PendingConfirm`/`MemItem` 在 app 与 mobile 各定义一份，snake/camel 混用）。
+> 目的：让同一大脑的三类前端（Tauri 桌面 app、Capacitor mobile、Chrome extension）共享**同一事件与数据形状**的单一事实源，消除手写双份类型的漂移（现状：`RunMetrics`/`FeedItem`/`PendingConfirm`/`MemItem` 在 desktop 与 mobile 各定义一份，snake/camel 混用）。
 
 ## 1. 传输通道
 
 | 端 | 通道 | 协议 |
 |---|---|---|
-| app（Tauri） | Rust IPC `invoke`（壳→脑）+ 事件 `brain-event`（脑→壳） | sidecar stdio JSON 行；Rust 桥转发 |
+| desktop（Tauri） | Rust IPC `invoke`（壳→脑）+ 事件 `brain-event`（脑→壳） | sidecar stdio JSON 行；Rust 桥转发 |
 | mobile（Capacitor） | HTTP `POST /v1/*`（请求）+ SSE `GET /v1/events`（事件流） | `X-Yibao-Token` / `?token=`；`last_event_id` 断点续传 |
 | extension（Chrome） | HTTP `POST /v1/*`（`X-Yibao-Token`） | 与 mobile 同侧 |
 
 ## 2. 事件 kind（三端一致，命名建议统一）
 
-| kind | 含义 | app（brain-event） | mobile/extension（SSE） |
+| kind | 含义 | desktop（brain-event） | mobile/extension（SSE） |
 |---|---|---|---|
 | `thought` | 推理过程（不展示） | ✅ | — |
 | `action_proposed` | 提议工具调用 | ✅ | — |
@@ -31,15 +31,15 @@
 | `run_done` | 一轮 run 收口 | — | ✅ |
 | `thinking` | 思考占位 | — | ✅ |
 
-> 差异原因：app 经 Rust 桥收到完整 brain-event；mobile/extension 只订阅 SSE 白名单 kinds（`KNOWN_KINDS`）。**建议**：SSE 侧补齐 `panel`/`action_proposed`，让 mobile 也能跟进桌面进行中的工具过程（现状 mobile 只显示最终回复）。
+> 差异原因：desktop 经 Rust 桥收到完整 brain-event；mobile/extension 只订阅 SSE 白名单 kinds（`KNOWN_KINDS`）。**建议**：SSE 侧补齐 `panel`/`action_proposed`，让 mobile 也能跟进桌面进行中的工具过程（现状 mobile 只显示最终回复）。
 
 ## 3. 数据形状与命名映射
 
 ### 3.1 命名规范映射表（sidecar snake_case ↔ 前端 camelCase）
 
-sidecar/Rust 落盘与 IPC 用 snake_case；app 前端协议层（`protocol/brain-types.ts`）保持 snake_case 透传（`conversationId` 除外——事件信封已用 camel）；mobile 端建议以 snake_case 直收（与 HTTP 载荷对齐）。
+sidecar/Rust 落盘与 IPC 用 snake_case；desktop 前端协议层（`protocol/brain-types.ts`）保持 snake_case 透传（`conversationId` 除外——事件信封已用 camel）；mobile 端建议以 snake_case 直收（与 HTTP 载荷对齐）。
 
-| 概念 | sidecar/Rust | app 前端 | 说明 |
+| 概念 | sidecar/Rust | desktop 前端 | 说明 |
 |---|---|---|---|
 | 会话 id | `conversation_id` | `conversationId` | brain-event 信封字段（后端 emit 时即 camel） |
 | 任务 id | `task_id` | `task_id` | brain-event 顶层 |
@@ -54,29 +54,29 @@ sidecar/Rust 落盘与 IPC 用 snake_case；app 前端协议层（`protocol/brai
 
 ### 3.2 需要合并的类型（现状双份，收敛到单一事实源）
 
-| 类型 | app 定义处 | mobile 定义处 | 差异 |
+| 类型 | desktop 定义处 | mobile 定义处 | 差异 |
 |---|---|---|---|
-| `FeedItem` | `protocol/brain-types.ts` | `mobile/src/state/feed.ts` | mobile 的 `status: string`（app `"none"\|"follow"\|"ignore"`） |
+| `FeedItem` | `protocol/brain-types.ts` | `mobile/src/state/feed.ts` | mobile 的 `status: string`（desktop `"none"\|"follow"\|"ignore"`）|（desktop `"none"\|"follow"\|"ignore"`）|（desktop `"none"\|"follow"\|"ignore"`） |
 | `FeedStats` | 同上 | 同上 | mobile 字段全可选（防御旧版） |
 | `RunningTask` | 同上 | 同上 | mobile 无 `kind` 联合收窄 |
-| `PendingConfirm` | 同上 | `mobile/src/state/approvals.ts` | app 有 `skill/label/desc`，mobile 有 `skill_id/summary`（`skill_id` vs `skill` 命名漂移！） |
+| `PendingConfirm` | 同上 | `mobile/src/state/approvals.ts` | desktop 有 `skill/label/desc`，mobile 有 `skill_id/summary`（`skill_id` vs `skill` 命名漂移！） |
 | `MemItem` | 同上 | `mobile/src/state/memories.ts` | mobile `created_at` 必选字符串 |
 | `RunMetrics` | 同上 | —（mobile 无） | — |
 
-> **重点漂移**：`PendingConfirm` 的 `skill_id`（mobile）vs `skill`（app）——同一字段两个名字。收敛方向：统一 `skill_id`（与 sidecar 落盘一致），app 侧补别名兼容。
+> **重点漂移**：`PendingConfirm` 的 `skill_id`（mobile）vs `skill`（desktop）——同一字段两个名字。收敛方向：统一 `skill_id`（与 sidecar 落盘一致），desktop 侧补别名兼容。
 
 ### 3.2.1 双端类型维护决策（2026-08-22，R-29 复核落定）
 
-**决策：app 与 mobile 双端类型各自维护，以本文档 3.2 节对照表为契约基准，不做代码级共享。**
+**决策：desktop 与 mobile 双端类型各自维护，以本文档 3.2 节对照表为契约基准，不做代码级共享。**
 
 理由：
-1. 两端是独立构建链（app：Tauri/Vite；mobile：Capacitor/Vite），代码级共享需引入 monorepo workspace 或 npm 私有包，构建复杂度收益比不划算；
-2. 双端载荷本就不同构（mobile 直收 HTTP/SSE snake_case，app 经 Rust 桥混 camelCase——见 3.1 映射表），强行共享类型反而要引入映射层；
+1. 两端是独立构建链（desktop：Tauri/Vite；mobile：Capacitor/Vite），代码级共享需引入 monorepo workspace 或 npm 私有包，构建复杂度收益比不划算；
+2. 双端载荷本就不同构（mobile 直收 HTTP/SSE snake_case，desktop 经 Rust 桥混 camelCase——见 3.1 映射表），强行共享类型反而要引入映射层；
 3. 漂移风险靠对照表 + 双端各自测试锁定，副作用可接受。
 
 **维护纪律**：sidecar 事件/载荷形状变更时，必须同步更新本文档 3.1/3.2 节，并检查双端对应类型；PR 中不同步更新契约文档的协议变更不予合入。
 
-**app 内部单源化（已完成，R-29）**：`RunMetrics` 唯一定义于 `app/src/protocol/brain-types.ts`（state/types.ts re-export 兼容旧路径）；`AvatarState`（7 态共享集）唯一定义于 protocol/brain-types.ts，Home.vue/HomeFrame.vue/HomePlugins.vue/PanelApp.vue/usePetState（PetAvatarState 扩展）/useHomeChatSession（HomeAvatarState 别名）全部引用单源。
+**desktop 内部单源化（已完成，R-29）**：`RunMetrics` 唯一定义于 `desktop/src/protocol/brain-types.ts`（state/types.ts re-export 兼容旧路径）；`AvatarState`（7 态共享集）唯一定义于 protocol/brain-types.ts，Home.vue/HomeFrame.vue/HomePlugins.vue/PanelApp.vue/usePetState（PetAvatarState 扩展）/useHomeChatSession（HomeAvatarState 别名）全部引用单源。
 
 ### 3.3 HTTP 端点（mobile/extension 侧，请求形状）
 
@@ -98,5 +98,5 @@ sidecar/Rust 落盘与 IPC 用 snake_case；app 前端协议层（`protocol/brai
 ## 4. 落地建议（后续迭代）
 
 1. **第一步（低风险）**：以 `protocol/brain-types.ts` 为基准，把 mobile 的 `feed.ts`/`approvals.ts`/`memories.ts` 类型改为 `import type`（跨包引用或复制 + 标注来源），先消除 `skill_id`/`skill` 漂移。
-2. **第二步**：建 `shared/protocol/`（仓库根）放 TypeScript 类型源，app/mobile 双端 import；sidecar 侧经 `docs/` 此契约文档对齐字段名。
+2. **第二步**：建 `shared/protocol/`（仓库根）放 TypeScript 类型源，desktop/mobile 双端 import；sidecar 侧经 `docs/` 此契约文档对齐字段名。
 3. **第三步**：SSE 事件 kind 补齐（mobile 订阅 `panel` 等），让移动端与桌面能力对齐。
