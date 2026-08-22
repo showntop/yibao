@@ -77,19 +77,28 @@ _brief_mod = _sibling("_brief")
 _build_brief = _brief_mod.build_brief
 _cc_reader = _sibling("_cc_reader")   # _text_of/_MAX_LINE_KB 复用；测试 monkeypatch HOME 改道
 
+_sess = _sibling("sessions")  # 会话核心域（sessions.py）
+
+# re-export：会话运行态与收尾（技能类与 tests/test_coding_plugin 沿用 coding 命名空间路径）
+_spawn_stream = _sess._spawn_stream
+_stream = _sess._stream
+_stop_session = _sess._stop_session
+_report_final = _sess._report_final
+_persist_marker = _sess._persist_marker
+_session_brief = _sess._session_brief
+_usage_suffix = _sess._usage_suffix
+
+_tr = _sibling("transcript")  # 转录解析域（transcript.py）
+
 
 def _codex_sessions_root() -> str:
-    """Codex session JSONL 根目录（间接层，供测试 monkeypatch 改道到 tmp 目录）。"""
+    """Codex session JSONL 根目录（间接层，供测试 monkeypatch 改道到 tmp 目录）。
+
+    转录域（transcript.py）内部经本模块动态解析此函数（见 transcript._codex_sessions_root），
+    测试 monkeypatch codingmod._codex_sessions_root 即可让 last_sessions/attach_codex 改道。"""
     return os.path.expanduser("~/.codex/sessions")
 
 
-# sid -> {"cancel": threading.Event, ...}。stop 经此拿 cancel 信号；线程收尾后 pop。
-# entry 可选键：steer（运行中督导补充队列，spec §A——SendSkill 对 running 会话的 prompt
-# 排队于此，当前轮 done 后 _stream 合并续跑，stop 连队列一起清）、mode_pending/rewind_pending
-# （运行中切模式/回滚通道）、usage_baseline（codex usage 差分基准）。
-# 跨进程丢失（底座重启）：_SESSIONS 随进程蒸发，sessions 表 status 仍 running 的陈旧行
-# 由 make_tools 的 _reconcile_stale_running 对账落 interrupted + marker（仿 agents._reconcile_orphans）。
-_SESSIONS: dict[str, dict] = {}
 
 
 def start_session(db, *, agent: str, cwd: str, prompt: str, source: str = "",
@@ -108,395 +117,6 @@ def start_session(db, *, agent: str, cwd: str, prompt: str, source: str = "",
         "source": source, "mode": mode,
     })
     return sid
-
-
-class _AsyncShield:
-    """把 threading.Event 适配成 runner 期望的 cancel_event（.is_set()）。
-
-    runner 在自己的 asyncio loop 里轮询 .is_set()——threading.Event 的 is_set 是原子读，
-    跨线程安全。包一层是为了语义显式（取消信号源是外部 threading.Event，不是 loop 内 asyncio.Event）。
-    """
-    def __init__(self, ev: threading.Event): self._ev = ev
-    def is_set(self) -> bool: return self._ev.is_set()
-
-
-def _spawn_stream(db, sid: str, cwd: str, prompt: str, runner, emit_event,
-                  resume_session_id: str | None = None,
-                  permission_mode: str = "acceptEdits",
-                  agent: str = "claude-code",
-                  llm=None) -> None:
-    """起 daemon 线程跑 runner（线程内自带 asyncio loop）。
-
-    emit_event 已线程安全（proactive_dispatcher.emit → call_soon_threadsafe），
-    daemon 线程直调即可。db 经参数链一路传到 _stream（落最终状态用）。
-    resume_session_id：非 None 时透传 runner.run，续上同一 CC 会话历史（多轮）；
-        None（StartSkill 路径）→ 全新会话。
-    permission_mode：透传 runner.run（acceptEdits/plan），进 SDK options / codex sandbox。
-    agent：会话引擎 id（claude-code/cc/codex），透传 _stream → panel_data data 平级键
-        （面板按此实时更新引擎徽标）。
-    llm：会话级 LLM 能力（SendSkill 透传 ctx.llm），仅供 _stream 的 codex resume
-        失败 fallback 生成交接摘要用；None → 无 fallback，落原 failed 路径。
-    _SESSIONS[sid] entry 同时是运行中切模式的通道（coding.mode 写 mode_pending，
-    runner 每条消息前消费 → client.set_permission_mode）。
-    usage_baseline 回填：codex 的 usage 差分基准（_codex_runner._diff_usage 就地写
-    entry）跨轮持久在 sessions 表——entry 每轮新建且流终 pop，不回填则第 2 轮起
-    baseline 落空、done 报 thread 全量累计，token 逐轮重复计。新建 entry 后查库回填；
-    坏数据（非法 JSON/非 dict）静默跳过，baseline 按 0 退化为全量上报一轮，不炸流。
-    CC runner 不读该键，回填与否皆无害。
-    """
-    cancel = threading.Event()
-    entry: dict = {"cancel": cancel}
-    try:
-        rows = db.query("sessions", where={"id": sid})
-        raw = str(rows[0].get("usage_baseline") or "") if rows else ""
-        if raw:
-            base = json.loads(raw)
-            if isinstance(base, dict):
-                entry["usage_baseline"] = base
-    except Exception:
-        pass   # 坏数据不炸流：baseline 缺失按 0 差分（详见 docstring）
-    _SESSIONS[sid] = entry
-
-    def _thread():
-        loop = asyncio.new_event_loop()
-        try:
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(
-                _stream(db, sid, cwd, prompt, runner, emit_event, cancel,
-                        resume_session_id=resume_session_id,
-                        permission_mode=permission_mode, agent=agent, llm=llm))
-        except Exception as e:  # 兜底：流式线程任何意外都不许炸出来
-            print(f"[yibao/coding] session {sid} stream 线程崩：{type(e).__name__}: {e}",
-                  file=sys.stderr)
-            try:
-                db.update("sessions", sid, {"status": "failed", "finished_at": int(time.time())})
-            except Exception:
-                pass
-        finally:
-            loop.close()
-            _SESSIONS.pop(sid, None)
-
-    threading.Thread(target=_thread, daemon=True, name=f"yibao-coding-{sid}").start()
-
-
-async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cancel,
-                  resume_session_id: str | None = None,
-                  permission_mode: str = "acceptEdits",
-                  agent: str = "claude-code",
-                  llm=None) -> None:
-    """跑 runner；每条事件转 panel_data 推面板 + 落 messages 表；结束按 cancel/error/done 落最终状态。
-
-    transcript 落库：user_msg（带 CC uuid，rewind 锚点）/ text_delta / done·stopped 终态 marker，
-    seq 跨轮续号（每轮流式开始时从库里查本 sid 当前 max seq 续起，多轮不交错；
-    HistorySkill 按 seq 取最近 40 条）。
-    落库 try/except 隔离——transcript 丢失绝不许炸断流式。
-    落最终状态前先查当前 status——用户主动 stop 时 _stop_session 已先写 stopped，
-    这里保留 stopped 不被 done/failed 覆盖（race-safe，仿 agents._common._wait:66-73）。
-    resume_session_id：非 None 时透传 runner.run，续上同一会话历史（多轮；CC=SDK resume，
-    codex=exec resume thread_id）。
-    permission_mode：透传 runner.run（acceptEdits/plan）。
-    agent：会话引擎 id，panel_data data 加平级 "agent" 键（data={session_id, agent, event}，
-    面板按此实时更新引擎徽标）。
-    llm：会话级 LLM 能力（SendSkill 透传 ctx.llm）。codex resume 零事件失败
-    （encrypted_content bug 形态：stdout 零事件 → 未捕获 thread.started → cc_sid None，
-    runner returncode 守御补发 error）时一次性自动 fallback：用交接摘要新开会话续跑
-    （SessionBriefSkill 手动补救流程的自动化），再败自然落原 failed 路径（无循环）；
-    llm None → 跳过 fallback。
-    session_entry：_SESSIONS[sid] live entry 透传 runner.run——coding.mode 写入
-    mode_pending 后，runner 每条消息前消费并 client.set_permission_mode（运行中切模式）。
-    can_use_tool：每轮新建权限回调桥（make_permission_callback(sid, on_event, emit_event=…)）——
-    SDK 触发权限询问时发 permission_request 进面板流 + confirmation_needed 进 L2 确认体系，
-    阻塞等 confirm_batched 路由 / coding.decide 备用通道裁决（双通道幂等，超时默认 deny）。
-    steer drain：本轮结束后查 _SESSIONS[sid]["steer"]（SendSkill 对 running 会话的排队
-    督导补充），非空合并续跑（resume_session_id=cc_sid），队列空才落终态汇报。
-    """
-    state = {"error": False}
-    cc_sid: str | None = None   # runner.run 返回值（ResultMessage.session_id）；None=取消/失败
-    # seq 跨轮续号：从库里本 sid 当前 max seq 续起（每轮重计会让多轮消息在 ORDER BY seq 下交错）
-    try:
-        prev = db.query("messages", where={"session_id": sid}, order="seq DESC", limit=1)
-        seq = {"n": int(prev[0]["seq"]) if prev else 0}
-    except Exception:
-        seq = {"n": 0}
-
-    def _persist(role: str, text: str, uuid: str = "") -> None:
-        if not text:
-            return
-        seq["n"] += 1
-        try:
-            db.insert("messages", {
-                "session_id": sid, "role": role, "text": text,
-                "ts": int(time.time()), "seq": seq["n"], "uuid": uuid,
-            })
-        except Exception as e:
-            print(f"[yibao/coding] transcript 落库失败（跳过）：{e}", file=sys.stderr)
-
-    def on_event(ev: dict) -> None:
-        kind = ev.get("kind")
-        if kind == "user_msg":
-            _persist("user", str(ev.get("text") or ""), str(ev.get("uuid") or ""))
-        elif kind == "text_delta":
-            _persist("assistant", str(ev.get("text") or ""))
-        elif kind == "done":
-            _persist("marker", "完成")
-            state["usage"] = ev.get("usage") if isinstance(ev.get("usage"), dict) else {}
-            # codex usage 差分基准落库：runner 发 done 前已把 thread 累计值就地写回
-            # session_entry["usage_baseline"]（_codex_runner._diff_usage），这里同步落
-            # sessions 行供下轮 _spawn_stream 回填（entry 流终 pop，内存留不住）。
-            # CC 引擎 entry 无该键 → 跳过；失败只 print 不炸流（同 _persist 隔离风格）。
-            try:
-                entry = _SESSIONS.get(sid)
-                base = entry.get("usage_baseline") if isinstance(entry, dict) else None
-                if isinstance(base, dict) and base:
-                    db.update("sessions", sid, {"usage_baseline": json.dumps(base)})
-            except Exception as e:
-                print(f"[yibao/coding] session {sid} usage_baseline 落库失败（跳过）：{e}",
-                      file=sys.stderr)
-        elif kind == "stopped":
-            _persist("marker", str(ev.get("text") or "已中断"))
-        elif kind == "marker":
-            # 流内留痕（如 codex resume 失败 fallback 提示）：落 messages 表 + 经下方
-            # emit_event 进面板流（双写一致，同 done/stopped 的 marker 发送方式）
-            _persist("marker", str(ev.get("text") or ""))
-        if emit_event is not None:
-            # panel/data 必须包在 payload 下：PanelApp.vue 的 panel_data 处理读
-            # e.payload?.panel / e.payload?.data，shell proactive→Rust→PanelApp 不再加包装。
-            emit_event({"kind": "panel_data",
-                        "payload": {"panel": "coding:studio",
-                                    "data": {"session_id": sid, "agent": agent, "event": ev}}})
-        if ev.get("kind") == "error":
-            state["error"] = True
-
-    try:
-        cc_sid = await runner.run(prompt, cwd, on_event=on_event, cancel_event=_AsyncShield(cancel),
-                                  resume_session_id=resume_session_id,
-                                  permission_mode=permission_mode,
-                                  can_use_tool=_runner.make_permission_callback(
-                                      sid, on_event, emit_event=emit_event),
-                                  session_entry=_SESSIONS.get(sid))
-    except Exception as e:  # runner 内部应已吞异常→error 事件；框架级异常兜底
-        print(f"[yibao/coding] session {sid} runner 框架异常：{type(e).__name__}: {e}",
-              file=sys.stderr)
-        state["error"] = True
-
-    # codex resume 零事件失败的一次性自动 fallback（encrypted_content bug 形态：stdout 零事件
-    # → 未捕获 thread.started → cc_sid None，runner returncode 守御补发 error——「resume 根本
-    # 没跑起来」；turn 中途失败已捕获 thread_id，cc_sid 非 None 不触发）。判据齐备则用交接摘要
-    # 新开会话续跑（SessionBriefSkill 手动补救流程的自动化）；只重试一次，再败自然落原
-    # failed 路径（state["error"] 由重试的 error 事件重立，无循环）。
-    if (agent == "codex" and resume_session_id and cc_sid is None
-            and state["error"] and not cancel.is_set() and llm is not None):
-        # 摘要生成统一走 _session_brief（messages 尾 40 条 → LLM 凝练 → 原文节选兜底，恒有值）
-        brief = _session_brief(db, sid, llm, "Codex", "Codex")
-        on_event({"kind": "marker", "text": "resume 失败，已用交接摘要新开会话续跑"})
-        state["error"] = False   # 复位，让重试自行定终态（再败由 on_event 的 error 分支重立）
-        # 新会话沿用同一 session_entry：先清旧 thread 的 usage 差分基准，
-        # 否则 fallback 轮差分被旧累计值钳 0 少报（S5-T2 评审留）
-        _entry = _SESSIONS.get(sid)
-        if isinstance(_entry, dict):
-            _entry.pop("usage_baseline", None)
-        try:
-            cc_sid = await runner.run(
-                f"【交接上下文】\n{brief}\n\n【用户继续】\n{prompt}", cwd,
-                on_event=on_event, cancel_event=_AsyncShield(cancel),
-                resume_session_id=None,
-                permission_mode=permission_mode,
-                can_use_tool=_runner.make_permission_callback(
-                    sid, on_event, emit_event=emit_event),
-                session_entry=_SESSIONS.get(sid))
-        except Exception as e:  # 与首轮同款框架级兜底
-            print(f"[yibao/coding] session {sid} fallback 重跑框架异常：{type(e).__name__}: {e}",
-                  file=sys.stderr)
-            state["error"] = True
-
-    # steer 队列 drain（运行中 steer，spec §A）：本轮跑完后查 live entry 的 steer 队列——
-    # 非空则取出全部排队消息按序合并为一条（【督导补充】前缀），以 resume_session_id=cc_sid
-    # 原地续跑；期间新到的 steer 继续入队，逐轮 drain 直到队列空才真正落终态
-    # （_report_final 只在队列空后触发）。stop 清队列 + cancel → 循环顶检查直接 break；
-    # cc_sid 为 None（首轮取消/失败未捕获会话 id）无法 resume → break，终态照常落。
-    while not cancel.is_set() and cc_sid:
-        entry = _SESSIONS.get(sid)
-        queue = entry.get("steer") if isinstance(entry, dict) else None
-        queued: list[str] = []
-        while queue:                     # 逐条 pop(0)：与 SendSkill 并发 append 不丢消息（GIL 原子）
-            queued.append(str(queue.pop(0)))
-        if not queued:
-            break
-        on_event({"kind": "marker",
-                  "text": f"督导补充已接续（合并 {len(queued)} 条排队消息）"})
-        merged = "【督导补充】\n" + "\n".join(queued)
-        try:
-            new_sid = await runner.run(
-                merged, cwd, on_event=on_event, cancel_event=_AsyncShield(cancel),
-                resume_session_id=cc_sid,
-                permission_mode=permission_mode,
-                can_use_tool=_runner.make_permission_callback(
-                    sid, on_event, emit_event=emit_event),
-                session_entry=_SESSIONS.get(sid))
-            if new_sid:
-                cc_sid = new_sid
-        except Exception as e:  # 与首轮同款框架级兜底
-            print(f"[yibao/coding] session {sid} steer 续跑框架异常：{type(e).__name__}: {e}",
-                  file=sys.stderr)
-            state["error"] = True
-        if state["error"]:
-            break                        # 续跑失败：不再 drain，落 failed 终态（残余队列随流终丢弃）
-
-    # 定最终状态：stopped（用户主动停）> error > done
-    try:
-        prev = db.query("sessions", where={"id": sid})
-    except Exception:
-        prev = []
-    cur = prev[0]["status"] if prev else "running"
-    if cur == "stopped":
-        final = "stopped"        # 用户已主动停：保留，不被覆盖
-    elif cancel.is_set():
-        final = "stopped"        # cancel 已 set（_stop_session 先写 stopped 再 set，正常走上一分支；
-                                 # 此分支兜底 db.update 失败的极端情形，意图与 stop 一致）
-    elif state["error"]:
-        final = "failed"
-    else:
-        final = "done"
-    try:
-        # cc_session_id 一并落库：即便 final=stopped（用户主动停）也要记录 cc_sid，
-        # 后续多轮 resume 仍需它；cc_sid 非空才更新该列——runner 未捕获（取消/失败，
-        # 如 codex 静默失败 resume 不存在 thread_id）时保留老行既有值，不抹成 ""
-        # （否则后续 send 永远报「cc_session_id 为空」）。CC 路径同款：拿不到也原样不写。
-        fields = {"status": final, "finished_at": int(time.time())}
-        if cc_sid:
-            fields["cc_session_id"] = cc_sid
-        db.update("sessions", sid, fields)
-    except Exception as e:
-        print(f"[yibao/coding] session {sid} 落最终状态失败：{type(e).__name__}: {e}",
-              file=sys.stderr)
-    _report_final(emit_event, sid, prompt, final, state.get("usage"))
-
-
-def _usage_suffix(usage) -> str:
-    """done 事件 usage → 成本摘要（如「（耗时 12s · $0.0312 · 1540 tok）」）；无数据 → ""。"""
-    if not isinstance(usage, dict) or not usage:
-        return ""
-    parts: list[str] = []
-    ms = usage.get("duration_ms")
-    if isinstance(ms, (int, float)) and ms > 0:
-        parts.append(f"耗时 {ms / 1000:.0f}s")
-    cost = usage.get("cost_usd")
-    if isinstance(cost, (int, float)) and cost > 0:
-        parts.append(f"${cost:.4f}")
-    tokens = sum(int(usage[k]) for k in ("input_tokens", "output_tokens")
-                 if isinstance(usage.get(k), (int, float)))
-    if tokens:
-        parts.append(f"{tokens} tok")
-    return f"（{' · '.join(parts)}）" if parts else ""
-
-
-def _report_final(emit_event, sid: str, prompt: str, final: str, usage) -> None:
-    """会话终态汇报（P2 督导）：done/failed → reminder（宠物气泡 + Feed 任务卡）；
-    stopped → event（仅 Feed 任务卡，不弹气泡防打扰）。task meta 供 Feed 任务卡与
-    后续点击路由（plugin:"coding"）；status 发英文键（done/failed/stopped——HomeFeed
-    徽章/图标/tag CSS 只认英文，对齐 agents 先例），中文文案在 text；done 的 text
-    带成本摘要。usage 数值本身不落库（只此一播进气泡/任务卡）——注意 sessions 表
-    usage_baseline 列落的是 codex 差分基准（thread 累计值，下轮 resume 回填用），
-    不是本轮用量，两者别混。"""
-    if emit_event is None:
-        return
-    try:
-        label = prompt[:30]
-        if final == "done":
-            kind, text = "reminder", f"✅ 编码任务完成：{label}{_usage_suffix(usage)}"
-        elif final == "failed":
-            kind, text = "reminder", f"❌ 编码任务失败：{label}"
-        else:
-            kind, text = "event", f"⏹ 编码任务已停止：{label}"
-        emit_event({"kind": kind, "text": text,
-                    "task": {"id": sid, "status": final, "label": label,
-                             "prompt": prompt, "plugin": "coding"},
-                    "plugin": "coding"})
-    except Exception as e:  # 汇报是增强面：失败只 print，绝不拖垮收尾
-        print(f"[yibao/coding] session {sid} 终态汇报失败（跳过）：{e}", file=sys.stderr)
-
-
-def _persist_marker(db, sid: str, text: str) -> None:
-    """流外 marker 落 messages 表（steer 入队提示 / 重启对账留痕用）：seq 从库当前 max 续起；
-    失败只 print 不炸（同 _stream._persist 隔离风格）。seq 与流内 _persist 并发撞号无碍
-    （messages.seq 仅索引非唯一约束，面板按 seq 排序微乱可接受）。"""
-    try:
-        prev = db.query("messages", where={"session_id": sid}, order="seq DESC", limit=1)
-        seq = int(prev[0]["seq"]) + 1 if prev else 1
-        db.insert("messages", {
-            "session_id": sid, "role": "marker", "text": text,
-            "ts": int(time.time()), "seq": seq, "uuid": "",
-        })
-    except Exception as e:
-        print(f"[yibao/coding] marker 落库失败（跳过）：{e}", file=sys.stderr)
-
-
-def _session_brief(db, sid: str, llm, src: str, dst: str) -> str:
-    """会话库任一会话的交接 Brief（三处共用：SessionBriefSkill / _stream 的 codex
-    resume fallback / SendSkill 的 cc_session_id 空降级续跑）。
-
-    取 messages 尾 40 条（seq DESC LIMIT 40 再反转回正序）→ git 摘要 → LLM 凝练；
-    llm 缺失/失败/空历史退化为最近消息原文节选——恒有交接上下文，不被 LLM 故障挡路。
-    src/dst 是引擎展示名（_build_brief 的 wording 入参）。
-    """
-    try:
-        msgs = db.query("messages", where={"session_id": sid}, order="seq DESC", limit=40)
-        msgs.reverse()
-        turns = [{"role": m["role"], "text": m["text"]} for m in msgs]
-    except Exception as e:
-        print(f"[yibao/coding] session {sid} 查历史失败（按空历史续）：{e}", file=sys.stderr)
-        turns = []
-    brief = None
-    if llm is not None and turns:
-        git = ""
-        try:
-            rows = db.query("sessions", where={"id": sid})
-            cwd = str(rows[0].get("cwd") or "") if rows else ""
-            git = _codex.git_summary(cwd) if cwd else ""
-        except Exception:
-            git = ""   # git 摘要失败不挡路（非 git 目录等），brief 仍有对话内容
-        brief = _build_brief(llm, turns, git, src, dst)
-    if not brief:
-        excerpt = "\n".join(f"{t['role']}: {str(t['text'])[:500]}" for t in turns[-10:]) or "（无历史消息）"
-        brief = f"（摘要生成失败，以下为最近对话节选）\n{excerpt}"
-    return brief
-
-
-def _stop_session(db, registry, sid: str) -> bool:
-    """race-safe 取消：先 db.update(stopped)，再 set cancel（仿 agents.task_stop:343-345）。
-
-    先落 stopped：收尾线程（_stream 末尾的落库）读到 stopped 会保留它；
-    反过来先 set cancel，runner 早退 → _stream 可能在本 update 前就把状态翻成 done/stopped
-    （竞态）。registry 鸭式：生产 _SESSIONS（dict sid->{"cancel":Event}）或测试替身
-    （.s 属性 / .get 方法，条目 {"cancel":Event} 或 {"cancelled":bool}）。
-    """
-    db.update("sessions", sid, {"status": "stopped", "finished_at": int(time.time())})
-    entry = None
-    if hasattr(registry, "s"):           # 仿 agents 测试替身形态 + 本插件生产 _SESSIONS 形态
-        entry = registry.s.get(sid)
-    if entry is None and hasattr(registry, "get"):
-        entry = registry.get(sid)
-    if entry is None:
-        return False
-    cancel = entry.get("cancel") if isinstance(entry, dict) else getattr(entry, "cancel", None)
-    if cancel is not None and hasattr(cancel, "set"):
-        cancel.set()                     # 生产：threading.Event
-    elif isinstance(entry, dict):
-        entry["cancelled"] = True        # 测试替身：{"cancelled": False}
-    else:
-        try:
-            entry.cancelled = True
-        except Exception:
-            pass
-    # steer 队列连停（spec §A：停止=全停，不留尾巴）：清空排队督导补充，
-    # _stream drain 循环顶的 cancel 检查兜底不再续跑（停了不会又自己跑起来）
-    if isinstance(entry, dict):
-        steer = entry.get("steer")
-        if isinstance(steer, list):
-            steer.clear()
-    # 放行挂起的权限等待（deny 收场）：否则 cancel 要等权限 60s 超时才被消费，停止最长延迟 60s
-    _runner.release_pending_permissions(sid)
-    return True
 
 
 class StartSkill(Skill):
@@ -602,12 +222,12 @@ class SendSkill(Skill):
         if not rows:
             return ActionResult(success=False, error=f"会话不存在：{sid}")
         row = rows[0]
-        entry = _SESSIONS.get(sid)   # .get 防御 KeyError 缝：stop/收尾线程 pop entry 与 check-then-act 竞态（T3 评审）
+        entry = _sess._SESSIONS.get(sid)   # .get 防御 KeyError 缝：stop/收尾线程 pop entry 与 check-then-act 竞态（T3 评审）
         if entry is not None:
             if row.get("status") == "running":
                 # 运行中 steer（spec §A）：不拒绝，prompt 排队进 live entry 的 steer 队列，
                 # 当前轮 done 后由 _stream 合并续跑（resume 同引擎同会话，期间新到继续入队）。
-                # 并发安全照抄 entry 级操作模式（setdefault/append 与 _SESSIONS 同锁域）。
+                # 并发安全照抄 entry 级操作模式（setdefault/append 与 _sess._SESSIONS 同锁域）。
                 queue = entry.setdefault("steer", [])
                 queue.append(prompt)
                 pos = len(queue)
@@ -693,7 +313,7 @@ class StopSkill(Skill):
             return ActionResult(success=False, error=f"会话不存在：{sid}")
         if rows[0].get("status") not in ("running",):
             return ActionResult(success=False, error=f"会话已结束（{rows[0].get('status')}），无需停止")
-        ok = _stop_session(ctx.db, _SESSIONS, sid)
+        ok = _stop_session(ctx.db, _sess._SESSIONS, sid)
         if not ok:
             # 无 live runner（陈旧 running，如底座重启 mid-run）：db 已落 stopped——
             # 补发终态事件让面板复位，否则发送键永久锁死
@@ -710,12 +330,12 @@ class StopSkill(Skill):
 
 
 def _live_state(sid: str) -> str:
-    """会话活体状态：waiting（_PERM 有该 sid 挂起审批）> running（_SESSIONS 有 live entry）> idle。"""
+    """会话活体状态：waiting（_PERM 有该 sid 挂起审批）> running（_sess._SESSIONS 有 live entry）> idle。"""
     prefix = f"perm_{sid}_"
     for rid, entry in list(_PERM.items()):
         if rid.startswith(prefix) and entry.get("allow") is None:
             return "waiting"
-    if sid in _SESSIONS:
+    if sid in _sess._SESSIONS:
         return "running"
     return "idle"
 
@@ -810,7 +430,7 @@ class StudioSkill(Skill):
 class HandoffListSkill(Skill):
     """列指定项目下 Codex 的会话（跨 agent 交接入口；只读）。
 
-    经模块级 `_codex_sessions_root()` 取 session 根 → `_codex.list_sessions(cwd)`，
+    经模块级 `_tr._codex_sessions_root()` 取 session 根 → `_codex.list_sessions(cwd)`，
     返回按时间倒序的 session 列表（含 session_id / path / first_line）。L0 只读。
     """
     id = "coding.handoff_list"
@@ -843,7 +463,7 @@ class HandoffListSkill(Skill):
         if not cwd:
             return ActionResult(success=False, error="缺少工作目录 cwd（用户需显式选）")
         try:
-            sessions = _codex.list_sessions(cwd, root=_codex_sessions_root())
+            sessions = _codex.list_sessions(cwd, root=_tr._codex_sessions_root())
         except Exception as e:
             return ActionResult(success=False, error=f"读取 Codex 会话失败：{type(e).__name__}: {e}")
         return ActionResult(success=True, data={"sessions": sessions})
@@ -892,7 +512,7 @@ class HandoffBriefSkill(Skill):
             return ActionResult(success=False, error="缺少工作目录 cwd（用户需显式选）")
         # 找 session path：经 list_sessions（已按 cwd 过滤 + 排序）；命中第一条同 sid 的
         try:
-            sessions = _codex.list_sessions(cwd, root=_codex_sessions_root())
+            sessions = _codex.list_sessions(cwd, root=_tr._codex_sessions_root())
         except Exception as e:
             return ActionResult(success=False, error=f"读取 Codex 会话失败：{type(e).__name__}: {e}")
         match = next((s for s in sessions if s.get("session_id") == sid), None)
@@ -1037,7 +657,7 @@ class ModeSkill(Skill):
         if not rows:
             return ActionResult(success=False, error=f"会话不存在：{sid}")
         ctx.db.update("sessions", sid, {"mode": mode})
-        entry = _SESSIONS.get(sid)   # .get 防御 KeyError 缝：stop/收尾线程 pop entry 与 check-then-act 竞态（T3 评审）
+        entry = _sess._SESSIONS.get(sid)   # .get 防御 KeyError 缝：stop/收尾线程 pop entry 与 check-then-act 竞态（T3 评审）
         live = entry is not None
         if live:
             entry["mode_pending"] = mode
@@ -1098,7 +718,7 @@ class RewindSkill(Skill):
 
         # 在跑：下条消息前由 runner 执行（消费 rewind_pending）。
         # .get 防御 KeyError 缝：stop/收尾线程 pop entry 与 check-then-act 竞态（T3 评审 mode_pending 同款）
-        entry = _SESSIONS.get(sid)
+        entry = _sess._SESSIONS.get(sid)
         live = entry is not None
         if live:
             entry["rewind_pending"] = uuid
@@ -1212,158 +832,6 @@ class FilesSkill(Skill):
 # ---------- 统一接续 popover（C1）：跨源上次会话检测 + DB 外 cc 会话导入 ----------
 
 
-def _cc_projects_base() -> Path:
-    """CC transcript 根目录 ~/.claude/projects（测试 monkeypatch HOME 改道 tmp，同 _cc_reader）。"""
-    return Path(os.path.expanduser("~/.claude/projects"))
-
-
-def _cc_project_dir(cwd: str) -> Path:
-    """cwd → CC 项目目录 ~/.claude/projects/<slug>。
-
-    slug 规则：非字母数字/连字符一律转 -（实测 /Users/denny/.codex → -Users-denny--codex，
-    即 / 与 . 都转 -）。对不上就当无记录（上游 None 兜底，不报错）。
-    """
-    return _cc_projects_base() / re.sub(r"[^A-Za-z0-9-]", "-", cwd)
-
-
-def _iso_ts(value) -> int | None:
-    """ISO 8601 时间串（CC/codex transcript 行 timestamp）→ unix 秒；解析失败 None。"""
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        return int(datetime.fromisoformat(value).timestamp())
-    except (ValueError, OSError, OverflowError):
-        return None
-
-
-def _cc_transcript_rows(path: Path) -> list[dict]:
-    """解析 CC transcript → [{role, text, uuid, ts}]（有文本的 user/assistant 行，时间正序）。
-
-    防御语义同 _cc_reader.read_transcript：坏行跳过、任何失败 → []（检测/导入都以空降级，绝不抛）。
-    """
-    rows: list[dict] = []
-    try:
-        with open(path, encoding="utf-8", errors="replace") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    row = json.loads(line[: _cc_reader._MAX_LINE_KB * 1024])
-                except json.JSONDecodeError:
-                    continue
-                role = row.get("type")
-                if role not in ("user", "assistant"):
-                    continue
-                if row.get("isMeta"):  # 机器行（local-command-caveat 等）非用户内容，摘要/导入/计数一律跳过
-                    continue
-                text = _cc_reader._text_of(row.get("message"))
-                if not text:
-                    continue
-                if text.startswith(("<local-command", "<command-")):  # 本地命令回声块（无 isMeta 标记的）
-                    continue
-                rows.append({"role": role, "text": text,
-                             "uuid": str(row.get("uuid") or ""),
-                             "ts": _iso_ts(row.get("timestamp"))})
-    except Exception:
-        return []
-    return rows
-
-
-# codex rollout 里 CLI 注入的机器条目（环境上下文/指令/插件推荐/中断标记等），非用户对话
-# 内容——对齐 attach_cc 的 isMeta/本地命令回声过滤精神，导入/摘要一律跳过（实测 91 份 rollout 归纳）
-_CODEX_META_PREFIXES = ("<environment_context", "<user_instructions", "<recommended_plugins",
-                        "<in-app-browser-context", "<codex_internal_context", "<turn_aborted")
-
-
-def _codex_transcript_rows(path: str) -> list[dict]:
-    """解析 codex rollout → [{role, text, ts}]（user/assistant 对话行，时间正序）。
-
-    只取 type=response_item 且 payload.role ∈ _codex._DIALOG_ROLES 的行（session_meta/
-    turn_context/event_msg/reasoning/function_call/developer 指令注入天然排除）；文本提取
-    复用 _codex._text（content 兼容字符串与块列表），ts 取行顶层 timestamp。防御语义同
-    _cc_transcript_rows：坏行跳过、任何失败 → []（导入以空降级，绝不抛）。
-    """
-    rows: list[dict] = []
-    try:
-        with open(path, encoding="utf-8", errors="replace") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    o = json.loads(line[: _cc_reader._MAX_LINE_KB * 1024])
-                except json.JSONDecodeError:
-                    continue
-                pl = o.get("payload") or {}
-                if o.get("type") != "response_item" or pl.get("role") not in _codex._DIALOG_ROLES:
-                    continue
-                text = _codex._text(pl.get("content"))
-                if not text or text.startswith(_CODEX_META_PREFIXES):  # 机器条目（见上常量）
-                    continue
-                rows.append({"role": pl["role"], "text": text, "ts": _iso_ts(o.get("timestamp"))})
-    except Exception:
-        return []
-    return rows
-
-
-def _cc_latest_session(cwd: str) -> dict | None:
-    """~/.claude/projects/<slug>/ 顶层 mtime 最新 .jsonl → cc 上次会话卡数据。
-
-    只扫 slug 目录顶层（不递归）：<uuid>/subagents/ 与 tool-results/ 天然排除。
-    无记录/任何失败 → None（前端不显示该卡）。
-    """
-    try:
-        files = [p for p in _cc_project_dir(cwd).glob("*.jsonl") if p.is_file()]
-        if not files:
-            return None
-        latest = max(files, key=lambda p: p.stat().st_mtime)
-        rows = _cc_transcript_rows(latest)
-        first_user = next((r["text"] for r in rows if r["role"] == "user"), "")
-        return {"cc_session_id": latest.stem,
-                "ts": int(latest.stat().st_mtime),
-                "summary": first_user[:60],
-                "message_count": len(rows)}
-    except Exception:
-        return None
-
-
-def _codex_latest_session(cwd: str) -> dict | None:
-    """~/.codex/sessions 按 cwd 过滤的最新一条 → codex 上次会话卡数据。
-
-    复用 handoff_list 同款扫描（_codex.list_sessions：日期树混存，读首行 session_meta.cwd
-    过滤，已按 timestamp 倒序），取 [0]；session_id 形态与 handoff_brief 入参对齐。
-    """
-    try:
-        sessions = _codex.list_sessions(cwd, root=_codex_sessions_root())
-    except Exception:
-        return None
-    if not sessions:
-        return None
-    latest = sessions[0]
-    ts = _iso_ts(latest.get("timestamp"))
-    if ts is None:
-        try:
-            ts = int(os.path.getmtime(latest.get("path") or ""))
-        except Exception:
-            ts = 0
-    return {"session_id": str(latest.get("session_id") or ""),
-            "ts": ts,
-            "summary": str(latest.get("first_line") or "")}
-
-
-def _find_cc_transcript(cc_session_id: str, cwd: str) -> Path | None:
-    """定位 cc transcript 文件：先 cwd slug 目录精确命中，再全 projects 顶层 glob 兜底
-    （都不递归——subagents/ 在 <uuid>/ 下深度 ≥2，天然排除）。找不到 → None。"""
-    if not cc_session_id or not re.fullmatch(r"[A-Za-z0-9_-]+", cc_session_id):
-        return None  # 白名单挡 ../ 路径逃逸与 / 分段（同 _cc_reader.read_transcript）
-    direct = _cc_project_dir(cwd) / f"{cc_session_id}.jsonl"
-    if direct.is_file():
-        return direct
-    hits = sorted(p for p in _cc_projects_base().glob(f"*/{cc_session_id}.jsonl") if p.is_file())
-    return hits[-1] if hits else None
-
-
 def attach_cc_session(db, *, cc_session_id: str, cwd: str) -> str | None:
     """DB 外 cc 会话导入落库（幂等），返回译宝 session_id；找不到 transcript 返回 None。
 
@@ -1376,10 +844,10 @@ def attach_cc_session(db, *, cc_session_id: str, cwd: str) -> str | None:
     rows = db.query("sessions", where={"cc_session_id": cc_session_id})
     if rows:
         return str(rows[0]["id"])
-    path = _find_cc_transcript(cc_session_id, cwd)
+    path = _tr._find_cc_transcript(cc_session_id, cwd)
     if path is None:
         return None
-    messages = _cc_transcript_rows(path)
+    messages = _tr._cc_transcript_rows(path)
     mtime = int(path.stat().st_mtime)
     times = [m["ts"] for m in messages if m["ts"] is not None]
     first_user = next((m["text"] for m in messages if m["role"] == "user"), "")
@@ -1428,8 +896,8 @@ class LastSessionsSkill(Skill):
         if not cwd:
             return ActionResult(success=False, error="缺少工作目录 cwd")
         return ActionResult(success=True, data={
-            "cc": _cc_latest_session(cwd),
-            "codex": _codex_latest_session(cwd),
+            "cc": _tr._cc_latest_session(cwd),
+            "codex": _tr._codex_latest_session(cwd),
         })
 
 
@@ -1510,66 +978,6 @@ class DriversSkill(Skill):
         return ActionResult(success=True, data={"drivers": _detect_drivers()})
 
 
-def _find_codex_session(thread_id: str) -> dict | None:
-    """~/.codex/sessions 全树扫首行 session_meta 匹配 thread_id → {cwd, timestamp, path, first_line}。
-
-    attach_codex 只有 thread_id 没有 cwd（list_sessions 必须按 cwd 过滤，用不上）——
-    直接扫 rollout 首行 session_meta（cwd/timestamp 都在 payload 里），再读首条 user 摘要。
-    thread_id 白名单校验（只作等值比对，防路径逃逸意图）；任何失败 → None。
-    """
-    if not thread_id or not re.fullmatch(r"[A-Za-z0-9_-]+", thread_id):
-        return None
-    root = os.path.expanduser(_codex_sessions_root())
-    try:
-        candidates = glob.glob(os.path.join(root, "**", "*.jsonl"), recursive=True)
-    except Exception:
-        return None
-    for path in candidates:
-        try:
-            with open(path, encoding="utf-8", errors="replace") as f:
-                meta = json.loads(f.readline())
-        except Exception:
-            continue
-        if meta.get("type") != "session_meta":
-            continue
-        p = meta.get("payload") or {}
-        if p.get("session_id") != thread_id:
-            continue
-        first_line = None
-        try:
-            with open(path, encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    try:
-                        o = json.loads(line)
-                    except Exception:
-                        continue
-                    pl = o.get("payload") or {}
-                    if o.get("type") == "response_item" and pl.get("role") == "user":
-                        first_line = _codex._text(pl.get("content"))[:60] or None
-                        break
-        except Exception:
-            pass
-        return {"cwd": p.get("cwd") or "", "timestamp": p.get("timestamp") or "",
-                "path": path, "first_line": first_line}
-    return None
-
-
-def _import_codex_messages(db, sid: str, path: str, *, fallback_ts: int) -> None:
-    """rollout 对话行落 messages 表（seq 1..n；ts 缺则 fallback_ts 兜底；codex 无 uuid 锚点留 ""）。
-
-    单行落库失败不拖垮整段导入（仿 attach_cc/_stream._persist 隔离）。
-    """
-    for i, m in enumerate(_codex_transcript_rows(path), start=1):
-        try:
-            db.insert("messages", {
-                "session_id": sid, "role": m["role"], "text": m["text"],
-                "ts": m["ts"] if m["ts"] is not None else fallback_ts,
-                "seq": i, "uuid": "",
-            })
-        except Exception as e:  # 单行落库失败不拖垮整段导入（仿 _stream._persist 隔离）
-            print(f"[yibao/coding] attach_codex rollout 落库失败（跳过）：{e}", file=sys.stderr)
-
-
 def attach_codex_session(db, *, thread_id: str) -> str | None:
     """codex 原生续导入落库（幂等），返回译宝 session_id；找不到 rollout 返回 None。
 
@@ -1589,17 +997,17 @@ def attach_codex_session(db, *, thread_id: str) -> str | None:
         except Exception:
             has_msgs = True   # 查询失败不冒险重插（保持幂等直返语义）
         if not has_msgs:
-            meta = _find_codex_session(thread_id)
+            meta = _tr._find_codex_session(thread_id)
             if meta is not None:   # rollout 已删 → 无源可补，静默直返
                 fb = rows[0].get("created_at")
                 if not isinstance(fb, int):
-                    fb = _iso_ts(meta.get("timestamp")) or int(time.time())
-                _import_codex_messages(db, sid, meta["path"], fallback_ts=fb)
+                    fb = _tr._iso_ts(meta.get("timestamp")) or int(time.time())
+                _tr._import_codex_messages(db, sid, meta["path"], fallback_ts=fb)
         return sid
-    meta = _find_codex_session(thread_id)
+    meta = _tr._find_codex_session(thread_id)
     if meta is None:
         return None
-    ts = _iso_ts(meta.get("timestamp"))
+    ts = _tr._iso_ts(meta.get("timestamp"))
     if ts is None:
         try:
             ts = int(os.path.getmtime(meta["path"]))
@@ -1612,7 +1020,7 @@ def attach_codex_session(db, *, thread_id: str) -> str | None:
         "status": "done", "created_at": ts, "finished_at": ts,
         "cc_session_id": thread_id, "source": "native", "mode": "acceptEdits",
     })
-    _import_codex_messages(db, sid, meta["path"], fallback_ts=ts)
+    _tr._import_codex_messages(db, sid, meta["path"], fallback_ts=ts)
     return sid
 
 
@@ -1654,7 +1062,7 @@ class AttachCodexSkill(Skill):
 
 def _reconcile_stale_running(ctx: Any) -> None:
     """底座重启对账（make_tools 时跑一次，仿 agents._reconcile_orphans）：sessions 表
-    status="running" 但内存无活体 entry（_SESSIONS 随进程蒸发）→ 落 interrupted +
+    status="running" 但内存无活体 entry（_sess._SESSIONS 随进程蒸发）→ 落 interrupted +
     messages 补 marker「底座重启，会话中断，可 send 续跑」。coding 是 in-process，
     判据就是「内存无 entry」而非 pid。对账只读插件 db，任何失败只 print 不炸加载。"""
     db = getattr(ctx, "db", None)
@@ -1667,7 +1075,7 @@ def _reconcile_stale_running(ctx: Any) -> None:
         return
     for row in rows:
         sid = str(row.get("id") or "")
-        if not sid or sid in _SESSIONS:
+        if not sid or sid in _sess._SESSIONS:
             continue                     # 有活体（理论不会：加载时无流式线程）→ 不动
         try:
             db.update("sessions", sid, {"status": "interrupted",
