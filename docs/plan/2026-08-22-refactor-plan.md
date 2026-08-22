@@ -24,7 +24,7 @@
 | ✅ 完成 | **R-25 跨端协议契约（含 R-29 收口 2026-08-22）**：protocol-contract.md（通道/kind 对照/命名映射/漂移清单）+ **app 内部单源化**——RunMetrics 唯一定义于 protocol/brain-types.ts（state/types.ts re-export 兼容）、AvatarState（7 态共享集）单源（Home/HomeFrame/HomePlugins/PanelApp/usePetState/useHomeChatSession 全部引用）；双端类型显式决策「各自维护 + 契约文档对照 + 变更同步纪律」（protocol-contract.md §3.2.1） |
 | 🟡 部分完成 | **R-08 App.vue 拆分（阶段一完成 2026-08-22）**：1711→1442 行。已拆出 `components/pet/` 三组件——PluginLauncher（插件启动器视图+样式）、BubbleFlow（气泡流视图+滚动容器 expose 桥接）、PendingConfirmCard（审批卡+批量快批条）；App.vue 保留：装配/窗口管理/事件流（onEvent 224 行）/composables 编排。**剩余（可选）**：onEvent 事件流抽 `composables/usePetEvents.ts`（依赖注入面大，行为等价性验证成本高，收益边际递减——组件级拆分目标已达成） |
 | ✅ 完成 | **R-30 HomePlugins 拆分（2026-08-22）**：1210→933 行——动效域迁 `composables/usePanelGrow.ts`（93 行）、对话浮层迁 `composables/usePluginOverlay.ts`（71 行）、列表视图迁 `components/plugins/PluginGrid.vue`（202 行，样式随迁）；顺带收敛 2 处漏网 invoke 直调（list_plugins/get_current_panel → brainClient.getCurrentPanel）；桌上工位守护测试断言更新至新位置 |
-| ✅ 完成 | **R-31 目录重组收口（2026-08-22，克制版）**：**窗口级根落地**——App.vue→`windows/pet/PetWindow.vue`、Home.vue→`windows/home/HomeWindow.vue`、PanelApp.vue→`windows/panel/PanelWindow.vue`（入口 ts/测试路径/相对 import 全量修正）；`lib/surface/` 归拢（pet-surface + surface-policy）；vitest include 扩为 `src/**/*.test.ts`（新目录自动覆盖）。**显式决策记录**：(1) components 其余平铺件不做四分——高内聚组团（pet/plugins/feed/settings）已域目录化，剩余 ~40 件硬套蓝图四分需为 Home* 系发明新分类（蓝图 gap），扰动 150+ 处 import 换纯视觉收益不划算，按「哪片要改顺手归哪片」渐进；(2) Rust commands.rs 保持单文件（914 行域序组织，R-12b 已拆 braind/setup_config/system 三域，目录化纯视觉） |
+| ✅ 完成 | **R-31 目录重组收口（2026-08-22，v2 完整版）**：**窗口级根**——windows/{pet,home,panel,invoke,snip}/；**views/ 页面层落地**（chat/feed/plugins/settings/brain 域包 + 平铺页面件，Home* 系按引用实测归位）；**components 收敛**为 pet/panel/common 三域复用件（无平铺残留）；**lib/home/** 域归拢（8 件 home-* 族）。3.1 蓝图同步修订为 v2（chat/ 分类取消等差异见 3.1 修订说明）。期间教训：批量路径重写须处理**无扩展名 import**（`../lib/brain` 不带 `.ts`，映射表 miss 导致多轮返工，最终以「从 HEAD 干净内容重放 + 扩展名补全」确定性收敛） |
 
 ⚠️ **提交纪律（立即生效）**：当前工作区堆积 73 文件 +779/−9196 未提交改动，已违反「每项任务独立可合入、可回滚」原则。**任何后续任务开工前，先按域分批提交现有改动**（重构提交与 feat/fix 提交分开，不混一个 commit）；此后每完成一项任务立即 commit。
 
@@ -191,38 +191,51 @@
 
 ## 3. 目标架构
 
-### 3.1 前端（app/src）目标分层
+### 3.1 前端（app/src）目标分层（v2 修订，2026-08-22 落地版）
+
+> **v2 修订说明**：原蓝图的 `views/` 语义在执行时被确认为「Home 窗的 tab/装配页面组件」（Home* 系只被 HomeWindow/homeAssemblyUi 引用），原 `components/chat/` 分类与实际复用关系不符（InputBar/Bubble 等跨三窗复用应进 common）。v2 按引用实测修订并已落地：
 
 ```
 app/src/
-├── main.ts                 # 仅装配（createApp + boot）
-├── windows/                # 窗口级根（App.vue → pet/PetWindow.vue；Home.vue → home/HomeWindow.vue；PanelApp.vue → panel/PanelWindow.vue）
-├── views/                  # 页面级（home/FeedView、PluginsView、DataView、SettingsView 拆子面板、chat/ChatView）
-├── components/
-│   ├── pet/                # 桌宠：Avatar、Bubble、StatusBadge
-│   ├── chat/               # BubbleFlow、InputBar、SessionList、ProcessRail
-│   ├── panel/              # SchemaPanel、WebviewPanelHost、PanelDock
-│   └── common/             # Segmented、Modal、EmptyState、ScrollBar 样式
-├── composables/            # useBrainEvents、usePendingConfirms、useClock、usePanelSurface
-├── protocol/               # 与 sidecar 的契约：事件 kind 枚举 + payload 类型（唯一事实源）
-├── services/               # brainClient（IPC 封装 + onceWithTimeout 工具 + 统一错误）
+├── main.ts / home.ts / panel.ts / invoke.ts / snip.ts   # 窗口入口（一窗一文件）
+├── windows/                # 窗口级根（✅ 已落地）
+│   ├── pet/PetWindow.vue   #   桌宠窗（原 App.vue）
+│   ├── home/HomeWindow.vue #   主屏大窗（原 Home.vue）
+│   ├── panel/PanelWindow.vue # 面板浮窗（原 PanelApp.vue）
+│   ├── invoke/InvokeBar.vue  # 唤起条窗
+│   └── snip/SnipOverlay.vue  # 截图框选窗
+├── views/                  # 页面级：Home 窗的 tab/装配组件（✅ 已落地）
+│   ├── chat/               #   HomeChat/Paper/Thread/Talk + SessionList + faces.css
+│   ├── feed/               #   HomeFeed 容器 + FeedTimeline/FeedInbox/FeedRecap
+│   ├── plugins/            #   HomePlugins + HomePluginGlance + PluginGrid
+│   ├── settings/           #   SettingsView + DataView + settings/ 四分类子面板
+│   ├── brain/              #   AgentBrain/NeuralBrain/BrainSession（mind 域页面件）
+│   └── HomeLife/HomeFrame/HomePaper/HomeDeskWork/HomeGlance/HomeFloatNotes/
+│       HomeWidget/HomeContextPanel/ActivityShelf/CapabilityConversationRail/
+│       HomeHostAsk/CommandPalette/InlineReceipt/PeekSurface（平铺页面件）
+├── components/             # 跨窗复用件（✅ 已收敛，无平铺残留）
+│   ├── pet/                #   桌宠视觉件：Avatar/SpeechBubble/QuickPanel/BubbleFlow/
+│   │                       #   PendingConfirmCard/PluginLauncher/PermissionsBanner/
+│   │                       #   SetupWizard/SurfaceLine
+│   ├── panel/              #   面板宿主：SchemaPanel/WebviewPanel
+│   └── common/             #   跨域复用：YbIcon/Bubble/InputBar/ConfirmDialog/UsageBar
+├── composables/            # 响应式编排（useChatFlow/usePetState/useAssembly/usePanelGrow/…）
+├── protocol/               # 与 sidecar 的契约（唯一事实源，R-29 后类型单源）
+├── services/               # brainClient（IPC 封装 + onceWithTimeout + 统一错误）
 ├── lib/                    # 纯函数（不 import vue）
-│   ├── time.ts / text.ts / icons.ts      # 通用工具
-│   ├── assembly/           # 主屏装配域（由 home-assembly.ts 拆出）
-│   │   ├── parts.ts        # 零件目录 HOME_PARTS + 注册表 PARTS + registerPart/syncPluginParts/resetPluginParts（插件零件注册）
-│   │   ├── widgets.ts      # 零件显隐/大小/材质配置（由 home-widgets.ts 迁入，去 Vue 化）
-│   │   ├── faces.ts        # 零件 faces 外观映射（home-glance-faces.ts）
-│   │   ├── presets.ts      # 4 套预设 rails/desk/salon/canvas + 几何常量（SPINE_W/NOTE_W/TILE/RAIL）
-│   │   ├── snap.ts         # 吸附算法（snapToGuides/snapAxis/snapBox/settleSnap）
-│   │   └── layout.ts       # 解析与渲染几何（resolveGrid/resolveAssembly/gridStageStyle/frameStyle…）
-│   ├── surface/            # pet-surface、surface-policy
-│   └── …（其余纯逻辑，如 proc/schema/at-mention）
-├── composables/            # useBrainEvents、usePendingConfirms、useClock、useAssembly（零件/装配响应式状态，吸收 livePluginIds）
-├── state/                  # SessionStore domains（+ 新增 pending/bubbles 域）
-└── assets/                 # tokens.css
+│   ├── home/               #   home 域纯函数族（assembly 拆分源 + chrome/desk-presence/
+│   │                       #   glance-faces/widgets/chat-session/assembly-ui 桩）
+│   ├── assembly/           #   主屏装配域（parts/snap/presets/layout）
+│   ├── surface/            #   pet-surface、surface-policy
+│   └── time/text/icons/markdown/window/pair/finish/proc/at-mention/
+│       explicit-intent/suggestions/work-thread/quick-dock/schema/webview-source/brain(桩)
+├── state/                  # SessionStore domains（+ pending/bubbles 域）
+└── assets/                 # tokens.css + scrollbar.css + settings.css + home-feed.css
 ```
 
 关键约束：`lib/`、`protocol/`、`services/` 不得 import Vue 运行时；组件只负责呈现与事件订阅，业务编排进 composables/services；`views/` 只做组装。
+
+> 与原蓝图差异（显式决策）：① 原蓝图 `components/chat/` 取消——对话页面件归 `views/chat/`，跨窗复用件归 `components/common/`（按引用实测而非预设分类）；② `lib/` 补 home/ 域归置（原蓝图未给全量方案）；③ 入口 ts 保持平铺（一窗一文件，非 vue-router 结构无需 views 路由层）。
 
 ### 3.2 Rust 后端目标分层
 

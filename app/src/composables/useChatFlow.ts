@@ -3,7 +3,7 @@
 // 持久化策略：chunk 只改内存，final_reply/收尾时 syncMessage 一次性落盘（消除写放大）。
 import { nextTick, ref, watch, type Ref } from "vue";
 import { runInput, type BrainEvent, type RunMetrics } from "../lib/brain";
-import type { BubbleMsg, ProcInfo, RunRef, HomeAvatarState as AvatarState } from "../lib/home-chat-session";
+import type { BubbleMsg, ProcInfo, RunRef, HomeAvatarState as AvatarState } from "../lib/home/home-chat-session.ts";
 import { newId } from "../state/domains/conversation";
 import { sessionStore } from "../state/store";
 import type { MessageInput } from "../state/domains/conversation";

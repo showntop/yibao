@@ -5,18 +5,18 @@
 // ⌘K 命令面板」（Raycast/Linear 风格：找页面用搜/说，不是点）。
 // 各页常驻挂载（v-show 切显隐）：事件订阅不断、气泡/面板状态切页不丢。
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import YbIcon from "../../components/YbIcon.vue";
-import CommandPalette, { type PaletteTab } from "../../components/CommandPalette.vue";
-import HomeChat from "../../components/HomeChat.vue";
-import HomePlugins from "../../components/HomePlugins.vue";
-import CapabilityConversationRail, { type CapabilityRailSurface } from "../../components/CapabilityConversationRail.vue";
-import InlineReceipt from "../../components/InlineReceipt.vue";
-import PeekSurface from "../../components/PeekSurface.vue";
-import ActivityShelf from "../../components/ActivityShelf.vue";
+import YbIcon from "../../components/common/YbIcon.vue";
+import CommandPalette, { type PaletteTab } from "../../views/CommandPalette.vue";
+import HomeChat from "../../views/chat/HomeChat.vue";
+import HomePlugins from "../../views/plugins/HomePlugins.vue";
+import CapabilityConversationRail, { type CapabilityRailSurface } from "../../views/CapabilityConversationRail.vue";
+import InlineReceipt from "../../views/InlineReceipt.vue";
+import PeekSurface from "../../views/PeekSurface.vue";
+import ActivityShelf from "../../views/ActivityShelf.vue";
 import { sessionStore, clearLegacySessionKeys } from "../../state/store";
 import type { SurfacePanel } from "../../state/types";
-import DataView from "../../components/DataView.vue";
-import SettingsView from "../../components/SettingsView.vue";
+import DataView from "../../views/settings/DataView.vue";
+import SettingsView from "../../views/settings/SettingsView.vue";
 import appLogo from "./assets/logo.png";
 import { onPendingConfirms, closeHomeWindow } from "../../lib/brain";
 import { decideSurface, type Attention, type Presentation } from "../../lib/surface/surface-policy";

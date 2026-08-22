@@ -1,5 +1,5 @@
 /** 一次工作（用户一句之后、模型边说边调用工具）在对话流里合成一条线索。 */
-import { isDeskPathCloseLine } from "./home-desk-presence";
+import { isDeskPathCloseLine } from "./home/home-desk-presence.ts";
 
 export type WorkBubble = {
   role: "user" | "ai" | "sys";

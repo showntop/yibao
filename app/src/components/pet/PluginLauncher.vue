@@ -2,7 +2,7 @@
 // 插件启动器视图（宠物窗双击团子进入）：列出插件，点击直达它的主面板。
 // 纯展示：插件清单/错误由父级维护（父级的 allPlugins 同时是输入意图匹配的数据源）；
 // 启动动作（panelAction + explicit 标记）是父级 surface 裁决域的事，经 launch 事件上抛。
-import YbIcon from "../YbIcon.vue";
+import YbIcon from "../common/YbIcon.vue";
 import { iconStyle, initial } from "../../lib/icons";
 
 defineProps<{

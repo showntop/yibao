@@ -2,8 +2,8 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const frame = readFileSync(resolve(import.meta.dirname, "../components/HomeFrame.vue"), "utf8");
-const bubble = readFileSync(resolve(import.meta.dirname, "../components/Bubble.vue"), "utf8");
+const frame = readFileSync(resolve(import.meta.dirname, "../views/HomeFrame.vue"), "utf8");
+const bubble = readFileSync(resolve(import.meta.dirname, "../components/common/Bubble.vue"), "utf8");
 
 describe("home frame place engines", () => {
   it("branches once on place, not on preset name", () => {

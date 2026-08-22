@@ -5,11 +5,11 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import SchemaPanel from "../../components/SchemaPanel.vue";
-import WebviewPanel from "../../components/WebviewPanel.vue";
-import Avatar from "../../components/Avatar.vue";
-import InputBar from "../../components/InputBar.vue";
-import YbIcon from "../../components/YbIcon.vue";
+import SchemaPanel from "../../components/panel/SchemaPanel.vue";
+import WebviewPanel from "../../components/panel/WebviewPanel.vue";
+import Avatar from "../../components/pet/Avatar.vue";
+import InputBar from "../../components/common/InputBar.vue";
+import YbIcon from "../../components/common/YbIcon.vue";
 import {
   onBrainEvent,
   onPendingConfirms,

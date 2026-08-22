@@ -3,9 +3,9 @@
 // 纯展示 + 事件上抛（submit / recap-click / surface-open）；滚动容器元素经 expose 暴露，
 // 父级桥接给 usePetBubbles 的 bubblesRef（scrollBubbles/restoreBubbleScroll 在父级 composable 里操作它）。
 import { ref } from "vue";
-import Avatar from "../Avatar.vue";
-import Bubble from "../Bubble.vue";
-import SurfaceLine from "../SurfaceLine.vue";
+import Avatar from "./Avatar.vue";
+import Bubble from "../common/Bubble.vue";
+import SurfaceLine from "./SurfaceLine.vue";
 import type { BubbleMsg } from "../../composables/usePetBubbles";
 import type { PetAvatarState } from "../../composables/usePetState";
 

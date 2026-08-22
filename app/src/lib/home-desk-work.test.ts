@@ -3,13 +3,13 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const home = readFileSync(resolve(import.meta.dirname, "../windows/home/HomeWindow.vue"), "utf8");
-const chat = readFileSync(resolve(import.meta.dirname, "../components/HomeChat.vue"), "utf8");
-const paper = readFileSync(resolve(import.meta.dirname, "../components/HomeChatPaper.vue"), "utf8");
-const thread = readFileSync(resolve(import.meta.dirname, "../components/HomeChatThread.vue"), "utf8");
-const faces = readFileSync(resolve(import.meta.dirname, "../components/home-chat-faces.css"), "utf8");
-const plugins = readFileSync(resolve(import.meta.dirname, "../components/HomePlugins.vue"), "utf8");
+const chat = readFileSync(resolve(import.meta.dirname, "../views/chat/HomeChat.vue"), "utf8");
+const paper = readFileSync(resolve(import.meta.dirname, "../views/chat/HomeChatPaper.vue"), "utf8");
+const thread = readFileSync(resolve(import.meta.dirname, "../views/chat/HomeChatThread.vue"), "utf8");
+const faces = readFileSync(resolve(import.meta.dirname, "../views/chat/home-chat-faces.css"), "utf8");
+const plugins = readFileSync(resolve(import.meta.dirname, "../views/plugins/HomePlugins.vue"), "utf8");
 const panelGrow = readFileSync(resolve(import.meta.dirname, "../composables/usePanelGrow.ts"), "utf8");
-const glance = readFileSync(resolve(import.meta.dirname, "../components/HomePluginGlance.vue"), "utf8");
+const glance = readFileSync(resolve(import.meta.dirname, "../views/plugins/HomePluginGlance.vue"), "utf8");
 
 describe("plugin host stays on the desk", () => {
   it("does not hide the home desk when a workstation opens", () => {

@@ -3,12 +3,12 @@ import { ref, computed, watch, watchEffect, nextTick, onMounted, onUnmounted } f
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import Avatar from "../../components/Avatar.vue";
-import InputBar from "../../components/InputBar.vue";
-import QuickPanel from "../../components/QuickPanel.vue";
-import SpeechBubble from "../../components/SpeechBubble.vue";
-import PermissionsBanner from "../../components/PermissionsBanner.vue";
-import SetupWizard from "../../components/SetupWizard.vue";
+import Avatar from "../../components/pet/Avatar.vue";
+import InputBar from "../../components/common/InputBar.vue";
+import QuickPanel from "../../components/pet/QuickPanel.vue";
+import SpeechBubble from "../../components/pet/SpeechBubble.vue";
+import PermissionsBanner from "../../components/pet/PermissionsBanner.vue";
+import SetupWizard from "../../components/pet/SetupWizard.vue";
 import PluginLauncher from "../../components/pet/PluginLauncher.vue";
 import BubbleFlow from "../../components/pet/BubbleFlow.vue";
 import PendingConfirmCard from "../../components/pet/PendingConfirmCard.vue";
@@ -59,7 +59,7 @@ import { usePetState } from "../../composables/usePetState";
 import { usePetApproval } from "../../composables/usePetApproval";
 import { usePetBubbles, type BubbleMsg } from "../../composables/usePetBubbles";
 import { usePetSpeech } from "../../composables/usePetSpeech";
-import YbIcon from "../../components/YbIcon.vue";
+import YbIcon from "../../components/common/YbIcon.vue";
 
 /** 小窗固定会话 id（方案 A）：永远用同一个会话，不镜像大窗活跃会话。
  *  run 带它使消息归属、重启可恢复；固定性从架构上消灭串台（大窗切会话不影响本窗）。 */

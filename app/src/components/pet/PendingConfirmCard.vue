@@ -2,7 +2,7 @@
 // 待批准确认卡（宠物窗输入槽区域的琥珀条）：单条批准/拒绝（可选记住选择）或批量快批。
 // remember 状态归父级（usePetApproval 域），经 v-model:remember 双向绑定；
 // 决策动作（decide/decideAllPending）是父级 composable 的事，经事件上抛。
-import YbIcon from "../YbIcon.vue";
+import YbIcon from "../common/YbIcon.vue";
 import { rememberLabelForSkill, type PendingConfirm } from "../../lib/brain";
 
 defineProps<{

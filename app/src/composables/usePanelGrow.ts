@@ -1,7 +1,7 @@
 // 面板"从来源长出"动效域（HomePlugins 用）：记录触发插件卡的位置，面板用 clip-path
 // 从卡片矩形生长/缩回（同源缩回）。独立成 composable：纯动效逻辑，不含业务状态。
 import { ref } from "vue";
-import { takeDeskOrigin } from "../lib/home-desk-presence";
+import { takeDeskOrigin } from "../lib/home/home-desk-presence.ts";
 
 export function usePanelGrow() {
   const originRect = ref<DOMRect | null>(null);

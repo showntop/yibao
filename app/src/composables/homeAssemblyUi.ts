@@ -1,15 +1,15 @@
 /** 零件目录挂的视图。换摊法换组件，不在业务里写 if (preset)。 */
 import type { Component } from "vue";
-import HomeChatThread from "../components/HomeChatThread.vue";
-import HomeChatPaper from "../components/HomeChatPaper.vue";
-import HomeChatTalk from "../components/HomeChatTalk.vue";
-import SessionList from "../components/SessionList.vue";
-import HomeContextPanel from "../components/HomeContextPanel.vue";
-import InputBar from "../components/InputBar.vue";
-import AgentBrain from "../components/AgentBrain.vue";
-import HomeGlance from "../components/HomeGlance.vue";
-import HomeLife from "../components/HomeLife.vue";
-import HomePluginGlance from "../components/HomePluginGlance.vue";
+import HomeChatThread from "../views/chat/HomeChatThread.vue";
+import HomeChatPaper from "../views/chat/HomeChatPaper.vue";
+import HomeChatTalk from "../views/chat/HomeChatTalk.vue";
+import SessionList from "../views/chat/SessionList.vue";
+import HomeContextPanel from "../views/HomeContextPanel.vue";
+import InputBar from "../components/common/InputBar.vue";
+import AgentBrain from "../views/brain/AgentBrain.vue";
+import HomeGlance from "../views/HomeGlance.vue";
+import HomeLife from "../views/HomeLife.vue";
+import HomePluginGlance from "../views/plugins/HomePluginGlance.vue";
 
 export const PART_VIEWS: Record<string, Record<string, Component>> = {
   chat: { thread: HomeChatThread, paper: HomeChatPaper, talk: HomeChatTalk },
