@@ -26,7 +26,8 @@
 | 🟡 部分完成 | **R-08 App.vue 拆分（阶段一完成 2026-08-22）**：1711→1442 行。已拆出 `components/pet/` 三组件——PluginLauncher（插件启动器视图+样式）、BubbleFlow（气泡流视图+滚动容器 expose 桥接）、PendingConfirmCard（审批卡+批量快批条）；App.vue 保留：装配/窗口管理/事件流（onEvent 224 行）/composables 编排。**剩余（可选）**：onEvent 事件流抽 `composables/usePetEvents.ts`（依赖注入面大，行为等价性验证成本高，收益边际递减——组件级拆分目标已达成） |
 | ✅ 完成 | **R-30 HomePlugins 拆分（2026-08-22）**：1210→933 行——动效域迁 `composables/usePanelGrow.ts`（93 行）、对话浮层迁 `composables/usePluginOverlay.ts`（71 行）、列表视图迁 `components/plugins/PluginGrid.vue`（202 行，样式随迁）；顺带收敛 2 处漏网 invoke 直调（list_plugins/get_current_panel → brainClient.getCurrentPanel）；桌上工位守护测试断言更新至新位置 |
 | ✅ 完成 | **R-31 目录重组收口（2026-08-22，v2 完整版）**：**窗口级根**——windows/{pet,home,panel,invoke,snip}/；**views/ 页面层落地**（chat/feed/plugins/settings/brain 域包 + 平铺页面件，Home* 系按引用实测归位）；**components 收敛**为 pet/panel/common 三域复用件（无平铺残留）；**lib/home/** 域归拢（8 件 home-* 族）。3.1 蓝图同步修订为 v2（chat/ 分类取消等差异见 3.1 修订说明）。期间教训：批量路径重写须处理**无扩展名 import**（`../lib/brain` 不带 `.ts`，映射表 miss 导致多轮返工，最终以「从 HEAD 干净内容重放 + 扩展名补全」确定性收敛）；**目录重组的验证必须含 `vite build`**——`vue-tsc` 对 asset import 不校验存在性（ambient `*.png` 声明通配吃掉），`./assets/logo.png` 深度错位逃过了 tsc+vitest，仅 vite 真解析可捕获（后续 hotfix 修正 HomeWindow.vue:20，289 模块/5 入口 build 通过） |
-| 🔄 进行中 | **阶段 6 蓝图收口（2026-08-22 立项）**：R-36 文档补账 ✅（本次完成——状态降级/验收勾选/蓝图执行注记/放弃清单落档）；待执行：**R-35** `_sibling` 归一（6 处→公共件）→ **R-32** sidecar 3.3 实质收口（a distiller_store / b llm_vision / c perception 域地图+拆分）→ **R-33** commands.rs 目录化 → **R-34** mobile useEventStream + 状态管理收口（R-33/R-34 可与 R-32 并行）。任务详单与放弃清单见第 4 节阶段 6；3.2/3.3/3.4 蓝图执行注记见第 3 节 |
+| 🔄 进行中 | **阶段 6 蓝图收口（2026-08-22 立项）**：R-36 文档补账 ✅、R-35 `_sibling` 归一 ✅（8de7f92）、R-32 sidecar 3.3 实质收口 ✅（a distiller_store a1e2d1b / b llm_vision 5cc612b / c perception 三分 f869cd0，每步 1142 全绿）、**R-33 commands.rs ✅ 显式放弃**（见下）；待执行：**R-34** mobile useEventStream + 状态管理收口（vitest 83）。任务详单与放弃清单见第 4 节阶段 6；3.2/3.3/3.4 蓝图执行注记见第 3 节 |
+| ✅ 完成 | **R-33 commands.rs（2026-08-22 显式放弃）**：871 行/61 命令不拆目录——与 3.2 形态决策一致（平铺即层）。理由：① 61 命令中约 80% 是同模式转发薄命令（`State<Brain>` → brain_cmd_with → Result），按用户视角分组拆分后大脑域仍占大头，文件变小但职责未减；② Tauri `generate_handler!` 宏要求全部命令名集中注册，拆分让命令清单散落 5 个文件，可读性不升反降；③ 与 transport.py（stdio 单文件协议）同构——单一注册表 + 同类模式，平铺合理。R-31 悬置尾巴据此关闭 |
 
 ✅ **提交纪律已恢复（2026-08-22）**：原 73 文件堆积改动已分批提交完毕（R-31/R-13 系列等各自独立 commit），工作区干净。纪律持续有效——每完成一项任务立即 commit。
 
@@ -256,7 +257,7 @@ src-tauri/src/
 > **执行注记（2026-08-22，阶段 6 立项时落档）**：本蓝图按「实质层/形态层」拆解收账——
 > - **实质层已达成**：lib.rs 纯装配（535 行，R-12b）；通信单点化 brain_cmd/brain_cmd_with（R-21b，等价命令注册表）；测试外移 tests/（R-22）。
 > - **形态层显式放弃**：不建 `commands/`/`bridge/`/`services/`/`storage/` 目录包裹——守护域（braind.rs）、配置域（setup_config.rs）、系统集成域（system.rs/snip.rs）、会话存储（session_db.rs）以平铺文件承载同样的职责分离（与 sidecar 3.3 v2 同款决策：分层语义靠命名承载，不靠目录）。`domain/`（CommandKind）为 R-21b 既有放弃决策。
-> - **遗留尾巴**：`commands.rs` 871 行单文件 → **R-33**（目录化或显式放弃，阶段 6）。
+> - **遗留尾巴**：`commands.rs` 871 行单文件 → **R-33**（2026-08-22 显式放弃，理由见执行状态表 R-33 行——已关闭）。
 
 ### 3.3 sidecar（Python）目标分层
 
@@ -386,7 +387,7 @@ app（Tauri IPC）与 mobile/extension（HTTP `/v1/*`）共用同一大脑，但
 | 编号 | 任务 | 目标 / 动作 | 涉及文件 | 优先级 |
 |---|---|---|---|---|
 | R-32 | sidecar 3.3 实质收口（分 3 步独立提交） | **(a)** `DistillerStore` → `distiller_store.py`（distiller.py 留编排，存储与编排分离）；**(b)** vision 四件（`ComputerUseClient`/`describe_screen`/`summarize_screen`/`answer_image_query`）→ `llm_vision.py`，`llm.py` 留 re-export 保 monkeypatch 路径（test_image_attachments patch `llm.answer_image_query`）；**(c)** perception.py（1027 行三合一）先出域地图（照 R-13 交接文档先例：行号域清单/拆分序/陷阱清单/验证口径）再分步拆 store/sensors/skills | sidecar | 高（架构实质） |
-| R-33 | Rust commands.rs 目录化 | 871 行按域拆 `commands/` 5~6 模块 + mod.rs（R-31 悬置尾巴）；或显式记放弃。每步 `cargo test` 25 全绿 | app/src-tauri | 中 |
+| R-33 | Rust commands.rs 目录化 | ✅ 2026-08-22 **显式放弃**（决策记录见执行状态表 R-33 行）：与 3.2 形态决策一致——61 命令 80% 为同模式转发薄命令，`generate_handler!` 宏需集中注册，拆分使命令清单散落且可读性不升；R-31 悬置尾巴据此关闭 | app/src-tauri | 中（已关闭） |
 | R-34 | mobile 收口（R-23b/R-24b） | `useEventStream` hook（Feed/Approvals/Chat 三处 onMounted→start/onUnmounted→stop + disposed 竞态守卫样板归一）；模块级单例 ref（pending-badge/memories/chat）→ provide/inject。vitest 83 全绿 | mobile | 中 |
 | R-35 | `_sibling` 归一 | plugins 下 6 处重复定义（agents/sandbox/coding/sessions/transcript/_session_skills 各一份）→ 插件公共件；先查测试锁定的 import 路径。R-15 附带项收口 | plugins | 高（正在恶化：原 3 处拆分后扩散至 6 处） |
 | R-36 | 文档补账 | R-23/R-24/R-15 状态降级标注；验收标准勾选/修订；3.2/3.3/3.4 蓝图执行注记（形态决策 + 实质缺口指向收口任务）；放弃清单落档 | docs | ✅ 2026-08-22 完成 |
