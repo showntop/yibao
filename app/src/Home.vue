@@ -20,10 +20,10 @@ import SettingsView from "./components/SettingsView.vue";
 import appLogo from "./assets/logo.png";
 import { onPendingConfirms, closeHomeWindow } from "./lib/brain";
 import { decideSurface, type Attention, type Presentation } from "./lib/surface-policy";
+import type { AvatarState } from "./protocol/brain-types";
 
 // 主屏（home）= 对话 + 信息面板的融合体（AI 原生：对话是主入口，动态/回顾/插件一瞥都在右侧）
 type Tab = "home" | "plugins" | "data" | "settings";
-type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
 
 const tab = ref<Tab>("home");
 const qaMode = import.meta.env.DEV && new URLSearchParams(window.location.search).get("qa") === "capability";

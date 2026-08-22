@@ -65,6 +65,19 @@ sidecar/Rust 落盘与 IPC 用 snake_case；app 前端协议层（`protocol/brai
 
 > **重点漂移**：`PendingConfirm` 的 `skill_id`（mobile）vs `skill`（app）——同一字段两个名字。收敛方向：统一 `skill_id`（与 sidecar 落盘一致），app 侧补别名兼容。
 
+### 3.2.1 双端类型维护决策（2026-08-22，R-29 复核落定）
+
+**决策：app 与 mobile 双端类型各自维护，以本文档 3.2 节对照表为契约基准，不做代码级共享。**
+
+理由：
+1. 两端是独立构建链（app：Tauri/Vite；mobile：Capacitor/Vite），代码级共享需引入 monorepo workspace 或 npm 私有包，构建复杂度收益比不划算；
+2. 双端载荷本就不同构（mobile 直收 HTTP/SSE snake_case，app 经 Rust 桥混 camelCase——见 3.1 映射表），强行共享类型反而要引入映射层；
+3. 漂移风险靠对照表 + 双端各自测试锁定，副作用可接受。
+
+**维护纪律**：sidecar 事件/载荷形状变更时，必须同步更新本文档 3.1/3.2 节，并检查双端对应类型；PR 中不同步更新契约文档的协议变更不予合入。
+
+**app 内部单源化（已完成，R-29）**：`RunMetrics` 唯一定义于 `app/src/protocol/brain-types.ts`（state/types.ts re-export 兼容旧路径）；`AvatarState`（7 态共享集）唯一定义于 protocol/brain-types.ts，Home.vue/HomeFrame.vue/HomePlugins.vue/PanelApp.vue/usePetState（PetAvatarState 扩展）/useHomeChatSession（HomeAvatarState 别名）全部引用单源。
+
 ### 3.3 HTTP 端点（mobile/extension 侧，请求形状）
 
 | 端点 | 用途 | 请求体 |

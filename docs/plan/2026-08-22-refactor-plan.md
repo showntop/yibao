@@ -21,8 +21,8 @@
 | 🟡 部分完成 | **R-15 coding.py**：1687→1095，已拆出 sessions.py / transcript.py / _brief.py / _cc_reader.py 等 ✅；继续按技能域收尾 |
 | ✅ 完成 | **R-20 invoke 收敛（收尾 2026-08-22）**：App.vue/HomeChat.vue 的 `get_setup_config`（含泛型形式共 3 处）、`ensure_active_conversation`×2、`ensure_pet_conversation`、`get_conversation_messages`、`list_plugins`×2、`expand_chat`、`set_pet_expanded`、`hide_invoke_bar`、`close_home_window` 全部改走 brainClient（新增 expandChat/setPetExpanded/closeHomeWindow/hideInvokeBar/ensureActiveConversation/ensurePetConversation/getConversationMessages/listPlugins 封装 + PetMessage 入 protocol）；顺带修复 setupCfg snake/camel 映射 bug（baseUrl 此前恒为 undefined）。**显式豁免**：WebviewPanel.vue iframe 原生桥白名单（注释声明的设计，非大脑通信） |
 | 🟡 部分完成 | **R-21 Rust 通信契约化**：`brain_cmd`/`brain_cmd_with` 收敛 9 处单行调用 ✅；强类型 CommandKind 枚举未做，commands.rs 仍余 write_to_brain 25 处字符串分发。剩余项 → **R-21b** |
-| 🟡 部分完成 | **R-25 跨端协议契约**：protocol-contract.md（通道/kind 对照/命名映射/漂移清单）✅；**单一事实源未达成**——RunMetrics 双份（protocol/brain-types.ts:69 vs state/types.ts:50）、FeedItem app/mobile 双份。剩余项 → **R-29** |
-| ⬜ 未开始 | **R-08 App.vue 拆分**（1924→1711，仅 pet 域 composables 抽取减 213 行；组件级拆分未动）；新增补账任务 **R-12b / R-21b / R-29 / R-30 / R-31**（见阶段 5） |
+| ✅ 完成 | **R-25 跨端协议契约（含 R-29 收口 2026-08-22）**：protocol-contract.md（通道/kind 对照/命名映射/漂移清单）+ **app 内部单源化**——RunMetrics 唯一定义于 protocol/brain-types.ts（state/types.ts re-export 兼容）、AvatarState（7 态共享集）单源（Home/HomeFrame/HomePlugins/PanelApp/usePetState/useHomeChatSession 全部引用）；双端类型显式决策「各自维护 + 契约文档对照 + 变更同步纪律」（protocol-contract.md §3.2.1） |
+| ⬜ 未开始 | **R-08 App.vue 拆分**（1924→1711，仅 pet 域 composables 抽取减 213 行；组件级拆分未动）；补账任务余 **R-12b / R-21b / R-30 / R-31**（见阶段 5） |
 
 ⚠️ **提交纪律（立即生效）**：当前工作区堆积 73 文件 +779/−9196 未提交改动，已违反「每项任务独立可合入、可回滚」原则。**任何后续任务开工前，先按域分批提交现有改动**（重构提交与 feat/fix 提交分开，不混一个 commit）；此后每完成一项任务立即 commit。
 

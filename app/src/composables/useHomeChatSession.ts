@@ -1,9 +1,10 @@
 /** 主屏对话宿主提供给 thread / paper 摊法的会话。 */
 import type { ComputedRef, InjectionKey, Ref } from "vue";
 import type { BrainEvent, RunMetrics } from "../lib/brain";
+import type { AvatarState } from "../protocol/brain-types";
 import type { ThreadItem, PaperPage } from "../lib/work-thread";
 
-export type HomeAvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
+export type HomeAvatarState = AvatarState;
 
 export type ProcInfo = {
   label: string;

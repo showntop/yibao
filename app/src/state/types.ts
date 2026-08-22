@@ -1,6 +1,7 @@
 /** SessionState 体系跨域公共类型 */
 
 import type { WebviewPayload } from "../lib/webview-source";
+import type { RunMetrics } from "../protocol/brain-types";
 
 /** 状态域标识：域间平行，仅 surface 域内存在嵌套链 */
 export type DomainId = "conversation" | "surface" | "window";
@@ -46,16 +47,9 @@ export interface RunRef {
   ok: boolean;
 }
 
-/** run 统计（token/费用/耗时）：final_reply 的 AI 气泡挂 indicator bar */
-export interface RunMetrics {
-  prompt_tokens: number;
-  completion_tokens: number;
-  cached_tokens: number;
-  total_tokens: number;
-  cost: number | null;
-  elapsed_ms: number;
-  model: string;
-}
+/** run 统计（token/费用/耗时）：final_reply 的 AI 气泡挂 indicator bar。
+ *  单一事实源在 protocol/brain-types（与 sidecar 事件载荷同形），此处 re-export 保持既有引用路径。 */
+export type { RunMetrics } from "../protocol/brain-types";
 
 /** 消息载荷：UI 呈现所需的最小字段集 */
 export interface MessagePayload {

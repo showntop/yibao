@@ -1,16 +1,10 @@
 // 桌宠 Avatar 状态机：运行态（listen/think/work/say）+ 环境态（有事/发呆）+ 短暂闪现（success/error/stretch）。
 // 由 App.vue 的 onEvent 等驱动；本 composable 只管状态推导与时长。纯前端状态，不涉及 IPC。
 import { computed, ref, watch, type Ref } from "vue";
-import type { SettingsValues } from "../protocol/brain-types";
+import type { AvatarState, SettingsValues } from "../protocol/brain-types";
 
 export type PetAvatarState =
-  | "idle"
-  | "listen"
-  | "think"
-  | "work"
-  | "say"
-  | "success"
-  | "error"
+  | AvatarState
   | "notify"
   | "drowsy"
   | "stretch";

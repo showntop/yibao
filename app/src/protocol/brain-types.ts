@@ -418,3 +418,7 @@ export interface PerceptionCleared {
   count: number;
   error?: string;
 }
+
+/** 前端 Avatar 状态机共享集（brain 事件流的 UI 投影）：各窗口/组件的会话状态单一事实源。
+ *  渲染全集（宠物扩展态 notify/drowsy/stretch）见 composables/usePetState 的 PetAvatarState。 */
+export type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";

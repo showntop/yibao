@@ -20,8 +20,7 @@ import {
   type ResolvedItem,
   type SnapHit,
 } from "../lib/home-assembly";
-
-type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
+import type { AvatarState } from "../protocol/brain-types";
 
 defineProps<{ thinking?: boolean; state?: AvatarState }>();
 const left = defineModel<boolean>("left", { default: true });

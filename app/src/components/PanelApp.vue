@@ -31,6 +31,7 @@ import {
 import { procLabel, procSkip, procResultSuffix } from "../lib/proc";
 import { formatContextPrefix, type InputContext } from "../lib/at-mention";
 import type { WebviewPayload } from "../lib/webview-source";
+import type { AvatarState } from "../protocol/brain-types";
 
 // 当前面板：kind="panel" 事件整体替换刷新（webview 非空 → webview 面板，否则 schema 面板）
 const current = ref<{
@@ -51,7 +52,6 @@ let unlistenFocus: (() => void) | null = null;
 let unlistenApprovals: (() => void) | null = null;
 
 // ---- 工作台条状态 ----
-type AvatarState = "idle" | "listen" | "think" | "work" | "say";
 const state = ref<AvatarState>("idle");
 const busy = computed(() => state.value !== "idle");
 const focus = ref<PanelFocus | null>(null); // 当前面板焦点（同步给大脑）

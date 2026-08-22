@@ -28,8 +28,8 @@ import type { Attention, Presentation } from "../lib/surface-policy";
 import type { WebviewPayload } from "../lib/webview-source";
 import { takeDeskOrigin } from "../lib/home-desk-presence";
 import { iconStyle, initial } from "../lib/icons";
+import type { AvatarState } from "../protocol/brain-types";
 
-type AvatarState = "idle" | "listen" | "think" | "work" | "say";
 const props = withDefaults(defineProps<{
   scene?: boolean;
   presentation?: Presentation;
