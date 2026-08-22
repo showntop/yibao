@@ -9,24 +9,26 @@
 
 > **完成口径**：标「✅ 完成」须同时满足 *任务描述的架构目标落地* + *验收标准对应项达成*；仅行数下降、结构未建者标「🟡 部分完成」并注明剩余项（对应收口任务）。首轮状态表存在的「降级交付记完成」问题已按此口径修正。
 >
-> **复核基线（全绿）**：app vitest 241 / sidecar pytest 1142 / Rust cargo test 11 / mobile vitest 83；`vue-tsc --noEmit` 零错误。Rust 编译环境已修复（`resources/bin/uv` 软链就位）。
+> **复核基线（全绿）**：app vitest 241 / sidecar pytest 1142 / Rust cargo test 25（R-12b 后实测；早期记录 11 为阶段 0 基线）/ mobile vitest 83；`vue-tsc --noEmit` 零错误。Rust 编译环境已修复（`resources/bin/uv` 软链就位）。
 
 | 状态 | 任务 |
 |---|---|
-| ✅ 完成 | R-00 基线；R-01 time.ts；R-02 truncate；R-03 icons；R-04（保留多窗口入口）；R-05 sidecar log()（print 残留 1 处，随下次 sidecar 改动顺手清）；R-06 extension 去重；R-07 命名清理；R-16 loop.py run 委托 arun；R-16b home-assembly.ts 拆分（assembly/ + composables/useAssembly）；R-22 Rust 测试移出源码；R-26 http_client.py 统一；R-28 CSS 体系（scrollbar.css/settings.css/home-feed.css） |
+| ✅ 完成 | R-00 基线；R-01 time.ts；R-02 truncate；R-03 icons；R-04（保留多窗口入口）；R-05 sidecar log()（2026-08-22 复核：日志性 print 已清零，cli.py 终端 UI 输出与 log.py 实现本身非日志残留）；R-06 extension 去重；R-07 命名清理；R-16 loop.py run 委托 arun；R-16b home-assembly.ts 拆分（assembly/ + composables/useAssembly）；R-22 Rust 测试移出源码；R-26 http_client.py 统一；R-28 CSS 体系（scrollbar.css/settings.css/home-feed.css） |
 | ✅ 完成 | R-09 SettingsView（1751→80 行容器 + `settings/` 4 子组件）；R-10 HomeFeed（1550→230 行容器 + `feed/` 3 子组件）；R-11 HomeChat（useChatFlow 气泡域）与 HomeContextPanel（useContextApprovals，script 522→222） |
-| ✅ 完成 | R-14 brain.ts 拆分（protocol/brain-types + services/brainClient + state/pending，brain.ts 余 8 行兼容 re-export）；R-17 统一错误处理；R-18 状态真源（`_pc` 迁 state/pending，零残留）；R-19 lib 去 Vue 耦合（lib/ 100% 无 Vue import）；R-23 mobile api/http.ts 收敛；R-24 StreamLike 唯一化；R-27 配置评估维持现状（显式决策，有记录） |
+| ✅ 完成 | R-14 brain.ts 拆分（protocol/brain-types + services/brainClient + state/pending，brain.ts 余 8 行兼容 re-export）；R-17 统一错误处理；R-18 状态真源（`_pc` 迁 state/pending，零残留）；R-19 lib 去 Vue 耦合（lib/ 100% 无 Vue import）；R-27 配置评估维持现状（显式决策，有记录） |
+| 🟡 部分完成 | **R-23/R-24 mobile（2026-08-22 阶段 6 复核降级）**：R-23 已达成「api/http.ts 请求收敛」✅，**未达成「事件流订阅抽象 `useEventStream`」**——mobile/src/composables/ 不存在，Feed/Approvals/Chat 仍各自重复 onMounted→start / onUnmounted→stop + disposed 竞态守卫样板；R-24 已达成「StreamLike 唯一化」✅，**未达成「模块级单例 ref → provide/inject 或 Pinia」**——state/pending-badge.ts、memories.ts、chat.ts 仍为模块级 ref 单例导出。**→ R-34 收口（阶段 6）** |
 | ✅ 完成 | **R-12b lib.rs 分层收口（2026-08-22）**：lib.rs 1584→535 行（纯装配：run/setup/托盘/热键/命令注册）；按 3.2 落地三域——`braind.rs`（633 行：BrainState/spawn/桥/看门狗/退避/ensure_runtime + restart_brain/clear_brain_data）、`setup_config.rs`（146 行：.env 合并 + get/save 命令）、`system.rs`（262 行：热区穿透 + 窗口尺寸命令 + 划词 CGEvent）；invoke_tests 3 例迁 `tests/system.rs`；cargo test 25 全绿零警告 |
 | ✅ 完成 | **R-13 server.py 拆分（第二步闭包域拆分落地 2026-08-22）**：stdio 协议已拆 `transport.py` ✅；msg 分发 elif 巨链 → handlers 查表（31 个命名 handler + 4 行主循环）✅；**serve_async 闭包域按序拆入 `runtime/` 包（四步独立提交，每步 1142 全绿）**——工具域 `runtime/helpers.py`（_running_tasks/_feed_stats/_collect_widgets/_mem_list）、mobile/HTTP 域 `runtime/mobile.py`（MobileDomain：_submit_run/_interrupt_mobile/_confirm_mobile/_mobile_state/_mobile_feed/_register_push + _http_deps 装配）、voice 域 `runtime/voice.py`（VoiceDomain：tts_lock/_pump_tts/_drive_voice_start；_run_done_msg 顺迁 transport.py）、runs 调度域 `runtime/runs.py`（RunsDomain：_slot/_preempt_*/_schedule_run/_chain_start）；共享状态收进 `RuntimeCtx`（serve_async 开头构造注入，_run_ctx 保持 ContextVar 原对象传参；_PREEMPT_GRACE_S 留 server 作 monkeypatch 点经构造参数注入）；run 流（_stream_agent/_drive_run）与 31 个 handler 暂留 serve_async（薄分发层）。server.py 1742→1334 行（serve_async 1361→956 行），runtime/ 共 5 文件 640 行 |
-| ✅ 完成 | **R-15 coding.py 拆分（2026-08-22 收口）**：1687→798 行——会话核心域 sessions.py / 转录域 transcript.py / 摘要域 _brief.py / 读取域 _cc_reader·_codex_reader / 执行域 _runner·_codex_runner 之上，再拆**会话生命周期技能域** `_session_skills.py`（341 行：start/send/stop/list/attach 五技能 + start_session/_live_state）；经 `_c()` 动态解析 coding 主模块符号，测试 monkeypatch codingmod.* 约定原样生效（双模块名兼容：生产 yibao_plugin_coding_coding / 测试 coding）；sidecar 1142 全绿 |
+| 🟡 部分完成 | **R-15 coding.py 拆分（2026-08-22 收口）**：1687→798 行——会话核心域 sessions.py / 转录域 transcript.py / 摘要域 _brief.py / 读取域 _cc_reader·_codex_reader / 执行域 _runner·_codex_runner 之上，再拆**会话生命周期技能域** `_session_skills.py`（341 行：start/send/stop/list/attach 五技能 + start_session/_live_state）；经 `_c()` 动态解析 coding 主模块符号，测试 monkeypatch codingmod.* 约定原样生效（双模块名兼容：生产 yibao_plugin_coding_coding / 测试 coding）；sidecar 1142 全绿。**附带项未达（2026-08-22 阶段 6 复核）**：任务含「合并 `_sibling` 到插件公共工具」未执行，且拆分使其从 3 处扩散到 6 处（agents/sandbox/coding/sessions/transcript/_session_skills）**→ R-35 收口（阶段 6）** |
 | ✅ 完成 | **R-20 invoke 收敛（收尾 2026-08-22）**：App.vue/HomeChat.vue 的 `get_setup_config`（含泛型形式共 3 处）、`ensure_active_conversation`×2、`ensure_pet_conversation`、`get_conversation_messages`、`list_plugins`×2、`expand_chat`、`set_pet_expanded`、`hide_invoke_bar`、`close_home_window` 全部改走 brainClient（新增 expandChat/setPetExpanded/closeHomeWindow/hideInvokeBar/ensureActiveConversation/ensurePetConversation/getConversationMessages/listPlugins 封装 + PetMessage 入 protocol）；顺带修复 setupCfg snake/camel 映射 bug（baseUrl 此前恒为 undefined）。**显式豁免**：WebviewPanel.vue iframe 原生桥白名单（注释声明的设计，非大脑通信） |
 | ✅ 完成 | **R-21b Rust 通信契约化（决策落定 2026-08-22）**：采用方案 (b) 变体——**字符串分发完全单点化**：write_to_brain 25 处调用点全部收敛至 `brain_cmd`/`brain_cmd_with` 双辅助（write_to_brain 仅被辅助函数内部调用），全部 type 字面量集中在调用参数上一览无余，等价于命令注册表。**显式放弃 CommandKind 枚举**，理由：payload 本质动态 JSON（Option 解包/条件字段），枚举只能约束 type 字符串一层管不了 payload 字段，工程量与回归风险不成比例；协议契约由 protocol-contract.md 文档锁定。验收标准第 6 条同步修订 |
 | ✅ 完成 | **R-25 跨端协议契约（含 R-29 收口 2026-08-22）**：protocol-contract.md（通道/kind 对照/命名映射/漂移清单）+ **app 内部单源化**——RunMetrics 唯一定义于 protocol/brain-types.ts（state/types.ts re-export 兼容）、AvatarState（7 态共享集）单源（Home/HomeFrame/HomePlugins/PanelApp/usePetState/useHomeChatSession 全部引用）；双端类型显式决策「各自维护 + 契约文档对照 + 变更同步纪律」（protocol-contract.md §3.2.1） |
 | 🟡 部分完成 | **R-08 App.vue 拆分（阶段一完成 2026-08-22）**：1711→1442 行。已拆出 `components/pet/` 三组件——PluginLauncher（插件启动器视图+样式）、BubbleFlow（气泡流视图+滚动容器 expose 桥接）、PendingConfirmCard（审批卡+批量快批条）；App.vue 保留：装配/窗口管理/事件流（onEvent 224 行）/composables 编排。**剩余（可选）**：onEvent 事件流抽 `composables/usePetEvents.ts`（依赖注入面大，行为等价性验证成本高，收益边际递减——组件级拆分目标已达成） |
 | ✅ 完成 | **R-30 HomePlugins 拆分（2026-08-22）**：1210→933 行——动效域迁 `composables/usePanelGrow.ts`（93 行）、对话浮层迁 `composables/usePluginOverlay.ts`（71 行）、列表视图迁 `components/plugins/PluginGrid.vue`（202 行，样式随迁）；顺带收敛 2 处漏网 invoke 直调（list_plugins/get_current_panel → brainClient.getCurrentPanel）；桌上工位守护测试断言更新至新位置 |
 | ✅ 完成 | **R-31 目录重组收口（2026-08-22，v2 完整版）**：**窗口级根**——windows/{pet,home,panel,invoke,snip}/；**views/ 页面层落地**（chat/feed/plugins/settings/brain 域包 + 平铺页面件，Home* 系按引用实测归位）；**components 收敛**为 pet/panel/common 三域复用件（无平铺残留）；**lib/home/** 域归拢（8 件 home-* 族）。3.1 蓝图同步修订为 v2（chat/ 分类取消等差异见 3.1 修订说明）。期间教训：批量路径重写须处理**无扩展名 import**（`../lib/brain` 不带 `.ts`，映射表 miss 导致多轮返工，最终以「从 HEAD 干净内容重放 + 扩展名补全」确定性收敛）；**目录重组的验证必须含 `vite build`**——`vue-tsc` 对 asset import 不校验存在性（ambient `*.png` 声明通配吃掉），`./assets/logo.png` 深度错位逃过了 tsc+vitest，仅 vite 真解析可捕获（后续 hotfix 修正 HomeWindow.vue:20，289 模块/5 入口 build 通过） |
+| 🔄 进行中 | **阶段 6 蓝图收口（2026-08-22 立项）**：R-36 文档补账 ✅（本次完成——状态降级/验收勾选/蓝图执行注记/放弃清单落档）；待执行：**R-35** `_sibling` 归一（6 处→公共件）→ **R-32** sidecar 3.3 实质收口（a distiller_store / b llm_vision / c perception 域地图+拆分）→ **R-33** commands.rs 目录化 → **R-34** mobile useEventStream + 状态管理收口（R-33/R-34 可与 R-32 并行）。任务详单与放弃清单见第 4 节阶段 6；3.2/3.3/3.4 蓝图执行注记见第 3 节 |
 
-⚠️ **提交纪律（立即生效）**：当前工作区堆积 73 文件 +779/−9196 未提交改动，已违反「每项任务独立可合入、可回滚」原则。**任何后续任务开工前，先按域分批提交现有改动**（重构提交与 feat/fix 提交分开，不混一个 commit）；此后每完成一项任务立即 commit。
+✅ **提交纪律已恢复（2026-08-22）**：原 73 文件堆积改动已分批提交完毕（R-31/R-13 系列等各自独立 commit），工作区干净。纪律持续有效——每完成一项任务立即 commit。
 
 ---
 
@@ -251,6 +253,11 @@ src-tauri/src/
 
 测试移入 `src-tauri/tests/`，源码文件不再内联大段 `#[cfg(test)]`。
 
+> **执行注记（2026-08-22，阶段 6 立项时落档）**：本蓝图按「实质层/形态层」拆解收账——
+> - **实质层已达成**：lib.rs 纯装配（535 行，R-12b）；通信单点化 brain_cmd/brain_cmd_with（R-21b，等价命令注册表）；测试外移 tests/（R-22）。
+> - **形态层显式放弃**：不建 `commands/`/`bridge/`/`services/`/`storage/` 目录包裹——守护域（braind.rs）、配置域（setup_config.rs）、系统集成域（system.rs/snip.rs）、会话存储（session_db.rs）以平铺文件承载同样的职责分离（与 sidecar 3.3 v2 同款决策：分层语义靠命名承载，不靠目录）。`domain/`（CommandKind）为 R-21b 既有放弃决策。
+> - **遗留尾巴**：`commands.rs` 871 行单文件 → **R-33**（目录化或显式放弃，阶段 6）。
+
 ### 3.3 sidecar（Python）目标分层
 
 ```
@@ -265,9 +272,37 @@ sidecar/src/yibao_brain/
 └── common/               # logging 统一、errors、http_client、config
 ```
 
+> **执行注记 v2（2026-08-22，阶段 6 立项时落档）**：本蓝图对病灶的诊断成立（三合一文件/巨型闭包函数），但目录药方按「实质层/形态层」拆解后分别处置——**实质目标照做（→ R-32），形态目标显式放弃**。
+>
+> **形态层决策及理由**：
+> 1. **复杂度类型错配**：蓝图是标准分层模板（handlers→services→store 调用层次），解决"职责种类多"；本系统的复杂度在"状态耦合深"（70 个闭包共享 run_slots/确认三表/tap/agent，复杂度集中在装配/关闭/抢占/并发槽位/看门狗）。R-13 第二步实践证明：让 serve_async 可拆的是 `RuntimeCtx` 状态容器（依赖注入），不是函数挪文件——位置不重要，依赖才重要。反事实：31 个 handler 拆进 handlers/*.py 后仍需访问全部共享状态，要么全局化（更糟）要么传 ctx（等于 RuntimeCtx 方案换文件名），搬完结构问题零解决。
+> 2. **`router/` 预期规模错**：查表化后分发收敛为 4 行，一张 dict 不配建包。
+> 3. **`transport/` 归类错**：stdio 行协议（进程边界）与 HTTP API 面（网络边界+认证+SSE）是两个关注点，实际自然分为 transport.py 与 http_api.py。
+> 4. **目录深度对 Python 是负担**：45 个模块的规模平铺可检索；分层语义靠命名承载（`*_store.py`=存储层、平铺业务模块=services 层、log/http_client/config=common 层），只有"域"才升级为包（runtime/、mac/、models/——多文件共享同一域语义才成包）。
+> 5. **`__main__.py` 放弃**：pyproject script（`yibao_brain.server:main`）已是入口单点，`python -m yibao_brain.server` 可运行性被 test_instance.py 锁定，拆出无可测试性收益。
+>
+> **实质层收口（→ R-32，阶段 6）**：`store/` 的存储与编排分离（distiller.py 三合一）、`llm/` 的 provider/vision 拆分（llm.py 三合一）、`perception.py`（1027 行三合一）——蓝图开对的药，照做。
+>
+> **v2 终态**：
+> ```
+> sidecar/src/yibao_brain/
+> ├── server.py            # serve_async：装配 + 主循环 + 31 个 _h_* 查表分发（终态）
+> ├── transport.py         # stdio 行协议 + 语音会话常量 + run_done 载荷
+> ├── runtime/             # serve_async 闭包域（RuntimeCtx + helpers/mobile/voice/runs）
+> ├── http_api.py / bridge.py    # HTTP 面 + 桥载荷
+> ├── distiller.py / distiller_store.py        # 编排 / 存储（R-32a 新增）
+> ├── perception.py / perception_store.py      # 感知编排 / 存储（R-32c 新增）
+> ├── llm.py / llm_vision.py                   # provider 抽象 / vision（R-32b 新增）
+> ├── loop.py / plugins.py / skills*.py / voice.py / ...  # 平铺业务模块 = services 层
+> ├── log.py / http_client.py / config.py      # = common 层（内容已统一）
+> └── mac/ models/                               # 既有域包
+> ```
+
 ### 3.4 跨端协议契约（P3）
 
 app（Tauri IPC）与 mobile/extension（HTTP `/v1/*`）共用同一大脑，但**事件 kind 与数据形状相同、类型定义双份手写**。建议新增 `shared/protocol/`（TypeScript 类型 + 命名规范映射表 snake→camel），由 `docs/` 中维护协议 schema 文档，两端 import 或生成，消除漂移。
+
+> **执行注记（2026-08-22）**：本蓝图**按替代方案达成（有决策记录）**——`shared/protocol/` 代码单源显式放弃，落地形态为：`docs/plan/protocol-contract.md`（通道/kind 对照/命名映射/漂移清单）+ app 内部单源（RunMetrics/AvatarState 唯一定义于 `protocol/brain-types.ts`）+ 双端类型显式决策「各自维护 + 契约对照 + 变更同步纪律」（§3.2.1 记录在案）。见执行状态 R-25 行。
 
 ---
 
@@ -343,6 +378,29 @@ app（Tauri IPC）与 mobile/extension（HTTP `/v1/*`）共用同一大脑，但
 | R-30 | 拆 HomePlugins.vue（1210） | 问题详单 2.1.1 列为上帝组件（插件列表 + 面板宿主 + 动画 + 工作台条）但原清单漏配任务：按域拆子组件，面板宿主与 PanelApp 的宿主逻辑评估复用 | app/src | 中 |
 | R-31 | 目录重组收口（物理形态，最后做） | 纯机械 mv + import 修正，单独 PR、零行为变化：App.vue/Home.vue/PanelApp.vue → `windows/{pet,home,panel}/`；components 平铺 47 文件四分 `pet/chat/panel/common`（settings/feed 保持）；Rust commands.rs → `commands/` 目录（可并入 R-12b 顺势做）；lib/ 的 pet-surface/surface-policy → `lib/surface/`。**前置：R-08/R-12b/R-13/R-15 全部完成后执行**，否则路径变更会叠加进后续逻辑拆分 diff | app/src、app/src-tauri | 低（视觉一致） |
 
+### 阶段 6：蓝图收口（2026-08-22 立项）
+
+> 来源：3.2/3.3/3.4 目标分层蓝图与执行实况的对照复核（R-13 第二步完成后的全库 review）。处置原则：蓝图诊断的病灶成立，目录药方按「实质层/形态层」拆解——**实质目标照做，形态目标显式放弃并落档**（见 3.2/3.3/3.4 执行注记），防止后人按蓝图字面追账。
+> 验证口径：每步独立提交；sidecar `uv run pytest` 1142 全绿 / Rust `cargo test` 25 全绿 / mobile vitest 83 全绿；测试零修改（允许改 import/patch 路径，不允许改断言）。
+
+| 编号 | 任务 | 目标 / 动作 | 涉及文件 | 优先级 |
+|---|---|---|---|---|
+| R-32 | sidecar 3.3 实质收口（分 3 步独立提交） | **(a)** `DistillerStore` → `distiller_store.py`（distiller.py 留编排，存储与编排分离）；**(b)** vision 四件（`ComputerUseClient`/`describe_screen`/`summarize_screen`/`answer_image_query`）→ `llm_vision.py`，`llm.py` 留 re-export 保 monkeypatch 路径（test_image_attachments patch `llm.answer_image_query`）；**(c)** perception.py（1027 行三合一）先出域地图（照 R-13 交接文档先例：行号域清单/拆分序/陷阱清单/验证口径）再分步拆 store/sensors/skills | sidecar | 高（架构实质） |
+| R-33 | Rust commands.rs 目录化 | 871 行按域拆 `commands/` 5~6 模块 + mod.rs（R-31 悬置尾巴）；或显式记放弃。每步 `cargo test` 25 全绿 | app/src-tauri | 中 |
+| R-34 | mobile 收口（R-23b/R-24b） | `useEventStream` hook（Feed/Approvals/Chat 三处 onMounted→start/onUnmounted→stop + disposed 竞态守卫样板归一）；模块级单例 ref（pending-badge/memories/chat）→ provide/inject。vitest 83 全绿 | mobile | 中 |
+| R-35 | `_sibling` 归一 | plugins 下 6 处重复定义（agents/sandbox/coding/sessions/transcript/_session_skills 各一份）→ 插件公共件；先查测试锁定的 import 路径。R-15 附带项收口 | plugins | 高（正在恶化：原 3 处拆分后扩散至 6 处） |
+| R-36 | 文档补账 | R-23/R-24/R-15 状态降级标注；验收标准勾选/修订；3.2/3.3/3.4 蓝图执行注记（形态决策 + 实质缺口指向收口任务）；放弃清单落档 | docs | ✅ 2026-08-22 完成 |
+
+**放弃清单（显式决策落档，防后人按蓝图字面追账）**：
+- 3.3 的 `router/`、`handlers/` 目录化（查表 dict + serve_async 内 `_h_*` 薄闭包为终态）
+- 3.3 六个子包的目录包裹形态（平铺模块 + 域包 mac/models/runtime 为终态；`*_store.py` 命名承载存储层语义）
+- 3.3 `__main__.py` 入口（pyproject script 已是单点，`python -m yibao_brain.server` 被 test_instance.py 锁定）
+- 3.4 `shared/protocol/` 代码单源（§3.2.1 既有决策）
+- 3.2 `domain/` CommandKind（R-21b 既有决策）、`bridge/services/storage` 目录包裹（平铺文件承载职责分离，见 3.2 执行注记）
+- R-08 onEvent 抽离（维持可选、暂不做）
+
+**长期项（不立任务，渐进达成）**：CSS 拼音缩写类名（`pcard`/`pl-*`/`tl-*` 等，5+ 文件）语义化；单字母局部变量清理（R-07 安全项之外的存量）。
+
 ---
 
 ## 5. 执行路线图
@@ -369,6 +427,7 @@ app（Tauri IPC）与 mobile/extension（HTTP `/v1/*`）共用同一大脑，但
 - R-12b 承接 R-12 已交付部分（守护/配置/系统集成分域续拆）；R-21b、R-29 分别是 R-21、R-25 的收口。
 - **R-31 是 R-08/R-12b/R-13/R-15 的后置**（逻辑拆分全部完成后才做物理重组）；R-29 依赖 R-14 的 protocol/ 已就位，可立即做。
 - R-20 收尾（4 处直调改走 brainClient）无前置，可随时插入。
+- **阶段 6 执行序**：R-36（已完成）→ R-35 → R-32a → R-32b → R-32c → R-33/R-34（后两项与 R-32 无耦合，可并行穿插）。R-35 优先于 R-32 的理由：工程量最小且重复正在恶化。
 
 每阶段完成标准：全测试绿 + 无新增 lint 错误 + 行为 diff 为零（重构不改变功能）。
 
@@ -389,12 +448,12 @@ app（Tauri IPC）与 mobile/extension（HTTP `/v1/*`）共用同一大脑，但
 ## 7. 验收标准（2026-08-22 复核标注现状）
 
 - [x] 全库（app/sidecar/plugins/mobile/extension）测试通过，无 lint error。（241/1142/11/83 全绿，vue-tsc 零错误）
-- [ ] 所有 >1000 行的源文件拆分完毕（前端组件、`lib.rs`、`server.py`、`coding.py`、`brain.ts`）。（brain.ts ✅ 8 行；coding.py ✅ 798、HomePlugins.vue ✅ 933；App.vue 1711 → R-08 剩余可选项；server.py ✅ 1334 → R-13 已落地：查表化 + 四闭包域拆 `runtime/`，serve_async 剩 956 行为 handler 薄层/组件装配/主循环收尾——暂留为显式决策）
-- [ ] 跨端共享类型单一事实源（无 `RunMetrics`/`FeedItem` 等双份定义）。（→ R-29；`AvatarState` 4 份且枚举不一致同属此项）
+- [ ] 所有 >1000 行的源文件拆分完毕（前端组件、`lib.rs`、`server.py`、`coding.py`、`brain.ts`）。（brain.ts ✅ 8 行；coding.py ✅ 798、HomePlugins.vue ✅ 933；App.vue 1711 → R-08 剩余可选项；server.py ✅ 1334 → R-13 已落地：查表化 + 四闭包域拆 `runtime/`，serve_async 剩 956 行为 handler 薄层/组件装配/主循环收尾——暂留为显式决策；**perception.py 1027 → R-32c（阶段 6 立项收口）**）
+- [x] （2026-08-22 按决策口径达成）跨端类型：app 内单源（`RunMetrics`/`AvatarState` 唯一定义于 `protocol/brain-types.ts`，R-29）；双端类型显式决策「各自维护 + protocol-contract.md 对照 + 变更同步纪律」（§3.2.1）——不以跨端代码单源为验收。
 - [x] 前端 `lib/` 与 `protocol/` 不再 import Vue 运行时。（复核确认零残留）
-- [ ] 组件不再直接 `invoke`，统一走 brainClient。（余 4 处：App.vue:143、HomeChat.vue:209、WebviewPanel.vue:104、Home.vue:394 等 → R-20 收尾）
+- [x] （2026-08-22 复核实测）组件不再直接 `invoke`：原列 4 处（App.vue:143、HomeChat.vue:209、Home.vue:394）已在 R-20 收尾时清除。残留全部在封装层/豁免清单：`WebviewPanel.vue:104` iframe 原生桥（显式豁免，见 R-20 状态行）、`lib/window.ts`（本地窗口命令封装层，非大脑通信）、`state/domains/conversation-backend.ts`（本地会话 DB 封装层，非大脑通信）。
 - [x] （2026-08-22 修订）Rust 侧字符串 type 分发完全单点化：所有命令经 brain_cmd/brain_cmd_with 双辅助，write_to_brain 仅被辅助内部调用；type 字面量集中于调用参数等价注册表。~~强类型枚举~~ 显式放弃（决策记录见执行状态 R-21b 行）。
-- [ ] sidecar 无 `print` 日志（统一 logging），无重复 HTTP 封装。（print 余 1 处；HTTP 封装 ✅）
-- [ ] 命名规范落地：无拼音命名、无单字母局部变量、跨边界命名映射表维护在协议文档。（映射表 ✅ protocol-contract.md；其余渐进达成）
-- [ ] 每项任务独立可合入，可回滚（git revert）。（⚠️ 当前工作区 73 文件未提交，违反本项——分批提交为第一优先动作）
+- [x] （2026-08-22 复核实测）sidecar 日志性 `print` 清零（`cli.py` 为终端 UI 输出、`log.py` 为 log 实现本身，均非日志残留）；HTTP 封装已统一（R-26）。
+- [ ] 命名规范落地：无拼音命名、无单字母局部变量、跨边界命名映射表维护在协议文档。（映射表 ✅ protocol-contract.md；CSS 拼音缩写类名与单字母存量列为长期项渐进达成——见阶段 6 放弃清单后的长期项说明）
+- [x] （2026-08-22 复核）每项任务独立可合入，可回滚：原 73 文件堆积已分批提交完毕；R-13 第二步四步均为独立 commit（c14e7c8/56ff03f/aab8b76/6a4df59），工作区干净。
 - [x] （新增）执行状态表与代码现状账实一致：完成口径 = 架构目标落地 + 验收项达成，降级交付必须标「部分完成」并指向收口任务。（本表即按此修订）
