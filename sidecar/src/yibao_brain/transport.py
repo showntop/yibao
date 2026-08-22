@@ -27,6 +27,15 @@ def is_exit_phrase(text: str) -> bool:
     return text.strip(_EXIT_STRIP).strip() in _VOICE_EXIT_PHRASES
 
 
+def _run_done_msg(rid, conversation_id: str = "") -> dict:
+    """run_done 载荷（spec §E）：conversation_id 非空才带——空 = 无归属（旧路径），
+    保持与旧客户端/旧断言的逐字节兼容（信封 _with_envelope 同样只带非空归属）。"""
+    msg = {"type": "run_done", "id": rid}
+    if conversation_id:
+        msg["conversation_id"] = conversation_id
+    return msg
+
+
 def line_reader() -> ReadMsg:
     """stdin 行读取器：EOF → None；坏行 → None（跳过，不中断会话）。"""
 

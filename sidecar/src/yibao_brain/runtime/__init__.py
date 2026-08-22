@@ -26,3 +26,6 @@ class RuntimeCtx:
         self.drive_run = None  # runs 调度域：run 驱动（serve_async 闭包，第四步迁 runtime/runs.py）
         self.schedule_run = None  # runs 调度域：受理尾巴（同槽抢占/跨槽并行）
         self.preempt_current = None  # runs 调度域：槽内抢占（preempt_gen+1 + cancel）
+        self.ai_loop = None  # asyncio 事件循环（run_in_executor/ensure_future 用）
+        self.voice = None  # 语音栈实例（voice.py build_voice；None = 语音不可用）
+        self.stream_agent = None  # run 流：_stream_agent（暂留 serve_async 的闭包）

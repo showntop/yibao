@@ -51,6 +51,7 @@ from .plugins import LlmChat, get_plugin_summaries
 from .runtime import RuntimeCtx
 from .runtime import helpers
 from .runtime.mobile import MobileDomain
+from .runtime.voice import VoiceDomain
 from .safety import Gate, GatePolicy, RiskClassifier
 from .skills import EchoSkill, SkillRegistry
 from .skills_composite import register_composite_skills
@@ -79,13 +80,14 @@ _FOCUS: dict = {"value": None}
 # 被抢占任务的收尾宽限（秒）：超时强制取消，防 hung 任务把槽位卡死（「点了没反应」的根）
 _PREEMPT_GRACE_S = 8.0
 
-# stdio 协议 + 语音退出语已拆到 transport.py（re-export 保持 server.<name> 引用路径）
+# stdio 协议 + 语音退出语 + run_done 载荷已拆到 transport.py（re-export 保持 server.<name> 引用路径）
 from .transport import (  # noqa: E402
     ReadMsg,
     WriteMsg,
     _VOICE_SESSION_BYE,
     _VOICE_SESSION_HINT,
     _VOICE_SESSION_MAX_EMPTY,
+    _run_done_msg,
     is_exit_phrase as _is_exit_phrase,
     line_reader,
     line_writer,
@@ -271,15 +273,6 @@ def _load_plugins_safe(reg, memory, prov, host, reminders=None, emit_event=None)
         log(f"插件加载失败（已跳过）：{e}")
 
 
-def _run_done_msg(rid, conversation_id: str = "") -> dict:
-    """run_done 载荷（spec §E）：conversation_id 非空才带——空 = 无归属（旧路径），
-    保持与旧客户端/旧断言的逐字节兼容（信封 _with_envelope 同样只带非空归属）。"""
-    msg = {"type": "run_done", "id": rid}
-    if conversation_id:
-        msg["conversation_id"] = conversation_id
-    return msg
-
-
 def _run_and_emit(loop: AgentLoop, text: str, write_msg: WriteMsg, rid, voice=None) -> None:
     for event in loop.run(text):
         write_msg({"type": "event", "event": event.model_dump(mode="json")})
@@ -340,6 +333,12 @@ async def serve_async(
     tap = EventTap(write_msg)  # 事件分接头：stdio 照发 + SSE 广播（Task 9 起替换 write_msg）
     write_msg = tap  # 重绑：本函数内所有闭包（_stream_agent/dispatcher/reader 等）经分接头
     # ——stdio 输出字节不变（tap 透传），event/run_done 额外复制进 SSE 环形缓冲
+    # 共享状态容器（R-13 第二步）：runtime/* 各域函数经 ctx 访问；各对象在装配段
+    # 逐个注入。write_msg 注入重绑后的 tap（分接头）——别传原始 write_msg。
+    ctx = RuntimeCtx()
+    ctx.write_msg = write_msg
+    ctx.ai_loop = ai_loop
+    ctx.voice = voice
     _LOOP_TICK["t"] = time.monotonic()
 
     async def _tick() -> None:
@@ -391,10 +390,12 @@ async def serve_async(
     # 槽位任务启动时 set，经 await 链一路传进 arun → invoker → confirmer，不串槽。
     _run_ctx: contextvars.ContextVar[dict | None] = contextvars.ContextVar("yibao_run_ctx", default=None)
 
-    # TTS 全局播报锁（spec §D）：物理声道只有一条，播报保持全局串行、不 per-会话化。
-    # 持锁者独占播放器（打断三连取消只作用本槽，A 的打断掐不掉 B 正在播的音）；
-    # 抢不到锁的 run 静默不播（文字流式照出）+ notice，不排队。
-    tts_lock = asyncio.Lock()
+    # voice 域（R-13 第二步拆分序 3）：tts_lock/_tts_chunks/_pump_tts/_drive_voice_start
+    # 已迁 runtime/voice.py。tts_lock/_pump_tts 绑回局部名——run 流（_stream_agent，
+    # 暂留 serve_async）与 _h_run 的原引用零改动。
+    voice_domain = VoiceDomain(ctx)
+    tts_lock = voice_domain.tts_lock
+    _pump_tts = voice_domain.pump_tts
 
     # 并发的 L0 只读面板调用（不占槽位）：跟踪起来，stdin 关闭时一起收尾
     readonly_tasks: set[asyncio.Task] = set()
@@ -501,7 +502,6 @@ async def serve_async(
     # 工具域（R-13 第二步拆分序 1）：_running_tasks/_feed_stats/_collect_widgets/_mem_list
     # 已迁 runtime/helpers.py——共享状态（agent/feed）经 ctx 注入，此处绑回原闭包名
     # （handler 层与 mobile 域调用点零改动）。
-    ctx = RuntimeCtx()
     ctx.agent = agent
     ctx.feed = feed
     _running_tasks = functools.partial(helpers._running_tasks, ctx)
@@ -687,26 +687,6 @@ async def serve_async(
 
     threading.Thread(target=_reader, daemon=True).start()
 
-    async def _tts_chunks(tts_q: asyncio.Queue):
-        while True:
-            item = await tts_q.get()
-            if item is None:
-                return
-            yield item
-
-    async def _pump_tts(tts_q: asyncio.Queue, cancel: asyncio.Event, surface: str = "pet", conversation_id: str = ""):
-        if voice is None:
-            return
-        try:
-            await voice.speak_stream(_tts_chunks(tts_q), cancel)
-        except asyncio.CancelledError:
-            return  # 打断命中合成/播放的正常取消，不是播报失败
-        except Exception as e:
-            write_msg({"type": "event", "surface": surface, "conversation_id": conversation_id, "event": {"kind": "error", "text": f"语音播报失败：{e}"}})
-            return
-        if not cancel.is_set():
-            write_msg({"type": "event", "surface": surface, "conversation_id": conversation_id, "event": {"kind": "speaking_done"}})
-
     async def _stream_agent(text: str, rid, cancel: asyncio.Event, surface: str = "pet", conversation_id: str = "", emit_done: bool = True):
         t0 = time.monotonic()
         tts_q: asyncio.Queue | None = asyncio.Queue() if voice is not None else None
@@ -762,84 +742,10 @@ async def serve_async(
     async def _drive_run(text: str, rid, cancel: asyncio.Event, surface: str = "pet", conversation_id: str = ""):
         await _stream_agent(text, rid, cancel, surface, conversation_id)
 
-    async def _drive_voice_start(rid, cancel: asyncio.Event, surface: str = "pet", conversation_id: str = "", continuous: bool = False):
-        # 连续对话（长按团子进入）：答完接着听。退出：退出语 / 连续两次没听清 / 打断。
-        def _vev(event: dict) -> None:
-            write_msg({"type": "event", "surface": surface, "conversation_id": conversation_id, "event": event})
-
-        def _done() -> None:
-            write_msg(_run_done_msg(rid, conversation_id))
-
-        if continuous:
-            _vev({"kind": "notice", "text": _VOICE_SESSION_HINT})
-        empties = 0
-        while True:
-            _vev({"kind": "listening"})
-
-            async def _watch_cancel():
-                await cancel.wait()
-                voice.stop_listen()  # 打断（interrupt）→ 录音循环下一拍退出
-
-            watcher = asyncio.ensure_future(_watch_cancel())
-            t0 = time.monotonic()
-            try:
-                text = await ai_loop.run_in_executor(None, voice.listen)
-            except Exception as e:
-                _vev({"kind": "error", "text": f"语音识别失败：{e}"})
-                _done()
-                return
-            finally:
-                watcher.cancel()
-            log(f"聆听结束（{time.monotonic() - t0:.1f}s）：{text[:30]!r}")
-            if cancel.is_set():  # 聆听被打断：不走 listening_done（避免误进 think 态）
-                _vev({"kind": "interrupted"})
-                _done()
-                return
-            _vev({"kind": "listening_done", "text": text})
-            if not text:
-                if continuous:
-                    empties += 1
-                    if empties < _VOICE_SESSION_MAX_EMPTY:
-                        continue  # 没听清：会话中不打岔，直接再听一轮
-                    _vev({"kind": "notice", "text": "一会儿没说话，先退下啦，叫我随时来～"})
-                    _done()
-                    return
-                _done()
-                return
-            empties = 0
-            if continuous and _is_exit_phrase(text):
-                # 退出语：固定告别（不过 LLM，确定性收尾）
-                _vev({"kind": "final_reply", "text": _VOICE_SESSION_BYE})
-                if tts_lock.locked():
-                    # 另一会话正在播报（spec §D 单声道）：告别静默不抢声道、不排队
-                    _done()
-                    return
-                _vev({"kind": "speaking"})
-
-                async def _bye():
-                    yield _VOICE_SESSION_BYE
-
-                await tts_lock.acquire()
-                try:
-                    await voice.speak_stream(_bye(), cancel)
-                except Exception as e:
-                    log(f"会话告别播报失败：{e}")
-                finally:
-                    tts_lock.release()
-                if cancel.is_set():
-                    _vev({"kind": "interrupted"})
-                else:
-                    _vev({"kind": "speaking_done"})
-                _done()
-                return
-            # 连续会话的 run_done 由本函数在会话结束时发（每轮结束就发会让前端以为请求完结）
-            await _stream_agent(text, rid, cancel, surface, conversation_id, emit_done=not continuous)
-            if not continuous:
-                return
-            if cancel.is_set():
-                _done()
-                return
-            # 答完接着听下一轮
+    # voice 域续：_drive_voice_start 已迁 runtime/voice.py——其回调的 run 流
+    # （_stream_agent）暂留 serve_async，经 ctx.stream_agent 注入。
+    ctx.stream_agent = _stream_agent
+    _drive_voice_start = voice_domain.drive_voice_start
 
     def _preempt_current(slot: dict) -> None:
         slot["preempt_gen"] += 1
@@ -933,7 +839,6 @@ async def serve_async(
 
     # HTTP 面（扩展桥+移动 API）：deps 里的绑定依赖上文 _drive_run 等，故在主循环前才组装启动
     ctx.settings = settings
-    ctx.write_msg = write_msg  # serve_async 内已重绑为 tap（分接头）——别传原始 write_msg
     ctx.run_slots = run_slots
     ctx.pending_confirms = pending_confirms
     ctx.early_answers = early_answers
