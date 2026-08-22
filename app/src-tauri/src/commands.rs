@@ -1,7 +1,8 @@
 //! Tauri command 层（按域分组）：文件系统命令 + 全局窗口状态命令。
 //! 薄层约定：只做参数解析 + 调底层能力（config / window / brain），业务编排在 lib.rs / services。
 
-use crate::{Brain, event_recorder, plugin_manifest, session_db, snip};
+use crate::{event_recorder, plugin_manifest, session_db, snip};
+use crate::braind::{Brain, runtime_root};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
@@ -19,7 +20,7 @@ pub struct HotRect {
 /// 相对坐标 + Rust 每次判定叠加当前窗口位置，拖动窗口后热区自动跟随。
 #[tauri::command]
 pub fn set_hot_rects(rects: Option<Vec<HotRect>>) {
-    *crate::PET_RECTS.lock().unwrap() = rects
+    *crate::system::PET_RECTS.lock().unwrap() = rects
         .map(|rs| rs.iter().map(|r| (r.x, r.y, r.w, r.h, r.kind.clone())).collect())
         .unwrap_or_default();
 }
@@ -27,19 +28,19 @@ pub fn set_hot_rects(rects: Option<Vec<HotRect>>) {
 /// 前端通知点击穿透模式：true=整窗可交互（展开/气泡中），false=仅团子热区可交互。
 #[tauri::command]
 pub fn set_interactive_full(full: bool) {
-    crate::PET_INTERACTIVE_FULL.store(full, std::sync::atomic::Ordering::Relaxed);
+    crate::system::PET_INTERACTIVE_FULL.store(full, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// 说话气泡显示中：气泡带成为第二热区（点气泡=展开），不像展开态整窗拦点击。
 #[tauri::command]
 pub fn set_bubble_on(on: bool) {
-    crate::PET_BUBBLE_ON.store(on, std::sync::atomic::Ordering::Relaxed);
+    crate::system::PET_BUBBLE_ON.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// 在 Finder 中打开数据目录（.env 配置 / 记忆 / 历史都在这）。
 #[tauri::command]
 pub fn open_data_dir(app: AppHandle) -> Result<(), String> {
-    let dir = crate::runtime_root();
+    let dir = runtime_root();
     std::fs::create_dir_all(&dir).map_err(|e| format!("建数据目录失败：{e}"))?;
     app.opener()
         .open_path(dir.to_string_lossy().as_ref(), None::<&str>)
@@ -83,7 +84,7 @@ pub fn save_attachment(data: String, ext: String) -> Result<String, String> {
     // ext 白名单化：只留 ASCII 字母数字，防路径注入；空则按 png
     let ext: String = ext.chars().filter(|c| c.is_ascii_alphanumeric()).take(8).collect();
     let ext = if ext.is_empty() { "png".to_string() } else { ext };
-    let dir = crate::runtime_root().join("attachments");
+    let dir = runtime_root().join("attachments");
     std::fs::create_dir_all(&dir).map_err(|e| format!("建附件目录失败：{e}"))?;
     let millis = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -154,7 +155,7 @@ pub fn open_home_window(app: AppHandle) -> Result<(), String> {
         if was_visible {
             let _ = panel.hide();
         }
-        let state = app.state::<crate::Brain>();
+        let state = app.state::<Brain>();
         if let Ok(mut g) = state.0.lock() {
             g.panel_hidden_by_home = was_visible;
         };
@@ -167,7 +168,7 @@ pub(crate) fn restore_after_home(app: &AppHandle) {
     if let Some(main) = app.get_webview_window("main") {
         let _ = main.show();
     }
-    let state = app.state::<crate::Brain>();
+    let state = app.state::<Brain>();
     let restore = state
         .0
         .lock()
@@ -659,7 +660,7 @@ pub fn remember_panel(state: tauri::State<Brain>, payload: Value) -> Result<(), 
 /// 这是只读 UI 投影：不把历史重新送回大脑，也不会重放任何插件动作。
 #[tauri::command]
 pub fn get_conversation_history(limit: Option<usize>) -> Result<Vec<Value>, String> {
-    let path = crate::runtime_root().join("history.json");
+    let path = runtime_root().join("history.json");
     let raw = match std::fs::read_to_string(path) {
         Ok(raw) => raw,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
