@@ -1,5 +1,6 @@
 /* 设置页共享样式（单一事实源）：SettingsView 容器 + settings/*Section 子组件共用。
- * 由 main.ts 全局引入；类名带 s-/finish-/watch-/perm-/pair- 等前缀，不与其它组件冲突。
+ * 由 main.ts + home.ts 全局引入（主窗内嵌的设置页 + 宠物窗内嵌的设置预览共用）；
+ * 类名带 s-/finish-/watch-/perm-/pair- 等前缀，不与其它组件冲突。
  * 元素选择器（input/select/textarea）限定在 .s-scroll 内，避免污染全应用表单。 */
 
 /* 设置页：macOS 系统设置（Ventura+）语言——左侧分类目录 + 右侧分组卡片。

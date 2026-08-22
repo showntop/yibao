@@ -2,6 +2,9 @@
 import { createApp } from "vue";
 import Home from "./windows/home/HomeWindow.vue";
 import "./assets/tokens.css";
+// 大窗里有可滚动的内容区，需要全局滚动条样式与主窗的设置页共用同一份 settings.css。
+import "./assets/scrollbar.css";
+import "./assets/settings.css";
 import { bootFinish } from "./lib/finish";
 import { bootChrome } from "./lib/home/home-chrome.ts";
 
