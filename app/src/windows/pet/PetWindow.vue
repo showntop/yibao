@@ -3,15 +3,15 @@ import { ref, computed, watch, watchEffect, nextTick, onMounted, onUnmounted } f
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import Avatar from "./components/Avatar.vue";
-import InputBar from "./components/InputBar.vue";
-import QuickPanel from "./components/QuickPanel.vue";
-import SpeechBubble from "./components/SpeechBubble.vue";
-import PermissionsBanner from "./components/PermissionsBanner.vue";
-import SetupWizard from "./components/SetupWizard.vue";
-import PluginLauncher from "./components/pet/PluginLauncher.vue";
-import BubbleFlow from "./components/pet/BubbleFlow.vue";
-import PendingConfirmCard from "./components/pet/PendingConfirmCard.vue";
+import Avatar from "../../components/Avatar.vue";
+import InputBar from "../../components/InputBar.vue";
+import QuickPanel from "../../components/QuickPanel.vue";
+import SpeechBubble from "../../components/SpeechBubble.vue";
+import PermissionsBanner from "../../components/PermissionsBanner.vue";
+import SetupWizard from "../../components/SetupWizard.vue";
+import PluginLauncher from "../../components/pet/PluginLauncher.vue";
+import BubbleFlow from "../../components/pet/BubbleFlow.vue";
+import PendingConfirmCard from "../../components/pet/PendingConfirmCard.vue";
 import {
   onBrainEvent,
   onBrainStatus,
@@ -40,26 +40,26 @@ import {
   type BrainEvent,
   type BrainStatusMsg,
   type BrainPermissions,
-} from "./lib/brain";
-import { formatContextPrefix, type InputContext } from "./lib/at-mention";
+} from "../../lib/brain";
+import { formatContextPrefix, type InputContext } from "../../lib/at-mention";
 import {
   openPanel,
   setInteractiveFull,
   setMainSize,
   setHotRects,
-} from "./lib/window";
-import { SUGGESTIONS } from "./lib/suggestions";
-import { matchExplicitOpen } from "./lib/explicit-intent";
-import { decideSurface, type Attention, type Presentation } from "./lib/surface-policy";
-import { deactivateAll, petFormOf, surfaceCount, type SurfaceAttr } from "./lib/pet-surface";
-import { procLabel, procSkip, procResultSuffix } from "./lib/proc";
-import { squashSpaces, truncate } from "./lib/text";
-import { sessionStore, clearLegacySessionKeys } from "./state/store";
-import { usePetState } from "./composables/usePetState";
-import { usePetApproval } from "./composables/usePetApproval";
-import { usePetBubbles, type BubbleMsg } from "./composables/usePetBubbles";
-import { usePetSpeech } from "./composables/usePetSpeech";
-import YbIcon from "./components/YbIcon.vue";
+} from "../../lib/window";
+import { SUGGESTIONS } from "../../lib/suggestions";
+import { matchExplicitOpen } from "../../lib/explicit-intent";
+import { decideSurface, type Attention, type Presentation } from "../../lib/surface/surface-policy";
+import { deactivateAll, petFormOf, surfaceCount, type SurfaceAttr } from "../../lib/surface/pet-surface";
+import { procLabel, procSkip, procResultSuffix } from "../../lib/proc";
+import { squashSpaces, truncate } from "../../lib/text";
+import { sessionStore, clearLegacySessionKeys } from "../../state/store";
+import { usePetState } from "../../composables/usePetState";
+import { usePetApproval } from "../../composables/usePetApproval";
+import { usePetBubbles, type BubbleMsg } from "../../composables/usePetBubbles";
+import { usePetSpeech } from "../../composables/usePetSpeech";
+import YbIcon from "../../components/YbIcon.vue";
 
 /** 小窗固定会话 id（方案 A）：永远用同一个会话，不镜像大窗活跃会话。
  *  run 带它使消息归属、重启可恢复；固定性从架构上消灭串台（大窗切会话不影响本窗）。 */

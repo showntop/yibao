@@ -5,11 +5,11 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import SchemaPanel from "./SchemaPanel.vue";
-import WebviewPanel from "./WebviewPanel.vue";
-import Avatar from "./Avatar.vue";
-import InputBar from "./InputBar.vue";
-import YbIcon from "./YbIcon.vue";
+import SchemaPanel from "../../components/SchemaPanel.vue";
+import WebviewPanel from "../../components/WebviewPanel.vue";
+import Avatar from "../../components/Avatar.vue";
+import InputBar from "../../components/InputBar.vue";
+import YbIcon from "../../components/YbIcon.vue";
 import {
   onBrainEvent,
   onPendingConfirms,
@@ -27,11 +27,11 @@ import {
   canRememberSkill,
   rememberLabelForSkill,
   closePanelWindow,
-} from "../lib/brain";
-import { procLabel, procSkip, procResultSuffix } from "../lib/proc";
-import { formatContextPrefix, type InputContext } from "../lib/at-mention";
-import type { WebviewPayload } from "../lib/webview-source";
-import type { AvatarState } from "../protocol/brain-types";
+} from "../../lib/brain";
+import { procLabel, procSkip, procResultSuffix } from "../../lib/proc";
+import { formatContextPrefix, type InputContext } from "../../lib/at-mention";
+import type { WebviewPayload } from "../../lib/webview-source";
+import type { AvatarState } from "../../protocol/brain-types";
 
 // 当前面板：kind="panel" 事件整体替换刷新（webview 非空 → webview 面板，否则 schema 面板）
 const current = ref<{

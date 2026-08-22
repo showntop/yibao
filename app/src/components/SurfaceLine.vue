@@ -3,7 +3,7 @@
 // 带表面属性的行（Phase 1.5）：可点时是入口，失活后是历史。
 // 小窗不做卡——卡不承载撤销，多提供的信息接近于零，却在 360px 里顶满一整块。
 // 不显示 ✓：失败结果本就不带表面建议，「有表面」已蕴含「成功了」。
-import type { SurfaceAttr } from "../lib/pet-surface";
+import type { SurfaceAttr } from "../lib/surface/pet-surface";
 
 const props = defineProps<{ attr: SurfaceAttr }>();
 const emit = defineEmits<{ open: [] }>();

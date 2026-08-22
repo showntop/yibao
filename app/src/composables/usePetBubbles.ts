@@ -1,7 +1,7 @@
 // 小窗气泡流域：消息列表 + 流式下标 + 过程行/表面锚点索引 + 滚动跟随 + 常驻轻提示。
 // 由 App.vue 的 onEvent 等驱动（本 composable 返回可变引用，App 直接操作）。
 import { nextTick, ref, watch, type Ref } from "vue";
-import type { SurfaceAttr } from "../lib/pet-surface";
+import type { SurfaceAttr } from "../lib/surface/pet-surface";
 
 /** 气泡消息（pstate：过程行状态，图标随态渲染；halted：被打断；icon：行首语义图标） */
 export type BubbleMsg = {

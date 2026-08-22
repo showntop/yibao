@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const home = readFileSync(resolve(import.meta.dirname, "../Home.vue"), "utf8");
+const home = readFileSync(resolve(import.meta.dirname, "../windows/home/HomeWindow.vue"), "utf8");
 const chat = readFileSync(resolve(import.meta.dirname, "../components/HomeChat.vue"), "utf8");
 const paper = readFileSync(resolve(import.meta.dirname, "../components/HomeChatPaper.vue"), "utf8");
 const thread = readFileSync(resolve(import.meta.dirname, "../components/HomeChatThread.vue"), "utf8");

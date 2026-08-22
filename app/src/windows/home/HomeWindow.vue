@@ -5,22 +5,22 @@
 // ⌘K 命令面板」（Raycast/Linear 风格：找页面用搜/说，不是点）。
 // 各页常驻挂载（v-show 切显隐）：事件订阅不断、气泡/面板状态切页不丢。
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import YbIcon from "./components/YbIcon.vue";
-import CommandPalette, { type PaletteTab } from "./components/CommandPalette.vue";
-import HomeChat from "./components/HomeChat.vue";
-import HomePlugins from "./components/HomePlugins.vue";
-import CapabilityConversationRail, { type CapabilityRailSurface } from "./components/CapabilityConversationRail.vue";
-import InlineReceipt from "./components/InlineReceipt.vue";
-import PeekSurface from "./components/PeekSurface.vue";
-import ActivityShelf from "./components/ActivityShelf.vue";
-import { sessionStore, clearLegacySessionKeys } from "./state/store";
-import type { SurfacePanel } from "./state/types";
-import DataView from "./components/DataView.vue";
-import SettingsView from "./components/SettingsView.vue";
+import YbIcon from "../../components/YbIcon.vue";
+import CommandPalette, { type PaletteTab } from "../../components/CommandPalette.vue";
+import HomeChat from "../../components/HomeChat.vue";
+import HomePlugins from "../../components/HomePlugins.vue";
+import CapabilityConversationRail, { type CapabilityRailSurface } from "../../components/CapabilityConversationRail.vue";
+import InlineReceipt from "../../components/InlineReceipt.vue";
+import PeekSurface from "../../components/PeekSurface.vue";
+import ActivityShelf from "../../components/ActivityShelf.vue";
+import { sessionStore, clearLegacySessionKeys } from "../../state/store";
+import type { SurfacePanel } from "../../state/types";
+import DataView from "../../components/DataView.vue";
+import SettingsView from "../../components/SettingsView.vue";
 import appLogo from "./assets/logo.png";
-import { onPendingConfirms, closeHomeWindow } from "./lib/brain";
-import { decideSurface, type Attention, type Presentation } from "./lib/surface-policy";
-import type { AvatarState } from "./protocol/brain-types";
+import { onPendingConfirms, closeHomeWindow } from "../../lib/brain";
+import { decideSurface, type Attention, type Presentation } from "../../lib/surface/surface-policy";
+import type { AvatarState } from "../../protocol/brain-types";
 
 // 主屏（home）= 对话 + 信息面板的融合体（AI 原生：对话是主入口，动态/回顾/插件一瞥都在右侧）
 type Tab = "home" | "plugins" | "data" | "settings";

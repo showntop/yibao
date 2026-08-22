@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 
 let brainHandler: ((e: any) => void) | null = null;
 const runInputMock = vi.fn((..._a: any[]) => Promise.resolve());
-vi.mock("../lib/brain", () => ({
+vi.mock("../../lib/brain", () => ({
   onBrainEvent: vi.fn((cb: any) => { brainHandler = cb; return Promise.resolve(() => {}); }),
   onPendingConfirms: vi.fn(() => () => {}),
   openHomeWindow: vi.fn(() => Promise.resolve()),
@@ -27,7 +27,7 @@ vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({ onFocusChanged: vi.fn(() => Promise.resolve(() => {})) }),
 }));
 
-import PanelApp from "./PanelApp.vue";
+import PanelApp from "./PanelWindow.vue";
 
 function mountApp() {
   return mount(PanelApp, {

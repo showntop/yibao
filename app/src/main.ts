@@ -1,5 +1,5 @@
 import { createApp } from "vue";
-import App from "./App.vue";
+import App from "./windows/pet/PetWindow.vue";
 import "./assets/tokens.css";
 import "./assets/scrollbar.css";
 import "./assets/settings.css";

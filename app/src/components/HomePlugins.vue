@@ -26,7 +26,7 @@ import {
 import { formatContextPrefix, type InputContext } from "../lib/at-mention";
 import { procLabel, procSkip, procResultSuffix } from "../lib/proc";
 import { sessionStore } from "../state/store";
-import type { Attention, Presentation } from "../lib/surface-policy";
+import type { Attention, Presentation } from "../lib/surface/surface-policy";
 import type { WebviewPayload } from "../lib/webview-source";
 import { usePanelGrow } from "../composables/usePanelGrow";
 import { usePluginOverlay } from "../composables/usePluginOverlay";
