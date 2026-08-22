@@ -20,7 +20,7 @@
 | 🟡 部分完成 | **R-13 server.py**：stdio 协议已拆 `transport.py` ✅；`serve_async` 巨闭包（315 行起）+ msg 分发 if/elif 巨链（~1230-1594）仍在。方案已定：ServerRuntime 类化 + handlers 查表，全计划风险最高项，独立会话执行 |
 | 🟡 部分完成 | **R-15 coding.py**：1687→1095，已拆出 sessions.py / transcript.py / _brief.py / _cc_reader.py 等 ✅；继续按技能域收尾 |
 | ✅ 完成 | **R-20 invoke 收敛（收尾 2026-08-22）**：App.vue/HomeChat.vue 的 `get_setup_config`（含泛型形式共 3 处）、`ensure_active_conversation`×2、`ensure_pet_conversation`、`get_conversation_messages`、`list_plugins`×2、`expand_chat`、`set_pet_expanded`、`hide_invoke_bar`、`close_home_window` 全部改走 brainClient（新增 expandChat/setPetExpanded/closeHomeWindow/hideInvokeBar/ensureActiveConversation/ensurePetConversation/getConversationMessages/listPlugins 封装 + PetMessage 入 protocol）；顺带修复 setupCfg snake/camel 映射 bug（baseUrl 此前恒为 undefined）。**显式豁免**：WebviewPanel.vue iframe 原生桥白名单（注释声明的设计，非大脑通信） |
-| 🟡 部分完成 | **R-21 Rust 通信契约化**：`brain_cmd`/`brain_cmd_with` 收敛 9 处单行调用 ✅；强类型 CommandKind 枚举未做，commands.rs 仍余 write_to_brain 25 处字符串分发。剩余项 → **R-21b** |
+| ✅ 完成 | **R-21b Rust 通信契约化（决策落定 2026-08-22）**：采用方案 (b) 变体——**字符串分发完全单点化**：write_to_brain 25 处调用点全部收敛至 `brain_cmd`/`brain_cmd_with` 双辅助（write_to_brain 仅被辅助函数内部调用），全部 type 字面量集中在调用参数上一览无余，等价于命令注册表。**显式放弃 CommandKind 枚举**，理由：payload 本质动态 JSON（Option 解包/条件字段），枚举只能约束 type 字符串一层管不了 payload 字段，工程量与回归风险不成比例；协议契约由 protocol-contract.md 文档锁定。验收标准第 6 条同步修订 |
 | ✅ 完成 | **R-25 跨端协议契约（含 R-29 收口 2026-08-22）**：protocol-contract.md（通道/kind 对照/命名映射/漂移清单）+ **app 内部单源化**——RunMetrics 唯一定义于 protocol/brain-types.ts（state/types.ts re-export 兼容）、AvatarState（7 态共享集）单源（Home/HomeFrame/HomePlugins/PanelApp/usePetState/useHomeChatSession 全部引用）；双端类型显式决策「各自维护 + 契约文档对照 + 变更同步纪律」（protocol-contract.md §3.2.1） |
 | ⬜ 未开始 | **R-08 App.vue 拆分**（1924→1711，仅 pet 域 composables 抽取减 213 行；组件级拆分未动）；补账任务余 **R-12b / R-21b / R-30 / R-31**（见阶段 5） |
 
@@ -378,7 +378,7 @@ app（Tauri IPC）与 mobile/extension（HTTP `/v1/*`）共用同一大脑，但
 - [ ] 跨端共享类型单一事实源（无 `RunMetrics`/`FeedItem` 等双份定义）。（→ R-29；`AvatarState` 4 份且枚举不一致同属此项）
 - [x] 前端 `lib/` 与 `protocol/` 不再 import Vue 运行时。（复核确认零残留）
 - [ ] 组件不再直接 `invoke`，统一走 brainClient。（余 4 处：App.vue:143、HomeChat.vue:209、WebviewPanel.vue:104、Home.vue:394 等 → R-20 收尾）
-- [ ] Rust 侧无字符串 type 分发，全部强类型枚举。（write_to_brain 余 25 处 → R-21b 二选一决策）
+- [x] （2026-08-22 修订）Rust 侧字符串 type 分发完全单点化：所有命令经 brain_cmd/brain_cmd_with 双辅助，write_to_brain 仅被辅助内部调用；type 字面量集中于调用参数等价注册表。~~强类型枚举~~ 显式放弃（决策记录见执行状态 R-21b 行）。
 - [ ] sidecar 无 `print` 日志（统一 logging），无重复 HTTP 封装。（print 余 1 处；HTTP 封装 ✅）
 - [ ] 命名规范落地：无拼音命名、无单字母局部变量、跨边界命名映射表维护在协议文档。（映射表 ✅ protocol-contract.md；其余渐进达成）
 - [ ] 每项任务独立可合入，可回滚（git revert）。（⚠️ 当前工作区 73 文件未提交，违反本项——分批提交为第一优先动作）

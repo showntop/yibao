@@ -321,10 +321,11 @@ pub fn run_input(
             );
         }
     }
-    write_to_brain(
+    brain_cmd_with(
         &state,
+        "run",
         serde_json::json!({
-            "id": 0, "type": "run", "text": text, "surface": surface_str,
+            "text": text, "surface": surface_str,
             "conversation_id": conversation_id.unwrap_or_default(),
         }),
     )
@@ -333,10 +334,7 @@ pub fn run_input(
 /// 截图唤起（v1.1）：⌘⇧Y 唤起主窗时前端触发，通知大脑抓屏描述（下次 run 注入屏幕上下文）。
 #[tauri::command]
 pub fn invoke_context(state: tauri::State<Brain>) -> Result<(), String> {
-    write_to_brain(
-        &state,
-        serde_json::json!({ "id": 0, "type": "invoke_context" }),
-    )
+    brain_cmd(&state, "invoke_context")
 }
 
 /// 批量确认条目（前端 Task 5 传 camelCase：{id, approved, remember}）。
@@ -367,37 +365,25 @@ pub fn confirm_batch(state: tauri::State<Brain>, items: Vec<ConfirmItem>) -> Res
             })
         })
         .collect();
-    write_to_brain(
-        &state,
-        serde_json::json!({ "id": 0, "type": "confirm_batch", "items": items_json }),
-    )
+    brain_cmd_with(&state, "confirm_batch", serde_json::json!({ "items": items_json }))
 }
 
 /// 主屏 Feed 查询：大脑回 {"type":"feed","items":…,"stats":…}，经 brain-feed 事件广播。
 #[tauri::command]
 pub fn get_feed(state: tauri::State<Brain>, limit: Option<u32>) -> Result<(), String> {
-    write_to_brain(
-        &state,
-        serde_json::json!({ "id": 0, "type": "feed", "limit": limit.unwrap_or(60) }),
-    )
+    brain_cmd_with(&state, "feed", serde_json::json!({ "limit": limit.unwrap_or(60) }))
 }
 
 /// 手动触发昨日提炼：大脑回 {"type":"distill_now","ok":…,"result":…}，经 brain-distill-now 事件广播。
 #[tauri::command]
 pub fn distill_now(state: tauri::State<Brain>) -> Result<(), String> {
-    write_to_brain(
-        &state,
-        serde_json::json!({ "id": 0, "type": "distill_now" }),
-    )
+    brain_cmd(&state, "distill_now")
 }
 
 /// 设置页信任统计：大脑回 {"type":"feed_stats","stats":…}，经 brain-feed-stats 事件广播。
 #[tauri::command]
 pub fn get_feed_stats(state: tauri::State<Brain>, days: Option<u32>) -> Result<(), String> {
-    write_to_brain(
-        &state,
-        serde_json::json!({ "id": 0, "type": "feed_stats", "days": days.unwrap_or(7) }),
-    )
+    brain_cmd_with(&state, "feed_stats", serde_json::json!({ "days": days.unwrap_or(7) }))
 }
 
 /// 晨间反刍探测：开窗时前端调用，大脑自行决定推不推（fire-and-forget）。
@@ -409,10 +395,7 @@ pub fn recap_check(state: tauri::State<Brain>) -> Result<(), String> {
 /// 每日回顾查询：大脑回 {"type":"distill_timeline","days":[…]}，经 brain-distill-timeline 事件广播。
 #[tauri::command]
 pub fn get_distill_timeline(state: tauri::State<Brain>, days: Option<u32>) -> Result<(), String> {
-    write_to_brain(
-        &state,
-        serde_json::json!({ "id": 0, "type": "distill_timeline", "days": days.unwrap_or(14) }),
-    )
+    brain_cmd_with(&state, "distill_timeline", serde_json::json!({ "days": days.unwrap_or(14) }))
 }
 
 /// 主屏 widget 查询：大脑回 {"type":"widgets","widgets":…}，经 brain-widgets 事件广播。
@@ -426,16 +409,14 @@ pub fn get_widgets(state: tauri::State<Brain>) -> Result<(), String> {
 /// 注：sidecar 直接读 msg["id"] 作 feed 条目 id（非信封序号），故不写 "id":0 占位。
 #[tauri::command]
 pub fn feed_mark_read(state: tauri::State<Brain>, id: i64) -> Result<(), String> {
-    write_to_brain(&state, serde_json::json!({ "type": "feed_mark_read", "id": id }))
+    // id 是业务字段（feed 条目 id），payload 覆盖辅助函数的 id=0 占位
+    brain_cmd_with(&state, "feed_mark_read", serde_json::json!({ "id": id }))
 }
 
 /// 主屏 Feed：全部已读（大脑回 {"type":"feed_all_read","n":N} 经 brain-feed-all-read 广播）。
 #[tauri::command]
 pub fn feed_mark_all_read(state: tauri::State<Brain>) -> Result<(), String> {
-    write_to_brain(
-        &state,
-        serde_json::json!({ "id": 0, "type": "feed_mark_all_read" }),
-    )
+    brain_cmd(&state, "feed_mark_all_read")
 }
 
 /// 主屏 Feed：处置态（follow/ignore/none，与 read 正交）。前端走乐观更新。
@@ -445,20 +426,14 @@ pub fn feed_mark_status(
     id: i64,
     status: String,
 ) -> Result<(), String> {
-    write_to_brain(
-        &state,
-        serde_json::json!({ "type": "feed_mark_status", "id": id, "status": status }),
-    )
+    brain_cmd_with(&state, "feed_mark_status", serde_json::json!({ "id": id, "status": status }))
 }
 
 /// 误报反馈（信任仪表写侧）：👍/👎 落 meta.feedback（大脑回 {"type":"feed_feedback_set",…}
-/// 经 brain-feed-feedback-set 广播）。注：sidecar 直读 msg["id"]，故不写 "id":0 占位。
+/// 经 brain-feed-feedback-set 广播）。id 是业务字段（feed 条目 id），覆盖辅助函数的 id=0 占位。
 #[tauri::command]
 pub fn feed_feedback(state: tauri::State<Brain>, id: i64, feedback: String) -> Result<(), String> {
-    write_to_brain(
-        &state,
-        serde_json::json!({ "type": "feed_feedback", "id": id, "feedback": feedback }),
-    )
+    brain_cmd_with(&state, "feed_feedback", serde_json::json!({ "id": id, "feedback": feedback }))
 }
 
 /// 主屏 Dock 查询：pinned 优先 + 频率补齐（回 {"type":"dock_list","dock":[...]}
@@ -472,10 +447,7 @@ pub fn dock_list(state: tauri::State<Brain>) -> Result<(), String> {
 /// 经 brain-dock-pin-set 广播）。
 #[tauri::command]
 pub fn set_dock_pin(state: tauri::State<Brain>, pid: String, on: bool) -> Result<(), String> {
-    write_to_brain(
-        &state,
-        serde_json::json!({ "id": 0, "type": "set_dock_pin", "pid": pid, "on": on }),
-    )
+    brain_cmd_with(&state, "set_dock_pin", serde_json::json!({ "pid": pid, "on": on }))
 }
 
 /// 记忆管理：列出全部记忆（回 {"type":"mem_list"} 经 brain-mem-list 广播）。
@@ -521,11 +493,10 @@ pub fn get_perception(
     limit: Option<u32>,
     before_id: Option<i64>,
 ) -> Result<(), String> {
-    write_to_brain(
+    brain_cmd_with(
         &state,
+        "perception_list",
         serde_json::json!({
-            "id": 0,
-            "type": "perception_list",
             "limit": limit.unwrap_or(60),
             "before_id": before_id,
         }),
@@ -535,10 +506,7 @@ pub fn get_perception(
 /// 感知日志：按观察 id 删除（信封 id 已占用，sidecar 字段必须是 per_id）。
 #[tauri::command]
 pub fn perception_delete(state: tauri::State<Brain>, id: i64) -> Result<(), String> {
-    write_to_brain(
-        &state,
-        serde_json::json!({ "id": 0, "type": "perception_delete", "per_id": id }),
-    )
+    brain_cmd_with(&state, "perception_delete", serde_json::json!({ "per_id": id }))
 }
 
 /// 感知日志：清空全部观察。
@@ -556,9 +524,10 @@ pub fn panel_action(
     params: Value,
     surface: Option<String>,
 ) -> Result<(), String> {
-    write_to_brain(
+    brain_cmd_with(
         &state,
-        serde_json::json!({ "id": id, "type": "panel_action", "method": method, "params": params, "surface": surface.unwrap_or_else(|| "pet".into()) }),
+        "panel_action",
+        serde_json::json!({ "id": id, "method": method, "params": params, "surface": surface.unwrap_or_else(|| "pet".into()) }),
     )
 }
 
@@ -608,10 +577,10 @@ pub fn finish_snip(app: AppHandle, state: tauri::State<Brain>, rect: SnipRect) -
             let scale = mon.scale_factor();
             let origin = (mon.position().x as i64, mon.position().y as i64);
             let (l, t, w, h) = snip::snip_abs_rect((rect.left, rect.top, rect.width, rect.height), origin, scale);
-            write_to_brain(
+            brain_cmd_with(
                 &state,
+                "snip_capture",
                 serde_json::json!({
-                    "id": 0, "type": "snip_capture",
                     "left": l, "top": t, "width": w, "height": h,
                 }),
             )?;
@@ -633,10 +602,7 @@ pub fn cancel_snip(app: AppHandle) -> Result<(), String> {
 /// 截图即问：问题转发大脑（暂存的区域截图 + 问题 → vision 直答）。
 #[tauri::command]
 pub fn vision_query(state: tauri::State<Brain>, question: String) -> Result<(), String> {
-    write_to_brain(
-        &state,
-        serde_json::json!({ "id": 0, "type": "vision_query", "question": question }),
-    )
+    brain_cmd_with(&state, "vision_query", serde_json::json!({ "question": question }))
 }
 
 /// 面板窗挂载后补拉最近一次的 panel 载荷（首开时 brain-event 先于窗口订阅发出）。
@@ -863,11 +829,10 @@ pub fn voice_start(
     continuous: Option<bool>,
     conversation_id: Option<String>,
 ) -> Result<(), String> {
-    write_to_brain(
+    brain_cmd_with(
         &state,
+        "voice_start",
         serde_json::json!({
-            "id": 0,
-            "type": "voice_start",
             "surface": surface.unwrap_or_else(|| "pet".into()),
             "continuous": continuous.unwrap_or(false),
             "conversation_id": conversation_id.unwrap_or_default(),
@@ -879,23 +844,17 @@ pub fn voice_start(
 /// 并发对话（spec §E）：带 conversation_id → 只打断该会话槽；不带/空 → 全停（旧行为）。
 #[tauri::command]
 pub fn interrupt(state: tauri::State<Brain>, conversation_id: Option<String>) -> Result<(), String> {
-    write_to_brain(
+    brain_cmd_with(
         &state,
-        serde_json::json!({
-            "id": 0,
-            "type": "interrupt",
-            "conversation_id": conversation_id.unwrap_or_default(),
-        }),
+        "interrupt",
+        serde_json::json!({ "conversation_id": conversation_id.unwrap_or_default() }),
     )
 }
 
 /// 面板焦点上报（v2 §5 focus）：壳面板窗内容变化时透传给大脑，run 时注入 LLM 上下文。
 #[tauri::command]
 pub fn report_panel_context(state: tauri::State<Brain>, focus: Value) -> Result<(), String> {
-    write_to_brain(
-        &state,
-        serde_json::json!({ "id": 0, "type": "panel_context", "focus": focus }),
-    )
+    brain_cmd_with(&state, "panel_context", serde_json::json!({ "focus": focus }))
 }
 
 /// 重新检测 macOS 权限（辅助功能/屏幕录制），结果经 brain-permissions 事件回前端。
@@ -907,9 +866,6 @@ pub fn check_permissions(state: tauri::State<Brain>) -> Result<(), String> {
 /// 触发系统授权引导弹窗（which = "ax" | "screen"）。
 #[tauri::command]
 pub fn prompt_permission(state: tauri::State<Brain>, which: String) -> Result<(), String> {
-    write_to_brain(
-        &state,
-        serde_json::json!({ "id": 0, "type": "prompt_permission", "which": which }),
-    )
+    brain_cmd_with(&state, "prompt_permission", serde_json::json!({ "which": which }))
 }
 
