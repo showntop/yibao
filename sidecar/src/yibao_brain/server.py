@@ -9,7 +9,6 @@ from .log import log
 import asyncio
 import contextvars
 import functools
-import itertools
 import json
 import os
 import sys
@@ -42,7 +41,7 @@ from .feed import FeedStore
 from .distiller import Distiller, DistillerStore
 from .jobstore import JobsStore
 from .history import ConversationHistory
-from .http_api import EventTap, MobileDeps
+from .http_api import EventTap
 from .ipc import Event, RiskLevel
 from .llm import FakeProvider, OpenAICompatProvider
 from .loop import AgentLoop, _offload
@@ -51,6 +50,7 @@ from .proactive import ProactiveDispatcher
 from .plugins import LlmChat, get_plugin_summaries
 from .runtime import RuntimeCtx
 from .runtime import helpers
+from .runtime.mobile import MobileDomain
 from .safety import Gate, GatePolicy, RiskClassifier
 from .skills import EchoSkill, SkillRegistry
 from .skills_composite import register_composite_skills
@@ -887,101 +887,9 @@ async def serve_async(
         slot["task"] = asyncio.ensure_future(
             _chain_start(slot, prev, _marked, slot["preempt_gen"]))
 
-    _MOB_SEQ = itertools.count(1)
-
-    def _submit_run(text: str, conversation_id: str) -> dict:
-        """手机 /v1/chat 受理：surface=mobile（不抢桌宠，桌宠也不抢手机）；会话槽位
-        按 conversation_id 独立——手机与桌面、手机多会话之间真并行。
-        不消费 invoke_ctx：那是桌面截图唤起的一次性上下文，留给桌面下一次 run。"""
-        rid = f"mob_{next(_MOB_SEQ)}"
-        start = lambda c, t=text, r=rid, ci=conversation_id: _drive_run(t, r, c, "mobile", ci)
-        log(f"run 受理 rid={rid} surface=mobile conv={conversation_id}：{text[:30]!r}")
-        _schedule_run("mobile", rid, start, conversation_id)
-        return {"ok": True, "run_id": rid, "conversation_id": conversation_id}
-
-    def _interrupt_mobile(conversation_id: str = "") -> bool:
-        """手机打断：维持 surface 域限定（只动 running_surface=mobile 的槽），叠加
-        conversation_id 定向（spec §E）——带 id 只打断该会话槽；不带 id 扫所有槽里
-        在跑的 mobile 轮（旧行为）。
-        task 判活对齐 _mobile_state：消掉「上轮收尾后陈旧的 running_surface=mobile」
-        误报 True + 平白推进 preempt_gen 的跳窗口。壳 interrupt 是「全都停」或定向
-        某槽；手机不该误伤桌面对话。"""
-        if conversation_id:
-            named = run_slots.get(conversation_id)
-            slots = [named] if named is not None else []
-        else:
-            slots = list(run_slots.values())
-        for slot in slots:
-            task = slot["task"]
-            if (slot.get("running_surface") == "mobile"
-                    and task is not None and not task.done()
-                    and slot["cancel"] is not None):
-                _preempt_current(slot)
-                return True
-        return False
-
-    def _confirm_mobile(cid: str, approved: bool, remember: bool) -> bool:
-        """与壳 confirm_batch 同路径：兑现 future；confirmer 未注册（SSE 事件先到一步）
-        存 early_answers 待兑现。重复点击 → False（404）。
-
-        early_answers 设 32 条上界：真实竞态（SSE 事件先到一步）最多攒 1-2 条，
-        存到 32 还没被 confirmer 取走，只可能是未知/垃圾 id——继续存就是无界堆积
-        （持有 token 的客户端可无限灌条目），故满员后按未知处理 → False（404）。"""
-        if cid in _confirm_done:
-            return False
-        if cid.startswith("perm_"):
-            # coding 工具审批：与壳 confirm_batch 同路由（双通道幂等），不占 future/早到缓存；
-            # 兑现失败（插件未加载/请求已清理）→ False（404），不假 ok
-            if not _fulfill_coding_perm(cid, approved):
-                return False
-            _confirm_done.append(cid)
-            return True
-        fut = pending_confirms.get(cid)
-        if fut is not None and not fut.done():
-            fut.set_result((approved, remember))
-        elif len(early_answers) < 32:
-            early_answers[cid] = (approved, remember)
-        else:
-            return False  # 无 future 且早到缓存已满：未知 id，不当真
-        _confirm_done.append(cid)
-        return True
-
-    def _mobile_state() -> dict:
-        """/v1/state 载荷：running + pending。running = 任一槽在跑即非空闲（并发对话
-        spec §F：多槽并行后 idle 判定看全局）。pending = confirm_meta 展开（L2 确认，
-        条目带 conversation_id/surface 归属）
-        + coding 审批只读合并 _PERM 挂起项（allow is None；confirmation_needed 只广播
-        不落 confirm_meta，故在此补源）——生命周期随裁决/超时/stop 的 _PERM.pop 收敛，
-        无需出队钩子。元素键名对齐 confirm_meta：id/skill_id/summary/risk/created_at。"""
-        busy = next((s for s in run_slots.values()
-                     if s["task"] is not None and not s["task"].done()), None)
-        running = {"surface": busy["surface"]} if busy is not None else None
-        pending = [{"id": cid, **meta} for cid, meta in confirm_meta.items()]
-        perm = _coding_perm_registry()
-        if perm:
-            for rid, entry in list(perm.items()):
-                if isinstance(entry, dict) and entry.get("allow") is None:
-                    pending.append({"id": rid, "skill_id": "coding",
-                                    "summary": str(entry.get("summary") or entry.get("tool") or "编码审批"),
-                                    "risk": 1,
-                                    "created_at": int(entry.get("created_at") or 0)})
-        return {"running": running, "pending": pending}
-
-    def _mobile_feed(limit: int = 60) -> dict:
-        """/v1/feed 载荷（mobile M2）：与桌面 feed IPC 完全同形（items 倒序 + 问候统计 +
-        进行中任务）。组装收敛在此，dispatch 的 feed 分支与手机端点共用一份。"""
-        running_tasks = _running_tasks()
-        return {"items": feed.recent(limit=limit),
-                "stats": _feed_stats(running_tasks),
-                "running_tasks": running_tasks}
-
-    def _register_push(registration_id: str, platform: str) -> None:
-        """推送设备登记（P4 极光发送消费）。同 registration_id 覆盖，防重复堆积。"""
-        devices = [d for d in (settings.get("push.devices") or [])
-                   if d.get("registration_id") != registration_id]
-        devices.append({"registration_id": registration_id, "platform": platform, "added_at": int(time.time())})
-        settings["push.devices"] = devices
-        save_settings({"push.devices": devices})
+    # mobile/HTTP 域（R-13 第二步拆分序 2）：_submit_run/_interrupt_mobile/_confirm_mobile/
+    # _mobile_state/_mobile_feed/_register_push + _http_deps 装配已迁 runtime/mobile.py。
+    # 共享状态与 runs 调度函数经 ctx 注入（同一批对象——闭包侧与域侧改的是同一份）。
 
     async def _chain_start(slot: dict, prev, start, queued_gen: int) -> None:
         """槽内串行：等本槽上一任务收尾再启动；主循环不在这里阻塞（ping 照答，看门狗
@@ -1023,35 +931,21 @@ async def serve_async(
         except Exception as e:  # 兜底：任务未预期的异常不能毒死槽位
             log(f"任务异常收尾：{type(e).__name__}: {e}")
 
-    # HTTP 面（扩展桥+移动 API）：deps 里的闭包依赖上文 _drive_run 等，故在主循环前才组装启动
-    _http_deps = MobileDeps()
+    # HTTP 面（扩展桥+移动 API）：deps 里的绑定依赖上文 _drive_run 等，故在主循环前才组装启动
+    ctx.settings = settings
+    ctx.write_msg = write_msg  # serve_async 内已重绑为 tap（分接头）——别传原始 write_msg
+    ctx.run_slots = run_slots
+    ctx.pending_confirms = pending_confirms
+    ctx.early_answers = early_answers
+    ctx.confirm_meta = confirm_meta
+    ctx.confirm_done = _confirm_done
+    ctx.drive_run = _drive_run
+    ctx.schedule_run = _schedule_run
+    ctx.preempt_current = _preempt_current
+    mobile = MobileDomain(ctx)
+    _mobile_feed = mobile.feed  # _h_feed handler 与手机 /v1/feed 端点共用同一组装
     if http_enabled:
-        async def _http_save(body: dict) -> tuple[int, dict]:
-            def _emit(action, result) -> None:
-                ev = Event(kind="action_result", action=action.model_dump(mode="json") if hasattr(action, "model_dump") else action,
-                           result=result.model_dump(mode="json") if hasattr(result, "model_dump") else result)
-                write_msg({"type": "event", "event": ev.model_dump(mode="json")})
-            return await _bridge_save(agent, _emit, body)
-
-        _http_deps.save = _http_save
-        _http_deps.submit_run = _submit_run
-        _http_deps.interrupt = _interrupt_mobile
-        _http_deps.confirm = _confirm_mobile
-        _http_deps.state = _mobile_state
-        _http_deps.register_push = _register_push
-        # 会话只读面（mobile M1）：/v1/conversations、/v1/history 直读 agent.history
-        _http_deps.conversations = lambda: _conversations_payload(agent.history)
-        _http_deps.history = lambda cid: _history_payload(agent.history, cid)
-
-        # 信息浏览面（mobile M2）：feed 与桌面 IPC 同源；reminders 插件直连；memories 复用 _mem_list
-        async def _mem_payload() -> dict:
-            return {"ok": True, "items": await _mem_list()}
-
-        _http_deps.feed = _mobile_feed
-        _http_deps.reminders_list = lambda: _reminders_list_payload(agent)
-        _http_deps.reminders_cancel = lambda rid: _reminders_cancel_payload(agent, rid)
-        _http_deps.memories = _mem_payload
-        bridge_server = await _start_http_api(agent, settings, tap, _http_deps)
+        bridge_server = await mobile.start_http()
 
     # ---- 消息分发：handlers 查表（R-13 拆分；分支体原样搬运，continue→return） ----
     _handlers: dict[str, object] = {}

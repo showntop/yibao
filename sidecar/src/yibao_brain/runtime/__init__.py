@@ -16,3 +16,13 @@ class RuntimeCtx:
     def __init__(self) -> None:
         self.agent = None  # AgentLoop（loop.py）
         self.feed = None  # FeedStore（feed.py）
+        self.settings = None  # 用户设置共享 dict（config.load_settings 的同一可变字典）
+        self.write_msg = None  # 分接头（EventTap）：serve_async 内 write_msg 已重绑为 tap
+        self.run_slots = None  # per-会话槽位表 dict[str, dict]（同槽抢占/跨槽并行）
+        self.pending_confirms = None  # 确认多槽：cid -> asyncio.Future
+        self.early_answers = None  # 早到确认缓存：cid -> (approved, remember)
+        self.confirm_meta = None  # 确认元数据：cid -> {skill_id, summary, ...}（手机 /v1/state）
+        self.confirm_done = None  # 已处理确认 deque（跨端防重）
+        self.drive_run = None  # runs 调度域：run 驱动（serve_async 闭包，第四步迁 runtime/runs.py）
+        self.schedule_run = None  # runs 调度域：受理尾巴（同槽抢占/跨槽并行）
+        self.preempt_current = None  # runs 调度域：槽内抢占（preempt_gen+1 + cancel）
