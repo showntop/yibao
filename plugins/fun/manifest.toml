@@ -1,0 +1,16 @@
+# 娱乐（摸鱼放松三件套：视频热榜 / 音乐直达 / 每日一言）
+# 对话式 + webview 面板；视频与音乐是「发现 + 浏览器打开」形态（版权正路），
+# 一言是纯文本可面板内展示。http 能力拉公开免登录端点，不引第三方库。
+id = "fun"
+name = "娱乐"
+description = "摸鱼放松：B站热门视频、音乐搜索直达、每日一言"
+capabilities = ["http"]
+
+[code]
+entry = "tools"
+
+[[panel]]
+type = "webview"
+name = "main"
+label = "娱乐"
+src = "panel/fun.html"

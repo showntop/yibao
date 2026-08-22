@@ -18,8 +18,8 @@ use system::{expand_chat, grab_selected_text, reveal_app_in_finder, set_main_siz
 
 use commands::{
     close_home_window, close_panel_window, hide_invoke_bar, open_data_dir, open_home_window,
-    open_panel_window, pick_folder, restore_after_home, save_attachment, save_file, set_bubble_on,
-    set_hot_rects, set_interactive_full, set_pet_expanded, run_input,
+    open_panel_window, open_url, pick_folder, restore_after_home, save_attachment, save_file,
+    set_bubble_on, set_hot_rects, set_interactive_full, set_pet_expanded, run_input,
     invoke_context,
     confirm_batch,
     get_feed,
@@ -501,6 +501,7 @@ pub fn run() {
             clear_brain_data,
             open_data_dir,
             open_home_window,
+            open_url,
             close_home_window,
             set_pet_expanded,
             pick_folder,

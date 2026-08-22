@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<!-- 娱乐面板：视频热榜（浏览器看）/ 音乐直达（浏览器听）/ 每日一言（面板内展示）。
+     能力调用全部经 window.yibao.invoke（postMessage 桥 → api.toml 白名单 / native:open_url 白名单旁路）。
+     桥 JS 由父侧注入（提供 window.yibao.invoke/onInit），本文件不自带。
+     版权正路：视频/音乐只做「发现 + 系统浏览器打开」，面板内不内嵌播放。 -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  /* 配色对齐译宝主题（tokens.css 语义色，slate + sky 蓝 accent） */
+  :root {
+    --bg: #f0f4f8; --card: #ffffff;
+    --border: rgba(148, 170, 195, 0.22); --border-soft: #edf1f6; --border-strong: #d3dce7;
+    --text: #3d4a5c; --muted: #6b7c8f; --faint: #a5b2c2;
+    --accent: #4a88c0; --accent-deep: #3a74ab; --accent-soft: rgba(74, 136, 192, 0.12);
+    --segment-track: #e3eaf2;
+    --green-bg: #e6f4ea; --green: #3e8e5a;
+    --red-bg: #fdecea; --red: #c0574b; --red-bar: #f0aaa1;
+    --warn-bg: #fdf3e0; --warn: #b98a2f;
+    --toast-bg: rgba(61, 74, 92, 0.94);
+    --mono: 12px/1.6 "SF Mono", ui-monospace, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #10161d; --card: #18212b;
+      --border: rgba(255, 255, 255, 0.09); --border-soft: rgba(255, 255, 255, 0.06); --border-strong: rgba(255, 255, 255, 0.18);
+      --text: #dbe4ee; --muted: #93a3b6; --faint: #6d7f93;
+      --accent: #5ea0d2; --accent-deep: #4d90c4; --accent-soft: rgba(77, 144, 196, 0.22);
+      --segment-track: rgba(255, 255, 255, 0.1);
+      --green-bg: rgba(62, 142, 90, 0.2); --green: #8fd0a6;
+      --red-bg: rgba(192, 87, 75, 0.2); --red: #f0aaa1; --red-bar: #e38a80;
+      --warn-bg: rgba(185, 138, 47, 0.18); --warn: #f0b25c;
+      --toast-bg: rgba(219, 228, 238, 0.92);
+    }
+  }
+  html, body { height: 100%; }
+  body {
+    font: 13px/1.6 -apple-system, "PingFang SC", sans-serif;
+    background: var(--bg); color: var(--text); padding: 14px;
+    display: flex; flex-direction: column;
+  }
+  .hidden { display: none !important; }
+
+  /* ---- 分段控制器 ---- */
+  .seg {
+    display: inline-flex; gap: 2px; padding: 3px; margin-bottom: 14px;
+    background: var(--segment-track); border-radius: 11px; align-self: flex-start;
+  }
+  .seg button {
+    border: none; background: transparent; color: var(--muted); cursor: pointer;
+    border-radius: 8px; padding: 5px 18px; font-size: 12.5px; font-weight: 500;
+    transition: all .15s ease;
+  }
+  .seg button:hover { color: var(--text); }
+  .seg button.on {
+    background: var(--card); color: var(--accent-deep); font-weight: 600;
+    box-shadow: 0 1px 3px rgba(45, 60, 80, .15);
+  }
+
+  #page-videos, #page-music, #page-quote { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+
+  /* ---- 卡片 ---- */
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+    box-shadow: 0 1px 2px rgba(45, 60, 80, .04), 0 6px 16px rgba(45, 60, 80, .05);
+    overflow: hidden; margin-bottom: 10px;
+  }
+  .card-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; border-bottom: 1px solid var(--border-soft);
+    font-size: 12px; font-weight: 600; color: var(--text);
+  }
+  .card-head .muted { font-weight: 400; color: var(--muted); font-size: 11.5px; }
+  .card-head .spacer { flex: 1; }
+
+  /* ---- 工具条 / 输入 ---- */
+  .toolbar { display: flex; align-items: center; gap: 8px; margin: 2px 0 10px; flex-wrap: wrap; }
+  .toolbar .spacer { flex: 1; }
+  .hint { font-size: 11px; color: var(--faint); }
+  button.act {
+    border: none; border-radius: 10px; padding: 6px 16px; cursor: pointer;
+    background: var(--accent); color: #fff; font-size: 12.5px; font-weight: 600;
+    box-shadow: 0 2px 6px rgba(74, 136, 192, .3); transition: all .15s ease;
+  }
+  button.act:hover { background: var(--accent-deep); }
+  button.act:active { transform: scale(.97); }
+  button.act:disabled { opacity: .55; cursor: default; transform: none; }
+  button.ghost {
+    background: transparent; color: var(--muted); border: 1px solid var(--border);
+    box-shadow: none; font-weight: 500;
+  }
+  button.ghost:hover { background: var(--accent-soft); color: var(--accent-deep); border-color: var(--border-strong); }
+  .opt { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
+  select, input[type="text"] {
+    border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--text);
+    font-size: 12px; padding: 5px 8px; outline: none;
+  }
+  input[type="text"] { flex: 1; min-width: 120px; }
+  input[type="text"]::placeholder { color: var(--faint); }
+
+  /* ---- 错误横幅 ---- */
+  .banner {
+    display: flex; align-items: flex-start; gap: 7px;
+    border-radius: 11px; padding: 8px 12px; margin-bottom: 10px;
+    font-size: 12.5px; line-height: 1.5;
+  }
+  .banner.err { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-bar); }
+  .banner.err::before { content: "⚠"; flex: none; }
+
+  /* ---- 列表（视频卡片 / 平台入口共用）---- */
+  .list { padding: 6px 8px 8px; overflow: auto; min-height: 0; }
+  .item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 7px 8px; border-radius: 10px; cursor: pointer;
+    transition: background .12s ease;
+  }
+  .item:hover { background: var(--accent-soft); }
+  .item + .item { border-top: 1px solid var(--border-soft); }
+  .item .idx {
+    flex: none; width: 22px; text-align: center; font-size: 11px; font-weight: 700; color: var(--faint);
+  }
+  .item .idx.top3 { color: var(--accent); }
+  .item .body { flex: 1; min-width: 0; }
+  .item .t {
+    font-size: 12.5px; color: var(--text); font-weight: 500;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .item .m {
+    font-size: 11px; color: var(--muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px;
+  }
+  .item .m .dot { color: var(--faint); margin: 0 4px; }
+  .item .go {
+    flex: none; width: 22px; text-align: center; color: var(--accent);
+    font-size: 12px; font-weight: 700; opacity: 0; transition: opacity .12s ease;
+  }
+  .item:hover .go { opacity: 1; }
+  .item .play {
+    flex: none; border: none; border-radius: 7px; background: var(--accent-soft);
+    color: var(--accent-deep); font-size: 11px; font-weight: 600; padding: 3px 10px; cursor: pointer;
+  }
+  .item .play:hover { background: var(--accent); color: #fff; }
+
+  /* ---- 热词 chips ---- */
+  .chips { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 4px 12px 10px; }
+  .chip {
+    border: 1px solid var(--border); background: transparent; color: var(--muted);
+    border-radius: 999px; padding: 2px 11px; font-size: 11.5px; cursor: pointer;
+    transition: all .12s ease;
+  }
+  .chip:hover { background: var(--accent-soft); color: var(--accent-deep); border-color: var(--border-strong); }
+
+  /* ---- 一言 ---- */
+  #page-quote { gap: 10px; }
+  .quote-card { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 22px 20px; min-height: 160px; }
+  .quote-text {
+    font-size: 15.5px; line-height: 1.8; color: var(--text); letter-spacing: .3px;
+    text-align: center; user-select: text;
+  }
+  .quote-from { margin-top: 14px; text-align: center; font-size: 11.5px; color: var(--faint); }
+  .quote-from::before { content: "—— "; }
+  .quote-loading { color: var(--faint); font-size: 12.5px; }
+
+  /* ---- 空态 ---- */
+  .empty { padding: 26px 16px; text-align: center; }
+  .empty .t { font-size: 13px; font-weight: 600; color: var(--muted); }
+  .empty .s { font-size: 11.5px; color: var(--faint); margin-top: 3px; }
+
+  /* ---- toast ---- */
+  #toast {
+    position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%) translateY(8px);
+    background: var(--toast-bg); color: var(--card); font-size: 12px;
+    padding: 6px 16px; border-radius: 999px; opacity: 0; pointer-events: none;
+    transition: all .2s ease;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+
+<div class="seg">
+  <button id="tab-videos" class="on">视频</button>
+  <button id="tab-music">音乐</button>
+  <button id="tab-quote">段子</button>
+</div>
+
+<!-- 视频热榜 -->
+<div id="page-videos">
+  <div class="toolbar">
+    <label class="opt">分区
+      <select id="vid-tid"></select>
+    </label>
+    <button class="act" id="vid-refresh">换一批</button>
+    <span class="spacer"></span>
+    <span class="hint">点卡片用浏览器看</span>
+  </div>
+  <div class="banner err hidden" id="vid-err"></div>
+  <div class="card" style="flex:1; display:flex; flex-direction:column; min-height:0;">
+    <div class="list" id="vid-list"></div>
+  </div>
+</div>
+
+<!-- 音乐直达 -->
+<div id="page-music" class="hidden">
+  <div class="card">
+    <div class="card-head">搜歌 <span class="muted">歌名 / 歌手 / 风格</span></div>
+    <div class="toolbar" style="margin:8px 12px 2px;">
+      <input type="text" id="mu-kw" placeholder="想听什么？如：周杰伦 / 白噪音" spellcheck="false" />
+      <button class="act" id="mu-search">搜索</button>
+    </div>
+    <div class="chips" id="mu-hot"></div>
+  </div>
+  <div class="card hidden" id="mu-result-card">
+    <div class="card-head">「<span id="mu-result-kw"></span>」在哪个平台听 <span class="muted">网页版即点即听</span></div>
+    <div class="list" id="mu-result"></div>
+  </div>
+  <div class="card">
+    <div class="card-head">直接逛逛 <span class="muted">打开平台首页</span></div>
+    <div class="list" id="mu-platforms"></div>
+  </div>
+</div>
+
+<!-- 每日一言 -->
+<div id="page-quote" class="hidden">
+  <div class="card quote-card">
+    <div class="quote-text" id="qt-text"></div>
+    <div class="quote-from" id="qt-from"></div>
+  </div>
+  <div class="toolbar">
+    <label class="opt">分类
+      <select id="qt-cat"></select>
+    </label>
+    <button class="act" id="qt-next">换一句</button>
+    <span class="spacer"></span>
+    <span class="hint">来自 hitokoto 一言</span>
+  </div>
+  <div class="banner err hidden" id="qt-err"></div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+  function show(el) { el.classList.remove("hidden"); }
+  function hide(el) { el.classList.add("hidden"); }
+
+  var toastTimer = null;
+  function toast(msg) {
+    var t = $("toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.classList.remove("show"); }, 1400);
+  }
+
+  function openUrl(url) {
+    window.yibao.invoke("native:open_url", { url: url }).then(function () {
+      toast("已用浏览器打开");
+    }).catch(function (e) {
+      toast(e && e.message ? e.message : "打开失败");
+    });
+  }
+
+  // ---- 页签 ----
+  var tab = "videos";
+  function showTab(t) {
+    tab = t;
+    $("tab-videos").className = t === "videos" ? "on" : "";
+    $("tab-music").className = t === "music" ? "on" : "";
+    $("tab-quote").className = t === "quote" ? "on" : "";
+    $("page-videos").className = t === "videos" ? "" : "hidden";
+    $("page-music").className = t === "music" ? "" : "hidden";
+    $("page-quote").className = t === "quote" ? "" : "hidden";
+    if (t === "videos" && !vidLoaded) loadVideos();
+    if (t === "music" && !muInit) initMusic();
+    if (t === "quote" && !qtLoaded) loadQuotes();
+  }
+  $("tab-videos").addEventListener("click", function () { showTab("videos"); });
+  $("tab-music").addEventListener("click", function () { showTab("music"); });
+  $("tab-quote").addEventListener("click", function () { showTab("quote"); });
+
+  // ---- 视频热榜 ----
+  var REGIONS = [
+    ["0", "全站"], ["1", "动画"], ["3", "音乐"], ["4", "游戏"], ["5", "影视"],
+    ["13", "番剧"], ["36", "科技"], ["119", "鬼畜"], ["129", "舞蹈"],
+    ["155", "娱乐"], ["160", "生活"], ["188", "知识"],
+  ];
+  var vidLoaded = false;
+  var curTid = "0";
+
+  function fillSelect(sel, pairs, cur) {
+    sel.innerHTML = "";
+    pairs.forEach(function (p) {
+      var o = document.createElement("option");
+      o.value = p[0];
+      o.textContent = p[1];
+      if (String(p[0]) === String(cur)) o.selected = true;
+      sel.appendChild(o);
+    });
+  }
+  fillSelect($("vid-tid"), REGIONS, "0");
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  function renderVideos(rows) {
+    var list = $("vid-list");
+    list.innerHTML = "";
+    if (!rows || !rows.length) {
+      var e = document.createElement("div");
+      e.className = "empty";
+      e.innerHTML = '<div class="t">这一批没有拿到内容</div><div class="s">点「换一批」再试试</div>';
+      list.appendChild(e);
+      return;
+    }
+    rows.forEach(function (v, i) {
+      var it = document.createElement("div");
+      it.className = "item";
+      var idx = document.createElement("span");
+      idx.className = "idx" + (i < 3 ? " top3" : "");
+      idx.textContent = String(i + 1);
+      var body = document.createElement("div");
+      body.className = "body";
+      var t = document.createElement("div");
+      t.className = "t";
+      t.textContent = v.title || "";
+      var m = document.createElement("div");
+      m.className = "m";
+      var parts = [];
+      if (v.author) parts.push(v.author);
+      if (v.views) parts.push(v.views + " 播放");
+      if (v.duration) parts.push(v.duration);
+      if (v.region) parts.push(v.region);
+      m.textContent = parts.join(" · ");
+      body.appendChild(t);
+      body.appendChild(m);
+      var go = document.createElement("span");
+      go.className = "go";
+      go.textContent = "›";
+      it.appendChild(idx);
+      it.appendChild(body);
+      it.appendChild(go);
+      it.addEventListener("click", function () {
+        if (v.url) openUrl(v.url);
+      });
+      list.appendChild(it);
+    });
+  }
+
+  function loadVideos() {
+    hide($("vid-err"));
+    $("vid-list").innerHTML = '<div class="empty"><div class="t">加载中…</div></div>';
+    var btn = $("vid-refresh");
+    var old = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "加载中…";
+    window.yibao.invoke("fun.videos", { tid: curTid, limit: 12 }).then(function (r) {
+      vidLoaded = true;
+      renderVideos(r && r.rows ? r.rows : []);
+    }).catch(function (e) {
+      $("vid-err").textContent = e && e.message ? e.message : "视频拉取失败，稍后重试";
+      show($("vid-err"));
+      renderVideos([]);
+    }).finally(function () {
+      btn.disabled = false;
+      btn.textContent = old;
+    });
+  }
+  $("vid-refresh").addEventListener("click", loadVideos);
+  $("vid-tid").addEventListener("change", function () {
+    curTid = $("vid-tid").value;
+    loadVideos();
+  });
+
+  // ---- 音乐直达 ----
+  var muInit = false;
+  function renderMusicItems(container, items, withPlay) {
+    container.innerHTML = "";
+    (items || []).forEach(function (it) {
+      var row = document.createElement("div");
+      row.className = "item";
+      var body = document.createElement("div");
+      body.className = "body";
+      var t = document.createElement("div");
+      t.className = "t";
+      t.textContent = it.name || "";
+      var m = document.createElement("div");
+      m.className = "m";
+      m.textContent = it.note || (it.url || "").replace(/^https?:\/\//, "");
+      body.appendChild(t);
+      body.appendChild(m);
+      row.appendChild(body);
+      if (withPlay) {
+        var play = document.createElement("button");
+        play.className = "play";
+        play.textContent = "去听";
+        play.addEventListener("click", function (ev) {
+          ev.stopPropagation();
+          openUrl(it.url);
+        });
+        row.appendChild(play);
+      }
+      row.addEventListener("click", function () { openUrl(it.url); });
+      container.appendChild(row);
+    });
+  }
+
+  function initMusic() {
+    muInit = true;
+    window.yibao.invoke("fun.music", {}).then(function (r) {
+      renderMusicItems($("mu-platforms"), r && r.platforms ? r.platforms : []);
+      var hot = $("mu-hot");
+      hot.innerHTML = "";
+      (r && r.keywords || []).forEach(function (kw) {
+        var c = document.createElement("button");
+        c.className = "chip";
+        c.textContent = kw;
+        c.addEventListener("click", function () {
+          $("mu-kw").value = kw;
+          searchMusic();
+        });
+        hot.appendChild(c);
+      });
+    }).catch(function () {
+      renderMusicItems($("mu-platforms"), []);
+    });
+  }
+
+  function searchMusic() {
+    var kw = $("mu-kw").value.trim();
+    if (!kw) { toast("先输入想听的歌或歌手"); return; }
+    var btn = $("mu-search");
+    btn.disabled = true;
+    btn.textContent = "搜索中…";
+    window.yibao.invoke("fun.music", { kw: kw }).then(function (r) {
+      var arr = r && r.search ? r.search : [];
+      $("mu-result-kw").textContent = kw;
+      renderMusicItems($("mu-result"), arr, true);
+      arr.length ? show($("mu-result-card")) : hide($("mu-result-card"));
+      if (!arr.length) toast("没有可用平台");
+    }).catch(function (e) {
+      hide($("mu-result-card"));
+      toast(e && e.message ? e.message : "搜索失败");
+    }).finally(function () {
+      btn.disabled = false;
+      btn.textContent = "搜索";
+    });
+  }
+  $("mu-search").addEventListener("click", searchMusic);
+  $("mu-kw").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { e.preventDefault(); searchMusic(); }
+  });
+
+  // ---- 每日一言 ----
+  var QT_CATS = [
+    ["", "随机"], ["d", "文学"], ["h", "影视"], ["i", "诗词"], ["a", "动画"],
+    ["b", "漫画"], ["c", "游戏"], ["j", "网易云"], ["k", "哲学"], ["l", "抖机灵"], ["e", "原创"],
+  ];
+  var quotes = [];
+  var qi = -1;
+  var qtLoaded = false;
+  fillSelect($("qt-cat"), QT_CATS, "");
+
+  function renderQuote() {
+    var q = quotes[qi];
+    if (!q) {
+      $("qt-text").textContent = "加载中…";
+      $("qt-text").className = "quote-text quote-loading";
+      $("qt-from").textContent = "";
+      return;
+    }
+    $("qt-text").className = "quote-text";
+    $("qt-text").textContent = q.text || "";
+    $("qt-from").textContent = q.from || "佚名";
+  }
+
+  function loadQuotes() {
+    hide($("qt-err"));
+    var cat = $("qt-cat").value;
+    renderQuote();
+    window.yibao.invoke("fun.quote", { cat: cat, count: 5 }).then(function (r) {
+      qtLoaded = true;
+      quotes = r && r.rows ? r.rows : [];
+      qi = quotes.length ? 0 : -1;
+      if (!quotes.length) {
+        $("qt-text").className = "quote-text quote-loading";
+        $("qt-text").textContent = "这一批没有拿到内容，点「换一句」再试试";
+        $("qt-from").textContent = "";
+        return;
+      }
+      renderQuote();
+    }).catch(function (e) {
+      $("qt-err").textContent = e && e.message ? e.message : "一言拉取失败，稍后重试";
+      show($("qt-err"));
+      $("qt-text").className = "quote-text quote-loading";
+      $("qt-text").textContent = "—";
+      $("qt-from").textContent = "";
+    });
+  }
+
+  function nextQuote() {
+    // 本地轮换，轮完再拉新的（省请求）
+    if (qi + 1 < quotes.length) {
+      qi += 1;
+      renderQuote();
+      return;
+    }
+    loadQuotes();
+  }
+  $("qt-next").addEventListener("click", nextQuote);
+  $("qt-cat").addEventListener("change", function () { quotes = []; qi = -1; loadQuotes(); });
+
+  // ---- 面板事件：对话流（LLM 调 fun.open 带 tab）打开时定位 tab ----
+  window.yibao.onInit(function (data) {
+    if (!data || !data.tab) return;
+    if (data.tab === "music") showTab("music");
+    else if (data.tab === "quote") showTab("quote");
+    else showTab("videos");
+  });
+})();
+</script>
+</body>
+</html>

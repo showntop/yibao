@@ -1,0 +1,25 @@
+# 娱乐面板可调方法白名单（v2 §7）：纯函数直调，L1 不弹确认，可并发
+
+[[method]]
+name = "open"
+handler = "fun.open"
+direct = true
+panel = "fun:main"
+
+[[method]]
+name = "videos"
+handler = "fun.videos"
+direct = true
+panel = "fun:main"
+
+[[method]]
+name = "music"
+handler = "fun.music"
+direct = true
+panel = "fun:main"
+
+[[method]]
+name = "quote"
+handler = "fun.quote"
+direct = true
+panel = "fun:main"

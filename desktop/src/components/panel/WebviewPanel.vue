@@ -96,9 +96,9 @@ function onMessage(ev: MessageEvent) {
   const bid = d.id;
   const method = typeof d.method === "string" ? d.method : "";
   // native: 旁路：iframe 无 Tauri IPC，白名单内的原生能力（pick_folder 文件夹选择器 /
-  // save_attachment 粘贴图片落盘 / save_file 保存对话框落盘）不经 sidecar 直调 Tauri 命令。
-  // 白名单严格限定——不放开任意原生命令透传。
-  const NATIVE = new Set(["native:pick_folder", "native:save_attachment", "native:save_file"]);
+  // save_attachment 粘贴图片落盘 / save_file 保存对话框落盘 / open_url 打开系统浏览器）
+  // 不经 sidecar 直调 Tauri 命令。白名单严格限定——不放开任意原生命令透传。
+  const NATIVE = new Set(["native:pick_folder", "native:save_attachment", "native:save_file", "native:open_url"]);
   if (NATIVE.has(method)) {
     const cmd = method.slice("native:".length); // "pick_folder"
     invoke(cmd, (d.params as Record<string, unknown>) ?? {})

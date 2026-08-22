@@ -47,6 +47,24 @@ pub fn open_data_dir(app: AppHandle) -> Result<(), String> {
         .map_err(|e| format!("打开数据目录失败：{e}"))
 }
 
+/// 用系统默认浏览器打开外链（娱乐等插件的「看视频/听音乐」跳转通道）。
+/// webview iframe 无 Tauri IPC，面板经 WebviewPanel `native:` 白名单旁路直调本命令。
+/// 只放 http/https，防任意 scheme（file:/yibao: 等）被利用。
+#[tauri::command]
+pub fn open_url(app: AppHandle, url: String) -> Result<(), String> {
+    let trimmed = url.trim().to_string();
+    let lower = trimmed.to_lowercase();
+    if !(lower.starts_with("https://") || lower.starts_with("http://")) {
+        return Err("只允许打开 http/https 链接".into());
+    }
+    if trimmed.len() > 4096 {
+        return Err("链接过长".into());
+    }
+    app.opener()
+        .open_url(trimmed.as_str(), None::<&str>)
+        .map_err(|e| format!("打开链接失败：{e}"))
+}
+
 /// 原生文件夹选择器（coding 面板 cwd 药丸用）：webview iframe 无 Tauri IPC，
 /// 面板经 WebviewPanel `native:` 白名单旁路直调本命令，对话框必须 Rust 侧开。
 /// 返回所选绝对路径；用户取消返回 None。
