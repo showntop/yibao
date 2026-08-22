@@ -1,11 +1,13 @@
 """Lifecycle owner for watch behaviors."""
 from __future__ import annotations
 
+from .log import log
 import asyncio
 import sys
 import time
 
 from .watch import Budget, WatchCtx, WatchSnapshot, build_behaviors, snapshot_from_perception
+
 
 
 class WatchService:
@@ -120,13 +122,13 @@ class WatchService:
                             self.dispatcher.emit(event)
                     except Exception as exc:
                         self._last_error = f"{behavior.name}: {exc}"
-                        print(f"[yibao] watch 行为 {behavior.name} 报错（跳过）：{exc}", file=sys.stderr)
+                        log(f"watch 行为 {behavior.name} 报错（跳过）：{exc}")
                 await asyncio.sleep(cadence)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 self._last_error = str(exc)
-                print(f"[yibao] watch tick 异常（继续）：{exc}", file=sys.stderr)
+                log(f"watch tick 异常（继续）：{exc}")
                 await asyncio.sleep(cadence)
 
     def _snapshot(self, now: float, *, max_age: float) -> WatchSnapshot:

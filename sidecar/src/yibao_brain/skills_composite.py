@@ -17,12 +17,12 @@ import re
 import subprocess
 import time
 import urllib.parse
-import urllib.request
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
 from .config import search_api_key, search_engine, search_provider, search_searxng_url
+from .http_client import fetch_url_text, get_bytes, post_bytes
 from .ipc import ActionResult, RiskLevel
 from .skills import Skill, SkillContext, SkillRegistry
 
@@ -32,30 +32,11 @@ _SEARCH_ENGINES = {
     "google": "https://www.google.com/search?q=",
 }
 
-_MAX_FETCH_BYTES = 2_000_000  # 网页下载上限（防超大页拖死）
 _MAX_RESULTS = 8              # 搜索结果条数上限
-_FETCH_TIMEOUT = 10           # 网络请求超时（秒）
-_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
 
 
 def _run_argv(argv: list[str], timeout: int = 10) -> subprocess.CompletedProcess:
     return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
-
-
-# ---- 网络请求基础 ----
-
-def _http_get(url: str, headers: dict | None = None) -> bytes:
-    req = urllib.request.Request(url, headers={"User-Agent": _UA, **(headers or {})})
-    with urllib.request.urlopen(req, timeout=_FETCH_TIMEOUT) as resp:
-        return resp.read(_MAX_FETCH_BYTES)
-
-
-def _http_post(url: str, payload: bytes, headers: dict) -> bytes:
-    req = urllib.request.Request(
-        url, data=payload, headers={"User-Agent": _UA, **headers}, method="POST"
-    )
-    with urllib.request.urlopen(req, timeout=_FETCH_TIMEOUT) as resp:
-        return resp.read(_MAX_FETCH_BYTES)
 
 
 def _browser_url(query: str, engine: str | None = None) -> str:
@@ -65,24 +46,7 @@ def _browser_url(query: str, engine: str | None = None) -> str:
     return base + urllib.parse.quote(query)
 
 
-# ---- 正文抓取（extract_url 用）----
-
-def _fetch_url_text(url: str) -> tuple[str, str]:
-    """抓网页并粗提取可读正文：返回 (标题, 正文文本)。"""
-    req = urllib.request.Request(url, headers={"User-Agent": _UA})
-    with urllib.request.urlopen(req, timeout=_FETCH_TIMEOUT) as resp:
-        raw = resp.read(_MAX_FETCH_BYTES)
-        charset = resp.headers.get_content_charset() or "utf-8"
-    src = raw.decode(charset, errors="replace")
-    m = re.search(r"<title[^>]*>(.*?)</title>", src, re.I | re.S)
-    title = " ".join(m.group(1).split()) if m else ""
-    body = re.sub(r"(?is)<(script|style|noscript)[^>]*>.*?</\1>", " ", src)
-    body = re.sub(r"(?s)<[^>]+>", " ", body)
-    body = re.sub(r"\s+", " ", body).strip()
-    if title and body.startswith(title):
-        body = body[len(title):].strip()
-    return title[:200], body
-
+# ---- 正文抓取（extract_url 用，实现见 http_client.fetch_url_text）----
 
 # ---- 搜索 provider 适配 ----
 
@@ -150,7 +114,7 @@ class _DDGResultParser(HTMLParser):
 
 def _search_ddg(query: str) -> list[dict]:
     url = "https://html.duckduckgo.com/html/?q=" + urllib.parse.quote(query)
-    raw = _http_get(url)
+    raw = get_bytes(url)
     parser = _DDGResultParser()
     parser.feed(raw.decode("utf-8", errors="replace"))
     return parser.results[:_MAX_RESULTS]
@@ -159,7 +123,7 @@ def _search_ddg(query: str) -> list[dict]:
 def _search_searxng(query: str, base: str) -> list[dict]:
     base = base.rstrip("/")
     url = f"{base}/search?q={urllib.parse.quote(query)}&format=json"
-    raw = _http_get(url, headers={"Accept": "application/json"})
+    raw = get_bytes(url, headers={"Accept": "application/json"})
     data = json.loads(raw.decode("utf-8", errors="replace"))
     out = []
     for r in data.get("results", []):
@@ -175,7 +139,7 @@ def _search_api(provider: str, query: str, key: str) -> list[dict]:
     """商用 Search API 统一适配：brave（GET）/ tavily（POST）/ serper（POST）。"""
     if provider == "brave":
         url = "https://api.search.brave.com/res/v1/web/search?q=" + urllib.parse.quote(query)
-        raw = _http_get(url, headers={"X-Subscription-Token": key})
+        raw = get_bytes(url, headers={"X-Subscription-Token": key})
         data = json.loads(raw.decode("utf-8", errors="replace"))
         items = data.get("web", {}).get("results", [])
         out = [
@@ -188,7 +152,7 @@ def _search_api(provider: str, query: str, key: str) -> list[dict]:
 
     if provider == "tavily":
         payload = json.dumps({"api_key": key, "query": query, "max_results": _MAX_RESULTS}).encode()
-        raw = _http_post("https://api.tavily.com/search", payload, {"Content-Type": "application/json"})
+        raw = post_bytes("https://api.tavily.com/search", payload, {"Content-Type": "application/json"})
         data = json.loads(raw.decode("utf-8", errors="replace"))
         items = data.get("results", [])
         return [
@@ -200,7 +164,7 @@ def _search_api(provider: str, query: str, key: str) -> list[dict]:
 
     if provider == "serper":
         payload = json.dumps({"q": query}).encode()
-        raw = _http_post("https://google.serper.dev/search", payload,
+        raw = post_bytes("https://google.serper.dev/search", payload,
                          {"X-API-KEY": key, "Content-Type": "application/json"})
         data = json.loads(raw.decode("utf-8", errors="replace"))
         items = data.get("organic", [])
@@ -358,7 +322,7 @@ class ExtractUrlSkill(Skill):
             max_chars = 8000
         max_chars = max(500, min(max_chars, 50000))
         try:
-            title, text = _fetch_url_text(url)
+            title, text = fetch_url_text(url)
         except Exception as e:
             return ActionResult(success=False, error=f"抓取失败：{e}")
         if not text:

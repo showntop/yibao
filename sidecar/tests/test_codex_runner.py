@@ -511,7 +511,7 @@ def test_resume_failure_falls_back_to_brief_new_session(monkeypatch):
             on_event({"kind": "done", "usage": {}})
             return "t-new"
 
-    monkeypatch.setattr(codingmod, "_build_brief",
+    monkeypatch.setattr(codingmod._sess, "_build_brief",
                         lambda llm, turns, git, src, dst: "交接摘要XYZ")
     monkeypatch.setattr(codingmod._codex, "git_summary", lambda cwd: "")
     db = _FakeDB()
@@ -550,19 +550,19 @@ def test_resume_fallback_clears_usage_baseline(monkeypatch):
             on_event({"kind": "done", "usage": {}})
             return "t-new"
 
-    monkeypatch.setattr(codingmod, "_build_brief", lambda llm, turns, git, src, dst: "摘要")
+    monkeypatch.setattr(codingmod._sess, "_build_brief", lambda llm, turns, git, src, dst: "摘要")
     monkeypatch.setattr(codingmod._codex, "git_summary", lambda cwd: "")
     db = _FakeDB()
     db.rows["s1"] = {"id": "s1", "status": "running", "cc_session_id": "t-old", "agent": "codex"}
     entry = {"usage_baseline": {"input_tokens": 9000, "output_tokens": 900}}  # 旧 thread 累计值
-    codingmod._SESSIONS["s1"] = entry
+    codingmod._sess._SESSIONS["s1"] = entry
     try:
         _run(_stream(db, "s1", "/tmp", "p", _FlakyRunner(),
                      emit_event=None, cancel=__import__("threading").Event(),
                      resume_session_id="t-old", agent="codex", llm=object()))
         assert "usage_baseline" not in entry                     # 重跑前已清，不钳 fallback 轮差分
     finally:
-        codingmod._SESSIONS.pop("s1", None)
+        codingmod._sess._SESSIONS.pop("s1", None)
 
 
 def test_resume_failure_without_llm_keeps_failed():

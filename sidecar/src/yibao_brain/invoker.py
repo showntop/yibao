@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+from .log import log
 import hashlib
 import inspect
 import json
@@ -108,12 +109,12 @@ class ToolInvoker:
 
         if skill.allow_session_remember:
             self.gate.session_allowed.add(action.skill_id)
-            print(f"[yibao] 本会话不再询问：{action.skill_id}", file=sys.stderr)
+            log(f"本会话不再询问：{action.skill_id}")
             return
         action_key = self._session_action_key(action)
         if action_key is not None:
             self.gate.session_allowed_actions.add(action_key)
-            print(f"[yibao] 本会话允许相同参数：{action.skill_id}", file=sys.stderr)
+            log(f"本会话允许相同参数：{action.skill_id}")
 
     def execute(self, action: Action, params: dict, meta: dict | None = None) -> ActionResult:
         """执行 + 审计。技能异常转为失败结果，不抛出（不杀 run）。"""
@@ -158,7 +159,8 @@ class ToolInvoker:
         """审计写库失败只记 stderr、不中断对话（丢一条日志好过整个 run 崩掉）。"""
         import sys
 
+
         try:
             self.log.record(action, result, screenshot_path=result.screenshot_path)
         except Exception as e:
-            print(f"[yibao] 审计日志写入失败（已跳过）：{e}", file=sys.stderr)
+            log(f"审计日志写入失败（已跳过）：{e}")

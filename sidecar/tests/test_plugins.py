@@ -1064,6 +1064,12 @@ class _SeqProvider:
         self._n += 1
         return self._f.chat(messages, tools) if self._n == 1 else self._s.chat(messages, tools)
 
+    async def astream(self, messages, tools=None):
+        self._n += 1
+        src = self._f if self._n == 1 else self._s
+        async for d in src.astream(messages, tools):
+            yield d
+
 
 def test_chat_write_tool_panel_carries_refresh_data(data_dir, tmp_path):
     """对话路径写操作：面板事件拿 refresh 查询数据而非回执 {"id":…}（否则面板显示「暂无数据」）。"""

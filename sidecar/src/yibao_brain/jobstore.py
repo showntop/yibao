@@ -5,11 +5,13 @@ FeedStore 同款模式：check_same_thread=False + 锁 + 幂等迁移 + 写失�
 """
 from __future__ import annotations
 
+from .log import log
 import os
 import sqlite3
 import sys
 import threading
 import time
+
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -38,7 +40,7 @@ class JobsStore:
             with self._lock:
                 self._conn.executescript(_SCHEMA)
         except Exception as e:
-            print(f"[yibao] jobs 存储初始化失败（已降级为不持久化）：{e}", file=sys.stderr)
+            log(f"jobs 存储初始化失败（已降级为不持久化）：{e}")
 
     def add(self, job: dict) -> None:
         if self._conn is None:
@@ -54,7 +56,7 @@ class JobsStore:
                 )
                 self._conn.commit()
         except Exception as e:
-            print(f"[yibao] jobs 写入失败（已跳过）：{e}", file=sys.stderr)
+            log(f"jobs 写入失败（已跳过）：{e}")
 
     def finish(self, task_id: str, *, status: str, exit_code, output_tail: str) -> None:
         if self._conn is None:
@@ -67,7 +69,7 @@ class JobsStore:
                 )
                 self._conn.commit()
         except Exception as e:
-            print(f"[yibao] jobs 更新失败（已跳过）：{e}", file=sys.stderr)
+            log(f"jobs 更新失败（已跳过）：{e}")
 
     def running(self) -> list[dict]:
         if self._conn is None:
@@ -79,7 +81,7 @@ class JobsStore:
                 ).fetchall()
             return [dict(r) for r in rows]
         except Exception as e:
-            print(f"[yibao] jobs 查询失败（已降级为空）：{e}", file=sys.stderr)
+            log(f"jobs 查询失败（已降级为空）：{e}")
             return []
 
     def mark_interrupted(self, task_id: str) -> None:
@@ -93,7 +95,7 @@ class JobsStore:
                 )
                 self._conn.commit()
         except Exception as e:
-            print(f"[yibao] jobs 标记失败（已跳过）：{e}", file=sys.stderr)
+            log(f"jobs 标记失败（已跳过）：{e}")
 
     def close(self) -> None:
         if self._conn is not None:

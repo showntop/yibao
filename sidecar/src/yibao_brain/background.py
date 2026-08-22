@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+from .log import log
 import asyncio
 import os
 import re
@@ -65,7 +66,7 @@ async def _dispatch_reminder(r: dict, *, settings: dict, feed, history, voice,
             write_msg({"type": "event", "surface": "pet", "event": {"kind": "speaking"}})
             await voice.speak_stream(_once(), asyncio.Event())
         except Exception as e:
-            print(f"[yibao] 提醒播报失败：{e}", file=sys.stderr)
+            log(f"提醒播报失败：{e}")
         write_msg({"type": "event", "surface": "pet", "event": {"kind": "speaking_done"}})
 
 
@@ -138,7 +139,7 @@ def _watch_tick(behaviors, snapshot, stgs) -> list:
         try:
             ev = b.tick(snapshot, ctx)
         except Exception as e:
-            print(f"[yibao] watch 行为 {getattr(b, 'name', '?')} 报错（跳过）：{e}", file=sys.stderr)
+            log(f"watch 行为 {getattr(b, 'name', '?')} 报错（跳过）：{e}")
             continue
         if not ev:
             continue
@@ -236,12 +237,12 @@ async def _perception_cleanup_tick(pstore, distiller) -> None:
         try:
             await _offload(pstore.purge)
         except Exception as e:
-            print(f"[yibao] 感知过期清理失败：{e}", file=sys.stderr)
+            log(f"感知过期清理失败：{e}")
     if distiller is not None:
         try:
             await _offload(distiller.store.purge)
         except Exception as e:
-            print(f"[yibao] 提炼原料清理失败：{e}", file=sys.stderr)
+            log(f"提炼原料清理失败：{e}")
 
 
 async def _perception_cleanup_loop(pstore, distiller) -> None:
@@ -259,7 +260,7 @@ async def _distiller_tick(settings: dict, distiller) -> None:
         if auto_run_due(time.time(), last):
             await _offload(distiller.run_yesterday, "auto")
     except Exception as e:
-        print(f"[yibao] 自动提炼失败：{e}", file=sys.stderr)
+        log(f"自动提炼失败：{e}")
 
 
 async def _distiller_loop(settings: dict, distiller) -> None:
@@ -275,10 +276,10 @@ async def _reminder_tick(*, store, agent, settings, feed, voice, run_state,
     try:
         due = await _offload(store.pop_due, time.time())
     except Exception as e:
-        print(f"[yibao] 提醒扫描失败：{e}", file=sys.stderr)
+        log(f"提醒扫描失败：{e}")
         return
     for r in due:
-        print(f"[yibao] 提醒触发 id={r.get('id')}：{str(r.get('text', ''))[:30]!r}", file=sys.stderr)
+        log(f"提醒触发 id={r.get('id')}：{str(r.get('text', ''))[:30]!r}")
         await _dispatch_reminder(r, settings=settings, feed=feed, history=agent.history,
                                  voice=voice, run_state=run_state, write_msg=write_msg,
                                  dispatcher=dispatcher)
@@ -305,6 +306,7 @@ def _recap_decide(*, settings: dict, last_recap_day: str | None, today: str,
     if last_recap_day == today:
         return None
     from .distiller import recap_select, build_recap_text, yesterday_window
+
     selected = recap_select(yesterday_items)
     if not selected:
         return None

@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+from .log import log
 import asyncio
 import itertools
 import sys
@@ -137,13 +138,14 @@ async def _enrich_later(agent: AgentLoop, material_id: str | None) -> None:
             return
         await _offload(agent.invoker.execute, action, {"id": material_id})
     except Exception as e:
-        print(f"[yibao] 素材后台精整失败（已跳过）：{e}", file=sys.stderr)
+        log(f"素材后台精整失败（已跳过）：{e}")
 
 
 async def _start_http_api(agent: AgentLoop, settings: dict, tap, deps) -> "object | None":
     """起 aiohttp HTTP 面（扩展桥 + 移动 API）；失败 → stderr + None（不拖垮大脑）。"""
     try:
         from .http_api import build_app, run_server
+
 
         # token 兜底生成后传"现取闭包"：桌面重置 token（settings_set）后无需重启面
         _ensure_http_token(settings, "http.token")
@@ -156,10 +158,10 @@ async def _start_http_api(agent: AgentLoop, settings: dict, tap, deps) -> "objec
         )
         bind = str(settings.get("http.bind") or "127.0.0.1")
         runner = await run_server(app, bind, http_port())
-        print(f"[yibao] HTTP 面（桥+移动 API）已监听 {bind}:{http_port()}", file=sys.stderr)
+        log(f"HTTP 面（桥+移动 API）已监听 {bind}:{http_port()}")
         return runner
     except Exception as e:
-        print(f"[yibao] HTTP 面启动失败（{e}，已禁用）", file=sys.stderr)
+        log(f"HTTP 面启动失败（{e}，已禁用）")
         return None
 
 
@@ -208,7 +210,7 @@ async def _reminders_list_payload(agent: AgentLoop) -> dict:
         rows = out.get("data", {}).get("rows") if out.get("ok") else None
         return {"ok": True, "items": rows or []}
     except Exception as e:
-        print(f"[yibao] 提醒列出失败（已降级空列表）：{e}", file=sys.stderr)
+        log(f"提醒列出失败（已降级空列表）：{e}")
         return {"ok": True, "items": []}
 
 

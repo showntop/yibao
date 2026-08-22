@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+from .log import log
 import asyncio
 import contextvars
 import itertools
@@ -69,27 +70,23 @@ from .bridge import (
 )
 from .panel import _is_readonly_direct, _readonly_no_run, _render_intent, handle_panel_action
 
-ReadMsg = Callable[[], dict | None]
-WriteMsg = Callable[[dict], None]
-
 # 面板焦点（v2 §5）：壳侧 panel_context 消息维护，run 时注入 LLM 上下文（「这个/它」有解）
 _FOCUS: dict = {"value": None}
 
 # 被抢占任务的收尾宽限（秒）：超时强制取消，防 hung 任务把槽位卡死（「点了没反应」的根）
 _PREEMPT_GRACE_S = 8.0
 
-# 连续语音会话（voice_start continuous）：退出语（确定性匹配，不过 LLM）、告别语、
-# 开场提示、连续没听清几轮自动退（防无人时麦克风空转）。
-_VOICE_EXIT_PHRASES = {"退出", "退出对话", "没事了", "没事", "不用了", "再见", "拜拜", "谢谢你", "谢谢", "先这样"}
-_VOICE_SESSION_BYE = "好的，先聊到这儿，叫我随时来～"
-_VOICE_SESSION_HINT = "连续对话中：你说完我答，答完接着听；说「退出」或点团子结束"
-_VOICE_SESSION_MAX_EMPTY = 2
-_EXIT_STRIP = "，。！？、~～… .!?,，"
-
-
-def _is_exit_phrase(text: str) -> bool:
-    """退出语判定：剥掉语气标点/空白后整句命中词表（「先这样了谢谢」这类混合句不拦，交给 LLM）。"""
-    return text.strip(_EXIT_STRIP).strip() in _VOICE_EXIT_PHRASES
+# stdio 协议 + 语音退出语已拆到 transport.py（re-export 保持 server.<name> 引用路径）
+from .transport import (  # noqa: E402
+    ReadMsg,
+    WriteMsg,
+    _VOICE_SESSION_BYE,
+    _VOICE_SESSION_HINT,
+    _VOICE_SESSION_MAX_EMPTY,
+    is_exit_phrase as _is_exit_phrase,
+    line_reader,
+    line_writer,
+)
 
 # 看门狗心跳：pong 改由读线程直接应答（见 serve_async._reader），不经事件循环——
 # 循环被长任务占住时照样 pong（忙 ≠ 死，历史误杀的根）；
@@ -160,7 +157,7 @@ def build_loop(
                             return None
 
                 except Exception as e:
-                    print(f"[yibao] computer-use 兜底未启用：{e}", file=sys.stderr)
+                    log(f"computer-use 兜底未启用：{e}")
                     cu_client = None
             register_real_skills(reg, describe=describe)
             register_composite_skills(reg)
@@ -168,7 +165,7 @@ def build_loop(
                 try:
                     reg.register(ComputerUseSkill(cu_client, max_steps=computer_use_max_steps()))
                 except Exception as e:
-                    print(f"[yibao] computer-use 技能注册失败：{e}", file=sys.stderr)
+                    log(f"computer-use 技能注册失败：{e}")
 
     if provider is not None:
         prov = provider
@@ -188,7 +185,7 @@ def build_loop(
 
             host = MacHost(screenshot_dir=screenshot_dir())
         except Exception as e:  # pyobjc 未装 / 非 mac → 回退无基座（技能会优雅报错）
-            print(f"[yibao] MacHost 不可用，回退无基座：{e}", file=sys.stderr)
+            log(f"MacHost 不可用，回退无基座：{e}")
 
     active_plugins: set | None = None  # None=全量暴露（测试/兼容）；集合=路由式暴露
     reminder_store = None
@@ -266,9 +263,9 @@ def _load_plugins_safe(reg, memory, prov, host, reminders=None, emit_event=None)
             emit_event=emit_event,
         )
         for pid, status in results.items():
-            print(f"[yibao] 插件 {pid}: {status}", file=sys.stderr)
+            log(f"插件 {pid}: {status}")
     except Exception as e:
-        print(f"[yibao] 插件加载失败（已跳过）：{e}", file=sys.stderr)
+        log(f"插件加载失败（已跳过）：{e}")
 
 
 def _run_done_msg(rid, conversation_id: str = "") -> dict:
@@ -450,7 +447,7 @@ async def serve_async(
             # B 会话的确认等待（并发对话 spec §B）。
             cancel = _ctx.get("cancel")
             cancel_wait = ai_loop.create_task(cancel.wait()) if cancel is not None else None
-            print(f"[yibao] 等待用户确认：{skill_id}", file=sys.stderr)
+            log(f"等待用户确认：{skill_id}")
             try:
                 waiters: set = {fut}
                 if cancel_wait is not None:
@@ -458,10 +455,10 @@ async def serve_async(
                 done, _ = await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
                 if fut in done:
                     approved, remember = fut.result()
-                    print(f"[yibao] 确认结果：{'允许' if approved else '拒绝'}（{skill_id}）", file=sys.stderr)
+                    log(f"确认结果：{'允许' if approved else '拒绝'}（{skill_id}）")
                     out[cid] = (bool(approved), bool(remember))
                 else:
-                    print(f"[yibao] 确认被抢占取消：{skill_id}", file=sys.stderr)
+                    log(f"确认被抢占取消：{skill_id}")
                     out[cid] = (False, False)
             finally:
                 if cancel_wait is not None:
@@ -515,7 +512,7 @@ async def serve_async(
                 finally:
                     adb.close()
             except Exception as e:
-                print(f"[yibao] 进行中任务查询失败（已降级）：{e}", file=sys.stderr)
+                log(f"进行中任务查询失败（已降级）：{e}")
 
         out = []
         for row in rows:
@@ -547,7 +544,7 @@ async def serve_async(
                         "created_at": int(job.get("started_at") or 0),
                     })
             except Exception as e:
-                print(f"[yibao] 后台命令查询失败（已降级）：{e}", file=sys.stderr)
+                log(f"后台命令查询失败（已降级）：{e}")
         # coding 插件运行中会话（P2 督导）：sessions 表 status=running 为准——_SESSIONS
         # 仅存于流式期间、重启即丢，陈旧 running 由 coding.stop 的陈旧兜底补发 stopped，
         # 这里照列让用户在主屏可见可停（与 agents 段同策略：只读表，不碰插件内存态）。
@@ -565,7 +562,7 @@ async def serve_async(
                 finally:
                     cdb.close()
             except Exception as e:
-                print(f"[yibao] coding 会话查询失败（已降级）：{e}", file=sys.stderr)
+                log(f"coding 会话查询失败（已降级）：{e}")
                 crows = []
             perm = _coding_perm_registry()   # waiting 判定数据源（只读合并，同 _fulfill_coding_perm 先例）
             for row in crows:
@@ -616,7 +613,7 @@ async def serve_async(
                     continue
                 result = await _offload(agent.invoker.execute, action, {})
                 if not result.success:
-                    print(f"[yibao] widget {ref} 取数失败（已跳过）：{result.error}", file=sys.stderr)
+                    log(f"widget {ref} 取数失败（已跳过）：{result.error}")
                     continue
                 result.panel = ref
                 payload = panel_payload(result)
@@ -624,7 +621,7 @@ async def serve_async(
                     payload["open"] = decl.get("open")
                     out.append(payload)
             except Exception as e:
-                print(f"[yibao] widget {ref} 取数异常（已跳过）：{e}", file=sys.stderr)
+                log(f"widget {ref} 取数异常（已跳过）：{e}")
         return out
 
     # 感知是增强面：Keychain/SQLite 不可用时保持关闭，绝不降级明文或拖垮大脑。
@@ -636,7 +633,7 @@ async def serve_async(
             pstore = PerceptionStore(perception_db_path())
         except Exception as e:
             settings["perception.master"] = False
-            print(f"[yibao] 感知不可用（保持关闭）：{e}", file=sys.stderr)
+            log(f"感知不可用（保持关闭）：{e}")
 
     # Distiller（感知 v3）：离线深加工层。perception.distill 关闭时调度循环直接跳过，零出站。
     distiller = None
@@ -653,7 +650,7 @@ async def serve_async(
                 history_fn=lambda: agent.history.messages()[-10:],
             )
         except Exception as e:
-            print(f"[yibao] 提炼器初始化失败（不影响主链路）：{e}", file=sys.stderr)
+            log(f"提炼器初始化失败（不影响主链路）：{e}")
             distiller = None
 
     if pstore is not None:
@@ -669,7 +666,7 @@ async def serve_async(
         try:
             pstore.purge()
         except Exception as e:
-            print(f"[yibao] 感知过期清理失败：{e}", file=sys.stderr)
+            log(f"感知过期清理失败：{e}")
         if use_real or perception_sensors is not None:
             try:
                 if perception_sensors is None:
@@ -735,7 +732,7 @@ async def serve_async(
                 perception_thread.start()
             except Exception as e:
                 settings["perception.master"] = False
-                print(f"[yibao] 感知采样器启动失败（保持关闭）：{e}", file=sys.stderr)
+                log(f"感知采样器启动失败（保持关闭）：{e}")
 
     perception_cleanup_task = asyncio.ensure_future(_perception_cleanup_loop(pstore, distiller))
     distiller_task = asyncio.ensure_future(_distiller_loop(settings, distiller))
@@ -749,7 +746,7 @@ async def serve_async(
 
             _wvision = ComputerUseClient()
         except Exception as e:
-            print(f"[yibao] watch 视觉不可用（主动搭话禁用）：{e}", file=sys.stderr)
+            log(f"watch 视觉不可用（主动搭话禁用）：{e}")
     try:
         from .perception import sample_frontmost_bundle_id
     except Exception:
@@ -774,7 +771,7 @@ async def serve_async(
             try:
                 rows = await _offload(agent.memory.list_all, uid)
             except Exception as e:
-                print(f"[yibao] 记忆列出失败（{label}，已跳过）：{e}", file=sys.stderr)
+                log(f"记忆列出失败（{label}，已跳过）：{e}")
                 continue
             for r in rows:
                 out.append({"id": r["id"], "text": r["text"], "ns": ns, "label": label,
@@ -809,7 +806,7 @@ async def serve_async(
                 if lag < _TICK_FRESH_S:
                     write_msg({"type": "pong"})
                 else:
-                    print(f"[yibao] 主循环 {lag:.0f}s 未调度，扣住 pong 待看门狗处置", file=sys.stderr)
+                    log(f"主循环 {lag:.0f}s 未调度，扣住 pong 待看门狗处置")
                 continue
             try:
                 ai_loop.call_soon_threadsafe(queue.put_nowait, msg)
@@ -890,7 +887,7 @@ async def serve_async(
                 write_msg({"type": "event", "surface": surface, "conversation_id": conversation_id, "event": {"kind": "interrupted"}})
             if emit_done:  # 连续语音会话里 run_done 由 _drive_voice_start 在会话结束时统一发
                 write_msg(_run_done_msg(rid, conversation_id))
-            print(f"[yibao] run 完成 rid={rid}（{time.monotonic() - t0:.1f}s）", file=sys.stderr)
+            log(f"run 完成 rid={rid}（{time.monotonic() - t0:.1f}s）")
 
     async def _drive_run(text: str, rid, cancel: asyncio.Event, surface: str = "pet", conversation_id: str = ""):
         await _stream_agent(text, rid, cancel, surface, conversation_id)
@@ -923,7 +920,7 @@ async def serve_async(
                 return
             finally:
                 watcher.cancel()
-            print(f"[yibao] 聆听结束（{time.monotonic() - t0:.1f}s）：{text[:30]!r}", file=sys.stderr)
+            log(f"聆听结束（{time.monotonic() - t0:.1f}s）：{text[:30]!r}")
             if cancel.is_set():  # 聆听被打断：不走 listening_done（避免误进 think 态）
                 _vev({"kind": "interrupted"})
                 _done()
@@ -956,7 +953,7 @@ async def serve_async(
                 try:
                     await voice.speak_stream(_bye(), cancel)
                 except Exception as e:
-                    print(f"[yibao] 会话告别播报失败：{e}", file=sys.stderr)
+                    log(f"会话告别播报失败：{e}")
                 finally:
                     tts_lock.release()
                 if cancel.is_set():
@@ -998,7 +995,7 @@ async def serve_async(
         if conv_key or slot["surface"] == surface:
             _preempt_current(slot)
         else:
-            print(f"[yibao] 跨 surface 请求排队（在跑={slot['surface']}，新={surface}）", file=sys.stderr)
+            log(f"跨 surface 请求排队（在跑={slot['surface']}，新={surface}）")
             write_msg({"type": "event", "surface": surface, "event": {
                 "kind": "notice", "text": "另一个窗口还在说，等它说完就轮到你…"}})
 
@@ -1028,7 +1025,7 @@ async def serve_async(
         不消费 invoke_ctx：那是桌面截图唤起的一次性上下文，留给桌面下一次 run。"""
         rid = f"mob_{next(_MOB_SEQ)}"
         start = lambda c, t=text, r=rid, ci=conversation_id: _drive_run(t, r, c, "mobile", ci)
-        print(f"[yibao] run 受理 rid={rid} surface=mobile conv={conversation_id}：{text[:30]!r}", file=sys.stderr)
+        log(f"run 受理 rid={rid} surface=mobile conv={conversation_id}：{text[:30]!r}")
         _schedule_run("mobile", rid, start, conversation_id)
         return {"ok": True, "run_id": rid, "conversation_id": conversation_id}
 
@@ -1133,12 +1130,12 @@ async def serve_async(
         """
         if prev is not None and not prev.done():
             t0 = time.monotonic()
-            print("[yibao] 新请求排队，等上一任务收尾…", file=sys.stderr)
+            log("新请求排队，等上一任务收尾…")
             try:
                 # shield：wait_for 超时不许连带取消 prev，强制取消由我们自己控制
                 await asyncio.wait_for(asyncio.shield(prev), timeout=_PREEMPT_GRACE_S)
             except asyncio.TimeoutError:
-                print(f"[yibao] 上一任务 {_PREEMPT_GRACE_S:.0f}s 未收尾，强制取消", file=sys.stderr)
+                log(f"上一任务 {_PREEMPT_GRACE_S:.0f}s 未收尾，强制取消")
                 prev.cancel()
                 try:
                     await prev
@@ -1146,7 +1143,7 @@ async def serve_async(
                     pass
             except (asyncio.CancelledError, Exception):
                 pass  # prev 自身异常/被取消都算已收尾
-            print(f"[yibao] 上一任务收尾完成（{time.monotonic() - t0:.1f}s）", file=sys.stderr)
+            log(f"上一任务收尾完成（{time.monotonic() - t0:.1f}s）")
         cancel = asyncio.Event()
         if slot["preempt_gen"] > queued_gen:
             cancel.set()
@@ -1154,7 +1151,7 @@ async def serve_async(
         try:
             await start(cancel)
         except Exception as e:  # 兜底：任务未预期的异常不能毒死槽位
-            print(f"[yibao] 任务异常收尾：{type(e).__name__}: {e}", file=sys.stderr)
+            log(f"任务异常收尾：{type(e).__name__}: {e}")
 
     # HTTP 面（扩展桥+移动 API）：deps 里的闭包依赖上文 _drive_run 等，故在主循环前才组装启动
     _http_deps = MobileDeps()
@@ -1235,7 +1232,7 @@ async def serve_async(
             if rtype == "voice_start" and voice is None:
                 # 语音不可用（未启用/初始化失败）：不许静默吞掉——前端会永远卡「聆听中」
                 rid = msg.get("id")
-                print("[yibao] voice_start 收到但语音栈不可用", file=sys.stderr)
+                log("voice_start 收到但语音栈不可用")
                 write_msg({"type": "event", "event": {"kind": "error", "text": "语音不可用：麦克风初始化失败或被禁用"}})
                 write_msg(_run_done_msg(rid, str(msg.get("conversation_id") or "")))
                 continue
@@ -1258,13 +1255,13 @@ async def serve_async(
                             t = f"[附件图片内容]\n{att_desc}\n\n{t}"
                     await _drive_run(t, r, c, s, ci)
 
-                print(f"[yibao] run 受理 rid={rid} surface={surface} conv={conversation_id}：{text[:30]!r}", file=sys.stderr)
+                log(f"run 受理 rid={rid} surface={surface} conv={conversation_id}：{text[:30]!r}")
                 _schedule_run(surface, rid, _start, conversation_id)
             elif voice is not None:
                 rid = msg.get("id")
                 cont = bool(msg.get("continuous"))
                 start = lambda c, r=rid, s=surface, ci=conversation_id, ct=cont: _drive_voice_start(r, c, s, ci, ct)
-                print(f"[yibao] voice_start 受理 rid={rid} surface={surface} conv={conversation_id} continuous={cont}", file=sys.stderr)
+                log(f"voice_start 受理 rid={rid} surface={surface} conv={conversation_id} continuous={cont}")
                 _schedule_run(surface, rid, start, conversation_id)
             else:
                 continue
@@ -1275,7 +1272,7 @@ async def serve_async(
                     try:
                         await handle_panel_action(m, agent, write_msg, run_text=_readonly_no_run)
                     except Exception as e:
-                        print(f"[yibao] 只读面板调用异常：{type(e).__name__}: {e}", file=sys.stderr)
+                        log(f"只读面板调用异常：{type(e).__name__}: {e}")
 
                 t = asyncio.ensure_future(_ro())
                 readonly_tasks.add(t)
@@ -1374,7 +1371,7 @@ async def serve_async(
                     if distiller is not None:
                         distiller.store.set_recap_day(today)
             except Exception as e:
-                print(f"[yibao] recap_check 失败：{e}", file=sys.stderr)
+                log(f"recap_check 失败：{e}")
         elif rtype == "distill_timeline":
             # 设置页/回顾视图：近 N 天提炼聚合（distiller 不在则空数组）
             try:
@@ -1382,7 +1379,7 @@ async def serve_async(
                 write_msg({"type": "distill_timeline",
                            "days": distiller.store.recent_days(days) if distiller else []})
             except Exception as e:
-                print(f"[yibao] distill_timeline 失败：{e}", file=sys.stderr)
+                log(f"distill_timeline 失败：{e}")
                 write_msg({"type": "distill_timeline", "days": []})
         elif rtype == "feed_stats":
             # 设置页「主动行为统计」：近 N 天主动行为聚合（默认 7 天）
@@ -1404,7 +1401,7 @@ async def serve_async(
                     if desc:
                         invoke_ctx.update({"text": desc, "ts": time.time()})
                 except Exception as e:
-                    print(f"[yibao] 唤起抓屏失败（已跳过）：{e}", file=sys.stderr)
+                    log(f"唤起抓屏失败（已跳过）：{e}")
         elif rtype == "snip_capture":
             # 截图即问（E）：壳侧 overlay 选区（物理像素）→ 区域截图 → b64 暂存待 vision_query。
             # 无截图能力/失败一律静默跳过。
@@ -1424,7 +1421,7 @@ async def serve_async(
                 except Exception as e:
                     # 失败清旧暂存：别让下次 vision_query 拿上一次的截图回答
                     snip_ctx.update({"b64": None})
-                    print(f"[yibao] 区域截图失败（已跳过）：{e}", file=sys.stderr)
+                    log(f"区域截图失败（已跳过）：{e}")
         elif rtype == "vision_query":
             # 截图即问：暂存区域截图 + 问题 → vision 直答（不走 run，不占对话历史）。
             # 复用 run 的事件/run_done 协议（id 与 run_input 同为 0），壳侧状态机零改动。
@@ -1526,7 +1523,7 @@ async def serve_async(
                     settings.update(load_settings())
                     await watch_service.apply_settings()
                 except Exception as e:
-                    print(f"[yibao] 设置保存失败：{e}", file=sys.stderr)
+                    log(f"设置保存失败：{e}")
             write_msg({"type": "settings", "values": {**settings, "watch.status": watch_service.status()}})
         elif rtype == "dock_list":
             # 主屏 Dock 查询：pinned 优先 + 频率补齐（详见 _dock_list）
@@ -1559,7 +1556,7 @@ async def serve_async(
                     save_settings({"dock_pinned": cur_list})
                     settings["dock_pinned"] = list(cur_list)
                 except Exception as e:
-                    print(f"[yibao] dock_pinned 写入失败：{e}", file=sys.stderr)
+                    log(f"dock_pinned 写入失败：{e}")
                     ok = False
             write_msg({"type": "dock_pin_set", "pid": pid, "ok": ok,
                        "dock": _dock_list(agent.log, _plugin_summaries_list())})
@@ -1607,29 +1604,6 @@ async def serve_async(
             write_msg({"type": "permissions", "permissions": _permissions_status()})
 
 
-def _line_reader() -> ReadMsg:
-    def _r() -> dict | None:
-        line = sys.stdin.readline()
-        if not line:
-            return None
-        try:
-            return json.loads(line)
-        except json.JSONDecodeError:
-            return None
-    return _r
-
-
-def _line_writer() -> WriteMsg:
-    lock = threading.Lock()  # pong 由读线程直发，与主循环消息共享 stdout，防行交错
-
-    def _w(msg: dict) -> None:
-        with lock:
-            sys.stdout.write(json.dumps(msg, ensure_ascii=False) + "\n")
-            sys.stdout.flush()
-
-    return _w
-
-
 def _build_voice_or_none():
     if not (voice_enabled() and sys.platform == "darwin"):
         return None
@@ -1644,7 +1618,7 @@ def _build_voice_or_none():
             max_seconds=vad_max_seconds(),
         )
     except Exception as e:
-        print(f"[yibao] 语音不可用，已禁用：{e}", file=sys.stderr)
+        log(f"语音不可用，已禁用：{e}")
         return None
 
 
@@ -1658,12 +1632,12 @@ def _watch_parent() -> None:
     while True:
         time.sleep(10)
         if os.getppid() != parent:
-            print("[yibao] 父进程已退出（ppid 变化），自我了断", file=sys.stderr)
+            log("父进程已退出（ppid 变化），自我了断")
             os._exit(0)
 
 
 def main() -> int:
-    reader, writer = _line_reader(), _line_writer()
+    reader, writer = line_reader(), line_writer()
     voice = _build_voice_or_none()
     threading.Thread(target=_watch_parent, daemon=True).start()
     # 数据目录分离：仓库时代的用户数据一次性迁走（sidecar/ → 应用数据目录）
@@ -1675,10 +1649,11 @@ def main() -> int:
     # 新大脑取锁前先把它们收掉；锁 fd 活到进程结束（OS 级，死即释）
     from .instance import ensure_single_instance
 
+
     try:
         _instance_lock_fd = ensure_single_instance(os.path.join(_cfg.data_dir(), "brain.lock"))
     except Exception as e:
-        print(f"[yibao] 大脑单实例锁获取失败：{e}", file=sys.stderr)
+        log(f"大脑单实例锁获取失败：{e}")
         return 1
     asyncio.run(
         serve_async(

@@ -1,6 +1,7 @@
 """CLI 文本壳：端到端驱动 AgentLoop（后续 Plan 2 的 Tauri 壳替换此入口）。"""
 from __future__ import annotations
 
+from .log import log
 import sys
 
 from .audit import AuditLog
@@ -26,7 +27,7 @@ def build_loop(use_real: bool, db_path: str = "audit.db"):
 
                 reg.register(ComputerUseSkill(ComputerUseClient(), max_steps=computer_use_max_steps()))
             except Exception as e:
-                print(f"[yibao] computer-use 兜底未启用：{e}", file=sys.stderr)
+                log(f"computer-use 兜底未启用：{e}")
 
     provider = OpenAICompatProvider() if (use_real and llm_api_key()) else FakeProvider(text="(未配置 LLM key，使用 fake 回复)")
     try:
@@ -39,9 +40,10 @@ def build_loop(use_real: bool, db_path: str = "audit.db"):
         try:
             from .mac.host_mac import MacHost
 
+
             host = MacHost(screenshot_dir=screenshot_dir())
         except Exception as e:
-            print(f"[yibao] MacHost 不可用，回退无基座：{e}", file=sys.stderr)
+            log(f"MacHost 不可用，回退无基座：{e}")
 
     def confirmer(actions) -> dict:
         # 批量 confirmer（Task 1）：逐个交互问，回 {id: (approved, remember)}。

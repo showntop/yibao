@@ -32,7 +32,7 @@ def test_second_run_sees_previous_turn(tmp_path):
     loop = build_loop(tmp_path, provider, history)
     list(loop.run("我叫小明"))
     list(loop.run("我叫什么"))
-    msgs = provider.calls[1]["messages"]
+    msgs = provider.astream_calls[1]["messages"]
     roles = [(m["role"], m["content"]) for m in msgs]
     assert ("user", "我叫小明") in roles
     assert ("assistant", "好的") in roles
@@ -216,7 +216,7 @@ def test_panel_surface_tagged_in_history(tmp_path):
     loop = build_loop(tmp_path, provider, history)
     list(loop.run("记一条选题", surface="panel:zimeiti"))
     list(loop.run("刚才那条呢"))
-    msgs = provider.calls[1]["messages"]
+    msgs = provider.astream_calls[1]["messages"]
     assert all("surface" not in m for m in msgs)  # provider 不认的字段不许漏过去
     assert {"role": "user", "content": "【zimeiti 面板】记一条选题"} in msgs
 
@@ -228,7 +228,7 @@ def test_pet_surface_not_tagged(tmp_path):
     loop = build_loop(tmp_path, provider, history)
     list(loop.run("你好", surface="pet"))
     list(loop.run("再说一遍"))
-    msgs = provider.calls[1]["messages"]
+    msgs = provider.astream_calls[1]["messages"]
     assert {"role": "user", "content": "你好"} in msgs
 
 

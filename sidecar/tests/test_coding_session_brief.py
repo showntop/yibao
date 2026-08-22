@@ -61,7 +61,7 @@ def test_session_brief_llm_brief_and_direction_wording(monkeypatch):
     db = _FakeDB()
     _mk_session(db, agent="claude-code", msgs=[("user", "实现登录"), ("assistant", "好的")])
     seen = {}
-    monkeypatch.setattr(codingmod, "_build_brief",
+    monkeypatch.setattr(codingmod._sess, "_build_brief",
                         lambda llm, turns, git, src, dst: seen.update(src=src, dst=dst) or "BRIEF")
     monkeypatch.setattr(codingmod._codex, "git_summary", lambda cwd: "")
     r = SessionBriefSkill().run({"id": "s1", "target": "codex"}, _Ctx(db, _FakeLlm()))
@@ -74,7 +74,7 @@ def test_session_brief_default_target_is_opposite(monkeypatch):
     db = _FakeDB()
     _mk_session(db, agent="codex", msgs=[("user", "hi")])
     seen = {}
-    monkeypatch.setattr(codingmod, "_build_brief",
+    monkeypatch.setattr(codingmod._sess, "_build_brief",
                         lambda llm, turns, git, src, dst: seen.update(src=src, dst=dst) or "B")
     monkeypatch.setattr(codingmod._codex, "git_summary", lambda cwd: "")
     r = SessionBriefSkill().run({"id": "s1"}, _Ctx(db, _FakeLlm()))
@@ -94,7 +94,7 @@ def test_session_brief_llm_failure_falls_back_to_excerpt(monkeypatch):
     """LLM 返回 None（provider 失败）→ 同样兜底原文节选。"""
     db = _FakeDB()
     _mk_session(db, msgs=[("user", "加个日志")])
-    monkeypatch.setattr(codingmod, "_build_brief", lambda *a: None)
+    monkeypatch.setattr(codingmod._sess, "_build_brief", lambda *a: None)
     monkeypatch.setattr(codingmod._codex, "git_summary", lambda cwd: "")
     r = SessionBriefSkill().run({"id": "s1"}, _Ctx(db, _FakeLlm()))
     assert r.success and "节选" in r.data["brief"] and "加个日志" in r.data["brief"]

@@ -7,11 +7,13 @@ M3 会话隔离闭环：模型上下文与前端 UI 会话一一对齐。
 """
 from __future__ import annotations
 
+from .log import log
 import json
 import os
 import sys
 import threading
 from pathlib import Path
+
 
 # 历史里的 tool 结果只留要点：完整结果可能很大（长列表/截图数据），
 # 模型从历史需要的是「调过工具、拿到过什么」的模式，不是全量数据。
@@ -150,4 +152,4 @@ class ConversationHistory:
             tmp.write_text(json.dumps(self._buckets, ensure_ascii=False), encoding="utf-8")
             os.replace(tmp, self.path)
         except OSError as e:
-            print(f"[yibao] 会话历史写入失败（已跳过）：{e}", file=sys.stderr)
+            log(f"会话历史写入失败（已跳过）：{e}")

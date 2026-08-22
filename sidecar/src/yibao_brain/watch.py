@@ -8,6 +8,7 @@ docs/superpowers/specs/2026-07-31-watch-mode-core-design.md
 """
 from __future__ import annotations
 
+from .log import log
 import base64
 import re
 import sys
@@ -15,6 +16,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
+
 
 
 @dataclass
@@ -246,7 +248,7 @@ def _proactive_look(host, vision, app: str, app_id: str, emit, *, frontmost, bud
         if isinstance(res, dict) and res.get("speak") and res.get("text"):
             emit({"kind": "reminder", "type": "proactive_chat", "text": str(res["text"])})
     except Exception as e:
-        print(f"[yibao] 主动搭话视觉调用失败（跳过）：{e}", file=sys.stderr)
+        log(f"主动搭话视觉调用失败（跳过）：{e}")
 
 
 class ProactiveChat:

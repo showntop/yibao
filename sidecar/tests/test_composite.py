@@ -194,7 +194,7 @@ def test_web_search_ddg_structured(monkeypatch):
         calls.append(url)
         return _DDG_HTML.encode("utf-8")
 
-    monkeypatch.setattr("yibao_brain.skills_composite._http_get", fake_get)
+    monkeypatch.setattr("yibao_brain.skills_composite.get_bytes", fake_get)
     r = WebSearchSkill(provider="ddg").run({"query": "译宝 AI"}, SkillContext())
     assert r.success
     assert r.data["provider"] == "ddg"
@@ -219,7 +219,7 @@ def test_web_search_searxng_structured(monkeypatch):
         calls.append(url)
         return payload
 
-    monkeypatch.setattr("yibao_brain.skills_composite._http_get", fake_get)
+    monkeypatch.setattr("yibao_brain.skills_composite.get_bytes", fake_get)
     r = WebSearchSkill(provider="searxng", searxng_url="http://127.0.0.1:8888").run({"query": "x"}, SkillContext())
     assert r.success
     assert "format=json" in calls[0]
@@ -246,7 +246,7 @@ def test_web_search_brave_structured(monkeypatch):
         calls.append((url, headers))
         return payload
 
-    monkeypatch.setattr("yibao_brain.skills_composite._http_get", fake_get)
+    monkeypatch.setattr("yibao_brain.skills_composite.get_bytes", fake_get)
     r = WebSearchSkill(provider="brave").run({"query": "x"}, SkillContext())
     assert r.success
     assert calls[0][1]["X-Subscription-Token"] == "k"
@@ -264,7 +264,7 @@ def test_web_search_tavily_structured(monkeypatch):
         calls.append(url)
         return payload
 
-    monkeypatch.setattr("yibao_brain.skills_composite._http_post", fake_post)
+    monkeypatch.setattr("yibao_brain.skills_composite.post_bytes", fake_post)
     r = WebSearchSkill(provider="tavily").run({"query": "x"}, SkillContext())
     assert r.success
     assert calls[0] == "https://api.tavily.com/search"

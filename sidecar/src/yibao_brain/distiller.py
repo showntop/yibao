@@ -10,6 +10,7 @@ perception.distill 关闭时零出站；未解析的 LLM 文本绝不投影。
 """
 from __future__ import annotations
 
+from .log import log
 import json
 import os
 import sqlite3
@@ -19,6 +20,7 @@ import time
 from datetime import date, datetime, timedelta
 
 from .perception import build_activity_segments
+
 
 _SUMMARY_CHAR_BUDGET = 20000   # 预聚合摘要字符上限（≈1 万 token）
 _B_ENTRY_TEXT_LIMIT = 200      # 单条 B 源文本截断
@@ -85,7 +87,7 @@ class DistillerStore:
                 self._conn.commit()
                 return int(cur.lastrowid)
         except Exception as e:
-            print(f"[yibao] 提炼落库失败：{e}", file=sys.stderr)
+            log(f"提炼落库失败：{e}")
             return None
 
     def mark_projected(self, ids: list[int]) -> None:
@@ -99,7 +101,7 @@ class DistillerStore:
                 )
                 self._conn.commit()
         except Exception as e:
-            print(f"[yibao] 提炼投影标记失败：{e}", file=sys.stderr)
+            log(f"提炼投影标记失败：{e}")
 
     def day_items(self, day: str) -> list[dict]:
         rows = self._conn.execute(
@@ -127,7 +129,7 @@ class DistillerStore:
                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (day,))
                 self._conn.commit()
         except Exception as e:
-            print(f"[yibao] recap 标记失败：{e}", file=sys.stderr)
+            log(f"recap 标记失败：{e}")
 
     def recap_last_day(self) -> str | None:
         try:
@@ -135,7 +137,7 @@ class DistillerStore:
                 "SELECT value FROM meta WHERE key='recap_last_day'").fetchone()
             return str(row["value"]) if row else None
         except Exception as e:
-            print(f"[yibao] recap 标记读取失败：{e}", file=sys.stderr)
+            log(f"recap 标记读取失败：{e}")
             return None
 
     def record_run(self, run_day: str, target_day: str, source: str,
@@ -150,7 +152,7 @@ class DistillerStore:
                 )
                 self._conn.commit()
         except Exception as e:
-            print(f"[yibao] 提炼运行记录失败：{e}", file=sys.stderr)
+            log(f"提炼运行记录失败：{e}")
 
     def last_auto_run_day(self) -> str | None:
         row = self._conn.execute(
@@ -172,7 +174,7 @@ class DistillerStore:
                 self._conn.commit()
                 return int(a or 0) + int(b or 0)
         except Exception as e:
-            print(f"[yibao] 提炼原料清理失败：{e}", file=sys.stderr)
+            log(f"提炼原料清理失败：{e}")
             return 0
 
     def recent_days(self, n: int = 14) -> list[dict]:
@@ -194,7 +196,7 @@ class DistillerStore:
                 out.append({"day": day, "status": status, "stats": stats, "items": items})
             return out
         except Exception as e:
-            print(f"[yibao] recent_days 查询失败：{e}", file=sys.stderr)
+            log(f"recent_days 查询失败：{e}")
             return []
 
     def close(self) -> None:
@@ -444,7 +446,7 @@ class Distiller:
             self.store.record_run(run_day, target_day, source, "ok", stats=stats)
             return {"status": "ok", "day": target_day, **counts}
         except Exception as e:
-            print(f"[yibao] 提炼失败：{e}", file=sys.stderr)
+            log(f"提炼失败：{e}")
             try:
                 self.store.record_run(run_day, target_day, source, "failed", str(e)[:200])
             except Exception:
@@ -460,7 +462,7 @@ class Distiller:
         try:
             return fn()
         except Exception as e:
-            print(f"[yibao] 提炼佐证读取失败：{e}", file=sys.stderr)
+            log(f"提炼佐证读取失败：{e}")
             return None
 
     def _project(self, day: str, result: dict) -> dict:
@@ -480,7 +482,7 @@ class Distiller:
                 self.memory.add(item["text"], self.user_id)
                 projected.append(did)
             except Exception as e:
-                print(f"[yibao] 模式写记忆失败：{e}", file=sys.stderr)
+                log(f"模式写记忆失败：{e}")
         # insight → Feed：置信度 ≥0.6 的前 3 条，带 distill_id 回指
         ranked = sorted(saved["insight"], key=lambda x: -x[1]["confidence"])
         for did, item in [
@@ -491,7 +493,7 @@ class Distiller:
                               {"type": "distill_insight", "distill_id": did})
                 projected.append(did)
             except Exception as e:
-                print(f"[yibao] 洞察投影 Feed 失败：{e}", file=sys.stderr)
+                log(f"洞察投影 Feed 失败：{e}")
         # event → Feed 按小时合并，防刷屏
         if saved["event"]:
             h = int(time.time()) // 3600 * 3600
@@ -503,7 +505,7 @@ class Distiller:
                     )
                     projected.append(did)
                 except Exception as e:
-                    print(f"[yibao] 事件投影 Feed 失败：{e}", file=sys.stderr)
+                    log(f"事件投影 Feed 失败：{e}")
         if projected:
             self.store.mark_projected(projected)
         return {

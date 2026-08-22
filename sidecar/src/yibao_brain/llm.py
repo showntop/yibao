@@ -1,6 +1,7 @@
 """LLM provider 抽象 + OpenAI 兼容端点实现（智谱 GLM / DeepSeek / OpenAI…）+ 测试用 Fake。"""
 from __future__ import annotations
 
+from .log import log
 import json
 import re
 import sys
@@ -390,7 +391,7 @@ def describe_screen(client, b64: str) -> str | None:
         text = (resp.choices[0].message.content or "").strip() if resp.choices else ""
         return text[:200] or None
     except Exception as e:
-        print(f"[yibao] 屏幕描述失败（已跳过）：{e}", file=sys.stderr)
+        log(f"屏幕描述失败（已跳过）：{e}")
         return None
 
 
@@ -416,7 +417,7 @@ def answer_image_query(client, b64: str, question: str) -> str | None:
         text = (resp.choices[0].message.content or "").strip() if resp.choices else ""
         return text or None
     except Exception as e:
-        print(f"[yibao] 截图问答失败（已跳过）：{e}", file=sys.stderr)
+        log(f"截图问答失败（已跳过）：{e}")
         return None
 
 
@@ -439,7 +440,7 @@ def summarize_screen(client, b64: str) -> str | None:
         text = (resp.choices[0].message.content or "").strip() if resp.choices else ""
         return text[:120] or None
     except Exception as e:
-        print(f"[yibao] B 源截图概括失败（已跳过）：{e}", file=sys.stderr)
+        log(f"B 源截图概括失败（已跳过）：{e}")
         return None
 
 
@@ -510,6 +511,7 @@ class ComputerUseClient:
 
             from PIL import Image
 
+
             payload = screenshot_b64.split(",", 1)[1]
             with Image.open(io.BytesIO(base64.b64decode(payload))) as image:
                 width, height = image.size
@@ -569,7 +571,7 @@ class ComputerUseClient:
             ))
             content = (resp.choices[0].message.content or "") if resp.choices else ""
         except Exception as e:
-            print(f"[yibao] 主动搭话视觉调用失败：{e}", file=sys.stderr)
+            log(f"主动搭话视觉调用失败：{e}")
             return None
         return parse_observe(content)
 

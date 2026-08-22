@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+from .log import log
 import importlib.util
 import json
 import logging
@@ -14,16 +15,16 @@ import re
 import sys
 import time
 import tomllib
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+from .http_client import HttpClient
 from .ipc import ActionResult, RiskLevel
 from .plugindb import PluginDb
 from .skills import Skill, SkillContext, SkillRegistry
+
 
 # 合法 capability 集合（v2 §3.3）；host 不由加载器注入（invoker 执行时嫁接）
 # process：声明本插件会 spawn 子进程（如调本机 CLI 智能体）；仅声明不注入，供审计/闸门识别
@@ -48,36 +49,6 @@ _TEMPLATE = re.compile(r"\{\{\s*([\w.]+)\s*\}\}")
 
 
 # ---------- 适配器 ----------
-
-
-class HttpClient:
-    """标准库 urllib 极简 http 客户端：get/post → 解析后的 json（非 json 返回原文）。10s 超时。"""
-
-    def __init__(self, timeout: float = 10.0):
-        self.timeout = timeout
-
-    def get(self, url: str, **kw):
-        return self._request("GET", url, **kw)
-
-    def post(self, url: str, **kw):
-        return self._request("POST", url, **kw)
-
-    def _request(self, method: str, url: str, json_body=None, headers=None, **_):
-        hdrs = {"Accept": "application/json", **(headers or {})}
-        data = None
-        if json_body is not None:
-            data = json.dumps(json_body, ensure_ascii=False).encode("utf-8")
-            hdrs.setdefault("Content-Type", "application/json")
-        req = urllib.request.Request(url, data=data, headers=hdrs, method=method)
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                body = resp.read().decode("utf-8")
-        except (urllib.error.URLError, OSError) as e:
-            raise RuntimeError(f"http 请求失败：{method} {url}：{e}") from e
-        try:
-            return json.loads(body)
-        except json.JSONDecodeError:
-            return body
 
 
 class LlmChat:
@@ -430,7 +401,7 @@ def _load_panels(child: Path, pid: str, manifest: dict, registry: SkillRegistry)
         ref = f"{pid}:{name}"
         ptype = p.get("type", "schema")
         if ptype not in ("schema", "webview", "widget", "module"):
-            print(f"[yibao] 插件 {pid} panel {ref} 类型 {ptype!r} 暂不支持（已跳过）", file=sys.stderr)
+            log(f"插件 {pid} panel {ref} 类型 {ptype!r} 暂不支持（已跳过）")
             continue
         _PANEL_TITLES[ref] = f"{manifest.get('name') or pid} · {p.get('label') or name}"
         _PLUGIN_DIRS[pid] = child
@@ -440,17 +411,17 @@ def _load_panels(child: Path, pid: str, manifest: dict, registry: SkillRegistry)
             entry = str(p.get("src") or "")
             if not entry:
                 _PANEL_TITLES.pop(ref, None)
-                print(f"[yibao] 插件 {pid} panel {ref} 缺 src(已跳过)", file=sys.stderr)
+                log(f"插件 {pid} panel {ref} 缺 src(已跳过)")
                 continue
             if not (child / entry).is_file():
-                print(f"[yibao] 插件 {pid} panel {ref} 入口文件暂缺(已登记,构建后生效):{entry}", file=sys.stderr)
+                log(f"插件 {pid} panel {ref} 入口文件暂缺(已登记,构建后生效):{entry}")
             parsed = {"type": "module", "entry": entry}
         else:
             try:
                 text = _inline_vendor((child / p["src"]).read_text(encoding="utf-8"), child)
                 parsed = {"type": "webview", "html": text} if ptype == "webview" else json.loads(text)
             except Exception as e:
-                print(f"[yibao] 插件 {pid} panel {ref} 读取失败（已跳过）：{e}", file=sys.stderr)
+                log(f"插件 {pid} panel {ref} 读取失败（已跳过）：{e}")
                 continue
         if ptype == "widget":
             try:
@@ -465,7 +436,7 @@ def _load_panels(child: Path, pid: str, manifest: dict, registry: SkillRegistry)
                     open_method = o if o.startswith(f"{pid}.") else f"{pid}.{o}"
             except (KeyError, ValueError) as e:
                 _PANEL_TITLES.pop(ref, None)
-                print(f"[yibao] 插件 {pid} widget {ref} 无效（已跳过）：{e}", file=sys.stderr)
+                log(f"插件 {pid} widget {ref} 无效（已跳过）：{e}")
                 continue
             _WIDGETS[ref] = {"method": full, "open": open_method, "title": _PANEL_TITLES[ref]}
         # 表面声明（调研 §12.6）：支持的档位 + 最小宽度；非法值静默过滤——单插件不该拖垮加载。
@@ -484,7 +455,7 @@ def _load_panels(child: Path, pid: str, manifest: dict, registry: SkillRegistry)
             if im in _INPUT_MODES:
                 parsed["input"] = im
             else:
-                print(f"[yibao] 插件 {pid} panel {ref} 的 input={im!r} 非法,按 inherit 处理", file=sys.stderr)
+                log(f"插件 {pid} panel {ref} 的 input={im!r} 非法,按 inherit 处理")
         _PANELS[ref] = parsed
 
 
@@ -546,7 +517,7 @@ def _load_api(pid: str, path: Path, registry: SkillRegistry) -> None:
                 if panel not in _PANELS:
                     raise ValueError(f"panel 指向未声明的面板：{panel!r}")
         except (KeyError, ValueError) as e:
-            print(f"[yibao] 插件 {pid} api method {name!r} 无效（已跳过）：{e}", file=sys.stderr)
+            log(f"插件 {pid} api method {name!r} 无效（已跳过）：{e}")
             continue
         _API[full] = ApiMethod(
             name=full, handler=handler,

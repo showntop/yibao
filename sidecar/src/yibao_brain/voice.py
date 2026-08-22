@@ -8,6 +8,7 @@ cancel 命中即停（"三连取消"之一：停 TTS）。
 """
 from __future__ import annotations
 
+from .log import log
 import asyncio
 import os
 import re
@@ -103,7 +104,7 @@ class LazySherpaRecognizer:
         if self._rec is None:
             with self._lock:
                 if self._rec is None:
-                    print("[yibao] 首次语音输入，加载 STT 模型…", file=sys.stderr)
+                    log("首次语音输入，加载 STT 模型…")
                     self._rec = SherpaRecognizer(self._model_dir)
         return self._rec.transcribe(pcm)
 
@@ -159,7 +160,7 @@ class SounddeviceRecorder:
         total = 0
         t0 = time.monotonic()
         speech_logged = False
-        print("[yibao] 录音开始", file=sys.stderr)
+        log("录音开始")
         with sd.InputStream(
             channels=1, dtype="float32", samplerate=SR, blocksize=int(0.1 * SR), callback=_on_audio
         ):
@@ -168,7 +169,7 @@ class SounddeviceRecorder:
                     samples = q.get(timeout=0.1)  # 带超时取：stop 信号 100ms 内必被看到
                 except queue.Empty:
                     if stats["frames"] == 0 and time.monotonic() - t0 > self._no_frame_timeout:
-                        print("[yibao] 麦克风一直无音频帧（被占用/掉线？），放弃录音", file=sys.stderr)
+                        log("麦克风一直无音频帧（被占用/掉线？），放弃录音")
                         break
                     continue
                 if not len(samples):
@@ -180,15 +181,15 @@ class SounddeviceRecorder:
                     buf = buf[window:]
                 if not speech_logged and vad.is_speech_detected():
                     speech_logged = True
-                    print("[yibao] VAD 检测到语音", file=sys.stderr)
+                    log("VAD 检测到语音")
                 while not vad.empty():
                     # VAD 切出一段完整语音（说完一句）→ 返回
                     seg = np.array(vad.front.samples, dtype=np.float32)
                     vad.pop()
-                    print(f"[yibao] 识别到完整语句（{time.monotonic() - t0:.1f}s），结束录音", file=sys.stderr)
+                    log(f"识别到完整语句（{time.monotonic() - t0:.1f}s），结束录音")
                     return seg
         why = "被打断" if self._stop.is_set() else "超时/无语音"
-        print(f"[yibao] 录音结束：{why}（{time.monotonic() - t0:.1f}s，{stats['frames']} 帧）", file=sys.stderr)
+        log(f"录音结束：{why}（{time.monotonic() - t0:.1f}s，{stats['frames']} 帧）")
         return np.zeros(SR, dtype=np.float32)  # 超时/被打断：无语音
 
 
@@ -485,13 +486,13 @@ class EdgeTtsSpeaker(StreamingPcmSpeaker):
                 raise  # 正常取消（打断命中合成中），必须向上传
             except Exception as e:
                 if _is_no_audio_error(e):
-                    print(f"[yibao] 句子无可播音频（已跳过）：{text!r}", file=sys.stderr)
+                    log(f"句子无可播音频（已跳过）：{text!r}")
                     return
                 if not produced and attempt == 0:
-                    print(f"[yibao] 合成失败，重建连接重试：{text!r} {e}", file=sys.stderr)
+                    log(f"合成失败，重建连接重试：{text!r} {e}")
                     self._reset_connector()
                     continue
-                print(f"[yibao] 句子合成失败（已跳过）：{text!r} {e}", file=sys.stderr)
+                log(f"句子合成失败（已跳过）：{text!r} {e}")
                 return
 
     async def _stream_sentence_pcm(self, text: str):
@@ -801,7 +802,7 @@ class CosyVoiceCloudSpeaker(StreamingPcmSpeaker):
         try:
             pcm_bytes = await self._get_client().synth(text, self._model, self._voice, self._key)
         except Exception as e:
-            print(f"[yibao] 云 TTS 合成失败（已跳过）：{text!r} {e}", file=sys.stderr)
+            log(f"云 TTS 合成失败（已跳过）：{text!r} {e}")
             return None
         pcm = _pcm_bytes_to_float32(pcm_bytes)
         return pcm if len(pcm) else None
@@ -900,7 +901,7 @@ class CosyVoiceSpeaker(StreamingPcmSpeaker):
             pcms = [np.asarray(a, dtype=np.float32) / 32768.0 for _sr, a in chunks]  # int16 → float32
             pcm = np.concatenate(pcms) if pcms else np.zeros(0, dtype=np.float32)
         except Exception as e:
-            print(f"[yibao] 本地 TTS 合成失败（已跳过）：{text!r} {e}", file=sys.stderr)
+            log(f"本地 TTS 合成失败（已跳过）：{text!r} {e}")
             return None
         return pcm if len(pcm) else None
 
@@ -909,6 +910,7 @@ class _CosyVoice2Client:
     """官方 CosyVoice2 薄封装（真机验收用）。流式吐 (sr, int16 numpy)，收集为 list。"""
     def __init__(self, model_path: str):
         from cosyvoice.cli.cosyvoice import CosyVoice2  # 惰性；未装由 available() 拦
+
 
         self._model = CosyVoice2(model_path)
 
@@ -934,7 +936,7 @@ def build_speaker(*, edge=None, cosyvoice=None, cosyvoice_cloud=None, provider=N
     chosen = factories.get(provider, factories["edge"])()
     if chosen.available():
         return chosen
-    print(f"[yibao] TTS provider {provider} 不可用，回退 edge", file=sys.stderr)
+    log(f"TTS provider {provider} 不可用，回退 edge")
     return factories["edge"]()
 
 

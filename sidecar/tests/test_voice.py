@@ -15,6 +15,12 @@ class _TwoStep:
         self._n += 1
         return self._f.chat(messages, tools) if self._n == 1 else self._s.chat(messages, tools)
 
+    async def astream(self, messages, tools=None):
+        self._n += 1
+        src = self._f if self._n == 1 else self._s
+        async for d in src.astream(messages, tools):
+            yield d
+
 
 def _reader(msgs):
     it = iter(msgs + [None])

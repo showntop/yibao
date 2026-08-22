@@ -1,6 +1,7 @@
 """长期记忆：接口 + Fake（测试）+ Mem0（生产）+ LazyMem0（后台懒加载）。"""
 from __future__ import annotations
 
+from .log import log
 import logging
 import os
 import sys
@@ -112,6 +113,7 @@ class Mem0Memory(Memory):
         from mem0 import Memory as _Mem0
 
         from .config import (
+
             llm_api_key, llm_base_url, llm_model,
             mem0_embedder_dim, mem0_embedder_model, mem0_vector_path,
         )
@@ -251,11 +253,11 @@ class LazyMem0Memory(Memory):
             except Exception as e:
                 err = e
                 if attempt < self._attempts:
-                    print(f"[yibao] mem0 初始化失败（第 {attempt}/{self._attempts} 次），"
-                          f"{self._delay:.0f}s 后重试：{e}", file=sys.stderr)
+                    log(f"mem0 初始化失败（第 {attempt}/{self._attempts} 次），"
+                        f"{self._delay:.0f}s 后重试：{e}")
                     time.sleep(self._delay)
         if real is None:
-            print(f"[yibao] mem0 后台初始化失败，记忆降级为空：{err}", file=sys.stderr)
+            log(f"mem0 后台初始化失败，记忆降级为空：{err}")
             with self._lock:
                 self._failed = True
                 self._fail_msg = f"长期记忆不可用（{_humanize_err(err)}），本次运行将记不住事"
@@ -272,7 +274,7 @@ class LazyMem0Memory(Memory):
                 real.add(text, user_id)
             except Exception:
                 pass
-        print("[yibao] mem0 后台就绪", file=sys.stderr)
+        log("mem0 后台就绪")
 
     def add(self, text: str, user_id: str) -> bool:
         with self._lock:

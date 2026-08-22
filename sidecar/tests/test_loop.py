@@ -79,7 +79,7 @@ def test_loop_sensitive_result_is_full_for_model_but_safe_for_shell_and_history(
 
     events = list(loop.run("我刚才在干嘛"))
 
-    assert "Window Secret" in json.dumps(second.calls[0]["messages"], ensure_ascii=False)
+    assert "Window Secret" in json.dumps(second.astream_calls[0]["messages"], ensure_ascii=False)
     action_result = next(e for e in events if e.kind == "action_result")
     assert action_result.result.data == {"count": 1}
     assert [(e.kind, e.text) for e in events[-2:]] == [
@@ -204,8 +204,8 @@ def test_loop_sync_reserves_final_reply_after_tool_budget(tmp_path):
     assert events[-1].kind == "final_reply"
     assert events[-1].text == "已到安全上限，停止继续操作"
     assert not any(e.kind == "error" and "最大步数" in (e.text or "") for e in events)
-    assert len(provider.chat_calls) == 3
-    assert provider.chat_calls[-1]["tools"] == []
+    assert len(provider.astream_calls) == 3
+    assert provider.astream_calls[-1]["tools"] == []
 
 
 def test_loop_arun_reserves_final_reply_after_tool_budget(tmp_path):
@@ -779,7 +779,7 @@ def test_focus_injected_as_system_message(tmp_path):
     }
     loop = _build_focus_loop(tmp_path, provider, focus)
     list(loop.run("这个怎么样"))
-    messages = provider.calls[0]["messages"]
+    messages = provider.astream_calls[0]["messages"]
     focus_msgs = [m for m in messages if m["role"] == "system" and "用户当前正在看" in m["content"]]
     assert len(focus_msgs) == 1
     content = focus_msgs[0]["content"]
@@ -794,7 +794,7 @@ def test_focus_none_injects_nothing(tmp_path):
         provider = FakeProvider(text="你好")
         loop = _build_focus_loop(tmp_path, provider, focus)
         list(loop.run("你好"))
-        messages = provider.calls[0]["messages"]
+        messages = provider.astream_calls[0]["messages"]
         assert not any("用户当前正在看" in m["content"] for m in messages if m["role"] == "system")
 
 
@@ -803,7 +803,7 @@ def test_focus_without_item_has_no_pronoun_hint(tmp_path):
     provider = FakeProvider(text="看板上有 3 条")
     loop = _build_focus_loop(tmp_path, provider, {"plugin": "zimeiti", "panel": "board"})
     list(loop.run("有几条选题"))
-    messages = provider.calls[0]["messages"]
+    messages = provider.astream_calls[0]["messages"]
     focus_msg = next(m for m in messages if m["role"] == "system" and "用户当前正在看" in m["content"])
     assert "zimeiti" in focus_msg["content"] and "board" in focus_msg["content"]
     assert "这个/它" not in focus_msg["content"]
@@ -829,7 +829,7 @@ def test_focus_provider_exception_is_ignored(tmp_path):
     )
     events = list(loop.run("你好"))
     assert events[-1].kind == "final_reply"
-    messages = provider.calls[0]["messages"]
+    messages = provider.astream_calls[0]["messages"]
     assert not any("用户当前正在看" in m["content"] for m in messages if m["role"] == "system")
 
 

@@ -1,6 +1,7 @@
 """配置：从环境变量读取，带默认值。"""
 from __future__ import annotations
 
+from .log import log
 import json
 import os
 import re
@@ -55,6 +56,7 @@ def migrate_legacy_data(legacy_dir: str) -> None:
     """
     import shutil
 
+
     for name in ("mem0_store", "audit.db", "history.json"):
         src = os.path.join(legacy_dir, name)
         dst = os.path.join(data_dir(), name)
@@ -63,9 +65,9 @@ def migrate_legacy_data(legacy_dir: str) -> None:
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         try:
             shutil.move(src, dst)
-            print(f"[yibao] 已迁移 {name} → {dst}", file=sys.stderr)
+            log(f"已迁移 {name} → {dst}")
         except OSError as e:
-            print(f"[yibao] 迁移 {name} 失败（保留原位）：{e}", file=sys.stderr)
+            log(f"迁移 {name} 失败（保留原位）：{e}")
 
 
 def _env(new: str, old: str = "", default: str = "") -> str:

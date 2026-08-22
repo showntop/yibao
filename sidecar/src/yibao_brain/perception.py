@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+from .log import log
 import getpass
 import json
 import os
@@ -213,7 +214,7 @@ class PerceptionStore:
                 self._conn.commit()
                 return int(cur.lastrowid)
         except Exception as exc:
-            print(f"[yibao] 感知写入失败（已跳过）：{exc}", file=sys.stderr)
+            log(f"感知写入失败（已跳过）：{exc}")
             return None
 
     def list(self, limit: int = 60, before_id: int | None = None) -> list[dict]:
@@ -820,6 +821,7 @@ def sample_idle_seconds() -> float:
     if sys.platform != "darwin":
         return 0.0
     from Quartz import (
+
         CGEventSourceSecondsSinceLastEventType,
         kCGAnyInputEventType,
         kCGEventSourceStateCombinedSessionState,
@@ -979,7 +981,7 @@ class PerceptionSensors:
         except FileNotFoundError:
             pass  # 已不存在（测试假路径/重复清理）属正常
         except OSError as exc:
-            print(f"[yibao] B 源截图帧清理失败（已跳过）：{exc}", file=sys.stderr)
+            log(f"B 源截图帧清理失败（已跳过）：{exc}")
 
     def _roll_screen_day(self, now: float) -> None:
         day = time.strftime("%Y-%m-%d", time.localtime(now))
@@ -1021,5 +1023,5 @@ class PerceptionSensors:
             try:
                 self.tick()
             except Exception as exc:
-                print(f"[yibao] 感知采样失败（已跳过）：{exc}", file=sys.stderr)
+                log(f"感知采样失败（已跳过）：{exc}")
             stop_event.wait(interval)

@@ -1,9 +1,11 @@
 """One delivery path for reminders, watch nudges and background-job events."""
 from __future__ import annotations
 
+from .log import log
 import asyncio
 import sys
 import time
+
 
 
 def proactive_level(settings: dict) -> str:
@@ -87,4 +89,4 @@ class ProactiveDispatcher:
             try:
                 await asyncio.to_thread(self.voice.speak, text)
             except Exception as exc:
-                print(f"[yibao] 主动播报失败：{exc}", file=sys.stderr)
+                log(f"主动播报失败：{exc}")

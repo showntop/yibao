@@ -400,7 +400,7 @@ def test_send_skill_empty_cc_rebuild_uses_llm_brief(monkeypatch):
     captured = {}
     monkeypatch.setattr(codingmod, "_spawn_stream",
                         lambda *a, **k: captured.update({"args": a, "kwargs": k}))
-    monkeypatch.setattr(codingmod, "_build_brief",
+    monkeypatch.setattr(codingmod._sess, "_build_brief",
                         lambda llm, turns, git, src, dst: f"摘要:{src}->{dst}")
     monkeypatch.setattr(codingmod._codex, "git_summary", lambda cwd: "")
 
@@ -481,7 +481,7 @@ def test_send_running_session_queues_steer_instead_of_rejecting(monkeypatch):
                         lambda *a, **k: spawned.__setitem__("n", spawned["n"] + 1))
     ctx = _make_ctx_with_session(status="running")
     entry = {"cancel": _threading.Event()}
-    monkeypatch.setattr(codingmod, "_SESSIONS", {"sid-1": entry})
+    monkeypatch.setattr(codingmod._sess, "_SESSIONS", {"sid-1": entry})
     events = []
     ctx.emit_event = events.append
     r = SendSkill().run({"id": "sid-1", "prompt": "先补一句"}, ctx)
@@ -497,7 +497,7 @@ def test_send_running_session_queues_steer_instead_of_rejecting(monkeypatch):
     db_marks = [m for m in ctx.db._tables.get("messages", []) if m["role"] == "marker"]
     assert len(db_marks) == 2 and "已排队" in db_marks[0]["text"]
     # 无活体 entry 的陈旧 running（如底座重启 mid-run、对账前的缝）→ 直送 resume 放行
-    monkeypatch.setattr(codingmod, "_SESSIONS", {})
+    monkeypatch.setattr(codingmod._sess, "_SESSIONS", {})
     r3 = SendSkill().run({"id": "sid-1", "prompt": "续跑"}, ctx)
     assert r3.success and spawned["n"] == 1
     # 终态会话放行
@@ -565,7 +565,7 @@ def test_stop_stale_running_emits_stopped_terminal(monkeypatch):
     且补发 panel_data/stopped 终态让面板复位（否则发送键永久锁死）。"""
     db = _FakeDB()
     db.rows["s-stale"] = {"id": "s-stale", "status": "running"}
-    monkeypatch.setattr(codingmod, "_SESSIONS", {})   # 无 live runner
+    monkeypatch.setattr(codingmod._sess, "_SESSIONS", {})   # 无 live runner
     ctx = _EmitCtx(db)
     res = StopSkill().run({"id": "s-stale"}, ctx)
     assert res.success is True
@@ -584,7 +584,7 @@ def test_stop_with_live_runner_no_extra_terminal(monkeypatch):
     db = _FakeDB()
     db.rows["s-live"] = {"id": "s-live", "status": "running"}
     cancel = _threading.Event()
-    monkeypatch.setattr(codingmod, "_SESSIONS", {"s-live": {"cancel": cancel}})
+    monkeypatch.setattr(codingmod._sess, "_SESSIONS", {"s-live": {"cancel": cancel}})
     ctx = _EmitCtx(db)
     res = StopSkill().run({"id": "s-live"}, ctx)
     assert res.success is True and cancel.is_set()
@@ -599,11 +599,11 @@ def test_send_rejects_when_runner_finishing(monkeypatch):
     monkeypatch.setattr(codingmod, "_spawn_stream",
                         lambda *a, **k: called.__setitem__("n", called["n"] + 1))
     ctx = _make_ctx_with_session(status="stopped")   # sid-1：db 已 terminal
-    monkeypatch.setattr(codingmod, "_SESSIONS", {"sid-1": {"cancel": _threading.Event()}})
+    monkeypatch.setattr(codingmod._sess, "_SESSIONS", {"sid-1": {"cancel": _threading.Event()}})
     r = SendSkill().run({"id": "sid-1", "prompt": "再来一条"}, ctx)
     assert not r.success and "收尾" in (r.error or "")
     assert called["n"] == 0
-    monkeypatch.setattr(codingmod, "_SESSIONS", {})   # runner 线程退清 → 放行
+    monkeypatch.setattr(codingmod._sess, "_SESSIONS", {})   # runner 线程退清 → 放行
     r2 = SendSkill().run({"id": "sid-1", "prompt": "再来一条"}, ctx)
     assert r2.success, r2.error
 
@@ -798,7 +798,7 @@ def test_stream_passes_live_session_entry_to_runner(monkeypatch):
     """_stream 把 _SESSIONS[sid]（live entry）透传 runner.run 的 session_entry（运行中切模式的通道）。"""
     db = _FakeDB(); db.rows["s10"] = {"id": "s10", "status": "running"}
     entry = {"cancel": _threading.Event()}
-    monkeypatch.setattr(codingmod, "_SESSIONS", {"s10": entry})
+    monkeypatch.setattr(codingmod._sess, "_SESSIONS", {"s10": entry})
     runner = _FakeRunner(cc_sid=None)
     _run(_stream(db, "s10", "/tmp/p", "hi", runner, emit_event=None,
                  cancel=_threading.Event()))
@@ -809,14 +809,14 @@ def test_mode_skill_updates_db_and_live_pending(monkeypatch):
     """coding.mode：落库 + live 会话置 mode_pending（runner 下条消息生效）；返回 live 标记。"""
     ctx = _make_ctx_with_session(status="running")
     entry = {"cancel": _threading.Event()}
-    monkeypatch.setattr(codingmod, "_SESSIONS", {"sid-1": entry})
+    monkeypatch.setattr(codingmod._sess, "_SESSIONS", {"sid-1": entry})
     r = ModeSkill().run({"id": "sid-1", "mode": "plan"}, ctx)
     assert r.success and r.data["live"] is True            # 有 live entry → mode_pending 已置
     assert entry["mode_pending"] == "plan"
     assert ctx.db.query("sessions", where={"id": "sid-1"})[0]["mode"] == "plan"
     assert r.data["ok"] is True and r.data["mode"] == "plan"
     # 非 live（会话已结束/无 runner）：只落库，不置 pending
-    monkeypatch.setattr(codingmod, "_SESSIONS", {})
+    monkeypatch.setattr(codingmod._sess, "_SESSIONS", {})
     r2 = ModeSkill().run({"id": "sid-1", "mode": "acceptEdits"}, ctx)
     assert r2.success and r2.data["live"] is False
     assert ctx.db.rows["sid-1"]["mode"] == "acceptEdits"
@@ -898,7 +898,7 @@ def test_rewind_live_session_defers_to_runner(monkeypatch):
     ctx = _make_ctx_with_session(status="running")
     # sessions_registry 挂到 ctx 上（仿 mode 测试的 _SESSIONS monkeypatch 约定）
     ctx.sessions_registry = {"sid-1": {"cancel": _NeverSet()}}
-    monkeypatch.setattr(codingmod, "_SESSIONS", ctx.sessions_registry)
+    monkeypatch.setattr(codingmod._sess, "_SESSIONS", ctx.sessions_registry)
     r = RewindSkill().run({"id": "sid-1", "user_msg_id": "u-1"}, ctx)
     assert r.success and r.data["live"] is True
     assert ctx.sessions_registry["sid-1"]["rewind_pending"] == "u-1"
@@ -916,7 +916,7 @@ class _FreshRewindClient:
 def test_rewind_idle_session_uses_fresh_client(monkeypatch):
     """会话已结束：新开 client（resume=cc_session_id）connect → rewind_files → disconnect。"""
     ctx = _make_ctx_with_session(status="done")   # sid-1：cc_session_id="cc-old-1", cwd="/tmp/p"
-    monkeypatch.setattr(codingmod, "_SESSIONS", {})          # 非 live
+    monkeypatch.setattr(codingmod._sess, "_SESSIONS", {})          # 非 live
     events = []
     ctx.emit_event = events.append
     client = _FreshRewindClient()
@@ -943,7 +943,7 @@ def test_rewind_idle_session_uses_fresh_client(monkeypatch):
 def test_rewind_fresh_client_failure_emits_error(monkeypatch):
     """新 client rewind 抛错 → error 事件（回滚失败：…）+ success=False，不炸。"""
     ctx = _make_ctx_with_session(status="done")
-    monkeypatch.setattr(codingmod, "_SESSIONS", {})
+    monkeypatch.setattr(codingmod._sess, "_SESSIONS", {})
     events = []
     ctx.emit_event = events.append
 
@@ -967,7 +967,7 @@ def test_rewind_failure_degrades(monkeypatch):
     """无 cc_session_id 且不在跑 → 失败文案，不炸。"""
     db = _FakeDB()
     db.rows["sid-1"] = {"id": "sid-1", "cwd": "/tmp/p", "cc_session_id": "", "status": "done"}
-    monkeypatch.setattr(codingmod, "_SESSIONS", {})
+    monkeypatch.setattr(codingmod._sess, "_SESSIONS", {})
     r = RewindSkill().run({"id": "sid-1", "user_msg_id": "u-1"}, _Ctx(db))
     assert not r.success and "无检查点" in (r.error or "")
     # 缺锚点 / 不存在会话 → 友好错误，不碰库不碰 runner
@@ -1340,8 +1340,8 @@ def test_list_skill_live_states():
     db.rows["b"] = {"id": "b", "status": "running", "created_at": 2}
     db.rows["c"] = {"id": "c", "status": "running", "created_at": 3}
     _runner_mod._PERM["perm_c_7"] = {"event": _threading.Event(), "allow": None}
-    codingmod._SESSIONS["b"] = {"cancel": _threading.Event()}
-    codingmod._SESSIONS["c"] = {"cancel": _threading.Event()}
+    codingmod._sess._SESSIONS["b"] = {"cancel": _threading.Event()}
+    codingmod._sess._SESSIONS["c"] = {"cancel": _threading.Event()}
     try:
         res = ListSkill().run({}, _Ctx(db))
         live = {s["id"]: s["live"] for s in res.data["sessions"]}
@@ -1353,8 +1353,8 @@ def test_list_skill_live_states():
         assert live2["c"] == "running"
     finally:
         _runner_mod._PERM.pop("perm_c_7", None)
-        codingmod._SESSIONS.pop("b", None)
-        codingmod._SESSIONS.pop("c", None)
+        codingmod._sess._SESSIONS.pop("b", None)
+        codingmod._sess._SESSIONS.pop("c", None)
 
 
 def test_start_skill_background_param(monkeypatch):
@@ -1946,7 +1946,7 @@ def _codex_runner_with(lines):
 def _wait_stream_done(sid, timeout=5.0):
     """等 _spawn_stream 的 daemon 线程收尾（entry pop = 流终）；超时直接断言失败。"""
     deadline = time.time() + timeout
-    while sid in codingmod._SESSIONS:
+    while sid in codingmod._sess._SESSIONS:
         assert time.time() < deadline, f"session {sid} 流式线程未在 {timeout}s 内收尾"
         time.sleep(0.01)
 
@@ -1958,7 +1958,7 @@ def test_usage_baseline_persisted_and_restored(monkeypatch):
     db = _FakeDB()
     db.rows["s-cx"] = {"id": "s-cx", "status": "running", "agent": "codex",
                        "cwd": "/tmp/p", "cc_session_id": "t-1"}
-    monkeypatch.setattr(codingmod, "_SESSIONS", {})   # 隔离真注册表；流式线程内读写同此 dict
+    monkeypatch.setattr(codingmod._sess, "_SESSIONS", {})   # 隔离真注册表；流式线程内读写同此 dict
     emitted = []
 
     # 第一轮：全新 entry（无 baseline）→ done 报全量 1000/100，baseline 落库
@@ -1998,7 +1998,7 @@ def test_usage_baseline_corrupt_row_does_not_break_stream(monkeypatch):
     db.rows["s-bad"] = {"id": "s-bad", "status": "running", "agent": "codex",
                         "cwd": "/tmp/p", "cc_session_id": "t-9",
                         "usage_baseline": "{not json"}
-    monkeypatch.setattr(codingmod, "_SESSIONS", {})
+    monkeypatch.setattr(codingmod._sess, "_SESSIONS", {})
     emitted = []
     codingmod._spawn_stream(db, "s-bad", "/tmp/p", "任务", _codex_runner_with([
         _json.dumps({"type": "thread.started", "thread_id": "t-9"}),
@@ -2037,7 +2037,7 @@ def test_stream_drains_steer_queue_and_resumes(monkeypatch):
     以 resume_session_id=cc_sid 原地续跑；队列空才落终态 done + 接续 marker 留痕。"""
     db = _FakeDB(); db.rows["st1"] = {"id": "st1", "status": "running"}
     entry = {"cancel": _threading.Event(), "steer": ["补充一", "补充二"]}
-    monkeypatch.setattr(codingmod, "_SESSIONS", {"st1": entry})
+    monkeypatch.setattr(codingmod._sess, "_SESSIONS", {"st1": entry})
     runner = _SteerRunner()
     _run(_stream(db, "st1", "/tmp/p", "原始任务", runner, emit_event=None,
                  cancel=_threading.Event()))
@@ -2054,7 +2054,7 @@ def test_stream_drains_steer_arriving_mid_continuation(monkeypatch):
     """续跑期间新到的 steer 继续入队 → 再续一轮（逐轮 drain 直到队列空才真终态）。"""
     db = _FakeDB(); db.rows["st2"] = {"id": "st2", "status": "running"}
     entry = {"cancel": _threading.Event(), "steer": ["第一轮补充"]}
-    monkeypatch.setattr(codingmod, "_SESSIONS", {"st2": entry})
+    monkeypatch.setattr(codingmod._sess, "_SESSIONS", {"st2": entry})
 
     def _on_run(n):
         if n == 2:
@@ -2080,7 +2080,7 @@ def test_stop_clears_steer_queue_and_stream_does_not_continue(monkeypatch):
     assert db.rows["st3"]["status"] == "stopped"
     # 极端时序兜底：队列又有残留 + cancel 已 set → _stream 也不续跑
     entry["steer"].append("尾巴")
-    monkeypatch.setattr(codingmod, "_SESSIONS", {"st3": entry})
+    monkeypatch.setattr(codingmod._sess, "_SESSIONS", {"st3": entry})
     runner = _SteerRunner()
     _run(_stream(db, "st3", "/tmp/p", "原始任务", runner, emit_event=None, cancel=cancel))
     assert len(runner.calls) == 1                                 # 只跑首轮，不续跑
@@ -2096,7 +2096,7 @@ def test_make_tools_reconciles_stale_running(monkeypatch):
                           "cwd": "/tmp/p", "cc_session_id": "cc-x"}
     db.rows["live-run"] = {"id": "live-run", "status": "running", "finished_at": 0}
     db.rows["done-1"] = {"id": "done-1", "status": "done"}
-    monkeypatch.setattr(codingmod, "_SESSIONS", {"live-run": {"cancel": _threading.Event()}})
+    monkeypatch.setattr(codingmod._sess, "_SESSIONS", {"live-run": {"cancel": _threading.Event()}})
     tools = codingmod.make_tools(type("C", (), {"db": db, "emit_event": None})())
     assert tools                                                   # 加载照常
     assert db.rows["old-run"]["status"] == "interrupted"

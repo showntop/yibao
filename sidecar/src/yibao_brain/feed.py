@@ -5,12 +5,14 @@ append-only SQLite：任何「值得让主人知道」的动态在发生时刻�
 """
 from __future__ import annotations
 
+from .log import log
 import json
 import os
 import sqlite3
 import sys
 import threading
 import time
+
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS feed (
@@ -63,7 +65,7 @@ class FeedStore:
                 )
                 self._conn.commit()
         except Exception as e:
-            print(f"[yibao] feed 写入失败（已跳过）：{e}", file=sys.stderr)
+            log(f"feed 写入失败（已跳过）：{e}")
 
     def append_hourly(self, kind: str, text: str, meta: dict, hour_key: int) -> None:
         """按小时合并写：同 (kind, meta.type, hour_key) 的最近一条追加文本、更新 ts；
@@ -90,7 +92,7 @@ class FeedStore:
                     )
                 self._conn.commit()
         except Exception as e:
-            print(f"[yibao] feed.append_hourly 失败（已忽略）：{e}", file=sys.stderr)
+            log(f"feed.append_hourly 失败（已忽略）：{e}")
 
     def recent(self, limit: int = 60, since: float | None = None) -> list[dict]:
         """按时间倒序取动态。meta JSON 解析失败退化为 {}。"""
@@ -134,7 +136,7 @@ class FeedStore:
                 row = self._conn.execute("SELECT COUNT(*) FROM feed WHERE read = 0").fetchone()
             return int(row[0]) if row else 0
         except Exception as e:
-            print(f"[yibao] feed 计数失败（已降级为 0）：{e}", file=sys.stderr)
+            log(f"feed 计数失败（已降级为 0）：{e}")
             return 0
 
     def mark_read(self, feed_id: int) -> bool:
@@ -145,7 +147,7 @@ class FeedStore:
                 self._conn.commit()
             return cur.rowcount > 0
         except Exception as e:
-            print(f"[yibao] feed 标记已读失败（已跳过）：{e}", file=sys.stderr)
+            log(f"feed 标记已读失败（已跳过）：{e}")
             return False
 
     def mark_all_read(self) -> int:
@@ -156,7 +158,7 @@ class FeedStore:
                 self._conn.commit()
             return cur.rowcount
         except Exception as e:
-            print(f"[yibao] feed 全部标记已读失败（已跳过）：{e}", file=sys.stderr)
+            log(f"feed 全部标记已读失败（已跳过）：{e}")
             return 0
 
     def set_status(self, feed_id: int, status: str) -> bool:
@@ -169,7 +171,7 @@ class FeedStore:
                 self._conn.commit()
             return cur.rowcount > 0
         except Exception as e:
-            print(f"[yibao] feed 设置处置态失败（已跳过）：{e}", file=sys.stderr)
+            log(f"feed 设置处置态失败（已跳过）：{e}")
             return False
 
     def count_ignored(self) -> int:
@@ -179,7 +181,7 @@ class FeedStore:
                 row = self._conn.execute("SELECT COUNT(*) FROM feed WHERE status = 'ignore'").fetchone()
             return int(row[0]) if row else 0
         except Exception as e:
-            print(f"[yibao] feed 计数失败（已降级为 0）：{e}", file=sys.stderr)
+            log(f"feed 计数失败（已降级为 0）：{e}")
             return 0
 
     def set_feedback(self, feed_id: int, feedback: str) -> bool:
@@ -195,7 +197,7 @@ class FeedStore:
                 self._conn.commit()
             return cur.rowcount > 0
         except Exception as e:
-            print(f"[yibao] feed 反馈写入失败（已跳过）：{e}", file=sys.stderr)
+            log(f"feed 反馈写入失败（已跳过）：{e}")
             return False
 
     def count_feedback_by_type(self, mtype: str, feedback: str, since: float) -> int:
@@ -209,7 +211,7 @@ class FeedStore:
                 ).fetchone()
             return int(row["n"]) if row else 0
         except Exception as e:
-            print(f"[yibao] feed 反馈计数失败（已降级为 0）：{e}", file=sys.stderr)
+            log(f"feed 反馈计数失败（已降级为 0）：{e}")
             return 0
 
     def stats(self, days: int = 7) -> dict:
@@ -248,7 +250,7 @@ class FeedStore:
                     out["read_rate"] = round(float(row["r"]) / n, 4)
                     out["ignored_rate"] = round(float(row["i"]) / n, 4)
         except Exception as e:
-            print(f"[yibao] feed 统计失败（已降级为零）：{e}", file=sys.stderr)
+            log(f"feed 统计失败（已降级为零）：{e}")
         return out
 
     def close(self) -> None:

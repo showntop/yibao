@@ -240,138 +240,18 @@ class AgentLoop:
         }
 
     def run(self, user_text: str, surface: str | None = None, conversation_id: str | None = None) -> Iterator[Event]:
-        """同步回路（历史按 conversation_id 分桶，见 arun 注释）。"""
-        self._run_start = time.monotonic()  # run_metrics 耗时基准
-        memories = self.memory.recall(user_text, self.user_id)
-        messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
-        focus_msg = self._focus_message()
-        if focus_msg:
-            messages.append(focus_msg)
-        if self.history:
-            messages.extend(self.history.messages(conversation_id))
-        # 变化内容（记忆/时间戳）放 history 之后：固定段（system+focus+history）整段为缓存前缀。
-        # 记忆按 query 语义召回、每次可能不同，放前面会把前缀切断 → 整轮 history+user 全 miss。
-        if memories:
-            messages.append({"role": "system", "content": "关于用户的记忆：\n" + "\n".join(memories)})
-        messages.append(_now_message())
-        messages.append({"role": "user", "content": user_text})
-        run_start = len(messages) - 1  # 本轮轨迹起点（user 消息），成功收尾时整轮入史（含工具调用）
-        safe_tool_content: dict[str, str] = {}
-        sensitive_turn = False
-        post_reply_notices: list[str] = []
-        usage_acc = Usage()  # 整轮 LLM 调用用量累加（工具轮多次调用合并）
+        """同步回路（历史按 conversation_id 分桶）。
 
-        def _acc_usage(u: Usage) -> None:
-            usage_acc.prompt_tokens += u.prompt_tokens
-            usage_acc.completion_tokens += u.completion_tokens
-            usage_acc.cached_tokens += u.cached_tokens
-            usage_acc.total_tokens += u.total_tokens
+        实现委托 arun（唯一异步实现），过滤流式 final_reply_chunk 保持同步事件流契约。
+        """
+        async def _drain() -> list[Event]:
+            return [
+                event
+                async for event in self.arun(user_text, surface=surface, conversation_id=conversation_id)
+                if event.kind != "final_reply_chunk"
+            ]
 
-        for _ in range(self.max_steps):
-            resp: LLMResponse = self.provider.chat(messages, tools=self._visible_tools())
-            _acc_usage(resp.usage)
-            if not resp.tool_calls:
-                if self.memory.add(user_text, self.user_id) and self.feed is not None:
-                    h = int(time.time()) // 3600 * 3600
-                    self.feed.append_hourly(
-                        "event", f"记住了：{user_text[:40]}",
-                        {"type": "memory", "hour": h}, h,
-                    )
-                if self.history:
-                    span = messages[run_start:] + [{"role": "assistant", "content": resp.text}]
-                    span[0] = _tag_surface(span[0], surface)
-                    self.history.record_messages(
-                        _history_safe_span(span, safe_tool_content, sensitive_turn),
-                        conversation_id,
-                    )
-                yield Event(kind="final_reply", text=resp.text, payload=self._metrics_payload(usage_acc))
-                for notice in post_reply_notices:
-                    yield Event(kind="notice", text=notice)
-                return
-            messages.append(_assistant_with_tools(resp.text, resp.tool_calls))
-            proceeded = False
-            # Task 2 攒批：先按 LLM 顺序收集决策（不立即执行——AUTO 不抢在 CONFIRM 前，
-            # 依赖链 a→b 的 a 仍在 b 前），再一轮批量确认，最后按序执行。spec §3.1。
-            plan: list[tuple[ToolCall, Action, Decision]] = []
-            for tc in resp.tool_calls:
-                tc.skill_id = self.skills.resolve_llm_name(tc.skill_id)  # 安全名 → 真实 id
-                action = self.invoker.propose(tc)
-                yield Event(kind="action_proposed", action=action)
-                reason = self.invoker.precheck(action)  # 本地启发式拦截（不执行、不弹审批）
-                if reason:
-                    yield Event(kind="action_result", action=action,
-                                result=ActionResult(success=False, error=reason))
-                    messages.append({"role": "tool", "tool_call_id": tc.id,
-                                     "content": f"{reason}（未执行，请改用更合适的工具重试）"})
-                    proceeded = True
-                    continue
-                plan.append((tc, action, self.invoker.decide(action)))
-            confirm_actions = [a for _tc, a, d in plan if d == Decision.CONFIRM]
-            verdicts: dict[str, tuple[bool, bool]] = {}
-            if confirm_actions:
-                # 一次推收件箱（旧前端读 action=actions[0]，Task 4/5 切 actions）
-                yield Event(kind="confirmation_needed", actions=confirm_actions,
-                            action=confirm_actions[0], confirmation_id=confirm_actions[0].id)
-                verdicts = self.invoker.batch_confirm_sync(confirm_actions)
-            for tc, action, decision in plan:
-                if decision == Decision.CONFIRM:
-                    approved, remember = verdicts.get(action.id, (False, False))
-                    self.invoker.apply_verdict(action, approved, remember)
-                    if not approved:
-                        yield Event(kind="error", action=action, text=f"用户拒绝执行 {tc.skill_id}")
-                        messages.append({"role": "tool", "tool_call_id": tc.id,
-                                         "content": "用户拒绝执行该操作"})
-                        continue
-                elif decision == Decision.DENY:
-                    yield Event(kind="error", text=f"策略禁止执行 {tc.skill_id}（风险过高）")
-                    messages.append({"role": "tool", "tool_call_id": tc.id, "content": "策略禁止该操作"})
-                    continue
-                result = self.invoker.execute(action, tc.params)
-                self._auto_activate(action.skill_id)
-                skill = self.skills.get(action.skill_id)
-                safe = self.invoker.safe_result(action, result)
-                yield Event(kind="action_result", action=action, result=safe)
-                if action.skill_id == "use_plugin" and result.success and not (result.data or {}).get("already"):
-                    # 插件展开要知情（§12-2 已定）：轻提示，不弹窗不打断
-                    yield Event(kind="notice", text=(result.data or {}).get("human", "插件已展开"))
-                payload = self._panel_with_refresh(action, safe)  # 壳侧面板也只拿安全副本
-                if payload is not None:
-                    yield Event(kind="panel", payload=payload)
-                messages.append(
-                    {"role": "tool", "tool_call_id": tc.id, "content": _stringify_result(result)}
-                )
-                safe_tool_content[tc.id] = _stringify_result(safe)
-                if skill.sensitive_output and result.success:
-                    sensitive_turn = True
-                try:
-                    notice = skill.post_reply_notice(result)
-                except Exception:
-                    notice = None
-                if notice and notice not in post_reply_notices:
-                    post_reply_notices.append(notice)
-                proceeded = True
-            if not proceeded:
-                # 所有工具调用都被拒/禁，给模型一次机会换策略
-                continue
-        # 工具轮次用满后仍预留一次“只收口、不再动作”的模型调用。旧逻辑在第 8 次工具
-        # 成功后直接报错，导致任务明明可能完成却没有最终答复。
-        final_messages = messages + [{"role": "system", "content": _TOOL_BUDGET_FINAL_PROMPT}]
-        resp = self.provider.chat(final_messages, tools=[])
-        _acc_usage(resp.usage)
-        final_text = (resp.text or "").strip()
-        if resp.tool_calls or not final_text:
-            yield Event(kind="error", text=_TOOL_BUDGET_FALLBACK)
-            return
-        if self.history:
-            span = messages[run_start:] + [{"role": "assistant", "content": final_text}]
-            span[0] = _tag_surface(span[0], surface)
-            self.history.record_messages(
-                _history_safe_span(span, safe_tool_content, sensitive_turn),
-                conversation_id,
-            )
-        yield Event(kind="final_reply", text=final_text, payload=self._metrics_payload(usage_acc))
-        for notice in post_reply_notices:
-            yield Event(kind="notice", text=notice)
+        yield from asyncio.run(_drain())
 
     async def arun(
         self, user_text: str, cancel=None, surface: str | None = None, conversation_id: str | None = None

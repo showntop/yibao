@@ -10,12 +10,14 @@
 """
 from __future__ import annotations
 
+from .log import log
 import fcntl
 import os
 import signal
 import subprocess
 import sys
 import time
+
 
 _BRAIN_PATTERN = "yibao_brain.server"
 # uv run 入口点启动形态（连字符），pgrep 正则 `.` 能匹配但 Python 字面 `in` 不行
@@ -67,7 +69,7 @@ def _reap_orphan_brains() -> None:
             capture_output=True, text=True, timeout=5,
         )
     except Exception as e:
-        print(f"[yibao] 孤儿大脑扫描失败（跳过）：{e}", file=sys.stderr)
+        log(f"孤儿大脑扫描失败（跳过）：{e}")
         return
     me = os.getpid()
     for token in r.stdout.split():
@@ -77,7 +79,7 @@ def _reap_orphan_brains() -> None:
             continue
         if pid == me or not _is_brain_process(pid):
             continue
-        print(f"[yibao] 回收存活的其他大脑进程 pid={pid}（单实例）", file=sys.stderr)
+        log(f"回收存活的其他大脑进程 pid={pid}（单实例）")
         _kill_pid(pid)
 
 
