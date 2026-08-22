@@ -80,7 +80,7 @@ pub(crate) fn runtime_root() -> std::path::PathBuf {
 }
 
 /// 是否生产模式（打包 .app）：dev（debug 构建或显式 YIBAO_SIDECAR_DIR）走仓库 sidecar。
-fn is_prod() -> bool {
+pub(crate) fn is_prod() -> bool {
     std::env::var("YIBAO_SIDECAR_DIR").is_err() && !cfg!(debug_assertions)
 }
 

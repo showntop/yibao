@@ -8,7 +8,7 @@
  * 颜色由父级 color 决定，因此可直接跟随语义令牌（含未来深色模式）。
  */
 
-type IconName =
+export type IconName =
   | "clock" | "chat" | "gear" | "spinner" | "check" | "x" | "stop"
   | "lock" | "pin" | "doc" | "alert" | "inbox" | "sparkle" | "plug"
   | "dumpling" | "mic" | "wave" | "thumb-up" | "thumb-down" | "search"

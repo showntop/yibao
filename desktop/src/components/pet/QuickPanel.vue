@@ -4,6 +4,7 @@ import { computed, onMounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import InputBar from "../common/InputBar.vue";
 import { getDockListOnce } from "../../lib/brain";
+import { inputMenuOpen } from "../../lib/input-menu";
 import type { InputContext } from "../../lib/at-mention";
 import {
   DOCK_SIZE,
@@ -62,14 +63,16 @@ const stackStyle = computed(() => ({
   left: quickStackLeft() + "px",
   width: STACK_W + "px",
   // 窗口高 = 300（idle/quick 恒 320×300）：给输入条+docks 一个确定高度并禁止超出，
-  // 多行输入时 textarea 由 growMax 限高、插件钮在底部被裁，输入框始终完整可见
+  // 多行输入时 textarea 由 growMax 限高、插件钮在底部被裁，输入框始终完整可见。
+  // overflow 用 visible：窗口视口（320×300）天然裁掉窗口外的 docks；若用 hidden 会把
+  // 输入框聚焦时的外圈 focus ring（outline）四周裁掉，看起来像"周边一圈被切掉"。
   height: `calc(100% - ${quickStackTop(props.petY) + 10}px)`,
-  overflow: "hidden",
+  overflow: "visible",
 }));
 </script>
 
 <template>
-  <div class="wb">
+  <div class="wb" :class="{ 'menu-open': inputMenuOpen }">
     <div class="wb-stack" :style="stackStyle">
       <div class="wb-zone wb-input">
         <InputBar
@@ -77,6 +80,7 @@ const stackStyle = computed(() => ({
           :listening="props.listening"
           placeholder="说点什么…"
           :grow-max="55"
+          compact
           @submit="(t, ctx) => emit('submit', t, ctx)"
           @mic="() => emit('mic')"
           @interrupt="() => emit('interrupt')"
@@ -106,7 +110,14 @@ const stackStyle = computed(() => ({
 .wb {
   position: absolute;
   inset: 0;
+  /* none：.wb 覆盖全窗且渲染在团子之上，必须 none 让点击穿透到下面的 .pet（团子的
+   * 单击/双击/长按）。子元素 .wb-input/.wb-dock 已显式 auto，不受影响。 */
   pointer-events: none;
+}
+/* 菜单打开时整体可交互（配合 Rust 热区放行菜单区域）：此期间 .wb 盖住团子没关系——
+ * 用户正在选命令，不需要点团子；菜单关闭后 class 移除，团子恢复可点。 */
+.wb.menu-open {
+  pointer-events: auto;
 }
 .wb-stack {
   position: absolute;
@@ -119,6 +130,9 @@ const stackStyle = computed(() => ({
   width: 100%;
   pointer-events: auto;
   flex-shrink: 0; /* 多行时输入条保持完整，插件钮让路被裁 */
+  /* 让含菜单的输入区层级高于下方的 .wb-docks，避免菜单向下展开时被 3 个 dock 按钮盖住 */
+  position: relative;
+  z-index: 3;
 }
 .wb-docks {
   display: flex;
@@ -175,5 +189,20 @@ const stackStyle = computed(() => ({
 .wb-dock-more .wb-dock-ic {
   background: transparent;
   border: 1px dashed var(--yb-surface-border);
+}
+/* 桌宠下菜单交互保障：菜单会溢出 .wb-input 几何（WKWebView 对 pointer-events:none 父元素的
+ * 溢出子树在事件派发路径仍可能跳过），这里显式恢复交互。菜单打开期间 dock 按钮让路
+ * （pointer-events:none），杜绝 dock 抢走 mousedown/wheel。大窗不在 .wb-stack 下，:deep 不匹配。 */
+.wb-stack :deep(.at-menu) {
+  pointer-events: auto !important;
+  cursor: pointer;
+  overflow-y: auto !important;
+}
+.wb-stack :deep(.at-item) {
+  pointer-events: auto !important;
+}
+/* 菜单打开时 dock 完全让路：hover/click/wheel 全归菜单，关闭后 dock 恢复可点 */
+.wb.menu-open .wb-docks {
+  pointer-events: none;
 }
 </style>

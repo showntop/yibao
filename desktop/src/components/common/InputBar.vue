@@ -1,10 +1,19 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from "vue";
+import { ref, computed, watch, watchEffect, onMounted, onBeforeUnmount, nextTick } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import YbIcon from "./YbIcon.vue";
 import { sessionStore } from "../../state/store";
-import { panelAction, onBrainEvent, type BrainEvent } from "../../lib/brain";
+import { panelAction, onBrainEvent, listPlugins, type BrainEvent } from "../../lib/brain";
 import { parseAtTrigger, stripAtTrigger, type InputContext } from "../../lib/at-mention";
+import {
+  parseSlashTrigger,
+  stripSlashTrigger,
+  filterSlashCommands,
+  BUILTIN_SLASH_COMMANDS,
+  pluginSlashCommands,
+  type SlashCmd,
+} from "../../lib/slash";
+import { inputMenuOpen, addMenuOpen } from "../../lib/input-menu";
 
 // busy = 生成/播报中（可打断）；listening = 录音中（麦克风切声波态，点击=取消录音）
 // draft = 外部预填草稿（主屏 Feed 点击带上下文来）；变化即填入并聚焦
@@ -16,13 +25,19 @@ const props = withDefaults(
     placeholder?: string;
     /** 多行展开的最大高度（px）；小窗（桌宠脚下）给更小值防溢出 */
     growMax?: number;
+    /** compact 模式（桌宠 QuickPanel）：加号菜单改向下展开，避开桌宠小窗向上被截 */
+    compact?: boolean;
   }>(),
-  { placeholder: "对译宝说点什么…（shift+回车换行）", growMax: 140 },
+  { placeholder: "对译宝说点什么…（shift+回车换行）", growMax: 140, compact: false },
 );
 const emit = defineEmits<{
   (e: "submit", text: string, contexts: InputContext[]): void;
   (e: "mic"): void;
   (e: "interrupt"): void;
+  /** /命令 local 动作（截图/新建会话/打开插件…），由父窗口分发 */
+  (e: "slash-local", id: string): void;
+  /** /命令 插件动作（api.toml command=true 的直调方法），由父窗口 panelAction */
+  (e: "slash-plugin", p: { pluginId: string; method: string }): void;
 }>();
 const text = ref("");
 const inputRef = ref<HTMLTextAreaElement | null>(null);
@@ -62,6 +77,8 @@ onMounted(() => {
   }
   // @ 文件搜索的回包通道（pa_<rid> 关联）；注册慢于卸载则立即退订，防监听泄漏
   void onBrainEvent(onBrainEv).then((un) => { if (unmounted) un(); else unlistenBrain = un; });
+  // / 命令的插件动作项（list_plugins 的 commands）
+  void loadPluginCommands();
 });
 onBeforeUnmount(() => {
   unmounted = true;
@@ -89,6 +106,64 @@ let atRootResolved = false; // 负缓存：无 coding 会话时避免逐键重�
 let atStart = -1;
 let atCaret = 0;
 let atSeq = 0; // 防乱序：逐键查询的慢响应到达时已过期则丢弃
+
+// ---- / 命令菜单（与 @ 文件引用同款浮层范式）：内置注册表 + 插件动作（list_plugins commands）----
+const slashOpen = ref(false);
+const slashAll = ref<SlashCmd[]>(BUILTIN_SLASH_COMMANDS); // 内置 + 插件（异步合并）
+const slashItems = ref<SlashCmd[]>([]);
+const slashIdx = ref(0);
+let slashStart = -1;
+let slashCaret = 0;
+let slashSeq = 0;
+
+/** 拉插件命令（list_plugins 的 commands → 插件动作命令）；失败静默，只留内置命令 */
+async function loadPluginCommands() {
+  try {
+    const plugins = await listPlugins();
+    slashAll.value = [...BUILTIN_SLASH_COMMANDS, ...pluginSlashCommands(plugins)];
+  } catch { /* 插件命令可选 */ }
+}
+
+function closeSlash() {
+  slashOpen.value = false;
+  slashSeq++; // 作废在途响应
+}
+
+async function slashQuery(q: string) {
+  const seq = ++slashSeq;
+  slashItems.value = filterSlashCommands(slashAll.value, q);
+  if (seq !== slashSeq) return;
+  slashIdx.value = 0;
+  // 同步计算 maxHeight：避开 watch 的 pre-flush 时序依赖，保证菜单首次出现时已就绪
+  // （否则 CSS 兜底 360 让菜单按内容自然高度渲染，超出窗口底被视口裁、无滚动条、下方条目不可点）
+  updateMenuMaxH();
+  slashOpen.value = true;
+}
+
+/** 选中命令：template=展开模板进输入框（光标落参数位）；local/plugin=清空输入、上抛父窗口执行 */
+function pickSlash(cmd: SlashCmd) {
+  closeSlash();
+  if (cmd.kind === "template" && cmd.template) {
+    const idx = cmd.template.indexOf("{p}");
+    const expanded = idx >= 0
+      ? cmd.template.slice(0, idx) + cmd.template.slice(idx + 3)
+      : cmd.template;
+    text.value = stripSlashTrigger(text.value, slashCaret, slashStart) + expanded;
+    const caretPos = text.value.length - expanded.length + (idx >= 0 ? idx : expanded.length);
+    persistDraft(text.value);
+    nextTick(() => {
+      autoGrow();
+      inputRef.value?.focus();
+      inputRef.value?.setSelectionRange(caretPos, caretPos);
+    });
+    return;
+  }
+  text.value = "";
+  persistDraft("");
+  nextTick(() => autoGrow());
+  if (cmd.kind === "local") emit("slash-local", cmd.local ?? "");
+  else if (cmd.kind === "plugin") emit("slash-plugin", { pluginId: cmd.pluginId ?? "", method: cmd.pluginMethod ?? "" });
+}
 
 let ridBase = Math.floor(Math.random() * 1e9);
 const pendingCalls = new Map<number, { resolve: (data: unknown) => void; timer: ReturnType<typeof setTimeout> }>();
@@ -135,11 +210,12 @@ async function atQuery(q: string) {
   const seq = ++atSeq;
   const cwd = await ensureAtRoot();
   if (seq !== atSeq) return;
-  if (!cwd) { atItems.value = []; atIdx.value = 0; atOpen.value = true; return; } // 空态提示
+  if (!cwd) { atItems.value = []; atIdx.value = 0; updateMenuMaxH(); atOpen.value = true; return; }
   const data = (await callSkill("coding.files", { cwd, q })) as { files?: { rel: string }[] } | null;
   if (seq !== atSeq) return;
   atItems.value = (data?.files ?? []).slice(0, 12);
   atIdx.value = 0;
+  updateMenuMaxH();
   atOpen.value = true;
 }
 
@@ -159,24 +235,83 @@ function pickAt(f: { rel: string }) {
   nextTick(() => { autoGrow(); inputRef.value?.focus(); });
 }
 
-function onTextInput() {
-  autoGrow();
-  const el = inputRef.value;
-  const caret = el?.selectionStart ?? text.value.length;
-  const t = parseAtTrigger(text.value, caret);
-  if (!t) { if (atOpen.value) closeAt(); return; }
-  atStart = t.start;
-  atCaret = caret;
-  void atQuery(t.query);
+// ---- 菜单浮层：绝对定位锚定在 .bar 内的 textarea 上方（bottom: calc(100% + 6px)）。
+//      不再 Teleport 到 body + fixed：那种方案在桌宠窗口圆角下右缘被切、视口/容器变换下时序脆弱。
+//      改为内嵌后：菜单天然贴 .bar 上方，宽 = .bar 内容宽（左右各收 8px 避 .bar 圆角视觉穿透），
+//      高度由 max-height 限制 + overflow-y 滚动。HomeChat 防 skill-row 遮挡靠"input-slot 后渲染在上层"；
+//      桌宠防团子遮挡靠 .wb-stack overflow visible + QuickPanel 后渲染 + max-height 卡在 stack 顶。
+const menuMaxH = ref(360);
+/** 菜单展开方向：优先向下（不遮挡输入上方的内容/对话；桌宠下避开团子、覆盖下方 dock 按钮），
+ *  输入框贴底（大窗）时自动回退向上。 */
+const menuPlacement = ref<"up" | "down">("up");
+
+function updateMenuMaxH() {
+  const ta = inputRef.value;
+  if (!ta) return;
+  const bar = ta.closest(".bar") as HTMLElement | null;
+  const r = (bar ?? ta).getBoundingClientRect();
+  const vh = window.innerHeight;
+  // 优先向下展开：桌宠下输入框下方到窗口底空间通常够 5-6 条，且不遮挡上方团子/内容；
+  // 下方不足（大窗输入框贴底）才向上。maxHeight = 实际可用空间，溢出则菜单内滚动。
+  const spaceDown = vh - r.bottom - 6;
+  const spaceUp = r.top - 8;
+  const useDown = spaceDown >= 96 || spaceDown >= spaceUp;
+  menuPlacement.value = useDown ? "down" : "up";
+  menuMaxH.value = Math.min(360, Math.max(48, useDown ? spaceDown : spaceUp));
 }
 
-function onAtKeydown(e: KeyboardEvent) {
-  if (!atOpen.value) return;
-  if (e.key === "Escape") { closeAt(); e.stopPropagation(); return; }
-  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-    e.preventDefault();
-    if (!atItems.value.length) return;
-    atIdx.value = (atIdx.value + (e.key === "ArrowDown" ? 1 : -1) + atItems.value.length) % atItems.value.length;
+// 派生共享的"菜单打开"状态（任一菜单开着 = true）：桌宠 QuickPanel 用它暂停 hover 自动收起。
+// 用 watchEffect 自动派生，避免 slashQuery/atQuery/closeSlash/closeAt 多处手动同步。
+watchEffect(() => {
+  inputMenuOpen.value = slashOpen.value || atOpen.value;
+  addMenuOpen.value = addOpen.value;
+});
+
+// watch 保留作为兜底（防止 updateMenuMaxH 在菜单首次出现时漏跑）
+watch([slashOpen, atOpen], ([s, a]) => {
+  if (s || a) updateMenuMaxH();
+});
+
+function onTextInput() {
+  autoGrow();
+  if (addOpen.value) addOpen.value = false; // 输入文字（含 /、@ 触发）即收加号菜单
+  const el = inputRef.value;
+  const caret = el?.selectionStart ?? text.value.length;
+  const atT = parseAtTrigger(text.value, caret);
+  const slashT = parseSlashTrigger(text.value, caret);
+  // @ 与 / 互斥：以「触发片段 start 更靠后」的为准（用户最后输入的那个触发符）
+  if (slashT && (!atT || slashT.start >= atT.start)) {
+    if (atOpen.value) closeAt();
+    slashStart = slashT.start;
+    slashCaret = caret;
+    void slashQuery(slashT.query);
+    return;
+  }
+  closeSlash();
+  if (!atT) { if (atOpen.value) closeAt(); return; }
+  atStart = atT.start;
+  atCaret = caret;
+  void atQuery(atT.query);
+}
+
+/** 命令/文件菜单的键盘导航（Escape/↑↓）；Enter 选中由 onEnter 统一处理（含 IME 守卫） */
+function onMenuKeydown(e: KeyboardEvent) {
+  if (slashOpen.value) {
+    if (e.key === "Escape") { closeSlash(); e.stopPropagation(); return; }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!slashItems.value.length) return;
+      slashIdx.value = (slashIdx.value + (e.key === "ArrowDown" ? 1 : -1) + slashItems.value.length) % slashItems.value.length;
+    }
+    return; // 菜单开着时其余键照常输入
+  }
+  if (atOpen.value) {
+    if (e.key === "Escape") { closeAt(); e.stopPropagation(); return; }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!atItems.value.length) return;
+      atIdx.value = (atIdx.value + (e.key === "ArrowDown" ? 1 : -1) + atItems.value.length) % atItems.value.length;
+    }
   }
 }
 
@@ -199,6 +334,7 @@ function send() {
   const t = text.value.trim();
   if (t) {
     closeAt();   // @ 浮层随发送收敛（Enter 已被浮层拦截，这里管发送钮路径）
+    closeSlash(); // / 命令浮层同理
     // AI 正在生成/播报（stopping）时发送 = 先打断再发新消息（不必手动"停止"）
     if (stopping.value) emit("interrupt");
     emit("submit", t, pendingContexts.value.slice());
@@ -209,13 +345,21 @@ function send() {
   }
 }
 
+/** 加号菜单 toggle：与 @ / 命令菜单互斥——打开加号前收掉命令/文件菜单 */
+function onAddToggle() {
+  if (!addOpen.value) {
+    closeSlash();
+    closeAt();
+  }
+  addOpen.value = !addOpen.value;
+}
+
 function openAdd(kind: InputContext["kind"]) {
   addOpen.value = false;
   if (kind === "attachment") {
     fileRef.value?.click();
     return;
-  }
-  if (kind === "file") {
+  }  if (kind === "file") {
     // 项目文件：往输入框补一个 @ 触发内联浮层（与手打 @ 同一路径；程序赋值不发 input 事件，手动触发解析）
     const cur = text.value;
     text.value = cur && !/\s$/.test(cur) ? `${cur} @` : `${cur}@`;
@@ -324,6 +468,12 @@ function onCompEnd() {
 
 function onEnter(e: KeyboardEvent) {
   if (e.isComposing || imeComposing.value || Date.now() - lastCompEnd < 50) return;
+  // / 命令菜单打开时 Enter = 选中命令（无候选则关菜单），不发送
+  if (slashOpen.value) {
+    if (slashItems.value.length) pickSlash(slashItems.value[slashIdx.value]);
+    else closeSlash();
+    return;
+  }
   // @ 浮层打开时 Enter = 选中候选（无候选则关浮层），不发送
   if (atOpen.value) {
     if (atItems.value.length) pickAt(atItems.value[atIdx.value]);
@@ -380,11 +530,11 @@ defineExpose({ focus: () => inputRef.value?.focus(), insertText, takeDraft });
         aria-label="添加附件或引用"
         :aria-expanded="addOpen"
         title="添加附件或引用"
-        @click="addOpen = !addOpen"
+        @click="onAddToggle"
       >
         <YbIcon name="plus" :size="16" />
       </button>
-      <div v-if="addOpen" class="add-menu" role="menu" aria-label="添加内容">
+      <div v-if="addOpen" class="add-menu" :class="{ down: props.compact }" role="menu" aria-label="添加内容">
         <button type="button" role="menuitem" @click="openAdd('attachment')">
           <strong>附件</strong><small>文件或图片</small>
         </button>
@@ -397,22 +547,40 @@ defineExpose({ focus: () => inputRef.value?.focus(), insertText, takeDraft });
       </div>
       <input ref="fileRef" class="file-input" type="file" @change="onFileChange" />
     </div>
-    <!-- @ 文件引用浮层：锚定输入区向上展开；↑↓ 导航 / Enter 选中 / Esc 关闭 -->
-    <div class="text-wrap">
-      <div v-if="atOpen" class="at-menu" role="listbox" aria-label="文件引用候选">
-        <div v-if="!atItems.length" class="at-empty">
-          {{ atRoot ? "无匹配" : "请先在 coding 面板选择项目目录" }}
-        </div>
-        <div
-          v-for="(f, i) in atItems"
-          :key="f.rel"
-          class="at-item"
-          :class="{ sel: i === atIdx }"
-          role="option"
-          :aria-selected="i === atIdx"
-          @mousedown.prevent="pickAt(f)"
-        >{{ f.rel }}</div>
+    <!-- @ 文件引用浮层：锚定 .bar 向上展开（绝对定位），↑↓ 导航 / Enter 选中 / Esc 关闭 -->
+    <!-- / 命令浮层：同 @ 浮层范式，绝对定位在 .bar 上方；内置命令 + 插件动作 -->
+    <div v-if="atOpen" class="at-menu" :class="menuPlacement" :style="{ maxHeight: menuMaxH + 'px' }" role="listbox" aria-label="文件引用候选">
+      <div v-if="!atItems.length" class="at-empty">
+        {{ atRoot ? "无匹配" : "请先在 coding 面板选择项目目录" }}
       </div>
+      <div
+        v-for="(f, i) in atItems"
+        :key="f.rel"
+        class="at-item"
+        :class="{ sel: i === atIdx }"
+        role="option"
+        :aria-selected="i === atIdx"
+        @mousedown.prevent="pickAt(f)"
+      >{{ f.rel }}</div>
+    </div>
+    <div v-if="slashOpen" class="at-menu" :class="menuPlacement" :style="{ maxHeight: menuMaxH + 'px' }" role="listbox" aria-label="命令候选">
+      <div v-if="!slashItems.length" class="at-empty">无匹配命令</div>
+      <div
+        v-for="(c, i) in slashItems"
+        :key="c.id"
+        class="at-item slash-item"
+        :class="{ sel: i === slashIdx }"
+        role="option"
+        :aria-selected="i === slashIdx"
+        @mousedown.prevent="pickSlash(c)"
+      >
+        <YbIcon :name="c.icon" :size="12" />
+        <span class="slash-kw">/{{ c.keyword }}</span>
+        <span class="slash-label">{{ c.label }}</span>
+        <span class="slash-desc">{{ c.desc }}</span>
+      </div>
+    </div>
+    <div class="text-wrap">
       <textarea
         ref="inputRef"
         v-model="text"
@@ -420,8 +588,9 @@ defineExpose({ focus: () => inputRef.value?.focus(), insertText, takeDraft });
         :class="{ nowrap: !isMulti }"
         :placeholder="placeholder"
         title="Shift+回车换行"
+        @mousedown="addOpen = false"
         @keydown.enter.exact.prevent="onEnter"
-        @keydown="onAtKeydown"
+        @keydown="onMenuKeydown"
         @compositionstart="onCompStart"
         @compositionend="onCompEnd"
         @input="onTextInput"
@@ -523,12 +692,11 @@ defineExpose({ focus: () => inputRef.value?.focus(), insertText, takeDraft });
 }
 .bar:focus-within {
   border-color: var(--yb-accent);
-  box-shadow: var(--yb-glaze-hi),
+  /* 聚焦态保留完整的玻璃阴影（含 --yb-glaze-edge 顶部边缘高光），否则右上角会"切角不齐"；
+   * focus ring 改用 outline（从 border-box 外侧绘制，跟随 border-radius），避免 spread 与 1px border 叠出内圈 */
+  box-shadow: var(--yb-glaze-hi), var(--yb-glaze-edge),
     0 1px 2px rgba(var(--yb-c-slate-rgb), 0.06),
     0 6px 18px rgba(var(--yb-c-slate-rgb), 0.10);
-  /* focus ring：原用 box-shadow 0 0 0 3px spread，但 spread 在某些 WebView
-   * 上从 padding-box 渲染，画在 border 内侧与 1px border 叠出"内圈"。
-   * outline 明确从 border-box 外侧绘制且跟随 border-radius，无 inset 风险。 */
   outline: 2px solid var(--yb-accent-soft);
   outline-offset: 1px;
 }
@@ -541,11 +709,12 @@ defineExpose({ focus: () => inputRef.value?.focus(), insertText, takeDraft });
   align-items: center;
 }
 .at-menu {
+  /* 绝对定位锚定 .bar：left/right 各 8px 收边（避免菜单圆角顶到 .bar 圆角）；
+   * 方向由 .up/.down 控制；max-height 由内联 menuMaxH 控制（视可用空间自适应）。 */
   position: absolute;
-  bottom: calc(100% + 6px);
-  left: 0;
-  right: 0;
-  max-height: 220px;
+  left: 8px;
+  right: 8px;
+  max-height: 360px;
   overflow-y: auto;
   padding: 5px;
   border: 1px solid var(--yb-surface-border);
@@ -554,7 +723,17 @@ defineExpose({ focus: () => inputRef.value?.focus(), insertText, takeDraft });
   -webkit-backdrop-filter: var(--yb-blur);
   backdrop-filter: var(--yb-blur);
   box-shadow: var(--yb-shadow-soft);
-  z-index: 25;
+  z-index: 2147483647; /* 瞬态浮层：绝不被团子/技能 chip 等任何元素遮挡 */
+  /* 显式可交互：父链 .wb 是 pointer-events:none（窗口空白穿透），WKWebView 对
+   * "父 none + 后代 auto" 组合可能误跳过；这里直接声明，确保菜单项可点选 */
+  pointer-events: auto;
+}
+/* 展开方向：默认向上（输入框上方）；空间不足时向下（覆盖输入框下方区域，如桌宠 dock 按钮） */
+.at-menu.up {
+  bottom: calc(100% + 6px);
+}
+.at-menu.down {
+  top: calc(100% + 6px);
 }
 .at-item {
   padding: 6px 8px;
@@ -569,10 +748,40 @@ defineExpose({ focus: () => inputRef.value?.focus(), insertText, takeDraft });
 .at-item.sel {
   background: var(--yb-row-hover);
 }
+.at-item:hover {
+  background: var(--yb-row-hover);
+}
 .at-empty {
   padding: 7px 9px;
   font-size: 11px;
   color: var(--yb-text-faint);
+}
+/* / 命令菜单项：图标 + 命令词（高亮）+ 标签 + 说明（淡化），与文件候选视觉区分；
+ * 紧凑行高：桌宠小窗可用空间有限，压薄让更多命令可见 */
+.slash-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  font-size: 11px;
+}
+.slash-item .slash-kw {
+  color: var(--yb-accent-deep);
+  font-weight: 600;
+  flex: none;
+}
+.slash-item .slash-label {
+  color: var(--yb-text);
+  flex: none;
+}
+.slash-item .slash-desc {
+  margin-left: auto;
+  color: var(--yb-text-faint);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 55%;
 }
 textarea {
   flex: 1;
@@ -653,6 +862,8 @@ textarea::-webkit-scrollbar-thumb {
   position: absolute;
   left: -2px;
   bottom: calc(100% + 9px);
+  max-height: 60vh;
+  overflow-y: auto;
   width: 170px;
   padding: 5px;
   display: grid;
@@ -679,6 +890,12 @@ textarea::-webkit-scrollbar-thumb {
 .add-menu button:hover {
   background: var(--yb-row-hover);
 }
+/* compact 模式（桌宠小窗）：向上空间不够，改向下展开避开 stack 顶/团子 */
+.add-menu.down {
+  bottom: auto;
+  top: calc(100% + 9px);
+}
+
 .add-menu strong {
   font-size: 12px;
   font-weight: var(--yb-fw-medium);

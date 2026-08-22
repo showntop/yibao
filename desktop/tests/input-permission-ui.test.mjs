@@ -2,15 +2,16 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const brainSource = await readFile(new URL("../src/lib/brain.ts", import.meta.url), "utf8");
-const bannerSource = await readFile(new URL("../src/components/PermissionsBanner.vue", import.meta.url), "utf8");
-const settingsSource = await readFile(new URL("../src/components/SettingsView.vue", import.meta.url), "utf8");
-const appSource = await readFile(new URL("../src/App.vue", import.meta.url), "utf8");
-const chatSource = await readFile(new URL("../src/components/HomeChat.vue", import.meta.url), "utf8");
+const brainTypesSource = await readFile(new URL("../src/protocol/brain-types.ts", import.meta.url), "utf8");
+const brainClientSource = await readFile(new URL("../src/services/brainClient.ts", import.meta.url), "utf8");
+const bannerSource = await readFile(new URL("../src/components/pet/PermissionsBanner.vue", import.meta.url), "utf8");
+const settingsSource = await readFile(new URL("../src/views/settings/PrivacySection.vue", import.meta.url), "utf8");
+const petSource = await readFile(new URL("../src/windows/pet/PetWindow.vue", import.meta.url), "utf8");
+const chatSource = await readFile(new URL("../src/views/chat/HomeChat.vue", import.meta.url), "utf8");
 
 test("input monitoring is part of the typed permissions contract", () => {
-  assert.match(brainSource, /input:\s*boolean/);
-  assert.match(brainSource, /"ax"\s*\|\s*"screen"\s*\|\s*"input"/);
+  assert.match(brainTypesSource, /input:\s*boolean/);
+  assert.match(brainClientSource, /"ax"\s*\|\s*"screen"\s*\|\s*"input"/);
 });
 
 test("permission surfaces explain and link input monitoring", () => {
@@ -21,6 +22,6 @@ test("permission surfaces explain and link input monitoring", () => {
 });
 
 test("pet and chat surfaces treat missing input monitoring as actionable", () => {
-  assert.match(appSource, /!perms\.value\.input/);
+  assert.match(petSource, /!perms\.value\.input/);
   assert.match(chatSource, /!perms\.value\.input/);
 });

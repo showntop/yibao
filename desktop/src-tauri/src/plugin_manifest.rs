@@ -78,6 +78,68 @@ pub fn parse_manifest(text: &str) -> Option<(String, String, Vec<Value>)> {
     Some((id?, name?, panels))
 }
 
+/// 解析插件 api.toml 中可暴露为 `/命令` 的方法（`direct = true` 且 `command = true` 的 [[method]]）。
+/// 行级解析（同 manifest，不引 toml 依赖）：只取 name/handler，供前端动态生成插件命令。
+pub fn parse_api_commands(text: &str) -> Vec<Value> {
+    let val = |l: &str, key: &str| -> Option<String> {
+        let rest = l.trim().strip_prefix(key)?;
+        let rest = rest.trim_start().strip_prefix('=')?.trim_start();
+        let rest = rest.strip_prefix('"')?;
+        let end = rest.find('"')?;
+        Some(rest[..end].to_string())
+    };
+    let mut out: Vec<Value> = Vec::new();
+    let mut in_method = false;
+    let mut name = String::new();
+    let mut handler = String::new();
+    let mut direct = false;
+    let mut command = false;
+    macro_rules! flush {
+        () => {
+            if in_method && direct && command && !name.is_empty() && !handler.is_empty() {
+                out.push(serde_json::json!({
+                    "name": name.clone(), "handler": handler.clone(),
+                }));
+            }
+        };
+    }
+    for line in text.lines() {
+        let l = line.trim();
+        if l.starts_with('[') {
+            flush!();
+            in_method = l == "[[method]]";
+            name.clear();
+            handler.clear();
+            direct = false;
+            command = false;
+            continue;
+        }
+        if !in_method {
+            continue;
+        }
+        if name.is_empty() {
+            if let Some(v) = val(l, "name") {
+                name = v;
+                continue;
+            }
+        }
+        if handler.is_empty() {
+            if let Some(v) = val(l, "handler") {
+                handler = v;
+                continue;
+            }
+        }
+        if !direct && l == "direct = true" {
+            direct = true;
+        }
+        if !command && l == "command = true" {
+            command = true;
+        }
+    }
+    flush!();
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -133,5 +195,33 @@ id = "add"
         let (_, _, panels) = parse_manifest(text).expect("应解析出插件");
         assert_eq!(panels[0]["open"], "mat_list");
         assert_eq!(panels[0]["label"], "素材库");
+    }
+
+    #[test]
+    fn parse_api_commands_picks_direct_and_command_only() {
+        // 只有 direct=true 且 command=true 的方法才收；缺任一标记/参数方法不收
+        let text = r#"
+[[method]]
+name = "json_format"
+handler = "toolbox.json_format"
+direct = true
+command = true
+
+[[method]]
+name = "list"
+handler = "toolbox.open"
+direct = true
+panel = "toolbox:main"
+
+[[method]]
+name = "history"
+handler = "coding.history"
+direct = true
+quiet = true
+"#;
+        let cmds = parse_api_commands(text);
+        assert_eq!(cmds.len(), 1);
+        assert_eq!(cmds[0]["name"], "json_format");
+        assert_eq!(cmds[0]["handler"], "toolbox.json_format");
     }
 }

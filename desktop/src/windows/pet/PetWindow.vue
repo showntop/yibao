@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, watchEffect, nextTick, onMounted, onUnmounted } from "vue";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
 import Avatar from "../../components/pet/Avatar.vue";
@@ -58,6 +59,7 @@ import { usePetBubbles, type BubbleMsg } from "../../composables/usePetBubbles";
 import { usePetSpeech } from "../../composables/usePetSpeech";
 import { usePetEvents } from "../../composables/usePetEvents";
 import YbIcon from "../../components/common/YbIcon.vue";
+import { inputMenuOpen, addMenuOpen } from "../../lib/input-menu";
 
 /** 小窗固定会话 id（方案 A）：永远用同一个会话，不镜像大窗活跃会话。
  *  run 带它使消息归属、重启可恢复；固定性从架构上消灭串台（大窗切会话不影响本窗）。 */
@@ -165,6 +167,8 @@ let unlistenCursorEnter: (() => void) | null = null;
 let unlistenCursorLeave: (() => void) | null = null;
 let unlistenConvUpdated: (() => void) | null = null;
 let rectTimer: ReturnType<typeof setInterval> | null = null;
+/** hover 收起延迟（命令/文件菜单打开时鼠标移向菜单项用）：菜单关闭后再收起面板 */
+let hoverCloseTimer: ReturnType<typeof setTimeout> | null = null;
 
 const suggestions = SUGGESTIONS;
 const missingPerms = computed(() => perms.value !== null && (!perms.value.ax || !perms.value.screen || !perms.value.input));
@@ -175,7 +179,10 @@ const showTyping = computed(() => state.value === "think" && streamingIdx.value 
 watch(showTyping, () => scrollBubbles(true));
 
 /** 单窗热区上报：idle 只报团子盒（pet），quick 追加面板元素（ui，.wb-zone）。
- *  Rust 据此放行鼠标穿透 + 驱动 enter/leave；窗口相对坐标，拖动自动跟随。 */
+ *  Rust 据此放行鼠标穿透 + 驱动 enter/leave；窗口相对坐标，拖动自动跟随。
+ *  ⚠️ 菜单（.at-menu）展开的区域也必须上报——Rust 只放行上报矩形，菜单区域漏报会被
+ *  set_ignore_cursor_events 穿透到桌面，点击/滚轮根本进不了 webview（hover 是轮询
+ *  间隙的假象）。菜单打开时按首帧 rect 上报（过滤后菜单变矮只是热区略大于实际，无害）。 */
 function syncHotRects() {
   void nextTick(() => {
     const rects: { x: number; y: number; w: number; h: number; kind: string }[] = [];
@@ -193,6 +200,24 @@ function syncHotRects() {
           rects.push({ x: r.left, y: r.top, w: r.width, h: r.height, kind: "ui" });
         }
       });
+      // 输入框命令/文件菜单热区：向下/向上展开超出 .wb-zone 的部分也要放行
+      if (inputMenuOpen.value) {
+        document.querySelectorAll<HTMLElement>(".at-menu").forEach((n) => {
+          const r = n.getBoundingClientRect();
+          if (r.width > 0 && r.height > 0) {
+            rects.push({ x: r.left, y: r.top, w: r.width, h: r.height, kind: "ui" });
+          }
+        });
+      }
+      // 加号菜单（附件/项目文件）：桌宠下改成向下展开——超 .wb-input 几何也需放行
+      if (addMenuOpen.value) {
+        document.querySelectorAll<HTMLElement>(".add-menu").forEach((n) => {
+          const r = n.getBoundingClientRect();
+          if (r.width > 0 && r.height > 0) {
+            rects.push({ x: r.left, y: r.top, w: r.width, h: r.height, kind: "ui" });
+          }
+        });
+      }
     }
     // 收起态回复气泡热区（点击展开；ui 只放行点击不驱动 enter）
     if (speechVisible.value) {
@@ -206,6 +231,9 @@ function syncHotRects() {
     void setHotRects(rects.length ? rects : null).catch(() => {});
   });
 }
+
+// 菜单开/关都要重新上报热区（开=菜单区域放行；关=撤掉菜单热区恢复穿透）
+watch([inputMenuOpen, addMenuOpen], () => syncHotRects());
 
 /** 顶部边界自适应：macOS 不允许窗口顶部出屏（诊断确认负 y setPosition 被忽略，
  *  窗口顶最低停在菜单栏下缘）。故窗口贴近顶部时「团子锚点在窗口内上移」：
@@ -372,9 +400,13 @@ function onPetClick() {
 }
 
 async function expandTo(v: PetView) {
+  if (v === view.value) return;
+  // 切走对话前记录滚动（BubbleFlow 即将卸载、滚动位置归零）；切回时恢复
+  if (view.value === "chat") captureBubbleScroll();
   view.value = v;
   if (v === "plugins") void loadPlugins();
   if (!expanded.value) await expand();
+  if (v === "chat") restoreBubbleScroll();
 }
 
 async function loadPlugins() {
@@ -566,6 +598,25 @@ function onMic() {
   });
 }
 
+/** /命令 local 动作：截图/打开插件/新建会话/帮助（InputBar 上抛） */
+function onSlashLocal(id: string) {
+  if (id === "snip") {
+    void invoke("start_snip").catch(() => pushWarn("截图启动失败"));
+  } else if (id === "plugins") {
+    void expandTo("plugins");
+  } else if (id === "new-conversation") {
+    // 小窗固定会话（方案 A）：新建会话引导去主窗
+    pushWarn("小窗为固定会话，请在主窗新建会话");
+  } else if (id === "help") {
+    void submit("介绍一下你的能力：能调用哪些插件、支持哪些斜杠命令、如何高效使用。");
+  }
+}
+
+/** /命令 插件动作：api.toml command=true 的直调方法（如 toolbox.json_format） */
+function onSlashPlugin(p: { pluginId: string; method: string }) {
+  void panelAction(p.method, {}).catch(() => pushWarn("插件命令执行失败"));
+}
+
 function onMicContinuous() {
   // 长按团子 = 连续对话：答完接着听，说「退出」或点团子结束（会话提示由大脑 notice 落气泡）
   void ensurePetConversation().then(() => voiceStart("pet", true, petConvId.value)).catch((err) => {
@@ -684,12 +735,25 @@ onMounted(async () => {
   // 离开清 hover + 收起面板。enter 仅由 Rust 团子热区（kind=pet）驱动，面板/输入条不会误触发。
   unlistenCursorEnter = await listen("pet-cursor-enter", () => {
     setPetHover(true);
+    if (hoverCloseTimer) clearTimeout(hoverCloseTimer);
     if (speechVisible.value) return; // 回复气泡显示中不弹快捷面板（区域重叠）
     quick.value = true;
     syncHotRects();
   });
   unlistenCursorLeave = await listen("pet-cursor-leave", () => {
     setPetHover(false);
+    if (hoverCloseTimer) clearTimeout(hoverCloseTimer);
+    if (inputMenuOpen.value) {
+      // 输入框命令/文件菜单打开：鼠标移向菜单项（离开团子热区）时不能立即收起面板，
+      // 否则面板连同菜单一起消失、点不中；菜单关闭后再延迟收起
+      hoverCloseTimer = setTimeout(() => {
+        if (!inputMenuOpen.value) {
+          quick.value = false;
+          syncHotRects();
+        }
+      }, 400);
+      return;
+    }
     quick.value = false;
     syncHotRects();
   });
@@ -726,6 +790,7 @@ onUnmounted(() => {
   unlistenConvUpdated?.();
   unlistenMoved?.();
   if (rectTimer) clearInterval(rectTimer);
+  if (hoverCloseTimer !== null) clearTimeout(hoverCloseTimer);
   disposeSpeech();
   window.removeEventListener("keydown", onKeydown);
   if (clickTimer !== null) clearTimeout(clickTimer);
@@ -849,7 +914,7 @@ onUnmounted(() => {
           <YbIcon :name="approvalGuard === 'allowed' ? 'check' : 'x'" :size="15" :stroke="2" />
           <span>{{ approvalGuard === "allowed" ? "已允许，正在继续" : "已拒绝" }}</span>
         </div>
-        <InputBar v-else-if="!pending" ref="inputBarRef" :busy="busy" :listening="state === 'listen'" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
+        <InputBar v-else-if="!pending" ref="inputBarRef" :busy="busy" :listening="state === 'listen'" @submit="submit" @mic="onMic" @interrupt="onInterrupt" @slash-local="onSlashLocal" @slash-plugin="onSlashPlugin" />
         <PendingConfirmCard
           v-else
           :pending="pending"

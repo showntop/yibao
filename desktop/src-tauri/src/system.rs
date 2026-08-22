@@ -260,3 +260,77 @@ pub(crate) fn grab_selected_text() -> Option<String> {
         Some(new)
     }
 }
+
+/// 截图即问：overlay 铺满光标所在显示器，等前端拖拽选区（finish_snip/cancel_snip）。
+/// 全局快捷键 ⌘⇧I 与 `/截图` 命令共用同一入口。
+#[cfg(desktop)]
+pub(crate) fn open_snip_overlay(app: &AppHandle) -> Result<(), String> {
+    let (cmx, cmy) = device_query::DeviceState::new().get_mouse().coords;
+    let Some(snip) = app.get_webview_window("snip") else {
+        return Err("截图窗口不可用".into());
+    };
+    if let Ok(mons) = snip.available_monitors() {
+        let hit = mons.into_iter().find(|m| {
+            let s = m.scale_factor();
+            let x = m.position().x as f64 / s;
+            let y = m.position().y as f64 / s;
+            let w = m.size().width as f64 / s;
+            let h = m.size().height as f64 / s;
+            (cmx as f64) >= x && (cmx as f64) < x + w && (cmy as f64) >= y && (cmy as f64) < y + h
+        });
+        if let Some(mon) = hit {
+            let s = mon.scale_factor();
+            let _ = snip.set_position(tauri::LogicalPosition::new(
+                mon.position().x as f64 / s,
+                mon.position().y as f64 / s,
+            ));
+            let _ = snip.set_size(tauri::LogicalSize::new(
+                mon.size().width as f64 / s,
+                mon.size().height as f64 / s,
+            ));
+        }
+    }
+    snip.show()
+        .and_then(|_| snip.set_focus())
+        .map_err(|e| e.to_string())?;
+    let _ = app.emit("snip-start", ());
+    Ok(())
+}
+
+/// `/截图` 命令入口：与 ⌘⇧I 全局快捷键走同一条截图链路。
+#[cfg(desktop)]
+#[tauri::command]
+pub fn start_snip(app: AppHandle) -> Result<(), String> {
+    open_snip_overlay(&app)
+}
+
+/// 在 Finder 中显示需要授权的二进制（生产=译宝.app；dev=sidecar python）。
+/// macOS 系统设置 TCC 面板支持把文件直接拖进授权列表——先把目标文件在 Finder
+/// 里亮出来，省去「点 + → 在文件选择器里翻找」的步骤。
+#[tauri::command]
+pub fn reveal_app_in_finder() -> Result<(), String> {
+    let target = if crate::braind::is_prod() {
+        // exe = …/译宝.app/Contents/MacOS/译宝 → 上两级得 .app（拖 .app 最直观）
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        exe.parent()
+            .and_then(|p| p.parent())
+            .filter(|p| p.extension().map_or(false, |e| e == "app"))
+            .unwrap_or(&exe)
+            .to_path_buf()
+    } else {
+        // dev 模式负责进程是 sidecar python 解释器，列表里以该二进制为准
+        crate::braind::sidecar_dir().join(".venv").join("bin").join("python")
+    };
+    let out = std::process::Command::new("open")
+        .arg("-R")
+        .arg(&target)
+        .output()
+        .map_err(|e| format!("调用 open -R 失败：{e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "reveal 失败：{}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(())
+}

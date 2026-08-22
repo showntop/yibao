@@ -14,7 +14,7 @@ use std::sync::Mutex;
 
 use braind::{boot_brain, ensure_runtime, restart_brain, clear_brain_data, Brain};
 use setup_config::{get_setup_config, save_setup_config};
-use system::{expand_chat, grab_selected_text, set_main_size, spawn_click_through};
+use system::{expand_chat, grab_selected_text, reveal_app_in_finder, set_main_size, spawn_click_through, start_snip};
 
 use commands::{
     close_home_window, close_panel_window, hide_invoke_bar, open_data_dir, open_home_window,
@@ -140,32 +140,7 @@ pub fn run() {
             ) {
                 let handle = app.clone();
                 std::thread::spawn(move || {
-                    let (cmx, cmy) = device_query::DeviceState::new().get_mouse().coords;
-                    if let Some(snip) = handle.get_webview_window("snip") {
-                        if let Ok(mons) = snip.available_monitors() {
-                            let hit = mons.into_iter().find(|m| {
-                                let s = m.scale_factor();
-                                let x = m.position().x as f64 / s;
-                                let y = m.position().y as f64 / s;
-                                let w = m.size().width as f64 / s;
-                                let h = m.size().height as f64 / s;
-                                (cmx as f64) >= x && (cmx as f64) < x + w && (cmy as f64) >= y && (cmy as f64) < y + h
-                            });
-                            if let Some(mon) = hit {
-                                let s = mon.scale_factor();
-                                let _ = snip.set_position(tauri::LogicalPosition::new(
-                                    mon.position().x as f64 / s,
-                                    mon.position().y as f64 / s,
-                                ));
-                                let _ = snip.set_size(tauri::LogicalSize::new(
-                                    mon.size().width as f64 / s,
-                                    mon.size().height as f64 / s,
-                                ));
-                            }
-                        }
-                        let _ = snip.show().and_then(|_| snip.set_focus());
-                        let _ = handle.emit("snip-start", ());
-                    }
+                    let _ = crate::system::open_snip_overlay(&handle);
                 });
                 return;
             }
@@ -513,6 +488,8 @@ pub fn run() {
             report_panel_context,
             check_permissions,
             prompt_permission,
+            reveal_app_in_finder,
+            start_snip,
             set_interactive_full,
             set_bubble_on,
             set_hot_rects,

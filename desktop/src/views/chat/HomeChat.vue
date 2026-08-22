@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 大窗主屏：预设换装配（缺省三栏）。与宠物窗同一条大脑会话（surface=pet）。
 import { ref, computed, watch, nextTick, onMounted, onUnmounted, provide } from "vue";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import InputBar from "../../components/common/InputBar.vue";
@@ -42,6 +43,7 @@ import {
   getSetupConfig,
   ensureActiveConversation,
   listPlugins,
+  panelAction,
   type BrainPermissions,
   type BrainStatusMsg,
 } from "../../lib/brain";
@@ -512,6 +514,37 @@ function onInterrupt() {
   });
 }
 
+/** /命令 local 动作：截图/打开插件/新建会话/帮助（InputBar 上抛） */
+function onSlashLocal(id: string) {
+  if (id === "snip") {
+    void invoke("start_snip").catch(() => pushWarn("截图启动失败"));
+  } else if (id === "plugins") {
+    emit("openPanel"); // 打开工作台面板（面板协作视图）
+  } else if (id === "new-conversation") {
+    void newConversation();
+  } else if (id === "help") {
+    void submit("介绍一下你的能力：能调用哪些插件、支持哪些斜杠命令、如何高效使用。");
+  }
+}
+
+/** 新建会话：创建即活跃，重置本窗气泡/状态（SessionList 列表由 refresh + sync 同步） */
+async function newConversation() {
+  try {
+    const meta = await sessionStore.conversation.createConversation("新对话");
+    currentSessionId.value = meta.id;
+    await sessionStore.conversation.refreshConversations().catch(() => {});
+    sessionRef.value?.sync();
+    onSessionNew();
+  } catch {
+    pushWarn("新建会话失败");
+  }
+}
+
+/** /命令 插件动作：api.toml command=true 的直调方法（如 toolbox.json_format） */
+function onSlashPlugin(p: { pluginId: string; method: string }) {
+  void panelAction(p.method, {}).catch(() => pushWarn("插件命令执行失败"));
+}
+
 // ---- 短暂 valence（success/error）：400ms 闪现后回 idle，期间不可打断 ----
 let valenceTimer: ReturnType<typeof setTimeout> | null = null;
 function flashValence(v: "success" | "error") {
@@ -743,7 +776,7 @@ onUnmounted(() => {
               <YbIcon :name="c.icon" :size="11" />{{ c.label }}
             </button>
           </div>
-          <InputBar :busy="busy" :listening="state === 'listen'" :draft="draftRef" @submit="submit" @mic="onMic" @interrupt="onInterrupt" />
+          <InputBar :busy="busy" :listening="state === 'listen'" :draft="draftRef" @submit="submit" @mic="onMic" @interrupt="onInterrupt" @slash-local="onSlashLocal" @slash-plugin="onSlashPlugin" />
         </div>
       </template>
     </HomeFrame>

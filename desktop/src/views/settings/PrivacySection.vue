@@ -6,6 +6,7 @@ import YbIcon from "../../components/common/YbIcon.vue";
 import {
   checkPermissions,
   promptPermission,
+  revealAppInFinder,
   onBrainPermissions,
   getSettingsOnce,
   setSettings,
@@ -31,6 +32,11 @@ function grant(which: "ax" | "screen" | "input") {
 
 function recheck() {
   void checkPermissions().catch(() => {});
+}
+
+function revealInFinder() {
+  // 兜底：在 Finder 亮出授权目标文件，可直接拖进系统设置授权列表
+  void revealAppInFinder().catch(() => {});
 }
 
 // ---- 感知（默认关闭；settings 即时生效；日志内容由 sidecar 临时解密给 UI）----
@@ -294,7 +300,8 @@ onUnmounted(() => {
       <button v-if="perms && !perms.input" class="s-mini accent" @click="grant('input')">去授权</button>
     </div>
     <div class="s-row">
-      <span class="s-row-why">{{ perms ? "授权后点重新检测；屏幕录制需重启译宝生效" : "大脑连接后自动检测" }}</span>
+      <span class="s-row-why">{{ perms ? "授权后自动检测；屏幕录制需重启译宝生效。列表里找不到译宝？可点「+」或把文件拖进列表" : "大脑连接后自动检测" }}</span>
+      <button class="s-mini" @click="revealInFinder">在 Finder 中显示</button>
       <button class="s-mini" @click="recheck">重新检测</button>
     </div>
   </section>

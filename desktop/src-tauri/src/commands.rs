@@ -543,6 +543,7 @@ pub fn plugins_dir() -> std::path::PathBuf {
 }
 
 /// 插件启动器（双击团子）：扫各插件 manifest.toml 拿 id/name + 面板级入口（带 open 的 [[panel]]）。
+/// 附带 /命令 用的插件动作（api.toml 里 command = true 的 direct 方法）。
 #[tauri::command]
 pub fn list_plugins() -> Result<Vec<Value>, String> {
     let rd = std::fs::read_dir(plugins_dir()).map_err(|e| format!("读插件目录失败：{e}"))?;
@@ -551,7 +552,14 @@ pub fn list_plugins() -> Result<Vec<Value>, String> {
         let path = entry.path().join("manifest.toml");
         let Ok(text) = std::fs::read_to_string(&path) else { continue };
         if let Some((id, name, panels)) = plugin_manifest::parse_manifest(&text) {
-            out.push(serde_json::json!({ "id": id, "name": name, "panels": panels }));
+            let mut item = serde_json::json!({ "id": id, "name": name, "panels": panels });
+            let api_path = entry.path().join("api.toml");
+            let cmds = match std::fs::read_to_string(&api_path) {
+                Ok(api_text) => plugin_manifest::parse_api_commands(&api_text),
+                Err(_) => Vec::new(),
+            };
+            item["commands"] = serde_json::Value::Array(cmds);
+            out.push(item);
         }
     }
     out.sort_by(|a, b| {

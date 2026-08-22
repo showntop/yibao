@@ -165,6 +165,11 @@ export function promptPermission(which: "ax" | "screen" | "input"): Promise<void
   return invoke("prompt_permission", { which });
 }
 
+/** 在 Finder 中显示需要授权的二进制（生产=译宝.app；dev=sidecar python），便于直接拖入系统设置授权列表。 */
+export function revealAppInFinder(): Promise<void> {
+  return invoke("reveal_app_in_finder");
+}
+
 // ---- 设置页 ----
 
 /** 读取设置（合并 数据目录.env / sidecar.env / 真环境变量）。 */
@@ -243,8 +248,10 @@ export function getConversationMessages(id: string, limit = 500): Promise<PetMes
   return invoke("get_conversation_messages", { id, limit });
 }
 
-/** 插件清单（id/name/panels；插件启动器与技能 chip 数据源，与左栏技能同源）。 */
-export function listPlugins(): Promise<{ id: string; name: string }[]> {
+/** 插件清单（id/name/panels/commands；插件启动器与技能 chip 数据源；commands 供 /命令 生成插件动作）。 */
+export function listPlugins(): Promise<
+  { id: string; name: string; commands?: { name: string; handler: string }[] }[]
+> {
   return invoke("list_plugins");
 }
 

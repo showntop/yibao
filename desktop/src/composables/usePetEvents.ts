@@ -166,7 +166,18 @@ export function usePetEvents(ctx: PetEventsCtx) {
           bubbles.value[streamingIdx.value].halted = true;
           streamingIdx.value = null;
         } else {
-          bubbles.value.push({ role: "ai", text: "已打断", halted: true });
+          // 「已打断」是事件标记，紧贴被打断的那条 AI 消息，不要 push 到末尾
+          // （否则用户后续再发消息时标记会跑到两轮之间，位置割裂）
+          const mark = { role: "sys" as const, text: "已打断" };
+          let lastAiIdx = -1;
+          for (let i = bubbles.value.length - 1; i >= 0; i--) {
+            if (bubbles.value[i].role === "ai") {
+              lastAiIdx = i;
+              break;
+            }
+          }
+          if (lastAiIdx >= 0) bubbles.value.splice(lastAiIdx + 1, 0, mark);
+          else bubbles.value.push(mark);
         }
         state.value = "idle";
         clearExplicit();

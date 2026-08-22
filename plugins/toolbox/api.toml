@@ -9,18 +9,22 @@ panel = "toolbox:main"
 name = "json_format"
 handler = "toolbox.json_format"
 direct = true
+command = true
 
 [[method]]
 name = "text_diff"
 handler = "toolbox.text_diff"
 direct = true
+command = true
 
 [[method]]
 name = "timestamp"
 handler = "toolbox.timestamp"
 direct = true
+command = true
 
 [[method]]
 name = "img2pdf"
 handler = "toolbox.img2pdf"
 direct = true
+command = true

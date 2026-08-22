@@ -62,28 +62,57 @@ export function usePetBubbles(deps: PetBubblesDeps) {
   // 对话区挂在 v-if="expanded" 上：收起即拆 DOM，滚动位置归零。
   // 再展开时 bubbles 已在内存、length 不变，上面的 watch 不触发，会停在最顶。
   // 收起前记下「是否贴底 / 滚动偏移」，展开后恢复；贴底或没有记录则滚到最新。
+  // 恢复时序：nextTick + rAF 尝试，若容器（bubblesRef）尚未同步到新挂载的 .bubbles
+  // 则保留请求，由 watch(bubblesRef) 在容器就绪时兜底执行——避免展开/切视图后停在开头。
   const STICK_BOTTOM_PX = 80;
   let stickBottom = true;
   let savedScrollTop = 0;
-  function captureBubbleScroll() {
+  let restoreFn: (() => void) | null = null;
+
+  function applyRestore() {
     const el = bubblesRef.value;
     if (!el) return;
+    el.scrollTop = stickBottom ? el.scrollHeight : savedScrollTop;
+  }
+
+  function captureBubbleScroll() {
+    const el = bubblesRef.value;
+    if (!el) {
+      // 容器不在（收起态/视图切换）：展开后按贴底处理，保证看到最新
+      stickBottom = true;
+      savedScrollTop = 0;
+      return;
+    }
     stickBottom = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_BOTTOM_PX;
     savedScrollTop = el.scrollTop;
   }
+
   function restoreBubbleScroll() {
+    restoreFn = applyRestore;
     void nextTick(() => {
       requestAnimationFrame(() => {
-        const el = bubblesRef.value;
-        if (!el) return;
-        el.scrollTop = stickBottom ? el.scrollHeight : savedScrollTop;
+        if (!bubblesRef.value) return; // 容器未就绪：留给 watch(bubblesRef) 兜底
+        const fn = restoreFn;
+        restoreFn = null;
+        fn?.();
       });
     });
   }
+
+  // 容器重新挂载（展开对话 / 插件视图切回）且仍有未消费的恢复请求：立即恢复
+  watch(bubblesRef, (el) => {
+    if (restoreFn && el) {
+      const fn = restoreFn;
+      restoreFn = null;
+      requestAnimationFrame(fn);
+    }
+  });
+
   /** 列表整表重建后复位滚动记忆（reloadMessages 用）。 */
   function resetScroll() {
     stickBottom = true;
     savedScrollTop = 0;
+    restoreFn = null;
   }
 
   return {
