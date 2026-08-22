@@ -1183,6 +1183,448 @@ async def serve_async(
         _http_deps.memories = _mem_payload
         bridge_server = await _start_http_api(agent, settings, tap, _http_deps)
 
+    # ---- 消息分发：handlers 查表（R-13 拆分；分支体原样搬运，continue→return） ----
+    _handlers: dict[str, object] = {}
+
+    async def _h_run(msg: dict) -> None:
+        rtype = msg.get("type")
+        if rtype == "voice_start" and voice is None:
+            # 语音不可用（未启用/初始化失败）：不许静默吞掉——前端会永远卡「聆听中」
+            rid = msg.get("id")
+            log("voice_start 收到但语音栈不可用")
+            write_msg({"type": "event", "event": {"kind": "error", "text": "语音不可用：麦克风初始化失败或被禁用"}})
+            write_msg(_run_done_msg(rid, str(msg.get("conversation_id") or "")))
+            return
+        surface = str(msg.get("surface") or "pet")  # 会话分流：随 run 贯穿事件流与历史
+        conversation_id = str(msg.get("conversation_id") or "")  # M3：会话归属随 run 贯穿（sidecar 单流，事件带归属）
+        if rtype == "run":
+            text, rid = msg.get("text", ""), msg.get("id")
+            # 截图唤起：新鲜（<60s）的屏幕描述注入本次 run，一次性消费
+            ctx_text = _consume_invoke_context(invoke_ctx)
+            if ctx_text:
+                text = f"[屏幕上下文] {ctx_text}\n\n{text}"
+
+            async def _start(c, t=text, r=rid, s=surface, ci=conversation_id):
+                # 附件图片（粘贴截图落盘 chip）：【附件：path】指向图片 → vision 描述注入，
+                # 主模型不必多模态；未配置/无图/失败一律静默。挪进调度任务里做——
+                # 串行 vision HTTP 堵的是本 run，不是主消息循环（审批/其他 run 不被卡）
+                if _wvision is not None and "【" in t:
+                    att_desc = await _offload(_describe_image_attachments, t, _wvision)
+                    if att_desc:
+                        t = f"[附件图片内容]\n{att_desc}\n\n{t}"
+                await _drive_run(t, r, c, s, ci)
+
+            log(f"run 受理 rid={rid} surface={surface} conv={conversation_id}：{text[:30]!r}")
+            _schedule_run(surface, rid, _start, conversation_id)
+        elif voice is not None:
+            rid = msg.get("id")
+            cont = bool(msg.get("continuous"))
+            start = lambda c, r=rid, s=surface, ci=conversation_id, ct=cont: _drive_voice_start(r, c, s, ci, ct)
+            log(f"voice_start 受理 rid={rid} surface={surface} conv={conversation_id} continuous={cont}")
+            _schedule_run(surface, rid, start, conversation_id)
+        else:
+            return
+
+    async def _h_panel_action(msg: dict) -> None:
+        if _is_readonly_direct(msg, agent):
+            # L0 只读直调：独立任务并发跑，不占槽位、不抢占在跑的 run（编辑器/面板加载数据不该踩对话）
+            async def _ro(m=msg):
+                try:
+                    await handle_panel_action(m, agent, write_msg, run_text=_readonly_no_run)
+                except Exception as e:
+                    log(f"只读面板调用异常：{type(e).__name__}: {e}")
+
+            t = asyncio.ensure_future(_ro())
+            readonly_tasks.add(t)
+            t.add_done_callback(readonly_tasks.discard)
+            return
+        # 面板写操作/意图方法：与 run 同槽位（按 conversation_id 取槽：同会话抢占 /
+        # 跨会话并行；default 槽内跨 surface 仍排队，主循环不阻塞）
+        surface = str(msg.get("surface") or "pet")
+        conversation_id = str(msg.get("conversation_id") or "")
+        slot = _slot(conversation_id)
+        _preempt_if_same_surface(slot, surface, conversation_id)
+        prev = slot["task"]
+        slot["surface"] = surface
+        start = lambda c, m=msg, s=surface, ci=conversation_id: handle_panel_action(
+            m, agent, write_msg, run_text=lambda text, rid, c=c, s=s, ci=ci: _stream_agent(text, rid, c, s, ci)
+        )
+
+        async def _marked_panel(cancel, s=start, sf=surface, sl=slot, ci=conversation_id):
+            sl["running_surface"] = sf
+            _run_ctx.set({"cancel": cancel, "surface": sf, "conversation_id": ci})
+            await s(cancel)
+
+        slot["task"] = asyncio.ensure_future(
+            _chain_start(slot, prev, _marked_panel, slot["preempt_gen"])
+        )
+
+    async def _h_interrupt(msg: dict) -> None:
+        # 用户主动打断（spec §E 定向化）：带 conversation_id → 只打断该会话槽
+        # （A 会话的打断不伤 B 会话）；不带 → 全停（旧行为，兼容无会话维度的调用方）。
+        _int_cid = str(msg.get("conversation_id") or "")
+        if _int_cid:
+            _int_slot = run_slots.get(_int_cid)
+            if _int_slot is not None:
+                _preempt_current(_int_slot)
+        else:
+            for _int_slot in run_slots.values():
+                _preempt_current(_int_slot)
+
+    async def _h_panel_context(msg: dict) -> None:
+        # 壳上面板焦点变化：存下来，下次 run 注入 LLM 上下文
+        _FOCUS["value"] = msg.get("focus")
+
+    async def _h_confirm_batch(msg: dict) -> None:
+        # 批量确认回执（spec §3.2）：对每个 item 兑现 future 或存 early_answers
+        # （future 没建 = batch_confirmer 还没注册，confirm_batch 先到）。
+        # 单 confirm 走 size=1 的 items（旧 confirm IPC 已退役，统一 batch）。
+        for item in (msg.get("items") or []):
+            cid = str(item.get("id") or "")
+            if not cid:
+                continue
+            approved = bool(item.get("approved", False))
+            remember = bool(item.get("remember", False))
+            if cid.startswith("perm_"):
+                # coding 工具审批：双通道幂等兑现（另一通道 coding.decide 备用），
+                # 不占 pending_confirms/early_answers（runner 不经 batch_confirmer）
+                _fulfill_coding_perm(cid, approved)
+                _confirm_done.append(cid)
+                continue
+            fut = pending_confirms.get(cid)
+            if fut is not None and not fut.done():
+                fut.set_result((approved, remember))
+            else:
+                # confirmer 还没注册（消息先于 run 任务到达）→ 缓存，由 batch_confirmer 兑现
+                early_answers[cid] = (approved, remember)
+            # 跨端防重：壳已处理的 cid 记入 _confirm_done——手机端随后点同一确认
+            # → _confirm_mobile 判已处理 → 404，答案也不会滞留在 early_answers。
+            _confirm_done.append(cid)
+        write_msg({"type": "confirm_batched", "ok": True})
+
+    async def _h_feed(msg: dict) -> None:
+        # 主屏查询：动态列表（倒序）+ 问候统计（组装在 _mobile_feed，与手机 /v1/feed 同源）
+        try:
+            limit = int(msg.get("limit") or 60)
+        except (TypeError, ValueError):
+            limit = 60
+        write_msg({"type": "feed", **_mobile_feed(limit)})
+
+    async def _h_distill_now(msg: dict) -> None:
+        # 设置页「立即提炼昨日」：master/distill 任一关闭直接拒绝（零出站）；运行可长达 60s，挪线程池
+        if distiller is None or not (settings.get("perception.master") and settings.get("perception.distill")):
+            write_msg({"type": "distill_now", "ok": False, "reason": "disabled"})
+        else:
+            result = await _offload(distiller.run_yesterday, "manual")
+            write_msg({"type": "distill_now", "ok": True, "result": result})
+
+    async def _h_recap_check(msg: dict) -> None:
+        # 晨间反刍（fire-and-forget）：闸门→去重→选材→emit reminder(morning_recap)→标记今天
+        try:
+            import datetime as _dt
+            today = _dt.date.today().isoformat()
+            decide = _recap_decide(
+                settings=settings,
+                last_recap_day=distiller.store.recap_last_day() if distiller else None,
+                today=today,
+                yesterday_items=(distiller.store.day_items(
+                    (_dt.date.today() - _dt.timedelta(days=1)).isoformat())
+                    if distiller else []),
+            )
+            if decide is not None:
+                _emit_event({"kind": "reminder", "type": "morning_recap",
+                             "text": decide["text"], "day": decide["day"]})
+                if distiller is not None:
+                    distiller.store.set_recap_day(today)
+        except Exception as e:
+            log(f"recap_check 失败：{e}")
+
+    async def _h_distill_timeline(msg: dict) -> None:
+        # 设置页/回顾视图：近 N 天提炼聚合（distiller 不在则空数组）
+        try:
+            days = int(msg.get("days") or 14)
+            write_msg({"type": "distill_timeline",
+                       "days": distiller.store.recent_days(days) if distiller else []})
+        except Exception as e:
+            log(f"distill_timeline 失败：{e}")
+            write_msg({"type": "distill_timeline", "days": []})
+
+    async def _h_feed_stats(msg: dict) -> None:
+        # 设置页「主动行为统计」：近 N 天主动行为聚合（默认 7 天）
+        try:
+            days = int(msg.get("days") or 7)
+        except (TypeError, ValueError):
+            days = 7
+        write_msg({"type": "feed_stats", "stats": feed.stats(days=days)})
+
+    async def _h_invoke_context(msg: dict) -> None:
+        # 截图唤起（v1.1）：抓屏 → vision 一句话描述 → 暂存待下次 run 注入。
+        # 无截图能力/无视觉配置/描述失败一律静默跳过；测试可注入 invoke_context_text。
+        if invoke_context_text is None and agent.host is not None and _wvision is not None:
+            try:
+                shot = agent.host.screenshotter.capture()
+                with open(shot, "rb") as f:
+                    import base64 as _b64mod
+                    b64 = "data:image/png;base64," + _b64mod.b64encode(f.read()).decode()
+                desc = _describe_screen(_wvision, b64)
+                if desc:
+                    invoke_ctx.update({"text": desc, "ts": time.time()})
+            except Exception as e:
+                log(f"唤起抓屏失败（已跳过）：{e}")
+
+    async def _h_snip_capture(msg: dict) -> None:
+        # 截图即问（E）：壳侧 overlay 选区（物理像素）→ 区域截图 → b64 暂存待 vision_query。
+        # 无截图能力/失败一律静默跳过。
+        if agent.host is not None:
+            try:
+                shot = agent.host.screenshotter.capture_region(
+                    int(msg.get("left", 0)), int(msg.get("top", 0)),
+                    int(msg.get("width", 1)), int(msg.get("height", 1)),
+                )
+                import base64 as _b64snip
+
+                with open(shot, "rb") as f:
+                    snip_ctx.update({
+                        "b64": "data:image/png;base64," + _b64snip.b64encode(f.read()).decode(),
+                        "ts": time.time(),
+                    })
+            except Exception as e:
+                # 失败清旧暂存：别让下次 vision_query 拿上一次的截图回答
+                snip_ctx.update({"b64": None})
+                log(f"区域截图失败（已跳过）：{e}")
+
+    async def _h_vision_query(msg: dict) -> None:
+        # 截图即问：暂存区域截图 + 问题 → vision 直答（不走 run，不占对话历史）。
+        # 复用 run 的事件/run_done 协议（id 与 run_input 同为 0），壳侧状态机零改动。
+        rid_vq = msg.get("id", 0)
+        question = str(msg.get("question") or "").strip()[:500]
+
+        def _vq_emit(ev: Event) -> None:
+            write_msg({"type": "event", "surface": "pet", "event": ev.model_dump(mode="json")})
+
+        if not question:
+            _vq_emit(Event(kind="error", text="空问题"))
+        elif _wvision is None:
+            _vq_emit(Event(kind="error", text="视觉端点未配置（YIBAO_VISION_*），无法截图问答"))
+        else:
+            b64 = _peek_snip(snip_ctx)
+            if b64 is None:
+                _vq_emit(Event(kind="error", text="截图已过期或尚未框选，请 ⌘⇧I 重新框选"))
+            else:
+                from .llm import answer_image_query
+
+                ans = await _offload(answer_image_query, _wvision, b64, question)
+                if ans:
+                    _vq_emit(Event(kind="final_reply", text=ans))
+                else:
+                    _vq_emit(Event(kind="error", text="截图问答失败，请重试"))
+        write_msg({"type": "run_done", "id": rid_vq})
+
+    async def _h_feed_mark_read(msg: dict) -> None:
+        # 主屏点掉单条：feed.mark_read 容错（坏 id 返回 False，不抛）
+        fid = int(msg.get("id", 0))
+        ok = feed.mark_read(fid)
+        write_msg({"type": "feed_marked_read", "id": fid, "ok": ok})
+
+    async def _h_feed_mark_all_read(msg: dict) -> None:
+        # 主屏「全部已读」：返回受影响行数
+        n = feed.mark_all_read()
+        write_msg({"type": "feed_all_read", "n": n})
+
+    async def _h_feed_mark_status(msg: dict) -> None:
+        # C 子项目：处置态（follow/ignore/none），与 read 正交
+        fid = int(msg.get("id", 0))
+        status = str(msg.get("status", "none"))
+        ok = feed.set_status(fid, status)
+        write_msg({"type": "feed_status_set", "id": fid, "status": status, "ok": ok})
+
+    async def _h_feed_feedback(msg: dict) -> None:
+        # 误报反馈（信任仪表写侧）：👍/👎 落 meta.feedback，同类降频由 dispatcher 执行
+        fid = int(msg.get("id", 0))
+        ok = feed.set_feedback(fid, str(msg.get("feedback", "none")))
+        write_msg({"type": "feed_feedback_set", "id": fid, "ok": ok})
+
+    async def _h_widgets(msg: dict) -> None:
+        # 主屏查询：插件 widget 卡片逐个取数（panel_payload 形状 + open 跳转方法）
+        write_msg({"type": "widgets", "widgets": await _collect_widgets()})
+
+    async def _h_mem_list(msg: dict) -> None:
+        # 记忆管理页：全命名空间分组列出 + 记忆后端状态（未就绪/降级时前端给提示）
+        mem = agent.memory
+        write_msg({"type": "mem_list", "items": await _mem_list(),
+                   "ready": bool(getattr(mem, "ready", True)), "failed": bool(getattr(mem, "failed", False))})
+
+    async def _h_mem_delete(msg: dict) -> None:
+        mid = str(msg.get("mem_id") or "")  # 信封 id 字段被请求序号占用，记忆 id 走 mem_id
+        try:
+            await _offload(agent.memory.delete_by_id, mid)
+            write_msg({"type": "mem_deleted", "id": mid, "ok": True})
+        except Exception as e:
+            write_msg({"type": "mem_deleted", "id": mid, "ok": False, "error": str(e)})
+
+    async def _h_mem_edit(msg: dict) -> None:
+        # 记忆管理「可改」：按 mem_id 替换文本；空文本/坏 id 明确报错，不静默
+        mid = str(msg.get("mem_id") or "")
+        text = str(msg.get("text") or "").strip()
+        if not mid or not text:
+            write_msg({"type": "mem_edited", "id": mid, "ok": False,
+                       "error": "记忆 id 与新文本都不能为空"})
+            return
+        try:
+            ok = await _offload(agent.memory.update, mid, text)
+            if ok:
+                write_msg({"type": "mem_edited", "id": mid, "ok": True})
+            else:
+                write_msg({"type": "mem_edited", "id": mid, "ok": False,
+                           "error": "记忆不存在或后端更新失败"})
+        except Exception as e:
+            write_msg({"type": "mem_edited", "id": mid, "ok": False, "error": str(e)})
+
+    async def _h_settings_get(msg: dict) -> None:
+        write_msg({"type": "settings", "values": {**settings, "watch.status": watch_service.status()}})
+
+    async def _h_http_pair_info(msg: dict) -> None:
+        # 配对信息（手机设置页扫码/手输 URL 用）：内网 IP + 实际监听口/绑定地址
+        write_msg({"type": "http_pair_info", "lan_ip": _lan_ip(),
+                   "port": http_port(), "bind": str(settings.get("http.bind") or "127.0.0.1")})
+
+    async def _h_settings_set(msg: dict) -> None:
+        vals = msg.get("values")
+        if isinstance(vals, dict):
+            try:
+                accepted = dict(vals)
+                if accepted.get("watch.enabled"):
+                    accepted["perception.master"] = True
+                    accepted["perception.activity"] = True
+                if accepted.get("watch.screen_enabled"):
+                    accepted["perception.master"] = True
+                    accepted["perception.app"] = True
+                if pstore is None and accepted.get("perception.master"):
+                    accepted["perception.master"] = False
+                save_settings(accepted)  # 只落已知键；写盘成功后重读合并
+                settings.update(load_settings())
+                await watch_service.apply_settings()
+            except Exception as e:
+                log(f"设置保存失败：{e}")
+        write_msg({"type": "settings", "values": {**settings, "watch.status": watch_service.status()}})
+
+    async def _h_dock_list(msg: dict) -> None:
+        # 主屏 Dock 查询：pinned 优先 + 频率补齐（详见 _dock_list）
+        write_msg({"type": "dock_list", "dock": _dock_list(agent.log, _plugin_summaries_list())})
+
+    async def _h_set_dock_pin(msg: dict) -> None:
+        # 主屏 Dock 固定/取消固定：改 settings.dock_pinned，写入侧 enforce 上限 _DOCK_MAX
+        pid = str(msg.get("pid") or "").strip()
+        on = bool(msg.get("on"))
+        cur_list = list(load_settings().get("dock_pinned") or [])
+        # 去重去空（脏数据兜底）
+        seen: set[str] = set()
+        cleaned = []
+        for x in cur_list:
+            xs = str(x).strip()
+            if xs and xs not in seen:
+                seen.add(xs)
+                cleaned.append(xs)
+        cur_list = cleaned
+        ok = True
+        if on:
+            if pid and pid not in seen:
+                if len(cur_list) >= _DOCK_MAX:
+                    ok = False  # 超上限拒绝（config 层不校验长度，这里拦）
+                else:
+                    cur_list.append(pid)
+        else:
+            cur_list = [x for x in cur_list if x != pid]
+        if ok and pid:
+            try:
+                save_settings({"dock_pinned": cur_list})
+                settings["dock_pinned"] = list(cur_list)
+            except Exception as e:
+                log(f"dock_pinned 写入失败：{e}")
+                ok = False
+        write_msg({"type": "dock_pin_set", "pid": pid, "ok": ok,
+                   "dock": _dock_list(agent.log, _plugin_summaries_list())})
+
+    async def _h_perception_list(msg: dict) -> None:
+        if pstore is None:
+            write_msg({"type": "perception", "items": [], "sources": [], "available": False})
+            return
+        try:
+            limit = max(1, min(int(msg.get("limit") or 60), 200))
+            before_raw = msg.get("before_id")
+            before_id = int(before_raw) if before_raw is not None else None
+            items = pstore.list(limit=limit, before_id=before_id)
+            sources = pstore.sources()
+            write_msg({"type": "perception", "items": items, "sources": sources, "available": True})
+        except Exception as e:
+            write_msg({"type": "perception", "items": [], "sources": [], "available": True, "error": str(e)})
+
+    async def _h_perception_delete(msg: dict) -> None:
+        per_raw = msg.get("per_id")
+        if pstore is None or per_raw is None:
+            write_msg({"type": "perception_deleted", "id": per_raw, "ok": False, "error": "感知存储不可用"})
+            return
+        try:
+            per_id = int(per_raw)
+            write_msg({"type": "perception_deleted", "id": per_id, "ok": bool(pstore.delete(per_id))})
+        except Exception as e:
+            write_msg({"type": "perception_deleted", "id": per_raw, "ok": False, "error": str(e)})
+
+    async def _h_perception_clear(msg: dict) -> None:
+        if pstore is None:
+            write_msg({"type": "perception_cleared", "count": 0, "error": "感知存储不可用"})
+            return
+        try:
+            write_msg({"type": "perception_cleared", "count": int(pstore.clear())})
+        except Exception as e:
+            write_msg({"type": "perception_cleared", "count": 0, "error": str(e)})
+
+    async def _h_check_permissions(msg: dict) -> None:
+        write_msg({"type": "permissions", "permissions": _permissions_status()})
+
+    async def _h_prompt_permission(msg: dict) -> None:
+        which = msg.get("which")
+        if which == "ax":
+            permissions.prompt_ax()
+        elif which == "screen":
+            permissions.prompt_screen()
+        elif which == "input":
+            permissions.prompt_input()
+        write_msg({"type": "permissions", "permissions": _permissions_status()})
+
+    _handlers["run"] = _h_run
+    _handlers["voice_start"] = _h_run  # 复合分支：原 if rtype in ("run", "voice_start") 共用一体
+    _handlers["panel_action"] = _h_panel_action
+    _handlers["interrupt"] = _h_interrupt
+    _handlers["panel_context"] = _h_panel_context
+    _handlers["confirm_batch"] = _h_confirm_batch
+    _handlers["feed"] = _h_feed
+    _handlers["distill_now"] = _h_distill_now
+    _handlers["recap_check"] = _h_recap_check
+    _handlers["distill_timeline"] = _h_distill_timeline
+    _handlers["feed_stats"] = _h_feed_stats
+    _handlers["invoke_context"] = _h_invoke_context
+    _handlers["snip_capture"] = _h_snip_capture
+    _handlers["vision_query"] = _h_vision_query
+    _handlers["feed_mark_read"] = _h_feed_mark_read
+    _handlers["feed_mark_all_read"] = _h_feed_mark_all_read
+    _handlers["feed_mark_status"] = _h_feed_mark_status
+    _handlers["feed_feedback"] = _h_feed_feedback
+    _handlers["widgets"] = _h_widgets
+    _handlers["mem_list"] = _h_mem_list
+    _handlers["mem_delete"] = _h_mem_delete
+    _handlers["mem_edit"] = _h_mem_edit
+    _handlers["settings_get"] = _h_settings_get
+    _handlers["http_pair_info"] = _h_http_pair_info
+    _handlers["settings_set"] = _h_settings_set
+    _handlers["dock_list"] = _h_dock_list
+    _handlers["set_dock_pin"] = _h_set_dock_pin
+    _handlers["perception_list"] = _h_perception_list
+    _handlers["perception_delete"] = _h_perception_delete
+    _handlers["perception_clear"] = _h_perception_clear
+    _handlers["check_permissions"] = _h_check_permissions
+    _handlers["prompt_permission"] = _h_prompt_permission
+
     while True:
         msg = await queue.get()
         if msg is None:
@@ -1228,380 +1670,9 @@ async def serve_async(
                     pass
             return
         rtype = msg.get("type")
-        if rtype in ("run", "voice_start"):
-            if rtype == "voice_start" and voice is None:
-                # 语音不可用（未启用/初始化失败）：不许静默吞掉——前端会永远卡「聆听中」
-                rid = msg.get("id")
-                log("voice_start 收到但语音栈不可用")
-                write_msg({"type": "event", "event": {"kind": "error", "text": "语音不可用：麦克风初始化失败或被禁用"}})
-                write_msg(_run_done_msg(rid, str(msg.get("conversation_id") or "")))
-                continue
-            surface = str(msg.get("surface") or "pet")  # 会话分流：随 run 贯穿事件流与历史
-            conversation_id = str(msg.get("conversation_id") or "")  # M3：会话归属随 run 贯穿（sidecar 单流，事件带归属）
-            if rtype == "run":
-                text, rid = msg.get("text", ""), msg.get("id")
-                # 截图唤起：新鲜（<60s）的屏幕描述注入本次 run，一次性消费
-                ctx_text = _consume_invoke_context(invoke_ctx)
-                if ctx_text:
-                    text = f"[屏幕上下文] {ctx_text}\n\n{text}"
-
-                async def _start(c, t=text, r=rid, s=surface, ci=conversation_id):
-                    # 附件图片（粘贴截图落盘 chip）：【附件：path】指向图片 → vision 描述注入，
-                    # 主模型不必多模态；未配置/无图/失败一律静默。挪进调度任务里做——
-                    # 串行 vision HTTP 堵的是本 run，不是主消息循环（审批/其他 run 不被卡）
-                    if _wvision is not None and "【" in t:
-                        att_desc = await _offload(_describe_image_attachments, t, _wvision)
-                        if att_desc:
-                            t = f"[附件图片内容]\n{att_desc}\n\n{t}"
-                    await _drive_run(t, r, c, s, ci)
-
-                log(f"run 受理 rid={rid} surface={surface} conv={conversation_id}：{text[:30]!r}")
-                _schedule_run(surface, rid, _start, conversation_id)
-            elif voice is not None:
-                rid = msg.get("id")
-                cont = bool(msg.get("continuous"))
-                start = lambda c, r=rid, s=surface, ci=conversation_id, ct=cont: _drive_voice_start(r, c, s, ci, ct)
-                log(f"voice_start 受理 rid={rid} surface={surface} conv={conversation_id} continuous={cont}")
-                _schedule_run(surface, rid, start, conversation_id)
-            else:
-                continue
-        elif rtype == "panel_action":
-            if _is_readonly_direct(msg, agent):
-                # L0 只读直调：独立任务并发跑，不占槽位、不抢占在跑的 run（编辑器/面板加载数据不该踩对话）
-                async def _ro(m=msg):
-                    try:
-                        await handle_panel_action(m, agent, write_msg, run_text=_readonly_no_run)
-                    except Exception as e:
-                        log(f"只读面板调用异常：{type(e).__name__}: {e}")
-
-                t = asyncio.ensure_future(_ro())
-                readonly_tasks.add(t)
-                t.add_done_callback(readonly_tasks.discard)
-                continue
-            # 面板写操作/意图方法：与 run 同槽位（按 conversation_id 取槽：同会话抢占 /
-            # 跨会话并行；default 槽内跨 surface 仍排队，主循环不阻塞）
-            surface = str(msg.get("surface") or "pet")
-            conversation_id = str(msg.get("conversation_id") or "")
-            slot = _slot(conversation_id)
-            _preempt_if_same_surface(slot, surface, conversation_id)
-            prev = slot["task"]
-            slot["surface"] = surface
-            start = lambda c, m=msg, s=surface, ci=conversation_id: handle_panel_action(
-                m, agent, write_msg, run_text=lambda text, rid, c=c, s=s, ci=ci: _stream_agent(text, rid, c, s, ci)
-            )
-
-            async def _marked_panel(cancel, s=start, sf=surface, sl=slot, ci=conversation_id):
-                sl["running_surface"] = sf
-                _run_ctx.set({"cancel": cancel, "surface": sf, "conversation_id": ci})
-                await s(cancel)
-
-            slot["task"] = asyncio.ensure_future(
-                _chain_start(slot, prev, _marked_panel, slot["preempt_gen"])
-            )
-        elif rtype == "interrupt":
-            # 用户主动打断（spec §E 定向化）：带 conversation_id → 只打断该会话槽
-            # （A 会话的打断不伤 B 会话）；不带 → 全停（旧行为，兼容无会话维度的调用方）。
-            _int_cid = str(msg.get("conversation_id") or "")
-            if _int_cid:
-                _int_slot = run_slots.get(_int_cid)
-                if _int_slot is not None:
-                    _preempt_current(_int_slot)
-            else:
-                for _int_slot in run_slots.values():
-                    _preempt_current(_int_slot)
-        elif rtype == "panel_context":
-            # 壳上面板焦点变化：存下来，下次 run 注入 LLM 上下文
-            _FOCUS["value"] = msg.get("focus")
-        elif rtype == "confirm_batch":
-            # 批量确认回执（spec §3.2）：对每个 item 兑现 future 或存 early_answers
-            # （future 没建 = batch_confirmer 还没注册，confirm_batch 先到）。
-            # 单 confirm 走 size=1 的 items（旧 confirm IPC 已退役，统一 batch）。
-            for item in (msg.get("items") or []):
-                cid = str(item.get("id") or "")
-                if not cid:
-                    continue
-                approved = bool(item.get("approved", False))
-                remember = bool(item.get("remember", False))
-                if cid.startswith("perm_"):
-                    # coding 工具审批：双通道幂等兑现（另一通道 coding.decide 备用），
-                    # 不占 pending_confirms/early_answers（runner 不经 batch_confirmer）
-                    _fulfill_coding_perm(cid, approved)
-                    _confirm_done.append(cid)
-                    continue
-                fut = pending_confirms.get(cid)
-                if fut is not None and not fut.done():
-                    fut.set_result((approved, remember))
-                else:
-                    # confirmer 还没注册（消息先于 run 任务到达）→ 缓存，由 batch_confirmer 兑现
-                    early_answers[cid] = (approved, remember)
-                # 跨端防重：壳已处理的 cid 记入 _confirm_done——手机端随后点同一确认
-                # → _confirm_mobile 判已处理 → 404，答案也不会滞留在 early_answers。
-                _confirm_done.append(cid)
-            write_msg({"type": "confirm_batched", "ok": True})
-        elif rtype == "feed":
-            # 主屏查询：动态列表（倒序）+ 问候统计（组装在 _mobile_feed，与手机 /v1/feed 同源）
-            try:
-                limit = int(msg.get("limit") or 60)
-            except (TypeError, ValueError):
-                limit = 60
-            write_msg({"type": "feed", **_mobile_feed(limit)})
-        elif rtype == "distill_now":
-            # 设置页「立即提炼昨日」：master/distill 任一关闭直接拒绝（零出站）；运行可长达 60s，挪线程池
-            if distiller is None or not (settings.get("perception.master") and settings.get("perception.distill")):
-                write_msg({"type": "distill_now", "ok": False, "reason": "disabled"})
-            else:
-                result = await _offload(distiller.run_yesterday, "manual")
-                write_msg({"type": "distill_now", "ok": True, "result": result})
-        elif rtype == "recap_check":
-            # 晨间反刍（fire-and-forget）：闸门→去重→选材→emit reminder(morning_recap)→标记今天
-            try:
-                import datetime as _dt
-                today = _dt.date.today().isoformat()
-                decide = _recap_decide(
-                    settings=settings,
-                    last_recap_day=distiller.store.recap_last_day() if distiller else None,
-                    today=today,
-                    yesterday_items=(distiller.store.day_items(
-                        (_dt.date.today() - _dt.timedelta(days=1)).isoformat())
-                        if distiller else []),
-                )
-                if decide is not None:
-                    _emit_event({"kind": "reminder", "type": "morning_recap",
-                                 "text": decide["text"], "day": decide["day"]})
-                    if distiller is not None:
-                        distiller.store.set_recap_day(today)
-            except Exception as e:
-                log(f"recap_check 失败：{e}")
-        elif rtype == "distill_timeline":
-            # 设置页/回顾视图：近 N 天提炼聚合（distiller 不在则空数组）
-            try:
-                days = int(msg.get("days") or 14)
-                write_msg({"type": "distill_timeline",
-                           "days": distiller.store.recent_days(days) if distiller else []})
-            except Exception as e:
-                log(f"distill_timeline 失败：{e}")
-                write_msg({"type": "distill_timeline", "days": []})
-        elif rtype == "feed_stats":
-            # 设置页「主动行为统计」：近 N 天主动行为聚合（默认 7 天）
-            try:
-                days = int(msg.get("days") or 7)
-            except (TypeError, ValueError):
-                days = 7
-            write_msg({"type": "feed_stats", "stats": feed.stats(days=days)})
-        elif rtype == "invoke_context":
-            # 截图唤起（v1.1）：抓屏 → vision 一句话描述 → 暂存待下次 run 注入。
-            # 无截图能力/无视觉配置/描述失败一律静默跳过；测试可注入 invoke_context_text。
-            if invoke_context_text is None and agent.host is not None and _wvision is not None:
-                try:
-                    shot = agent.host.screenshotter.capture()
-                    with open(shot, "rb") as f:
-                        import base64 as _b64mod
-                        b64 = "data:image/png;base64," + _b64mod.b64encode(f.read()).decode()
-                    desc = _describe_screen(_wvision, b64)
-                    if desc:
-                        invoke_ctx.update({"text": desc, "ts": time.time()})
-                except Exception as e:
-                    log(f"唤起抓屏失败（已跳过）：{e}")
-        elif rtype == "snip_capture":
-            # 截图即问（E）：壳侧 overlay 选区（物理像素）→ 区域截图 → b64 暂存待 vision_query。
-            # 无截图能力/失败一律静默跳过。
-            if agent.host is not None:
-                try:
-                    shot = agent.host.screenshotter.capture_region(
-                        int(msg.get("left", 0)), int(msg.get("top", 0)),
-                        int(msg.get("width", 1)), int(msg.get("height", 1)),
-                    )
-                    import base64 as _b64snip
-
-                    with open(shot, "rb") as f:
-                        snip_ctx.update({
-                            "b64": "data:image/png;base64," + _b64snip.b64encode(f.read()).decode(),
-                            "ts": time.time(),
-                        })
-                except Exception as e:
-                    # 失败清旧暂存：别让下次 vision_query 拿上一次的截图回答
-                    snip_ctx.update({"b64": None})
-                    log(f"区域截图失败（已跳过）：{e}")
-        elif rtype == "vision_query":
-            # 截图即问：暂存区域截图 + 问题 → vision 直答（不走 run，不占对话历史）。
-            # 复用 run 的事件/run_done 协议（id 与 run_input 同为 0），壳侧状态机零改动。
-            rid_vq = msg.get("id", 0)
-            question = str(msg.get("question") or "").strip()[:500]
-
-            def _vq_emit(ev: Event) -> None:
-                write_msg({"type": "event", "surface": "pet", "event": ev.model_dump(mode="json")})
-
-            if not question:
-                _vq_emit(Event(kind="error", text="空问题"))
-            elif _wvision is None:
-                _vq_emit(Event(kind="error", text="视觉端点未配置（YIBAO_VISION_*），无法截图问答"))
-            else:
-                b64 = _peek_snip(snip_ctx)
-                if b64 is None:
-                    _vq_emit(Event(kind="error", text="截图已过期或尚未框选，请 ⌘⇧I 重新框选"))
-                else:
-                    from .llm import answer_image_query
-
-                    ans = await _offload(answer_image_query, _wvision, b64, question)
-                    if ans:
-                        _vq_emit(Event(kind="final_reply", text=ans))
-                    else:
-                        _vq_emit(Event(kind="error", text="截图问答失败，请重试"))
-            write_msg({"type": "run_done", "id": rid_vq})
-        elif rtype == "feed_mark_read":
-            # 主屏点掉单条：feed.mark_read 容错（坏 id 返回 False，不抛）
-            fid = int(msg.get("id", 0))
-            ok = feed.mark_read(fid)
-            write_msg({"type": "feed_marked_read", "id": fid, "ok": ok})
-        elif rtype == "feed_mark_all_read":
-            # 主屏「全部已读」：返回受影响行数
-            n = feed.mark_all_read()
-            write_msg({"type": "feed_all_read", "n": n})
-        elif rtype == "feed_mark_status":
-            # C 子项目：处置态（follow/ignore/none），与 read 正交
-            fid = int(msg.get("id", 0))
-            status = str(msg.get("status", "none"))
-            ok = feed.set_status(fid, status)
-            write_msg({"type": "feed_status_set", "id": fid, "status": status, "ok": ok})
-        elif rtype == "feed_feedback":
-            # 误报反馈（信任仪表写侧）：👍/👎 落 meta.feedback，同类降频由 dispatcher 执行
-            fid = int(msg.get("id", 0))
-            ok = feed.set_feedback(fid, str(msg.get("feedback", "none")))
-            write_msg({"type": "feed_feedback_set", "id": fid, "ok": ok})
-        elif rtype == "widgets":
-            # 主屏查询：插件 widget 卡片逐个取数（panel_payload 形状 + open 跳转方法）
-            write_msg({"type": "widgets", "widgets": await _collect_widgets()})
-        elif rtype == "mem_list":
-            # 记忆管理页：全命名空间分组列出 + 记忆后端状态（未就绪/降级时前端给提示）
-            mem = agent.memory
-            write_msg({"type": "mem_list", "items": await _mem_list(),
-                       "ready": bool(getattr(mem, "ready", True)), "failed": bool(getattr(mem, "failed", False))})
-        elif rtype == "mem_delete":
-            mid = str(msg.get("mem_id") or "")  # 信封 id 字段被请求序号占用，记忆 id 走 mem_id
-            try:
-                await _offload(agent.memory.delete_by_id, mid)
-                write_msg({"type": "mem_deleted", "id": mid, "ok": True})
-            except Exception as e:
-                write_msg({"type": "mem_deleted", "id": mid, "ok": False, "error": str(e)})
-        elif rtype == "mem_edit":
-            # 记忆管理「可改」：按 mem_id 替换文本；空文本/坏 id 明确报错，不静默
-            mid = str(msg.get("mem_id") or "")
-            text = str(msg.get("text") or "").strip()
-            if not mid or not text:
-                write_msg({"type": "mem_edited", "id": mid, "ok": False,
-                           "error": "记忆 id 与新文本都不能为空"})
-                continue
-            try:
-                ok = await _offload(agent.memory.update, mid, text)
-                if ok:
-                    write_msg({"type": "mem_edited", "id": mid, "ok": True})
-                else:
-                    write_msg({"type": "mem_edited", "id": mid, "ok": False,
-                               "error": "记忆不存在或后端更新失败"})
-            except Exception as e:
-                write_msg({"type": "mem_edited", "id": mid, "ok": False, "error": str(e)})
-        elif rtype == "settings_get":
-            write_msg({"type": "settings", "values": {**settings, "watch.status": watch_service.status()}})
-        elif rtype == "http_pair_info":
-            # 配对信息（手机设置页扫码/手输 URL 用）：内网 IP + 实际监听口/绑定地址
-            write_msg({"type": "http_pair_info", "lan_ip": _lan_ip(),
-                       "port": http_port(), "bind": str(settings.get("http.bind") or "127.0.0.1")})
-        elif rtype == "settings_set":
-            vals = msg.get("values")
-            if isinstance(vals, dict):
-                try:
-                    accepted = dict(vals)
-                    if accepted.get("watch.enabled"):
-                        accepted["perception.master"] = True
-                        accepted["perception.activity"] = True
-                    if accepted.get("watch.screen_enabled"):
-                        accepted["perception.master"] = True
-                        accepted["perception.app"] = True
-                    if pstore is None and accepted.get("perception.master"):
-                        accepted["perception.master"] = False
-                    save_settings(accepted)  # 只落已知键；写盘成功后重读合并
-                    settings.update(load_settings())
-                    await watch_service.apply_settings()
-                except Exception as e:
-                    log(f"设置保存失败：{e}")
-            write_msg({"type": "settings", "values": {**settings, "watch.status": watch_service.status()}})
-        elif rtype == "dock_list":
-            # 主屏 Dock 查询：pinned 优先 + 频率补齐（详见 _dock_list）
-            write_msg({"type": "dock_list", "dock": _dock_list(agent.log, _plugin_summaries_list())})
-        elif rtype == "set_dock_pin":
-            # 主屏 Dock 固定/取消固定：改 settings.dock_pinned，写入侧 enforce 上限 _DOCK_MAX
-            pid = str(msg.get("pid") or "").strip()
-            on = bool(msg.get("on"))
-            cur_list = list(load_settings().get("dock_pinned") or [])
-            # 去重去空（脏数据兜底）
-            seen: set[str] = set()
-            cleaned = []
-            for x in cur_list:
-                xs = str(x).strip()
-                if xs and xs not in seen:
-                    seen.add(xs)
-                    cleaned.append(xs)
-            cur_list = cleaned
-            ok = True
-            if on:
-                if pid and pid not in seen:
-                    if len(cur_list) >= _DOCK_MAX:
-                        ok = False  # 超上限拒绝（config 层不校验长度，这里拦）
-                    else:
-                        cur_list.append(pid)
-            else:
-                cur_list = [x for x in cur_list if x != pid]
-            if ok and pid:
-                try:
-                    save_settings({"dock_pinned": cur_list})
-                    settings["dock_pinned"] = list(cur_list)
-                except Exception as e:
-                    log(f"dock_pinned 写入失败：{e}")
-                    ok = False
-            write_msg({"type": "dock_pin_set", "pid": pid, "ok": ok,
-                       "dock": _dock_list(agent.log, _plugin_summaries_list())})
-        elif rtype == "perception_list":
-            if pstore is None:
-                write_msg({"type": "perception", "items": [], "sources": [], "available": False})
-                continue
-            try:
-                limit = max(1, min(int(msg.get("limit") or 60), 200))
-                before_raw = msg.get("before_id")
-                before_id = int(before_raw) if before_raw is not None else None
-                items = pstore.list(limit=limit, before_id=before_id)
-                sources = pstore.sources()
-                write_msg({"type": "perception", "items": items, "sources": sources, "available": True})
-            except Exception as e:
-                write_msg({"type": "perception", "items": [], "sources": [], "available": True, "error": str(e)})
-        elif rtype == "perception_delete":
-            per_raw = msg.get("per_id")
-            if pstore is None or per_raw is None:
-                write_msg({"type": "perception_deleted", "id": per_raw, "ok": False, "error": "感知存储不可用"})
-                continue
-            try:
-                per_id = int(per_raw)
-                write_msg({"type": "perception_deleted", "id": per_id, "ok": bool(pstore.delete(per_id))})
-            except Exception as e:
-                write_msg({"type": "perception_deleted", "id": per_raw, "ok": False, "error": str(e)})
-        elif rtype == "perception_clear":
-            if pstore is None:
-                write_msg({"type": "perception_cleared", "count": 0, "error": "感知存储不可用"})
-                continue
-            try:
-                write_msg({"type": "perception_cleared", "count": int(pstore.clear())})
-            except Exception as e:
-                write_msg({"type": "perception_cleared", "count": 0, "error": str(e)})
-        elif rtype == "check_permissions":
-            write_msg({"type": "permissions", "permissions": _permissions_status()})
-        elif rtype == "prompt_permission":
-            which = msg.get("which")
-            if which == "ax":
-                permissions.prompt_ax()
-            elif which == "screen":
-                permissions.prompt_screen()
-            elif which == "input":
-                permissions.prompt_input()
-            write_msg({"type": "permissions", "permissions": _permissions_status()})
+        _handler = _handlers.get(rtype)
+        if _handler is not None:
+            await _handler(msg)
 
 
 def _build_voice_or_none():
