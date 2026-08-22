@@ -1,26 +1,26 @@
-import { DEFAULT_PORT, getConfig } from "./shared.js";
+import { DEFAULT_PORT, getConfig, yibaoFetch } from "./shared.js";
 
-const $ = (id) => document.getElementById(id);
-const msg = (t) => ($("msg").textContent = t);
+// el：getElementById 简写（DOM 定位语义化；取代单字母 $）
+const el = (id) => document.getElementById(id);
+const msg = (t) => (el("msg").textContent = t);
 
-const cfg = await getConfig();
-$("token").value = cfg.token;
-$("port").value = cfg.port;
+const config = await getConfig();
+el("token").value = config.token;
+el("port").value = config.port;
 
-$("save").addEventListener("click", async () => {
+el("save").addEventListener("click", async () => {
   await chrome.storage.sync.set({
-    token: $("token").value.trim(),
-    port: Number($("port").value) || DEFAULT_PORT,
+    token: el("token").value.trim(),
+    port: Number(el("port").value) || DEFAULT_PORT,
   });
   msg("已保存");
 });
 
-$("test").addEventListener("click", async () => {
-  const token = $("token").value.trim();
-  const port = Number($("port").value) || DEFAULT_PORT;
+el("test").addEventListener("click", async () => {
+  const token = el("token").value.trim();
+  const port = Number(el("port").value) || DEFAULT_PORT;
   try {
-    const resp = await fetch(`http://127.0.0.1:${port}/health`, { headers: { "X-Yibao-Token": token } });
-    const j = await resp.json();
+    const j = await yibaoFetch("/health", { token, port });
     msg(j.ok ? "✓ 连接成功，译宝大脑在线" : `✗ ${j.error || "连接失败"}`);
   } catch {
     msg(`✗ 连不上 127.0.0.1:${port}——译宝在运行吗？端口对吗？`);

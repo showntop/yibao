@@ -1,4 +1,4 @@
-import { extractPage, saveToYibao } from "./shared.js";
+import { extractPage, saveToYibao, isInjectFail, INJECT_FAIL_HINT } from "./shared.js";
 
 const status = (t) => (document.getElementById("status").textContent = t);
 
@@ -14,11 +14,7 @@ async function save(mode) {
     status(r.ok ? `✓ ${mode === "topic" ? "已存选题" : "已存素材"}：《${r.title}》` : `✗ ${r.error}`);
   } catch (e) {
     const msg = String(e);
-    status(
-      msg.includes("Cannot access") || msg.includes("Cannot script")
-        ? "✗ 这个页面不支持读取（chrome://、应用商店、PDF 等页面受浏览器限制）"
-        : `✗ ${msg.slice(0, 80)}`,
-    );
+    status(isInjectFail(msg) ? `✗ ${INJECT_FAIL_HINT}` : `✗ ${msg.slice(0, 80)}`);
   }
 }
 
