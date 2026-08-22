@@ -20,6 +20,9 @@ const sessionList = computed(() => sessions.value?.list.value ?? []);
 // 兜底重连：浏览器实测 EventSource 断线重连若落在服务端下线窗口（CORS 归类为致命），
 // Chromium 不再自愈——state 停留 error。5s 后手动 start() 重建连接；open 即取消。
 let retryTimer: number | undefined;
+// 卸载竞态守卫（R-34，与 Feed/Approvals 同款）：loadConn 是 async——await 期间离页的
+// 话 onUnmounted 已先跑，迟到的连接结果还去构造 useChat 会留下无人 stop 的 EventSource
+let disposed = false;
 
 // 顶层同步注册：await 之后注册的 watch 脱离组件作用域（无主 watcher，卸载后仍跑）
 watch(
@@ -32,6 +35,7 @@ watch(
 
 onMounted(async () => {
   const conn = await loadConn();
+  if (disposed) return; // 已卸载：不再构造 chat/sessions（也就无连接可漏）
   if (!conn) return router.replace("/pairing");
   chat.value = useChat(conn); // 构造即 start，无需再显式连
   sessions.value = useSessions(conn);
@@ -40,6 +44,7 @@ onMounted(async () => {
   usePendingBadge(chat.value.stream, conn);
 });
 onUnmounted(() => {
+  disposed = true;
   window.clearTimeout(retryTimer);
   window.clearTimeout(newChatTimer);
   chat.value?.stream.stop();

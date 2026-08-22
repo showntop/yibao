@@ -21,9 +21,14 @@ const deciding = ref<Record<string, boolean>>({});
 // 待批角标（M2）：本页也挂帧——帧语义已是 debounce sync（confirmation_needed 只当
 // 「有变化」提示，300ms 合并后拉一次 /v1/state，重放帧不虚增）；审批处理完 sync 当场收敛
 let badgeSync: (() => Promise<void>) | null = null;
+// 卸载竞态守卫（R-34，与 Feed.vue 同款）：loadConn 是 async——await 期间离页的话
+// onUnmounted 已先跑（彼时 stream 还是 null），迟到的连接结果还去 start 事件流会留下
+// 无人 stop 的 EventSource（跨页持续连 + 无人消费）
+let disposed = false;
 
 onMounted(async () => {
   const conn = await loadConn();
+  if (disposed) return; // 已卸载：不再构造事件流/审批（也就无连接可漏）
   if (!conn) return router.replace("/pairing");
   stream.value = useEventStream(() => buildEventsUrl(conn));
   approvals.value = useApprovals(conn, stream.value);
@@ -31,7 +36,10 @@ onMounted(async () => {
   stream.value.start(); // 先挂 handler 再连接：start 后到达的 confirmation_needed 才不漏
   void approvals.value.refresh();
 });
-onUnmounted(() => stream.value?.stop());
+onUnmounted(() => {
+  disposed = true;
+  stream.value?.stop();
+});
 
 async function onDecide(p: PendingConfirm, approved: boolean) {
   if (!approvals.value || deciding.value[p.id]) return; // 在途重复点击：直接忽略
