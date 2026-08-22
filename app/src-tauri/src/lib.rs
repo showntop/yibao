@@ -1,8 +1,65 @@
 // 译宝桌面壳：拉起 Python 大脑 sidecar + stdio 桥 + 守护（崩溃重启/看门狗）+ 全局热键 + 输入/确认命令。
-mod event_recorder;
+pub mod event_recorder;
+mod plugin_manifest;
 mod plugin_proto;
-mod session_db;
+pub mod session_db;
+mod snip;
+mod commands;
 
+use commands::{
+    close_home_window, close_panel_window, hide_invoke_bar, open_data_dir, open_home_window,
+    open_panel_window, pick_folder, restore_after_home, save_attachment, save_file, set_bubble_on,
+    set_hot_rects, set_interactive_full, set_pet_expanded, run_input,
+    invoke_context,
+    confirm_batch,
+    get_feed,
+    distill_now,
+    get_feed_stats,
+    recap_check,
+    get_distill_timeline,
+    get_widgets,
+    feed_mark_read,
+    feed_mark_all_read,
+    feed_mark_status,
+    feed_feedback,
+    dock_list,
+    set_dock_pin,
+    get_mem_list,
+    mem_delete,
+    mem_edit,
+    get_settings,
+    get_http_pair_info,
+    set_settings,
+    get_perception,
+    perception_delete,
+    perception_clear,
+    panel_action,
+    plugins_dir,
+    list_plugins,
+    finish_snip,
+    cancel_snip,
+    vision_query,
+    get_current_panel,
+    remember_panel,
+    get_conversation_history,
+    list_conversations,
+    get_conversation_messages,
+    create_conversation,
+    set_active_conversation,
+    get_active_conversation,
+    ensure_active_conversation,
+    ensure_pet_conversation,
+    update_conversation_title,
+    delete_conversation,
+    clear_conversations,
+    truncate_conversation_messages,
+    voice_start,
+    interrupt,
+    report_panel_context,
+    prompt_permission,
+    check_permissions,
+    PetExpanded,
+};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -11,7 +68,6 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
-use tauri_plugin_opener::OpenerExt;
 #[cfg(desktop)]
 use device_query::{DeviceQuery, DeviceState};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -33,32 +89,6 @@ static PET_BUBBLE_ON: AtomicBool = AtomicBool::new(false);
 /// idle 态只上报团子盒，quick 态上报团子盒 ∪ 面板；隐藏时上报 None 清除。
 /// 相对坐标 + Rust 每次判定叠加当前窗口位置，拖动窗口后热区自动跟随。
 static PET_RECTS: Mutex<Vec<(f64, f64, f64, f64, String)>> = Mutex::new(Vec::new());
-
-#[derive(serde::Deserialize)]
-struct HotRect {
-    x: f64,
-    y: f64,
-    w: f64,
-    h: f64,
-    kind: String,
-}
-
-#[tauri::command]
-fn set_hot_rects(rects: Option<Vec<HotRect>>) {
-    *PET_RECTS.lock().unwrap() = rects
-        .map(|rs| rs.iter().map(|r| (r.x, r.y, r.w, r.h, r.kind.clone())).collect())
-        .unwrap_or_default();
-}
-
-#[tauri::command]
-fn set_interactive_full(full: bool) {
-    PET_INTERACTIVE_FULL.store(full, Ordering::Relaxed);
-}
-
-#[tauri::command]
-fn set_bubble_on(on: bool) {
-    PET_BUBBLE_ON.store(on, Ordering::Relaxed);
-}
 
 /// 团子窗尺寸：收起/快捷 320×300（恒窗，内容层切换，零 resize 闪烁）/ 展开对话 360×520。
 /// 入参为 CSS 像素，内部按 scale 换算物理像素。以左上角为锚（团子原地不动，向右下展开）。
@@ -114,7 +144,7 @@ fn expand_chat(app: AppHandle) -> Result<(), String> {
 }
 
 /// sidecar 守护状态：子进程句柄 + 心跳/重启计数/退出标记。
-struct BrainState {
+pub(crate) struct BrainState {
     child: Option<CommandChild>,
     last_pong: Instant,
     seen_pong: bool, // 本代进程是否已回过一个 pong/hello（区分启动中与运行中）
@@ -132,7 +162,7 @@ struct BrainState {
     /// 窗口挂载后靠 get_current_panel 拉这份缓存补渲染（解首开竞态）。
     last_panel: Option<Value>,
     /// 面板浮窗被大窗临时藏起（大小窗互斥）：关大窗时凭它还原。
-    panel_hidden_by_home: bool,
+    pub(crate) panel_hidden_by_home: bool,
     /// 会话持久化库（conversation 域唯一权威存储；打开失败降级为 None 不落库，
     /// 此时对话仅内存态，不阻塞大脑主流程）。
     session_db: Option<session_db::SessionDb>,
@@ -167,7 +197,7 @@ impl BrainState {
     }
 }
 
-struct Brain(Mutex<BrainState>);
+pub(crate) struct Brain(Mutex<BrainState>);
 
 /// 运行时根目录：与 Python config.data_dir 一致（~/Library/Application Support/yibao）。
 /// 用户数据、Python 运行时副本、语音模型都在这里（.app Resources 只读，不能往里装 venv）。
@@ -465,13 +495,6 @@ fn spawn_brain(
             .spawn()
     };
     spawn_result.map_err(|e| format!("拉起 sidecar 失败：{e}"))
-}
-
-fn write_to_brain(state: &Brain, msg: Value) -> Result<(), String> {
-    let mut guard = state.0.lock().map_err(|e| e.to_string())?;
-    let child = guard.child.as_mut().ok_or("大脑不在线（重启中）")?;
-    let line = format!("{}\n", msg);
-    child.write(line.as_bytes()).map_err(|e| e.to_string())
 }
 
 /// 每代 sidecar 一个 stdout 桥任务：行分隔 JSON → Tauri 事件。
@@ -841,106 +864,6 @@ async fn clear_brain_data(app: AppHandle, kind: String) -> Result<(), String> {
     Ok(())
 }
 
-/// 在 Finder 中打开数据目录（.env 配置 / 记忆 / 历史都在这）。
-#[tauri::command]
-fn open_data_dir(app: AppHandle) -> Result<(), String> {
-    let dir = runtime_root();
-    std::fs::create_dir_all(&dir).map_err(|e| format!("建数据目录失败：{e}"))?;
-    app.opener()
-        .open_path(dir.to_string_lossy().as_ref(), None::<&str>)
-        .map_err(|e| format!("打开数据目录失败：{e}"))
-}
-
-/// 原生文件夹选择器（coding 面板 cwd 药丸用）：webview iframe 无 Tauri IPC，
-/// 面板经 WebviewPanel `native:` 白名单旁路直调本命令，对话框必须 Rust 侧开。
-/// 返回所选绝对路径；用户取消返回 None。
-/// 必须 async：同步命令内联跑在 macOS 主线程，而 blocking_pick_folder 内部先
-/// run_on_main_thread 派发创建对话框、再 recv() 原地阻塞——主线程被堵死则派发永不执行，
-/// 硬死锁（点击后整窗卡死、对话框根本不出现）。async 命令跑在异步运行时线程，主线程自由。
-/// .parent(&window) 把对话框挂到发起窗口（home/panel），避免被常驻置顶宠物窗压住。
-#[tauri::command]
-async fn pick_folder(window: tauri::Window) -> Result<Option<String>, String> {
-    use tauri_plugin_dialog::DialogExt;
-    let folder = window
-        .app_handle()
-        .dialog()
-        .file()
-        .set_title("选择项目文件夹")
-        .set_parent(&window)
-        .blocking_pick_folder();
-    Ok(folder
-        .and_then(|p| p.into_path().ok())
-        .map(|p| p.to_string_lossy().into_owned()))
-}
-
-/// 粘贴图片/附件落盘（输入条 chips 化）：base64 → runtime_root()/attachments/<毫秒>-<rand>.<ext>，
-/// 返回绝对路径。InputBar paste 直调；coding iframe 经 WebviewPanel `native:` 白名单旁路。
-/// 同步命令即可：纯内存解码 + 一次小文件写，无对话框无主线程阻塞（对照 pick_folder 必须 async 的注释）。
-#[tauri::command]
-fn save_attachment(data: String, ext: String) -> Result<String, String> {
-    use base64::Engine;
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(data.trim())
-        .map_err(|e| format!("附件 base64 解码失败：{e}"))?;
-    if bytes.len() > 20 * 1024 * 1024 {
-        return Err("附件过大（>20MB）".into());
-    }
-    // ext 白名单化：只留 ASCII 字母数字，防路径注入；空则按 png
-    let ext: String = ext.chars().filter(|c| c.is_ascii_alphanumeric()).take(8).collect();
-    let ext = if ext.is_empty() { "png".to_string() } else { ext };
-    let dir = runtime_root().join("attachments");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("建附件目录失败：{e}"))?;
-    let millis = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let rand: String = uuid::Uuid::new_v4().simple().to_string().chars().take(6).collect();
-    let path = dir.join(format!("att-{millis}-{rand}.{ext}"));
-    std::fs::write(&path, bytes).map_err(|e| format!("写附件失败：{e}"))?;
-    Ok(path.to_string_lossy().into_owned())
-}
-
-/// 保存文件到用户指定位置（图片转 PDF 等面板产物落盘）：base64 → 保存对话框选位 → 写文件。
-/// webview iframe 无 Tauri IPC，面板经 WebviewPanel `native:` 白名单旁路直调本命令；
-/// 对话框必须 Rust 侧开（对照 pick_folder 的 async 死锁注释：blocking_save_file 同样
-/// 内部 run_on_main_thread + 原地阻塞，必须 async 跑在异步线程上）。
-/// 用户取消返回 None。
-#[tauri::command]
-async fn save_file(
-    window: tauri::Window,
-    data: String,
-    default_name: String,
-) -> Result<Option<String>, String> {
-    use base64::Engine;
-    use tauri_plugin_dialog::DialogExt;
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(data.trim())
-        .map_err(|e| format!("文件 base64 解码失败：{e}"))?;
-    if bytes.len() > 50 * 1024 * 1024 {
-        return Err("文件过大（>50MB）".into());
-    }
-    // 默认名只取文件名部分（去路径分隔符），防路径注入；空则兜底 untitled
-    let name = default_name
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or("untitled")
-        .to_string();
-    let name = if name.is_empty() { "untitled".to_string() } else { name };
-    let file = window
-        .app_handle()
-        .dialog()
-        .file()
-        .set_title("保存文件")
-        .set_parent(&window)
-        .set_file_name(&name)
-        .blocking_save_file();
-    let Some(path) = file.and_then(|p| p.into_path().ok()) else {
-        return Ok(None); // 用户取消
-    };
-    std::fs::write(&path, &bytes).map_err(|e| format!("写文件失败：{e}"))?;
-    Ok(Some(path.to_string_lossy().into_owned()))
-}
-
 /// 看门狗：每 5s 发 ping；运行中 >15s 无 pong 视为疑似僵死。
 /// 两轮确认：第一轮只补发 ping 并标记 warned，下一轮仍无 pong 才 kill（由桥任务 Terminated 统一重启）——
 /// macOS App Nap/休眠会把整个壳挂起，苏醒后 last_pong 时间跳变，单轮判断会误杀健康大脑。
@@ -977,829 +900,6 @@ fn spawn_watchdog(app: AppHandle) {
             }
         }
     });
-}
-
-#[tauri::command]
-fn run_input(
-    window: tauri::WebviewWindow,
-    app_handle: tauri::AppHandle,
-    state: tauri::State<Brain>,
-    text: String,
-    surface: Option<String>,
-    conversation_id: Option<String>,
-) -> Result<(), String> {
-    let surface_str = surface.unwrap_or_else(|| "pet".into());
-    // 用户消息落库（Rust 是 conversation 域唯一写者）：M3 显式归属——
-    // 前端传入 conversation_id 即落库到该会话（大小窗各自传自己的会话）；
-    // 空 id（面板工作台 surface=panel:xxx 的瞬时输入）不持久化。
-    if let Some(conv_id) = conversation_id.as_deref().filter(|c| !c.is_empty()) {
-        let g = state.0.lock().map_err(|e| e.to_string())?;
-        if let Some(db) = g.session_db.as_ref() {
-            let _ = db.append_message(
-                conv_id,
-                &event_recorder::new_id(),
-                "user",
-                serde_json::json!({ "text": text }),
-                session_db::now_ms(),
-                false,
-            );
-            // 跨窗同步：用户消息无事件流（其他窗口收不到），广播轻量信号让
-            // 正在看同一会话的窗口刷新（不主动抢流式——订阅方自己判断）。
-            let _ = app_handle.emit(
-                "conversation-updated",
-                serde_json::json!({ "conversationId": conv_id, "from": window.label() }),
-            );
-        }
-    }
-    write_to_brain(
-        &state,
-        serde_json::json!({
-            "id": 0, "type": "run", "text": text, "surface": surface_str,
-            "conversation_id": conversation_id.unwrap_or_default(),
-        }),
-    )
-}
-
-/// 截图唤起（v1.1）：⌘⇧Y 唤起主窗时前端触发，通知大脑抓屏描述（下次 run 注入屏幕上下文）。
-#[tauri::command]
-fn invoke_context(state: tauri::State<Brain>) -> Result<(), String> {
-    write_to_brain(
-        &state,
-        serde_json::json!({ "id": 0, "type": "invoke_context" }),
-    )
-}
-
-/// 批量确认条目（前端 Task 5 传 camelCase：{id, approved, remember}）。
-/// id = confirmation_needed 事件里 action.id（单条时等于 confirmation_id）。
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ConfirmItem {
-    id: String,
-    approved: bool,
-    #[serde(default)]
-    remember: bool,
-}
-
-/// 批量确认（Task 4 桥到 sidecar 新 IPC）：一次回 N 条 verdict。
-/// 写 {"type":"confirm_batch","items":[{"id":...,"approved":...,"remember":...}, ...]}，
-/// sidecar 回 confirm_batched ok（按 id 匹配 pending_confirms / early_answers）。
-/// confirmation_needed 转发：sidecar 已把 actions 放进 event 载荷，桥任务 Some("event") 分支
-/// 透传整个 v，前端读 actions 即可——本命令只管回批。
-#[tauri::command]
-fn confirm_batch(state: tauri::State<Brain>, items: Vec<ConfirmItem>) -> Result<(), String> {
-    let items_json: Vec<Value> = items
-        .iter()
-        .map(|it| {
-            serde_json::json!({
-                "id": it.id,
-                "approved": it.approved,
-                "remember": it.remember,
-            })
-        })
-        .collect();
-    write_to_brain(
-        &state,
-        serde_json::json!({ "id": 0, "type": "confirm_batch", "items": items_json }),
-    )
-}
-
-/// 主屏 Feed 查询：大脑回 {"type":"feed","items":…,"stats":…}，经 brain-feed 事件广播。
-#[tauri::command]
-fn get_feed(state: tauri::State<Brain>, limit: Option<u32>) -> Result<(), String> {
-    write_to_brain(
-        &state,
-        serde_json::json!({ "id": 0, "type": "feed", "limit": limit.unwrap_or(60) }),
-    )
-}
-
-/// 手动触发昨日提炼：大脑回 {"type":"distill_now","ok":…,"result":…}，经 brain-distill-now 事件广播。
-#[tauri::command]
-fn distill_now(state: tauri::State<Brain>) -> Result<(), String> {
-    write_to_brain(
-        &state,
-        serde_json::json!({ "id": 0, "type": "distill_now" }),
-    )
-}
-
-/// 设置页信任统计：大脑回 {"type":"feed_stats","stats":…}，经 brain-feed-stats 事件广播。
-#[tauri::command]
-fn get_feed_stats(state: tauri::State<Brain>, days: Option<u32>) -> Result<(), String> {
-    write_to_brain(
-        &state,
-        serde_json::json!({ "id": 0, "type": "feed_stats", "days": days.unwrap_or(7) }),
-    )
-}
-
-/// 晨间反刍探测：开窗时前端调用，大脑自行决定推不推（fire-and-forget）。
-#[tauri::command]
-fn recap_check(state: tauri::State<Brain>) -> Result<(), String> {
-    write_to_brain(&state, serde_json::json!({ "id": 0, "type": "recap_check" }))
-}
-
-/// 每日回顾查询：大脑回 {"type":"distill_timeline","days":[…]}，经 brain-distill-timeline 事件广播。
-#[tauri::command]
-fn get_distill_timeline(state: tauri::State<Brain>, days: Option<u32>) -> Result<(), String> {
-    write_to_brain(
-        &state,
-        serde_json::json!({ "id": 0, "type": "distill_timeline", "days": days.unwrap_or(14) }),
-    )
-}
-
-/// 主屏 widget 查询：大脑回 {"type":"widgets","widgets":…}，经 brain-widgets 事件广播。
-#[tauri::command]
-fn get_widgets(state: tauri::State<Brain>) -> Result<(), String> {
-    write_to_brain(&state, serde_json::json!({ "id": 0, "type": "widgets" }))
-}
-
-/// 主屏 Feed：点掉单条（大脑回 {"type":"feed_marked_read","id":N,"ok":bool}
-/// 经 brain-feed-marked-read 广播）。
-/// 注：sidecar 直接读 msg["id"] 作 feed 条目 id（非信封序号），故不写 "id":0 占位。
-#[tauri::command]
-fn feed_mark_read(state: tauri::State<Brain>, id: i64) -> Result<(), String> {
-    write_to_brain(&state, serde_json::json!({ "type": "feed_mark_read", "id": id }))
-}
-
-/// 主屏 Feed：全部已读（大脑回 {"type":"feed_all_read","n":N} 经 brain-feed-all-read 广播）。
-#[tauri::command]
-fn feed_mark_all_read(state: tauri::State<Brain>) -> Result<(), String> {
-    write_to_brain(
-        &state,
-        serde_json::json!({ "id": 0, "type": "feed_mark_all_read" }),
-    )
-}
-
-/// 主屏 Feed：处置态（follow/ignore/none，与 read 正交）。前端走乐观更新。
-#[tauri::command]
-fn feed_mark_status(
-    state: tauri::State<Brain>,
-    id: i64,
-    status: String,
-) -> Result<(), String> {
-    write_to_brain(
-        &state,
-        serde_json::json!({ "type": "feed_mark_status", "id": id, "status": status }),
-    )
-}
-
-/// 误报反馈（信任仪表写侧）：👍/👎 落 meta.feedback（大脑回 {"type":"feed_feedback_set",…}
-/// 经 brain-feed-feedback-set 广播）。注：sidecar 直读 msg["id"]，故不写 "id":0 占位。
-#[tauri::command]
-fn feed_feedback(state: tauri::State<Brain>, id: i64, feedback: String) -> Result<(), String> {
-    write_to_brain(
-        &state,
-        serde_json::json!({ "type": "feed_feedback", "id": id, "feedback": feedback }),
-    )
-}
-
-/// 主屏 Dock 查询：pinned 优先 + 频率补齐（回 {"type":"dock_list","dock":[...]}
-/// 经 brain-dock-list 广播）。
-#[tauri::command]
-fn dock_list(state: tauri::State<Brain>) -> Result<(), String> {
-    write_to_brain(&state, serde_json::json!({ "id": 0, "type": "dock_list" }))
-}
-
-/// 主屏 Dock：固定/取消固定（回 {"type":"dock_pin_set","pid":...,"ok":bool,"dock":[...]}
-/// 经 brain-dock-pin-set 广播）。
-#[tauri::command]
-fn set_dock_pin(state: tauri::State<Brain>, pid: String, on: bool) -> Result<(), String> {
-    write_to_brain(
-        &state,
-        serde_json::json!({ "id": 0, "type": "set_dock_pin", "pid": pid, "on": on }),
-    )
-}
-
-/// 记忆管理：列出全部记忆（回 {"type":"mem_list"} 经 brain-mem-list 广播）。
-#[tauri::command]
-fn get_mem_list(state: tauri::State<Brain>) -> Result<(), String> {
-    write_to_brain(&state, serde_json::json!({ "id": 0, "type": "mem_list" }))
-}
-
-/// 记忆管理：按 id 删除一条（回 {"type":"mem_deleted"} 经 brain-mem-deleted 广播）。
-#[tauri::command]
-fn mem_delete(state: tauri::State<Brain>, id: String) -> Result<(), String> {
-    write_to_brain(&state, serde_json::json!({ "id": 0, "type": "mem_delete", "mem_id": id }))
-}
-
-/// 记忆管理：按 id 编辑文本（回 {"type":"mem_edited"} 经 brain-mem-edited 广播）。
-#[tauri::command]
-fn mem_edit(state: tauri::State<Brain>, id: String, text: String) -> Result<(), String> {
-    write_to_brain(&state, serde_json::json!({ "id": 0, "type": "mem_edit", "mem_id": id, "text": text }))
-}
-
-/// 用户设置查询（回 {"type":"settings"} 经 brain-settings 广播）。
-#[tauri::command]
-fn get_settings(state: tauri::State<Brain>) -> Result<(), String> {
-    write_to_brain(&state, serde_json::json!({ "id": 0, "type": "settings_get" }))
-}
-
-/// 手机伴生端配对信息（回 {"type":"http_pair_info"} 经 brain-http-pair-info 广播）。
-#[tauri::command]
-fn get_http_pair_info(state: tauri::State<Brain>) -> Result<(), String> {
-    write_to_brain(&state, serde_json::json!({ "id": 0, "type": "http_pair_info" }))
-}
-
-/// 用户设置写入（仅已知键生效；回 {"type":"settings"} 经 brain-settings 广播）。
-#[tauri::command]
-fn set_settings(state: tauri::State<Brain>, values: serde_json::Value) -> Result<(), String> {
-    write_to_brain(&state, serde_json::json!({ "id": 0, "type": "settings_set", "values": values }))
-}
-
-/// 感知日志：分页查询（回 perception，经 brain-perception 广播）。
-#[tauri::command]
-fn get_perception(
-    state: tauri::State<Brain>,
-    limit: Option<u32>,
-    before_id: Option<i64>,
-) -> Result<(), String> {
-    write_to_brain(
-        &state,
-        serde_json::json!({
-            "id": 0,
-            "type": "perception_list",
-            "limit": limit.unwrap_or(60),
-            "before_id": before_id,
-        }),
-    )
-}
-
-/// 感知日志：按观察 id 删除（信封 id 已占用，sidecar 字段必须是 per_id）。
-#[tauri::command]
-fn perception_delete(state: tauri::State<Brain>, id: i64) -> Result<(), String> {
-    write_to_brain(
-        &state,
-        serde_json::json!({ "id": 0, "type": "perception_delete", "per_id": id }),
-    )
-}
-
-/// 感知日志：清空全部观察。
-#[tauri::command]
-fn perception_clear(state: tauri::State<Brain>) -> Result<(), String> {
-    write_to_brain(&state, serde_json::json!({ "id": 0, "type": "perception_clear" }))
-}
-
-/// 面板动作（v2 §7）：壳不懂 panel 语义，透传 api.toml 白名单方法给大脑裁决。
-#[tauri::command]
-fn panel_action(
-    state: tauri::State<Brain>,
-    id: i64,
-    method: String,
-    params: Value,
-    surface: Option<String>,
-) -> Result<(), String> {
-    write_to_brain(
-        &state,
-        serde_json::json!({ "id": id, "type": "panel_action", "method": method, "params": params, "surface": surface.unwrap_or_else(|| "pet".into()) }),
-    )
-}
-
-/// 插件目录：YIBAO_PLUGINS_DIR 优先，否则 <repo>/plugins（与 brain 加载同源）。
-fn plugins_dir() -> std::path::PathBuf {
-    if let Ok(dir) = std::env::var("YIBAO_PLUGINS_DIR") {
-        return std::path::PathBuf::from(dir);
-    }
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("plugins")
-}
-
-/// 解析插件 manifest.toml：顶层 id/name + 带 open 的 [[panel]] 条目（面板级入口，如素材库）。
-/// 行级解析、不引 toml 依赖：顶层键只在任何 section 之前读（[[tool]] 里也有 id，不能误抓）；
-/// [[panel]] 段内只取 name/label/open，无 open 的 panel 收成不了入口（detail/editor 需参数，本就不能直接开）。
-fn parse_manifest(text: &str) -> Option<(String, String, Vec<Value>)> {
-    // 取 `key = "值"` 的引号内内容：第一个引号到闭引号，之后的东西（如行尾注释）一律不混进值
-    let val = |l: &str, key: &str| -> Option<String> {
-        let rest = l.trim().strip_prefix(key)?;
-        let rest = rest.trim_start().strip_prefix('=')?.trim_start();
-        let rest = rest.strip_prefix('"')?;
-        let end = rest.find('"')?;
-        Some(rest[..end].to_string())
-    };
-    let mut id: Option<String> = None;
-    let mut name: Option<String> = None;
-    let mut panels: Vec<Value> = Vec::new();
-    let mut seen_section = false;
-    let mut in_panel = false;
-    let mut pname = String::new();
-    let mut plabel: Option<String> = None;
-    let mut popen: Option<String> = None;
-    // 只负责「收」：take 走字段（留下空态），不做重置赋值——重置由 section 分支显式做，EOF 后无人再读
-    macro_rules! flush_panel {
-        () => {
-            if in_panel && !pname.is_empty() {
-                if let Some(open) = popen.take() {
-                    let label = plabel.take().filter(|s| !s.is_empty()).unwrap_or_else(|| pname.clone());
-                    panels.push(serde_json::json!({
-                        "name": std::mem::take(&mut pname), "label": label, "open": open,
-                    }));
-                }
-            }
-        };
-    }
-    for line in text.lines() {
-        let l = line.trim();
-        if l.starts_with('[') {
-            flush_panel!();
-            seen_section = true;
-            in_panel = l == "[[panel]]";
-            pname.clear();
-            plabel = None;
-            popen = None;
-            continue;
-        }
-        if !seen_section {
-            if id.is_none() {
-                id = val(l, "id");
-            }
-            if name.is_none() {
-                name = val(l, "name");
-            }
-            continue;
-        }
-        if in_panel {
-            if pname.is_empty() {
-                if let Some(v) = val(l, "name") {
-                    pname = v;
-                    continue;
-                }
-            }
-            if plabel.is_none() {
-                if let Some(v) = val(l, "label") {
-                    plabel = Some(v);
-                    continue;
-                }
-            }
-            if popen.is_none() {
-                if let Some(v) = val(l, "open") {
-                    popen = Some(v);
-                }
-            }
-        }
-    }
-    flush_panel!();
-    Some((id?, name?, panels))
-}
-
-/// 插件启动器（双击团子）：扫各插件 manifest.toml 拿 id/name + 面板级入口（带 open 的 [[panel]]）。
-#[tauri::command]
-fn list_plugins() -> Result<Vec<Value>, String> {
-    let rd = std::fs::read_dir(plugins_dir()).map_err(|e| format!("读插件目录失败：{e}"))?;
-    let mut out = Vec::new();
-    for entry in rd.flatten() {
-        let path = entry.path().join("manifest.toml");
-        let Ok(text) = std::fs::read_to_string(&path) else { continue };
-        if let Some((id, name, panels)) = parse_manifest(&text) {
-            out.push(serde_json::json!({ "id": id, "name": name, "panels": panels }));
-        }
-    }
-    out.sort_by(|a, b| {
-        a["id"].as_str().unwrap_or("").cmp(b["id"].as_str().unwrap_or(""))
-    });
-    Ok(out)
-}
-
-/// 打开/聚焦大窗（home）：与小窗互斥——藏宠物窗；面板浮窗若开着也临时藏起
-///（记 panel_hidden_by_home，关大窗时还原）。宠物窗 header「扩充」钮与托盘「设置…」共用本命令。
-#[tauri::command]
-fn open_home_window(app: AppHandle) -> Result<(), String> {
-    if let Some(win) = app.get_webview_window("home") {
-        win.show().map_err(|e| e.to_string())?;
-        win.set_focus().map_err(|e| e.to_string())?;
-    }
-    if let Some(main) = app.get_webview_window("main") {
-        let _ = main.hide();
-    }
-    if let Some(panel) = app.get_webview_window("panel") {
-        let was_visible = panel.is_visible().unwrap_or(false);
-        if was_visible {
-            let _ = panel.hide();
-        }
-        let state = app.state::<Brain>();
-        if let Ok(mut g) = state.0.lock() {
-            g.panel_hidden_by_home = was_visible;
-        };
-    }
-    Ok(())
-}
-
-/// 大窗收起后还原小窗模式：亮宠物窗；面板浮窗若是被大窗临时藏起的，一并还原。
-fn restore_after_home(app: &AppHandle) {
-    if let Some(main) = app.get_webview_window("main") {
-        let _ = main.show();
-    }
-    let state = app.state::<Brain>();
-    let restore = state
-        .0
-        .lock()
-        .map(|mut g| std::mem::take(&mut g.panel_hidden_by_home))
-        .unwrap_or(false);
-    if restore {
-        if let Some(panel) = app.get_webview_window("panel") {
-            let _ = panel.show();
-        }
-    }
-}
-
-/// 关闭大窗 = 隐藏（不销毁，保状态）+ 还原小窗模式（互斥：宠物窗回来）。
-/// 大窗前端的 × 走本命令；OS 级关闭由全局 CloseRequested 拦截后走同一还原。
-#[tauri::command]
-fn close_home_window(app: AppHandle) -> Result<(), String> {
-    if let Some(win) = app.get_webview_window("home") {
-        win.hide().map_err(|e| e.to_string())?;
-    }
-    restore_after_home(&app);
-    Ok(())
-}
-
-/// 打开/聚焦面板窗：已存在则 show+focus（关闭只是隐藏，状态保留）；
-/// 首次用 builder 创建（无装饰+透明与主窗一致，不需 always_on_top），位置取屏幕中央偏右（避开宠物球常驻角）。
-/// 大窗模式下不弹浮窗：面板嵌入大窗主区渲染（panel 事件大窗同样收到）。
-/// 注：CloseRequested → hide 由全局 on_window_event 统一拦截（对所有窗生效，面板窗同享）。
-#[tauri::command]
-fn open_panel_window(app: AppHandle) -> Result<(), String> {
-    if let Some(home) = app.get_webview_window("home") {
-        if home.is_visible().unwrap_or(false) {
-            return Ok(());
-        }
-    }
-    if let Some(win) = app.get_webview_window("panel") {
-        win.show().map_err(|e| e.to_string())?;
-        win.set_focus().map_err(|e| e.to_string())?;
-        return Ok(());
-    }
-    let win =
-        tauri::WebviewWindowBuilder::new(&app, "panel", tauri::WebviewUrl::App("panel.html".into()))
-            .title("译宝面板")
-            .transparent(true)
-            .decorations(false)
-            .visible_on_all_workspaces(true)
-            .resizable(true)
-            .inner_size(780.0, 580.0)
-            .build()
-            .map_err(|e| format!("创建面板窗失败：{e}"))?;
-    if let Ok(Some(mon)) = win.current_monitor() {
-        let s = mon.scale_factor();
-        let mx = mon.position().x as f64 / s;
-        let my = mon.position().y as f64 / s;
-        let sw = mon.size().width as f64 / s;
-        let sh = mon.size().height as f64 / s;
-        // 屏幕中央偏右：宠物球多在屏幕角落，面板居中偏右避让
-        let x = mx + (sw - 780.0) / 2.0 + 80.0;
-        let y = my + (sh - 580.0) / 2.0;
-        let _ = win.set_position(tauri::LogicalPosition::new(x, y));
-    }
-    Ok(())
-}
-
-/// 关闭面板窗 = 隐藏（不销毁，保状态、二次打开快）。
-/// 顺带广播 panel-closed：宠物窗靠它给「⇢ 协作中」的气泡收尾（⇠ 协作结束）。
-#[tauri::command]
-fn close_panel_window(app: AppHandle) -> Result<(), String> {
-    if let Some(win) = app.get_webview_window("panel") {
-        win.hide().map_err(|e| e.to_string())?;
-        let _ = app.emit("panel-closed", ());
-    }
-    Ok(())
-}
-
-/// 隐藏唤起条（主窗处理完 invoke-action 后兜底调用；条本身点击/Esc/blur 已自隐，幂等）。
-#[tauri::command]
-fn hide_invoke_bar(app: AppHandle) -> Result<(), String> {
-    if let Some(win) = app.get_webview_window("invoke-bar") {
-        win.hide().map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
-
-#[derive(serde::Deserialize)]
-struct SnipRect {
-    left: f64,
-    top: f64,
-    width: f64,
-    height: f64,
-}
-
-/// 框选完成：隐藏 overlay → 逻辑选区换算物理像素 → 通知大脑区域截图 → 广播 snip-captured 让主窗展开。
-#[tauri::command]
-fn finish_snip(app: AppHandle, state: tauri::State<Brain>, rect: SnipRect) -> Result<(), String> {
-    if let Some(snip) = app.get_webview_window("snip") {
-        let _ = snip.hide();
-        if let Ok(Some(mon)) = snip.current_monitor() {
-            let scale = mon.scale_factor();
-            let origin = (mon.position().x as i64, mon.position().y as i64);
-            let (l, t, w, h) = snip_abs_rect((rect.left, rect.top, rect.width, rect.height), origin, scale);
-            write_to_brain(
-                &state,
-                serde_json::json!({
-                    "id": 0, "type": "snip_capture",
-                    "left": l, "top": t, "width": w, "height": h,
-                }),
-            )?;
-            let _ = app.emit("snip-captured", serde_json::json!({ "width": w, "height": h }));
-        }
-    }
-    Ok(())
-}
-
-/// 取消框选（Esc / 单击 / 过小选区）：只收 overlay，不打扰。
-#[tauri::command]
-fn cancel_snip(app: AppHandle) -> Result<(), String> {
-    if let Some(snip) = app.get_webview_window("snip") {
-        let _ = snip.hide();
-    }
-    Ok(())
-}
-
-/// 截图即问：问题转发大脑（暂存的区域截图 + 问题 → vision 直答）。
-#[tauri::command]
-fn vision_query(state: tauri::State<Brain>, question: String) -> Result<(), String> {
-    write_to_brain(
-        &state,
-        serde_json::json!({ "id": 0, "type": "vision_query", "question": question }),
-    )
-}
-
-/// 面板窗挂载后补拉最近一次的 panel 载荷（首开时 brain-event 先于窗口订阅发出）。
-#[tauri::command]
-fn get_current_panel(state: tauri::State<Brain>) -> Result<Option<Value>, String> {
-    let g = state.0.lock().map_err(|e| e.to_string())?;
-    Ok(g.last_panel.clone())
-}
-
-/// 面板载荷回填：大窗从 localStorage 快照恢复工作面后，把同一份面板数据写回
-/// last_panel（内存缓存）。last_panel 是内存态，重启即失——前端快照是持久层，
-/// 恢复时回填保证面板窗/宠物窗在竞态下也能补拉到同一份数据（多窗一致）。
-#[tauri::command]
-fn remember_panel(state: tauri::State<Brain>, payload: Value) -> Result<(), String> {
-    let mut g = state.0.lock().map_err(|e| e.to_string())?;
-    g.last_panel = Some(payload);
-    Ok(())
-}
-
-/// 读取 sidecar 已持久化的近期会话，供主屏恢复协作时间线。
-/// 这是只读 UI 投影：不把历史重新送回大脑，也不会重放任何插件动作。
-#[tauri::command]
-fn get_conversation_history(limit: Option<usize>) -> Result<Vec<Value>, String> {
-    let path = runtime_root().join("history.json");
-    let raw = match std::fs::read_to_string(path) {
-        Ok(raw) => raw,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(format!("读取会话历史失败：{e}")),
-    };
-    let parsed: Value = serde_json::from_str(&raw).map_err(|e| format!("会话历史格式损坏：{e}"))?;
-    let messages = parsed
-        .as_array()
-        .ok_or_else(|| "会话历史格式不是数组".to_string())?;
-    let cap = limit.unwrap_or(80).clamp(1, 200);
-    let start = messages.len().saturating_sub(cap);
-    Ok(messages[start..]
-        .iter()
-        .filter_map(|message| {
-            let role = message.get("role")?.as_str()?;
-            if !matches!(role, "user" | "assistant" | "tool") {
-                return None;
-            }
-            let content = message.get("content")?.as_str()?;
-            let mut projected = serde_json::json!({ "role": role, "content": content });
-            if let Some(surface) = message.get("surface").and_then(Value::as_str) {
-                projected["surface"] = Value::String(surface.to_string());
-            }
-            if let Some(tool_call_id) = message.get("tool_call_id").and_then(Value::as_str) {
-                projected["tool_call_id"] = Value::String(tool_call_id.to_string());
-            }
-            if let Some(calls) = message.get("tool_calls").and_then(Value::as_array) {
-                projected["tool_calls"] = Value::Array(calls.iter().filter_map(|call| {
-                    let id = call.get("id").and_then(Value::as_str);
-                    let name = call.get("function")?.get("name")?.as_str()?;
-                    Some(serde_json::json!({ "id": id, "function": { "name": name } }))
-                }).collect());
-            }
-            Some(projected)
-        })
-        .collect())
-}
-
-// ---- 会话持久化恢复 API（conversation 域；Rust SQLite 是唯一权威，webview 只读）----
-
-/// 会话列表（updated_at 倒序）。
-#[tauri::command]
-fn list_conversations(state: tauri::State<Brain>) -> Result<Vec<session_db::ConversationMeta>, String> {
-    let g = state.0.lock().map_err(|e| e.to_string())?;
-    match g.session_db.as_ref() {
-        Some(db) => db.list_conversations(),
-        None => Ok(Vec::new()),
-    }
-}
-
-/// 拉取某会话的消息（恢复用；只读，不重放任何动作）。
-#[tauri::command]
-fn get_conversation_messages(
-    state: tauri::State<Brain>,
-    id: String,
-    limit: Option<i64>,
-) -> Result<Vec<session_db::Message>, String> {
-    let g = state.0.lock().map_err(|e| e.to_string())?;
-    match g.session_db.as_ref() {
-        Some(db) => db.get_messages(&id, limit.unwrap_or(500)),
-        None => Ok(Vec::new()),
-    }
-}
-
-/// 新建会话（id 由 Rust 生成返回，保证多端一致）；自动设为活跃会话。
-#[tauri::command]
-fn create_conversation(
-    state: tauri::State<Brain>,
-    title: Option<String>,
-) -> Result<session_db::ConversationMeta, String> {
-    let g = state.0.lock().map_err(|e| e.to_string())?;
-    let db = g.session_db.as_ref().ok_or("会话库不可用")?;
-    let id = event_recorder::new_id();
-    let meta = db.create_conversation(&id, title.as_deref().unwrap_or("新对话"), session_db::now_ms())?;
-    let _ = db.set_active_conversation(&id);
-    Ok(meta)
-}
-
-/// 设置活跃会话指针（事件落库归属兜底 + 大小窗镜面同步）。
-/// 广播 active-conversation-changed：大窗切会话后小窗跟随切换（两窗镜面同一条会话）。
-#[tauri::command]
-fn set_active_conversation(
-    app_handle: tauri::AppHandle,
-    state: tauri::State<Brain>,
-    id: String,
-) -> Result<(), String> {
-    {
-        let g = state.0.lock().map_err(|e| e.to_string())?;
-        if let Some(db) = g.session_db.as_ref() {
-            db.set_active_conversation(&id)?;
-        }
-    }
-    let _ = app_handle.emit("active-conversation-changed", serde_json::json!({ "conversationId": id }));
-    Ok(())
-}
-
-/// 读活跃会话指针（前端恢复时定位当前会话）。
-#[tauri::command]
-fn get_active_conversation(state: tauri::State<Brain>) -> Result<Option<String>, String> {
-    let g = state.0.lock().map_err(|e| e.to_string())?;
-    match g.session_db.as_ref() {
-        Some(db) => db.get_active_conversation(),
-        None => Ok(None),
-    }
-}
-
-/// 确保存在活跃会话：无则新建并设为活跃（大窗首启直接输入时兜底）。
-/// 大窗专用；小窗走 ensure_pet_conversation（固定会话，不镜像活跃会话）。
-#[tauri::command]
-fn ensure_active_conversation(
-    app_handle: tauri::AppHandle,
-    state: tauri::State<Brain>,
-) -> Result<Option<session_db::ConversationMeta>, String> {
-    let g = state.0.lock().map_err(|e| e.to_string())?;
-    let Some(db) = g.session_db.as_ref() else { return Ok(None) };
-    if let Some(id) = db.get_active_conversation()?.filter(|c| !c.is_empty()) {
-        // 指针存在但会话已被删 → 视为无效，重建
-        if let Some(meta) = db.list_conversations()?.into_iter().find(|m| m.id == id) {
-            return Ok(Some(meta));
-        }
-    }
-    let id = event_recorder::new_id();
-    let meta = db.create_conversation(&id, "新对话", session_db::now_ms())?;
-    db.set_active_conversation(&id)?;
-    let _ = app_handle.emit("active-conversation-changed", serde_json::json!({ "conversationId": id }));
-    Ok(Some(meta))
-}
-
-/// 小窗固定会话（方案 A）：小窗永远用同一个会话，不镜像活跃会话。
-/// 无指针或指针指向的会话已被删 → 自动新建并返回（幂等）。固定性从架构上消灭串台：
-/// 小窗 run 永远带这个 id，事件归属恒定，大窗切会话完全不影响小窗。
-#[tauri::command]
-fn ensure_pet_conversation(
-    state: tauri::State<Brain>,
-) -> Result<Option<session_db::ConversationMeta>, String> {
-    let g = state.0.lock().map_err(|e| e.to_string())?;
-    let Some(db) = g.session_db.as_ref() else { return Ok(None) };
-    if let Some(id) = db.get_pet_conversation()?.filter(|c| !c.is_empty()) {
-        if let Some(meta) = db.list_conversations()?.into_iter().find(|m| m.id == id) {
-            return Ok(Some(meta));
-        }
-    }
-    let id = event_recorder::new_id();
-    let meta = db.create_conversation(&id, "小窗对话", session_db::now_ms())?;
-    db.set_pet_conversation(&id)?;
-    Ok(Some(meta))
-}
-
-/// 更新会话标题（首条用户消息自动生成）。
-#[tauri::command]
-fn update_conversation_title(state: tauri::State<Brain>, id: String, title: String) -> Result<(), String> {
-    let g = state.0.lock().map_err(|e| e.to_string())?;
-    if let Some(db) = g.session_db.as_ref() {
-        db.update_conversation_title(&id, &title, session_db::now_ms())?;
-    }
-    Ok(())
-}
-
-/// 删除会话（级联清消息；若删的是活跃会话则清指针）。
-#[tauri::command]
-fn delete_conversation(state: tauri::State<Brain>, id: String) -> Result<(), String> {
-    let g = state.0.lock().map_err(|e| e.to_string())?;
-    if let Some(db) = g.session_db.as_ref() {
-        db.delete_conversation(&id)?;
-        if db.get_active_conversation().ok().flatten().as_deref() == Some(id.as_str()) {
-            let _ = db.set_active_conversation("");
-        }
-    }
-    Ok(())
-}
-
-/// 清空全部会话（联动 clear_brain_data）。
-#[tauri::command]
-fn clear_conversations(state: tauri::State<Brain>) -> Result<(), String> {
-    let g = state.0.lock().map_err(|e| e.to_string())?;
-    if let Some(db) = g.session_db.as_ref() {
-        db.clear_all()?;
-    }
-    Ok(())
-}
-
-/// 截断会话到前 keep_count 条（重新生成/编辑重发：其后对话作废）。
-#[tauri::command]
-fn truncate_conversation_messages(
-    state: tauri::State<Brain>,
-    id: String,
-    keep_count: i64,
-) -> Result<(), String> {
-    let g = state.0.lock().map_err(|e| e.to_string())?;
-    if let Some(db) = g.session_db.as_ref() {
-        db.truncate_messages(&id, keep_count)?;
-    }
-    Ok(())
-}
-
-#[tauri::command]
-fn voice_start(
-    state: tauri::State<Brain>,
-    surface: Option<String>,
-    continuous: Option<bool>,
-    conversation_id: Option<String>,
-) -> Result<(), String> {
-    write_to_brain(
-        &state,
-        serde_json::json!({
-            "id": 0,
-            "type": "voice_start",
-            "surface": surface.unwrap_or_else(|| "pet".into()),
-            "continuous": continuous.unwrap_or(false),
-            "conversation_id": conversation_id.unwrap_or_default(),
-        }),
-    )
-}
-
-/// 打断进行中的生成/播报（Plan 4b 三连取消：停 TTS + 终止 LLM + 清队列）。
-/// 并发对话（spec §E）：带 conversation_id → 只打断该会话槽；不带/空 → 全停（旧行为）。
-#[tauri::command]
-fn interrupt(state: tauri::State<Brain>, conversation_id: Option<String>) -> Result<(), String> {
-    write_to_brain(
-        &state,
-        serde_json::json!({
-            "id": 0,
-            "type": "interrupt",
-            "conversation_id": conversation_id.unwrap_or_default(),
-        }),
-    )
-}
-
-/// 面板焦点上报（v2 §5 focus）：壳面板窗内容变化时透传给大脑，run 时注入 LLM 上下文。
-#[tauri::command]
-fn report_panel_context(state: tauri::State<Brain>, focus: Value) -> Result<(), String> {
-    write_to_brain(
-        &state,
-        serde_json::json!({ "id": 0, "type": "panel_context", "focus": focus }),
-    )
-}
-
-/// 宠物窗展开态（前端同步）：全局热键据此在 Rust 侧决定 显示/展开/隐藏，显隐不经过前端。
-struct PetExpanded(std::sync::atomic::AtomicBool);
-
-#[tauri::command]
-fn set_pet_expanded(state: tauri::State<PetExpanded>, expanded: bool) {
-    state
-        .0
-        .store(expanded, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// 重新检测 macOS 权限（辅助功能/屏幕录制），结果经 brain-permissions 事件回前端。
-#[tauri::command]fn check_permissions(state: tauri::State<Brain>) -> Result<(), String> {
-    write_to_brain(&state, serde_json::json!({ "id": 0, "type": "check_permissions" }))
-}
-
-/// 触发系统授权引导弹窗（which = "ax" | "screen"）。
-#[tauri::command]
-fn prompt_permission(state: tauri::State<Brain>, which: String) -> Result<(), String> {
-    write_to_brain(
-        &state,
-        serde_json::json!({ "id": 0, "type": "prompt_permission", "which": which }),
-    )
 }
 
 /// 鼠标穿透轮询（单窗三态架构）：每 40ms 读全局光标位置——
@@ -1984,33 +1084,6 @@ fn grab_selected_text() -> Option<String> {
     }
 }
 
-/** 唤起条落位：光标右下偏移（14,18），越出所在屏右/下缘时翻转到左/上；纯函数便于单测。
- *  mon = (屏原点x, 屏原点y, 屏宽, 屏高)，全部逻辑坐标。 */
-fn clamp_bar_pos(mx: f64, my: f64, bar_w: f64, bar_h: f64, mon: (f64, f64, f64, f64)) -> (f64, f64) {
-    let (mx0, my0, mw, mh) = mon;
-    let mut x = mx + 14.0;
-    let mut y = my + 18.0;
-    if x + bar_w > mx0 + mw {
-        x = mx - bar_w - 14.0;
-    }
-    if y + bar_h > my0 + mh {
-        y = my - bar_h - 18.0;
-    }
-    (x.max(mx0), y.max(my0))
-}
-
-/** 选区换算：overlay 窗口逻辑坐标 → 虚拟桌面物理像素（mss 坐标系）。
- *  mon_px_origin = 屏物理原点（可为负：副屏在主屏左侧）；scale = 屏 scale_factor。纯函数便于单测。 */
-fn snip_abs_rect(r: (f64, f64, f64, f64), mon_px_origin: (i64, i64), scale: f64) -> (i64, i64, i64, i64) {
-    let (l, t, w, h) = r;
-    (
-        mon_px_origin.0 + (l * scale).round() as i64,
-        mon_px_origin.1 + (t * scale).round() as i64,
-        (w * scale).round().max(1.0) as i64,
-        (h * scale).round().max(1.0) as i64,
-    )
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let shortcuts = tauri_plugin_global_shortcut::Builder::new()
@@ -2058,7 +1131,7 @@ pub fn run() {
                                     mon.size().width as f64 / s,
                                     mon.size().height as f64 / s,
                                 );
-                                let (bx, by) = clamp_bar_pos(cmx as f64, cmy as f64, 328.0, 56.0, mon_rect);
+                                let (bx, by) = snip::clamp_bar_pos(cmx as f64, cmy as f64, 328.0, 56.0, mon_rect);
                                 let _ = bar.set_position(tauri::LogicalPosition::new(bx, by));
                             }
                             let _ = bar.show().and_then(|_| bar.set_focus());
@@ -2473,37 +1546,6 @@ mod invoke_tests {
     use super::*;
 
     #[test]
-    fn bar_pos_bottom_right_offset() {
-        // 屏幕中央：光标右下偏移
-        let (x, y) = clamp_bar_pos(500.0, 400.0, 328.0, 56.0, (0.0, 0.0, 1440.0, 900.0));
-        assert_eq!((x, y), (514.0, 418.0));
-    }
-
-    #[test]
-    fn bar_pos_flips_at_right_and_bottom_edges() {
-        // 右边缘：翻到光标左侧；下边缘：翻到光标上方
-        let (x, y) = clamp_bar_pos(1400.0, 880.0, 328.0, 56.0, (0.0, 0.0, 1440.0, 900.0));
-        assert_eq!((x, y), (1400.0 - 328.0 - 14.0, 880.0 - 56.0 - 18.0));
-    }
-
-    #[test]
-    fn bar_pos_respects_monitor_origin() {
-        // 副屏（原点在 1440,0）：越界判断相对该屏
-        let (x, y) = clamp_bar_pos(1500.0, 100.0, 328.0, 56.0, (1440.0, 0.0, 1440.0, 900.0));
-        assert_eq!((x, y), (1514.0, 118.0));
-    }
-
-    #[test]
-    fn snip_rect_scales_and_offsets() {
-        // scale=2  retina：逻辑 (100,50,200,120) + 屏原点 (0,0) → 物理 (200,100,400,240)
-        let r = snip_abs_rect((100.0, 50.0, 200.0, 120.0), (0, 0), 2.0);
-        assert_eq!(r, (200, 100, 400, 240));
-        // 副屏负原点（主屏左侧 1440 宽）：逻辑 (10,10,50,50) → 物理 (-1420+20, 20, 100, 100)
-        let r2 = snip_abs_rect((10.0, 10.0, 50.0, 50.0), (-2880, 0), 2.0);
-        assert_eq!(r2, (-2860, 20, 100, 100));
-    }
-
-    #[test]
     fn clipboard_change_returns_immediately_when_already_changed() {
         let old = Some("a".to_string());
         let new = wait_clipboard_change(&old, || Some("b".to_string()), 400);
@@ -2539,56 +1581,4 @@ mod invoke_tests {
         assert!(start.elapsed().as_millis() >= 50); // 轮询了一段才超时，非立即放弃
     }
 
-    #[test]
-    fn parse_manifest_picks_panels_with_open() {
-        // 面板级入口：只有带 open 的 [[panel]] 才被收成子入口；顶层 id/name 照常
-        let text = r#"
-id = "zimeiti"
-name = "自媒体"
-capabilities = ["db", "llm"]
-
-[[panel]]
-type = "schema"
-name = "board"
-label = "选题看板"
-src = "panel/board.schema.json"
-
-[[panel]]
-type = "schema"
-name = "materials"
-label = "素材库"
-src = "panel/materials.schema.json"
-open = "mat_list"
-
-[[tool]]
-id = "add"
-"#;
-        let (id, name, panels) = parse_manifest(text).expect("应解析出插件");
-        assert_eq!(id, "zimeiti");
-        assert_eq!(name, "自媒体");
-        assert_eq!(panels.len(), 1);
-        assert_eq!(panels[0]["name"], "materials");
-        assert_eq!(panels[0]["label"], "素材库");
-        assert_eq!(panels[0]["open"], "mat_list");
-    }
-
-    #[test]
-    fn parse_manifest_without_panels_or_open() {
-        // 无 [[panel]] / panel 无 open → panels 为空；缺 id/name → None
-        let (id, name, panels) = parse_manifest("id = \"notes\"\nname = \"笔记\"\n").unwrap();
-        assert_eq!((id.as_str(), name.as_str()), ("notes", "笔记"));
-        assert!(panels.is_empty());
-        let no_open = "id = \"z\"\nname = \"Z\"\n\n[[panel]]\nname = \"board\"\nlabel = \"看板\"\n";
-        assert!(parse_manifest(no_open).unwrap().2.is_empty());
-        assert!(parse_manifest("name = \"孤儿\"\n").is_none()); // 缺 id
-    }
-
-    #[test]
-    fn parse_manifest_strips_trailing_comment_after_value() {
-        // 行尾注释：open = "mat_list"   # 说明 —— 值只能取到第一个闭引号，注释不许混进方法名
-        let text = "id = \"zimeiti\"\nname = \"自媒体\"\n\n[[panel]]\nname = \"materials\"\nlabel = \"素材库\"\nopen = \"mat_list\"   # 面板级入口\n";
-        let (_, _, panels) = parse_manifest(text).expect("应解析出插件");
-        assert_eq!(panels[0]["open"], "mat_list");
-        assert_eq!(panels[0]["label"], "素材库");
-    }
 }
