@@ -51,6 +51,7 @@ from .plugins import LlmChat, get_plugin_summaries
 from .runtime import RuntimeCtx
 from .runtime import helpers
 from .runtime.mobile import MobileDomain
+from .runtime.runs import RunsDomain
 from .runtime.voice import VoiceDomain
 from .safety import Gate, GatePolicy, RiskClassifier
 from .skills import EchoSkill, SkillRegistry
@@ -77,7 +78,9 @@ from .panel import _is_readonly_direct, _readonly_no_run, _render_intent, handle
 # 面板焦点（v2 §5）：壳侧 panel_context 消息维护，run 时注入 LLM 上下文（「这个/它」有解）
 _FOCUS: dict = {"value": None}
 
-# 被抢占任务的收尾宽限（秒）：超时强制取消，防 hung 任务把槽位卡死（「点了没反应」的根）
+# 被抢占任务的收尾宽限（秒）：超时强制取消，防 hung 任务把槽位卡死（「点了没反应」的根）。
+# 消费方在 runtime/runs.py（chain_start），serve_async 构造 RunsDomain 时传入本值——
+# 测试 monkeypatch yibao_brain.server._PREEMPT_GRACE_S 的路径原样生效。
 _PREEMPT_GRACE_S = 8.0
 
 # stdio 协议 + 语音退出语 + run_done 载荷已拆到 transport.py（re-export 保持 server.<name> 引用路径）
@@ -369,11 +372,6 @@ async def serve_async(
     #   不再排队、不再发「另一个窗口还在说」notice；仅 default 槽保留旧的跨 surface 排队。
     run_slots: dict[str, dict] = {}
 
-    def _slot(conversation_id: str) -> dict:
-        """取（无则建）会话槽位；conversation_id 空 → default 槽。"""
-        return run_slots.setdefault(conversation_id or "", {
-            "task": None, "cancel": None, "preempt_gen": 0, "surface": None, "running_surface": None})
-
     class _SlotsIdleView:
         """proactive/提醒的 idle 判定适配（spec §F）：done() = 所有槽均空闲。
 
@@ -389,6 +387,20 @@ async def serve_async(
     # 当前 run 的归属上下文（batch_confirmer 读本槽 cancel、confirm_meta 记会话归属）：
     # 槽位任务启动时 set，经 await 链一路传进 arun → invoker → confirmer，不串槽。
     _run_ctx: contextvars.ContextVar[dict | None] = contextvars.ContextVar("yibao_run_ctx", default=None)
+
+    # runs 调度域（R-13 第二步拆分序 4）：_slot/_preempt_* /_schedule_run/_chain_start
+    # 已迁 runtime/runs.py。_run_ctx 传原 ContextVar 对象（任务级隔离，不收进 ctx 属性）；
+    # 各函数绑回局部名——_h_run/_h_panel_action/_h_interrupt 的原引用零改动，
+    # mobile 域经 ctx.schedule_run/ctx.preempt_current 拿到的是同一批方法。
+    ctx.run_slots = run_slots
+    runs = RunsDomain(ctx, _run_ctx, preempt_grace_s=_PREEMPT_GRACE_S)
+    _slot = runs.slot
+    _preempt_current = runs.preempt_current
+    _preempt_if_same_surface = runs.preempt_if_same_surface
+    _schedule_run = runs.schedule_run
+    _chain_start = runs.chain_start
+    ctx.schedule_run = _schedule_run
+    ctx.preempt_current = _preempt_current
 
     # voice 域（R-13 第二步拆分序 3）：tts_lock/_tts_chunks/_pump_tts/_drive_voice_start
     # 已迁 runtime/voice.py。tts_lock/_pump_tts 绑回局部名——run 流（_stream_agent，
@@ -747,106 +759,17 @@ async def serve_async(
     ctx.stream_agent = _stream_agent
     _drive_voice_start = voice_domain.drive_voice_start
 
-    def _preempt_current(slot: dict) -> None:
-        slot["preempt_gen"] += 1
-        if slot["cancel"] is not None:
-            slot["cancel"].set()
-
-    def _preempt_if_same_surface(slot: dict, surface: str, conv_key: str) -> None:
-        """同槽（= 同会话）新请求 → 抢占在跑任务。同会话跨 surface（同一
-        conversation_id 从 Home 和 pet 同时发话）也视为同会话，照样抢占（spec §核心模型）。
-
-        仅 default 槽（conv_key 为空 = 无 conversation_id 的遗留调用）保留旧的
-        「跨 surface 不抢占、链式排队 + notice」（行为同现状）；跨会话不再走到这里——
-        不同 conversation_id 落在不同槽位，直接真并行。
-
-        比较对象是 slot["surface"] = 该槽最近一次受理的 surface（dispatch 时即写入，
-        无「chain 任务还没跑起来」的调度竞态）。取舍：default 槽里 A(pet) 在跑、B(panel)
-        排队中又来 C(pet) 时，C 会被判成跨 surface 而排队而非顶掉 A——三消息交替跨窗的
-        极端场景，排队自愈、不会卡死，不为它引入 per-surface 代数。
-        """
-        prev = slot["task"]
-        if prev is None or prev.done():
-            return
-        if conv_key or slot["surface"] == surface:
-            _preempt_current(slot)
-        else:
-            log(f"跨 surface 请求排队（在跑={slot['surface']}，新={surface}）")
-            write_msg({"type": "event", "surface": surface, "event": {
-                "kind": "notice", "text": "另一个窗口还在说，等它说完就轮到你…"}})
-
-    def _schedule_run(surface: str, rid, start, conversation_id: str = "") -> None:
-        """受理尾巴（run/voice_start/手机 chat 共用）：按 conversation_id 取槽——同槽
-        新话顶旧话，跨槽真并行零等待。running_surface 在真正开跑时才写——手机 interrupt
-        按它判域，排队窗口不误杀桌面轮。"""
-        slot = _slot(conversation_id)
-        _preempt_if_same_surface(slot, surface, conversation_id or "")
-        prev = slot["task"]
-        slot["surface"] = surface  # 受理即记录：下次 dispatch 判断同/跨 surface 无调度竞态
-
-        async def _marked(cancel, s=start, sf=surface, sl=slot, ci=conversation_id or ""):
-            sl["running_surface"] = sf
-            # 归属上下文：batch_confirmer 读本槽 cancel / confirm_meta 记会话归属
-            _run_ctx.set({"cancel": cancel, "surface": sf, "conversation_id": ci})
-            await s(cancel)
-
-        slot["task"] = asyncio.ensure_future(
-            _chain_start(slot, prev, _marked, slot["preempt_gen"]))
-
     # mobile/HTTP 域（R-13 第二步拆分序 2）：_submit_run/_interrupt_mobile/_confirm_mobile/
     # _mobile_state/_mobile_feed/_register_push + _http_deps 装配已迁 runtime/mobile.py。
-    # 共享状态与 runs 调度函数经 ctx 注入（同一批对象——闭包侧与域侧改的是同一份）。
-
-    async def _chain_start(slot: dict, prev, start, queued_gen: int) -> None:
-        """槽内串行：等本槽上一任务收尾再启动；主循环不在这里阻塞（ping 照答，看门狗
-        不误杀）。「等上一任务」只在同槽内生效——跨槽（跨会话）零等待、真并行（spec §A）。
-
-        排队期间本槽又来了更新的请求（preempt_gen 前进）→ 本任务一启动即置 cancel 快速跳过。
-        上一任务被抢占后超过 _PREEMPT_GRACE_S 仍不收尾（LLM/TTS hung 等）→ 强制取消，
-        槽位必须自愈，否则本槽后续所有请求都静默排队（「点了没反应」）。
-
-        注意：slot["task"] 只在 dispatch 处写入（= 该槽最新受理的 chain）。
-        这里绝不能再写——chain 启动晚于 dispatch，旧 chain 后启动会把 task 回写成自己，
-        stdin 清理/打断看到的就是已收尾的旧任务，排队中的新任务被孤儿化（2026-07-25
-        实测：测试里 asyncio.run 收尾顺手 cancel 孤儿 chain → 偶发丢 final_reply）。
-        slot["cancel"] 由这里写（= 本槽当前真正在跑任务的取消闸）：抢占经 gen 代数
-        传导，写晚了对齐的是「在跑」语义，不会误伤排队任务。
-        """
-        if prev is not None and not prev.done():
-            t0 = time.monotonic()
-            log("新请求排队，等上一任务收尾…")
-            try:
-                # shield：wait_for 超时不许连带取消 prev，强制取消由我们自己控制
-                await asyncio.wait_for(asyncio.shield(prev), timeout=_PREEMPT_GRACE_S)
-            except asyncio.TimeoutError:
-                log(f"上一任务 {_PREEMPT_GRACE_S:.0f}s 未收尾，强制取消")
-                prev.cancel()
-                try:
-                    await prev
-                except (asyncio.CancelledError, Exception):
-                    pass
-            except (asyncio.CancelledError, Exception):
-                pass  # prev 自身异常/被取消都算已收尾
-            log(f"上一任务收尾完成（{time.monotonic() - t0:.1f}s）")
-        cancel = asyncio.Event()
-        if slot["preempt_gen"] > queued_gen:
-            cancel.set()
-        slot["cancel"] = cancel
-        try:
-            await start(cancel)
-        except Exception as e:  # 兜底：任务未预期的异常不能毒死槽位
-            log(f"任务异常收尾：{type(e).__name__}: {e}")
+    # 共享状态注入已随各域上移（见 ctx 构造/runs 域/settings 段）。
 
     # HTTP 面（扩展桥+移动 API）：deps 里的绑定依赖上文 _drive_run 等，故在主循环前才组装启动
     ctx.settings = settings
-    ctx.run_slots = run_slots
     ctx.pending_confirms = pending_confirms
     ctx.early_answers = early_answers
     ctx.confirm_meta = confirm_meta
     ctx.confirm_done = _confirm_done
     ctx.drive_run = _drive_run
-    ctx.schedule_run = _schedule_run
-    ctx.preempt_current = _preempt_current
     mobile = MobileDomain(ctx)
     _mobile_feed = mobile.feed  # _h_feed handler 与手机 /v1/feed 端点共用同一组装
     if http_enabled:
