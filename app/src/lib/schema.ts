@@ -1,5 +1,6 @@
 // schema 协议 v1（docs/superpowers/specs/2026-07-18-yibao-v2-plugin-architecture.md 附录 A）：
 // 四组件 list/detail/form/board + 绑定语法（$data.x 注入数据 / $item.x list/board item 上下文）。
+import { fmtMonthDayTime } from "./time";
 
 /** 面板动作声明：method 必须在 api.toml 白名单，params 值支持绑定语法。 */
 export interface ActionDecl {
@@ -84,10 +85,7 @@ function applyFilter(v: unknown, name: string): unknown {
   if (name === "date") {
     const n = typeof v === "number" ? v : Number(v);
     if (!Number.isFinite(n) || n <= 0) return "";
-    const d = new Date(n * 1000);
-    const hh = String(d.getHours()).padStart(2, "0");
-    const mm = String(d.getMinutes()).padStart(2, "0");
-    return `${d.getMonth() + 1}月${d.getDate()}日 ${hh}:${mm}`;
+    return fmtMonthDayTime(new Date(n * 1000));
   }
   return v;
 }

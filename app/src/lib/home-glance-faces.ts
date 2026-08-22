@@ -1,5 +1,6 @@
 /** 主屏 glance 的脸：有没有内容、怎么写成一眼，不碰装配。 */
 import { resolve, type SchemaDoc } from "./schema";
+import { truncate } from "./text";
 import type { FeedItem, MemItem, PerceptionItem, PendingConfirm, RunningTask, WidgetPayload } from "./brain";
 
 export type RemindFace = { text: string; when: string; tight: boolean };
@@ -136,7 +137,7 @@ export function pickSpark(
   const chosen = scored[0]?.item ?? (keys.size ? null : pool[0]);
   if (!chosen) return null;
   const text = chosen.text.trim();
-  return { id: chosen.id, text: text.length > 72 ? `${text.slice(0, 72)}…` : text };
+  return { id: chosen.id, text: truncate(text, 72) };
 }
 
 export function glimpseFace(
@@ -164,10 +165,10 @@ export function catchFace(
     .sort((a, b) => b.ts - a.ts)[0];
   const clipText = clip ? String(clip.payload.text ?? clip.payload.preview ?? "").trim() : "";
   if (clip && clipText && now - clip.ts * 1000 <= CATCH_FRESH) {
-    return { kind: "clipboard", text: clipText.length > 80 ? `${clipText.slice(0, 80)}…` : clipText };
+    return { kind: "clipboard", text: truncate(clipText, 80) };
   }
   const note = noteLine.trim();
-  if (note) return { kind: "note", text: note.length > 80 ? `${note.slice(0, 80)}…` : note };
+  if (note) return { kind: "note", text: truncate(note, 80) };
   return null;
 }
 

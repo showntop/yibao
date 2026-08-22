@@ -11,6 +11,7 @@ import {
   type FeedStats,
 } from "../lib/brain";
 import { todayBands } from "../lib/home-glance-faces";
+import { truncate } from "../lib/text";
 import NeuralBrain from "./NeuralBrain.vue";
 import Avatar from "./Avatar.vue";
 import HomeWidget from "./HomeWidget.vue";
@@ -68,7 +69,7 @@ function hashStr(s: string): number {
 function memoryLabel(m: MemItem): string {
   const parts = m.text.replace(/[，。！？、；：""''（）【】\n]/g, " ").split(/\s+/).filter(Boolean);
   const label = (parts.slice(0, 2).join("·") || m.text.slice(0, 8)).trim();
-  return label.length > 10 ? `${label.slice(0, 10)}…` : label;
+  return truncate(label, 10);
 }
 
 const MEMORY_POSITIONS = [
@@ -167,7 +168,7 @@ function toggleCapability(id: CapabilityKind) {
 }
 
 function askMemory(point: Pick<MemoryPoint, "full">) {
-  emit("chat", `关于「${point.full.length > 40 ? `${point.full.slice(0, 40)}…` : point.full}」：`);
+  emit("chat", `关于「${truncate(point.full, 40)}」：`);
 }
 
 function greet() {

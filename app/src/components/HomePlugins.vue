@@ -27,6 +27,7 @@ import { sessionStore } from "../state/store";
 import type { Attention, Presentation } from "../lib/surface-policy";
 import type { WebviewPayload } from "../lib/webview-source";
 import { takeDeskOrigin } from "../lib/home-desk-presence";
+import { iconStyle, initial } from "../lib/icons";
 
 type AvatarState = "idle" | "listen" | "think" | "work" | "say";
 const props = withDefaults(defineProps<{
@@ -150,28 +151,6 @@ const filtered = computed(() => {
   if (!q) return plugins.value;
   return plugins.value.filter((p) => p.name.toLowerCase().includes(q) || p.id.toLowerCase().includes(q));
 });
-
-// 图标配色：按 id 哈希到 5 色调色板（主题感知 CSS 变量，与小窗 QuickPanel 同源）
-const ICON_PALETTE = [
-  { bg: "var(--yb-icon-bg-0)", fg: "var(--yb-icon-fg-0)" },
-  { bg: "var(--yb-icon-bg-1)", fg: "var(--yb-icon-fg-1)" },
-  { bg: "var(--yb-icon-bg-2)", fg: "var(--yb-icon-fg-2)" },
-  { bg: "var(--yb-icon-bg-3)", fg: "var(--yb-icon-fg-3)" },
-  { bg: "var(--yb-icon-bg-4)", fg: "var(--yb-icon-fg-4)" },
-] as const;
-function djb2(s: string): number {
-  let h = 5381;
-  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
-  return Math.abs(h);
-}
-function iconStyle(id: string) {
-  const c = ICON_PALETTE[djb2(id) % ICON_PALETTE.length];
-  return { background: c.bg, color: c.fg };
-}
-function initial(name: string): string {
-  const ch = name.trim().charAt(0);
-  return ch ? ch.toUpperCase() : "?";
-}
 
 async function loadPlugins() {
   pluginErr.value = "";
@@ -882,13 +861,6 @@ onUnmounted(() => {
   overflow-y: auto;
   padding: 0 var(--yb-space-5) var(--yb-space-4);
   scrollbar-width: thin;
-}
-.plist::-webkit-scrollbar {
-  width: 7px;
-}
-.plist::-webkit-scrollbar-thumb {
-  background: var(--yb-border-strong);
-  border-radius: var(--yb-radius-pill);
 }
 .pl-err {
   display: flex;

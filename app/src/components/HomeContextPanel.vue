@@ -1,49 +1,28 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+// 大窗「上下文面板」：会话目标/状态 + 待批准（审批域在 composables/useContextApprovals）+ 过程行 + 上下文/输出/相关 widget。
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import {
   getFeedOnce,
   getWidgetsOnce,
   onFeed,
-  onBrainEvent,
   onWidgets,
-  onPendingConfirms,
   panelAction,
-  sendConfirmBatch,
   canRememberSkill,
   rememberLabelForSkill,
   type FeedStats,
   type RunningTask,
-  type PendingConfirm,
   type WidgetPayload,
 } from "../lib/brain";
 import HomeWidget from "./HomeWidget.vue";
 import { useLiveAssembly } from "../lib/home-chrome";
 import { setDeskOrigin } from "../lib/home-desk-presence";
 import { faceOf } from "../lib/home-assembly";
+import { useContextApprovals } from "../composables/useContextApprovals";
 
 type AgentState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
 interface ProcessEntry { label: string; done: boolean; ok?: boolean }
 interface ContextRow { id: string; title: string; meta: string; kind: "file" | "screen" | "memory" | "conversation" }
 interface OutputRow { id: string; title: string; meta: string }
-interface ProcessedItem {
-  id: string;
-  kind: "approval" | "task";
-  title: string;
-  decision?: "approved" | "rejected";
-  remembered?: boolean;
-  taskStatus?: "running" | "completed" | "failed" | "timed_out" | "cancelled";
-  taskId?: string;
-  ts: number;
-}
-interface InterruptedApproval {
-  id: string;
-  skill: string;
-  label: string;
-  desc: string;
-  risk?: number;
-  surface?: string;
-  createdAt: number;
-}
 
 const props = withDefaults(defineProps<{
   sessionId?: string;
@@ -61,129 +40,44 @@ const props = withDefaults(defineProps<{
 });
 
 const emit = defineEmits<{ chat: [draft: string] }>();
+
+// 审批域（队列/历史/快照/订阅）独立成 composable
+const approvalsApi = useContextApprovals({
+  sessionId: () => props.sessionId,
+  emitChat: (draft) => emit("chat", draft),
+});
+const {
+  processedHistory,
+  displayApprovals,
+  interruptedApprovals,
+  preparedInterruptedIds,
+  approvalErrors,
+  prepareInterruptedApproval,
+  dismissInterruptedApproval,
+  decideApproval,
+  approvalTitle,
+  approvalCommand,
+  approvalCwd,
+  isDeciding,
+  approvalRemember,
+  setApprovalRemember,
+  processedMeta,
+  setRefreshRunningTasks,
+  listen: listenApprovals,
+} = approvalsApi;
+
 const assembly = useLiveAssembly();
 const peekDensity = computed(() => faceOf(assembly.value, "now", "inspector"));
 
 const stats = ref<FeedStats>({ pending_reminders: 0, running_tasks: 0, done_24h: 0, unread: 0, ignored: 0 });
 const runningTasks = ref<RunningTask[]>([]);
-const approvals = ref<PendingConfirm[]>([]);
 const widgets = ref<WidgetPayload[]>([]);
 const loaded = ref(false);
 const historyOpen = ref(false);
-const decidingIds = ref<Set<string>>(new Set());
-const approvalErrors = ref<Record<string, string>>({});
-const rememberMap = ref<Record<string, boolean>>({});
-const previewApprovalDismissed = ref(false);
-const previewInterruptedDismissed = ref(false);
-const knownApprovals = new Map<string, PendingConfirm>();
-const preparedInterruptedIds = ref<Set<string>>(new Set());
+
+// 浏览器设计预览（无 Tauri 桥）：展示假数据
 const browserPreview = typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window);
 const previewDemo = browserPreview && new URLSearchParams(window.location.search).has("demo");
-const previewInterrupted = browserPreview && new URLSearchParams(window.location.search).get("demo") === "interrupted";
-
-const PROCESSED_KEY = "yb-session-processed-v1";
-function loadProcessedStore(): Record<string, ProcessedItem[]> {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(PROCESSED_KEY) || "{}");
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-const processedStore = ref<Record<string, ProcessedItem[]>>(loadProcessedStore());
-const processedSessionKey = computed(() => props.sessionId || (previewDemo ? "__preview__" : "__current__"));
-const processedHistory = computed(() => processedStore.value[processedSessionKey.value] ?? []);
-
-const PENDING_SNAPSHOT_KEY = "yb-session-pending-v1";
-function loadPendingSnapshotStore(): Record<string, InterruptedApproval[]> {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(PENDING_SNAPSHOT_KEY) || "{}");
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-const pendingSnapshotStore = ref<Record<string, InterruptedApproval[]>>(loadPendingSnapshotStore());
-const pendingSnapshots = computed(() => pendingSnapshotStore.value[processedSessionKey.value] ?? []);
-
-watch(processedSessionKey, () => (historyOpen.value = false));
-
-function saveProcessedStore() {
-  try { localStorage.setItem(PROCESSED_KEY, JSON.stringify(processedStore.value)); } catch { /* 存储不可用时保留本次窗口状态 */ }
-}
-
-function savePendingSnapshotStore() {
-  try { localStorage.setItem(PENDING_SNAPSHOT_KEY, JSON.stringify(pendingSnapshotStore.value)); } catch { /* 无本地存储时不阻断审批 */ }
-}
-
-function setPendingSnapshots(items: InterruptedApproval[]) {
-  pendingSnapshotStore.value = {
-    ...pendingSnapshotStore.value,
-    [processedSessionKey.value]: items.sort((a, b) => b.createdAt - a.createdAt).slice(0, 20),
-  };
-  savePendingSnapshotStore();
-}
-
-function rememberPendingSnapshots(items: PendingConfirm[]) {
-  const next = [...pendingSnapshots.value];
-  for (const item of items) {
-    if (next.some((existing) => existing.id === item.id)) continue;
-    next.push({
-      id: item.id,
-      skill: item.skill,
-      label: safeApprovalHistoryTitle(item),
-      desc: item.desc || "等待你确认后继续",
-      risk: item.risk,
-      surface: item.surface,
-      createdAt: Date.now(),
-    });
-  }
-  setPendingSnapshots(next);
-}
-
-function removePendingSnapshot(id: string) {
-  setPendingSnapshots(pendingSnapshots.value.filter((item) => item.id !== id));
-  const prepared = new Set(preparedInterruptedIds.value);
-  prepared.delete(id);
-  preparedInterruptedIds.value = prepared;
-}
-
-function setProcessedHistory(items: ProcessedItem[]) {
-  processedStore.value = {
-    ...processedStore.value,
-    [processedSessionKey.value]: items.sort((a, b) => b.ts - a.ts).slice(0, 40),
-  };
-  saveProcessedStore();
-}
-
-function upsertProcessed(item: ProcessedItem) {
-  const items = processedHistory.value.filter((existing) => existing.id !== item.id);
-  setProcessedHistory([item, ...items]);
-}
-
-function updateProcessed(id: string, patch: Partial<ProcessedItem>): boolean {
-  const item = processedHistory.value.find((existing) => existing.id === id);
-  if (!item) return false;
-  upsertProcessed({ ...item, ...patch });
-  return true;
-}
-
-function safeApprovalHistoryTitle(approval: PendingConfirm): string {
-  if (approval.skill === "watch_command") return "后台命令";
-  return approval.label || approval.skill || "受控操作";
-}
-
-function recordApprovalDecision(approval: PendingConfirm, approved: boolean, remembered: boolean) {
-  removePendingSnapshot(approval.id);
-  upsertProcessed({
-    id: approval.id,
-    kind: "approval",
-    title: safeApprovalHistoryTitle(approval),
-    decision: approved ? "approved" : "rejected",
-    remembered: approved && remembered,
-    ts: Date.now(),
-  });
-}
 
 const stateLabel = computed(() => {
   if (previewDemo && props.sessionState === "idle") return "进行中 · 02:14";
@@ -201,34 +95,6 @@ const goalText = computed(() => {
   if (previewDemo) return "提取决定、待办和负责人";
   if (props.hasConversation && props.sessionTitle !== "新对话") return `围绕「${props.sessionTitle}」继续推进`;
   return "开始对话后，这里会整理本次目标";
-});
-
-const displayApprovals = computed(() => {
-  if (approvals.value.length) return approvals.value;
-  if (previewInterrupted) return [];
-  if (!previewDemo || previewApprovalDismissed.value) return [];
-  return [{
-    id: "preview-approval",
-    label: "后台盯命令",
-    skill: "watch_command",
-    desc: "译宝需要你的许可才能执行这条命令",
-    params: { command: "npm run build", cwd: "/Users/denny/Work/yibao/app" },
-  }];
-});
-
-const interruptedApprovals = computed(() => {
-  const activeIds = new Set(displayApprovals.value.map((item) => item.id));
-  const saved = pendingSnapshots.value.filter((item) => !activeIds.has(item.id));
-  if (saved.length || !previewInterrupted || previewInterruptedDismissed.value) return saved;
-  return [{
-    id: "preview-interrupted",
-    skill: "watch_command",
-    label: "后台命令",
-    desc: "等待你确认后继续",
-    risk: 3,
-    surface: "pet",
-    createdAt: Date.now() - 5 * 60_000,
-  }];
 });
 
 const displayTasks = computed(() => {
@@ -306,126 +172,24 @@ function openWidget(widget: WidgetPayload, event?: MouseEvent) {
   void panelAction(widget.open, {}, undefined, `panel:${pluginId}`).catch(() => {});
 }
 
-function approvalTitle(approval: PendingConfirm): string {
-  if (approval.skill === "watch_command") return "允许在后台运行命令？";
-  return approval.label || approval.skill || "允许执行这项操作？";
+/** 上下文行的 mono 短标签：文件取后缀，其他类型给短码（替代单字胶囊） */
+function kindTag(row: ContextRow): string {
+  if (row.kind === "memory") return "mem";
+  if (row.kind === "screen") return "scrn";
+  if (row.kind === "conversation") return "chat";
+  const m = row.title.match(/\.([a-zA-Z0-9]+)$/);
+  return m ? `.${m[1].toLowerCase()}` : "file";
 }
-
-function approvalCommand(approval: PendingConfirm): string {
-  const value = approval.params?.command;
-  return typeof value === "string" ? value : "";
-}
-
-function approvalCwd(approval: PendingConfirm): string {
-  const value = approval.params?.cwd;
-  return typeof value === "string" ? value : "";
-}
-
-function isDeciding(id: string): boolean {
-  return decidingIds.value.has(id);
-}
-
-function approvalRemember(id: string): boolean {
-  return rememberMap.value[id] ?? false;
-}
-
-function setApprovalRemember(id: string, event: Event) {
-  const checked = (event.target as HTMLInputElement).checked;
-  rememberMap.value = { ...rememberMap.value, [id]: checked };
-}
-
-function clearApprovalRemember(id: string) {
-  const next = { ...rememberMap.value };
-  delete next[id];
-  rememberMap.value = next;
-}
-
-function normalizeTaskStatus(status: unknown): ProcessedItem["taskStatus"] | undefined {
-  if (status === "done" || status === "success") return "completed";
-  if (status === "stopped" || status === "interrupted") return "cancelled";
-  if (status === "timeout") return "timed_out";
-  return status === "running" || status === "completed" || status === "failed" || status === "timed_out" || status === "cancelled"
-    ? status
-    : undefined;
-}
-
-function processedMeta(item: ProcessedItem): string {
-  const taskLabels: Record<NonNullable<ProcessedItem["taskStatus"]>, string> = {
-    running: "执行中",
-    completed: "已完成",
-    failed: "失败",
-    timed_out: "已超时",
-    cancelled: "已取消",
-  };
-  let state = "已处理";
-  if (item.decision === "rejected") state = "已拒绝";
-  if (item.decision === "approved") state = item.remembered ? "已允许相同操作" : "已允许";
-  if (item.taskStatus) state = taskLabels[item.taskStatus];
-  const time = new Date(item.ts).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
-  return `${state} · ${time}`;
-}
-
-function interruptedPrompt(approval: InterruptedApproval): string {
-  if (approval.skill === "watch_command") {
-    return "重新处理上次未完成的后台命令。请先根据当前会话重新确认具体命令和工作目录，再请求我的批准；不要直接执行。";
-  }
-  return `重新处理上次未完成的「${approval.label}」。请先结合当前会话重新确认操作内容，再请求我的批准；不要直接执行。`;
-}
-
-function prepareInterruptedApproval(approval: InterruptedApproval) {
-  emit("chat", interruptedPrompt(approval));
-  preparedInterruptedIds.value = new Set([...preparedInterruptedIds.value, approval.id]);
-}
-
-function dismissInterruptedApproval(approval: InterruptedApproval) {
-  if (approval.id === "preview-interrupted") previewInterruptedDismissed.value = true;
-  else void sendConfirmBatch([{ id: approval.id, approved: false, remember: false }]).catch(() => {});
-  removePendingSnapshot(approval.id);
-  upsertProcessed({
-    id: approval.id,
-    kind: "approval",
-    title: approval.label || "受控操作",
-    decision: "rejected",
-    ts: Date.now(),
-  });
-}
-
-async function decideApproval(approval: PendingConfirm, approved: boolean) {
-  const remembered = approved && approvalRemember(approval.id);
-  if (previewDemo) {
-    recordApprovalDecision(approval, approved, remembered);
-    previewApprovalDismissed.value = true;
-    clearApprovalRemember(approval.id);
-    return;
-  }
-  if (isDeciding(approval.id)) return;
-  decidingIds.value = new Set([...decidingIds.value, approval.id]);
-  const nextErrors = { ...approvalErrors.value };
-  delete nextErrors[approval.id];
-  approvalErrors.value = nextErrors;
-  try {
-    await sendConfirmBatch([{ id: approval.id, approved, remember: remembered }]);
-    recordApprovalDecision(approval, approved, remembered);
-    clearApprovalRemember(approval.id);
-  } catch {
-    approvalErrors.value = { ...approvalErrors.value, [approval.id]: "没有提交成功，请重试" };
-  } finally {
-    const next = new Set(decidingIds.value);
-    next.delete(approval.id);
-    decidingIds.value = next;
-  }
-}
-
-let unFeed: (() => void) | null = null;
-let unBrain: (() => void) | null = null;
-let unWidgets: (() => void) | null = null;
-let unApprovals: (() => void) | null = null;
 
 async function refreshRunningTasks() {
   const result = await getFeedOnce().catch(() => ({ items: [], stats: stats.value, running_tasks: [] }));
   if (result.stats) stats.value = result.stats;
   runningTasks.value = result.running_tasks ?? [];
 }
+
+let unApprovals: (() => void) | null = null;
+let unFeed: (() => void) | null = null;
+let unWidgets: (() => void) | null = null;
 
 onMounted(async () => {
   if (browserPreview) {
@@ -436,88 +200,25 @@ onMounted(async () => {
     await refreshRunningTasks();
     loaded.value = true;
   } catch { loaded.value = true; }
+  setRefreshRunningTasks(refreshRunningTasks);
+  void listenApprovals().then((u) => (unApprovals = u));
   try {
     const result = await getWidgetsOnce().catch(() => ({ widgets: [] }));
     widgets.value = result.widgets ?? [];
   } catch { /* no related capabilities */ }
-  try {
-    unApprovals = onPendingConfirms((list) => {
-      const visible = list.filter((item) => !item.surface || item.surface === "pet");
-      visible.forEach((item) => knownApprovals.set(item.id, item));
-      rememberPendingSnapshots(visible);
-      for (const item of visible) {
-        const prepared = interruptedApprovals.value.find((old) => preparedInterruptedIds.value.has(old.id) && old.skill === item.skill);
-        if (prepared) removePendingSnapshot(prepared.id);
-      }
-      approvals.value = visible;
-    });
-  } catch { /* sidecar unavailable */ }
   try {
     unFeed = await onFeed((result) => {
       if (result?.stats) stats.value = result.stats;
       runningTasks.value = result?.running_tasks ?? [];
     });
   } catch { /* sidecar unavailable */ }
-  try {
-    unBrain = await onBrainEvent((event) => {
-      const commandStarted = event.kind === "action_result" && event.action?.skill_id === "watch_command";
-      const commandFinished = event.kind === "reminder" && event.type === "watch_command";
-      const actionId = event.action?.id;
-      const knownApproval = actionId ? knownApprovals.get(actionId) : undefined;
-      if (event.kind === "action_result" && knownApproval && !processedHistory.value.some((item) => item.id === actionId)) {
-        recordApprovalDecision(knownApproval, true, false);
-      }
-      if (event.kind === "error" && knownApproval) {
-        recordApprovalDecision(knownApproval, false, false);
-      }
-      if ((event.kind === "action_result" || event.kind === "error") && actionId) knownApprovals.delete(actionId);
-      if ((event.kind === "action_result" || event.kind === "error") && actionId) removePendingSnapshot(actionId);
-      if (commandStarted) {
-        const historyId = actionId || `task:${Date.now()}`;
-        const taskId = typeof event.result?.data?.task_id === "string" ? event.result.data.task_id : undefined;
-        const taskStatus: ProcessedItem["taskStatus"] = event.result?.success ? "running" : "failed";
-        if (!updateProcessed(historyId, { taskId, taskStatus, ts: Date.now() })) {
-          upsertProcessed({ id: historyId, kind: "task", title: "后台命令", taskId, taskStatus, ts: Date.now() });
-        }
-      }
-      if (commandFinished) {
-        const taskId = event.task_id;
-        const taskStatus = normalizeTaskStatus(event.status) ?? "completed";
-        const existing = processedHistory.value.find((item) => taskId && item.taskId === taskId);
-        if (existing) updateProcessed(existing.id, { taskStatus, ts: Date.now() });
-        else upsertProcessed({ id: `task:${taskId || Date.now()}`, kind: "task", title: "后台命令", taskId, taskStatus, ts: Date.now() });
-      }
-      const agentTaskFinished = event.kind === "reminder" && Boolean(event.task?.id);
-      if (agentTaskFinished && event.task?.id) {
-        upsertProcessed({
-          id: `task:${event.task.id}`,
-          kind: "task",
-          title: event.task.label || "后台任务",
-          taskId: event.task.id,
-          taskStatus: normalizeTaskStatus(event.task.status) ?? "completed",
-          ts: Date.now(),
-        });
-      }
-      if (commandStarted || commandFinished || agentTaskFinished) void refreshRunningTasks();
-    });
-  } catch { /* sidecar unavailable */ }
   try { unWidgets = await onWidgets((result) => (widgets.value = result?.widgets ?? [])); } catch { /* sidecar unavailable */ }
 });
 
-/** 上下文行的 mono 短标签：文件取后缀，其他类型给短码（替代单字胶囊） */
-function kindTag(row: ContextRow): string {
-  if (row.kind === "memory") return "mem";
-  if (row.kind === "screen") return "scrn";
-  if (row.kind === "conversation") return "chat";
-  const m = row.title.match(/\.([a-zA-Z0-9]+)$/);
-  return m ? `.${m[1].toLowerCase()}` : "file";
-}
-
 onUnmounted(() => {
-  unFeed?.();
-  unBrain?.();
-  unWidgets?.();
   unApprovals?.();
+  unFeed?.();
+  unWidgets?.();
 });
 </script>
 

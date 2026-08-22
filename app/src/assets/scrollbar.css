@@ -1,0 +1,16 @@
+/* 全局滚动条：薄滑轨 + 圆角滑钮（与窗口风格统一；组件内不再各自复制）。
+ * 特殊场景（如 textarea 细条）可在组件内以更高优先级选择器覆盖。 */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--yb-border-strong);
+  border-radius: var(--yb-radius-pill);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--yb-surface-border);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}

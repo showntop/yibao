@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // 截图框选层：⌘⇧I 后铺满显示器，拖拽画矩形 → finish_snip；Esc/单击/过小选区 → cancel_snip。
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { cancelSnip, finishSnip } from "../lib/brain";
 
 const start = ref<{ x: number; y: number } | null>(null);
 const cur = ref<{ x: number; y: number } | null>(null);
@@ -28,13 +28,13 @@ async function up() {
   start.value = null;
   cur.value = null;
   if (r && r.width > 8 && r.height > 8) {
-    await invoke("finish_snip", { rect: r });
+    await finishSnip(r);
   } else {
-    await invoke("cancel_snip"); // 单击/抖动选区 = 取消
+    await cancelSnip(); // 单击/抖动选区 = 取消
   }
 }
 function onKey(e: KeyboardEvent) {
-  if (e.key === "Escape") void invoke("cancel_snip");
+  if (e.key === "Escape") void cancelSnip();
 }
 
 let unlisten: UnlistenFn | null = null;

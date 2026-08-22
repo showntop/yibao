@@ -295,30 +295,34 @@ describe("plugin glances", () => {
   afterEach(() => resetPluginParts());
 
   it("grid presets only carry plugin cards explicitly listed in stacks; sidecar alone never forces them in", () => {
-    syncPluginParts([{ panel: "notes:widget" }, { panel: "weather:now" }]);
+    const ids = syncPluginParts([{ panel: "notes:widget" }, { panel: "weather:now" }]);
     // 预设 stacks 没声明 → 不上桌面
-    const rails = resolveAssembly("rails", defaultLayout());
+    const rails = resolveAssembly("rails", defaultLayout(), { pluginIds: ids });
     expect(rails.items.find((i) => i.id === pluginPartId("notes:widget"))).toBeUndefined();
     expect(rails.grid?.stacks.left).not.toContain(pluginPartId("notes:widget"));
 
-    const desk = resolveAssembly("desk", defaultLayout());
+    const desk = resolveAssembly("desk", defaultLayout(), { pluginIds: ids });
     expect(desk.items.find((i) => i.id === pluginPartId("notes:widget"))).toBeUndefined();
 
-    const compact = resolveAssembly("desk", defaultLayout(), { compact: true });
+    const compact = resolveAssembly("desk", defaultLayout(), { compact: true, pluginIds: ids });
     expect(compact.items.find((i) => i.id === pluginPartId("notes:widget"))).toBeUndefined();
 
-    const salon = resolveAssembly("salon", defaultLayout());
+    const salon = resolveAssembly("salon", defaultLayout(), { pluginIds: ids });
     expect(salon.items.find((i) => i.id === pluginPartId("notes:widget"))).toBeUndefined();
 
-    const canvas = resolveAssembly("canvas", defaultLayout(), { stage: { width: 1280, height: 800 } });
+    const canvas = resolveAssembly("canvas", defaultLayout(), {
+      stage: { width: 1280, height: 800 },
+      pluginIds: ids,
+    });
     expect(canvas.items.find((i) => i.id === pluginPartId("notes:widget"))?.frame).toBeTruthy();
   });
 
   it("grid presets never force plugin cards in, folded or not", () => {
-    syncPluginParts([{ panel: "notes:widget" }]);
+    const ids = syncPluginParts([{ panel: "notes:widget" }]);
     const folded = resolveAssembly("rails", defaultLayout(), {
       stage: { width: 1280, height: 800 },
       collapsed: ["left"],
+      pluginIds: ids,
     });
     expect(folded.items.find((i) => i.id === pluginPartId("notes:widget"))).toBeUndefined();
   });

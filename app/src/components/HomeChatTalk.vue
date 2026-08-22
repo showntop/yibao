@@ -2,6 +2,7 @@
 import { computed, inject, ref, watch } from "vue";
 import { HOME_CHAT_SESSION } from "../lib/home-chat-session";
 import { talkBeats, talkTurns } from "../lib/work-thread";
+import { truncate } from "../lib/text";
 
 const chat = inject(HOME_CHAT_SESSION);
 if (!chat) throw new Error("HomeChatTalk needs a chat session");
@@ -44,7 +45,7 @@ const echo = computed(() => {
   const i = last.value.user;
   if (i === null) return "";
   const text = bubbles.value[i]?.text ?? "";
-  return text.length > 36 ? `${text.slice(0, 36)}…` : text;
+  return truncate(text, 36);
 });
 
 function advance() {

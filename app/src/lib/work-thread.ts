@@ -26,16 +26,16 @@ export type PaperPage = {
 };
 
 /** 过程行、或普通 AI 正文（提醒/告警/委派卡不算进同一轮工作）。 */
-export function isOrphanDeskStamp(b: WorkBubble): boolean {
-  if (b.panelLink) return false;
-  const text = b.text.trim();
+export function isOrphanDeskStamp(bubble: WorkBubble): boolean {
+  if (bubble.panelLink) return false;
+  const text = bubble.text.trim();
   return /^(已请|已走|摊开|收起|用了)\s/.test(text) && text.includes("·");
 }
 
-export function isWorkPiece(b: WorkBubble): boolean {
-  if (b.panelLink || /^(已请|已走|摊开|收起|用了)\s/.test(b.text.trim())) return false;
-  if (b.proc) return true;
-  return b.role === "ai" && !b.icon;
+export function isWorkPiece(bubble: WorkBubble): boolean {
+  if (bubble.panelLink || /^(已请|已走|摊开|收起|用了)\s/.test(bubble.text.trim())) return false;
+  if (bubble.proc) return true;
+  return bubble.role === "ai" && !bubble.icon;
 }
 
 export function groupThread(
@@ -46,17 +46,17 @@ export function groupThread(
   let i = 0;
   while (i < bubbles.length) {
     if (isNewDay(i)) items.push({ type: "day", index: i });
-    const b = bubbles[i];
-    if (isOrphanDeskStamp(b) || isDeskPathCloseLine(b.text)) {
+    const bubble = bubbles[i];
+    if (isOrphanDeskStamp(bubble) || isDeskPathCloseLine(bubble.text)) {
       i += 1;
       continue;
     }
-    if (b.role === "user") {
+    if (bubble.role === "user") {
       items.push({ type: "user", index: i });
       i += 1;
       continue;
     }
-    if (isWorkPiece(b)) {
+    if (isWorkPiece(bubble)) {
       const start = i;
       const indices: number[] = [];
       while (i < bubbles.length && isWorkPiece(bubbles[i])) {
@@ -76,8 +76,8 @@ export function groupThread(
 export function runAnswer(bubbles: WorkBubble[], indices: number[]): string {
   return indices
     .map((i) => bubbles[i])
-    .filter((b) => b.role === "ai" && !b.proc)
-    .map((b) => b.text.trim())
+    .filter((bubble) => bubble.role === "ai" && !bubble.proc)
+    .map((bubble) => bubble.text.trim())
     .filter(Boolean)
     .join("\n\n");
 }
@@ -86,10 +86,10 @@ export function runAnswer(bubbles: WorkBubble[], indices: number[]): string {
 export function talkTurns(bubbles: WorkBubble[], limit = 6): number[] {
   const idxs: number[] = [];
   for (let i = 0; i < bubbles.length; i += 1) {
-    const b = bubbles[i];
-    if (b.panelLink || b.proc || b.icon || isOrphanDeskStamp(b) || isDeskPathCloseLine(b.text)) continue;
-    if (b.role !== "user" && b.role !== "ai") continue;
-    if (!b.text.trim()) continue;
+    const bubble = bubbles[i];
+    if (bubble.panelLink || bubble.proc || bubble.icon || isOrphanDeskStamp(bubble) || isDeskPathCloseLine(bubble.text)) continue;
+    if (bubble.role !== "user" && bubble.role !== "ai") continue;
+    if (!bubble.text.trim()) continue;
     idxs.push(i);
   }
   if (limit <= 0) return [];
@@ -145,8 +145,8 @@ export function talkBeats(text: string, max = 120): string[] {
 
 export function runTailIndex(bubbles: WorkBubble[], indices: number[]): number {
   for (let k = indices.length - 1; k >= 0; k -= 1) {
-    const b = bubbles[indices[k]];
-    if (b.role === "ai" && !b.proc) return indices[k];
+    const bubble = bubbles[indices[k]];
+    if (bubble.role === "ai" && !bubble.proc) return indices[k];
   }
   return indices[indices.length - 1] ?? 0;
 }

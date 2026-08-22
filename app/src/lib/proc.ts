@@ -11,9 +11,8 @@ export function procSkip(a?: BrainAction): boolean {
   return a?.skill_id === "use_plugin";
 }
 
-export function truncate(s: string, n: number): string {
-  return s.length > n ? s.slice(0, n) + "…" : s;
-}
+import { truncate } from "./text";
+export { truncate } from "./text";
 
 /** 过程行结果摘要：失败带 error（60 字截断），成功空串（行尾只换 ✅）。 */
 export function procResultSuffix(r?: BrainResult): string {

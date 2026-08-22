@@ -26,6 +26,7 @@ import {
   type PanelFocus,
   canRememberSkill,
   rememberLabelForSkill,
+  closePanelWindow,
 } from "../lib/brain";
 import { procLabel, procSkip, procResultSuffix } from "../lib/proc";
 import { formatContextPrefix, type InputContext } from "../lib/at-mention";
@@ -350,7 +351,7 @@ function focusInput() {
 
 function close() {
   void reportPanelContext(null).catch(() => {});
-  void invoke("close_panel_window");
+  void closePanelWindow();
 }
 
 async function pullCache() {

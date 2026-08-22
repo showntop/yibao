@@ -2,6 +2,7 @@
 import { computed, ref } from "vue";
 import YbIcon from "./YbIcon.vue";
 import { spineCaption, spineVisible, useLiveAssembly } from "../lib/home-chrome";
+import { fmtClockToday } from "../lib/time";
 import { faceOf, spineLimitOf } from "../lib/home-assembly";
 import { sessionStore } from "../state/store";
 import type { ConversationMeta } from "../state/types";
@@ -90,17 +91,7 @@ async function remove(id: string) {
 defineExpose({ updateCurrent, newChat, sessions, sync });
 
 
-function fmtTime(ts: number): string {
-  const date = new Date(ts);
-  const now = new Date();
-  const pad = (value: number) => String(value).padStart(2, "0");
-  if (date.toDateString() === now.toDateString()) return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
-  const yesterday = new Date(now);
-  yesterday.setDate(now.getDate() - 1);
-  if (date.toDateString() === yesterday.toDateString()) return "昨天";
-  if (date.getFullYear() === now.getFullYear()) return `${date.getMonth() + 1}/${date.getDate()}`;
-  return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
-}
+
 </script>
 
 <template>
@@ -115,7 +106,7 @@ function fmtTime(ts: number): string {
         <button class="echo-main" type="button" :title="session.title" @click="select(session)">
           <span class="echo-line1">
             <strong>{{ face === "list" ? session.title : spineCaption(session.title, face === "cards" ? 4 : 2) }}</strong>
-            <time v-if="face === 'list'">{{ fmtTime(session.updatedAt) }}</time>
+            <time v-if="face === 'list'">{{ fmtClockToday(session.updatedAt) }}</time>
           </span>
           <span v-if="face === 'list' && session.preview" class="echo-preview">{{ session.preview }}</span>
           <span v-else-if="face === 'list'" class="echo-preview quiet">暂无内容</span>

@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, provide, ref } from "vue";
 import YbIcon from "./YbIcon.vue";
 import { HOME_ASSEMBLY_KEY, useHomeChrome } from "../lib/home-chrome";
 import { useHomeWidgets } from "../lib/home-widgets";
+import { useLivePluginIds } from "../composables/useAssembly";
 import {
   DEFAULT_STAGE,
   SNAP_PITCH,
@@ -31,6 +32,7 @@ const stageSize = ref({ ...DEFAULT_STAGE });
 
 const { id: presetId } = useHomeChrome();
 const widgets = useHomeWidgets();
+const { ids: pluginIds } = useLivePluginIds();
 
 onMounted(() => {
   const mq = window.matchMedia("(max-width: 960px)");
@@ -60,6 +62,7 @@ const assembly = computed(() =>
     compact: compact.value,
     stage: stageSize.value,
     collapsed: collapsed.value,
+    pluginIds: pluginIds.value,
   }),
 );
 provide(HOME_ASSEMBLY_KEY, assembly);

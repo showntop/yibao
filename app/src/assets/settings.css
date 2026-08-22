@@ -1,0 +1,580 @@
+/* 设置页共享样式（单一事实源）：SettingsView 容器 + settings/*Section 子组件共用。
+ * 由 main.ts 全局引入；类名带 s-/finish-/watch-/perm-/pair- 等前缀，不与其它组件冲突。
+ * 元素选择器（input/select/textarea）限定在 .s-scroll 内，避免污染全应用表单。 */
+
+/* 设置页：macOS 系统设置（Ventura+）语言——左侧分类目录 + 右侧分组卡片。
+   页面底用浅灰（--yb-card-page-bg）反衬白卡，这是系统设置的标志性层次。 */
+.settings {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  background: var(--yb-card-page-bg);
+}
+
+/* ---- 分类目录（二级导航）---- */
+.cat-nav {
+  width: 168px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0 var(--yb-space-2) var(--yb-space-3);
+  border-right: 1px solid var(--yb-border-base);
+  background: var(--yb-sidebar-bg);
+}
+.cat-title {
+  margin: 0 0 var(--yb-space-3);
+  padding: 0 var(--yb-space-2);
+  font-size: var(--yb-fs-xl);
+  font-weight: var(--yb-fw-bold);
+  color: var(--yb-text-strong);
+  user-select: none;
+}
+.cat-item {
+  display: flex;
+  align-items: center;
+  gap: var(--yb-space-2);
+  padding: 6px var(--yb-space-2);
+  border: none;
+  border-radius: var(--yb-radius-xs);
+  background: transparent;
+  color: var(--yb-text);
+  font-size: var(--yb-fs-lg);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--yb-dur-fast) var(--yb-ease-out);
+}
+.cat-ic {
+  flex-shrink: 0;
+  color: var(--yb-text-dim);
+}
+.cat-item:hover {
+  background: var(--yb-sidebar-sel);
+}
+.cat-item.on {
+  background: var(--yb-sidebar-sel-active);
+  color: var(--yb-text-on-accent);
+}
+.cat-item.on .cat-ic {
+  color: var(--yb-text-on-accent);
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.s-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--yb-space-4);
+  padding: 0 var(--yb-space-5) var(--yb-space-5);
+  scrollbar-width: thin;
+  animation: fade-in 0.2s var(--yb-ease-out) both;
+}
+/* 大屏：分组卡 2 列网格，避免右侧大面积空白；窄屏单列左对齐 */
+@media (min-width: 1100px) {
+  .s-scroll {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-content: start;
+    column-gap: var(--yb-space-4);
+  }
+}
+/* 分组卡：实白 + hairline + 小圆角。大屏 grid 双列自动填充，无右侧孤立空白。 */
+.s-group {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 760px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--yb-space-3);
+  padding: var(--yb-space-4);
+  border: 1px solid var(--yb-card-border);
+  border-radius: var(--yb-card-radius);
+  background: var(--yb-card-bg);
+}
+/* 分组标题：卡内首行，与内容用 hairline 分隔（系统设置的 section header） */
+.s-group-title {
+  margin: calc(var(--yb-space-1) * -1) 0 0;
+  padding-bottom: var(--yb-space-2);
+  border-bottom: 1px solid var(--yb-card-row-line);
+  font-size: var(--yb-fs-md);
+  font-weight: var(--yb-fw-bold);
+  color: var(--yb-text-dim);
+}
+/* 字段（模型/语音）：对齐首启向导的输入样式 */
+.s-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.s-label {
+  font-size: var(--yb-fs-md);
+  color: var(--yb-text-dim);
+}
+.s-scroll input,
+.s-scroll select,
+.s-scroll textarea {
+  padding: 6px 10px;
+  border-radius: var(--yb-radius-xs);
+  border: 1px solid var(--yb-border-strong);
+  background: var(--yb-card-bg);
+  color: var(--yb-text);
+  font-size: var(--yb-fs-md);
+  font-family: inherit;
+  outline: none;
+  transition: border-color var(--yb-dur-fast) var(--yb-ease-out), box-shadow var(--yb-dur-fast) var(--yb-ease-out);
+}
+/* macOS focus ring：accent 描边 + 外发光环（--yb-focus-ring 是完整 box-shadow 值） */
+.s-scroll input:focus,
+.s-scroll select:focus,
+.s-scroll textarea:focus {
+  border-color: var(--yb-accent);
+  box-shadow: var(--yb-focus-ring);
+}
+/* 下拉框：去掉系统原生箭头，换成与主题一致的描边箭头（currentColor 跟随文字色，深浅主题都协调） */
+.s-scroll select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 30px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5' fill='none' stroke='currentColor' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  cursor: pointer;
+  transition: border-color var(--yb-dur-fast) var(--yb-ease-out), box-shadow var(--yb-dur-fast) var(--yb-ease-out), background-color var(--yb-dur-fast) var(--yb-ease-out);
+}
+.s-scroll select:hover {
+  border-color: var(--yb-border-strong);
+  background-color: var(--yb-surface-2);
+}
+.s-scroll select option {
+  background: var(--yb-card-bg);
+  color: var(--yb-text);
+}
+.sub-title {
+  margin-top: var(--yb-space-2);
+  padding-top: var(--yb-space-2);
+  border-top: 1px solid var(--yb-card-row-line);
+  border-bottom: none;
+}
+.watch-status {
+  color: var(--yb-accent-deep);
+}
+.watch-disclosure {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yb-space-2);
+  padding: var(--yb-space-3);
+  border-radius: var(--yb-radius-xs);
+  background: var(--yb-card-page-bg);
+}
+.watch-disclosure textarea {
+  resize: vertical;
+}
+.watch-advanced summary {
+  cursor: pointer;
+  color: var(--yb-text-dim);
+  font-size: var(--yb-fs-md);
+  margin-bottom: var(--yb-space-2);
+}
+/* 长列表（感知日志 / 记忆管理）：限高自滚，不把后面的卡推出视野 */
+.log-scroll {
+  max-height: 280px;
+  overflow-y: auto;
+  margin: 0 calc(var(--yb-space-2) * -1);
+  padding: 0 var(--yb-space-2);
+  scrollbar-width: thin;
+}
+/* 设置行：左标签右控件（系统设置的核心行式） */
+.s-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--yb-space-3);
+  min-height: 26px;
+}
+.s-row-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: var(--yb-fs-lg);
+  color: var(--yb-text);
+}
+.s-row-why {
+  font-size: var(--yb-fs-sm);
+  color: var(--yb-text-dim);
+}
+.s-row-value {
+  font-size: var(--yb-fs-md);
+  color: var(--yb-text-dim);
+}
+.s-row-btns {
+  display: inline-flex;
+  gap: 6px;
+}
+.finish-seg {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  padding: 2px;
+  gap: 2px;
+  border-radius: var(--yb-radius-sm);
+  background: var(--yb-segment-track);
+  box-shadow: var(--yb-press);
+}
+.finish-opt {
+  height: 24px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: calc(var(--yb-radius-sm) - 2px);
+  background: transparent;
+  color: var(--yb-text-dim);
+  font: inherit;
+  font-size: var(--yb-fs-sm);
+  cursor: pointer;
+}
+.finish-opt.on {
+  background: var(--yb-segment-thumb);
+  color: var(--yb-text-strong);
+  box-shadow: var(--yb-glaze-hi), var(--yb-shadow-1);
+}
+.widget-row {
+  align-items: flex-start;
+  padding: 6px 0;
+  border-top: 1px solid var(--yb-card-row-line);
+}
+.widget-row:first-of-type { border-top: 0; }
+.widget-ctrls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.widget-row .s-row-label input {
+  margin: 0 4px 0 0;
+  accent-color: var(--yb-accent);
+}
+.s-mini-btn {
+  margin-left: 6px;
+  border: 1px solid var(--yb-border-base);
+  border-radius: var(--yb-radius-pill);
+  background: transparent;
+  color: var(--yb-text);
+  font-size: var(--yb-fs-xs);
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.s-mini-btn:hover { background: var(--yb-surface-2); }
+.bridge-token { font-family: var(--yb-mono); font-size: var(--yb-fs-sm); }
+/* 手机伴生端配对二维码：固定小尺寸，提示行与码等宽对齐 */
+.pair-qr { width: 120px; height: 120px; border-radius: 6px; background: #fff; padding: 4px; }
+.pair-qr-tip { font-size: var(--yb-fs-sm); opacity: 0.75; max-width: 220px; }
+.s-note {
+  font-size: var(--yb-fs-sm);
+  color: var(--yb-text-dim);
+  line-height: 1.4;
+}
+/* 记忆行：命名空间徽章 + 文本（两行截断）+ 删除 */
+.m-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--yb-space-2);
+  padding: 7px 0;
+  border-top: 1px solid var(--yb-card-row-line);
+}
+.m-ns {
+  flex-shrink: 0;
+  padding: 1px 8px;
+  border-radius: var(--yb-radius-pill);
+  background: var(--yb-accent-soft);
+  color: var(--yb-accent-deep);
+  font-size: var(--yb-fs-sm);
+  line-height: var(--yb-lh-base);
+}
+.m-text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--yb-fs-md);
+  color: var(--yb-text);
+  line-height: var(--yb-lh-ui);
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  cursor: pointer;
+}
+.m-text.open {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+}
+.m-time {
+  flex-shrink: 0;
+  font-size: var(--yb-fs-sm);
+  opacity: 0.55;
+  white-space: nowrap;
+}
+/* 记忆筛选 chips + 行内编辑框 */
+.m-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 0 8px;
+}
+.m-chip {
+  border: 1px solid var(--yb-border-strong);
+  background: var(--yb-card-bg);
+  color: var(--yb-text-dim);
+  border-radius: var(--yb-radius-pill);
+  padding: 2px 10px;
+  font-size: var(--yb-fs-sm);
+  font-family: inherit;
+  cursor: pointer;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
+}
+.m-chip.on {
+  background: var(--yb-accent-soft);
+  border-color: var(--yb-accent);
+  color: var(--yb-accent-deep);
+}
+/* 权限点：绿=已授权 / 红=未授权 / 灰=未知（大脑未连接） */
+.perm-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--yb-state-idle);
+}
+.perm-dot.on {
+  background: var(--yb-state-success);
+}
+.perm-dot.off {
+  background: var(--yb-state-error);
+}
+/* iOS 风开关：天青 accent 着色 */
+.switch {
+  position: relative;
+  width: 36px;
+  height: 22px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: var(--yb-radius-pill);
+  background: var(--yb-btn-neutral-hover);
+  cursor: pointer;
+  transition: background var(--yb-dur-fast) var(--yb-ease-out);
+  padding: 0;
+}
+.switch i {
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--yb-segment-thumb);
+  box-shadow: var(--yb-shadow-1);
+  transition: transform var(--yb-dur-fast) var(--yb-ease-out);
+}
+.switch.on {
+  background: var(--yb-accent);
+}
+.switch.on i {
+  transform: translateX(14px);
+}
+.switch:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+/* 三档 segmented（自主权旋钮）：macOS Segmented Control——凹槽 + 白滑块 */
+.seg {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--yb-radius-xs);
+  background: var(--yb-segment-track);
+}
+.seg-btn {
+  border: none;
+  border-radius: var(--yb-radius-xs);
+  background: transparent;
+  color: var(--yb-text-dim);
+  font-size: var(--yb-fs-md);
+  font-family: inherit;
+  padding: 3px 12px;
+  cursor: pointer;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
+}
+.seg-btn:hover {
+  color: var(--yb-text);
+}
+.seg-btn.on {
+  background: var(--yb-segment-thumb);
+  color: var(--yb-text);
+  font-weight: var(--yb-fw-medium);
+  box-shadow: var(--yb-shadow-1);
+}
+/* 感知日志：来源徽章 + 一行正文/元信息 + 原地删除。 */
+.p-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--yb-space-2);
+  padding: 7px 0;
+  border-top: 1px solid var(--yb-card-row-line);
+}
+.p-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.p-text {
+  overflow: hidden;
+  color: var(--yb-text);
+  font-size: var(--yb-fs-md);
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.p-meta {
+  color: var(--yb-text-dim);
+  font-size: var(--yb-fs-sm);
+}
+.p-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.p-spacer {
+  flex: 1;
+}
+/* 行内小按钮 */
+.s-mini {
+  padding: 3px 11px;
+  border: 1px solid var(--yb-border-strong);
+  border-radius: var(--yb-radius-xs);
+  background: var(--yb-card-bg);
+  color: var(--yb-text-dim);
+  font-size: var(--yb-fs-md);
+  font-family: inherit;
+  font-weight: var(--yb-fw-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
+}
+.s-mini:hover:not(:disabled) {
+  background: var(--yb-btn-neutral);
+  color: var(--yb-text);
+}
+.s-mini.accent {
+  border-color: var(--yb-accent);
+  background: var(--yb-accent);
+  color: var(--yb-text-on-accent);
+}
+.s-mini.accent:hover:not(:disabled) {
+  background: var(--yb-accent-deep);
+  color: var(--yb-text-on-accent);
+}
+.s-mini.danger {
+  border-color: var(--yb-danger);
+  background: var(--yb-danger);
+  color: var(--yb-text-on-accent);
+}
+.s-mini.danger:hover:not(:disabled) {
+  background: var(--yb-danger);
+  color: var(--yb-text-on-accent);
+  filter: brightness(0.94);
+}
+.s-mini:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+/* 操作带：粘到 s-scroll 底部，长表单（启动/搜索/扩展）也能始终看到保存按钮。
+   不是 s-group 也不带卡边——它是「针对上面卡组的横切操作」，
+   用 surface 底 + hairline 描边 + 微阴影与卡区分，又跟 card page bg 协调。 */
+.s-ops-band {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 760px;
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--yb-space-3);
+  padding: var(--yb-space-3) var(--yb-space-4);
+  margin-top: calc(-1 * var(--yb-space-4));
+  border: 1px solid var(--yb-card-border);
+  border-radius: var(--yb-card-radius);
+  background: var(--yb-card-bg);
+  box-shadow: var(--yb-shadow-1);
+  /* 渐变遮罩：从 card-bg 渐变到透明，让带子「贴」在内容之上而非孤立浮空 */
+  backdrop-filter: var(--yb-blur);
+}
+.s-ops-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--yb-fs-md);
+  color: var(--yb-text-dim);
+  line-height: var(--yb-lh-ui);
+  min-width: 0;
+}
+.s-ops-ic {
+  color: var(--yb-text-faint);
+  flex-shrink: 0;
+}
+.s-ops-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--yb-space-3);
+  flex-shrink: 0;
+}
+.s-msg {
+  display: flex;
+  align-items: center;
+  gap: var(--yb-space-1);
+  font-size: var(--yb-fs-md);
+  line-height: var(--yb-lh-ui);
+}
+.s-msg.ok {
+  color: var(--yb-intent-ok);
+}
+.s-msg.err {
+  color: var(--yb-danger);
+}
+.s-primary {
+  flex-shrink: 0;
+  padding: 6px 18px;
+  border: none;
+  border-radius: var(--yb-radius-xs);
+  background: var(--yb-accent);
+  color: var(--yb-text-on-accent);
+  font-size: var(--yb-fs-md);
+  font-family: inherit;
+  font-weight: var(--yb-fw-medium);
+  cursor: pointer;
+  transition: background var(--yb-dur-fast) var(--yb-ease-out);
+}
+.s-primary:hover:not(:disabled) {
+  background: var(--yb-accent-deep);
+}
+.s-primary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

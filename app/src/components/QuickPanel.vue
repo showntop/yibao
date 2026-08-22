@@ -11,6 +11,7 @@ import {
   quickStackTop,
   STACK_W,
 } from "../lib/quick-dock";
+import { iconStyle } from "../lib/icons";
 
 const props = withDefaults(
   defineProps<{
@@ -52,20 +53,6 @@ async function reloadDock() {
 function onDock(slot: DockSlot) {
   if (slot.kind === "plugin") emit("launch", slot.p);
   else emit("launch", { id: "", name: "全部" });
-}
-
-const ICON_PALETTE = [
-  { bg: "var(--yb-icon-bg-0)", fg: "var(--yb-icon-fg-0)" },
-  { bg: "var(--yb-icon-bg-1)", fg: "var(--yb-icon-fg-1)" },
-  { bg: "var(--yb-icon-bg-2)", fg: "var(--yb-icon-fg-2)" },
-  { bg: "var(--yb-icon-bg-3)", fg: "var(--yb-icon-fg-3)" },
-  { bg: "var(--yb-icon-bg-4)", fg: "var(--yb-icon-fg-4)" },
-];
-function iconStyle(id: string) {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  const c = ICON_PALETTE[h % ICON_PALETTE.length];
-  return { background: c.bg, color: c.fg };
 }
 
 onMounted(() => void reloadDock());

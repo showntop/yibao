@@ -11,8 +11,8 @@ import { useLiveAssembly } from "../lib/home-chrome";
 import {
   isPlaced,
   pluginPartId,
-  syncPluginParts,
 } from "../lib/home-assembly";
+import { useLivePluginIds } from "../composables/useAssembly";
 import { pluginGlanceLine, pluginHasGlance } from "../lib/home-glance-faces";
 import { isDeskLivePlugin, setDeskOrigin, type DeskKind } from "../lib/home-desk-presence";
 
@@ -20,6 +20,7 @@ const props = defineProps<{ panel?: string; livePanel?: string | null; liveKind?
 const emit = defineEmits<{ fold: [] }>();
 const widgets = ref<WidgetPayload[]>([]);
 const assembly = useLiveAssembly();
+const { sync: pluginSync } = useLivePluginIds();
 let unWidgets: (() => void) | null = null;
 
 const canDrag = computed(() => assembly.value.place === "canvas");
@@ -35,7 +36,7 @@ const shown = computed(() => {
 
 function applyWidgets(next: WidgetPayload[]) {
   widgets.value = next;
-  syncPluginParts(next);
+  pluginSync(next);
 }
 
 function live(widget: WidgetPayload) {

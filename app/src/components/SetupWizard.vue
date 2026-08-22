@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { invoke } from "@tauri-apps/api/core";
 import YbIcon from "./YbIcon.vue";
+import { saveSetupConfig } from "../lib/brain";
 
 // 首启设置向导：没配 LLM key 时大脑不会启动（Rust 侧 setup-config-needed 事件触发）。
 // 保存写数据目录 .env，随后 Rust 拉起大脑；主界面靠大脑上线事件自然接管。
@@ -31,11 +31,12 @@ async function save() {
   saving.value = true;
   err.value = "";
   try {
-    await invoke("save_setup_config", {
+    await saveSetupConfig({
       key: key.value,
       model: model.value,
       baseUrl: baseUrl.value,
       voice: voice.value,
+      voiceEnabled: true,
     });
     emit("saved");
   } catch (e) {

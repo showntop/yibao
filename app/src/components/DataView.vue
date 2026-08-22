@@ -18,6 +18,8 @@ import {
   type MemItem,
   type PerceptionItem,
 } from "../lib/brain";
+import { fmtShortDateTime, relativeTime } from "../lib/time";
+import { truncate } from "../lib/text";
 
 // ---- 感知日志（让用户看到、逐条删、全部清空）----
 const perceptionMaster = ref(false);
@@ -62,7 +64,7 @@ function perceptionText(item: PerceptionItem): string {
   }
   if (item.source === "screen") {
     const text = String(item.payload.text || "");
-    const cut = text.length > 60 ? `${text.slice(0, 60)}…` : text;
+    const cut = truncate(text, 60);
     return item.kind === "vision" ? `概括 · ${cut}` : cut;
   }
   return String(item.payload.text || item.kind);
@@ -70,14 +72,6 @@ function perceptionText(item: PerceptionItem): string {
 
 function perceptionSource(item: PerceptionItem): string {
   return item.source === "app" ? "应用" : item.source === "activity" ? "活动" : item.source === "screen" ? "屏幕" : item.source;
-}
-
-function relativeTime(ts: number): string {
-  const seconds = Math.max(0, Math.round(Date.now() / 1000 - ts));
-  if (seconds < 60) return "刚刚";
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)} 小时前`;
-  return `${Math.floor(seconds / 86400)} 天前`;
 }
 
 async function doPerceptionDelete(id: number) {
@@ -131,11 +125,7 @@ const memFiltered = computed(() =>
 );
 
 function fmtMemTime(iso?: string): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "";
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getMonth() + 1}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  return iso ? fmtShortDateTime(iso) : "";
 }
 
 async function loadMem() {
@@ -377,13 +367,6 @@ onMounted(() => {
   padding: 0 var(--yb-space-5) var(--yb-space-5);
   scrollbar-width: thin;
 }
-.d-scroll::-webkit-scrollbar {
-  width: 7px;
-}
-.d-scroll::-webkit-scrollbar-thumb {
-  background: var(--yb-border-strong);
-  border-radius: var(--yb-radius-pill);
-}
 /* 大屏：双列网格（清空与文件放第 2 列），长列表 .is-wide 横跨 2 列——
  * 既填充大屏空间，又不让感知日志/记忆管理在窄列里被压成竖条 */
 @media (min-width: 1100px) {
@@ -515,13 +498,6 @@ textarea:focus {
   margin: 0 calc(var(--yb-space-2) * -1);
   padding: 0 var(--yb-space-2);
   scrollbar-width: thin;
-}
-.log-scroll::-webkit-scrollbar {
-  width: 6px;
-}
-.log-scroll::-webkit-scrollbar-thumb {
-  background: var(--yb-border-strong);
-  border-radius: var(--yb-radius-pill);
 }
 /* 感知日志行 */
 .p-row {

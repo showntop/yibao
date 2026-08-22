@@ -18,14 +18,12 @@ import {
   onBrainPermissions,
   onRunDone,
   onPanelClosed,
-  onPendingConfirms,
   onSettings,
   getSettingsOnce,
   openHomeWindow,
   emitRecapOpen,
   runInput,
   invokeContext,
-  sendConfirmBatch,
   voiceStart,
   interrupt,
   panelAction,
@@ -35,9 +33,6 @@ import {
   type BrainEvent,
   type BrainStatusMsg,
   type BrainPermissions,
-  type PendingConfirm,
-  type SettingsValues,
-  canRememberSkill,
   rememberLabelForSkill,
 } from "./lib/brain";
 import { formatContextPrefix, type InputContext } from "./lib/at-mention";
@@ -52,22 +47,14 @@ import { matchExplicitOpen } from "./lib/explicit-intent";
 import { decideSurface, type Attention, type Presentation } from "./lib/surface-policy";
 import { deactivateAll, petFormOf, surfaceCount, type SurfaceAttr } from "./lib/pet-surface";
 import { procLabel, procSkip, procResultSuffix } from "./lib/proc";
+import { iconStyle, initial } from "./lib/icons";
+import { squashSpaces, truncate } from "./lib/text";
 import { sessionStore, clearLegacySessionKeys } from "./state/store";
+import { usePetState } from "./composables/usePetState";
+import { usePetApproval } from "./composables/usePetApproval";
+import { usePetBubbles, type BubbleMsg } from "./composables/usePetBubbles";
+import { usePetSpeech } from "./composables/usePetSpeech";
 import YbIcon from "./components/YbIcon.vue";
-
-type AvatarState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error" | "notify" | "drowsy" | "stretch";
-// pstate：过程行状态（图标随态渲染，文案不再拼 emoji）；halted：被打断；icon：行首语义图标
-type BubbleMsg = {
-  role: "user" | "ai" | "sys";
-  text: string;
-  pstate?: "run" | "ok" | "fail";
-  halted?: boolean;
-  icon?: "clock" | "alert" | "doc";
-  /** 晨间反刍 deep-link：morning_recap 提醒气泡携带 day 字符串时，点击切到 home 回顾视图 */
-  recap?: string;
-  /** 表面属性（Phase 1.5）：与 pstate 正交。有则该行渲染为面板入口 */
-  surface?: SurfaceAttr;
-};
 
 /** Rust SessionDb 消息的序列化形状（camelCase）——小窗恢复拉取用 */
 type PetMessage = {
@@ -80,47 +67,52 @@ type PetMessage = {
   ephemeral?: boolean;
 };
 
-const state = ref<AvatarState>("idle");
-// 环境态原料：attentionNeeded=有事找你（提醒/收起时的播报，展开即消）；drowsy=发呆（连续纯待命超时）
-const attentionNeeded = ref(false);
-const drowsy = ref(false);
-/** 展示态：运行态优先；idle 时按 有事 > 发呆 > 普通 推导（发呆只在收起态露脸） */
-const petState = computed<AvatarState>(() => {
-  if (state.value !== "idle") return state.value;
-  if (attentionNeeded.value) return "notify";
-  if (!expanded.value && drowsy.value) return "drowsy";
-  return "idle";
-});
-const bubbles = ref<BubbleMsg[]>([]);
-const streamingIdx = ref<number | null>(null); // 正在接收 chunk 的 bubble 下标
 /** 小窗固定会话 id（方案 A）：永远用同一个会话，不镜像大窗活跃会话。
  *  run 带它使消息归属、重启可恢复；固定性从架构上消灭串台（大窗切会话不影响本窗）。 */
 const petConvId = ref("");
-const pendingConfirms = ref<PendingConfirm[]>([]);
-const pending = computed(() => pendingConfirms.value[0] ?? null);
-const pendingCanRemember = computed(() => canRememberSkill(pending.value?.skill ?? ""));
-const rememberPending = ref(false);
-const approvalGuard = ref<null | "allowed" | "denied">(null);
-let approvalGuardTimer: ReturnType<typeof setTimeout> | null = null;
 const brainDown = ref(false); // 大脑掉线/重启中（守护在恢复）
 const perms = ref<BrainPermissions | null>(null); // macOS 权限状态（null=未收到）
-// 感知观察中叠加点（Avatar observing prop）：总开关 + 任一采集源开启即视为观察中
-const observing = ref(false);
-function syncObserving(s: SettingsValues | null) {
-  observing.value = !!(
-    s?.["perception.master"] &&
-    (s?.["perception.app"] || s?.["perception.activity"] || s?.["perception.screen"])
-  );
-}
 const expanded = ref(false);
+// 桌宠状态机（Avatar 展示态/发呆/闪现）独立成 composable
+const {
+  state,
+  petState,
+  attentionNeeded,
+  statusText,
+  busy,
+  observing,
+  syncObserving,
+  flashState,
+  flashValence,
+  onPetHover,
+  dispose: disposePetState,
+} = usePetState(expanded);
+// 气泡流域（消息流 + 流式下标 + 滚动跟随 + 过程行/表面锚点索引）独立成 composable
+const {
+  bubbles,
+  streamingIdx,
+  procIdx,
+  surfaceAnchor,
+  pushWarn,
+  openBubbleSticky,
+  bubblesRef,
+  scrollBubbles,
+  captureBubbleScroll,
+  restoreBubbleScroll,
+  resetScroll,
+} = usePetBubbles({ expanded, expand });
 /** 快捷面板（单窗三态 quick 内容层）：hover 团子显示 3 圆 + 输入条，同窗渲染零 resize */
 const quick = ref(false);
-/** 收起态回复气泡：长按语音/快捷输入条的回复默认只走气泡，不展开对话窗；
- *  点击气泡展开完整对话（气泡内容迁入气泡流）。气泡显示期间快捷面板不弹。 */
-const speech = ref<string | null>(null);
-const speechStreaming = ref(false);
-const speechVisible = ref(false);
-let speechTimer: ReturnType<typeof setTimeout> | null = null;
+// 收起态回复气泡域（内容/流式/显隐 + 自动收起定时器）独立成 composable
+const {
+  speech,
+  speechStreaming,
+  speechVisible,
+  showSpeechBubble,
+  scheduleAutoHide: speechScheduleHide,
+  cancelAutoHide: speechCancelHide,
+  dispose: disposeSpeech,
+} = usePetSpeech({ quick, syncHotRects });
 /** 团子窗口内 top（CSS 像素）：默认 16（贴窗口顶，下方留给输入条+插件）；
  *  窗口贴近屏幕顶时继续上移（macOS 不允许窗口出屏），让团子贴菜单栏下缘。
  *  团子屏幕 y = max(窗口y + 16, 24) → petY = max(16, 24 - 窗口y)。 */
@@ -128,8 +120,6 @@ const petY = ref(16);
 let scaleCached = 1; // Retina 缩放（窗口创建后不变，onMoved 计算用）
 let unlistenMoved: (() => void) | null = null;
 const panelOpen = ref(false); // 面板浮窗当前打开状态
-// 过程展示：action.id → 过程行（sys 淡色小字）在 bubbles 里的下标，结果回来原地更新
-const procIdx = new Map<string, number>();
 // explicit run 标记：插件视图点击 / 窄规则命中两个来源共用；run_done、final_reply、interrupted 或发起失败时清理。
 // 刻意不设过期时间：文本路径要等两轮 LLM 往返，任何墙钟窗口都会在慢模型上静默失效。
 // run_done 已带 conversation_id（并发对话），监听处按归属过滤——别窗 run 收尾不再提前清掉
@@ -141,16 +131,6 @@ function markExplicit(pluginId: string): void {
 }
 function clearExplicit(): void {
   requestedPlugin = "";
-}
-
-// action id → 过程行下标：panel 事件按 origin 找回该行补表面属性。
-// 必须与 procIdx 分开：procIdx 在 action_result 就删了，
-// 而 panel 事件在 action_result 之后才到（loop.py:331 → :337）。
-const surfaceAnchor = new Map<string, number>();
-
-/** 告警气泡：⚠️ 前缀改行首 alert 图标渲染（文案纯净，图标走 YbIcon） */
-function pushWarn(text: string) {
-  bubbles.value.push({ role: "ai", text, icon: "alert" });
 }
 
 // ---- 首启设置向导（缺 LLM key 时 Rust 发 setup-config-needed，大脑未启动）----
@@ -168,12 +148,6 @@ function onSetupSaved() {
   bubbles.value.push({ role: "sys", text: "配置已保存，大脑启动中…" });
 }
 
-/** 常驻轻提示（reminder 等「有事找你」）：展开对话窗 + 落一条提醒气泡。 */
-function openBubbleSticky(text: string) {
-  if (expanded.value) return;
-  bubbles.value.push({ role: "ai", text, icon: "alert" });
-  void expand();
-}
 let unlisten: (() => void) | null = null;
 let unlistenRunDone: (() => void) | null = null;
 let unlistenStatus: (() => void) | null = null;
@@ -193,58 +167,13 @@ let unlistenCursorLeave: (() => void) | null = null;
 let unlistenConvUpdated: (() => void) | null = null;
 let rectTimer: ReturnType<typeof setInterval> | null = null;
 
-const statusText = computed(
-  () => ({
-    idle: "待命中", listen: "聆听中", think: "思考中…", work: "操作中…", say: "说话中…",
-    success: "完成", error: "出错了", notify: "有事找你", drowsy: "发呆中", stretch: "伸展中",
-  }[petState.value]),
-);
-// success/error 是短暂 valence（不可打断），不算 busy
-const busy = computed(() =>
-  state.value === "listen" || state.value === "think" ||
-  state.value === "work" || state.value === "say",
-);
 const suggestions = SUGGESTIONS;
 const missingPerms = computed(() => perms.value !== null && (!perms.value.ax || !perms.value.screen || !perms.value.input));
 // 「正在输入」占位：run 受理（think）到首个 chunk 之间气泡流还是空的，用三点呼吸占位；
 // 复用 state/streamingIdx 判断——首 chunk 建起 streaming 气泡即让位，终态（idle/error）自动消失
 const showTyping = computed(() => state.value === "think" && streamingIdx.value === null);
-
-// ---- 气泡流滚动：新气泡平滑到底、流式 chunk 即时跟手 ----
-const bubblesRef = ref<HTMLElement | null>(null);
-function scrollBubbles(smooth: boolean) {
-  void nextTick(() => {
-    const el = bubblesRef.value;
-    if (!el) return;
-    if (smooth) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-    else el.scrollTop = el.scrollHeight;
-  });
-}
-watch(() => bubbles.value.length, () => scrollBubbles(true));
-watch(() => bubbles.value[bubbles.value.length - 1]?.text, () => scrollBubbles(false));
+// showTyping 呼吸占位出现/消失时滚动（bubbles 自身的滚动 watch 在 usePetBubbles 内）
 watch(showTyping, () => scrollBubbles(true));
-
-// 对话区挂在 v-if="expanded" 上：收起即拆 DOM，滚动位置归零。
-// 再展开时 bubbles 已在内存、length 不变，上面的 watch 不触发，会停在最顶。
-// 收起前记下「是否贴底 / 滚动偏移」，展开后恢复；贴底或没有记录则滚到最新。
-const STICK_BOTTOM_PX = 80;
-let stickBottom = true;
-let savedScrollTop = 0;
-function captureBubbleScroll() {
-  const el = bubblesRef.value;
-  if (!el) return;
-  stickBottom = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_BOTTOM_PX;
-  savedScrollTop = el.scrollTop;
-}
-function restoreBubbleScroll() {
-  void nextTick(() => {
-    requestAnimationFrame(() => {
-      const el = bubblesRef.value;
-      if (!el) return;
-      el.scrollTop = stickBottom ? el.scrollHeight : savedScrollTop;
-    });
-  });
-}
 
 /** 单窗热区上报：idle 只报团子盒（pet），quick 追加面板元素（ui，.wb-zone）。
  *  Rust 据此放行鼠标穿透 + 驱动 enter/leave；窗口相对坐标，拖动自动跟随。 */
@@ -303,12 +232,12 @@ async function expand() {
   // 收起态气泡内容迁入气泡流（点击气泡/点团子展开都带上）
   if (speech.value) {
     bubbles.value.push({ role: "ai", text: speech.value });
-    stickBottom = true; // 收起态新回复迁入，打开应对准最新
+    resetScroll(); // 收起态新回复迁入，打开应对准最新
   }
   speechVisible.value = false;
   speech.value = null;
   speechStreaming.value = false;
-  if (speechTimer) { clearTimeout(speechTimer); speechTimer = null; }
+  speechCancelHide();
   restoreBubbleScroll();
   // 先记录收起态位置（collapse 还原用），再交给 Rust 展开（定位 + clamp + 缩放一步完成）
   try {
@@ -319,19 +248,26 @@ async function expand() {
   restoreBubbleScroll(); // 窗口 320×300 → 360×520 后 clientHeight 变了，贴底要再对准一次
 }
 
-/** 显示收起态回复气泡（回复类事件用；与快捷面板互斥，区域重叠） */
-function showSpeechBubble() {
-  speechVisible.value = true;
-  quick.value = false;
-  syncHotRects();
-}
-/** 隐藏并清空气泡；timer 到期调用 */
-function hideSpeechBubble() {
-  speechVisible.value = false;
-  speech.value = null;
-  speechStreaming.value = false;
-  syncHotRects();
-}
+// 待批确认域（队列 + 快批 + 回执占位）独立成 composable
+const {
+  pendingConfirms,
+  pending,
+  pendingCanRemember,
+  rememberPending,
+  approvalGuard,
+  decide,
+  decideAllPending,
+  listen: listenApprovals,
+  dispose: disposeApproval,
+} = usePetApproval({
+  petConvId,
+  state,
+  attentionNeeded,
+  expanded,
+  pushWarn,
+  openBubbleSticky,
+  expand,
+});
 
 /** 点击收起态气泡：展开完整对话窗（气泡内容由 expand() 迁入气泡流）。 */
 function onSpeechExpand() {
@@ -347,31 +283,6 @@ async function collapse() {
   await getCurrentWindow()
     .setPosition(new PhysicalPosition(idlePos.x, idlePos.y))
     .catch(() => {});
-}
-
-// ---- 发呆（drowsy）：连续 5 分钟纯待命则入睡相；任何运行态变化/碰团子即醒并重计时 ----
-let drowsyTimer: ReturnType<typeof setTimeout> | null = null;
-function armDrowsy() {
-  if (drowsyTimer) clearTimeout(drowsyTimer);
-  drowsyTimer = setTimeout(() => { drowsy.value = true; }, 5 * 60_000);
-}
-watch(
-  state,
-  (s) => {
-    if (s === "idle") armDrowsy();
-    else {
-      if (drowsyTimer) { clearTimeout(drowsyTimer); drowsyTimer = null; }
-      drowsy.value = false;
-    }
-  },
-  { immediate: true },
-);
-function onPetHover() {
-  // 只负责醒团子（发呆重置）。弹工作台交给 pet-cursor-enter（Rust 56×56 内缩热区），
-  // 否则 88×88 的 pet-wrap 透明边也会触发 pointerenter，鼠标没到身体就弹出。
-  if (state.value !== "idle") return;
-  drowsy.value = false;
-  armDrowsy();
 }
 
 /** 拖动开始/结束（Avatar 通知）：收起态拖团子期间窗口必须整窗可交互——贴顶区
@@ -436,28 +347,6 @@ function onQuickInterrupt() {
 type PetView = "chat" | "plugins";
 interface PluginInfo { id: string; name: string }
 
-/* 插件启动器：按 id 哈希到 5 色调色板（与 QuickPanel 一致，主题感知 CSS 变量）。
- * inline 复刻避免动 QuickPanel；后续若多处复用可抽 lib/icons.ts。 */
-const ICON_PALETTE = [
-  { bg: "var(--yb-icon-bg-0)", fg: "var(--yb-icon-fg-0)" },
-  { bg: "var(--yb-icon-bg-1)", fg: "var(--yb-icon-fg-1)" },
-  { bg: "var(--yb-icon-bg-2)", fg: "var(--yb-icon-fg-2)" },
-  { bg: "var(--yb-icon-bg-3)", fg: "var(--yb-icon-fg-3)" },
-  { bg: "var(--yb-icon-bg-4)", fg: "var(--yb-icon-fg-4)" },
-] as const;
-function djb2(s: string): number {
-  let h = 5381;
-  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
-  return Math.abs(h);
-}
-function iconStyle(id: string) {
-  const c = ICON_PALETTE[djb2(id) % ICON_PALETTE.length];
-  return { background: c.bg, color: c.fg };
-}
-function initial(name: string): string {
-  const ch = name.trim().charAt(0);
-  return ch ? ch.toUpperCase() : "?";
-}
 const view = ref<PetView>("chat");
 const allPlugins = ref<PluginInfo[]>([]);
 const plugins = ref<PluginInfo[]>([]);
@@ -557,8 +446,8 @@ function onRecapClick(day?: string) {
 const inputBarRef = ref<{ focus: () => void } | null>(null);
 const selectionCtx = ref<string | null>(null); // 划词上下文（chip 展示，发送时拼进给大脑的消息）
 const ctxPreview = computed(() => {
-  const t = (selectionCtx.value ?? "").replace(/\s+/g, " ").trim();
-  return t.length > 42 ? t.slice(0, 42) + "…" : t;
+  const t = squashSpaces(selectionCtx.value ?? "");
+  return truncate(t, 42);
 });
 const snipCtx = ref<{ width: number; height: number } | null>(null); // 截图即问：框选完成待提问
 
@@ -653,8 +542,7 @@ function onEvent(e: BrainEvent) {
           speech.value = receipt;
           speechStreaming.value = false;
           showSpeechBubble();
-          if (speechTimer) clearTimeout(speechTimer);
-          speechTimer = setTimeout(hideSpeechBubble, 4000);
+          speechScheduleHide(4000);
         } else {
           bubbles.value.push({ role: "sys", text: receipt, icon: "doc" });
         }
@@ -684,8 +572,7 @@ function onEvent(e: BrainEvent) {
         speech.value = e.text ?? "";
         speechStreaming.value = false;
         showSpeechBubble();
-        if (speechTimer) clearTimeout(speechTimer);
-        speechTimer = setTimeout(hideSpeechBubble, 8000);
+        speechScheduleHide(8000);
         clearExplicit();
         break;
       }
@@ -743,8 +630,7 @@ function onEvent(e: BrainEvent) {
         speech.value = text;
         speechStreaming.value = false;
         showSpeechBubble();
-        if (speechTimer) clearTimeout(speechTimer);
-        speechTimer = setTimeout(hideSpeechBubble, 4000);
+        speechScheduleHide(4000);
         break;
       }
       void (async () => {
@@ -789,8 +675,7 @@ function onEvent(e: BrainEvent) {
           speech.value = "没听清，再试一次？";
           speechStreaming.value = false;
           showSpeechBubble();
-          if (speechTimer) clearTimeout(speechTimer);
-          speechTimer = setTimeout(hideSpeechBubble, 8000);
+          speechScheduleHide(8000);
         }
       }
       break;
@@ -910,58 +795,6 @@ async function submit(text: string, contexts: InputContext[] = []) {
   }
 }
 
-async function decide(approved: boolean, remember = false) {
-  if (!pending.value) return;
-  const { id } = pending.value;
-  state.value = "think";
-  beginApprovalGuard(approved);
-  try {
-    await sendConfirmBatch([{ id, approved, remember: pendingCanRemember.value && remember }]);
-    rememberPending.value = false;
-    releaseApprovalGuard();
-  } catch (err) {
-    clearApprovalGuard();
-    pushWarn("确认失败：" + String(err));
-    state.value = "idle";
-  }
-}
-
-async function decideAllPending(approved: boolean) {
-  if (pendingConfirms.value.length < 2) return;
-  const items = pendingConfirms.value.map(({ id }) => ({ id, approved, remember: false }));
-  state.value = "think";
-  beginApprovalGuard(approved);
-  try {
-    await sendConfirmBatch(items);
-    releaseApprovalGuard();
-  } catch (err) {
-    clearApprovalGuard();
-    pushWarn("批量确认失败：" + String(err));
-    state.value = "idle";
-  }
-}
-
-/** 审批卡会乐观出队；保留短暂回执占位，吸收连点，避免同一位置瞬间变成「停止」。 */
-function beginApprovalGuard(approved: boolean) {
-  if (approvalGuardTimer) clearTimeout(approvalGuardTimer);
-  approvalGuardTimer = null;
-  approvalGuard.value = approved ? "allowed" : "denied";
-}
-
-function releaseApprovalGuard(delay = 850) {
-  if (approvalGuardTimer) clearTimeout(approvalGuardTimer);
-  approvalGuardTimer = setTimeout(() => {
-    approvalGuard.value = null;
-    approvalGuardTimer = null;
-  }, delay);
-}
-
-function clearApprovalGuard() {
-  if (approvalGuardTimer) clearTimeout(approvalGuardTimer);
-  approvalGuardTimer = null;
-  approvalGuard.value = null;
-}
-
 function onMic() {
   // 不乐观置 listen：等大脑 listening 事件确认（语音栈不可用时大脑会回 error，别自欺卡死）
   void ensurePetConversation().then(() => voiceStart("pet", false, petConvId.value)).catch((err) => {
@@ -982,20 +815,6 @@ function onInterrupt() {
   void interrupt(petConvId.value || undefined).catch((err) => {
     pushWarn("打断失败：" + String(err));
   });
-}
-
-// ---- 短暂闪现（success/error/stretch/drowsy…）：ms 后回 idle，期间不可打断（busy 是 allowlist，闪现态天然不在内）----
-let flashTimer: ReturnType<typeof setTimeout> | null = null;
-function flashState(v: AvatarState, ms = 400) {
-  if (flashTimer) clearTimeout(flashTimer);
-  state.value = v;
-  flashTimer = setTimeout(() => {
-    if (state.value === v) state.value = "idle";
-    flashTimer = null;
-  }, ms);
-}
-function flashValence(v: "success" | "error") {
-  flashState(v, 400);
 }
 
 function onKeydown(e: KeyboardEvent) {
@@ -1031,8 +850,7 @@ async function reloadMessages(): Promise<void> {
   procIdx.clear(); // 过程行下标随气泡重建作废
   surfaceAnchor.clear(); // 表面锚点同样指向气泡下标，随重建作废
   // 列表整表重建，旧偏移失效；收起期间重拉则下次打开对准最新
-  stickBottom = true;
-  savedScrollTop = 0;
+  resetScroll();
   if (expanded.value) restoreBubbleScroll();
 }
 
@@ -1079,30 +897,7 @@ onMounted(async () => {
     if (!panelOpen.value) return;
     panelOpen.value = false;
   });
-  unlistenApprovals = onPendingConfirms((items) => {
-    const previousCount = pendingConfirms.value.length;
-    // 归属过滤（并发对话 spec §B）：surface=pet 之外再按会话 id 区分——大窗会话的
-    // 确认卡不再落到小窗快批（无归属的卡保持旧行为照收）。
-    pendingConfirms.value = items.filter(
-      (item) =>
-        (!item.surface || item.surface === "pet") &&
-        (!item.conversationId || !petConvId.value || item.conversationId === petConvId.value),
-    );
-    if (pendingConfirms.value.length === 0) {
-      rememberPending.value = false;
-      return;
-    }
-    state.value = "idle";
-    if (pendingConfirms.value.length > 1) {
-      attentionNeeded.value = true;
-      if (!expanded.value) {
-        openBubbleSticky(`${pendingConfirms.value.length} 项待批准，可在小窗全部处理`);
-      }
-    } else if (previousCount === 0 && !expanded.value) {
-      // 单条直接展开快批；多条先以常驻气泡提醒，用户展开后可整批处理。
-      void expand();
-    }
-  });
+  unlistenApprovals = listenApprovals();
   // 感知观察中叠加点：一次性取数兜底 + brain-settings 回推刷新（设置页改开关即时反映）
   void getSettingsOnce().then(syncObserving);
   unlistenSettings = await onSettings(syncObserving);
@@ -1167,12 +962,11 @@ onUnmounted(() => {
   unlistenConvUpdated?.();
   unlistenMoved?.();
   if (rectTimer) clearInterval(rectTimer);
-  if (speechTimer) clearTimeout(speechTimer);
+  disposeSpeech();
   window.removeEventListener("keydown", onKeydown);
   if (clickTimer !== null) clearTimeout(clickTimer);
-  if (flashTimer !== null) clearTimeout(flashTimer);
-  if (drowsyTimer !== null) clearTimeout(drowsyTimer);
-  if (approvalGuardTimer !== null) clearTimeout(approvalGuardTimer);
+  disposePetState();
+  disposeApproval();
 });
 </script>
 
@@ -1738,13 +1532,6 @@ onUnmounted(() => {
    * 下可能误渲染为深色伪影（与 ::selection 叠加形成"深蓝条"），先关掉。 */
   /* mask-image: linear-gradient(180deg, transparent, #000 14px);
   -webkit-mask-image: linear-gradient(180deg, transparent, #000 14px); */
-}
-.bubbles::-webkit-scrollbar {
-  width: 6px;
-}
-.bubbles::-webkit-scrollbar-thumb {
-  background: var(--yb-surface-border);
-  border-radius: var(--yb-radius-pill);
 }
 /* morning_recap 气泡可点击 deep-link 到回顾（class 经 fallthrough 落到 Bubble 根 div） */
 .recap-clickable {
