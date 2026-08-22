@@ -35,13 +35,20 @@ def _sibling(stem: str):
     """按路径加载同目录兄弟模块并缓存进 sys.modules：全插件共享同一实例（_PROCS 唯一）。
 
     插件加载器不把模块挂 sys.modules，普通 import 拿不到同插件兄弟模块，只能按文件路径来。
+    R-35 归一：加载逻辑收敛到 _common.load_sibling（公共件无兄弟依赖，无循环），
+    本文件与 sandbox.py 均为薄委托。
     """
-    name = f"yibao_plugin_agents_{stem}"
+    return _load_common().load_sibling(Path(__file__).parent, "yibao_plugin_agents", stem)
+
+
+def _load_common():
+    """加载本目录 _common.py（固定路径内联；公共件不含兄弟依赖，无递归/无二次种子加载）。"""
+    name = "yibao_plugin_agents__common"
     mod = sys.modules.get(name)
     if mod is None:
-        spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(f"{stem}.py"))
+        spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name("_common.py"))
         mod = importlib.util.module_from_spec(spec)
-        sys.modules[name] = mod  # 先挂再 exec：重复触发加载也拿到同一实例
+        sys.modules[name] = mod
         spec.loader.exec_module(mod)
     return mod
 

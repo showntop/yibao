@@ -1,21 +1,44 @@
-"""agents 插件内部共享：任务进程登记 + 等待收尾播报（agents.py 与 sandbox.py 共用）。
+"""agents 插件内部共享：任务进程登记 + 等待收尾播报 + 兄弟模块加载器（agents.py/sandbox.py 共用）。
 
 文件名以下划线开头 = 插件加载器跳过（不当 tool 模块加载）；兄弟模块经各自的 _sibling()
 按路径加载并缓存进 sys.modules，保证全插件范围内单实例——_PROCS 唯一，task_stop 才能
 停到任何一种任务（CLI 智能体 / 沙箱脚本）。
+
+R-35 归一：_sibling 的加载逻辑收敛到本文件 load_sibling，入口文件只留薄委托；
+公共件自身不含兄弟依赖，故无循环/无二次种子加载。与 coding 插件 _common.load_sibling
+同构，因目录不同各自维护一份（跨插件共享需要跨目录 bootstrap 链，收益不成立）。
 """
 from __future__ import annotations
 
+import importlib.util
 import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 _LOG_MAX_BYTES = 10 * 1024 * 1024  # log 超过 10MB 只读尾部
 _SUMMARY_TAIL = 500  # 无解析器时的摘要：log 尾部 500 字
 
 # task_id → 在跑进程句柄（task_stop 用；底座重启后丢失，stop 会优雅报错）
 _PROCS: dict[str, "subprocess.Popen"] = {}
+
+
+def load_sibling(dir: Path, prefix: str, stem: str):
+    """按路径加载同目录兄弟模块并缓存进 sys.modules：全插件共享同一实例。
+
+    dir 传调用方所在目录（本模块 __file__ 指向 _common 自身，不能直接用）；
+    prefix 为插件前缀（yibao_plugin_<plugin>）；先挂 sys.modules 再 exec：
+    重复触发加载也拿到同一实例。
+    """
+    name = f"{prefix}_{stem}"
+    mod = sys.modules.get(name)
+    if mod is None:
+        spec = importlib.util.spec_from_file_location(name, dir / f"{stem}.py")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[name] = mod  # 先挂再 exec：重复触发加载也拿到同一实例
+        spec.loader.exec_module(mod)
+    return mod
 
 
 def _pid_alive(pid: int) -> bool:

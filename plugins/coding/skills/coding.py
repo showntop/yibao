@@ -40,12 +40,18 @@ def _sibling(stem: str):
     插件加载器按文件路径 import 本模块、名挂在 yibao_plugin_coding_coding；
     兄弟 helper（_runner）不是包内模块，普通 import 拿不到，只能 spec_from_file_location。
     先挂 sys.modules 再 exec：重复触发也拿到同一实例。
+    R-35 归一：加载逻辑收敛到 _common.load_sibling（公共件无兄弟依赖，无循环），
+    本文件与 sessions/transcript/_session_skills 均为薄委托。
     """
-    name = f"yibao_plugin_coding_{stem}"
+    return _load_common().load_sibling(Path(__file__).parent, "yibao_plugin_coding", stem)
+
+
+def _load_common():
+    """加载本目录 _common.py（固定路径内联；公共件不含兄弟依赖，无递归/无二次种子加载）。"""
+    name = "yibao_plugin_coding__common"
     mod = sys.modules.get(name)
     if mod is None:
-        spec = importlib.util.spec_from_file_location(
-            name, Path(__file__).with_name(f"{stem}.py"))
+        spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name("_common.py"))
         mod = importlib.util.module_from_spec(spec)
         sys.modules[name] = mod
         spec.loader.exec_module(mod)

@@ -18,12 +18,20 @@ from pathlib import Path
 
 
 def _sibling(stem: str):
-    """按路径加载同目录兄弟模块并缓存进 sys.modules（同 coding._sibling 惯例）。"""
-    name = f"yibao_plugin_coding_{stem}"
+    """按路径加载同目录兄弟模块并缓存进 sys.modules（R-35 归一：加载逻辑在 _common.load_sibling，薄委托）。
+
+    _load_common 固定路径内联加载公共件（不含兄弟依赖，无递归）；与 coding.py 同源，
+    不重复维护加载逻辑。
+    """
+    return _load_common().load_sibling(Path(__file__).parent, "yibao_plugin_coding", stem)
+
+
+def _load_common():
+    """加载本目录 _common.py（固定路径内联；公共件不含兄弟依赖，无递归/无二次种子加载）。"""
+    name = "yibao_plugin_coding__common"
     mod = sys.modules.get(name)
     if mod is None:
-        spec = importlib.util.spec_from_file_location(
-            name, Path(__file__).with_name(f"{stem}.py"))
+        spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name("_common.py"))
         mod = importlib.util.module_from_spec(spec)
         sys.modules[name] = mod
         spec.loader.exec_module(mod)
