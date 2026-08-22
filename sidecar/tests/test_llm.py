@@ -8,9 +8,8 @@ from yibao_brain.llm import (
     ToolCall,
     merge_tool_call_deltas,
     ToolCallDelta,
-    _vision_create_with_retry,
-    parse_observe,
 )
+from yibao_brain.llm_vision import _vision_create_with_retry, parse_observe  # noqa: E402  R-32b：视觉域已拆出
 
 
 def test_vision_create_retries_on_timeout_then_succeeds():
