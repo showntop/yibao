@@ -110,6 +110,17 @@ export interface BrainEvent {
   name?: string;
 }
 
+/** 小窗（宠物会话）历史消息行（Rust get_conversation_messages 返回形状；字段为 Rust 序列化 camelCase）。 */
+export interface PetMessage {
+  id: string;
+  conversationId: string;
+  seq: number;
+  role: string;
+  payload: { text: string; halted?: boolean; icon?: string };
+  ts: number;
+  ephemeral?: boolean;
+}
+
 /** sidecar 已落盘的近期会话消息。仅用于恢复壳层时间线；不会触发任何动作重放。 */
 export interface ConversationHistoryMessage {
   role: "user" | "assistant" | "tool";

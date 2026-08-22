@@ -5,7 +5,6 @@
 // ⌘K 命令面板」（Raycast/Linear 风格：找页面用搜/说，不是点）。
 // 各页常驻挂载（v-show 切显隐）：事件订阅不断、气泡/面板状态切页不丢。
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import { invoke } from "@tauri-apps/api/core";
 import YbIcon from "./components/YbIcon.vue";
 import CommandPalette, { type PaletteTab } from "./components/CommandPalette.vue";
 import HomeChat from "./components/HomeChat.vue";
@@ -19,7 +18,7 @@ import type { SurfacePanel } from "./state/types";
 import DataView from "./components/DataView.vue";
 import SettingsView from "./components/SettingsView.vue";
 import appLogo from "./assets/logo.png";
-import { onPendingConfirms } from "./lib/brain";
+import { onPendingConfirms, closeHomeWindow } from "./lib/brain";
 import { decideSurface, type Attention, type Presentation } from "./lib/surface-policy";
 
 // 主屏（home）= 对话 + 信息面板的融合体（AI 原生：对话是主入口，动态/回顾/插件一瞥都在右侧）
@@ -391,7 +390,7 @@ onUnmounted(() => {
 
 function close() {
   // 收起大窗 = 隐藏 + 回小窗模式（Rust 侧还原宠物窗/面板浮窗）
-  void invoke("close_home_window").catch(() => {});
+  void closeHomeWindow().catch(() => {});
 }
 </script>
 

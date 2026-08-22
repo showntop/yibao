@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from "vue";
-import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -20,6 +19,13 @@ import {
   onPanelClosed,
   onSettings,
   getSettingsOnce,
+  getSetupConfig,
+  expandChat,
+  setPetExpanded,
+  hideInvokeBar,
+  ensurePetConversation as ensurePetConversationCmd,
+  getConversationMessages,
+  listPlugins,
   openHomeWindow,
   emitRecapOpen,
   runInput,
@@ -55,17 +61,6 @@ import { usePetApproval } from "./composables/usePetApproval";
 import { usePetBubbles, type BubbleMsg } from "./composables/usePetBubbles";
 import { usePetSpeech } from "./composables/usePetSpeech";
 import YbIcon from "./components/YbIcon.vue";
-
-/** Rust SessionDb 消息的序列化形状（camelCase）——小窗恢复拉取用 */
-type PetMessage = {
-  id: string;
-  conversationId: string;
-  seq: number;
-  role: string;
-  payload: { text: string; halted?: boolean; icon?: string };
-  ts: number;
-  ephemeral?: boolean;
-};
 
 /** 小窗固定会话 id（方案 A）：永远用同一个会话，不镜像大窗活跃会话。
  *  run 带它使消息归属、重启可恢复；固定性从架构上消灭串台（大窗切会话不影响本窗）。 */
@@ -140,7 +135,8 @@ async function onSetupNeeded() {
   setupNeeded.value = true;
   if (!expanded.value) void expand();
   try {
-    setupCfg.value = await invoke("get_setup_config");
+    const cfg = await getSetupConfig();
+    setupCfg.value = { model: cfg.model, baseUrl: cfg.base_url, voice: cfg.voice };
   } catch { /* 用默认值 */ }
 }
 function onSetupSaved() {
@@ -244,7 +240,7 @@ async function expand() {
     const p = await getCurrentWindow().outerPosition();
     idlePos = { x: p.x, y: p.y };
   } catch { /* 忽略 */ }
-  await invoke("expand_chat").catch(() => {});
+  await expandChat().catch(() => {});
   restoreBubbleScroll(); // 窗口 320×300 → 360×520 后 clientHeight 变了，贴底要再对准一次
 }
 
@@ -382,7 +378,7 @@ async function loadPlugins() {
   pluginErr.value = "";
   try {
     // 上限 8 个：插件是精选的，不会多；超出说明该做设置页了
-    allPlugins.value = await invoke<PluginInfo[]>("list_plugins");
+    allPlugins.value = await listPlugins();
     plugins.value = allPlugins.value.slice(0, 8);
   } catch (err) {
     allPlugins.value = [];
@@ -467,7 +463,7 @@ async function onPetShow() {
 
 // 展开态同步给 Rust（全局热键在 Rust 侧决定 显示/展开/隐藏 的依据）
 watch(expanded, (v) => {
-  void invoke("set_pet_expanded", { expanded: v }).catch(() => {});
+  void setPetExpanded(v).catch(() => {});
 });
 
 async function onPetInvokeSelection(text: string | null) {
@@ -481,7 +477,7 @@ async function onPetInvokeSelection(text: string | null) {
 
 // 唤起条动作：解释/翻译走现有 run（selectionCtx 自动拼入）；存素材 quiet 直调（不弹面板）
 async function handleInvokeAction(action: string) {
-  void invoke("hide_invoke_bar").catch(() => {}); // 兜底（条本身已自隐）
+  void hideInvokeBar().catch(() => {}); // 兜底（条本身已自隐）
   const sel = selectionCtx.value;
   if (action === "explain" || action === "translate") {
     // 不展开：收起态气泡带会镜像流式（打字机），想细看点气泡即展开——看一眼就够的场景不打扰
@@ -829,7 +825,7 @@ watch(expanded, (v) => {
 /** 确保小窗固定会话存在（方案 A：不镜像大窗活跃会话；无则 Rust 侧新建 + 存 pet 指针） */
 async function ensurePetConversation(): Promise<void> {
   if (petConvId.value) return;
-  const meta = await invoke<{ id: string } | null>("ensure_pet_conversation").catch(() => null);
+  const meta = await ensurePetConversationCmd().catch(() => null);
   if (meta?.id) petConvId.value = meta.id;
 }
 
@@ -838,7 +834,7 @@ async function ensurePetConversation(): Promise<void> {
 async function reloadMessages(): Promise<void> {
   if (!petConvId.value) return;
   if (streamingIdx.value !== null) return;
-  const rows = await invoke<PetMessage[]>("get_conversation_messages", { id: petConvId.value, limit: 500 }).catch(() => null);
+  const rows = await getConversationMessages(petConvId.value, 500).catch(() => null);
   if (!rows) return;
   bubbles.value = rows.map((m) => ({
     role: m.role,
@@ -937,7 +933,7 @@ onMounted(async () => {
   unlistenSnip = await onSnipCaptured((r) => { void onSnipReady(r); });
   // 主动拉一次配置：首启引导若秒过（venv/模型已在），setup-config-needed 可能先于挂载发出而丢——靠拉取兜底
   try {
-    const cfg = await invoke<{ has_key: boolean }>("get_setup_config");
+    const cfg = await getSetupConfig();
     if (!cfg.has_key) void onSetupNeeded();
   } catch { /* 忽略，事件路径仍兜底 */ }
   window.addEventListener("keydown", onKeydown);

@@ -25,6 +25,7 @@ import {
   type MemListResponse,
   type PanelFocus,
   type PerceptionCleared,
+  type PetMessage,
   type PerceptionDeleted,
   type PerceptionResponse,
   type SettingsValues,
@@ -204,6 +205,46 @@ export function openHomeWindow(): Promise<void> {
 /** 关闭面板窗（PanelApp 右上角/快捷键）。 */
 export function closePanelWindow(): Promise<void> {
   return invoke("close_panel_window");
+}
+
+/** 展开宠物聊天窗（定位 + clamp + 缩放一步完成，Rust 侧裁决）。 */
+export function expandChat(): Promise<void> {
+  return invoke("expand_chat");
+}
+
+/** 展开态同步给 Rust（全局热键在 Rust 侧决定 显示/展开/隐藏 的依据）。 */
+export function setPetExpanded(expanded: boolean): Promise<void> {
+  return invoke("set_pet_expanded", { expanded });
+}
+
+/** 收起大窗 = 隐藏 + 回小窗模式（Rust 侧还原宠物窗/面板浮窗）。 */
+export function closeHomeWindow(): Promise<void> {
+  return invoke("close_home_window");
+}
+
+/** 隐藏划词唤起条（动作受理后的兜底，条本身已自隐）。 */
+export function hideInvokeBar(): Promise<void> {
+  return invoke("hide_invoke_bar");
+}
+
+/** 确保存在活跃会话：无则新建并设为活跃（大窗首启直接输入时兜底；小窗走 ensurePetConversation）。 */
+export function ensureActiveConversation(): Promise<{ id: string } | null> {
+  return invoke("ensure_active_conversation");
+}
+
+/** 确保小窗固定会话存在（不镜像大窗活跃会话，两窗互不干扰）。 */
+export function ensurePetConversation(): Promise<{ id: string } | null> {
+  return invoke("ensure_pet_conversation");
+}
+
+/** 从 Rust 权威重拉指定会话消息（小窗恢复渲染；流式进行中调用方自行跳过）。 */
+export function getConversationMessages(id: string, limit = 500): Promise<PetMessage[] | null> {
+  return invoke("get_conversation_messages", { id, limit });
+}
+
+/** 插件清单（id/name/panels；插件启动器与技能 chip 数据源，与左栏技能同源）。 */
+export function listPlugins(): Promise<{ id: string; name: string }[]> {
+  return invoke("list_plugins");
 }
 
 /** 截图确认：overlay 把选区交给大脑（截图即问）。 */

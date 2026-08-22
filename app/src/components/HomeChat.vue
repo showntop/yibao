@@ -1,7 +1,6 @@
 <script setup lang="ts">
 // 大窗主屏：预设换装配（缺省三栏）。与宠物窗同一条大脑会话（surface=pet）。
 import { ref, computed, watch, nextTick, onMounted, onUnmounted, provide } from "vue";
-import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import InputBar from "./InputBar.vue";
@@ -40,6 +39,9 @@ import {
   interrupt,
   getWidgetsOnce,
   onWidgets,
+  getSetupConfig,
+  ensureActiveConversation,
+  listPlugins,
   type BrainPermissions,
   type BrainStatusMsg,
 } from "../lib/brain";
@@ -206,7 +208,8 @@ const setupCfg = ref({ model: "glm-4.6", baseUrl: "", voice: "zh-CN-XiaoxiaoNeur
 async function onSetupNeeded() {
   setupNeeded.value = true;
   try {
-    setupCfg.value = await invoke("get_setup_config");
+    const cfg = await getSetupConfig();
+    setupCfg.value = { model: cfg.model, baseUrl: cfg.base_url, voice: cfg.voice };
   } catch { /* 用默认值 */ }
 }
 function onSetupSaved() {
@@ -439,7 +442,7 @@ async function submit(text: string, contexts: InputContext[] = []) {
   // 无会话时确保存在（首启直接输入）：M3 下 run 必须带会话 id，否则消息不落库。
   // 大窗走 ensure_active_conversation；小窗走 ensure_pet_conversation（固定会话，两窗互不干扰）。
   if (!currentSessionId.value) {
-    const meta = await invoke<{ id: string } | null>("ensure_active_conversation").catch(() => null);
+    const meta = await ensureActiveConversation().catch(() => null);
     if (meta?.id) {
       currentSessionId.value = meta.id;
       await sessionStore.conversation.refreshConversations().catch(() => {});
@@ -573,7 +576,7 @@ onMounted(async () => {
   let activeId = sessionStore.conversation.getActiveConversationId();
   if (!activeId) {
     // 首启无会话（或小窗已建会话但本域未同步）：走 Rust 确保并刷新列表
-    const meta = await invoke<{ id: string } | null>("ensure_active_conversation").catch(() => null);
+    const meta = await ensureActiveConversation().catch(() => null);
     if (meta?.id) {
       await sessionStore.conversation.refreshConversations().catch(() => {});
       activeId = meta.id;
@@ -584,7 +587,7 @@ onMounted(async () => {
     await restoreConversation(activeId);
   }
   // 技能 chip 动态数据：与左栏技能同源（list_plugins），不另起炉灶
-  try { plugins.value = await invoke<{ id: string; name: string }[]>("list_plugins").catch(() => []); } catch { plugins.value = []; }
+  try { plugins.value = await listPlugins().catch(() => []); } catch { plugins.value = []; }
   unlisten = await onBrainEvent(onEvent);
   unlistenStatus = await onBrainStatus(onStatus);
   unlistenPerms = await onBrainPermissions((p) => { perms.value = p; });
@@ -613,7 +616,7 @@ onMounted(async () => {
   // 小窗已改为固定会话（不跟随大窗，也不再广播切会话）→ 大窗无需订阅 active-conversation-changed
   // 主动拉一次配置：setup-config-needed 可能先于挂载发出而丢——靠拉取兜底
   try {
-    const cfg = await invoke<{ has_key: boolean }>("get_setup_config");
+    const cfg = await getSetupConfig();
     if (!cfg.has_key) void onSetupNeeded();
   } catch { /* 忽略，事件路径仍兜底 */ }
   try {
