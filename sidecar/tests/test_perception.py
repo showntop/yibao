@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from cryptography.fernet import Fernet
 
-from yibao_brain import perception
+from yibao_brain import perception_sensors, perception_store
 from yibao_brain.perception import (
     LoadUserActivitySkill,
     PerceptionKeyUnavailable,
@@ -420,51 +420,51 @@ def test_load_user_activity_dense_window_keeps_recent_context_and_marks_truncate
 
 
 def test_keychain_timeout_fails_closed(monkeypatch):
-    monkeypatch.setattr(perception.sys, "platform", "darwin")
-    monkeypatch.setattr(perception.getpass, "getuser", lambda: "denny")
+    monkeypatch.setattr(perception_store.sys, "platform", "darwin")
+    monkeypatch.setattr(perception_store.getpass, "getuser", lambda: "denny")
 
     def timeout(*args, **kwargs):
         raise subprocess.TimeoutExpired(args[0], 5)
 
-    monkeypatch.setattr(perception.subprocess, "run", timeout)
+    monkeypatch.setattr(perception_store.subprocess, "run", timeout)
 
     with pytest.raises(PerceptionKeyUnavailable, match="超时"):
-        perception.key_from_macos_keychain()
+        perception_store.key_from_macos_keychain()
 
 
 def test_frontmost_sampler_rechecks_systemwide_ax_each_call(monkeypatch):
     focused = iter([(101, "one.py"), (202, "pytest")])
     names = {101: "Xcode", 202: "Terminal"}
-    monkeypatch.setattr(perception.sys, "platform", "darwin")
-    monkeypatch.setattr(perception, "_ax_frontmost", lambda: next(focused), raising=False)
-    monkeypatch.setattr(perception, "_localized_app_name", lambda pid, fallback: names[pid])
+    monkeypatch.setattr(perception_sensors.sys, "platform", "darwin")
+    monkeypatch.setattr(perception_sensors, "_ax_frontmost", lambda: next(focused), raising=False)
+    monkeypatch.setattr(perception_sensors, "_localized_app_name", lambda pid, fallback: names[pid])
     monkeypatch.setattr(
-        perception,
+        perception_sensors,
         "_window_snapshot",
         lambda: pytest.fail("AX 可用时不应依赖屏幕录制权限"),
     )
 
-    assert perception.sample_frontmost() == ("Xcode", "one.py")
-    assert perception.sample_frontmost() == ("Terminal", "pytest")
+    assert perception_sensors.sample_frontmost() == ("Xcode", "one.py")
+    assert perception_sensors.sample_frontmost() == ("Terminal", "pytest")
 
 
 def test_frontmost_bundle_sampler_rechecks_systemwide_ax_each_call(monkeypatch):
     focused = iter([(101, "one.py"), (202, "pytest")])
     bundle_ids = {101: "com.apple.dt.Xcode", 202: "com.apple.Terminal"}
-    monkeypatch.setattr(perception.sys, "platform", "darwin")
-    monkeypatch.setattr(perception, "_ax_frontmost", lambda: next(focused), raising=False)
-    monkeypatch.setattr(perception, "_localized_app_name", lambda pid, fallback: fallback)
-    monkeypatch.setattr(perception, "_bundle_id_for_pid", lambda pid: bundle_ids[pid])
+    monkeypatch.setattr(perception_sensors.sys, "platform", "darwin")
+    monkeypatch.setattr(perception_sensors, "_ax_frontmost", lambda: next(focused), raising=False)
+    monkeypatch.setattr(perception_sensors, "_localized_app_name", lambda pid, fallback: fallback)
+    monkeypatch.setattr(perception_sensors, "_bundle_id_for_pid", lambda pid: bundle_ids[pid])
 
-    assert perception.sample_frontmost_bundle_id() == "com.apple.dt.Xcode"
-    assert perception.sample_frontmost_bundle_id() == "com.apple.Terminal"
+    assert perception_sensors.sample_frontmost_bundle_id() == "com.apple.dt.Xcode"
+    assert perception_sensors.sample_frontmost_bundle_id() == "com.apple.Terminal"
 
 
 def test_frontmost_sampler_falls_back_to_live_window_order_without_ax(monkeypatch):
-    monkeypatch.setattr(perception.sys, "platform", "darwin")
-    monkeypatch.setattr(perception, "_ax_frontmost", lambda: None)
+    monkeypatch.setattr(perception_sensors.sys, "platform", "darwin")
+    monkeypatch.setattr(perception_sensors, "_ax_frontmost", lambda: None)
     monkeypatch.setattr(
-        perception,
+        perception_sensors,
         "_window_snapshot",
         lambda: [
             {"kCGWindowLayer": 20, "kCGWindowOwnerPID": 1, "kCGWindowOwnerName": "Overlay"},
@@ -476,10 +476,10 @@ def test_frontmost_sampler_falls_back_to_live_window_order_without_ax(monkeypatc
             },
         ],
     )
-    monkeypatch.setattr(perception, "_localized_app_name", lambda pid, fallback: fallback)
-    monkeypatch.setattr(perception, "_ax_title_for_pid", lambda pid: "")
+    monkeypatch.setattr(perception_sensors, "_localized_app_name", lambda pid, fallback: fallback)
+    monkeypatch.setattr(perception_sensors, "_ax_title_for_pid", lambda pid: "")
 
-    assert perception.sample_frontmost() == ("Terminal", "pytest")
+    assert perception_sensors.sample_frontmost() == ("Terminal", "pytest")
 
 
 def test_sensors_do_nothing_while_master_is_off(tmp_path):
