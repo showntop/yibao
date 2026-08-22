@@ -2,7 +2,6 @@
 import { ref, computed, watch, watchEffect, nextTick, onMounted, onUnmounted } from "vue";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import Avatar from "../../components/pet/Avatar.vue";
 import InputBar from "../../components/common/InputBar.vue";
 import QuickPanel from "../../components/pet/QuickPanel.vue";
@@ -37,8 +36,6 @@ import {
   onInvokeAction,
   onSnipCaptured,
   visionQuery,
-  type BrainEvent,
-  type BrainStatusMsg,
   type BrainPermissions,
 } from "../../lib/brain";
 import { formatContextPrefix, type InputContext } from "../../lib/at-mention";
@@ -50,8 +47,8 @@ import {
 } from "../../lib/window";
 import { SUGGESTIONS } from "../../lib/suggestions";
 import { matchExplicitOpen } from "../../lib/explicit-intent";
-import { decideSurface, type Attention, type Presentation } from "../../lib/surface/surface-policy";
-import { deactivateAll, petFormOf, surfaceCount, type SurfaceAttr } from "../../lib/surface/pet-surface";
+import { decideSurface } from "../../lib/surface/surface-policy";
+import { deactivateAll, petFormOf, surfaceCount } from "../../lib/surface/pet-surface";
 import { procLabel, procSkip, procResultSuffix } from "../../lib/proc";
 import { squashSpaces, truncate } from "../../lib/text";
 import { sessionStore, clearLegacySessionKeys } from "../../state/store";
@@ -59,6 +56,7 @@ import { usePetState } from "../../composables/usePetState";
 import { usePetApproval } from "../../composables/usePetApproval";
 import { usePetBubbles, type BubbleMsg } from "../../composables/usePetBubbles";
 import { usePetSpeech } from "../../composables/usePetSpeech";
+import { usePetEvents } from "../../composables/usePetEvents";
 import YbIcon from "../../components/common/YbIcon.vue";
 
 /** 小窗固定会话 id（方案 A）：永远用同一个会话，不镜像大窗活跃会话。
@@ -506,258 +504,23 @@ async function handleInvokeAction(action: string) {
   }
 }
 
-function onEvent(e: BrainEvent) {
-  // 会话分流：面板场景的对话事件只归面板窗；panel 事件例外（管开窗 + 关联气泡，两窗都收）
-  if (e.surface && e.surface !== "pet" && e.kind !== "panel") return;
-  // M3 归属过滤：事件属于其他会话（大窗的 run / 别的会话）→ 跳过渲染。
-  // 小窗固定会话：只渲染 petConvId 归属的事件，其余已落库到各自会话（切过去可见）。
-  if (e.conversationId && petConvId.value && e.conversationId !== petConvId.value) return;
-  switch (e.kind) {
-    case "action_proposed":
-      state.value = "work";
-      // 过程行：技能短标签 + pstate 驱动图标（use_plugin 跳过——成功有 notice，不重复）
-      if (e.action?.id && !procSkip(e.action)) {
-        if (streamingIdx.value !== null) streamingIdx.value = null;
-        procIdx.set(e.action.id, bubbles.value.length);
-        surfaceAnchor.set(e.action.id, bubbles.value.length);
-        bubbles.value.push({ role: "sys", text: procLabel(e.action), pstate: "run" });
-      }
-      break;
-    case "action_result": {
-      // 双窗口：确认可能在面板窗作答，结果回来即收尾（成功短闪 400ms，spec 选项 ①）
-      flashValence("success");
-      // 过程行收尾：pstate 换图标（失败带 error 摘要）；无匹配行（面板直调等）不动
-      const idx = e.action?.id !== undefined ? procIdx.get(e.action.id) : undefined;
-      if (idx !== undefined) {
-        const ok = e.result?.success !== false;
-        bubbles.value[idx].pstate = ok ? "ok" : "fail";
-        bubbles.value[idx].text = procLabel(e.action) + procResultSuffix(e.result);
-        procIdx.delete(e.action!.id!);
-      }
-      // 唤起条/扩展存素材回执：LLM 摘要打标完成后到标题（quiet 不弹面板，气泡即凭证）
-      if (e.action?.skill_id === "zimeiti.mat_save" && e.action?.id?.startsWith("pa_") && e.result?.success) {
-        const title = (e.result as { data?: { title?: string } }).data?.title;
-        const receipt = title ? `已存素材：《${title}》` : "已存素材";
-        if (!expanded.value) {
-          // 收起态（存素材时窗多半收着）：说话气泡直接告知 + 定时收起，不依赖系统通知权限
-          speech.value = receipt;
-          speechStreaming.value = false;
-          showSpeechBubble();
-          speechScheduleHide(4000);
-        } else {
-          bubbles.value.push({ role: "sys", text: receipt, icon: "doc" });
-        }
-      }
-      break;
-    }
-    case "final_reply_chunk": {
-      // 收起态：回复进气泡（默认不展开对话窗）
-      if (!expanded.value) {
-        speech.value = (speech.value ?? "") + (e.text ?? "");
-        speechStreaming.value = true;
-        showSpeechBubble();
-        break;
-      }
-      // 展开态：流式增量拼到当前 streaming bubble（首片时新建）
-      if (streamingIdx.value === null) {
-        bubbles.value.push({ role: "ai", text: e.text ?? "" });
-        streamingIdx.value = bubbles.value.length - 1;
-      } else {
-        bubbles.value[streamingIdx.value].text += e.text ?? "";
-      }
-      break;
-    }
-    case "final_reply": {
-      // 收起态：完整文本收尾进气泡 + 定时自动收起
-      if (!expanded.value) {
-        speech.value = e.text ?? "";
-        speechStreaming.value = false;
-        showSpeechBubble();
-        speechScheduleHide(8000);
-        clearExplicit();
-        break;
-      }
-      // 展开态：以完整文本为准收尾（兜底 chunk 丢失）；语音中保持 say 等 speaking_done
-      const full = e.text ?? "";
-      if (streamingIdx.value !== null) {
-        bubbles.value[streamingIdx.value].text = full;
-        streamingIdx.value = null;
-      } else {
-        bubbles.value.push({ role: "ai", text: full });
-      }
-      if (state.value !== "say") state.value = "idle";
-      clearExplicit();
-      break;
-    }
-    case "interrupted":
-      if (streamingIdx.value !== null) {
-        bubbles.value[streamingIdx.value].halted = true;
-        streamingIdx.value = null;
-      } else {
-        bubbles.value.push({ role: "ai", text: "已打断", halted: true });
-      }
-      state.value = "idle";
-      clearExplicit();
-      break;
-    case "speaking_done":
-      state.value = "idle";
-      break;
-    case "notice":
-      // 轻提示（插件展开等，§12-2 要知情）：居中淡色小字，不弹窗不打断；
-      // 收起态看不到气泡流 → 标「有事找你」，点团子即见
-      bubbles.value.push({ role: "sys", text: e.text ?? "" });
-      if (!expanded.value) attentionNeeded.value = true;
-      break;
-    case "reminder": {
-      // 主动提醒：轻提示而非弹窗——亮窗（若隐藏）+ notify 态 + 常驻气泡，等用户点团子来看；
-      // 确认闸门（confirmation_needed）不在此列，仍是强制展开。
-      // 自主权「气泡」档（e.level）：不主动亮窗，只标「有事找你」；缺省 level 按完整档（兼容旧 sidecar）。
-      // morning_recap：气泡可点击 → deep-link 进 home 回顾视图（Task 12）
-      const text = e.text ?? "到点了";
-      const isRecap = e.type === "morning_recap";
-      const recapDay = e.day;
-      bubbles.value.push({ role: "ai", text, icon: "clock", recap: isRecap ? recapDay : undefined });
-      // —— 反应式渲染（C 最小版）：确定性信号 → 一次性闪现；提醒纪律（档位/互斥/TTS）不变 ——
-      const taskDone = e.task?.status === "done" || (e.type === "watch_command" && e.status === "completed");
-      const taskFail = e.task?.status === "failed" || (e.type === "watch_command" && e.status === "failed");
-      if (e.type === "health_nudge") {
-        flashState("stretch", 1500); // 久坐 → 一套伸展操
-      } else if (e.type === "late_night") {
-        flashState("drowsy", 3000); // 深夜 → 打哈欠（Zz）
-      } else if (taskDone || taskFail) {
-        // 任务结果 = 轻反应：闪现 + 4s 自收气泡。不弹窗/不常驻/不标「有事找你」——
-        // 欢呼不该以打断姿态出现（记录照落 bubbles/Feed，窗藏时闪现不可见也无妨）
-        flashState(taskDone ? "success" : "error", taskDone ? 1200 : 900);
-        speech.value = text;
-        speechStreaming.value = false;
-        showSpeechBubble();
-        speechScheduleHide(4000);
-        break;
-      }
-      void (async () => {
-        try {
-          // 大小窗互斥：大窗开着时提醒由大窗呈现，别把宠物窗再弹出来
-          const home = await WebviewWindow.getByLabel("home");
-          if (home && (await home.isVisible())) return;
-          const win = getCurrentWindow();
-          const visible = await win.isVisible();
-          if (!visible && e.level === "bubble") {
-            attentionNeeded.value = true; // 气泡档：窗藏着就不打扰，点团子即见
-            return;
-          }
-          if (!visible) await win.show();
-          if (!expanded.value) {
-            attentionNeeded.value = true;
-            openBubbleSticky(text);
-          }
-        } catch { /* 亮窗失败也至少留了气泡 */ }
-      })();
-      break;
-    }
-    case "error":
-      state.value = "idle";
-      streamingIdx.value = null;
-      pushWarn(e.text ?? "出错了");
-      flashValence("error");
-      break;
-    case "listening":
-      state.value = "listen";
-      break;
-    case "listening_done":
-      // 空识别（超时/没说话）：回 idle 并提示——不能进 think，run_done 不复位状态，会永远卡「思考中」
-      // 用户句必须无条件入列：长按团子发生在收起态，等 expanded 再 push 会把识别结果丢掉。
-      if (e.text) {
-        state.value = "think";
-        bubbles.value.push({ role: "user", text: e.text });
-      } else {
-        state.value = "idle";
-        bubbles.value.push({ role: "ai", text: "没听清，再试一次？" });
-        if (!expanded.value) {
-          speech.value = "没听清，再试一次？";
-          speechStreaming.value = false;
-          showSpeechBubble();
-          speechScheduleHide(8000);
-        }
-      }
-      break;
-    case "speaking":
-      state.value = "say";
-      break;
-    case "panel": {
-      // 面板不再无条件弹独立浮窗（调研 §16 反模式）：先把表面属性补到发起它的
-      // 那一行上；无 origin 的刷新事件复用同 panel 最近行，否则新建。stage/focus 只可能在
-      // explicit 时出现——裁决器非 explicit 本就封顶 peek。
-      const panel = e.payload?.panel ?? "";
-      const title = e.payload?.title || panel || "插件面板";
-      const titleParts = title.split(" · ").map((part) => part.trim()).filter(Boolean);
-      const surfaceTitle = titleParts[titleParts.length - 1] || title;
-      const plugin = panel.split(":", 1)[0] || panel;
-      const explicit = requestedPlugin === plugin;
+// 事件流处理（R-08）：onEvent/onStatus/onPerms 已迁 composables/usePetEvents.ts——
+// 闭包依赖（refs/动作）经 ctx 透传，本文件只留装配
+const {
+  onEvent,
+  onStatus,
+  onPerms,
+} = usePetEvents({
+  petConvId, state, bubbles, streamingIdx, procIdx, surfaceAnchor,
+  expanded, speech, speechStreaming, attentionNeeded, brainDown, perms,
+  missingPerms, requestedPlugin,
+  procSkip, procLabel, procResultSuffix, flashValence, flashState,
+  showSpeechBubble, speechScheduleHide, clearExplicit, deactivateAll,
+  surfaceCount, petFormOf, decideSurface, openPanelWindow, pushWarn,
+  openBubbleSticky, expand,
+});
 
-      // cast 与 HomePlugins.vue:391-393 同款：PanelPayload 里这些字段是宽类型，
-      // 而裁决器要窄联合。安全性由 sidecar 保证——_load_panels 已按
-      // _SURFACE_LEVELS 过滤过非法值，ActionResult 的 Literal 类型同理。
-      const decision = decideSurface({
-        suggested: (e.payload?.presentation as Presentation | null | undefined) ?? null,
-        attention: (e.payload?.attention as Attention | undefined) ?? "suggest",
-        explicit,
-        current: null,
-        supported: e.payload?.surfaces as Presentation[] | undefined,
-      });
 
-      // 先记痕：开窗与否都留一条可点行，用户关窗后仍能一键回去
-      deactivateAll(bubbles.value);
-      const attr: SurfaceAttr = { panel, title: surfaceTitle, count: surfaceCount(e.payload?.data), live: true };
-      const at = e.payload?.origin ? surfaceAnchor.get(e.payload.origin) : undefined;
-      const row = at !== undefined ? bubbles.value[at] : undefined;
-      if (row) {
-        row.surface = attr;
-      } else {
-        let surfaceRow = -1;
-        for (let i = bubbles.value.length - 1; i >= 0; i--) {
-          if (bubbles.value[i].surface?.panel === panel) {
-            surfaceRow = i;
-            break;
-          }
-        }
-        if (surfaceRow >= 0) bubbles.value[surfaceRow].surface = attr;
-        else bubbles.value.push({ role: "sys", text: "", surface: attr });
-      }
-      if (e.payload?.origin) surfaceAnchor.delete(e.payload.origin);
-
-      if (petFormOf(decision) === "window") openPanelWindow();
-      break;
-    }
-  }
-}
-
-function onStatus(m: BrainStatusMsg) {
-  if (m.status === "up") {
-    if (brainDown.value) {
-      brainDown.value = false;
-      bubbles.value.push({ role: "ai", text: "✓ 大脑已恢复" });
-    }
-    return;
-  }
-  // down / restarting：复位界面状态（进行中的 run/确认已随进程丢失）
-  state.value = "idle";
-  streamingIdx.value = null;
-  if (!brainDown.value) {
-    brainDown.value = true;
-    const why = m.detail ? `（${m.detail}）` : "";
-    pushWarn(`大脑掉线${why}，正在自动重启…`);
-  }
-}
-
-function onPerms(p: BrainPermissions) {
-  const wasMissing = missingPerms.value;
-  perms.value = p;
-  if (missingPerms.value) {
-    if (!expanded.value) void expand(); // 权限引导必须可见
-  } else if (wasMissing) {
-    bubbles.value.push({ role: "ai", text: "✓ 权限就绪" });
-  }
-}
 
 async function submit(text: string, contexts: InputContext[] = []) {
   const fullText = formatContextPrefix(contexts) + text;   // @ 文件/附件 chips 前缀进文本（气泡与大脑同源）
