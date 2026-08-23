@@ -488,28 +488,32 @@ function onMoveStart(item: ResolvedItem, e: PointerEvent) {
   box-sizing: border-box;
   display: grid;
   place-items: center;
+  width: 24px;
+  height: 24px;
   padding: 0;
-  border: 1px solid var(--yb-widget-border);
+  border: 0;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--yb-widget-bg) 88%, transparent);
+  background: transparent;
   color: var(--yb-text-faint);
   cursor: pointer;
-  opacity: 0.42;
-  box-shadow: var(--yb-shadow-1);
+  opacity: 0;
+  box-shadow: none;
   transition: opacity 140ms var(--yb-ease-out), color 140ms var(--yb-ease-out), background 140ms var(--yb-ease-out);
 }
 .stage:hover .fold-handle,
-.fold-handle:focus-visible,
-.fold-handle.folded {
-  opacity: 0.95;
+.fold-handle:focus-visible {
+  opacity: 0.55;
 }
 .fold-handle:hover,
 .fold-handle:focus-visible {
+  opacity: 1;
   color: var(--yb-paper-ink);
-  background: var(--yb-widget-bg);
+  background: color-mix(in srgb, var(--yb-widget-bg) 92%, transparent);
 }
 .fold-handle.folded {
-  color: var(--yb-accent);
+  opacity: 1;
+  background: color-mix(in srgb, var(--yb-accent-soft) 60%, transparent);
+  color: var(--yb-accent-deep);
 }
 @media (prefers-reduced-motion: reduce) {
   .fold-handle { transition: none; }

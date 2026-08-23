@@ -75,6 +75,7 @@ export type Assembly = {
 
 export const FOLD_HANDLE = { width: 24, height: 24 };
 
+/** 折叠把手浮在舞台左/右上角，视觉降权由 HomeFrame 的 .fold-handle 负责。 */
 export function foldHandleStyle(
   fold: AssemblyFold,
   stage: StageSize,
@@ -87,7 +88,7 @@ export function foldHandleStyle(
     top: `${SNAP_GAP}px`,
     width: `${width}px`,
     height: `${height}px`,
-    zIndex: "12",
+    zIndex: "20",
   };
 }
 
