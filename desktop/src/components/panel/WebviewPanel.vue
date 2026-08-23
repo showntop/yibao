@@ -215,7 +215,7 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 100%;
   border: none;
-  border-radius: var(--yb-radius-md);
+  border-radius: var(--yb-card-radius);
   background: var(--yb-surface-1);
 }
 </style>

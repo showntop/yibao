@@ -55,6 +55,7 @@ const emit = defineEmits<{
   panel: [surface: CapabilitySurfaceEvent];
   surface: [surface: SurfaceMeta];
   close: [];
+  shrink: [];
   focus: [];
   handoff: [active: boolean];
 }>();
@@ -526,6 +527,10 @@ onUnmounted(() => {
         <button v-if="props.scene" class="scene-action" :title="props.presentation === 'focus' ? '退出专注' : '进入专注'" @click="emit('focus')">
           <YbIcon name="expand" :size="13" />
           <span>{{ props.presentation === "focus" ? "退出专注" : "专注" }}</span>
+        </button>
+        <button v-if="props.scene" class="scene-action" title="缩为小窗（转回右下角探窗）" @click="emit('shrink')">
+          <YbIcon name="shrink" :size="13" />
+          <span>小窗</span>
         </button>
       </template>
     </header>

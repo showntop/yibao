@@ -188,6 +188,23 @@ function closePeek(): void {
   peekPanel.value = null;
 }
 
+/** Peek → Work：点探窗头部「展开」，先收起探窗，再走 explicit 裁决升级到工作面。 */
+function expandPeek(): void {
+  const surface = peekSurface.value;
+  if (!surface) return;
+  closePeek();
+  openExplicit(surface);
+}
+
+/** Work → Peek：把当前工作面缩成右下角探窗继续挂着；面板载荷取自 surface 域最近一份。 */
+function shrinkWork(): void {
+  const cap = capability.value;
+  if (!cap) return;
+  peekSurface.value = { ...cap, explicit: true, suggested: "stage", attention: "suggest" };
+  peekPanel.value = sessionStore.surface.getPanel();
+  void hideSurface();
+}
+
 function onPanelAvailable(surface: CapabilitySurfaceEvent) {
   capability.value = surface;
   // 表面裁决：模型最多自动展开到 peek；stage/focus 必须有明确意图（裁决器是唯一判据）。
@@ -493,6 +510,7 @@ function close() {
           @surface="onSurface"
           @handoff="pluginHandoff = $event"
           @close="sceneActive ? hideSurface() : closeCapability()"
+          @shrink="shrinkWork"
           @focus="toggleFocus"
         />
         </div>
@@ -529,6 +547,7 @@ function close() {
       :webview="peekPanel?.webview ?? null"
       :data="peekPanel?.data ?? {}"
       @close="closePeek()"
+      @expand="expandPeek()"
     />
 
     <!-- 活动轨（Phase 1）：运行中/待批准/已完成三态胶囊；不抢焦点，点开回看 -->

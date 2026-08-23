@@ -20,7 +20,7 @@ const props = withDefaults(
   }>(),
   { schema: null, webview: null },
 );
-const emit = defineEmits<{ close: [] }>();
+const emit = defineEmits<{ close: []; expand: [] }>();
 
 const rootEl = ref<HTMLElement | null>(null);
 const isWebview = computed(() => !!(props.webview?.html || props.webview?.url));
@@ -98,6 +98,7 @@ onBeforeUnmount(() => {
         <span class="peek-tag">{{ provider }}</span>
         <strong class="peek-title">{{ title }}</strong>
         <span class="peek-spacer" />
+        <button type="button" class="peek-close" title="展开到工作面" aria-label="展开到工作面" @click="emit('expand')"><YbIcon name="expand" :size="14" /></button>
         <button type="button" class="peek-close" aria-label="收起" @click="close"><YbIcon name="x" :size="14" /></button>
       </header>
       <div class="peek-body">
