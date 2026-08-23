@@ -3,14 +3,15 @@
 # 一言是纯文本可面板内展示。http 能力拉公开免登录端点，不引第三方库。
 id = "fun"
 name = "娱乐"
-description = "摸鱼放松：B站热门视频、音乐搜索直达、每日一言"
-capabilities = ["http"]
+description = "摸鱼放松：B站热门/精准搜索视频、网易云热歌/搜歌、AI 段子与每日一言"
+# http：B站热门/网易云热歌榜与搜索/一言；llm：fun.joke AI 讲段子
+capabilities = ["http", "llm"]
 
 [code]
 entry = "tools"
 
 [[panel]]
-type = "webview"
+type = "module"
 name = "main"
 label = "娱乐"
-src = "panel/fun.html"
+src = "panel/index.html"

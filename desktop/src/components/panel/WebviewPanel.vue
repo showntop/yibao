@@ -190,12 +190,20 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <!-- module 面板(urlSource)必须给 allow-same-origin：面板以 yibao-plugin://<pid> 真实 origin
+       运行（非 opaque）——否则面板内嵌的第三方 iframe（B站/网易云播放器）继承 opaque 后
+       getCookie 抛 SecurityError 黑屏（子 iframe 自身声明 allow-same-origin 在 WebKit 无效）。
+       allow 授权 fullscreen/autoplay 给内嵌播放器（权限逐层授权，父不给子拿不到）。
+       安全：该 origin 是自定义协议域而非主窗 origin，跨 window 有进程隔离；
+       CSP connect-src 'none' 仍禁插件脚本外联。srcdoc 分支保持 allow-scripts（不给
+       allow-same-origin——srcdoc 会继承主窗 origin，给等同放行主窗 DOM）。 -->
   <iframe
     v-if="urlSource"
     :key="urlSource.key"
     ref="iframeEl"
     class="webview"
-    sandbox="allow-scripts"
+    sandbox="allow-scripts allow-same-origin"
+    allow="fullscreen; autoplay"
     :src="urlSource.url"
     @load="onIframeLoad"
   />

@@ -1,14 +1,17 @@
-"""fun.videos：B站热门视频雷达——拉公开免登录热门接口，归一化成视频卡片列表。
+"""fun.videos：B站视频雷达——热门榜（免登录公开接口）+ 关键词精准搜索（内嵌 B站官方搜索页）。
 
-主源全站热门（api.bilibili.com popular），备源排行榜（ranking/v2）——单源挂了自动切换；
-两个源都失败才报错。返回卡片：排名/标题/UP主/播放/时长/分区，点击由面板经
-native:open_url 用系统浏览器打开观看（版权正路，不在面板内嵌播放）。
+热门榜：主源全站热门（api.bilibili.com popular），备源排行榜（ranking/v2）——单源挂了自动切换，
+两个源都失败才报错，返回卡片（标题/UP主/播放/时长/分区）供面板内嵌播放器直接看。
+关键词搜索：B站搜索 API 已被风控（v_voucher 拦截，匿名不可用），正路是返回官方搜索页
+URL（search.bilibili.com/all?keyword=...），面板 iframe 内嵌官方搜索页——用户点结果即在
+B站视频页内直接播放（B站搜索页/视频页无 X-Frame-Options 可嵌入）。精准、免 API、版权正路。
 文件自包含（加载器按文件独立 importlib 加载，禁止跨文件 import）。
 """
 from __future__ import annotations
 
 import html
 import json
+import urllib.parse
 import urllib.request
 from typing import Any, Callable
 
@@ -89,10 +92,15 @@ def _pick_video(item: dict) -> dict | None:
         return None
     owner = item.get("owner") or {}
     stat = item.get("stat") or {}
+    # 封面：接口给 http 直链，CDN 支持 https（面板 CSP 只放行 https 图片），统一转一下
+    pic = str(item.get("pic") or "").strip()
+    if pic.startswith("http://"):
+        pic = "https://" + pic[len("http://"):]
     return {
         "title": html.unescape(title),
         "bvid": bvid,
         "url": f"https://www.bilibili.com/video/{bvid}",
+        "pic": pic,
         "author": str(owner.get("name") or "").strip(),
         "views": _fmt_count(stat.get("view")),
         "likes": _fmt_count(stat.get("like")),
@@ -133,9 +141,11 @@ class VideosSkill(Skill):
     id = "fun.videos"
     label = "看视频"
     description = (
-        "拉取 B站热门视频（全站/分区），返回视频卡片列表（标题/UP主/播放/时长，浏览器观看）。"
-        "用户说「看看有什么好看的视频」「B站热门」「推荐个视频」「有什么可看的」时用它；"
-        "想看某分区传 tid（如 5=影视、160=生活、188=知识）。"
+        "拉取 B站视频：给了 keyword 则按关键词在面板内嵌 B站官方搜索页精准找视频（点结果即播）；"
+        "没给 keyword 拉 B站热门（全站/分区）卡片列表（面板内嵌播放器直接看）。"
+        "用户说「看看有什么好看的视频」「B站热门」「推荐个视频」时用热门；"
+        "「想看 XX」「找 XX 的视频」「XX 的电影解说」时传 keyword；想看某分区传 tid"
+        "（如 5=影视、160=生活、188=知识）。"
     )
     default_risk = RiskLevel.L1_LOW
 
@@ -146,17 +156,37 @@ class VideosSkill(Skill):
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "keyword": {
+                        "type": "string",
+                        "description": "精准搜索关键词（如「牛来 电影解说」「猫meme」「美食探店」）；不传则拉热门榜",
+                    },
                     "tid": {
                         "type": "string",
                         "enum": list(_REGIONS),
-                        "description": "分区 id（0=全站/1=动画/3=音乐/4=游戏/5=影视/13=番剧/36=科技/119=鬼畜/129=舞蹈/155=娱乐/160=生活/188=知识）",
+                        "description": "热门榜分区 id（0=全站/1=动画/3=音乐/4=游戏/5=影视/13=番剧/36=科技/119=鬼畜/129=舞蹈/155=娱乐/160=生活/188=知识）",
                     },
-                    "limit": {"type": "integer", "description": "返回条数（默认 10，上限 20）"},
+                    "limit": {"type": "integer", "description": "热门榜返回条数（默认 10，上限 20）"},
                 },
             },
         }
 
     def run(self, params: dict, ctx: Any) -> ActionResult:
+        keyword = str(params.get("keyword") or "").strip()
+        if keyword:
+            # 精准搜索：B站官方搜索页内嵌（免 API、免登录、无风控），面板 iframe 加载
+            q = urllib.parse.quote(keyword)
+            result = ActionResult(success=True, data={
+                "mode": "search",
+                "keyword": keyword,
+                "search_url": f"https://search.bilibili.com/all?keyword={q}",
+                "rows": [],
+                "region": "搜索",
+                "tid": "",
+                "failed": [],
+            })
+            result.panel = "fun:main"
+            return result
+
         try:
             limit = int(params.get("limit") or 10)
         except (TypeError, ValueError):
@@ -193,6 +223,7 @@ class VideosSkill(Skill):
 
         result = ActionResult(success=True, data={
             "rows": rows,
+            "mode": "hot",
             "region": _REGIONS[tid],
             "tid": tid,
             "failed": errors,

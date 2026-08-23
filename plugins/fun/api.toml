@@ -1,5 +1,12 @@
 # 娱乐面板可调方法白名单（v2 §7）：纯函数直调，L1 不弹确认，可并发
 
+# 插件页/启动器点击娱乐卡片调 <pid>.list 打开主面板（各插件惯例入口）
+[[method]]
+name = "list"
+handler = "fun.open"
+direct = true
+panel = "fun:main"
+
 [[method]]
 name = "open"
 handler = "fun.open"
@@ -21,5 +28,11 @@ panel = "fun:main"
 [[method]]
 name = "quote"
 handler = "fun.quote"
+direct = true
+panel = "fun:main"
+
+[[method]]
+name = "joke"
+handler = "fun.joke"
 direct = true
 panel = "fun:main"

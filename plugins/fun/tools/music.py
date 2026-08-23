@@ -1,16 +1,27 @@
-"""fun.music：音乐直达——平台快捷入口 + 搜索链接生成。
+"""fun.music：音乐直达——热歌榜 + 网易云搜歌，面板内官方播放器闭环听歌。
 
-版权正路：不拉第三方热榜/不内嵌播放，返回各平台的入口与「歌名 → 平台搜索页」链接，
-由面板经 native:open_url 用系统浏览器打开（网页版可即点即听，无需登录下载）。
-纯本地生成，无网络请求（L0）。文件自包含。
+- 热歌榜：网易云云音乐热歌榜歌单（id=3778678，v6 免登录接口），点歌即面板内嵌 outchain
+  官方播放器自动播放（auto=1）。榜单/搜索任一挂了互不拖垮（各自失败标记）。
+- 搜歌：公开免登录接口（UA + Referer），返回歌曲 id 构造外链播放器内嵌播放。
+文件自包含（加载器按文件独立 importlib 加载，禁止跨文件 import）。
 """
 from __future__ import annotations
 
+import json
 import urllib.parse
+import urllib.request
 from typing import Any
 
 from yibao_brain.ipc import ActionResult, RiskLevel
 from yibao_brain.skills import Skill
+
+_FETCH_TIMEOUT = 8
+_MAX_SONGS = 6
+_MAX_CHART = 15
+_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+_NETEASE_SEARCH = "https://music.163.com/api/search/get/web?type=1&limit={limit}&s={q}"
+_NETEASE_CHART = "https://music.163.com/api/v6/playlist/detail?id={pid}&n={limit}"
+_HOT_CHART_ID = "3778678"  # 网易云云音乐热歌榜
 
 # 平台 → (中文名, 首页, 搜索模板, 备注)。搜索词经 quote() 编码后填 %s
 _PLATFORMS: list[tuple[str, str, str, str]] = [
@@ -24,14 +35,89 @@ _PLATFORMS: list[tuple[str, str, str, str]] = [
 _HOT_KEYWORDS = ("周杰伦", "Taylor Swift", "林俊杰", "古典 纯音乐", "白噪音 助眠", "深夜电台")
 
 
+def _get_json(url: str) -> dict:
+    """GET 网易云 JSON 端点（module-level，测试 monkeypatch 它，不真发网络）。"""
+    req = urllib.request.Request(url, headers={
+        "User-Agent": _UA, "Accept": "application/json",
+        "Referer": "https://music.163.com/",
+    })
+    with urllib.request.urlopen(req, timeout=_FETCH_TIMEOUT) as resp:
+        charset = resp.headers.get_content_charset() or "utf-8"
+        return json.loads(resp.read().decode(charset, errors="replace"))
+
+
+def _fmt_duration(sec: int) -> str:
+    if sec <= 0:
+        return ""
+    m, s = divmod(sec, 60)
+    return f"{m}:{s:02d}"
+
+
+def _norm_song(sid: str, name: str, artist: str, album: str, dur_ms: Any) -> dict:
+    """歌曲归一化：面板内嵌官方播放器（auto=1 点开即播）。"""
+    try:
+        dur = _fmt_duration(int(dur_ms) // 1000)
+    except (TypeError, ValueError):
+        dur = ""
+    return {
+        "id": sid,
+        "name": name,
+        "artist": artist,
+        "album": album,
+        "duration": dur,
+        "page_url": f"https://music.163.com/#/song?id={sid}",
+        "embed_url": f"https://music.163.com/outchain/player?type=2&id={sid}&auto=1&height=66",
+    }
+
+
+def _fetch_songs(kw: str, limit: int) -> list[dict]:
+    """网易云搜索歌曲（搜索接口字段：artists/album）。"""
+    data = _get_json(_NETEASE_SEARCH.format(q=urllib.parse.quote(kw), limit=limit))
+    out: list[dict] = []
+    for s in ((data.get("result") or {}).get("songs")) or []:
+        if not isinstance(s, dict):
+            continue
+        sid = str(s.get("id") or "").strip()
+        name = str(s.get("name") or "").strip()
+        if not sid or not name:
+            continue
+        artists = s.get("artists") or []
+        artist = " / ".join(str(a.get("name") or "").strip() for a in artists if a.get("name"))
+        album = str((s.get("album") or {}).get("name") or "").strip()
+        out.append(_norm_song(sid, name, artist, album, s.get("duration")))
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _fetch_chart(playlist_id: str, limit: int) -> list[dict]:
+    """网易云热歌榜歌单详情（v6 接口字段：ar/al；免登录，id 即歌单 id）。"""
+    data = _get_json(_NETEASE_CHART.format(pid=playlist_id, limit=limit))
+    out: list[dict] = []
+    for t in ((data.get("playlist") or {}).get("tracks")) or []:
+        if not isinstance(t, dict):
+            continue
+        sid = str(t.get("id") or "").strip()
+        name = str(t.get("name") or "").strip()
+        if not sid or not name:
+            continue
+        ar = t.get("ar") or t.get("artists") or []
+        artist = " / ".join(str(a.get("name") or "").strip() for a in ar if a.get("name"))
+        album = str((t.get("al") or t.get("album") or {}).get("name") or "").strip()
+        out.append(_norm_song(sid, name, artist, album, t.get("duration")))
+        if len(out) >= limit:
+            break
+    return out
+
+
 class MusicSkill(Skill):
     id = "fun.music"
     label = "听音乐"
     description = (
-        "音乐直达：返回网易云/QQ音乐/酷狗/汽水音乐入口；给了歌名/歌手则生成各平台搜索页链接，"
-        "点开即听（用系统浏览器打开，网页版免登录）。用户说「听歌」「推荐首歌」「放个音乐」时用它。"
+        "音乐直达：默认给网易云热歌榜（点歌面板内官方播放器即播）；给了歌名/歌手则搜网易云返回"
+        "歌曲列表（点播即播），另附各平台入口。用户说「听歌」「推荐首歌」「放个音乐」「热歌榜」时用它。"
     )
-    default_risk = RiskLevel.L0_READONLY
+    default_risk = RiskLevel.L1_LOW
 
     def openai_schema(self) -> dict:
         return {
@@ -42,7 +128,7 @@ class MusicSkill(Skill):
                 "properties": {
                     "kw": {
                         "type": "string",
-                        "description": "要听的歌名/歌手/风格关键词（如「周杰伦」「白噪音」）；不传则只给平台入口",
+                        "description": "要听的歌名/歌手/风格关键词（如「周杰伦」「白噪音」）；不传则给热歌榜 + 平台入口",
                     },
                 },
             },
@@ -56,6 +142,10 @@ class MusicSkill(Skill):
             "platforms": platforms,
             "keywords": list(_HOT_KEYWORDS),
             "search": [],
+            "songs": [],
+            "songs_failed": False,
+            "chart": [],
+            "chart_failed": False,
             "kw": "",
         }
         if kw:
@@ -63,6 +153,15 @@ class MusicSkill(Skill):
             data["kw"] = kw
             data["search"] = [{"id": pid, "name": name, "url": tpl % q}
                               for pid, name, _home, tpl, _note in _PLATFORMS]
+            try:
+                data["songs"] = _fetch_songs(kw, _MAX_SONGS)
+            except Exception:
+                data["songs_failed"] = True  # 搜索挂了不拖垮：平台入口照常给
+        else:
+            try:
+                data["chart"] = _fetch_chart(_HOT_CHART_ID, _MAX_CHART)
+            except Exception:
+                data["chart_failed"] = True  # 榜单挂了不拖垮：平台入口照常给
         result = ActionResult(success=True, data=data)
         result.panel = "fun:main"
         return result

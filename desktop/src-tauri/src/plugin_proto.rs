@@ -20,9 +20,23 @@ const BRIDGE_TAG: &str = "<script src=\"/__yibao__/bridge.js\"></script>";
 
 /// CSP 按 pid 收窄到本插件源;/__yibao__/ SDK 在任意 pid 下可服务,故同属本源可达。
 /// form-action 禁表单外发;connect-src 'none' 断网络(XHR/fetch/ws)。
+/// 源列表用「host 精确 + scheme 兜底」双形式:yibao-plugin://<pid> 精确收窄,
+/// yibao-plugin: 兜底——WKWebView 对自定义协议 host-source 的匹配在部分版本不生效,
+/// 漏掉兜底会导致面板的 app.js/style.css 被 CSP 误拦(空白/黑屏)。
+/// fun 插件(R4 内嵌播放)额外放行:img-src https:(视频封面)、media-src https:(音频流)、
+/// frame-src 官方嵌入播放器域(B站 player.bilibili.com / 网易云 music.163.com)——
+/// 只对 fun 生效,其它插件维持禁网络现状;connect-src 一律 'none'(数据仍走桥,不做任意外联)。
 fn csp_meta(pid: &str) -> String {
+    let img_extra = if pid == "fun" { " https:" } else { "" };
+    let embed_extra = if pid == "fun" {
+        // 内嵌播放器(播放/听)+ 站内搜索页与视频页(B站搜索页/视频页无 X-Frame-Options,可 iframe 嵌入)
+        "; media-src https:; frame-src https://player.bilibili.com https://music.163.com https://search.bilibili.com https://www.bilibili.com"
+    } else {
+        ""
+    };
+    let self_src = format!("yibao-plugin://{pid} yibao-plugin:");
     format!(
-        "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src yibao-plugin://{pid} 'unsafe-inline'; style-src yibao-plugin://{pid} 'unsafe-inline'; img-src yibao-plugin://{pid} data:; font-src yibao-plugin://{pid} data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'\">"
+        "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src {self_src} 'unsafe-inline'; style-src {self_src} 'unsafe-inline'; img-src {self_src}{img_extra} data:; font-src {self_src} data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'{embed_extra}\">"
     )
 }
 
@@ -209,10 +223,28 @@ mod tests {
         let root = fixture_root();
         let r = handle(&req("yibao-plugin://demo/panel/dist/index.html"), &root);
         let body = String::from_utf8_lossy(r.body()).into_owned();
-        assert!(body.contains("script-src yibao-plugin://demo 'unsafe-inline'"));
+        // 双源:host 精确 + scheme 兜底(兜底防 WKWebView 对自定义协议 host-source 不匹配而误拦子资源)
+        assert!(body.contains("script-src yibao-plugin://demo yibao-plugin: 'unsafe-inline'"));
+        assert!(body.contains("style-src yibao-plugin://demo yibao-plugin: 'unsafe-inline'"));
         assert!(body.contains("form-action 'none'"));
-        // 旧形式是裸 scheme 源 `yibao-plugin: '(后跟空格+引号);新形式带 ://<pid>,前缀重合,须带空格区分
-        assert!(!body.contains("script-src yibao-plugin: '"));
+        // 非 fun 插件不获得内嵌放宽(connect-src 一律禁网,img/media/frame 不放开)
+        assert!(!body.contains("frame-src"));
+        assert!(!body.contains("media-src"));
+        assert!(!body.contains("img-src yibao-plugin://demo https:"));
+    }
+
+    #[test]
+    fn csp_embed_extra_only_for_fun() {
+        // fun 娱乐面板内嵌播放:放行 B站/网易云官方嵌入播放器 + 站内搜索页/视频页 + 媒体流 + 封面图
+        let fun = csp_meta("fun");
+        assert!(fun.contains("frame-src https://player.bilibili.com https://music.163.com https://search.bilibili.com https://www.bilibili.com"));
+        assert!(fun.contains("media-src https:"));
+        assert!(fun.contains("img-src yibao-plugin://fun yibao-plugin: https: data:"));
+        assert!(fun.contains("connect-src 'none'")); // 数据仍走桥,不开放 fetch
+        let demo = csp_meta("demo");
+        assert!(!demo.contains("frame-src"));
+        assert!(!demo.contains("media-src"));
+        assert!(!demo.contains("img-src yibao-plugin://demo https:"));
     }
 
     #[test]
