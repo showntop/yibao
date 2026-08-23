@@ -82,13 +82,29 @@
     <div class="chips" id="mu-hot"></div>
   </div>
   <div class="card hidden" id="mu-result-card">
-    <div class="card-head">「<span id="mu-result-kw"></span>」点歌直接听 <span class="muted">网易云官方播放器</span></div>
+    <div class="card-head">「<span id="mu-result-kw"></span>」点歌直接听 <span class="muted">网易云官方播放器</span>
+      <span class="spacer"></span>
+      <button class="chip" id="mu-qq-link" title="版权在 QQ 音乐的艺人（如周杰伦）原版在 QQ 音乐">QQ 原版 ›</button>
+    </div>
     <div class="list" id="mu-result"></div>
   </div>
-  <!-- 播放器嵌条：搜索/热歌榜点歌都内嵌到这里（官方 outchain 播放器） -->
+  <!-- 播放器嵌条：搜索/热歌榜点歌都内嵌到这里（官方 outchain 播放器，auto=1 点开即播） -->
   <div class="song-embed hidden" id="song-embed">
-    <iframe id="song-frame" sandbox="allow-scripts allow-same-origin"
+    <iframe id="song-frame" sandbox="allow-scripts allow-same-origin" allow="autoplay"
       style="width:100%;height:66px;border:none;"></iframe>
+  </div>
+  <!-- QQ 音乐搜索视图：版权在 QQ 的艺人原版（内嵌 QQ 搜索页，点第一个即播） -->
+  <div id="qq-search-view" class="hidden">
+    <div class="toolbar">
+      <button class="act ghost" id="qq-back">‹ 返回</button>
+      <span class="ptitle" id="qq-title"></span>
+      <span class="spacer"></span>
+      <button class="act ghost" id="qq-open">浏览器打开</button>
+    </div>
+    <div class="player-wrap">
+      <iframe id="qq-frame" class="player-frame"
+        sandbox="allow-scripts allow-same-origin" allow="autoplay"></iframe>
+    </div>
   </div>
   <div class="card">
     <div class="card-head">热歌榜 <span class="muted">网易云云音乐 · 点歌即播</span></div>

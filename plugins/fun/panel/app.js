@@ -272,6 +272,31 @@
     });
   }
 
+  // QQ 音乐搜索视图：版权在 QQ 的艺人（如周杰伦）原版——内嵌 QQ 搜索页，点第一个即播
+  var curQqKw = "";
+  function showQqSearch(kw, url) {
+    curQqKw = kw;
+    $("qq-title").textContent = "QQ 音乐「" + kw + "」";
+    $("qq-frame").src = url;
+    hide($("mu-result-card"));
+    hide($("song-embed"));
+    show($("qq-search-view"));
+  }
+  function backFromQqSearch() {
+    $("qq-frame").src = "";
+    hide($("qq-search-view"));
+    if ($("mu-result").children.length) show($("mu-result-card")); // 从搜索进来的才回结果卡
+  }
+  $("qq-back").addEventListener("click", backFromQqSearch);
+  $("qq-open").addEventListener("click", function () {
+    if (curQqKw) openUrl("https://y.qq.com/n/ryqq/search?w=" + encodeURIComponent(curQqKw));
+  });
+  $("mu-qq-link").addEventListener("click", function () {
+    var kw = $("mu-result-kw").textContent.trim();
+    if (!kw) { toast("先搜索一首歌"); return; }
+    showQqSearch(kw, "https://y.qq.com/n/ryqq/search?w=" + encodeURIComponent(kw));
+  });
+
   function renderSongs(songs) {
     var list = $("mu-result");
     list.innerHTML = "";
@@ -451,6 +476,29 @@
   // ---- 面板事件：对话流打开时定位 ----
   window.yibao.onInit(function (data) {
     if (!data) return;
+    // QQ 音乐原版：LLM 调 fun.music {kw, source:"qq"} → data 带 mode=qq + qq_search_url → 内嵌 QQ 搜索页
+    if (data.mode === "qq" && data.qq_search_url) {
+      showTab("music");
+      showQqSearch(data.kw || "", data.qq_search_url);
+      return;
+    }
+    // 音乐直达：LLM 调 fun.music {kw} 后，data 带 kw + songs → 切音乐 tab + 渲染结果 + 自动播第一首
+    if (data.kw) {
+      showTab("music");
+      if (data.songs && data.songs.length) {
+        renderSongs(data.songs);
+        $("mu-result-kw").textContent = data.kw;
+        show($("mu-result-card"));
+        playSong(data.songs[0]); // 点开即播
+      } else if (data.songs_failed) {
+        // 网易云挂了 → 退回平台搜索链接
+        renderSongs([]);
+        $("mu-result-kw").textContent = data.kw + "（网易云暂不可用，用平台搜索）";
+        renderMusicItems($("mu-result"), data.search || []);
+        show($("mu-result-card"));
+      }
+      return;
+    }
     // 精准搜索：LLM 调 fun.videos {keyword} 后，面板事件 data 带 keyword/search_url → 自动切搜索视图
     if (data.keyword) {
       showTab("videos");

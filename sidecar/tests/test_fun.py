@@ -83,6 +83,14 @@ def test_open_defaults_and_tab(env):
     assert _run(reg, "fun.open", {"tab": "wat"}).data["tab"] == "videos"  # 未知 tab 兜底
 
 
+def test_open_with_kw_passthrough(env):
+    """听「周杰伦的七里香」链路：open 带 kw 透传，面板据此自动搜播。"""
+    reg, _ = env
+    r = _run(reg, "fun.open", {"tab": "music", "kw": "七里香"})
+    assert r.success and r.data["tab"] == "music" and r.data["kw"] == "七里香"
+    assert "kw" not in _run(reg, "fun.open", {"tab": "music"}).data  # 不带 kw 不掺假
+
+
 # ---------- videos（B站热门 + 排行榜备源） ----------
 
 _POPULAR_JSON = {
@@ -275,6 +283,22 @@ def test_music_search_generates_encoded_links(env, monkeypatch):
     assert "https://y.qq.com/n/ryqq/search?w=%E5%91%A8%E6%9D%B0%E4%BC%A6" in links["QQ音乐"]
     assert len(links) == 4  # 四个平台都给
     assert r.data["songs"] == [] and not r.data["songs_failed"]
+    assert r.data["mode"] == "netease"
+    # QQ 音乐原版搜索页链接（面板「QQ 原版 ›」入口）
+    assert r.data["qq_search_url"] == "https://y.qq.com/n/ryqq/search?w=%E5%91%A8%E6%9D%B0%E4%BC%A6"
+
+
+def test_music_qq_source_skips_netease(env, monkeypatch):
+    """版权在 QQ 的艺人（如周杰伦）：source=qq 不拉网易云翻唱，返回 QQ 搜索页 URL 供面板内嵌。"""
+    reg, _ = env
+    _fake_netease(monkeypatch, reg, songs=_SEARCH_RAW)  # 若误拉网易云会触发 fake → songs 有数据 → 断言失败
+    r = _run(reg, "fun.music", {"kw": "七里香", "source": "qq"})
+    assert r.success and r.data["mode"] == "qq"
+    assert r.data["songs"] == [] and not r.data["songs_failed"]  # 不拉网易云
+    assert r.data["qq_search_url"] == "https://y.qq.com/n/ryqq/search?w=%E4%B8%83%E9%87%8C%E9%A6%99"
+    # 非法 source 兜底回 netease
+    r2 = _run(reg, "fun.music", {"kw": "七里香", "source": "xx"})
+    assert r2.data["mode"] == "netease"
 
 
 def test_music_search_returns_netease_songs(env, monkeypatch):

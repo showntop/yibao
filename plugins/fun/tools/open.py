@@ -28,6 +28,10 @@ class OpenFunSkill(Skill):
                         "enum": ["videos", "music", "quote"],
                         "description": "打开后定位到哪个 tab，默认 videos",
                     },
+                    "kw": {
+                        "type": "string",
+                        "description": "music tab 的直达歌名/歌手（如「七里香」），面板会直接搜并自动播放；只打开面板可不传",
+                    },
                 },
             },
         }
@@ -36,7 +40,11 @@ class OpenFunSkill(Skill):
         tab = params.get("tab") or "videos"
         if tab not in ("videos", "music", "quote"):
             tab = "videos"
-        return ActionResult(success=True, data={"tab": tab}, panel="fun:main")
+        data: dict[str, Any] = {"tab": tab}
+        kw = str(params.get("kw") or "").strip()
+        if kw:
+            data["kw"] = kw  # 面板 onInit 消费：切 music tab + 自动搜播
+        return ActionResult(success=True, data=data, panel="fun:main")
 
 
 def make_tools(ctx: Any) -> list[Skill]:

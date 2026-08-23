@@ -22,6 +22,7 @@ _UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML
 _NETEASE_SEARCH = "https://music.163.com/api/search/get/web?type=1&limit={limit}&s={q}"
 _NETEASE_CHART = "https://music.163.com/api/v6/playlist/detail?id={pid}&n={limit}"
 _HOT_CHART_ID = "3778678"  # 网易云云音乐热歌榜
+_QQ_SEARCH = "https://y.qq.com/n/ryqq/search?w={q}"  # QQ 音乐搜索页（无 X-Frame-Options 可内嵌）
 
 # 平台 → (中文名, 首页, 搜索模板, 备注)。搜索词经 quote() 编码后填 %s
 _PLATFORMS: list[tuple[str, str, str, str]] = [
@@ -114,8 +115,10 @@ class MusicSkill(Skill):
     id = "fun.music"
     label = "听音乐"
     description = (
-        "音乐直达：默认给网易云热歌榜（点歌面板内官方播放器即播）；给了歌名/歌手则搜网易云返回"
-        "歌曲列表（点播即播），另附各平台入口。用户说「听歌」「推荐首歌」「放个音乐」「热歌榜」时用它。"
+        "音乐直达：用户说「听 XX」「放 XX」「来首 XX」（如「听周杰伦的七里香」）时传 kw=歌名/歌手。"
+        "默认 source=netease 搜网易云、面板自动播第一首；若艺人版权在 QQ 音乐（周杰伦/陈奕迅等"
+        "网易云只有翻唱、原版在 QQ），传 source=\"qq\" 让面板内嵌 QQ 音乐搜索页、点第一个即原版。"
+        "不给 kw 则给网易云热歌榜（点歌即播）。另附各平台入口。"
     )
     default_risk = RiskLevel.L1_LOW
 
@@ -128,7 +131,12 @@ class MusicSkill(Skill):
                 "properties": {
                     "kw": {
                         "type": "string",
-                        "description": "要听的歌名/歌手/风格关键词（如「周杰伦」「白噪音」）；不传则给热歌榜 + 平台入口",
+                        "description": "要听的歌名/歌手/风格关键词（如「七里香」「周杰伦」「白噪音」）；不传则给热歌榜 + 平台入口",
+                    },
+                    "source": {
+                        "type": "string",
+                        "enum": ["netease", "qq"],
+                        "description": "播放源：netease=网易云（默认，内嵌播放器自动播第一首）；qq=QQ 音乐搜索页（版权在 QQ 的艺人如周杰伦/陈奕迅时用，内嵌 QQ 搜索页点第一个即原版）",
                     },
                 },
             },
@@ -136,6 +144,9 @@ class MusicSkill(Skill):
 
     def run(self, params: dict, ctx: Any) -> ActionResult:
         kw = str(params.get("kw") or "").strip()
+        source = str(params.get("source") or "netease").strip()
+        if source not in ("netease", "qq"):
+            source = "netease"
         platforms = [{"id": pid, "name": name, "url": home, "note": note}
                      for pid, name, home, _tpl, note in _PLATFORMS]
         data: dict[str, Any] = {
@@ -146,6 +157,8 @@ class MusicSkill(Skill):
             "songs_failed": False,
             "chart": [],
             "chart_failed": False,
+            "qq_search_url": "",
+            "mode": "hot",
             "kw": "",
         }
         if kw:
@@ -153,10 +166,16 @@ class MusicSkill(Skill):
             data["kw"] = kw
             data["search"] = [{"id": pid, "name": name, "url": tpl % q}
                               for pid, name, _home, tpl, _note in _PLATFORMS]
-            try:
-                data["songs"] = _fetch_songs(kw, _MAX_SONGS)
-            except Exception:
-                data["songs_failed"] = True  # 搜索挂了不拖垮：平台入口照常给
+            data["qq_search_url"] = _QQ_SEARCH.format(q=q)
+            if source == "qq":
+                # 版权在 QQ 的艺人（如周杰伦）：不拉网易云翻唱，面板内嵌 QQ 音乐搜索页点第一个即原版
+                data["mode"] = "qq"
+            else:
+                data["mode"] = "netease"
+                try:
+                    data["songs"] = _fetch_songs(kw, _MAX_SONGS)
+                except Exception:
+                    data["songs_failed"] = True  # 搜索挂了不拖垮：平台入口照常给
         else:
             try:
                 data["chart"] = _fetch_chart(_HOT_CHART_ID, _MAX_CHART)

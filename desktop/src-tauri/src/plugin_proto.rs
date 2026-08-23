@@ -29,8 +29,8 @@ const BRIDGE_TAG: &str = "<script src=\"/__yibao__/bridge.js\"></script>";
 fn csp_meta(pid: &str) -> String {
     let img_extra = if pid == "fun" { " https:" } else { "" };
     let embed_extra = if pid == "fun" {
-        // 内嵌播放器(播放/听)+ 站内搜索页与视频页(B站搜索页/视频页无 X-Frame-Options,可 iframe 嵌入)
-        "; media-src https:; frame-src https://player.bilibili.com https://music.163.com https://search.bilibili.com https://www.bilibili.com"
+        // 内嵌播放器(播放/听)+ 站内搜索页与视频页(B站/QQ音乐页均无 X-Frame-Options,可 iframe 嵌入)
+        "; media-src https:; frame-src https://player.bilibili.com https://music.163.com https://search.bilibili.com https://www.bilibili.com https://y.qq.com"
     } else {
         ""
     };
@@ -235,9 +235,9 @@ mod tests {
 
     #[test]
     fn csp_embed_extra_only_for_fun() {
-        // fun 娱乐面板内嵌播放:放行 B站/网易云官方嵌入播放器 + 站内搜索页/视频页 + 媒体流 + 封面图
+        // fun 娱乐面板内嵌播放:放行 B站/网易云/QQ音乐官方播放器与站内页 + 媒体流 + 封面图
         let fun = csp_meta("fun");
-        assert!(fun.contains("frame-src https://player.bilibili.com https://music.163.com https://search.bilibili.com https://www.bilibili.com"));
+        assert!(fun.contains("frame-src https://player.bilibili.com https://music.163.com https://search.bilibili.com https://www.bilibili.com https://y.qq.com"));
         assert!(fun.contains("media-src https:"));
         assert!(fun.contains("img-src yibao-plugin://fun yibao-plugin: https: data:"));
         assert!(fun.contains("connect-src 'none'")); // 数据仍走桥,不开放 fetch
