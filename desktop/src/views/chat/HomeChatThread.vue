@@ -6,6 +6,7 @@ import YbIcon from "../../components/common/YbIcon.vue";
 import UsageBar from "../../components/common/UsageBar.vue";
 import { HOME_CHAT_SESSION } from "../../lib/home/home-chat-session.ts";
 import { isDeskPathOpenLine } from "../../lib/home/home-desk-presence.ts";
+import { actionsOf, ACTION_DEFS, type MsgAction } from "../../lib/msg-actions";
 import { runTailIndex } from "../../lib/work-thread";
 
 const chat = inject(HOME_CHAT_SESSION);
@@ -42,6 +43,39 @@ const {
   onBubblesScroll,
   scrollBubbles,
 } = chat;
+
+// ---- 消息操作（策略层驱动）：按钮由 actionsOf(role) 决定，只做渲染与分发，不写条件 ----
+/** run 组底部的操作：固定为 AI 回答的能力（复制/反馈/重写）。 */
+const runActions = actionsOf("ai");
+function actionLabel(a: MsgAction): string | undefined {
+  return ACTION_DEFS[a].label;
+}
+function userActions(i: number): MsgAction[] {
+  return actionsOf(bubbles.value[i]?.role ?? "sys");
+}
+function dispatchRunAction(a: MsgAction, indices: number[]) {
+  switch (a) {
+    case "copy":
+      copyRun(indices);
+      break;
+    case "regenerate":
+      regenerate(runTailIndex(bubbles.value, indices));
+      break;
+    case "edit": // 策略表当前不给 ai 配 edit，防御性兜底
+    case "feedback":
+      break;
+  }
+}
+function dispatchUserAction(a: MsgAction, i: number) {
+  switch (a) {
+    case "copy":
+      copyText(bubbles.value[i].text);
+      break;
+    case "edit":
+      onEditMessage(i);
+      break;
+  }
+}
 </script>
 
 <template>
@@ -126,11 +160,16 @@ const {
             <div v-if="runShowFooter(item.indices)" class="msg-meta">
               <UsageBar v-if="runMetricsOf(item.indices)" :metrics="runMetricsOf(item.indices)!" />
               <i v-if="runMetricsOf(item.indices)" class="msg-meta-rule" aria-hidden="true" />
-              <div class="msg-actions">
-                <button @click="copyRun(item.indices)">复制</button>
-                <button title="有帮助" @click="onFeedback(true)"><YbIcon name="thumb-up" :size="12" /></button>
-                <button title="没帮助" @click="onFeedback(false)"><YbIcon name="thumb-down" :size="12" /></button>
-                <button @click="regenerate(runTailIndex(bubbles, item.indices))">{{ runHalted(item.indices) ? "重试" : "重写" }}</button>
+              <div v-if="runActions.length" class="msg-actions">
+                <template v-for="a in runActions" :key="a">
+                  <template v-if="a === 'feedback'">
+                    <button title="有帮助" @click="onFeedback(true)"><YbIcon name="thumb-up" :size="12" /></button>
+                    <button title="没帮助" @click="onFeedback(false)"><YbIcon name="thumb-down" :size="12" /></button>
+                  </template>
+                  <button v-else @click="dispatchRunAction(a, item.indices)">
+                    {{ a === "regenerate" && runHalted(item.indices) ? "重试" : actionLabel(a) }}
+                  </button>
+                </template>
               </div>
             </div>
           </div>
@@ -138,9 +177,10 @@ const {
 
         <div v-else-if="item.type === 'user'" class="msg-row user-msg">
           <Bubble :role="bubbles[item.index].role" :text="bubbles[item.index].text" :streaming="item.index === streamingIdx" :halted="bubbles[item.index].halted" :icon="bubbles[item.index].icon" />
-          <div class="msg-actions">
-            <button @click="copyText(bubbles[item.index].text)">复制</button>
-            <button @click="onEditMessage(item.index)">编辑</button>
+          <div v-if="userActions(item.index).length" class="msg-actions">
+            <button v-for="a in userActions(item.index)" :key="a" @click="dispatchUserAction(a, item.index)">
+              {{ actionLabel(a) }}
+            </button>
           </div>
         </div>
 

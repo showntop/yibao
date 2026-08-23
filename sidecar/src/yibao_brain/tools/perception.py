@@ -1,4 +1,4 @@
-"""Plan 3a 真实原子技能：经 SkillContext.host 调感知/执行基座操作 macOS。
+"""Plan 3a 真实原子技能：经 ToolContext.host 调感知/执行基座操作 macOS。
 
 技能只做「编排」，原语（截图/查找/触发/点击/输入）由 host 提供。
 click_control 仅走 AX 动作；a11y 找不到/不支持时返回失败并指向 computer_use 视觉兜底（不再坐标回退）。
@@ -7,24 +7,24 @@ from __future__ import annotations
 
 import json
 import os
-from .background_jobs import BackgroundJobManager
-from .grounding import SoMGrounding, _physical_scale, zoom_ground
-from .ipc import ActionResult, RiskLevel
-from .skills import Skill, SkillContext, SkillRegistry
+from ..background_jobs import BackgroundJobManager
+from ..grounding import SoMGrounding, _physical_scale, zoom_ground
+from ..ipc import ActionResult, RiskLevel
+from .core import Tool, ToolContext, ToolRegistry
 
 
 def _no_host() -> ActionResult:
     return ActionResult(success=False, error="无执行基座 host（ctx.host 为空）")
 
 
-def _interaction_lease(ctx: SkillContext):
+def _interaction_lease(ctx: ToolContext):
     guard = getattr(ctx.host, "user_input", None) if ctx.host is not None else None
     if guard is None:
         return None
     return guard, guard.checkpoint()
 
 
-def _permit_interaction(ctx: SkillContext, lease) -> tuple[bool, str | None]:
+def _permit_interaction(ctx: ToolContext, lease) -> tuple[bool, str | None]:
     if lease is None:
         return True, None
     guard, token = lease
@@ -39,7 +39,7 @@ def _permit_interaction(ctx: SkillContext, lease) -> tuple[bool, str | None]:
     return allowed, reason
 
 
-class ScreenshotSkill(Skill):
+class ScreenshotTool(Tool):
     id = "screenshot"
     label = "截屏看屏幕"
     description = "截取当前主屏幕，保存为图片并返回路径；配置了视觉模型时附可见窗口描述。"
@@ -55,7 +55,7 @@ class ScreenshotSkill(Skill):
             "parameters": {"type": "object", "properties": {}, "required": []},
         }
 
-    def run(self, params: dict, ctx: SkillContext) -> ActionResult:
+    def run(self, params: dict, ctx: ToolContext) -> ActionResult:
         if ctx.host is None:
             return _no_host()
         path = ctx.host.screenshotter.capture()
@@ -70,7 +70,7 @@ class ScreenshotSkill(Skill):
         return ActionResult(success=True, data=data, screenshot_path=path)
 
 
-class ReadTreeSkill(Skill):
+class ReadTreeTool(Tool):
     id = "read_tree"
     label = "读取界面结构"
     description = "读取前台应用的辅助功能(A11y)控件树（标题/角色/位置），了解屏幕上有哪些可交互控件。"
@@ -89,7 +89,7 @@ class ReadTreeSkill(Skill):
             },
         }
 
-    def run(self, params: dict, ctx: SkillContext) -> ActionResult:
+    def run(self, params: dict, ctx: ToolContext) -> ActionResult:
         if ctx.host is None:
             return _no_host()
         depth = int(params.get("max_depth", 8))
@@ -97,7 +97,7 @@ class ReadTreeSkill(Skill):
         return ActionResult(success=True, data={"tree": tree})
 
 
-class OpenAppSkill(Skill):
+class OpenAppTool(Tool):
     id = "open_app"
     label = "打开应用"
     description = "按名字打开一个应用，如 Calculator / Safari / TextEdit。"
@@ -114,7 +114,7 @@ class OpenAppSkill(Skill):
             },
         }
 
-    def run(self, params: dict, ctx: SkillContext) -> ActionResult:
+    def run(self, params: dict, ctx: ToolContext) -> ActionResult:
         if ctx.host is None:
             return _no_host()
         app = str(params.get("app", "")).strip()
@@ -128,7 +128,7 @@ class OpenAppSkill(Skill):
         return ActionResult(success=True, data={"app": app, "pid": pid})
 
 
-class ClickControlSkill(Skill):
+class ClickControlTool(Tool):
     id = "click_control"
     label = "点击控件"
     description = "点击一个控件：按 role/title 查找并触发其动作（确定性）。找不到或不支持时返回失败，应改用 computer_use 视觉定位。"
@@ -148,7 +148,7 @@ class ClickControlSkill(Skill):
             },
         }
 
-    def run(self, params: dict, ctx: SkillContext) -> ActionResult:
+    def run(self, params: dict, ctx: ToolContext) -> ActionResult:
         if ctx.host is None:
             return _no_host()
         a11y = ctx.host.a11y
@@ -170,7 +170,7 @@ class ClickControlSkill(Skill):
         )
 
 
-class TypeTextSkill(Skill):
+class TypeTextTool(Tool):
     id = "type_text"
     label = "输入文字"
     description = "向当前聚焦的文本控件输入文字（支持中文）。"
@@ -187,7 +187,7 @@ class TypeTextSkill(Skill):
             },
         }
 
-    def run(self, params: dict, ctx: SkillContext) -> ActionResult:
+    def run(self, params: dict, ctx: ToolContext) -> ActionResult:
         if ctx.host is None:
             return _no_host()
         text = str(params.get("text", ""))
@@ -200,7 +200,7 @@ class TypeTextSkill(Skill):
         return ActionResult(success=True, data={"chars": len(text)})
 
 
-class ComputerUseSkill(Skill):
+class ComputerUseTool(Tool):
     """视觉兜底：截图 → SoM 叠编号 → GLM 选号/动作 → 解析执行，覆盖 a11y 力不能及的 UI。
 
     build_marks 渲染失败时回退旧 raw-bbox（next_action）。
@@ -240,7 +240,7 @@ class ComputerUseSkill(Skill):
             },
         }
 
-    def run(self, params: dict, ctx: SkillContext) -> ActionResult:
+    def run(self, params: dict, ctx: ToolContext) -> ActionResult:
         if ctx.host is None:
             return _no_host()
         task = str(params.get("task", "")).strip()
@@ -401,28 +401,28 @@ class ComputerUseSkill(Skill):
         # finish / 未知动作 → 不执行
 
 
-def register_real_skills(
-    reg: SkillRegistry, background_jobs: BackgroundJobManager | None = None,
+def register_core_tools(
+    reg: ToolRegistry, background_jobs: BackgroundJobManager | None = None,
     describe=None,
 ) -> BackgroundJobManager:
     """把真实原子技能注册到 registry。describe：截屏附视觉描述（无视觉 None）。"""
     jobs = background_jobs or BackgroundJobManager()
     for skill in (
-        ScreenshotSkill(describe=describe),
-        ReadTreeSkill(),
-        OpenAppSkill(),
-        ClickControlSkill(),
-        TypeTextSkill(),
-        WatchCommandSkill(jobs),
-        WatchCommandStatusSkill(jobs),
-        CancelWatchCommandSkill(jobs),
+        ScreenshotTool(describe=describe),
+        ReadTreeTool(),
+        OpenAppTool(),
+        ClickControlTool(),
+        TypeTextTool(),
+        WatchCommandTool(jobs),
+        WatchCommandStatusTool(jobs),
+        CancelWatchCommandTool(jobs),
     ):
         reg.register(skill)
     reg.background_jobs = jobs
     return jobs
 
 
-class WatchCommandSkill(Skill):
+class WatchCommandTool(Tool):
     """后台盯命令：后台跑 shell 命令，完成/失败经 ctx.emit_event 主动报告。不阻塞。"""
     id = "watch_command"
     label = "后台盯命令"
@@ -462,7 +462,7 @@ class WatchCommandSkill(Skill):
             },
         }
 
-    def run(self, params: dict, ctx: SkillContext) -> ActionResult:
+    def run(self, params: dict, ctx: ToolContext) -> ActionResult:
         command = str(params.get("command", "")).strip()
         if not command:
             return ActionResult(success=False, error="缺少 command 参数")
@@ -484,7 +484,7 @@ class WatchCommandSkill(Skill):
         return ActionResult(success=True, data={"started": command, "label": label, **data})
 
 
-class WatchCommandStatusSkill(Skill):
+class WatchCommandStatusTool(Tool):
     id = "watch_command_status"
     label = "查看后台任务"
     description = "查看一个后台命令的状态和末尾输出；不传 task_id 时列出最近任务。"
@@ -504,7 +504,7 @@ class WatchCommandStatusSkill(Skill):
             },
         }
 
-    def run(self, params: dict, ctx: SkillContext) -> ActionResult:
+    def run(self, params: dict, ctx: ToolContext) -> ActionResult:
         task_id = str(params.get("task_id", "")).strip()
         if not task_id:
             return ActionResult(success=True, data={"tasks": self.jobs.list()})
@@ -516,7 +516,7 @@ class WatchCommandStatusSkill(Skill):
         )
 
 
-class CancelWatchCommandSkill(Skill):
+class CancelWatchCommandTool(Tool):
     id = "cancel_watch_command"
     label = "取消后台任务"
     description = "取消指定 task_id 的后台命令，并终止它的整个进程组。"
@@ -536,7 +536,7 @@ class CancelWatchCommandSkill(Skill):
             },
         }
 
-    def run(self, params: dict, ctx: SkillContext) -> ActionResult:
+    def run(self, params: dict, ctx: ToolContext) -> ActionResult:
         task_id = str(params.get("task_id", "")).strip()
         if not task_id:
             return ActionResult(success=False, error="缺少 task_id 参数")

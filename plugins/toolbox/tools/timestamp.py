@@ -5,10 +5,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 from yibao_brain.ipc import ActionResult, RiskLevel
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 
-class TimestampSkill(Skill):
+class TimestampTool(Tool):
     id = "toolbox.timestamp"
     label = "Unix 时间戳转换"
     description = (
@@ -78,5 +78,5 @@ class TimestampSkill(Skill):
         return ActionResult(success=True, data=data, panel="toolbox:main")
 
 
-def make_tools(ctx: Any) -> list[Skill]:
-    return [TimestampSkill()]
+def make_tools(ctx: Any) -> list[Tool]:
+    return [TimestampTool()]

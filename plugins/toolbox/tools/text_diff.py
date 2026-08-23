@@ -5,13 +5,13 @@ import difflib
 from typing import Any
 
 from yibao_brain.ipc import ActionResult, RiskLevel
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 _MAX_BYTES = 512 * 1024
 _MAX_LINES = 5000
 
 
-class TextDiffSkill(Skill):
+class TextDiffTool(Tool):
     id = "toolbox.text_diff"
     label = "文本对比"
     description = (
@@ -81,5 +81,5 @@ class TextDiffSkill(Skill):
         )
 
 
-def make_tools(ctx: Any) -> list[Skill]:
-    return [TextDiffSkill()]
+def make_tools(ctx: Any) -> list[Tool]:
+    return [TextDiffTool()]

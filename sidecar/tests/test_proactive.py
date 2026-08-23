@@ -105,7 +105,7 @@ def test_dispatcher_skips_feed_for_confirmation_and_action_result():
             settings={"proactive.level": "full"}, feed=feed, write_msg=messages.append,
         )
         await dispatcher.dispatch({"kind": "confirmation_needed",
-                                   "action": {"id": "a1", "skill_id": "coding.exec"}})
+                                   "action": {"id": "a1", "tool_id": "coding.exec"}})
         await dispatcher.dispatch({"kind": "action_result",
                                    "action": {"id": "a1"}, "result": {"success": True}})
         assert feed.items == []                       # 审批双事件不落 Feed

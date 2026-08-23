@@ -3,10 +3,10 @@ attach_codex/drivers/容缺回归（process_factory 注入 fake，不跑真 code
 from __future__ import annotations
 import asyncio, json, os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-# 插件 skills 不在 src 下，单独加路径（同 test_coding_plugin）
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "plugins", "coding", "skills"))
+# 插件 tools 不在 src 下，单独加路径（同 test_coding_plugin）
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "plugins", "coding", "tools"))
 import coding as codingmod  # noqa: E402
-from coding import _stream, StartSkill, SendSkill, RewindSkill  # noqa: E402
+from coding import _stream, StartTool, SendTool, RewindTool  # noqa: E402
 from _codex_runner import CodexCliRunner, normalize_event, item_events, _diff_usage  # noqa: E402
 from yibao_brain.ipc import RiskLevel  # noqa: E402
 
@@ -398,13 +398,13 @@ class _Ctx:
 
 
 def test_start_codex_agent_uses_codex_runner(monkeypatch):
-    """StartSkill agent=codex → CodexCliRunner + agent 透传 _spawn_stream；库行 agent=codex。"""
+    """StartTool agent=codex → CodexCliRunner + agent 透传 _spawn_stream；库行 agent=codex。"""
     db = _FakeDB()
     captured, made = {}, []
     monkeypatch.setattr(codingmod, "_spawn_stream",
                         lambda *a, **k: captured.update({"args": a, "kwargs": k}))
     monkeypatch.setattr(codingmod, "CodexCliRunner", lambda: made.append(1) or object())
-    res = StartSkill().run({"cwd": "/tmp", "prompt": "p", "agent": "codex"}, _Ctx(db))
+    res = StartTool().run({"cwd": "/tmp", "prompt": "p", "agent": "codex"}, _Ctx(db))
     assert res.success and made == [1]
     assert captured["kwargs"].get("agent") == "codex"
     assert db.rows[res.data["session_id"]]["agent"] == "codex"
@@ -415,7 +415,7 @@ def test_start_unknown_agent_clear_error(monkeypatch):
     called = {"n": 0}
     monkeypatch.setattr(codingmod, "_spawn_stream",
                         lambda *a, **k: called.__setitem__("n", called["n"] + 1))
-    res = StartSkill().run({"cwd": "/tmp", "prompt": "p", "agent": "cursor"}, _Ctx(db))
+    res = StartTool().run({"cwd": "/tmp", "prompt": "p", "agent": "cursor"}, _Ctx(db))
     assert res.success is False and "cursor" in res.error
     assert called["n"] == 0 and db.rows == {}                # 未落库未起流
 
@@ -429,7 +429,7 @@ def test_send_codex_session_resumes_via_codex_runner(monkeypatch):
     monkeypatch.setattr(codingmod, "_spawn_stream",
                         lambda *a, **k: captured.update({"kwargs": k}))
     monkeypatch.setattr(codingmod, "CodexCliRunner", lambda: made.append(1) or object())
-    res = SendSkill().run({"id": "s1", "prompt": "再来"}, _Ctx(db))
+    res = SendTool().run({"id": "s1", "prompt": "再来"}, _Ctx(db))
     assert res.success and made == [1]
     assert captured["kwargs"].get("resume_session_id") == "t-1"
     assert captured["kwargs"].get("agent") == "codex"
@@ -439,7 +439,7 @@ def test_send_codex_session_resumes_via_codex_runner(monkeypatch):
 def test_rewind_rejects_codex_session():
     db = _FakeDB()
     db.rows["s1"] = {"id": "s1", "agent": "codex", "cc_session_id": "t-1", "status": "done"}
-    res = RewindSkill().run({"id": "s1", "user_msg_id": "u1"}, _Ctx(db))
+    res = RewindTool().run({"id": "s1", "user_msg_id": "u1"}, _Ctx(db))
     assert res.success is False and "Claude Code" in res.error
 
 
@@ -611,7 +611,7 @@ def test_drivers_available_with_version(monkeypatch):
         returncode = 0; stdout = "codex-cli 0.137.0\n"
     monkeypatch.setattr(codingmod.shutil, "which", lambda name: "/usr/local/bin/codex")
     monkeypatch.setattr(codingmod.subprocess, "run", lambda *a, **k: _Out())
-    res = codingmod.DriversSkill().run({}, _Ctx(_FakeDB()))
+    res = codingmod.DriversTool().run({}, _Ctx(_FakeDB()))
     assert res.success
     drivers = {d["id"]: d for d in res.data["drivers"]}
     assert drivers["claude-code"] == {"id": "claude-code", "available": True}
@@ -621,15 +621,15 @@ def test_drivers_available_with_version(monkeypatch):
 def test_drivers_codex_missing_and_probe_failure(monkeypatch):
     """二进制不存在 → unavailable；--version 异常/超时 → 容错 unavailable（绝不抛）。"""
     monkeypatch.setattr(codingmod.shutil, "which", lambda name: None)
-    drivers = {d["id"]: d for d in codingmod.DriversSkill().run({}, _Ctx(_FakeDB())).data["drivers"]}
+    drivers = {d["id"]: d for d in codingmod.DriversTool().run({}, _Ctx(_FakeDB())).data["drivers"]}
     assert drivers["codex"] == {"id": "codex", "available": False, "version": None}
 
     monkeypatch.setattr(codingmod.shutil, "which", lambda name: "/usr/local/bin/codex")
     def _boom(*a, **k): raise TimeoutError("timeout")
     monkeypatch.setattr(codingmod.subprocess, "run", _boom)
-    drivers = {d["id"]: d for d in codingmod.DriversSkill().run({}, _Ctx(_FakeDB())).data["drivers"]}
+    drivers = {d["id"]: d for d in codingmod.DriversTool().run({}, _Ctx(_FakeDB())).data["drivers"]}
     assert drivers["codex"]["available"] is False
-    assert codingmod.DriversSkill.default_risk == RiskLevel.L0_READONLY
+    assert codingmod.DriversTool.default_risk == RiskLevel.L0_READONLY
 
 
 # ---------- coding.attach_codex ----------
@@ -658,7 +658,7 @@ def test_attach_codex_imports_and_idempotent(tmp_path, monkeypatch):
                    "2026-08-16T11:00:00Z", [("user", "别的")])   # 不命中不误伤
     monkeypatch.setattr(codingmod, "_codex_sessions_root", lambda: root)
     db = _FakeDB()
-    res = codingmod.AttachCodexSkill().run({"session_id": "t-imp"}, _Ctx(db))
+    res = codingmod.AttachCodexTool().run({"session_id": "t-imp"}, _Ctx(db))
     assert res.success
     sid = res.data["session_id"]
     row = db.rows[sid]
@@ -667,18 +667,18 @@ def test_attach_codex_imports_and_idempotent(tmp_path, monkeypatch):
     assert row["prompt"] == long_first[:60]
     assert row["created_at"] > 0 and row["finished_at"] == row["created_at"]
     # 幂等：再导一次 → 同 id，不重复插
-    res2 = codingmod.AttachCodexSkill().run({"session_id": "t-imp"}, _Ctx(db))
+    res2 = codingmod.AttachCodexTool().run({"session_id": "t-imp"}, _Ctx(db))
     assert res2.success and res2.data["session_id"] == sid and len(db.rows) == 1
 
 
 def test_attach_codex_missing_and_bad_params(tmp_path, monkeypatch):
     monkeypatch.setattr(codingmod, "_codex_sessions_root", lambda: str(tmp_path / "none"))
     db = _FakeDB()
-    res = codingmod.AttachCodexSkill().run({"session_id": "t-ghost"}, _Ctx(db))
+    res = codingmod.AttachCodexTool().run({"session_id": "t-ghost"}, _Ctx(db))
     assert not res.success and "t-ghost" in res.error
-    res2 = codingmod.AttachCodexSkill().run({}, _Ctx(db))
+    res2 = codingmod.AttachCodexTool().run({}, _Ctx(db))
     assert not res2.success and "session_id" in res2.error
-    res3 = codingmod.AttachCodexSkill().run({"session_id": "../escape"}, _Ctx(db))
+    res3 = codingmod.AttachCodexTool().run({"session_id": "../escape"}, _Ctx(db))
     assert not res3.success                                  # 白名单挡路径逃逸（同 attach_cc）
 
 
@@ -689,12 +689,12 @@ def test_send_on_attached_codex_session_resumes_natively(tmp_path, monkeypatch):
                    "2026-08-16T10:00:00Z", [("user", "老任务")])
     monkeypatch.setattr(codingmod, "_codex_sessions_root", lambda: root)
     db = _FakeDB()
-    sid = codingmod.AttachCodexSkill().run({"session_id": "t-keep"}, _Ctx(db)).data["session_id"]
+    sid = codingmod.AttachCodexTool().run({"session_id": "t-keep"}, _Ctx(db)).data["session_id"]
     captured, made = {}, []
     monkeypatch.setattr(codingmod, "_spawn_stream",
                         lambda *a, **k: captured.update({"kwargs": k}))
     monkeypatch.setattr(codingmod, "CodexCliRunner", lambda: made.append(1) or object())
-    res = SendSkill().run({"id": sid, "prompt": "接着干"}, _Ctx(db))
+    res = SendTool().run({"id": sid, "prompt": "接着干"}, _Ctx(db))
     assert res.success and made == [1]
     assert captured["kwargs"].get("resume_session_id") == "t-keep"   # exec resume 原生续
     assert captured["kwargs"].get("agent") == "codex"

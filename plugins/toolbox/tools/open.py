@@ -4,12 +4,12 @@ from __future__ import annotations
 from typing import Any
 
 from yibao_brain.ipc import ActionResult, RiskLevel
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 _TOOLS = ("json", "diff", "timestamp", "img2pdf")
 
 
-class OpenToolboxSkill(Skill):
+class OpenToolboxTool(Tool):
     id = "toolbox.open"
     label = "打开工具箱"
     description = "打开工具箱面板（JSON 格式化 / 文本对比 / Unix 时间戳转换 / 图片转 PDF 等常用小工具）。"
@@ -41,5 +41,5 @@ class OpenToolboxSkill(Skill):
         return ActionResult(success=True, data={"tool": tool}, panel="toolbox:main")
 
 
-def make_tools(ctx: Any) -> list[Skill]:
-    return [OpenToolboxSkill()]
+def make_tools(ctx: Any) -> list[Tool]:
+    return [OpenToolboxTool()]

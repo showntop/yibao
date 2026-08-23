@@ -175,7 +175,7 @@ function greet() {
   emit("chat", "查看当前状态、记忆和可用能力");
 }
 
-function launchSkill(plugin: PluginInfo) {
+function launchTool(plugin: PluginInfo) {
   emit("chat", `打开${plugin.name}面板`);
 }
 
@@ -252,7 +252,7 @@ onUnmounted(() => {
           <span class="cap-detail-title">{{ activeGroup.label }}</span>
           <span class="cap-detail-copy">{{ activeGroup.detail }}</span>
           <div v-if="activeGroup.id === 'act' && plugins.length" class="skill-links">
-            <button v-for="plugin in plugins.slice(0, 3)" :key="plugin.id" type="button" @click="launchSkill(plugin)">
+            <button v-for="plugin in plugins.slice(0, 3)" :key="plugin.id" type="button" @click="launchTool(plugin)">
               {{ plugin.name }}
             </button>
           </div>

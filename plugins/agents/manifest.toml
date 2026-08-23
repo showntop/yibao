@@ -7,7 +7,7 @@ description = "干活任务中心，两条通道：①步骤明确的一次性�
 capabilities = ["db", "process"]   # process：本插件会 spawn 子进程（CLI 智能体）
 
 [code]
-entry = "skills"
+entry = "tools"
 
 [[table]]
 name = "tasks"

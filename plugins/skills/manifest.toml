@@ -1,0 +1,15 @@
+# 外部技能桥：把 SKILL.md 开放技能库（Skill Hub / GitHub / 本地目录）桥接成译宝可用技能。
+# 零转换：git clone / 放到技能根目录 → skills.refresh 即热加载，不重启 sidecar。
+# 设计（capability-unified-design spec §D Skill 线）：
+# - 单入口 + 内部索引：只注册 skills.run 一个执行 tool，技能清单存插件内部索引，
+#   refresh 重扫技能根目录即生效（新技能无需动 ToolRegistry，天然运行时热加载）；
+# - 独立安装的 Skill id 带 `skill:` 前缀（四域不交叠）；
+# - 执行 = 把 SKILL.md 指令喂给主 LLM 单轮生成；需要跑脚本时 LLM 自然调
+#   agents.code_exec（沙箱）/watch_command（后台 shell），各自带风险闸门。
+id = "skills"
+name = "外部技能桥"
+description = "开放技能库（SKILL.md，即 Skill Hub/GitHub 上的 Anthropic Skills）：用户请求匹配某个技能（做 PPT/设计/写作/品牌等）时，先用 skills.list 看有哪些技能，再用 skills.run 按技能说明执行；新技能用 skills.install 从 GitHub 安装，或把技能目录放进技能根目录后 skills.refresh 重扫；常用技能可用 skills.import 固化为正式插件"
+capabilities = ["llm"]
+
+[code]
+entry = "bridge"

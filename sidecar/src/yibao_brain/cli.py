@@ -11,21 +11,21 @@ from .llm import FakeProvider, OpenAICompatProvider
 from .loop import AgentLoop
 from .memory import FakeMemory, Mem0Memory
 from .safety import Gate, GatePolicy, RiskClassifier
-from .skills import EchoSkill, SkillRegistry
-from .skills_real import ComputerUseSkill, register_real_skills
+from .tools import EchoTool, ToolRegistry
+from .tools.perception import ComputerUseTool, register_core_tools
 
 
 def build_loop(use_real: bool, db_path: str = "audit.db"):
     real_a11y = use_real and a11y_enabled() and sys.platform == "darwin"
-    reg = SkillRegistry()
-    reg.register(EchoSkill())
+    reg = ToolRegistry()
+    reg.register(EchoTool())
     if real_a11y:
-        register_real_skills(reg)
+        register_core_tools(reg)
         if vision_api_key() and computer_use_enabled():
             try:
                 from .llm import ComputerUseClient
 
-                reg.register(ComputerUseSkill(ComputerUseClient(), max_steps=computer_use_max_steps()))
+                reg.register(ComputerUseTool(ComputerUseClient(), max_steps=computer_use_max_steps()))
             except Exception as e:
                 log(f"computer-use 兜底未启用：{e}")
 
@@ -49,7 +49,7 @@ def build_loop(use_real: bool, db_path: str = "audit.db"):
         # 批量 confirmer（Task 1）：逐个交互问，回 {id: (approved, remember)}。
         out: dict[str, tuple[bool, bool]] = {}
         for action in actions:
-            print(f"\n⚠️ 高风险操作待确认：[{action.skill_id}] {action.description} params={action.params}")
+            print(f"\n⚠️ 高风险操作待确认：[{action.tool_id}] {action.description} params={action.params}")
             approved = input("允许执行？(y/N) ").strip().lower() == "y"
             out[action.id] = (approved, False)
         return out
@@ -84,7 +84,7 @@ def main() -> int:
             if event.kind == "final_reply":
                 print(f"译宝> {event.text}")
             elif event.kind == "action_proposed":
-                print(f"  · 提议操作：{event.action.skill_id}({event.action.params}) 风险={event.action.risk.name}")
+                print(f"  · 提议操作：{event.action.tool_id}({event.action.params}) 风险={event.action.risk.name}")
             elif event.kind == "action_result":
                 ok = "✓" if event.result.success else "✗"
                 print(f"  {ok} 结果：{event.result.data} {event.result.error}")

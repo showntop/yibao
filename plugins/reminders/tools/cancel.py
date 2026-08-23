@@ -4,10 +4,10 @@ from __future__ import annotations
 from typing import Any
 
 from yibao_brain.ipc import ActionResult, RiskLevel
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 
-class RemindersCancelSkill(Skill):
+class RemindersCancelTool(Tool):
     id = "reminders.cancel"
     label = "取消提醒"
     description = "取消一个待触发提醒（面板管理用）。"
@@ -41,5 +41,5 @@ class RemindersCancelSkill(Skill):
                             data={"id": item["id"], "human": f"已取消提醒：{item['text']}"})
 
 
-def make_tools(ctx: Any) -> list[Skill]:
-    return [RemindersCancelSkill()]
+def make_tools(ctx: Any) -> list[Tool]:
+    return [RemindersCancelTool()]

@@ -1,14 +1,14 @@
 // 过程展示（工具调用气泡行）共享小工具：四个对话场景（宠物窗/大窗对话/面板浮窗/大窗插件页）同款逻辑。
 import type { BrainAction, BrainResult } from "./brain";
 
-/** 过程行标题：技能短标签，回退 skill_id。 */
+/** 过程行标题：技能短标签，回退 tool_id。 */
 export function procLabel(a?: BrainAction): string {
-  return a?.label || a?.skill_id || "操作";
+  return a?.label || a?.tool_id || "操作";
 }
 
 /** use_plugin 不插过程行（成功有 notice 轻提示，重复；失败由 LLM 下一句转告）。 */
 export function procSkip(a?: BrainAction): boolean {
-  return a?.skill_id === "use_plugin";
+  return a?.tool_id === "use_plugin";
 }
 
 import { truncate } from "./text";

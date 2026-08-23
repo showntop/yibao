@@ -19,7 +19,7 @@ describe("useApprovals", () => {
       if (url.endsWith("/v1/state")) {
         state.calls++;
         return new Response(JSON.stringify({ ok: true, running: null,
-          pending: state.calls === 1 ? [{ id: "pa_1", skill_id: "code_exec", summary: "cmd=rm x", risk: 3, created_at: 1 }] : [] }), { status: 200 });
+          pending: state.calls === 1 ? [{ id: "pa_1", tool_id: "code_exec", summary: "cmd=rm x", risk: 3, created_at: 1 }] : [] }), { status: 200 });
       }
       return new Response("{}", { status: state.confirmStatus });
     });
@@ -40,7 +40,7 @@ describe("useApprovals", () => {
       if (url.endsWith("/v1/state")) {
         stateCalls++;
         return new Response(JSON.stringify({ ok: true, running: null,
-          pending: [{ id: "pa_3", skill_id: "s", summary: "x", risk: 2, created_at: 3 }] }), { status: 200 });
+          pending: [{ id: "pa_3", tool_id: "s", summary: "x", risk: 2, created_at: 3 }] }), { status: 200 });
       }
       if (confirmDown) throw new TypeError("network down"); // /v1/confirm 断网
       return new Response("nope", { status: 500 }); // 先走非 404 的服务端错误
@@ -64,7 +64,7 @@ describe("useApprovals", () => {
   it("confirmation_needed 帧驱动自动刷新", async () => {
     const st = fakeStream();
     const fetchImpl = vi.fn(async () => new Response(
-      JSON.stringify({ ok: true, running: null, pending: [{ id: "pa_2", skill_id: "s", summary: "x", risk: 2, created_at: 2 }] }), { status: 200 }));
+      JSON.stringify({ ok: true, running: null, pending: [{ id: "pa_2", tool_id: "s", summary: "x", risk: 2, created_at: 2 }] }), { status: 200 }));
     const a = useApprovals({ host: "http://x", token: "t" } as never, st as never, fetchImpl as never);
     st.emit("confirmation_needed"); // 桌面发起的新待批
     await new Promise((r) => setTimeout(r, 0));

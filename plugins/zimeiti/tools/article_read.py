@@ -5,10 +5,10 @@
 from pathlib import Path
 
 from yibao_brain.ipc import ActionResult, RiskLevel
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 
-class ArticleRead(Skill):
+class ArticleRead(Tool):
     id = "zimeiti.article_read"
     label = "读稿件"
     description = "读选题的稿件正文：默认读最新版；version 指定读历史版。改稿前必读当前稿"

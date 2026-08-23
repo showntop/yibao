@@ -136,7 +136,7 @@ async def _collect_widgets(ctx) -> list[dict]:
     out = []
     for ref, decl in get_widgets().items():
         try:
-            action = agent.invoker.propose(ToolCall(id=f"w_{ref}", skill_id=decl["method"], params={}))
+            action = agent.invoker.propose(ToolCall(id=f"w_{ref}", tool_id=decl["method"], params={}))
             if agent.invoker.decide(action) != Decision.AUTO:  # 理论上是 L0 恒 AUTO；防御
                 continue
             result = await _offload(agent.invoker.execute, action, {})

@@ -12,7 +12,7 @@ import time
 from typing import Any
 
 from yibao_brain.ipc import ActionResult, RiskLevel
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 _MAX_FOR_LLM = 12000  # 喂 LLM 的截取（摘要质量够用的上限）
 
@@ -45,7 +45,7 @@ def _summarize(llm: Any, text: str) -> dict:
     return {"title": head, "summary": text[:200], "tags": []}
 
 
-class MatEnrich(Skill):
+class MatEnrich(Tool):
     id = "zimeiti.mat_enrich"
     label = "素材精整"
     description = (
@@ -92,5 +92,5 @@ class MatEnrich(Skill):
         return ActionResult(success=True, data={"id": mid, "title": meta["title"]})
 
 
-def make_tools(ctx: Any) -> list[Skill]:
+def make_tools(ctx: Any) -> list[Tool]:
     return [MatEnrich()]

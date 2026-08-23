@@ -25,8 +25,8 @@ import {
   type BrainEvent,
   type PendingConfirm,
   type PanelFocus,
-  canRememberSkill,
-  rememberLabelForSkill,
+  canRememberTool,
+  rememberLabelForTool,
   closePanelWindow,
 } from "../../lib/brain";
 import { procLabel, procSkip, procResultSuffix } from "../../lib/proc";
@@ -46,7 +46,7 @@ const current = ref<{
 const errorText = ref(""); // 面板内顶部错误细条（不进对话气泡）
 const pendingConfirms = ref<PendingConfirm[]>([]);
 const pending = computed(() => pendingConfirms.value[0] ?? null);
-const pendingCanRemember = computed(() => canRememberSkill(pending.value?.skill ?? ""));
+const pendingCanRemember = computed(() => canRememberTool(pending.value?.tool_id ?? ""));
 const rememberPending = ref(false);
 let unlisten: (() => void) | null = null;
 let unlistenFocus: (() => void) | null = null;
@@ -452,10 +452,10 @@ onUnmounted(() => {
       </span>
     </div>
     <div v-else-if="pending" class="confirm-bar">
-      <span class="c-text"><YbIcon class="c-ic" name="alert" :size="14" />{{ pending.label || pending.skill }}{{ pending.desc ? " · " + pending.desc : "" }}</span>
+      <span class="c-text"><YbIcon class="c-ic" name="alert" :size="14" />{{ pending.label || pending.tool_id }}{{ pending.desc ? " · " + pending.desc : "" }}</span>
       <label v-if="pendingCanRemember" class="c-remember">
         <input v-model="rememberPending" type="checkbox" />
-        {{ rememberLabelForSkill(pending.skill) }}
+        {{ rememberLabelForTool(pending.tool_id) }}
       </label>
       <span class="c-btns">
         <button class="deny" @click="decide(false)">拒绝</button>

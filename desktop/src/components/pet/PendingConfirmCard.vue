@@ -3,7 +3,7 @@
 // remember 状态归父级（usePetApproval 域），经 v-model:remember 双向绑定；
 // 决策动作（decide/decideAllPending）是父级 composable 的事，经事件上抛。
 import YbIcon from "../common/YbIcon.vue";
-import { rememberLabelForSkill, type PendingConfirm } from "../../lib/brain";
+import { rememberLabelForTool, type PendingConfirm } from "../../lib/brain";
 
 defineProps<{
   pending: PendingConfirm;
@@ -37,7 +37,7 @@ const emit = defineEmits<{
   <!-- 单条确认卡：技能确认（安全委派）+ 撤回 -->
   <div v-else class="quick-confirm">
     <div class="quick-copy">
-      <strong><YbIcon class="qc-ic" name="alert" :size="14" />{{ pending.label || pending.skill }}</strong>
+      <strong><YbIcon class="qc-ic" name="alert" :size="14" />{{ pending.label || pending.tool_id }}</strong>
       <span v-if="pending.desc">{{ pending.desc }}</span>
     </div>
     <label v-if="canRemember" class="quick-remember">
@@ -46,7 +46,7 @@ const emit = defineEmits<{
         :checked="remember"
         @change="emit('update:remember', ($event.target as HTMLInputElement).checked)"
       />
-      {{ rememberLabelForSkill(pending.skill) }}
+      {{ rememberLabelForTool(pending.tool_id) }}
     </label>
     <div class="quick-actions">
       <button class="quick-deny" @click="emit('decide', false)">拒绝</button>

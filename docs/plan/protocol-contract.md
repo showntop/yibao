@@ -59,11 +59,11 @@ sidecar/Rust 落盘与 IPC 用 snake_case；desktop 前端协议层（`protocol/
 | `FeedItem` | `protocol/brain-types.ts` | `mobile/src/state/feed.ts` | mobile 的 `status: string`（desktop `"none"\|"follow"\|"ignore"`）|（desktop `"none"\|"follow"\|"ignore"`）|（desktop `"none"\|"follow"\|"ignore"`） |
 | `FeedStats` | 同上 | 同上 | mobile 字段全可选（防御旧版） |
 | `RunningTask` | 同上 | 同上 | mobile 无 `kind` 联合收窄 |
-| `PendingConfirm` | 同上 | `mobile/src/state/approvals.ts` | desktop 有 `skill/label/desc`，mobile 有 `skill_id/summary`（`skill_id` vs `skill` 命名漂移！） |
+| `PendingConfirm` | 同上 | `mobile/src/state/approvals.ts` | desktop 有 `tool_id/label/desc`，mobile 有 `tool_id/summary`（2026-08-23 已对齐 `tool_id`，漂移消除） |
 | `MemItem` | 同上 | `mobile/src/state/memories.ts` | mobile `created_at` 必选字符串 |
 | `RunMetrics` | 同上 | —（mobile 无） | — |
 
-> **重点漂移**：`PendingConfirm` 的 `skill_id`（mobile）vs `skill`（desktop）——同一字段两个名字。收敛方向：统一 `skill_id`（与 sidecar 落盘一致），desktop 侧补别名兼容。
+> **漂移已消除（2026-08-23）**：`PendingConfirm` 字段随协议改名 `skill_id → tool_id`（capability-unified-design spec §B）统一为 `tool_id`，desktop 本地字段 `skill` 同步对齐；sidecar 落盘字段为 `Action.tool_id`。
 
 ### 3.2.1 双端类型维护决策（2026-08-22，R-29 复核落定）
 
@@ -97,6 +97,6 @@ sidecar/Rust 落盘与 IPC 用 snake_case；desktop 前端协议层（`protocol/
 
 ## 4. 落地建议（后续迭代）
 
-1. **第一步（低风险）**：以 `protocol/brain-types.ts` 为基准，把 mobile 的 `feed.ts`/`approvals.ts`/`memories.ts` 类型改为 `import type`（跨包引用或复制 + 标注来源），先消除 `skill_id`/`skill` 漂移。
+1. **第一步（低风险）**：以 `protocol/brain-types.ts` 为基准，把 mobile 的 `feed.ts`/`approvals.ts`/`memories.ts` 类型改为 `import type`（跨包引用或复制 + 标注来源），双端字段统一 `tool_id`。
 2. **第二步**：建 `shared/protocol/`（仓库根）放 TypeScript 类型源，desktop/mobile 双端 import；sidecar 侧经 `docs/` 此契约文档对齐字段名。
 3. **第三步**：SSE 事件 kind 补齐（mobile 订阅 `panel` 等），让移动端与桌面能力对齐。

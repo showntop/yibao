@@ -54,9 +54,9 @@ from .runtime.mobile import MobileDomain
 from .runtime.runs import RunsDomain
 from .runtime.voice import VoiceDomain
 from .safety import Gate, GatePolicy, RiskClassifier
-from .skills import EchoSkill, SkillRegistry
-from .skills_composite import register_composite_skills
-from .skills_real import ComputerUseSkill, register_real_skills
+from .tools import EchoTool, ToolRegistry
+from .tools.composite import register_composite_tools
+from .tools.perception import ComputerUseTool, register_core_tools
 from .watch import WatchCtx
 from .watch_service import WatchService
 
@@ -141,9 +141,9 @@ def build_loop(
     feed=None,
 ) -> AgentLoop:
     real_a11y = use_real and a11y_enabled() and sys.platform == "darwin"
-    reg = skills_factory() if skills_factory else SkillRegistry()
+    reg = skills_factory() if skills_factory else ToolRegistry()
     if not skills_factory:
-        reg.register(EchoSkill())
+        reg.register(EchoTool())
         if real_a11y:
             cu_client = None
             describe = None
@@ -167,11 +167,11 @@ def build_loop(
                 except Exception as e:
                     log(f"computer-use 兜底未启用：{e}")
                     cu_client = None
-            register_real_skills(reg, describe=describe)
-            register_composite_skills(reg)
+            register_core_tools(reg, describe=describe)
+            register_composite_tools(reg)
             if cu_client is not None:
                 try:
-                    reg.register(ComputerUseSkill(cu_client, max_steps=computer_use_max_steps()))
+                    reg.register(ComputerUseTool(cu_client, max_steps=computer_use_max_steps()))
                 except Exception as e:
                     log(f"computer-use 技能注册失败：{e}")
 
@@ -203,13 +203,105 @@ def build_loop(
 
         reminder_store = ReminderStore(os.path.join(os.path.dirname(db_path), "reminders.json"))
         _load_plugins_safe(reg, memory, prov, host, reminders=reminder_store, emit_event=emit_event)
+        # 能力热重载（P1 reload 地基）：增量扫描 plugins/，新插件免重启生效
+        from pathlib import Path
+
+        from .plugins import HttpClient, LlmChat as _PlugLlm, get_plugin_summaries, load_plugins
+        from .tools import CapabilityRefreshTool, UsePluginTool
+
+        _plugins_dir = os.environ.get("YIBAO_PLUGINS_DIR") or str(
+            Path(__file__).resolve().parents[3] / "plugins"
+        )
+
+        def _reload_plugins(existing=None):
+            return load_plugins(
+                _plugins_dir, reg,
+                memory=memory, http=HttpClient(), llm=_PlugLlm(prov),
+                host_available=host is not None, reminders=reminder_store,
+                emit_event=emit_event, existing=existing,
+            )
+
+        reg.register(CapabilityRefreshTool(reg, _reload_plugins))
+        # 能力台账（P3 管理面地基）：tool_list 只读列出全部 Tool + 来源形态/风险/特权
+        from .tools import ToolListTool as _ToolListTool
+
         # 路由式暴露（§12-2）：插件 tool 默认隐藏，use_plugin 按需展开；
         # active 集合与 AgentLoop 共享（技能执行即改，下一步 LLM 调用即见新工具）
-        from .plugins import get_plugin_summaries
-        from .skills import UsePluginSkill
+        # （get_plugin_summaries/load_plugins 已在上方 import）
 
         active_plugins = set()
-        reg.register(UsePluginSkill(reg, active_plugins, get_plugin_summaries()))
+        reg.register(UsePluginTool(reg, active_plugins, get_plugin_summaries()))
+        # 技能展开（use_skill 与 use_plugin 对称）：说明书进主上下文，agent 循环执行
+        from .tools.skills_index import refresh_index
+        from .tools import UseSkillTool
+
+        refresh_index()
+        reg.register(UseSkillTool())
+        reg.register(_ToolListTool(reg, active_plugins, get_plugin_summaries()))
+        # 台账面板直调（P3 管理面板数据源）：L0 只读、不占槽位不抢占
+        from .plugins import ApiMethod as _ApiMethod
+        from .plugins import _API as _PLUGIN_API
+
+        _PLUGIN_API["tool_ledger"] = _ApiMethod(
+            name="tool_ledger", handler="tool_list", direct=True,
+            intent=None, risk=RiskLevel.L0_READONLY, plugin_id="core",
+        )
+        # MCP 适配器（P2）：运行时挂载 MCP server，工具经 use_mcp 展开（默认隐藏）
+        from .config import data_dir as _data_dir
+        from .tools.mcp import (
+            McpAddTool, McpConnectTool, McpDisconnectTool, McpListTool,
+            McpManager, UseMcpTool,
+        )
+
+        mcp_manager = McpManager(os.path.join(_data_dir(), "mcp_servers.json"), reg, active_plugins)
+        reg.register(UseMcpTool(mcp_manager, active_plugins))
+        reg.register(McpListTool(mcp_manager))
+        reg.register(McpConnectTool(mcp_manager))
+        reg.register(McpDisconnectTool(mcp_manager))
+        reg.register(McpAddTool(mcp_manager))
+        # 台账管理（P3 操作闭环 + B/E 收尾）：SourceStore 持久化 + SourceManager 路由
+        # 注意：必须放在 MCP 块之后（依赖 _data_dir 与 mcp_manager）
+        from .tools.ledger import (
+            ToolDisableTool as _ToolDisableTool,
+            ToolEnableTool as _ToolEnableTool,
+            ToolStatusTool as _ToolStatusTool,
+            ToolUninstallTool as _ToolUninstallTool,
+            ToolUpdateTool as _ToolUpdateTool,
+        )
+        from .tools.management import PluginManager as _PluginManager
+        from .tools.management import SkillManager as _SkillManager
+        from .tools.management import SourceRecord as _SourceRecord
+        from .tools.management import SourceStore as _SourceStore
+
+        _source_store = _SourceStore(os.path.join(_data_dir(), "sources.json"))
+        _plugin_manager = _PluginManager(reg, _plugins_dir, loader=_reload_plugins)
+        _skill_manager = _SkillManager()
+        _managers = {"plugin": _plugin_manager, "skill": _skill_manager, "mcp": mcp_manager}
+        # 启动对账（spec §对象模型）：discover → 存储 status 合并（disabled 保留）→ 恢复禁用集 + 落盘
+        _discovered: dict[str, _SourceRecord] = {}
+        for _m in (_plugin_manager, _skill_manager, mcp_manager):
+            for _rec in _m.discover():
+                _discovered[_rec.id] = _rec
+        _discovered = _source_store.merge_status(_discovered)
+        for _rid, _rec in _discovered.items():
+            if _rec.status == "disabled":
+                reg.disable_source(_rec.id)
+        _source_store.save(_discovered)
+
+        reg.register(_ToolDisableTool(reg, active_plugins, _managers, _source_store))
+        reg.register(_ToolEnableTool(reg, active_plugins, _managers, _source_store))
+        reg.register(_ToolStatusTool(reg, active_plugins, _managers, _source_store))
+        reg.register(_ToolUpdateTool(reg, active_plugins, _managers, _source_store))
+        reg.register(_ToolUninstallTool(reg, active_plugins, _managers, _source_store))
+        for _method, _risk in (("tool_disable", RiskLevel.L2_MEDIUM),
+                               ("tool_enable", RiskLevel.L2_MEDIUM),
+                               ("tool_status", RiskLevel.L0_READONLY),
+                               ("tool_update", RiskLevel.L3_HIGH),
+                               ("tool_uninstall", RiskLevel.L3_HIGH)):
+            _PLUGIN_API[_method] = _ApiMethod(
+                name=_method, handler=_method, direct=True,
+                intent=None, risk=_risk, plugin_id="core",
+            )
         for sk in make_skills(reminder_store):
             reg.register(sk)
         # gen 面板（LLM 生成 webview）：启动恢复已生成面板 + 注册 panel_gen/open/list/delete
@@ -359,7 +451,7 @@ async def serve_async(
     # 本 run 槽位的 cancel（见 batch_confirmer 内 _run_ctx 读取）。
     pending_confirms: dict[str, asyncio.Future] = {}
     early_answers: dict[str, tuple[bool, bool]] = {}
-    confirm_meta: dict[str, dict] = {}  # cid -> {skill_id, summary, risk, created_at, conversation_id, surface}：手机 /v1/state 待批列表
+    confirm_meta: dict[str, dict] = {}  # cid -> {tool_id, summary, risk, created_at, conversation_id, surface}：手机 /v1/state 待批列表
     _confirm_done: deque[str] = deque(maxlen=100)  # 已处理确认（防手机重复点击 404）
     # run_slots：per-会话槽位表（并发对话 spec §A）。键 = conversation_id（空串归 default
     # 槽，兼容无会话 id 的遗留调用）。每槽 {task, cancel, preempt_gen, surface, running_surface}，
@@ -438,7 +530,7 @@ async def serve_async(
         out: dict[str, tuple[bool, bool]] = {}
         for action in actions:
             cid = action.id
-            skill_id = getattr(action, "skill_id", "?")
+            tool_id = getattr(action, "tool_id", "?")
             # 早到的 confirm_batch 直接兑现（future 还没建）
             if cid in early_answers:
                 out[cid] = early_answers.pop(cid)
@@ -446,11 +538,11 @@ async def serve_async(
             fut = pending_confirms.setdefault(cid, ai_loop.create_future())
             _ctx = _run_ctx.get() or {}
             confirm_meta[cid] = {
-                "skill_id": skill_id,
+                "tool_id": tool_id,
                 # 可读摘要：params 非空 dict → k=v 逗号形式（手机审批页直接展示）；
-                # 空 dict/非 dict → 回落 skill_id。截 120 字防长参数刷屏。
+                # 空 dict/非 dict → 回落 tool_id。截 120 字防长参数刷屏。
                 "summary": (", ".join(f"{k}={v}" for k, v in (getattr(action, "params", None) or {}).items())[:120]
-                            if isinstance(getattr(action, "params", None), dict) and action.params else skill_id),
+                            if isinstance(getattr(action, "params", None), dict) and action.params else tool_id),
                 "risk": int(getattr(getattr(action, "risk", None), "value", getattr(action, "risk", 0)) or 0),
                 "created_at": int(time.time()),
                 # 会话归属（并发对话 spec §B）：/v1/state pending 与壳端确认卡按它过滤展示
@@ -463,7 +555,7 @@ async def serve_async(
             # B 会话的确认等待（并发对话 spec §B）。
             cancel = _ctx.get("cancel")
             cancel_wait = ai_loop.create_task(cancel.wait()) if cancel is not None else None
-            log(f"等待用户确认：{skill_id}")
+            log(f"等待用户确认：{tool_id}")
             try:
                 waiters: set = {fut}
                 if cancel_wait is not None:
@@ -471,10 +563,10 @@ async def serve_async(
                 done, _ = await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
                 if fut in done:
                     approved, remember = fut.result()
-                    log(f"确认结果：{'允许' if approved else '拒绝'}（{skill_id}）")
+                    log(f"确认结果：{'允许' if approved else '拒绝'}（{tool_id}）")
                     out[cid] = (bool(approved), bool(remember))
                 else:
-                    log(f"确认被抢占取消：{skill_id}")
+                    log(f"确认被抢占取消：{tool_id}")
                     out[cid] = (False, False)
             finally:
                 if cancel_wait is not None:
@@ -551,11 +643,11 @@ async def serve_async(
             distiller = None
 
     if pstore is not None:
-        from .perception import LoadScreenContentSkill, LoadUserActivitySkill
+        from .perception import LoadScreenContentTool, LoadUserActivityTool
 
         # 与 sensors 共用同一 store、与 settings_set 共用同一可变字典，开关即时生效。
-        agent.skills.register(LoadUserActivitySkill(pstore, settings))
-        agent.skills.register(LoadScreenContentSkill(pstore, settings))
+        agent.skills.register(LoadUserActivityTool(pstore, settings))
+        agent.skills.register(LoadScreenContentTool(pstore, settings))
 
     perception_stop = threading.Event()
     perception_thread = None

@@ -88,7 +88,7 @@ export interface ConversationMeta {
 /** 待审批快照（重启后暂停、不自动执行） */
 export interface PendingApproval {
   id: string;
-  skill: string;
+  tool_id: string;
   label: string;
   detail?: string;
   createdAt: number;
@@ -98,7 +98,7 @@ export interface PendingApproval {
 export interface ProcessedItem {
   id: string;
   taskId?: string;
-  skill: string;
+  tool_id: string;
   label: string;
   ok: boolean;
   at: number;

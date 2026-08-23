@@ -2,11 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   groupPages,
   groupThread,
+  isTaskLogBubble,
+  isTaskLogEvent,
   isWorkPiece,
   paperErrorNotice,
   paperStamps,
   runAnswer,
   runIsLive,
+  runShowFooter,
   runTailIndex,
   talkTurns,
   talkBeats,
@@ -60,6 +63,47 @@ describe("work-thread", () => {
     expect(runIsLive(bubbles, [0, 1, 2], null)).toBe(true);
     expect(runIsLive([ai("完"), proc(true)], [0, 1], 0)).toBe(true);
     expect(runIsLive([ai("完"), proc(true)], [0, 1], null)).toBe(false);
+  });
+
+  it("treats sandbox/agent completion events as task logs, not user reminders", () => {
+    expect(isTaskLogEvent({ task: { id: "abc", status: "done" } })).toBe(true);
+    expect(isTaskLogEvent({ type: "watch_command" })).toBe(true);
+    expect(isTaskLogEvent({ type: "morning_recap" })).toBe(false);
+    expect(isTaskLogEvent({})).toBe(false);
+    expect(isTaskLogBubble(ai("到点了", { icon: "clock" }))).toBe(false);
+    expect(
+      isTaskLogBubble(
+        ai("✅ 沙箱脚本完成：const { execSync } = require(\"child_process\");\nnpm install OK", {
+          icon: "clock",
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not let a task-log reminder split one working turn into two runs", () => {
+    const bubbles = [
+      user("做一份 PPT"),
+      ai("npm 缓存目录有权限问题，改用工作目录内的缓存。"),
+      proc(true),
+      ai("✅ 沙箱脚本完成：const { execSync } = require(\"child_process\");\nnpm install OK", {
+        icon: "clock",
+      }),
+      ai("依赖装好了。现在写生成脚本。"),
+    ];
+    expect(groupThread(bubbles, () => false)).toEqual([
+      { type: "user", index: 0 },
+      { type: "run", start: 1, indices: [1, 2, 4] },
+    ]);
+  });
+
+  it("hides copy/feedback/rewrite until the latest working turn actually settles", () => {
+    const live = [ai("先搜"), proc(true), ai("半句")];
+    expect(runShowFooter(live, [0, 1, 2], null, false)).toBe(true);
+    expect(runShowFooter(live, [0, 1, 2], null, true)).toBe(false);
+    expect(runShowFooter(live, [0, 1, 2], 2, true)).toBe(false);
+    expect(runShowFooter([ai("旧答"), user("下一句"), ai("新答"), proc(false)], [0], null, true)).toBe(true);
+    expect(runShowFooter([ai("说了半句", { halted: true })], [0], null, true)).toBe(true);
+    expect(runShowFooter([proc(true)], [0], null, false)).toBe(false);
   });
 
   it("binds a user turn and the following run into one page, reminders onto that page", () => {

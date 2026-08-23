@@ -11,7 +11,7 @@ import re
 from typing import Any
 
 from yibao_brain.ipc import ActionResult, RiskLevel
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 _MAX_SELECTION = 4000  # 片段太长说明该走对话改稿，不是选段润色
 _MAX_FULL = 8000  # 全文三模式（polish/title/platform）的上限
@@ -107,7 +107,7 @@ def _unwrap(text: str) -> str:
     return t
 
 
-class AiEditSkill(Skill):
+class AiEditTool(Tool):
     id = "zimeiti.ai_edit"
     label = "AI 改稿"
     description = (
@@ -181,5 +181,5 @@ class AiEditSkill(Skill):
         return ActionResult(success=True, data={"replacement": replacement, "mode": mode})
 
 
-def make_tools(ctx: Any) -> list[Skill]:
-    return [AiEditSkill()]
+def make_tools(ctx: Any) -> list[Tool]:
+    return [AiEditTool()]

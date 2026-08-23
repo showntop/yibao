@@ -1,12 +1,14 @@
 id = "coding"
 name = "编码"
 description = "统一 coding 聊天：选项目 + Claude Code，提任务后台流式跑，面板回显 + 文件改动 diff。v1 单 agent、用户显式选、不 auto-routing。"
+# 特权插件：调度域在底座 runtime/，与 sidecar 深度集成，管理面不可装卸
+privileged = true
 # llm：HandoffBriefSkill 用 ctx.llm 摘要交接（plugins.py:240 校验）。
 # process：声明性，本插件 v1 仍为 in-process SDK；加是为交接链路上对齐 agents。
 capabilities = ["db", "llm", "process"]
 
 [code]
-entry = "skills"
+entry = "tools"
 
 [[table]]
 name = "sessions"

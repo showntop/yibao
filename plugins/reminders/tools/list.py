@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from yibao_brain.ipc import ActionResult, RiskLevel
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 
 _WEEKDAYS = "一二三四五六日"
@@ -21,7 +21,7 @@ def _fmt_when(ts: float, rrule) -> str:
     return dt.strftime("%m月%d日 %H:%M")
 
 
-class RemindersListSkill(Skill):
+class RemindersListTool(Tool):
     id = "reminders.list"
     label = "查看提醒"
     description = "列出待触发提醒并打开提醒面板（面板管理用）。"
@@ -45,5 +45,5 @@ class RemindersListSkill(Skill):
         return ActionResult(success=True, data={"rows": rows}, panel="reminders:main")
 
 
-def make_tools(ctx: Any) -> list[Skill]:
-    return [RemindersListSkill()]
+def make_tools(ctx: Any) -> list[Tool]:
+    return [RemindersListTool()]

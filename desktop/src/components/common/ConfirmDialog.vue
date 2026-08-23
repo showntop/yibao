@@ -1,21 +1,21 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { canRememberSkill, rememberLabelForSkill } from "../../lib/brain";
+import { canRememberTool, rememberLabelForTool } from "../../lib/brain";
 import YbIcon from "./YbIcon.vue";
 
-const props = defineProps<{ skill: string; desc: string }>();
+const props = defineProps<{ tool_id: string; desc: string }>();
 const emit = defineEmits<{ (e: "approve", remember: boolean): void; (e: "deny"): void }>();
 const remember = ref(false);
-const canRemember = computed(() => canRememberSkill(props.skill));
+const canRemember = computed(() => canRememberTool(props.tool_id));
 </script>
 
 <template>
   <div class="dlg">
     <div class="title"><YbIcon name="alert" :size="16" /> 确认执行高风险操作</div>
-    <p><span class="skill">{{ skill }}</span>{{ desc ? " · " + desc : "" }}</p>
+    <p><span class="skill">{{ tool_id }}</span>{{ desc ? " · " + desc : "" }}</p>
     <label v-if="canRemember" class="remember">
       <input type="checkbox" v-model="remember" />
-      {{ rememberLabelForSkill(skill) }}
+      {{ rememberLabelForTool(tool_id) }}
     </label>
     <div class="btns">
       <button class="deny" @click="emit('deny')">拒绝</button>

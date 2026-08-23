@@ -129,9 +129,9 @@ def test_list_empty(store):
 
 def test_reminder_skills_registerable_as_base_skills(store):
     """底座技能注册契约：id 禁点号（防伪装插件）——点号命名曾把大脑启动直接干崩。"""
-    from yibao_brain.skills import SkillRegistry
+    from yibao_brain.tools import ToolRegistry
 
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     for sk in make_skills(store):
         reg.register(sk)
     assert reg.get("reminder_set") is not None
@@ -157,9 +157,9 @@ def _load(tmp_path, monkeypatch, store):
     from yibao_brain.llm import FakeProvider
     from yibao_brain.memory import FakeMemory
     from yibao_brain.plugins import LlmChat, load_plugins
-    from yibao_brain.skills import SkillRegistry
+    from yibao_brain.tools import ToolRegistry
 
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     results = load_plugins(
         REPO_ROOT / "plugins", reg,
         memory=FakeMemory(), http=_Http(), llm=LlmChat(FakeProvider()),

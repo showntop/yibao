@@ -30,10 +30,10 @@ fn final_reply_non_streaming_appends() {
 fn streaming_then_tools_then_reply_interleaves() {
     let (db, mut r) = setup();
     r.record(&db, "c1", &json!({"kind":"final_reply_chunk","text":"先查一下。"}));
-    r.record(&db, "c1", &json!({"kind":"action_proposed","action":{"id":"a1","skill_id":"web_search","label":"联网搜索"}}));
-    r.record(&db, "c1", &json!({"kind":"action_result","action":{"id":"a1","skill_id":"web_search","label":"联网搜索"},"result":{"success":true,"data":{"human":"ok"}}}));
-    r.record(&db, "c1", &json!({"kind":"action_proposed","action":{"id":"a2","skill_id":"extract_url","label":"读网页"}}));
-    r.record(&db, "c1", &json!({"kind":"action_result","action":{"id":"a2","skill_id":"extract_url","label":"读网页"},"result":{"success":true,"data":{"human":"ok"}}}));
+    r.record(&db, "c1", &json!({"kind":"action_proposed","action":{"id":"a1","tool_id":"web_search","label":"联网搜索"}}));
+    r.record(&db, "c1", &json!({"kind":"action_result","action":{"id":"a1","tool_id":"web_search","label":"联网搜索"},"result":{"success":true,"data":{"human":"ok"}}}));
+    r.record(&db, "c1", &json!({"kind":"action_proposed","action":{"id":"a2","tool_id":"extract_url","label":"读网页"}}));
+    r.record(&db, "c1", &json!({"kind":"action_result","action":{"id":"a2","tool_id":"extract_url","label":"读网页"},"result":{"success":true,"data":{"human":"ok"}}}));
     r.record(&db, "c1", &json!({"kind":"final_reply_chunk","text":"结论是这样"}));
     r.record(&db, "c1", &json!({"kind":"final_reply","text":"结论是这样"}));
     let msgs = db.get_messages("c1", 10).unwrap();
@@ -81,13 +81,13 @@ fn interrupted_without_stream_appends_marker() {
 #[test]
 fn proc_lifecycle_done_and_ok() {
     let (db, mut r) = setup();
-    r.record(&db, "c1", &json!({"kind":"action_proposed","action":{"id":"a1","skill_id":"sys_info","label":"查系统"}}));
+    r.record(&db, "c1", &json!({"kind":"action_proposed","action":{"id":"a1","tool_id":"sys_info","label":"查系统"}}));
     let msgs = db.get_messages("c1", 10).unwrap();
     assert_eq!(msgs.len(), 1);
     assert_eq!(msgs[0].payload["proc"]["done"], false);
     assert_eq!(msgs[0].payload["proc"]["label"], "查系统");
     // 结果回来原地收尾
-    r.record(&db, "c1", &json!({"kind":"action_result","action":{"id":"a1","skill_id":"sys_info","label":"查系统"},"result":{"success":true,"data":{"human":"ok"}}}));
+    r.record(&db, "c1", &json!({"kind":"action_result","action":{"id":"a1","tool_id":"sys_info","label":"查系统"},"result":{"success":true,"data":{"human":"ok"}}}));
     let msgs = db.get_messages("c1", 10).unwrap();
     assert_eq!(msgs.len(), 1, "proc 收尾是原地更新，不新增");
     assert_eq!(msgs[0].payload["proc"]["done"], true);
@@ -97,15 +97,15 @@ fn proc_lifecycle_done_and_ok() {
 #[test]
 fn proc_skip_use_plugin() {
     let (db, mut r) = setup();
-    r.record(&db, "c1", &json!({"kind":"action_proposed","action":{"id":"a1","skill_id":"use_plugin","label":"展开插件"}}));
+    r.record(&db, "c1", &json!({"kind":"action_proposed","action":{"id":"a1","tool_id":"use_plugin","label":"展开插件"}}));
     assert_eq!(db.get_messages("c1", 10).unwrap().len(), 0, "use_plugin 不插过程行");
 }
 
 #[test]
 fn refs_attach_to_next_ai_message() {
     let (db, mut r) = setup();
-    r.record(&db, "c1", &json!({"kind":"action_proposed","action":{"id":"a1","skill_id":"sys_info","label":"查系统"}}));
-    r.record(&db, "c1", &json!({"kind":"action_result","action":{"id":"a1","skill_id":"sys_info","label":"查系统"},"result":{"success":true,"data":{"human":"macOS"}}}));
+    r.record(&db, "c1", &json!({"kind":"action_proposed","action":{"id":"a1","tool_id":"sys_info","label":"查系统"}}));
+    r.record(&db, "c1", &json!({"kind":"action_result","action":{"id":"a1","tool_id":"sys_info","label":"查系统"},"result":{"success":true,"data":{"human":"macOS"}}}));
     r.record(&db, "c1", &json!({"kind":"final_reply","text":"你是 macOS"}));
     let msgs = db.get_messages("c1", 10).unwrap();
     let ai = msgs.iter().find(|m| m.role == "ai").unwrap();
@@ -142,6 +142,30 @@ fn listening_done_with_text_appends_user() {
     r.record(&db, "c1", &json!({"kind":"listening_done"}));
     assert_eq!(texts(&db), vec!["今天天气怎么样"]);
     assert_eq!(db.get_messages("c1", 10).unwrap()[0].role, "user");
+}
+
+#[test]
+fn reminder_task_logs_do_not_enter_conversation() {
+    let (db, mut r) = setup();
+    r.record(
+        &db,
+        "c1",
+        &json!({
+            "kind":"reminder",
+            "text":"✅ 沙箱脚本完成：print('hi')\nnpm install OK",
+            "task":{"id":"abc","status":"done","label":"沙箱脚本"}
+        }),
+    );
+    r.record(
+        &db,
+        "c1",
+        &json!({"kind":"reminder","type":"watch_command","text":"命令跑完了","status":"completed"}),
+    );
+    r.record(&db, "c1", &json!({"kind":"reminder","text":"该开战会了"}));
+    let msgs = db.get_messages("c1", 10).unwrap();
+    assert_eq!(msgs.len(), 1, "任务收尾不落对话，只留真正的用户提醒");
+    assert_eq!(msgs[0].payload["text"], "该开战会了");
+    assert_eq!(msgs[0].payload["icon"], "clock");
 }
 
 #[test]

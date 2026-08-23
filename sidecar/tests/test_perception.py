@@ -12,14 +12,14 @@ from cryptography.fernet import Fernet
 
 from yibao_brain import perception_sensors, perception_store
 from yibao_brain.perception import (
-    LoadUserActivitySkill,
+    LoadUserActivityTool,
     PerceptionKeyUnavailable,
     PerceptionSensors,
     PerceptionStore,
     build_activity_segments,
 )
 from yibao_brain.ipc import RiskLevel
-from yibao_brain.skills import SkillContext
+from yibao_brain.tools import ToolContext
 
 
 def _store(tmp_path):
@@ -269,7 +269,7 @@ def test_load_user_activity_contract_authorization_and_structured_result(tmp_pat
         "activity", "idle", {"idle_seconds": 60}, "S1", ts=start.timestamp() + 2700
     )
     settings = {"perception.model_access": False}
-    skill = LoadUserActivitySkill(store, settings, now_provider=lambda: now)
+    skill = LoadUserActivityTool(store, settings, now_provider=lambda: now)
     params = {"start_at": start.isoformat(), "end_at": now.isoformat()}
 
     schema = skill.openai_schema()
@@ -277,11 +277,11 @@ def test_load_user_activity_contract_authorization_and_structured_result(tmp_pat
     assert skill.default_risk == RiskLevel.L0_READONLY
     assert schema["parameters"]["required"] == ["start_at", "end_at"]
     assert skill.precheck(params) == "模型读取感知记录未开启，请先在设置的感知区域开启"
-    assert skill.run(params, SkillContext()).success is False
+    assert skill.run(params, ToolContext()).success is False
 
     settings["perception.model_access"] = True
     assert skill.precheck(params) is None
-    result = skill.run(params, SkillContext())
+    result = skill.run(params, ToolContext())
 
     assert result.success is True
     assert result.data["observation_count"] == 2
@@ -329,13 +329,13 @@ def test_load_user_activity_contract_authorization_and_structured_result(tmp_pat
 )
 def test_load_user_activity_rejects_invalid_windows(tmp_path, start_at, end_at, error):
     now = datetime(2026, 7, 28, 14, 0, tzinfo=timezone(timedelta(hours=8)))
-    skill = LoadUserActivitySkill(
+    skill = LoadUserActivityTool(
         _store(tmp_path),
         {"perception.model_access": True},
         now_provider=lambda: now,
     )
 
-    result = skill.run({"start_at": start_at, "end_at": end_at}, SkillContext())
+    result = skill.run({"start_at": start_at, "end_at": end_at}, ToolContext())
 
     assert result.success is False
     assert error in result.error
@@ -351,14 +351,14 @@ def test_load_user_activity_empty_or_corrupt_window_has_no_notice(tmp_path):
             "INSERT INTO observations (ts, source, kind, payload, sensitivity) VALUES (?, ?, ?, ?, ?)",
             (start.timestamp() + 60, "app", "frontmost", "broken", "S1"),
         )
-    skill = LoadUserActivitySkill(
+    skill = LoadUserActivityTool(
         store,
         {"perception.model_access": True},
         now_provider=lambda: now,
     )
 
     result = skill.run(
-        {"start_at": start.isoformat(), "end_at": now.isoformat()}, SkillContext()
+        {"start_at": start.isoformat(), "end_at": now.isoformat()}, ToolContext()
     )
 
     assert result.success is True
@@ -402,14 +402,14 @@ def test_load_user_activity_dense_window_keeps_recent_context_and_marks_truncate
             }
 
     store = DenseStore()
-    skill = LoadUserActivitySkill(
+    skill = LoadUserActivityTool(
         store,
         {"perception.model_access": True},
         now_provider=lambda: end,
     )
 
     result = skill.run(
-        {"start_at": start.isoformat(), "end_at": end.isoformat()}, SkillContext()
+        {"start_at": start.isoformat(), "end_at": end.isoformat()}, ToolContext()
     )
 
     assert result.success is True
@@ -813,19 +813,19 @@ def test_screen_vision_frame_removed_after_summary(tmp_path):
 
 # ---------- 消费工具：load_screen_content ----------
 def test_load_screen_content_gate_and_window(tmp_path):
-    from yibao_brain.perception import LoadScreenContentSkill
+    from yibao_brain.perception import LoadScreenContentTool
 
     store = _store(tmp_path)
     store.append("screen", "tree", {"app": "Safari", "title": "天气", "text": "AXWindow: 天气页"}, "S3")
     store.append("screen", "vision", {"app": "Canvas", "text": "画板一个矩形", "path": "/x.png"}, "S3")
     store.append("app", "frontmost", {"app": "Safari"}, "S1")
     # 未开 model_access → 拦截
-    skill = LoadScreenContentSkill(store, {"perception.model_access": False})
-    r = skill.run({}, SkillContext())
+    skill = LoadScreenContentTool(store, {"perception.model_access": False})
+    r = skill.run({}, ToolContext())
     assert not r.success and "未开启" in (r.error or "")
     # 开启 → 返回 screen 条目（不含 app 源），按时间倒序
-    skill2 = LoadScreenContentSkill(store, {"perception.model_access": True})
-    r2 = skill2.run({}, SkillContext())
+    skill2 = LoadScreenContentTool(store, {"perception.model_access": True})
+    r2 = skill2.run({}, ToolContext())
     assert r2.success and r2.data["count"] == 2
     assert all(it["kind"] in ("tree", "vision") for it in r2.data["items"])
     assert r2.data["items"][0]["app"] == "Canvas"
@@ -835,26 +835,26 @@ def test_load_screen_content_gate_and_window(tmp_path):
 
 
 def test_load_screen_content_limit_truncation_and_empty_window(tmp_path):
-    from yibao_brain.perception import LoadScreenContentSkill
+    from yibao_brain.perception import LoadScreenContentTool
 
     now = time.time()
     store = _store(tmp_path)
     for i in range(3):
         store.append("screen", "tree", {"app": f"App{i}", "text": f"页面{i}"}, "S3", ts=now - 90 + i * 10)
     store.append("screen", "tree", {"app": "Old", "text": "窗口外"}, "S3", ts=now - 7200)
-    skill = LoadScreenContentSkill(store, {"perception.model_access": True})
+    skill = LoadScreenContentTool(store, {"perception.model_access": True})
 
     # limit 截断：留最新 limit 条、倒序、标记 truncated；窗口外条目不进结果
-    r = skill.run({"minutes": 30, "limit": 2}, SkillContext())
+    r = skill.run({"minutes": 30, "limit": 2}, ToolContext())
     assert r.success and r.data["count"] == 2 and r.data["truncated"] is True
     assert [it["app"] for it in r.data["items"]] == ["App2", "App1"]
 
     # 窗口内无条目（1 分钟窗覆盖不到 70~90 秒前的条目）→ 空结果且无 notice
-    empty = skill.run({"minutes": 1}, SkillContext())
+    empty = skill.run({"minutes": 1}, ToolContext())
     assert empty.success and empty.data["count"] == 0 and empty.data["truncated"] is False
     assert skill.post_reply_notice(empty) is None
 
     # minutes 上限 1440（超出收敛）
-    clamped = skill.run({"minutes": 99999}, SkillContext())
+    clamped = skill.run({"minutes": 99999}, ToolContext())
     assert clamped.success and clamped.data["minutes"] == 1440
     store.close()

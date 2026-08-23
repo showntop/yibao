@@ -19,9 +19,9 @@ def env(data_dir):
     from yibao_brain.llm import FakeProvider
     from yibao_brain.memory import FakeMemory
     from yibao_brain.plugins import LlmChat, load_plugins
-    from yibao_brain.skills import SkillRegistry
+    from yibao_brain.tools import ToolRegistry
 
-    reg = SkillRegistry()
+    reg = ToolRegistry()
 
     class _Http:
         def get(self, url, **kw):
@@ -493,7 +493,7 @@ def test_loop_panel_event_carries_explicit(env, monkeypatch, tmp_path):
 
     loop = AgentLoop(
         provider=_TwoStepProvider(
-            FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="fun.music", params={"kw": "七里香"})]),
+            FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="fun.music", params={"kw": "七里香"})]),
             FakeProvider(text="已打开音乐面板"),
         ),
         skills=reg,

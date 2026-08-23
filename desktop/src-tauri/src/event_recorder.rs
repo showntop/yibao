@@ -30,7 +30,7 @@ pub(crate) fn new_id() -> String {
 
 fn proc_label(a: &Value) -> String {
     a.get("label")
-        .or_else(|| a.get("skill_id"))
+        .or_else(|| a.get("tool_id"))
         .and_then(|v| v.as_str())
         .unwrap_or("操作")
         .to_string()
@@ -38,7 +38,7 @@ fn proc_label(a: &Value) -> String {
 
 /// use_plugin 不插过程行（成功有 notice 轻提示，重复；失败由 LLM 下一句转告）。
 fn proc_skip(a: &Value) -> bool {
-    a.get("skill_id").and_then(|v| v.as_str()) == Some("use_plugin")
+    a.get("tool_id").and_then(|v| v.as_str()) == Some("use_plugin")
 }
 
 fn truncate(s: &str, n: usize) -> String {
@@ -79,7 +79,7 @@ impl EventRecorder {
             "interrupted" => self.on_interrupted(db, conv_id),
             "listening_done" => self.on_listening_done(db, conv_id, e),
             "notice" => self.append_simple(db, conv_id, "sys", e, None),
-            "reminder" => self.append_simple(db, conv_id, "ai", e, Some("clock")),
+            "reminder" => self.on_reminder(db, conv_id, e),
             "error" => self.append_simple(db, conv_id, "ai", e, Some("alert")),
             // panel 事件不再落 panelLink 协作气泡（对话流已去除该机制，避免消息库里残留「⇢ 正在和 X 协作」）
             _ => {}
@@ -97,6 +97,16 @@ impl EventRecorder {
             return;
         };
         self.append(db, conv_id, "user", json!({ "text": text }), now_ms());
+    }
+
+    fn on_reminder(&self, db: &SessionDb, conv_id: &str, e: &Value) {
+        // 沙箱/agent 收尾复用 reminder 写 Feed；落对话会变成蓝色闹钟胶囊并拆开当轮 run。
+        let is_task = e.get("task").map(|t| t.is_object()).unwrap_or(false)
+            || e.get("type").and_then(|t| t.as_str()) == Some("watch_command");
+        if is_task {
+            return;
+        }
+        self.append_simple(db, conv_id, "ai", e, Some("clock"));
     }
 
     fn append_simple(&self, db: &SessionDb, conv_id: &str, role: &str, e: &Value, icon: Option<&str>) {

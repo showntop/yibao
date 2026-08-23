@@ -6,7 +6,7 @@ from enum import Enum
 from pydantic import BaseModel
 
 from .ipc import Action, RiskLevel
-from .skills import Skill
+from .tools import Tool
 
 
 class Decision(str, Enum):
@@ -34,7 +34,7 @@ class RiskClassifier:
         self.keywords = [k.lower() for k in (dangerous_keywords or _DEFAULT_DANGEROUS)]
         self.escalate_to = escalate_to
 
-    def classify(self, action: Action, skill: Skill | None) -> RiskLevel:
+    def classify(self, action: Action, skill: Tool | None) -> RiskLevel:
         base = skill.default_risk if skill is not None else action.risk
         text = " ".join(str(v) for v in action.params.values()).lower()
         if any(k in text for k in self.keywords):
@@ -52,7 +52,7 @@ class Gate:
         self.session_allowed_actions: set[str] = set()
 
     def decide(self, action: Action) -> Decision:
-        if action.skill_id in self.session_allowed:
+        if action.tool_id in self.session_allowed:
             return Decision.AUTO
         r = action.risk
         if r <= self.policy.auto_below_or_equal:

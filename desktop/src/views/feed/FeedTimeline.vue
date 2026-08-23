@@ -176,7 +176,7 @@ async function openInChat(it: FeedItem) {
 }
 
 // ---- coding 任务卡点击路由（B3）：attach 打开 coding:studio 面板并恢复该会话 ----
-// 直调失败/会话不存在的回执经 onBrainEvent 按 skill_id 认领（面板没开成必须看得见，点了没反应是最差反馈）
+// 直调失败/会话不存在的回执经 onBrainEvent 按 tool_id 认领（面板没开成必须看得见，点了没反应是最差反馈）
 const actionErr = ref("");
 
 /** coding 任务卡 → coding.attach{session_id}（L0 直调）：面板窗/peek 由宿主既有表面裁决呈现，
@@ -266,10 +266,10 @@ onMounted(async () => {
   });
   unEvent = await onBrainEvent((e) => {
     const agentChanged = e.kind === "action_result"
-      && !!e.action?.skill_id?.startsWith("agents.");
+      && !!e.action?.tool_id?.startsWith("agents.");
     if (e.kind === "reminder" || agentChanged) scheduleFeedRefresh();
     // coding.attach 失败回执认领：直调失败走 action_result(success=false)，闸门/异常走 error 事件
-    if (e.action?.skill_id === "coding.attach") {
+    if (e.action?.tool_id === "coding.attach") {
       if (e.kind === "error") actionErr.value = e.text ?? "打开编码会话失败";
       else if (e.kind === "action_result" && e.result && !e.result.success) {
         actionErr.value = e.result.error ?? "打开编码会话失败";

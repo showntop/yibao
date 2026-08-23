@@ -68,15 +68,15 @@ def test_parse_observe_requires_strict_boolean_and_bounded_text():
 
 
 def test_tool_call_fields():
-    tc = ToolCall(id="t1", skill_id="echo", params={"text": "x"})
-    assert tc.id == "t1" and tc.skill_id == "echo" and tc.params == {"text": "x"}
+    tc = ToolCall(id="t1", tool_id="echo", params={"text": "x"})
+    assert tc.id == "t1" and tc.tool_id == "echo" and tc.params == {"text": "x"}
 
 
 def test_fake_provider_returns_canned():
-    p = FakeProvider(text="ok", tool_calls=[ToolCall(id="t1", skill_id="echo", params={"text": "hi"})])
+    p = FakeProvider(text="ok", tool_calls=[ToolCall(id="t1", tool_id="echo", params={"text": "hi"})])
     resp = p.chat(messages=[{"role": "user", "content": "hi"}])
     assert resp.text == "ok"
-    assert resp.tool_calls[0].skill_id == "echo"
+    assert resp.tool_calls[0].tool_id == "echo"
 
 
 def test_openai_compat_provider_parses_openai_response():
@@ -142,13 +142,13 @@ def test_llm_chat_forwards_timeout_only_when_given():
 def test_merge_tool_call_deltas_accumulates_arguments():
     # 同一 index 的 arguments 片段要拼接后解析成 params
     deltas = [
-        ToolCallDelta(index=0, id="c1", skill_id="echo", arguments='{"text": "h'),
+        ToolCallDelta(index=0, id="c1", tool_id="echo", arguments='{"text": "h'),
         ToolCallDelta(index=0, arguments='i"}'),
     ]
     out = merge_tool_call_deltas(deltas)
     assert len(out) == 1
     assert out[0].id == "c1"
-    assert out[0].skill_id == "echo"
+    assert out[0].tool_id == "echo"
     assert out[0].params == {"text": "hi"}
 
 
@@ -160,11 +160,11 @@ def test_fake_provider_astream_yields_text_chunks():
 
 
 def test_fake_provider_astream_tool_calls_one_shot():
-    p = FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="echo", params={"text": "hi"})])
+    p = FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="echo", params={"text": "hi"})])
     deltas = asyncio.run(_collect(p.astream([{"role": "user", "content": "hi"}])))
     assert len(deltas) == 1
     tcs = merge_tool_call_deltas(deltas[0].tool_call_deltas)
-    assert tcs[0].skill_id == "echo" and tcs[0].params == {"text": "hi"}
+    assert tcs[0].tool_id == "echo" and tcs[0].params == {"text": "hi"}
 
 
 def test_openai_compat_provider_astream_parses_stream():
@@ -222,7 +222,7 @@ def test_openai_compat_provider_astream_parses_stream():
     text = "".join(d.text for d in deltas)
     all_tcs = merge_tool_call_deltas([d for dl in deltas for d in dl.tool_call_deltas])
     assert text == "hello"
-    assert all_tcs[0].skill_id == "echo" and all_tcs[0].params == {"text": "hi"}
+    assert all_tcs[0].tool_id == "echo" and all_tcs[0].params == {"text": "hi"}
 
 
 async def _collect(ait):

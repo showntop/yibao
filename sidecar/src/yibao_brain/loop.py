@@ -17,7 +17,7 @@ from .pricing import compute_cost
 from .memory import Memory
 from .plugins import get_panel, get_panel_title, panel_payload
 from .safety import Decision, Gate, RiskClassifier
-from .skills import SkillRegistry
+from .tools import ToolRegistry
 
 Confirmer = Callable[[list[Action]], dict[str, tuple[bool, bool]]]
 
@@ -86,7 +86,7 @@ class AgentLoop:
     def __init__(
         self,
         provider: LLMProvider,
-        skills: SkillRegistry,
+        skills: ToolRegistry,
         classifier: RiskClassifier,
         gate: Gate,
         memory: Memory,
@@ -147,7 +147,7 @@ class AgentLoop:
         return {"role": "system", "content": text}
 
     @property
-    def skills(self) -> SkillRegistry:
+    def skills(self) -> ToolRegistry:
         """委托给 invoker：替换 registry 时执行器同步生效（测试/运行期换注册表）。"""
         return self.invoker.skills
 
@@ -168,13 +168,13 @@ class AgentLoop:
                 active.add(focus["plugin"])
         return self.skills.openai_tools(active_plugins=active)
 
-    def _auto_activate(self, skill_id: str) -> None:
+    def _auto_activate(self, tool_id: str) -> None:
         """插件 tool 被执行过 → 该插件激活（直接点名调用也算展开，后续步骤工具可见）。"""
-        if self._active is not None and "." in skill_id:
-            self._active.add(skill_id.split(".", 1)[0])
+        if self._active is not None and "." in tool_id:
+            self._active.add(tool_id.split(".", 1)[0])
 
     @skills.setter
-    def skills(self, reg: SkillRegistry) -> None:
+    def skills(self, reg: ToolRegistry) -> None:
         self.invoker.skills = reg
 
     def _panel_with_refresh(self, action, result) -> dict | None:
@@ -192,7 +192,7 @@ class AgentLoop:
         payload = panel_payload(result)
         if payload is None or not result.success:
             return payload
-        refresh_id = getattr(self.skills.get(action.skill_id), "refresh", None)
+        refresh_id = getattr(self.skills.get(action.tool_id), "refresh", None)
         if not refresh_id:
             # hints 必须在 _redirect_to_focused_webview 之后并入：它重建 dict，会丢掉新字段
             return _with_surface_hints(self._redirect_to_focused_webview(payload), result, action.id)
@@ -205,7 +205,7 @@ class AgentLoop:
         except Exception:
             r_params = {}
         r_action = self.invoker.propose(
-            ToolCall(id=f"refresh_{action.id}", skill_id=refresh_id, params=r_params)
+            ToolCall(id=f"refresh_{action.id}", tool_id=refresh_id, params=r_params)
         )
         if self.invoker.decide(r_action) != Decision.AUTO:
             return _with_surface_hints(self._redirect_to_focused_webview(payload), result, action.id)
@@ -345,7 +345,7 @@ class AgentLoop:
                 if cancelled():
                     yield Event(kind="interrupted")
                     return
-                tc.skill_id = self.skills.resolve_llm_name(tc.skill_id)  # 安全名 → 真实 id
+                tc.tool_id = self.skills.resolve_llm_name(tc.tool_id)  # 安全名 → 真实 id
                 action = self.invoker.propose(tc)
                 yield Event(kind="action_proposed", action=action)
                 reason = self.invoker.precheck(action)  # 本地启发式拦截（不执行、不弹审批）
@@ -372,13 +372,13 @@ class AgentLoop:
                     approved, remember = verdicts.get(action.id, (False, False))
                     self.invoker.apply_verdict(action, approved, remember)
                     if not approved:
-                        yield Event(kind="error", action=action, text=f"用户拒绝执行 {tc.skill_id}")
+                        yield Event(kind="error", action=action, text=f"用户拒绝执行 {tc.tool_id}")
                         messages.append(
                             {"role": "tool", "tool_call_id": tc.id, "content": "用户拒绝执行该操作"}
                         )
                         continue
                 elif decision == Decision.DENY:
-                    yield Event(kind="error", text=f"策略禁止执行 {tc.skill_id}（风险过高）")
+                    yield Event(kind="error", text=f"策略禁止执行 {tc.tool_id}（风险过高）")
                     messages.append(
                         {"role": "tool", "tool_call_id": tc.id, "content": "策略禁止该操作"}
                     )
@@ -395,14 +395,14 @@ class AgentLoop:
                     tc.params,
                     {"cancel": cancel, "request_cancel": request_cancel},
                 )
-                self._auto_activate(action.skill_id)
-                skill = self.skills.get(action.skill_id)
+                self._auto_activate(action.tool_id)
+                skill = self.skills.get(action.tool_id)
                 safe = self.invoker.safe_result(action, result)
                 yield Event(kind="action_result", action=action, result=safe)
                 if cancelled():
                     yield Event(kind="interrupted")
                     return
-                if action.skill_id == "use_plugin" and result.success and not (result.data or {}).get("already"):
+                if action.tool_id == "use_plugin" and result.success and not (result.data or {}).get("already"):
                     # 插件展开要知情（§12-2 已定）：轻提示，不弹窗不打断
                     yield Event(kind="notice", text=(result.data or {}).get("human", "插件已展开"))
                 payload = await _offload(self._panel_with_refresh, action, safe)  # 壳侧面板也只拿安全副本
@@ -510,7 +510,7 @@ def _assistant_with_tools(content: str, tool_calls) -> dict:
                 "id": tc.id,
                 "type": "function",
                 "function": {
-                    "name": tc.skill_id,
+                    "name": tc.tool_id,
                     "arguments": json.dumps(tc.params, ensure_ascii=False),
                 },
             }

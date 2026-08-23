@@ -7,14 +7,14 @@ import subprocess
 import pytest
 
 from yibao_brain.ipc import RiskLevel
-from yibao_brain.skills import SkillContext, SkillRegistry
-from yibao_brain.skills_composite import (
-    ExtractUrlSkill,
-    FindFileSkill,
-    OpenPathSkill,
-    WebSearchSkill,
-    WriteNoteSkill,
-    register_composite_skills,
+from yibao_brain.tools import ToolContext, ToolRegistry
+from yibao_brain.tools.composite import (
+    ExtractUrlTool,
+    FindFileTool,
+    OpenPathTool,
+    WebSearchTool,
+    WriteNoteTool,
+    register_composite_tools,
 )
 
 from .fakes import FakeHost, _FakeHandle
@@ -42,7 +42,7 @@ def test_find_file_returns_paths(monkeypatch):
         return _cp("/Users/d/报表.xlsx\n/Users/d/报销单.pdf\n")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    r = FindFileSkill().run({"query": "报销"}, SkillContext())
+    r = FindFileTool().run({"query": "报销"}, ToolContext())
     assert r.success
     assert r.data["paths"] == ["/Users/d/报表.xlsx", "/Users/d/报销单.pdf"]
     assert r.data["count"] == 2
@@ -50,7 +50,7 @@ def test_find_file_returns_paths(monkeypatch):
 
 
 def test_find_file_empty_query():
-    r = FindFileSkill().run({"query": "  "}, SkillContext())
+    r = FindFileTool().run({"query": "  "}, ToolContext())
     assert not r.success
 
 
@@ -59,7 +59,7 @@ def test_find_file_mdfind_missing(monkeypatch):
         raise FileNotFoundError("mdfind")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    r = FindFileSkill().run({"query": "x"}, SkillContext())
+    r = FindFileTool().run({"query": "x"}, ToolContext())
     assert not r.success
 
 
@@ -69,7 +69,7 @@ def test_find_file_mdfind_missing(monkeypatch):
 def test_web_search_opens_engine_url(monkeypatch):
     calls: list[list[str]] = []
     monkeypatch.setattr(subprocess, "run", lambda argv, **kw: calls.append(argv) or _cp())
-    r = WebSearchSkill(engine="baidu").run({"query": "译宝 AI"}, SkillContext())
+    r = WebSearchTool(engine="baidu").run({"query": "译宝 AI"}, ToolContext())
     assert r.success
     assert calls[0][0] == "open"
     url = calls[0][1]
@@ -81,13 +81,13 @@ def test_web_search_engine_from_config(monkeypatch):
     calls: list[list[str]] = []
     monkeypatch.setattr(subprocess, "run", lambda argv, **kw: calls.append(argv) or _cp())
     monkeypatch.setenv("YIBAO_SEARCH_ENGINE", "bing")
-    r = WebSearchSkill().run({"query": "yibao"}, SkillContext())
+    r = WebSearchTool().run({"query": "yibao"}, ToolContext())
     assert r.success
     assert calls[0][1].startswith("https://www.bing.com/search?q=")
 
 
 def test_web_search_empty_query():
-    r = WebSearchSkill().run({"query": ""}, SkillContext())
+    r = WebSearchTool().run({"query": ""}, ToolContext())
     assert not r.success
 
 
@@ -99,7 +99,7 @@ def test_open_path_existing(monkeypatch, tmp_path):
     monkeypatch.setattr(subprocess, "run", lambda argv, **kw: calls.append(argv) or _cp())
     f = tmp_path / "a.txt"
     f.write_text("x")
-    r = OpenPathSkill().run({"path": str(f)}, SkillContext())
+    r = OpenPathTool().run({"path": str(f)}, ToolContext())
     assert r.success
     assert calls[0] == ["open", str(f)]
 
@@ -109,14 +109,14 @@ def test_open_path_reveal(monkeypatch, tmp_path):
     monkeypatch.setattr(subprocess, "run", lambda argv, **kw: calls.append(argv) or _cp())
     f = tmp_path / "a.txt"
     f.write_text("x")
-    r = OpenPathSkill().run({"path": str(f), "reveal": True}, SkillContext())
+    r = OpenPathTool().run({"path": str(f), "reveal": True}, ToolContext())
     assert r.success
     assert calls[0] == ["open", "-R", str(f)]
 
 
 def test_open_path_missing(monkeypatch):
     monkeypatch.setattr(subprocess, "run", lambda argv, **kw: _cp())
-    r = OpenPathSkill().run({"path": "/nonexistent/yibao-xyz"}, SkillContext())
+    r = OpenPathTool().run({"path": "/nonexistent/yibao-xyz"}, ToolContext())
     assert not r.success
 
 
@@ -124,10 +124,10 @@ def test_open_path_missing(monkeypatch):
 
 
 def test_write_note_via_ax_set_value(monkeypatch):
-    monkeypatch.setattr("yibao_brain.skills_composite.time.sleep", lambda s: None)
+    monkeypatch.setattr("yibao_brain.tools.composite.time.sleep", lambda s: None)
     host = FakeHost()
     host.a11y.handles[("AXTextArea", None)] = _FakeHandle(role="AXTextArea")
-    r = WriteNoteSkill().run({"text": "你好译宝"}, SkillContext(host=host))
+    r = WriteNoteTool().run({"text": "你好译宝"}, ToolContext(host=host))
     assert r.success
     assert host.a11y.launch_calls == ["TextEdit"]
     assert host.a11y.set_value_calls[0][1] == "你好译宝"
@@ -135,31 +135,31 @@ def test_write_note_via_ax_set_value(monkeypatch):
 
 
 def test_write_note_fallback_type_text(monkeypatch):
-    monkeypatch.setattr("yibao_brain.skills_composite.time.sleep", lambda s: None)
+    monkeypatch.setattr("yibao_brain.tools.composite.time.sleep", lambda s: None)
     host = FakeHost()
     host.a11y.handles[("AXTextArea", None)] = _FakeHandle(role="AXTextArea")
     host.a11y.set_value_ok = False
-    r = WriteNoteSkill().run({"text": "abc"}, SkillContext(host=host))
+    r = WriteNoteTool().run({"text": "abc"}, ToolContext(host=host))
     assert r.success
     assert r.data["method"] == "type"
     assert host.input.types == ["abc"]
 
 
 def test_write_note_no_text():
-    r = WriteNoteSkill().run({"text": ""}, SkillContext(host=FakeHost()))
+    r = WriteNoteTool().run({"text": ""}, ToolContext(host=FakeHost()))
     assert not r.success
 
 
 def test_write_note_no_host():
-    r = WriteNoteSkill().run({"text": "x"}, SkillContext())
+    r = WriteNoteTool().run({"text": "x"}, ToolContext())
     assert not r.success
 
 
 def test_write_note_launch_failure(monkeypatch):
-    monkeypatch.setattr("yibao_brain.skills_composite.time.sleep", lambda s: None)
+    monkeypatch.setattr("yibao_brain.tools.composite.time.sleep", lambda s: None)
     host = FakeHost()
     host.a11y.launch_pid = None
-    r = WriteNoteSkill().run({"text": "x"}, SkillContext(host=host))
+    r = WriteNoteTool().run({"text": "x"}, ToolContext(host=host))
     assert not r.success
 
 
@@ -167,8 +167,8 @@ def test_write_note_launch_failure(monkeypatch):
 
 
 def test_register_composite_skills():
-    reg = SkillRegistry()
-    register_composite_skills(reg)
+    reg = ToolRegistry()
+    register_composite_tools(reg)
     ids = {s.id for s in reg.list()}
     assert ids == {"find_file", "web_search", "extract_url", "open_path", "write_note"}
     assert all("parameters" in t for t in reg.openai_tools())
@@ -194,8 +194,8 @@ def test_web_search_ddg_structured(monkeypatch):
         calls.append(url)
         return _DDG_HTML.encode("utf-8")
 
-    monkeypatch.setattr("yibao_brain.skills_composite.get_bytes", fake_get)
-    r = WebSearchSkill(provider="ddg").run({"query": "译宝 AI"}, SkillContext())
+    monkeypatch.setattr("yibao_brain.tools.composite.get_bytes", fake_get)
+    r = WebSearchTool(provider="ddg").run({"query": "译宝 AI"}, ToolContext())
     assert r.success
     assert r.data["provider"] == "ddg"
     assert "html.duckduckgo.com" in calls[0]
@@ -219,8 +219,8 @@ def test_web_search_searxng_structured(monkeypatch):
         calls.append(url)
         return payload
 
-    monkeypatch.setattr("yibao_brain.skills_composite.get_bytes", fake_get)
-    r = WebSearchSkill(provider="searxng", searxng_url="http://127.0.0.1:8888").run({"query": "x"}, SkillContext())
+    monkeypatch.setattr("yibao_brain.tools.composite.get_bytes", fake_get)
+    r = WebSearchTool(provider="searxng", searxng_url="http://127.0.0.1:8888").run({"query": "x"}, ToolContext())
     assert r.success
     assert "format=json" in calls[0]
     assert r.data["results"] == [
@@ -230,7 +230,7 @@ def test_web_search_searxng_structured(monkeypatch):
 
 
 def test_web_search_searxng_missing_url():
-    r = WebSearchSkill(provider="searxng").run({"query": "x"}, SkillContext())
+    r = WebSearchTool(provider="searxng").run({"query": "x"}, ToolContext())
     assert not r.success
     assert "SearXNG" in r.error
 
@@ -246,8 +246,8 @@ def test_web_search_brave_structured(monkeypatch):
         calls.append((url, headers))
         return payload
 
-    monkeypatch.setattr("yibao_brain.skills_composite.get_bytes", fake_get)
-    r = WebSearchSkill(provider="brave").run({"query": "x"}, SkillContext())
+    monkeypatch.setattr("yibao_brain.tools.composite.get_bytes", fake_get)
+    r = WebSearchTool(provider="brave").run({"query": "x"}, ToolContext())
     assert r.success
     assert calls[0][1]["X-Subscription-Token"] == "k"
     assert r.data["results"] == [{"title": "T1", "url": "https://x.com/1", "snippet": "S1"}]
@@ -264,8 +264,8 @@ def test_web_search_tavily_structured(monkeypatch):
         calls.append(url)
         return payload
 
-    monkeypatch.setattr("yibao_brain.skills_composite.post_bytes", fake_post)
-    r = WebSearchSkill(provider="tavily").run({"query": "x"}, SkillContext())
+    monkeypatch.setattr("yibao_brain.tools.composite.post_bytes", fake_post)
+    r = WebSearchTool(provider="tavily").run({"query": "x"}, ToolContext())
     assert r.success
     assert calls[0] == "https://api.tavily.com/search"
     assert r.data["results"] == [{"title": "T", "url": "https://t.com", "snippet": "C"}]
@@ -273,7 +273,7 @@ def test_web_search_tavily_structured(monkeypatch):
 
 def test_web_search_api_missing_key(monkeypatch):
     monkeypatch.delenv("YIBAO_SEARCH_BRAVE_KEY", raising=False)
-    r = WebSearchSkill(provider="brave").run({"query": "x"}, SkillContext())
+    r = WebSearchTool(provider="brave").run({"query": "x"}, ToolContext())
     assert not r.success
     assert "YIBAO_SEARCH_BRAVE_KEY" in r.error
 
@@ -306,25 +306,25 @@ def test_extract_url_fetches_text(monkeypatch):
             "<script>var x=1;</script><nav>菜单</nav>"
             "<p>译宝是 AI 桌面助手，可以操作电脑。</p></body></html>").encode()
     monkeypatch.setattr(
-        "yibao_brain.skills_composite.urllib.request.urlopen",
+        "yibao_brain.tools.composite.urllib.request.urlopen",
         lambda req, timeout=10: _FakeResp(html),
     )
-    r = ExtractUrlSkill().run({"url": "https://example.com/"}, SkillContext())
+    r = ExtractUrlTool().run({"url": "https://example.com/"}, ToolContext())
     assert r.success
     assert r.data["title"] == "译宝官网"
     assert "译宝是 AI 桌面助手" in r.data["text"]
 
 
 def test_extract_url_bad_url():
-    r = ExtractUrlSkill().run({"url": "ftp://x"}, SkillContext())
+    r = ExtractUrlTool().run({"url": "ftp://x"}, ToolContext())
     assert not r.success
 
 
 def test_extract_url_empty_body(monkeypatch):
     html = b"<html><head><title>x</title></head><body>  </body></html>"
     monkeypatch.setattr(
-        "yibao_brain.skills_composite.urllib.request.urlopen",
+        "yibao_brain.tools.composite.urllib.request.urlopen",
         lambda req, timeout=10: _FakeResp(html),
     )
-    r = ExtractUrlSkill().run({"url": "https://example.com/"}, SkillContext())
+    r = ExtractUrlTool().run({"url": "https://example.com/"}, ToolContext())
     assert not r.success

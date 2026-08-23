@@ -6,14 +6,14 @@ proto 原型是 HTML，面板内不渲染源码，返回说明+路径（挑战/P
 from pathlib import Path
 
 from yibao_brain.ipc import ActionResult, RiskLevel
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 KINDS = ("challenge", "prd", "proto")
 _LABEL = {"challenge": "挑战文档", "prd": "PRD", "proto": "原型"}
 _MAX_TEXT = 20000  # 面板渲染上限，截断防卡
 
 
-class DocRead(Skill):
+class DocRead(Tool):
     id = "forge.doc_read"
     label = "读文档"
     description = (

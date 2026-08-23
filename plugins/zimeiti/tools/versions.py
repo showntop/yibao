@@ -4,10 +4,10 @@ from __future__ import annotations
 from typing import Any
 
 from yibao_brain.ipc import ActionResult, RiskLevel
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 
-class VersionsSkill(Skill):
+class VersionsTool(Tool):
     id = "zimeiti.versions"
     label = "查看版本"
     description = "列出选题的版本历史（版本号/备注/时间，新到旧；不含正文）。"
@@ -40,5 +40,5 @@ class VersionsSkill(Skill):
         return ActionResult(success=True, data={"rows": out})
 
 
-def make_tools(ctx: Any) -> list[Skill]:
-    return [VersionsSkill()]
+def make_tools(ctx: Any) -> list[Tool]:
+    return [VersionsTool()]

@@ -29,7 +29,7 @@ def _reader(msgs):
 
 def test_serve_voice_start_speaks_final_reply(tmp_path):
     provider = _TwoStep(
-        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="echo", params={"text": "hi"})]),
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="echo", params={"text": "hi"})]),
         second=FakeProvider(text="你好，我是译宝"),
     )
     loop = build_loop(_reader([]), use_real=False, db_path=str(tmp_path / "a.db"), provider=provider)

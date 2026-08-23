@@ -9,12 +9,12 @@ from yibao_brain.llm import FakeProvider, ToolCall
 from yibao_brain.loop import AgentLoop
 from yibao_brain.memory import FakeMemory
 from yibao_brain.safety import Gate, GatePolicy, RiskClassifier
-from yibao_brain.skills import EchoSkill, SkillRegistry
+from yibao_brain.tools import EchoTool, ToolRegistry
 
 
 def build_loop(tmp_path, provider, history):
-    reg = SkillRegistry()
-    reg.register(EchoSkill())
+    reg = ToolRegistry()
+    reg.register(EchoTool())
     return AgentLoop(
         provider=provider,
         skills=reg,
@@ -90,7 +90,7 @@ def test_history_concurrent_record_no_lost_turns(tmp_path):
 def test_failed_run_not_recorded(tmp_path):
     # 模型一直要调工具 → 达到最大步数报错，这种失败 run 不应污染历史
     history = ConversationHistory(tmp_path / "h.json")
-    provider = FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="echo", params={"text": "x"})])
+    provider = FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="echo", params={"text": "x"})])
     loop = build_loop(tmp_path, provider, history)
     events = list(loop.run("转圈圈"))
     assert events[-1].kind == "error"
@@ -152,7 +152,7 @@ def test_tool_run_records_full_trace(tmp_path):
     """
     history = ConversationHistory(tmp_path / "h.json")
     provider = _SeqProvider(
-        FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="echo", params={"text": "hi"})]),
+        FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="echo", params={"text": "hi"})]),
         FakeProvider(text="已回显 hi"),
     )
     loop = build_loop(tmp_path, provider, history)

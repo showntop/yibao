@@ -12,7 +12,7 @@ import urllib.request
 from typing import Any, Callable
 
 from yibao_brain.ipc import ActionResult, RiskLevel
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 _FETCH_TIMEOUT = 10
 _MAX_LIMIT = 20
@@ -101,7 +101,7 @@ _PLATFORMS: dict[str, tuple[str, str, Callable[[dict, int], list[dict]]]] = {
 }
 
 
-class HotTopicsSkill(Skill):
+class HotTopicsTool(Tool):
     id = "zimeiti.hot_topics"
     label = "查热点选题"
     description = (
@@ -172,5 +172,5 @@ class HotTopicsSkill(Skill):
         return result
 
 
-def make_tools(ctx: Any) -> list[Skill]:
-    return [HotTopicsSkill()]
+def make_tools(ctx: Any) -> list[Tool]:
+    return [HotTopicsTool()]

@@ -6,8 +6,8 @@ import YbIcon from "../../components/common/YbIcon.vue";
 import {
   onPendingConfirms,
   sendConfirmBatch,
-  canRememberSkill,
-  rememberLabelForSkill,
+  canRememberTool,
+  rememberLabelForTool,
   type PendingConfirm,
 } from "../../lib/brain";
 
@@ -50,7 +50,7 @@ function onToggleSelect(id: string, e: Event) {
 
 function rememberOf(id: string): boolean {
   const approval = approvals.value.find((item) => item.id === id);
-  return approval && canRememberSkill(approval.skill) ? rememberMap.value[id] ?? false : false;
+  return approval && canRememberTool(approval.tool_id) ? rememberMap.value[id] ?? false : false;
 }
 
 function onToggleRemember(id: string, e: Event) {
@@ -119,13 +119,13 @@ onUnmounted(() => {
             <input type="checkbox" :checked="isSelected(p.id)" @change="onToggleSelect(p.id, $event)" />
           </label>
           <div class="ap-info">
-            <strong class="ap-label">{{ p.label || p.skill }}</strong>
-            <span class="ap-desc">{{ p.desc || p.skill }}</span>
+            <strong class="ap-label">{{ p.label || p.tool_id }}</strong>
+            <span class="ap-desc">{{ p.desc || p.tool_id }}</span>
           </div>
         </div>
-        <label v-if="canRememberSkill(p.skill)" class="ap-remember" :title="rememberLabelForSkill(p.skill)">
+        <label v-if="canRememberTool(p.tool_id)" class="ap-remember" :title="rememberLabelForTool(p.tool_id)">
           <input type="checkbox" :checked="rememberOf(p.id)" @change="onToggleRemember(p.id, $event)" />
-          <span>{{ rememberLabelForSkill(p.skill) }}</span>
+          <span>{{ rememberLabelForTool(p.tool_id) }}</span>
         </label>
         <div class="ap-btns">
           <button class="btn-ghost" @click="decideApproval(p, false)">拒绝</button>

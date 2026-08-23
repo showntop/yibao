@@ -5,13 +5,13 @@
 from pathlib import Path
 
 from yibao_brain.ipc import ActionResult, RiskLevel
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 # 白名单：name 直接拼文件路径，必须挡住目录穿越和任意文件读取
 GUIDES = ("write",)
 
 
-class Guide(Skill):
+class Guide(Tool):
     id = "zimeiti.guide"
     label = "自媒体指南"
     description = (

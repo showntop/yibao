@@ -10,7 +10,7 @@
   cached_input_tokens 不参与计费差分）→ session_entry["usage_baseline"] 差分；
 - 取消 = SIGTERM（3s 宽限）→ SIGKILL；发 stopped 不发 done（对齐 CC 语义）；
 - headless 无运行中审批钩子（approval 恒 never）：can_use_tool/mode_pending/
-  rewind_pending 三个协议参数收下但忽略（mode 下轮 run 生效——SendSkill 读库 mode
+  rewind_pending 三个协议参数收下但忽略（mode 下轮 run 生效——SendTool 读库 mode
   传入新 sandbox；L2 确认条对 Codex 会话天然不触发，符合调研降级预期）。
 
 事件字段名以 0.137.0 实测 + 二进制符号对照为准：
@@ -212,7 +212,7 @@ class CodexCliRunner:
                   session_entry: dict | None = None) -> str | None:
         """子进程流式跑 prompt；逐行 JSONL 归一后 on_event；返回 thread_id（str|None）。
 
-        - thread.started 捕获 thread_id 作返回值（落 sessions.cc_session_id，SendSkill resume 用）。
+        - thread.started 捕获 thread_id 作返回值（落 sessions.cc_session_id，SendTool resume 用）。
         - turn.completed → done{usage:{duration_ms,cost_usd:None,input_tokens,output_tokens}}：
           token 经 usage_baseline 差分；duration_ms 由本 runner time.monotonic 计；cost 无→None（前端容缺）。
         - turn.failed/error → error 事件；异常不外抛转 error 事件（对齐 CC 语义）。
@@ -222,7 +222,7 @@ class CodexCliRunner:
           如 resume 不存在 thread_id：退出码 1、错误只在 stderr、stdout 零事件）；
           零退出才走裸 done 兜底（对齐 CC：流尽未遇 ResultMessage 也发 done）。
         - can_use_tool/mode_pending/rewind_pending 忽略：headless 无运行中审批/回滚钩子
-          （mode 下轮生效：SendSkill 读库 mode → 新 sandbox 进 argv）。
+          （mode 下轮生效：SendTool 读库 mode → 新 sandbox 进 argv）。
         """
         factory = self._process_factory or self._default_factory
         argv = self._build_argv(cwd, resume_session_id, permission_mode)

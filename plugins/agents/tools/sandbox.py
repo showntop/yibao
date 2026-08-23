@@ -24,7 +24,7 @@ from typing import Any
 
 from yibao_brain import config
 from yibao_brain.ipc import ActionResult, RiskLevel
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 
 def _sibling(stem: str):
@@ -94,7 +94,7 @@ def _find_interpreter(lang: str) -> str | None:
     return shutil.which("node")
 
 
-class CodeExecSkill(Skill):
+class CodeExecTool(Tool):
     id = "agents.code_exec"
     label = "运行沙箱脚本"
     description = (
@@ -268,5 +268,5 @@ class CodeExecSkill(Skill):
                                   f"输出尾部：\n{output or '(无输出)'}")
 
 
-def make_tools(ctx: Any) -> list[Skill]:
-    return [CodeExecSkill()]
+def make_tools(ctx: Any) -> list[Tool]:
+    return [CodeExecTool()]

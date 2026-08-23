@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from yibao_brain.ipc import ActionResult, RiskLevel
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 # 平台 → 后台首页（open_platform 用）；子串包含匹配（platform 是自由文本，如「公众号+小红书」）
 _PLATFORM_URLS = (
@@ -25,7 +25,7 @@ _PLATFORM_URLS = (
 )
 
 
-class PublishSkill(Skill):
+class PublishTool(Tool):
     id = "zimeiti.publish"
     label = "发布内容"
     description = (
@@ -101,5 +101,5 @@ class PublishSkill(Skill):
         )
 
 
-def make_tools(ctx: Any) -> list[Skill]:
-    return [PublishSkill()]
+def make_tools(ctx: Any) -> list[Tool]:
+    return [PublishTool()]

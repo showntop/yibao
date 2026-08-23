@@ -8,13 +8,13 @@ import time
 from pathlib import Path
 
 from yibao_brain.ipc import ActionResult, RiskLevel
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 # 文档种类白名单：决定写回哪一列（{kind}_path），也挡住乱写列名
 KINDS = ("challenge", "prd")
 
 
-class DocSave(Skill):
+class DocSave(Tool):
     id = "forge.doc_save"
     label = "保存文档"
     description = (

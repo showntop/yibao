@@ -7,8 +7,8 @@ def test_risk_level_ordering():
 
 
 def test_action_defaults():
-    a = Action(skill_id="echo", params={"text": "hi"})
-    assert a.skill_id == "echo"
+    a = Action(tool_id="echo", params={"text": "hi"})
+    assert a.tool_id == "echo"
     assert a.params == {"text": "hi"}
     assert a.risk == RiskLevel.L1_LOW
     assert a.id  # auto-assigned non-empty

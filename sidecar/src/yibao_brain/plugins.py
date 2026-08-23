@@ -23,7 +23,8 @@ logger = logging.getLogger(__name__)
 from .http_client import HttpClient
 from .ipc import ActionResult, RiskLevel
 from .plugindb import PluginDb
-from .skills import Skill, SkillContext, SkillRegistry
+# 直接 import tools.core（不经 tools/__init__ 全量），避免 ledger→plugins 循环导入
+from .tools.core import Tool, ToolContext, ToolRegistry
 
 
 # 合法 capability 集合（v2 §3.3）；host 不由加载器注入（invoker 执行时嫁接）
@@ -100,10 +101,10 @@ def _render_params(obj, render):
 # ---------- 声明式 tool ----------
 
 
-class DeclarativeTool(Skill):
+class DeclarativeTool(Tool):
     """manifest [[tool]] 声明的免代码 tool：按 type 分发到 db/http/llm/composite 执行。"""
 
-    def __init__(self, plugin_id: str, spec: dict, registry: SkillRegistry):
+    def __init__(self, plugin_id: str, spec: dict, registry: ToolRegistry):
         tid = spec["id"]
         self.id = tid if tid.startswith(f"{plugin_id}.") else f"{plugin_id}.{tid}"
         self.description = spec.get("description", "")
@@ -152,7 +153,7 @@ class DeclarativeTool(Skill):
             "parameters": {"type": "object", "properties": self._params_schema, "required": self._required},
         }
 
-    def run(self, params: dict, ctx: SkillContext) -> ActionResult:
+    def run(self, params: dict, ctx: ToolContext) -> ActionResult:
         handler = {
             "db": self._run_db,
             "http": self._run_http,
@@ -171,7 +172,7 @@ class DeclarativeTool(Skill):
                 result.attention = self._attention
         return result
 
-    def _run_db(self, params: dict, ctx: SkillContext) -> ActionResult:
+    def _run_db(self, params: dict, ctx: ToolContext) -> ActionResult:
         if ctx.db is None:
             return ActionResult(success=False, error="未声明 db capability")
         spec = self._spec.get("db") or {}
@@ -212,7 +213,7 @@ class DeclarativeTool(Skill):
             return ActionResult(success=True, data={"id": params.get("id")})
         return ActionResult(success=False, error=f"未知 db op：{op!r}")
 
-    def _run_http(self, params: dict, ctx: SkillContext) -> ActionResult:
+    def _run_http(self, params: dict, ctx: ToolContext) -> ActionResult:
         if ctx.http is None:
             return ActionResult(success=False, error="未声明 http capability")
         spec = self._spec.get("http") or {}
@@ -226,14 +227,14 @@ class DeclarativeTool(Skill):
             return ActionResult(success=False, error=f"不支持的 http method：{method!r}")
         return ActionResult(success=True, data=resp if isinstance(resp, dict) else {"response": resp})
 
-    def _run_prompt(self, params: dict, ctx: SkillContext) -> ActionResult:
+    def _run_prompt(self, params: dict, ctx: ToolContext) -> ActionResult:
         if ctx.llm is None:
             return ActionResult(success=False, error="未声明 llm capability")
         template = (self._spec.get("prompt") or {}).get("template", "")
         prompt = _render(template, params.get)
         return ActionResult(success=True, data={"text": ctx.llm.chat(prompt)})
 
-    def _run_composite(self, params: dict, ctx: SkillContext) -> ActionResult:
+    def _run_composite(self, params: dict, ctx: ToolContext) -> ActionResult:
         """顺序调同 registry 的其他 tool（直接 run 不过闸门——编排本身已过了一次闸）。
 
         params 模板支持 {{input.x}}（本 tool 入参）与 {{steps.N.data}}（前序步骤返回 data 的 json）。
@@ -277,6 +278,20 @@ _PLUGIN_DIRS: dict[str, Path] = {}  # pid → 插件根目录(module 面板 payl
 def get_plugin_summaries() -> dict[str, dict]:
     """已加载插件摘要：pid → {name, description}（use_plugin 路由暴露用）。"""
     return {pid: dict(info) for pid, info in _PLUGIN_INFO.items()}
+
+
+def unload_plugin(registry: ToolRegistry, pid: str) -> int:
+    """卸载插件（tool_uninstall）：注销其全部工具 + 移除摘要/目录记录。返回注销工具数。
+
+    privileged 插件的拒绝由调用方（tool_uninstall）负责；此处只管注册表与摘要清理。
+    """
+    removed = 0
+    for tid in list(registry.plugin_tools().get(pid, [])):
+        registry.unregister(tid)
+        removed += 1
+    _PLUGIN_INFO.pop(pid, None)
+    _PLUGIN_DIRS.pop(pid, None)
+    return removed
 
 
 _PLUGIN_MEM_NS: dict[str, str] = {}
@@ -396,7 +411,7 @@ def _inline_vendor(text: str, child: Path) -> str:
     return _INJECT_VENDOR.sub(_replace, text)
 
 
-def _load_panels(child: Path, pid: str, manifest: dict, registry: SkillRegistry) -> None:
+def _load_panels(child: Path, pid: str, manifest: dict, registry: ToolRegistry) -> None:
     """解析 manifest [[panel]]：schema/widget 读 JSON、webview 读 HTML 文本存注册表；未知类型记错误跳过。
     module(R4 插件运行时)不读文件全文,只登记入口相对路径(内容经 yibao-plugin:// 协议按需下发)。
     显示名 = 插件 name · 面板 label（label 缺省用面板 name）。
@@ -497,7 +512,7 @@ def get_plugin_events(plugin_id: str) -> list[str]:
     return list(_API_EVENTS.get(plugin_id, []))
 
 
-def _load_api(pid: str, path: Path, registry: SkillRegistry) -> None:
+def _load_api(pid: str, path: Path, registry: ToolRegistry) -> None:
     """解析 api.toml。单个 method 无效（handler 未注册/跨插件、risk 非法）记错误跳过，不拖垮其他 method。"""
     doc = tomllib.loads(path.read_text(encoding="utf-8"))
     for m in doc.get("method") or []:
@@ -539,7 +554,7 @@ def _load_api(pid: str, path: Path, registry: SkillRegistry) -> None:
 
 def load_plugins(
     plugins_dir,
-    registry: SkillRegistry,
+    registry: ToolRegistry,
     *,
     memory,
     http,
@@ -548,14 +563,21 @@ def load_plugins(
     host_available: bool = True,
     reminders=None,
     emit_event=None,
+    existing: set[str] | None = None,
 ) -> dict[str, str]:
-    """扫描加载所有插件，返回 {插件标识: "ok" 或错误信息}（失败插件的标识为目录名）。"""
+    """扫描加载所有插件，返回 {插件标识: "ok" 或错误信息}（失败插件的标识为目录名）。
+
+    existing：已加载的插件目录名集合（约定目录名 == manifest id）。增量重载场景
+    （capability_refresh）传入即跳过已注册插件，只热加载新放入的目录。
+    """
     results: dict[str, str] = {}
     root = Path(plugins_dir)
     if not root.is_dir():
         return results
     for child in sorted(root.iterdir()):
         if not child.is_dir() or child.name.startswith("_"):  # _staging/ 暂存区跳过
+            continue
+        if existing is not None and child.name in existing:  # 增量重载：已加载的跳过
             continue
         if not (child / "manifest.toml").is_file():
             continue
@@ -569,16 +591,18 @@ def load_plugins(
     return results
 
 
-def _load_one(child: Path, registry: SkillRegistry, *, memory, http, llm, emit_panel, host_available,
+def _load_one(child: Path, registry: ToolRegistry, *, memory, http, llm, emit_panel, host_available,
               reminders=None, emit_event=None) -> str:
     manifest = tomllib.loads((child / "manifest.toml").read_text(encoding="utf-8"))
     pid = manifest["id"]  # id 必填；min_engine_version 只解析暂不校验（阶段 0）
     if not _PLUGIN_ID.match(pid):
         raise ValueError(f"非法插件 id：{pid!r}")
     # 插件摘要（use_plugin 路由暴露：LLM 靠它知道有哪些插件可展开）
+    # privileged：与底座深度集成、不可装卸的特权插件（如 coding），管理面只读
     _PLUGIN_INFO[pid] = {
         "name": manifest.get("name") or pid,
         "description": manifest.get("description") or "",
+        "privileged": bool(manifest.get("privileged", False)),
     }
 
     caps = set(manifest.get("capabilities") or [])
@@ -593,7 +617,7 @@ def _load_one(child: Path, registry: SkillRegistry, *, memory, http, llm, emit_p
 
     # 按 capabilities 构造 scoped ctx：未声明的能力对应属性保持 None
     # emit_event 与 capability 无关（后台线程主动播报的公共通道，如 agents 插件任务完成通知）
-    ctx = SkillContext(emit_panel=emit_panel, emit_event=emit_event)
+    ctx = ToolContext(emit_panel=emit_panel, emit_event=emit_event)
     if "db" in caps:
         ctx.db = PluginDb(pid)
         ctx.db.apply_schema(tables)
@@ -609,7 +633,7 @@ def _load_one(child: Path, registry: SkillRegistry, *, memory, http, llm, emit_p
         ctx.reminders = reminders  # 共享底座提醒存储；未提供时为 None（tool 运行时优雅报错）
 
     # 先收齐全部 tool，最后统一注册：任何一步失败都不留半成品
-    skills: list[Skill] = []
+    skills: list[Tool] = []
     for spec in manifest.get("tool") or []:
         ttype = spec.get("type", "db")
         if ttype not in ("db", "http", "prompt", "composite"):
@@ -636,7 +660,7 @@ def _load_one(child: Path, registry: SkillRegistry, *, memory, http, llm, emit_p
     return pid
 
 
-def _load_code_tools(child: Path, manifest: dict, ctx: SkillContext) -> list[Skill]:
+def _load_code_tools(child: Path, manifest: dict, ctx: ToolContext) -> list[Tool]:
     """代码插件最小支持：[code] entry = "tools" → 目录下每个 .py 提供 make_tools(ctx)。"""
     entry = (manifest.get("code") or {}).get("entry")
     if not entry:
@@ -644,7 +668,7 @@ def _load_code_tools(child: Path, manifest: dict, ctx: SkillContext) -> list[Ski
     tools_dir = child / entry
     if not tools_dir.is_dir():
         raise ValueError(f"[code] entry 目录不存在：{entry!r}")
-    out: list[Skill] = []
+    out: list[Tool] = []
     for py in sorted(tools_dir.glob("*.py")):
         if py.name.startswith("_"):
             continue

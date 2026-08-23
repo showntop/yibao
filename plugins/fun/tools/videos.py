@@ -16,7 +16,7 @@ import urllib.request
 from typing import Any, Callable
 
 from yibao_brain.ipc import ActionResult, RiskLevel
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 _FETCH_TIMEOUT = 10
 _MAX_LIMIT = 20
@@ -137,7 +137,7 @@ def _parse_ranking(data: dict, limit: int) -> list[dict]:
     return out
 
 
-class VideosSkill(Skill):
+class VideosTool(Tool):
     id = "fun.videos"
     label = "看视频"
     description = (
@@ -234,5 +234,5 @@ class VideosSkill(Skill):
         return result
 
 
-def make_tools(ctx: Any) -> list[Skill]:
-    return [VideosSkill()]
+def make_tools(ctx: Any) -> list[Tool]:
+    return [VideosTool()]

@@ -17,6 +17,11 @@ import uuid
 from pathlib import Path
 
 
+def make_tools(ctx):
+    """辅助模块不直接贡献工具（工具统一由 coding.py 提供）；空实现通过插件加载器检查。"""
+    return []
+
+
 def _sibling(stem: str):
     """按路径加载同目录兄弟模块并缓存进 sys.modules（R-35 归一：加载逻辑在 _common.load_sibling，薄委托）。
 
@@ -72,11 +77,11 @@ def _spawn_stream(db, sid: str, cwd: str, prompt: str, runner, emit_event,
     emit_event 已线程安全（proactive_dispatcher.emit → call_soon_threadsafe），
     daemon 线程直调即可。db 经参数链一路传到 _stream（落最终状态用）。
     resume_session_id：非 None 时透传 runner.run，续上同一 CC 会话历史（多轮）；
-        None（StartSkill 路径）→ 全新会话。
+        None（StartTool 路径）→ 全新会话。
     permission_mode：透传 runner.run（acceptEdits/plan），进 SDK options / codex sandbox。
     agent：会话引擎 id（claude-code/cc/codex），透传 _stream → panel_data data 平级键
         （面板按此实时更新引擎徽标）。
-    llm：会话级 LLM 能力（SendSkill 透传 ctx.llm），仅供 _stream 的 codex resume
+    llm：会话级 LLM 能力（SendTool 透传 ctx.llm），仅供 _stream 的 codex resume
         失败 fallback 生成交接摘要用；None → 无 fallback，落原 failed 路径。
     _SESSIONS[sid] entry 同时是运行中切模式的通道（coding.mode 写 mode_pending，
     runner 每条消息前消费 → client.set_permission_mode）。
@@ -130,7 +135,7 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
 
     transcript 落库：user_msg（带 CC uuid，rewind 锚点）/ text_delta / done·stopped 终态 marker，
     seq 跨轮续号（每轮流式开始时从库里查本 sid 当前 max seq 续起，多轮不交错；
-    HistorySkill 按 seq 取最近 40 条）。
+    HistoryTool 按 seq 取最近 40 条）。
     落库 try/except 隔离——transcript 丢失绝不许炸断流式。
     落最终状态前先查当前 status——用户主动 stop 时 _stop_session 已先写 stopped，
     这里保留 stopped 不被 done/failed 覆盖（race-safe，仿 agents._common._wait:66-73）。
@@ -139,17 +144,17 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
     permission_mode：透传 runner.run（acceptEdits/plan）。
     agent：会话引擎 id，panel_data data 加平级 "agent" 键（data={session_id, agent, event}，
     面板按此实时更新引擎徽标）。
-    llm：会话级 LLM 能力（SendSkill 透传 ctx.llm）。codex resume 零事件失败
+    llm：会话级 LLM 能力（SendTool 透传 ctx.llm）。codex resume 零事件失败
     （encrypted_content bug 形态：stdout 零事件 → 未捕获 thread.started → cc_sid None，
     runner returncode 守御补发 error）时一次性自动 fallback：用交接摘要新开会话续跑
-    （SessionBriefSkill 手动补救流程的自动化），再败自然落原 failed 路径（无循环）；
+    （SessionBriefTool 手动补救流程的自动化），再败自然落原 failed 路径（无循环）；
     llm None → 跳过 fallback。
     session_entry：_SESSIONS[sid] live entry 透传 runner.run——coding.mode 写入
     mode_pending 后，runner 每条消息前消费并 client.set_permission_mode（运行中切模式）。
     can_use_tool：每轮新建权限回调桥（make_permission_callback(sid, on_event, emit_event=…)）——
     SDK 触发权限询问时发 permission_request 进面板流 + confirmation_needed 进 L2 确认体系，
     阻塞等 confirm_batched 路由 / coding.decide 备用通道裁决（双通道幂等，超时默认 deny）。
-    steer drain：本轮结束后查 _SESSIONS[sid]["steer"]（SendSkill 对 running 会话的排队
+    steer drain：本轮结束后查 _SESSIONS[sid]["steer"]（SendTool 对 running 会话的排队
     督导补充），非空合并续跑（resume_session_id=cc_sid），队列空才落终态汇报。
     """
     state = {"error": False}
@@ -224,7 +229,7 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
     # codex resume 零事件失败的一次性自动 fallback（encrypted_content bug 形态：stdout 零事件
     # → 未捕获 thread.started → cc_sid None，runner returncode 守御补发 error——「resume 根本
     # 没跑起来」；turn 中途失败已捕获 thread_id，cc_sid 非 None 不触发）。判据齐备则用交接摘要
-    # 新开会话续跑（SessionBriefSkill 手动补救流程的自动化）；只重试一次，再败自然落原
+    # 新开会话续跑（SessionBriefTool 手动补救流程的自动化）；只重试一次，再败自然落原
     # failed 路径（state["error"] 由重试的 error 事件重立，无循环）。
     if (agent == "codex" and resume_session_id and cc_sid is None
             and state["error"] and not cancel.is_set() and llm is not None):
@@ -260,7 +265,7 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
         entry = _SESSIONS.get(sid)
         queue = entry.get("steer") if isinstance(entry, dict) else None
         queued: list[str] = []
-        while queue:                     # 逐条 pop(0)：与 SendSkill 并发 append 不丢消息（GIL 原子）
+        while queue:                     # 逐条 pop(0)：与 SendTool 并发 append 不丢消息（GIL 原子）
             queued.append(str(queue.pop(0)))
         if not queued:
             break
@@ -374,8 +379,8 @@ def _persist_marker(db, sid: str, text: str) -> None:
 
 
 def _session_brief(db, sid: str, llm, src: str, dst: str) -> str:
-    """会话库任一会话的交接 Brief（三处共用：SessionBriefSkill / _stream 的 codex
-    resume fallback / SendSkill 的 cc_session_id 空降级续跑）。
+    """会话库任一会话的交接 Brief（三处共用：SessionBriefTool / _stream 的 codex
+    resume fallback / SendTool 的 cc_session_id 空降级续跑）。
 
     取 messages 尾 40 条（seq DESC LIMIT 40 再反转回正序）→ git 摘要 → LLM 凝练；
     llm 缺失/失败/空历史退化为最近消息原文节选——恒有交接上下文，不被 LLM 故障挡路。

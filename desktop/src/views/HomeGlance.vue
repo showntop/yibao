@@ -2,13 +2,13 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import HomeWidget from "./HomeWidget.vue";
 import {
-  canRememberSkill,
+  canRememberTool,
   getFeedOnce,
   getWidgetsOnce,
   onFeed,
   onPendingConfirms,
   onWidgets,
-  rememberLabelForSkill,
+  rememberLabelForTool,
   sendConfirmBatch,
   type FeedItem,
   type PendingConfirm,
@@ -50,7 +50,7 @@ async function decide(approved: boolean) {
     await sendConfirmBatch([{
       id: card.id,
       approved,
-      remember: remember.value && canRememberSkill(card.skill),
+      remember: remember.value && canRememberTool(card.tool_id),
     }]);
     remember.value = false;
   } catch {
@@ -95,9 +95,9 @@ onUnmounted(() => {
         <strong>{{ firstNeed.label || "待批准" }}</strong>
         <small v-if="firstNeed.desc">{{ firstNeed.desc }}</small>
         <p v-if="decideError" class="err" role="alert">{{ decideError }}</p>
-        <label v-if="canRememberSkill(firstNeed.skill)" class="remember">
+        <label v-if="canRememberTool(firstNeed.tool_id)" class="remember">
           <input v-model="remember" type="checkbox" />
-          <span>{{ rememberLabelForSkill(firstNeed.skill) }}</span>
+          <span>{{ rememberLabelForTool(firstNeed.tool_id) }}</span>
         </label>
         <div class="acts">
           <button type="button" class="reject" :disabled="Boolean(deciding)" @click="decide(false)">驳回</button>

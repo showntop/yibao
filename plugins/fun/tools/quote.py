@@ -10,7 +10,7 @@ import urllib.request
 from typing import Any
 
 from yibao_brain.ipc import ActionResult, RiskLevel
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 _FETCH_TIMEOUT = 8
 _MAX_COUNT = 10
@@ -69,7 +69,7 @@ def _fallback_joke() -> dict | None:
         return None
 
 
-class JokeSkill(Skill):
+class JokeTool(Tool):
     id = "fun.joke"
     label = "AI 讲段子"
     description = (
@@ -106,7 +106,7 @@ class JokeSkill(Skill):
         return ActionResult(success=False, error="段子没生成出来，稍后再试")
 
 
-class QuoteSkill(Skill):
+class QuoteTool(Tool):
     id = "fun.quote"
     label = "来一句"
     description = (
@@ -175,5 +175,5 @@ class QuoteSkill(Skill):
         return result
 
 
-def make_tools(ctx: Any) -> list[Skill]:
-    return [QuoteSkill(), JokeSkill()]
+def make_tools(ctx: Any) -> list[Tool]:
+    return [QuoteTool(), JokeTool()]

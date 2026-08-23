@@ -19,7 +19,7 @@ from datetime import datetime
 from typing import Any
 
 from .ipc import ActionResult, RiskLevel
-from .skills import Skill
+from .tools import Tool
 
 _MIN_DELAY_S = 10  # 太短没意义（调度 10s 一拍），也防 LLM 给出 0/负数
 _MAX_DELAY_S = 366 * 24 * 3600  # 一年以上不收
@@ -146,7 +146,7 @@ def _parse_at(raw: str) -> float | None:
     return None
 
 
-class ReminderSetSkill(Skill):
+class ReminderSetTool(Tool):
     id = "reminder_set"
     label = "设提醒"
     description = (
@@ -217,7 +217,7 @@ class ReminderSetSkill(Skill):
         )
 
 
-class ReminderListSkill(Skill):
+class ReminderListTool(Tool):
     id = "reminder_list"
     label = "查提醒"
     description = "列出还没触发的提醒（用户问「我有什么提醒/闹钟」时用）。"
@@ -243,7 +243,7 @@ class ReminderListSkill(Skill):
         )
 
 
-class ReminderCancelSkill(Skill):
+class ReminderCancelTool(Tool):
     id = "reminder_cancel"
     label = "取消提醒"
     description = "取消一个待触发的提醒（先 reminder_list 拿 id；用户说「取消那个提醒」时用）。"
@@ -277,5 +277,5 @@ class ReminderCancelSkill(Skill):
                                                 "human": f"已取消：{_fmt_item(item)}"})
 
 
-def make_skills(store: ReminderStore) -> list[Skill]:
-    return [ReminderSetSkill(store), ReminderListSkill(store), ReminderCancelSkill(store)]
+def make_skills(store: ReminderStore) -> list[Tool]:
+    return [ReminderSetTool(store), ReminderListTool(store), ReminderCancelTool(store)]

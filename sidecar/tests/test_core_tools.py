@@ -1,23 +1,23 @@
 """真实原子技能单测：用 FakeHost 注入，断言编排逻辑（不触真机 a11y/键鼠）。"""
-from yibao_brain.skills import SkillContext, SkillRegistry
-from yibao_brain.skills_real import (
-    ClickControlSkill,
-    OpenAppSkill,
-    ReadTreeSkill,
-    ScreenshotSkill,
-    TypeTextSkill,
-    register_real_skills,
+from yibao_brain.tools import ToolContext, ToolRegistry
+from yibao_brain.tools.perception import (
+    ClickControlTool,
+    OpenAppTool,
+    ReadTreeTool,
+    ScreenshotTool,
+    TypeTextTool,
+    register_core_tools,
 )
 from fakes import FakeHost, _FakeHandle
 
 
-def _ctx(host: FakeHost) -> SkillContext:
-    return SkillContext(host=host)
+def _ctx(host: FakeHost) -> ToolContext:
+    return ToolContext(host=host)
 
 
 def test_screenshot_captures_and_sets_path():
     host = FakeHost()
-    r = ScreenshotSkill().run({}, _ctx(host))
+    r = ScreenshotTool().run({}, _ctx(host))
     assert r.success
     assert r.data["path"] == host.screenshotter.path
     assert r.screenshot_path == host.screenshotter.path
@@ -27,7 +27,7 @@ def test_screenshot_captures_and_sets_path():
 def test_read_tree_returns_frontmost_tree():
     host = FakeHost()
     host.a11y.tree = {"role": "AXApp", "title": "Calculator", "children": []}
-    r = ReadTreeSkill().run({"max_depth": 3}, _ctx(host))
+    r = ReadTreeTool().run({"max_depth": 3}, _ctx(host))
     assert r.success
     assert r.data["tree"]["title"] == "Calculator"
 
@@ -35,7 +35,7 @@ def test_read_tree_returns_frontmost_tree():
 def test_open_app_returns_pid():
     host = FakeHost()
     host.a11y.launch_pid = 4321
-    r = OpenAppSkill().run({"app": "Calculator"}, _ctx(host))
+    r = OpenAppTool().run({"app": "Calculator"}, _ctx(host))
     assert r.success
     assert r.data == {"app": "Calculator", "pid": 4321}
 
@@ -46,7 +46,7 @@ def test_open_app_not_blocked_by_user_input_lease():
     host.a11y.launch_pid = 4321
     host.user_input.allowed = False
     host.user_input.reason = "检测到用户正在操作，AI 已让出控制"
-    r = OpenAppSkill().run({"app": "Calculator"}, _ctx(host))
+    r = OpenAppTool().run({"app": "Calculator"}, _ctx(host))
     assert r.success
     assert r.data == {"app": "Calculator", "pid": 4321}
     # 守卫压根没被调用——租约已不覆盖 open_app
@@ -55,7 +55,7 @@ def test_open_app_not_blocked_by_user_input_lease():
 
 
 def test_open_app_missing_param():
-    r = OpenAppSkill().run({}, _ctx(FakeHost()))
+    r = OpenAppTool().run({}, _ctx(FakeHost()))
     assert not r.success
     assert "app" in r.error
 
@@ -63,7 +63,7 @@ def test_open_app_missing_param():
 def test_open_app_launch_fail():
     host = FakeHost()
     host.a11y.launch_pid = None
-    r = OpenAppSkill().run({"app": "Ghost"}, _ctx(host))
+    r = OpenAppTool().run({"app": "Ghost"}, _ctx(host))
     assert not r.success
 
 
@@ -71,7 +71,7 @@ def test_click_control_ax_press():
     host = FakeHost()
     h = _FakeHandle("AXButton", "等于")
     host.a11y.handles[("AXButton", "等于")] = h
-    r = ClickControlSkill().run({"role": "AXButton", "title": "等于"}, _ctx(host))
+    r = ClickControlTool().run({"role": "AXButton", "title": "等于"}, _ctx(host))
     assert r.success and r.data["method"] == "ax"
     assert host.a11y.press_calls == [h]
     assert host.input.clicks == []  # 没走坐标回退
@@ -84,7 +84,7 @@ def test_click_control_yields_before_ax_press_when_user_is_active():
     host.user_input.allowed = False
     host.user_input.reason = "检测到用户正在操作，AI 已让出控制"
 
-    r = ClickControlSkill().run({"role": "AXButton", "title": "等于"}, _ctx(host))
+    r = ClickControlTool().run({"role": "AXButton", "title": "等于"}, _ctx(host))
 
     assert not r.success and "用户正在操作" in r.error
     assert host.a11y.press_calls == []
@@ -92,34 +92,34 @@ def test_click_control_yields_before_ax_press_when_user_is_active():
 
 def test_click_control_no_blind_coord_and_hints_computer_use():
     # 不再盲点坐标：给了 x/y 但 a11y 查不到 → 失败 + 提示 computer_use
-    r = ClickControlSkill().run({"x": 100, "y": 200}, _ctx(FakeHost()))
+    r = ClickControlTool().run({"x": 100, "y": 200}, _ctx(FakeHost()))
     assert not r.success
     assert "computer_use" in r.error
 
 
 def test_click_control_ax_fail_still_coordless():
     host = FakeHost()
-    r = ClickControlSkill().run({"role": "AXButton", "title": "不存在", "x": 5, "y": 6}, _ctx(host))
+    r = ClickControlTool().run({"role": "AXButton", "title": "不存在", "x": 5, "y": 6}, _ctx(host))
     assert not r.success and "computer_use" in r.error
     assert host.input.clicks == []  # 没走坐标点击
 
 
 def test_click_control_ax_fail_then_no_coord_returns_error():
     # 给了 role/title 但查不到、又没给坐标 → 失败
-    r = ClickControlSkill().run({"role": "AXButton", "title": "不存在"}, _ctx(FakeHost()))
+    r = ClickControlTool().run({"role": "AXButton", "title": "不存在"}, _ctx(FakeHost()))
     assert not r.success
 
 
 def test_type_text_injects():
     host = FakeHost()
-    r = TypeTextSkill().run({"text": "hello 你好"}, _ctx(host))
+    r = TypeTextTool().run({"text": "hello 你好"}, _ctx(host))
     assert r.success
     assert r.data["chars"] == len("hello 你好")
     assert host.input.types == ["hello 你好"]
 
 
 def test_type_text_missing():
-    r = TypeTextSkill().run({}, _ctx(FakeHost()))
+    r = TypeTextTool().run({}, _ctx(FakeHost()))
     assert not r.success
 
 
@@ -128,15 +128,15 @@ def test_type_text_yields_when_user_is_active():
     host.user_input.allowed = False
     host.user_input.reason = "检测到用户正在操作，AI 已让出控制"
 
-    r = TypeTextSkill().run({"text": "hello"}, _ctx(host))
+    r = TypeTextTool().run({"text": "hello"}, _ctx(host))
 
     assert not r.success and "用户正在操作" in r.error
     assert host.input.types == []
 
 
 def test_register_real_skills_order():
-    reg = SkillRegistry()
-    register_real_skills(reg)
+    reg = ToolRegistry()
+    register_core_tools(reg)
     assert [s.id for s in reg.list()] == [
         "screenshot",
         "read_tree",
@@ -151,8 +151,8 @@ def test_register_real_skills_order():
 
 def test_real_skills_declare_openai_params():
     # 模型要靠 parameters 才能正确调用；默认 schema 的 properties 是空的，真实技能必须覆盖
-    reg = SkillRegistry()
-    register_real_skills(reg)
+    reg = ToolRegistry()
+    register_core_tools(reg)
     for skill in reg.list():
         schema = skill.openai_schema()
         assert schema["name"] == skill.id
@@ -162,8 +162,8 @@ def test_real_skills_declare_openai_params():
 
 def test_real_skills_have_host_guard():
     # 无 host 时优雅失败，不抛异常
-    for skill_cls in (ScreenshotSkill, ReadTreeSkill, OpenAppSkill, ClickControlSkill, TypeTextSkill):
-        r = skill_cls().run({}, SkillContext(host=None))
+    for skill_cls in (ScreenshotTool, ReadTreeTool, OpenAppTool, ClickControlTool, TypeTextTool):
+        r = skill_cls().run({}, ToolContext(host=None))
         assert not r.success
 
 
@@ -221,7 +221,7 @@ def test_choose_action_parse_marked():
 
 def test_computer_use_som_click_type_finish(tmp_path, monkeypatch):
     import pyautogui
-    from yibao_brain.skills_real import ComputerUseSkill
+    from yibao_brain.tools.perception import ComputerUseTool
     from yibao_brain.grounding import SoMGrounding
     from fakes import FakeComputerUseClient, FakeScreenshotter, FakeHost, _FakeHandle
 
@@ -237,8 +237,8 @@ def test_computer_use_som_click_type_finish(tmp_path, monkeypatch):
         {"action": "type", "text": "hi"},
         {"action": "finish"},
     ])
-    r = ComputerUseSkill(client, max_steps=3, som=SoMGrounding()).run(
-        {"task": "t"}, SkillContext(host=host)
+    r = ComputerUseTool(client, max_steps=3, som=SoMGrounding()).run(
+        {"task": "t"}, ToolContext(host=host)
     )
     assert r.success and r.data["steps"] == 2
     assert host.a11y.press_calls and host.input.clicks == []  # mark1 走 AX
@@ -248,7 +248,7 @@ def test_computer_use_som_click_type_finish(tmp_path, monkeypatch):
 
 def test_computer_use_som_coord_fallback_when_no_element(tmp_path, monkeypatch):
     import pyautogui
-    from yibao_brain.skills_real import ComputerUseSkill
+    from yibao_brain.tools.perception import ComputerUseTool
     from yibao_brain.grounding import SoMGrounding
     from fakes import FakeComputerUseClient, FakeScreenshotter
 
@@ -259,7 +259,7 @@ def test_computer_use_som_coord_fallback_when_no_element(tmp_path, monkeypatch):
     host.a11y.tree = {"role": "AXApp", "children": [
         {"role": "AXButton", "bbox": [40, 40, 60, 60], "children": []}]}
     client = FakeComputerUseClient(marked_actions=[{"action": "click", "mark": 1}, {"action": "finish"}])
-    ComputerUseSkill(client, som=SoMGrounding()).run({"task": "t"}, SkillContext(host=host))
+    ComputerUseTool(client, som=SoMGrounding()).run({"task": "t"}, ToolContext(host=host))
     assert host.input.clicks == [(50.0, 50.0)]  # bbox 中心，逻辑坐标
 
 
@@ -267,7 +267,7 @@ def test_computer_use_raw_bbox_fallback_on_render_fail(tmp_path, monkeypatch):
     # build_marks 渲染失败（_render 返 None）但图可读 → 回退 next_action raw-bbox
     # 注意：不能用坏路径——_b64 也打不开图，next_action 永远不执行。故 monkeypatch _render。
     import pyautogui
-    from yibao_brain.skills_real import ComputerUseSkill
+    from yibao_brain.tools.perception import ComputerUseTool
     from yibao_brain.grounding import SoMGrounding
     from fakes import FakeComputerUseClient, FakeScreenshotter
 
@@ -279,7 +279,7 @@ def test_computer_use_raw_bbox_fallback_on_render_fail(tmp_path, monkeypatch):
     monkeypatch.setattr(som, "_render", lambda *a, **k: None)  # 强制渲染失败
     client = FakeComputerUseClient(
         actions=[{"action": "click", "box": [10, 10, 30, 30]}, {"action": "finish"}])  # 走 raw-bbox
-    r = ComputerUseSkill(client, som=som).run({"task": "t"}, SkillContext(host=host))
+    r = ComputerUseTool(client, som=som).run({"task": "t"}, ToolContext(host=host))
     assert r.success and r.data["steps"] == 1
     assert host.input.clicks == [(20.0, 20.0)]  # box 中心 / scale 1.0
     assert client.choose_calls == []  # 没走 SoM
@@ -290,7 +290,7 @@ def test_computer_use_prefers_native_bbox_for_capable_model(tmp_path, monkeypatc
     import pyautogui
 
     from yibao_brain.grounding import SoMGrounding
-    from yibao_brain.skills_real import ComputerUseSkill
+    from yibao_brain.tools.perception import ComputerUseTool
     from fakes import FakeComputerUseClient, FakeScreenshotter
 
     monkeypatch.setattr(pyautogui, "size", lambda: _size_obj(100, 100))
@@ -315,8 +315,8 @@ def test_computer_use_prefers_native_bbox_for_capable_model(tmp_path, monkeypatc
     client.prefers_raw_bbox = True
     host.a11y.element_at_result = _FakeHandle("AXButton", "等于")
 
-    result = ComputerUseSkill(client, som=som).run(
-        {"task": "点击等号", "app": "计算器"}, SkillContext(host=host)
+    result = ComputerUseTool(client, som=som).run(
+        {"task": "点击等号", "app": "计算器"}, ToolContext(host=host)
     )
 
     assert result.success and result.data["steps"] == 1
@@ -328,13 +328,13 @@ def test_computer_use_prefers_native_bbox_for_capable_model(tmp_path, monkeypatc
 
 
 def test_computer_use_native_bbox_requires_target_app():
-    from yibao_brain.skills_real import ComputerUseSkill
+    from yibao_brain.tools.perception import ComputerUseTool
     from fakes import FakeComputerUseClient
 
     client = FakeComputerUseClient(actions=[{"action": "click", "box": [1, 2, 3, 4]}])
     client.prefers_raw_bbox = True
 
-    result = ComputerUseSkill(client).run({"task": "点击等号"}, SkillContext(host=FakeHost()))
+    result = ComputerUseTool(client).run({"task": "点击等号"}, ToolContext(host=FakeHost()))
 
     assert not result.success
     assert "目标应用" in result.error
@@ -345,7 +345,7 @@ def test_computer_use_defaults_to_one_step(tmp_path, monkeypatch):
     import pyautogui
 
     from yibao_brain.grounding import SoMGrounding
-    from yibao_brain.skills_real import ComputerUseSkill
+    from yibao_brain.tools.perception import ComputerUseTool
     from fakes import FakeComputerUseClient, FakeScreenshotter
 
     monkeypatch.setattr(pyautogui, "size", lambda: _size_obj(100, 100))
@@ -355,8 +355,8 @@ def test_computer_use_defaults_to_one_step(tmp_path, monkeypatch):
         {"role": "AXButton", "bbox": [10, 10, 30, 30], "children": []}]}
     client = FakeComputerUseClient(marked_actions=[{"action": "click", "mark": 1}] * 3)
 
-    result = ComputerUseSkill(client, som=SoMGrounding()).run(
-        {"task": "只点一次", "max_steps": 5}, SkillContext(host=host)
+    result = ComputerUseTool(client, som=SoMGrounding()).run(
+        {"task": "只点一次", "max_steps": 5}, ToolContext(host=host)
     )
 
     assert result.success and result.data["steps"] == 1
@@ -366,7 +366,7 @@ def test_computer_use_defaults_to_one_step(tmp_path, monkeypatch):
 def test_computer_use_cancel_after_model_response_prevents_click(tmp_path):
     import threading
 
-    from yibao_brain.skills_real import ComputerUseSkill
+    from yibao_brain.tools.perception import ComputerUseTool
     from fakes import FakeComputerUseClient, FakeScreenshotter
 
     shot = _make_shot(tmp_path, physical_w=198, physical_h=350)
@@ -386,9 +386,9 @@ def test_computer_use_cancel_after_model_response_prevents_click(tmp_path):
     host = FakeHost()
     host.screenshotter = WindowScreenshotter()
 
-    result = ComputerUseSkill(CancelClient()).run(
+    result = ComputerUseTool(CancelClient()).run(
         {"task": "点击等号", "app": "计算器"},
-        SkillContext(host=host, meta={"cancel": cancel}),
+        ToolContext(host=host, meta={"cancel": cancel}),
     )
 
     assert not result.success and "中断" in result.error
@@ -398,7 +398,7 @@ def test_computer_use_cancel_after_model_response_prevents_click(tmp_path):
 def test_computer_use_user_input_after_screenshot_preempts_click_and_run(tmp_path):
     import threading
 
-    from yibao_brain.skills_real import ComputerUseSkill
+    from yibao_brain.tools.perception import ComputerUseTool
     from fakes import FakeComputerUseClient, FakeScreenshotter
 
     shot = _make_shot(tmp_path, physical_w=198, physical_h=350)
@@ -417,9 +417,9 @@ def test_computer_use_user_input_after_screenshot_preempts_click_and_run(tmp_pat
     host.user_input.allowed = False
     host.user_input.reason = "检测到用户正在操作，AI 已让出控制"
 
-    result = ComputerUseSkill(client).run(
+    result = ComputerUseTool(client).run(
         {"task": "点击等号", "app": "计算器"},
-        SkillContext(host=host, meta={"request_cancel": preempted.set}),
+        ToolContext(host=host, meta={"request_cancel": preempted.set}),
     )
 
     assert not result.success and "用户正在操作" in result.error
@@ -433,7 +433,7 @@ def test_computer_use_empty_dict_action_not_counted_as_step(tmp_path, monkeypatc
     # raw-bbox 路径下，_parse_action 对 "{}" 模型输出返回 {} → 不应计为一步
     # （回归：旧守则 action.get("action") != "finish" 对 {} 为真 → 幻影 step）
     import pyautogui
-    from yibao_brain.skills_real import ComputerUseSkill
+    from yibao_brain.tools.perception import ComputerUseTool
     from yibao_brain.grounding import SoMGrounding
     from fakes import FakeComputerUseClient, FakeScreenshotter
 
@@ -444,7 +444,7 @@ def test_computer_use_empty_dict_action_not_counted_as_step(tmp_path, monkeypatc
     som = SoMGrounding()
     monkeypatch.setattr(som, "_render", lambda *a, **k: None)  # 强制渲染失败 → raw-bbox
     client = FakeComputerUseClient(actions=[{}, {"action": "finish"}])  # 空 dict 后 finish
-    r = ComputerUseSkill(client, som=som).run({"task": "t"}, SkillContext(host=host))
+    r = ComputerUseTool(client, som=som).run({"task": "t"}, ToolContext(host=host))
     assert r.success and r.data["steps"] == 0
     assert r.data["actions"] == []  # {} 未被记为步
     assert host.input.clicks == []  # 也没误执行
@@ -454,9 +454,9 @@ def test_computer_use_empty_dict_action_not_counted_as_step(tmp_path, monkeypatc
 def test_computer_use_schema_default_tracks_step_cap():
     """放开多步批处理：schema 默认步数 = 构造上限；模型不传 max_steps 即按上限连续执行。"""
     from fakes import FakeComputerUseClient
-    from yibao_brain.skills_real import ComputerUseSkill
+    from yibao_brain.tools.perception import ComputerUseTool
 
-    schema = ComputerUseSkill(FakeComputerUseClient(), max_steps=6).openai_schema()
+    schema = ComputerUseTool(FakeComputerUseClient(), max_steps=6).openai_schema()
     ms = schema["parameters"]["properties"]["max_steps"]
     assert ms["default"] == 6
     assert ms["maximum"] == 6
@@ -464,7 +464,7 @@ def test_computer_use_schema_default_tracks_step_cap():
 
 def test_computer_use_som_max_steps_cap(tmp_path, monkeypatch):
     import pyautogui
-    from yibao_brain.skills_real import ComputerUseSkill
+    from yibao_brain.tools.perception import ComputerUseTool
     from yibao_brain.grounding import SoMGrounding
     from fakes import FakeComputerUseClient, FakeScreenshotter
 
@@ -474,21 +474,21 @@ def test_computer_use_som_max_steps_cap(tmp_path, monkeypatch):
     host.a11y.tree = {"role": "AXApp", "children": [
         {"role": "AXButton", "bbox": [0, 0, 2, 2], "children": []}]}
     client = FakeComputerUseClient(marked_actions=[{"action": "click", "mark": 1}] * 5)
-    r = ComputerUseSkill(client, max_steps=3, som=SoMGrounding()).run({"task": "t"}, SkillContext(host=host))
+    r = ComputerUseTool(client, max_steps=3, som=SoMGrounding()).run({"task": "t"}, ToolContext(host=host))
     assert r.success and r.data["steps"] == 3
 
 
 def test_computer_use_finish_stops_immediately(tmp_path, monkeypatch):
     import pyautogui
 
-    from yibao_brain.skills_real import ComputerUseSkill
+    from yibao_brain.tools.perception import ComputerUseTool
     from fakes import FakeComputerUseClient
 
     monkeypatch.setattr(pyautogui, "size", lambda: _size_obj(100, 100))
     host = FakeHost()
     host.screenshotter.path = _make_shot(tmp_path)
-    r = ComputerUseSkill(FakeComputerUseClient(marked_actions=[{"action": "finish"}])).run(
-        {"task": "t"}, SkillContext(host=host)
+    r = ComputerUseTool(FakeComputerUseClient(marked_actions=[{"action": "finish"}])).run(
+        {"task": "t"}, ToolContext(host=host)
     )
     assert r.success and r.data["steps"] == 0
 
@@ -497,7 +497,7 @@ def test_computer_use_none_action_stops(tmp_path, monkeypatch):
     # choose_action 返 None（模型输出非法）→ 立即停，不失控
     import pyautogui
 
-    from yibao_brain.skills_real import ComputerUseSkill
+    from yibao_brain.tools.perception import ComputerUseTool
 
     class _NoneClient:
         def choose_action(self, b, t, n, history=None, n_zones=0):
@@ -506,14 +506,14 @@ def test_computer_use_none_action_stops(tmp_path, monkeypatch):
     monkeypatch.setattr(pyautogui, "size", lambda: _size_obj(100, 100))
     host = FakeHost()
     host.screenshotter.path = _make_shot(tmp_path)
-    r = ComputerUseSkill(_NoneClient()).run({"task": "t"}, SkillContext(host=host))
+    r = ComputerUseTool(_NoneClient()).run({"task": "t"}, ToolContext(host=host))
     assert r.success and r.data["steps"] == 0
 
 
 def test_computer_use_missing_task():
-    from yibao_brain.skills_real import ComputerUseSkill
+    from yibao_brain.tools.perception import ComputerUseTool
 
-    r = ComputerUseSkill(client=None).run({}, SkillContext(host=FakeHost()))
+    r = ComputerUseTool(client=None).run({}, ToolContext(host=FakeHost()))
     assert not r.success
 
 
@@ -521,8 +521,8 @@ def test_computer_use_zoom_action_grounds_and_clicks(tmp_path, monkeypatch):
     """SoM 路径模型选字母区域 → zoom_ground 精化 → resolve_point 点击。"""
     from PIL import Image
 
-    from yibao_brain import skills_real
-    from yibao_brain.skills_real import ComputerUseSkill
+    from yibao_brain.tools import perception as core_tools
+    from yibao_brain.tools.perception import ComputerUseTool
 
     class FakeClient:
         prefers_raw_bbox = False
@@ -530,14 +530,14 @@ def test_computer_use_zoom_action_grounds_and_clicks(tmp_path, monkeypatch):
         def choose_action(self, marked, task, n_marks, history=None, n_zones=0):
             return {"action": "zoom", "zone": "A"}
 
-    monkeypatch.setattr(skills_real, "zoom_ground", lambda client, shot, rect, scale, task: (50.0, 60.0))
+    monkeypatch.setattr(core_tools, "zoom_ground", lambda client, shot, rect, scale, task: (50.0, 60.0))
     host = FakeHost()  # element_at 返回 None → 走坐标点击
     shot = tmp_path / "s.png"
     Image.new("RGB", (100, 80), "white").save(shot)
     host.screenshotter = type("S", (), {"capture": lambda self: str(shot)})()
     host.a11y.frontmost_tree = lambda: {"role": "AXApp", "children": []}
-    ctx = SkillContext(host=host)
-    skill = ComputerUseSkill(FakeClient())
+    ctx = ToolContext(host=host)
+    skill = ComputerUseTool(FakeClient())
     r = skill.run({"task": "点按钮", "app": "x"}, ctx)
     assert r.success, r.error
     assert host.input.clicks == [(50.0, 60.0)]
@@ -546,9 +546,9 @@ def test_computer_use_zoom_action_grounds_and_clicks(tmp_path, monkeypatch):
 # ---------- watch_command：后台盯命令 ----------
 def test_watch_command_session_remember_key_is_exact_and_normalized(tmp_path):
     from yibao_brain.background_jobs import BackgroundJobManager
-    from yibao_brain.skills_real import WatchCommandSkill
+    from yibao_brain.tools.perception import WatchCommandTool
 
-    skill = WatchCommandSkill(BackgroundJobManager())
+    skill = WatchCommandTool(BackgroundJobManager())
     same_cwd = tmp_path / "child" / ".."
 
     assert skill.session_remember_key({"command": " npm test ", "cwd": str(same_cwd)}) == {
@@ -573,12 +573,12 @@ def _wait_emit(events, timeout_s=2.0):
 
 def test_watch_command_starts_and_emits_on_done(tmp_path):
     from yibao_brain.background_jobs import BackgroundJobManager
-    from yibao_brain.skills_real import WatchCommandSkill
+    from yibao_brain.tools.perception import WatchCommandTool
 
     events = []
-    ctx = SkillContext()
+    ctx = ToolContext()
     ctx.emit_event = events.append
-    r = WatchCommandSkill(BackgroundJobManager()).run(
+    r = WatchCommandTool(BackgroundJobManager()).run(
         {"command": "echo hello", "cwd": str(tmp_path)}, ctx
     )
     assert r.success and r.data["started"] == "echo hello"
@@ -590,12 +590,12 @@ def test_watch_command_starts_and_emits_on_done(tmp_path):
 
 def test_watch_command_reports_failure_exit_code(tmp_path):
     from yibao_brain.background_jobs import BackgroundJobManager
-    from yibao_brain.skills_real import WatchCommandSkill
+    from yibao_brain.tools.perception import WatchCommandTool
 
     events = []
-    ctx = SkillContext()
+    ctx = ToolContext()
     ctx.emit_event = events.append
-    WatchCommandSkill(BackgroundJobManager()).run(
+    WatchCommandTool(BackgroundJobManager()).run(
         {"command": "sh -c 'exit 7'", "cwd": str(tmp_path)}, ctx
     )
     _wait_emit(events)
@@ -604,33 +604,33 @@ def test_watch_command_reports_failure_exit_code(tmp_path):
 
 def test_watch_command_no_emit_does_not_crash(tmp_path):
     from yibao_brain.background_jobs import BackgroundJobManager
-    from yibao_brain.skills_real import WatchCommandSkill
+    from yibao_brain.tools.perception import WatchCommandTool
 
-    r = WatchCommandSkill(BackgroundJobManager()).run(
-        {"command": "echo hi", "cwd": str(tmp_path)}, SkillContext()
+    r = WatchCommandTool(BackgroundJobManager()).run(
+        {"command": "echo hi", "cwd": str(tmp_path)}, ToolContext()
     )  # emit_event=None
     assert r.success
 
 
 def test_watch_command_missing_command():
     from yibao_brain.background_jobs import BackgroundJobManager
-    from yibao_brain.skills_real import WatchCommandSkill
+    from yibao_brain.tools.perception import WatchCommandTool
 
-    assert not WatchCommandSkill(BackgroundJobManager()).run({}, SkillContext()).success
+    assert not WatchCommandTool(BackgroundJobManager()).run({}, ToolContext()).success
 
 
 def test_watch_command_requires_cwd():
     from yibao_brain.background_jobs import BackgroundJobManager
-    from yibao_brain.skills_real import WatchCommandSkill
+    from yibao_brain.tools.perception import WatchCommandTool
 
-    assert not WatchCommandSkill(BackgroundJobManager()).run(
-        {"command": "echo hi"}, SkillContext()
+    assert not WatchCommandTool(BackgroundJobManager()).run(
+        {"command": "echo hi"}, ToolContext()
     ).success
 
 
 def test_screenshot_with_describe_attaches_description():
     host = FakeHost()
-    skill = ScreenshotSkill(
+    skill = ScreenshotTool(
         describe=lambda path: "终端(左) + 译宝(右上)" if path == host.screenshotter.path else None)
     r = skill.run({}, _ctx(host))
     assert r.success
@@ -639,7 +639,7 @@ def test_screenshot_with_describe_attaches_description():
 
 def test_screenshot_describe_failure_still_returns_path():
     host = FakeHost()
-    skill = ScreenshotSkill(describe=lambda path: None)
+    skill = ScreenshotTool(describe=lambda path: None)
     r = skill.run({}, _ctx(host))
     assert r.success
     assert "description" not in r.data

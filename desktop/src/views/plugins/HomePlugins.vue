@@ -6,6 +6,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { emit as emitTauri } from "@tauri-apps/api/event";
 import SchemaPanel from "../../components/panel/SchemaPanel.vue";
+import CapabilityLedger from "./CapabilityLedger.vue";
 import PluginGrid from "./PluginGrid.vue";
 import WebviewPanel from "../../components/panel/WebviewPanel.vue";
 import Avatar from "../../components/pet/Avatar.vue";
@@ -66,6 +67,7 @@ interface PluginInfo { id: string; name: string; panels?: PluginPanelEntry[] }
 const plugins = ref<PluginInfo[]>([]);
 const pluginErr = ref("");
 const viewingList = ref(true); // true=插件列表；false=面板视图（panel 事件到来自动切入）
+const viewingLedger = ref(false); // 能力台账（P3 管理面板）：列表页顶部的独立视图
 let requestedPlugin = "";
 let requestedUntil = 0;
 
@@ -517,6 +519,9 @@ onUnmounted(() => {
           <h1 class="pg-title" data-tauri-drag-region>插件</h1>
           <span class="pg-sub" data-tauri-drag-region>点开任意插件进入它的工作面板</span>
         </div>
+        <button class="head-action" title="查看全部能力（插件 / 底座 / MCP）" @click="viewingLedger = true">
+          <YbIcon name="plug" :size="13" />能力台账
+        </button>
       </template>
       <template v-else>
         <button class="back" :title="props.scene ? '收起工作面' : '返回插件列表'" @click="props.scene ? emit('close') : backToList()">
@@ -540,12 +545,15 @@ onUnmounted(() => {
 
     <!-- 插件列表：Launchpad 式网格（图标按 id 哈希配色），顶部搜索过滤 -->
     <PluginGrid
-      v-if="viewingList"
+      v-if="viewingList && !viewingLedger"
       :plugins="plugins"
       :err="pluginErr"
       @launch="launchPlugin"
       @open-panel="openPluginPanel"
     />
+
+    <!-- 能力台账（P3）：全形态 Tool 只读表，back 回插件列表 -->
+    <CapabilityLedger v-else-if="viewingLedger" @back="viewingLedger = false" />
 
     <!-- 面板视图：确认统一进主屏收件箱；这里只保留错误细条 / 面板内容 / 工作台条。
          外层宿主承载"从来源长出"动效：clip-path 从插件卡矩形展开到全面板，收起时同源缩回 -->
@@ -650,6 +658,27 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+/* 台账入口：页头右侧（列表态专用） */
+.head-action {
+  margin-left: auto;
+  height: 27px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  border: 1px solid var(--yb-card-border);
+  border-radius: var(--yb-radius-sm);
+  background: var(--yb-card-bg);
+  color: var(--yb-text-dim);
+  font: inherit;
+  font-size: var(--yb-fs-xs);
+  cursor: pointer;
+  transition: all var(--yb-dur-fast) var(--yb-ease-out);
+}
+.head-action:hover {
+  border-color: rgba(var(--yb-c-sky-rgb), 0.28);
+  color: var(--yb-accent);
 }
 .pg-title {
   margin: 0;

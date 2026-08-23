@@ -9,7 +9,7 @@ from yibao_brain import plugins
 from yibao_brain.ipc import ActionResult, RiskLevel
 from yibao_brain.llm import FakeProvider
 from yibao_brain.server import serve_async
-from yibao_brain.skills import Skill, SkillRegistry
+from yibao_brain.tools import Tool, ToolRegistry
 
 
 def make_reader(msgs):
@@ -35,7 +35,7 @@ def _restore_registries():
     plugins._PANEL_TITLES.clear(); plugins._PANEL_TITLES.update(saved[2])
 
 
-class _L0Skill(Skill):
+class _L0Tool(Tool):
     id = "tdel.list"
     description = "列出"
     default_risk = RiskLevel.L0_READONLY
@@ -44,7 +44,7 @@ class _L0Skill(Skill):
         return ActionResult(success=True, data={"rows": [{"text": "一"}]})
 
 
-class _L1Skill(Skill):
+class _L1Tool(Tool):
     id = "tdel.write"
     description = "写入"
     default_risk = RiskLevel.L1_LOW
@@ -53,7 +53,7 @@ class _L1Skill(Skill):
         return ActionResult(success=True, data={})
 
 
-class _FailSkill(Skill):
+class _FailTool(Tool):
     id = "tdel.broken"
     description = "必失败"
     default_risk = RiskLevel.L0_READONLY
@@ -63,7 +63,7 @@ class _FailSkill(Skill):
 
 
 def _registry_with(*skills):
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     for s in skills:
         reg.register(s, plugin="tdel")
     return reg
@@ -98,7 +98,7 @@ _WIDGET_OK = (
 
 def test_widget_registered(tmp_path):
     child = _mk_plugin(tmp_path, _WIDGET_OK)
-    _load(child, _registry_with(_L0Skill()))
+    _load(child, _registry_with(_L0Tool()))
     decl = plugins.get_widgets().get("tdel:widget")
     assert decl == {"method": "tdel.list", "open": "tdel.list", "title": "测试 · 最近"}
     # widget 的 schema 也进面板注册表（panel_payload 复用 schema 分支）
@@ -108,21 +108,21 @@ def test_widget_registered(tmp_path):
 def test_widget_full_method_id_accepted(tmp_path):
     toml = _WIDGET_OK.replace('method = "list"', 'method = "tdel.list"')
     child = _mk_plugin(tmp_path, toml)
-    _load(child, _registry_with(_L0Skill()))
+    _load(child, _registry_with(_L0Tool()))
     assert plugins.get_widgets()["tdel:widget"]["method"] == "tdel.list"
 
 
 def test_widget_without_open_is_none(tmp_path):
     toml = _WIDGET_OK.replace('open = "list"\n', "")
     child = _mk_plugin(tmp_path, toml)
-    _load(child, _registry_with(_L0Skill()))
+    _load(child, _registry_with(_L0Tool()))
     assert plugins.get_widgets()["tdel:widget"]["open"] is None
 
 
 def test_widget_requires_method(tmp_path):
     toml = _WIDGET_OK.replace('method = "list"\n', "")
     child = _mk_plugin(tmp_path, toml)
-    _load(child, _registry_with(_L0Skill()))
+    _load(child, _registry_with(_L0Tool()))
     assert "tdel:widget" not in plugins.get_widgets()
     assert plugins.get_panel("tdel:widget") is None  # 无效 widget 不留面板残骸
 
@@ -130,21 +130,21 @@ def test_widget_requires_method(tmp_path):
 def test_widget_method_must_be_registered(tmp_path):
     toml = _WIDGET_OK.replace('method = "list"', 'method = "ghost"')
     child = _mk_plugin(tmp_path, toml)
-    _load(child, _registry_with(_L0Skill()))
+    _load(child, _registry_with(_L0Tool()))
     assert "tdel:widget" not in plugins.get_widgets()
 
 
 def test_widget_method_must_be_l0(tmp_path):
     toml = _WIDGET_OK.replace('method = "list"', 'method = "write"')
     child = _mk_plugin(tmp_path, toml)
-    _load(child, _registry_with(_L0Skill(), _L1Skill()))
+    _load(child, _registry_with(_L0Tool(), _L1Tool()))
     assert "tdel:widget" not in plugins.get_widgets()
 
 
 def test_widget_bad_schema_skipped(tmp_path):
     child = _mk_plugin(tmp_path, _WIDGET_OK)
     (child / "panel" / "w.schema.json").write_text("{bad json", encoding="utf-8")
-    _load(child, _registry_with(_L0Skill()))
+    _load(child, _registry_with(_L0Tool()))
     assert "tdel:widget" not in plugins.get_widgets()
 
 
@@ -174,7 +174,7 @@ def test_serve_async_widgets_query(tmp_path, monkeypatch):
     msgs = _serve_widgets(
         tmp_path, monkeypatch,
         {"tdel:widget": {"method": "tdel.list", "open": "tdel.list", "title": "测试 · 最近"}},
-        [_L0Skill()],
+        [_L0Tool()],
     )
     assert len(msgs) == 1
     payloads = msgs[0]["widgets"]
@@ -190,7 +190,7 @@ def test_serve_async_widgets_failure_skipped(tmp_path, monkeypatch):
     msgs = _serve_widgets(
         tmp_path, monkeypatch,
         {"tdel:widget": {"method": "tdel.broken", "open": None, "title": "测试 · 坏"}},
-        [_FailSkill()],
+        [_FailTool()],
     )
     assert len(msgs) == 1
     assert msgs[0]["widgets"] == []  # 单个失败只跳过，响应照常

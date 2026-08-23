@@ -224,7 +224,7 @@ class Ambient:
 
 
 def _b64_of(path: str) -> str | None:
-    """截图文件 → data:image/png;base64,... （视觉 API 入参格式，与 skills_real._b64 一致）。"""
+    """截图文件 → data:image/png;base64,... （视觉 API 入参格式，与 core_tools._b64 一致）。"""
     try:
         with open(path, "rb") as f:
             return "data:image/png;base64," + base64.b64encode(f.read()).decode()

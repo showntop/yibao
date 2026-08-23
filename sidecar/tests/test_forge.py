@@ -11,7 +11,7 @@ import pytest
 from yibao_brain.llm import FakeProvider
 from yibao_brain.memory import FakeMemory
 from yibao_brain.plugins import LlmChat, get_api, load_plugins
-from yibao_brain.skills import SkillRegistry
+from yibao_brain.tools import ToolRegistry
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FORGE_DIR = REPO_ROOT / "plugins" / "forge"
@@ -27,7 +27,7 @@ def data_dir(tmp_path, monkeypatch):
 @pytest.fixture
 def env(data_dir):
     """加载真实 forge 插件；返回 (registry, FakeMemory, 加载结果)。"""
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     mem = FakeMemory()
 
     class _Http:

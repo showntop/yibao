@@ -6,7 +6,7 @@ import { getJsonResult } from "../api/http";
 /** 服务端 /v1/state 的待批项（confirm_meta 逐字段透传） */
 export interface PendingConfirm {
   id: string;
-  skill_id: string;
+  tool_id: string;
   summary: string;
   risk: number;
   created_at: number;

@@ -22,7 +22,7 @@ export type ProcessedItem = {
 
 export interface InterruptedApproval {
   id: string;
-  skill: string;
+  tool_id: string;
   label: string;
   desc: string;
   risk?: number;
@@ -115,8 +115,8 @@ export function useContextApprovals(deps: ContextApprovalsDeps) {
   }
 
   function safeApprovalHistoryTitle(approval: PendingConfirm): string {
-    if (approval.skill === "watch_command") return "后台命令";
-    return approval.label || approval.skill || "受控操作";
+    if (approval.tool_id === "watch_command") return "后台命令";
+    return approval.label || approval.tool_id || "受控操作";
   }
 
   function rememberPendingSnapshots(items: PendingConfirm[]) {
@@ -125,7 +125,7 @@ export function useContextApprovals(deps: ContextApprovalsDeps) {
       if (next.some((existing) => existing.id === item.id)) continue;
       next.push({
         id: item.id,
-        skill: item.skill,
+        tool_id: item.tool_id,
         label: safeApprovalHistoryTitle(item),
         desc: item.desc || "等待你确认后继续",
         risk: item.risk,
@@ -163,7 +163,7 @@ export function useContextApprovals(deps: ContextApprovalsDeps) {
     return [{
       id: "preview-approval",
       label: "后台盯命令",
-      skill: "watch_command",
+      tool_id: "watch_command",
       desc: "译宝需要你的许可才能执行这条命令",
       params: { command: "npm run build", cwd: "/Users/denny/Work/yibao/app" },
     }];
@@ -175,7 +175,7 @@ export function useContextApprovals(deps: ContextApprovalsDeps) {
     if (saved.length || !previewInterrupted || previewInterruptedDismissed.value) return saved;
     return [{
       id: "preview-interrupted",
-      skill: "watch_command",
+      tool_id: "watch_command",
       label: "后台命令",
       desc: "等待你确认后继续",
       risk: 3,
@@ -186,8 +186,8 @@ export function useContextApprovals(deps: ContextApprovalsDeps) {
 
   // ---- 审批辅助 ----
   function approvalTitle(approval: PendingConfirm): string {
-    if (approval.skill === "watch_command") return "允许在后台运行命令？";
-    return approval.label || approval.skill || "允许执行这项操作？";
+    if (approval.tool_id === "watch_command") return "允许在后台运行命令？";
+    return approval.label || approval.tool_id || "允许执行这项操作？";
   }
 
   function approvalCommand(approval: PendingConfirm): string {
@@ -245,7 +245,7 @@ export function useContextApprovals(deps: ContextApprovalsDeps) {
   }
 
   function interruptedPrompt(approval: InterruptedApproval): string {
-    if (approval.skill === "watch_command") {
+    if (approval.tool_id === "watch_command") {
       return "重新处理上次未完成的后台命令。请先根据当前会话重新确认具体命令和工作目录，再请求我的批准；不要直接执行。";
     }
     return `重新处理上次未完成的「${approval.label}」。请先结合当前会话重新确认操作内容，再请求我的批准；不要直接执行。`;
@@ -304,7 +304,7 @@ export function useContextApprovals(deps: ContextApprovalsDeps) {
         visible.forEach((item) => knownApprovals.set(item.id, item));
         rememberPendingSnapshots(visible);
         for (const item of visible) {
-          const prepared = interruptedApprovals.value.find((old) => preparedInterruptedIds.value.has(old.id) && old.skill === item.skill);
+          const prepared = interruptedApprovals.value.find((old) => preparedInterruptedIds.value.has(old.id) && old.tool_id === item.tool_id);
           if (prepared) removePendingSnapshot(prepared.id);
         }
         approvals.value = visible;
@@ -312,7 +312,7 @@ export function useContextApprovals(deps: ContextApprovalsDeps) {
     } catch { /* sidecar unavailable */ }
     try {
       unsubs.push(await onBrainEvent((event) => {
-        const commandStarted = event.kind === "action_result" && event.action?.skill_id === "watch_command";
+        const commandStarted = event.kind === "action_result" && event.action?.tool_id === "watch_command";
         const commandFinished = event.kind === "reminder" && event.type === "watch_command";
         const actionId = event.action?.id;
         const knownApproval = actionId ? knownApprovals.get(actionId) : undefined;

@@ -32,10 +32,27 @@ export function isOrphanDeskStamp(bubble: WorkBubble): boolean {
   return /^(已请|已走|摊开|收起|用了)\s/.test(text) && text.includes("·");
 }
 
+/** 插件任务收尾复用了 reminder 通道写 Feed，不是用户闹钟。 */
+export function isTaskLogEvent(e: { task?: unknown; type?: string }): boolean {
+  return Boolean(e.task) || e.type === "watch_command";
+}
+
+/** 已落库的任务收尾（沙箱/agent）带 clock 图标，文案是完成日志。 */
+export function isTaskLogBubble(bubble: WorkBubble): boolean {
+  if (bubble.icon !== "clock") return false;
+  const text = bubble.text.trim();
+  return /^(✅|❌|⏰|⏹)/u.test(text) && /(完成|失败|超时|已停止)/.test(text);
+}
+
 export function isWorkPiece(bubble: WorkBubble): boolean {
   if (bubble.panelLink || /^(已请|已走|摊开|收起|用了)\s/.test(bubble.text.trim())) return false;
+  if (isTaskLogBubble(bubble)) return false;
   if (bubble.proc) return true;
   return bubble.role === "ai" && !bubble.icon;
+}
+
+function isThreadSkip(bubble: WorkBubble): boolean {
+  return isOrphanDeskStamp(bubble) || isDeskPathCloseLine(bubble.text) || isTaskLogBubble(bubble);
 }
 
 export function groupThread(
@@ -47,7 +64,7 @@ export function groupThread(
   while (i < bubbles.length) {
     if (isNewDay(i)) items.push({ type: "day", index: i });
     const bubble = bubbles[i];
-    if (isOrphanDeskStamp(bubble) || isDeskPathCloseLine(bubble.text)) {
+    if (isThreadSkip(bubble)) {
       i += 1;
       continue;
     }
@@ -59,8 +76,13 @@ export function groupThread(
     if (isWorkPiece(bubble)) {
       const start = i;
       const indices: number[] = [];
-      while (i < bubbles.length && isWorkPiece(bubbles[i])) {
+      while (i < bubbles.length) {
         if (indices.length > 0 && isNewDay(i)) break;
+        if (isThreadSkip(bubbles[i])) {
+          i += 1;
+          continue;
+        }
+        if (!isWorkPiece(bubbles[i])) break;
         indices.push(i);
         i += 1;
       }
@@ -192,6 +214,32 @@ export function runIsLive(
   if (streamingIdx !== null && indices.includes(streamingIdx)) return true;
 
   return indices.some((i) => bubbles[i].proc && !bubbles[i].proc!.done);
+}
+
+function lastWorkIndex(bubbles: WorkBubble[]): number {
+  for (let i = bubbles.length - 1; i >= 0; i -= 1) {
+    if (isWorkPiece(bubbles[i])) return i;
+  }
+  return -1;
+}
+
+/** 复制/赞/重写只属于已经收束的 AI 回答；大脑还在跑时，当前这轮不露工具栏。 */
+export function runShowFooter(
+  bubbles: WorkBubble[],
+  indices: number[],
+  streamingIdx: number | null,
+  agentBusy = false,
+): boolean {
+  const hasAnswer = indices.some((i) => {
+    const bubble = bubbles[i];
+    return bubble?.role === "ai" && !bubble.proc && !bubble.icon;
+  });
+  if (!hasAnswer) return false;
+  if (indices.some((i) => bubbles[i].halted)) return true;
+  if (runIsLive(bubbles, indices, streamingIdx)) return false;
+  if (!agentBusy) return true;
+  const lastWork = lastWorkIndex(bubbles);
+  return lastWork >= 0 && !indices.includes(lastWork);
 }
 
 /** 纸边图章：去重、至多几枚。过程行同名会堆成一列。 */

@@ -9,10 +9,10 @@ import time
 from pathlib import Path
 
 from yibao_brain.ipc import ActionResult, RiskLevel
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 
-class ProtoGen(Skill):
+class ProtoGen(Tool):
     id = "forge.proto_gen"
     label = "生成原型"
     description = "把写好的交互原型 HTML 落盘到需求名下并在浏览器打开预览；原型 HTML 生成完毕后调用"

@@ -9,12 +9,12 @@ from yibao_brain.loop import AgentLoop
 from yibao_brain.memory import FakeMemory
 from yibao_brain.pricing import compute_cost, price_for
 from yibao_brain.safety import Gate, GatePolicy, RiskClassifier
-from yibao_brain.skills import EchoSkill, SkillRegistry
+from yibao_brain.tools import EchoTool, ToolRegistry
 
 
 def build_loop(tmp_path, provider, history):
-    reg = SkillRegistry()
-    reg.register(EchoSkill())
+    reg = ToolRegistry()
+    reg.register(EchoTool())
     return AgentLoop(
         provider=provider,
         skills=reg,
@@ -62,7 +62,7 @@ def test_metrics_multiple_tool_turns_accumulate(tmp_path):
         def __init__(self):
             self._n = 0
             self._first = FakeProvider(
-                tool_calls=[ToolCall(id="t1", skill_id="echo", params={"text": "hi"})],
+                tool_calls=[ToolCall(id="t1", tool_id="echo", params={"text": "hi"})],
                 usage={"prompt_tokens": 50, "completion_tokens": 10, "total_tokens": 60},
             )
             self._second = FakeProvider(

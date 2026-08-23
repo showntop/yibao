@@ -50,15 +50,15 @@ class _FakeInvoker:
         self.calls = []
 
     def propose(self, call):
-        self.calls.append(("propose", call.skill_id, dict(call.params)))
-        return Action(id=call.id, skill_id=call.skill_id)
+        self.calls.append(("propose", call.tool_id, dict(call.params)))
+        return Action(id=call.id, tool_id=call.tool_id)
 
     def decide(self, action):
-        self.calls.append(("decide", action.skill_id))
+        self.calls.append(("decide", action.tool_id))
         return self.decision
 
     def execute(self, action, params):
-        self.calls.append(("execute", action.skill_id, dict(params)))
+        self.calls.append(("execute", action.tool_id, dict(params)))
         return self.result
 
 
@@ -73,7 +73,7 @@ def _mkdeps(invoker, events):
     agent = _FakeAgent(invoker)
 
     def emit(action, result):
-        events.append({"kind": "action_result", "action": {"id": action.id, "skill_id": action.skill_id}})
+        events.append({"kind": "action_result", "action": {"id": action.id, "tool_id": action.tool_id}})
 
     async def save(body):
         return await _bridge_save(agent, emit, body)
@@ -104,7 +104,7 @@ def test_save_material_executes_mat_save_and_emits_pa_http():
             ev = events[0]
             assert ev["kind"] == "action_result"
             assert ev["action"]["id"].startswith("pa_http_")
-            assert ev["action"]["skill_id"] == "zimeiti.mat_save"
+            assert ev["action"]["tool_id"] == "zimeiti.mat_save"
         finally:
             await client.close()
 
@@ -158,15 +158,15 @@ def test_zimeiti_api_toml_has_quiet_bridge_entries():
     from pathlib import Path
 
     from yibao_brain import plugins
-    from yibao_brain.skills import Skill, SkillRegistry
+    from yibao_brain.tools import Tool, ToolRegistry
 
-    class _Dummy(Skill):
+    class _Dummy(Tool):
         description = "dummy"
 
         def run(self, params, ctx):
             raise NotImplementedError
 
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     for sid in ("zimeiti.mat_save", "zimeiti.add", "zimeiti.mat_list"):
         d = _Dummy()
         d.id = sid

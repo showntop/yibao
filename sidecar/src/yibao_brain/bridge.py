@@ -108,7 +108,7 @@ async def _bridge_save(agent: AgentLoop, emit, body: dict) -> tuple[int, dict]:
     if api is None or not api.direct:
         return 500, {"ok": False, "error": f"方法不可用：{api_name}"}
     rid = f"http_{next(_BRIDGE_SEQ)}"
-    action = agent.invoker.propose(ToolCall(id=f"pa_{rid}", skill_id=api.handler, params=params))
+    action = agent.invoker.propose(ToolCall(id=f"pa_{rid}", tool_id=api.handler, params=params))
     action.id = f"pa_{rid}"  # 壳侧靠 pa_ 前缀认领回执（与 panel_action 同协议）
     if api.risk is not None:
         action.risk = max(action.risk, api.risk)
@@ -131,7 +131,7 @@ async def _enrich_later(agent: AgentLoop, material_id: str | None) -> None:
         return
     try:
         action = agent.invoker.propose(
-            ToolCall(id=f"pa_enrich_{material_id}", skill_id="zimeiti.mat_enrich", params={"id": material_id})
+            ToolCall(id=f"pa_enrich_{material_id}", tool_id="zimeiti.mat_enrich", params={"id": material_id})
         )
         action.id = f"pa_enrich_{material_id}"
         if agent.invoker.decide(action) != Decision.AUTO:
@@ -190,7 +190,7 @@ async def _reminders_call(agent: AgentLoop, api_name: str, params: dict) -> dict
     if api is None or not api.direct:
         return {"ok": False, "error": f"方法不可用：{api_name}"}
     rid = f"pa_mob_{next(_BRIDGE_SEQ)}"
-    action = agent.invoker.propose(ToolCall(id=rid, skill_id=api.handler, params=params))
+    action = agent.invoker.propose(ToolCall(id=rid, tool_id=api.handler, params=params))
     action.id = rid  # propose 不透传 ToolCall.id（Action 另起 act_ 号）——回填 pa_mob_ 前缀，壳侧审计可区分手机发起（与 _bridge_save 同协议）
     if api.risk is not None:
         action.risk = max(action.risk, api.risk)

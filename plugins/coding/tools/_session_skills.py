@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from yibao_brain.ipc import ActionResult, RiskLevel
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 
 def _sibling(stem: str):
@@ -55,7 +55,7 @@ def start_session(db, *, agent: str, cwd: str, prompt: str, source: str = "",
                   mode: str = "acceptEdits") -> str:
     """纯函数：往 sessions 表插一行 running，返回 sid。不碰线程/runner（测试可直打）。
 
-    source：会话来源标记——""=用户直起；"codex:<sid>"=从 codex 交接切过来（HandoffSkill 起）。
+    source：会话来源标记——""=用户直起；"codex:<sid>"=从 codex 交接切过来（HandoffTool 起）。
     透传落库，便于后续面板/审计按来源过滤；不参与 runner 行为。
     mode：权限模式（acceptEdits=自动改文件 / plan=只读规划）落 mode 列，
     后续 send 不带 mode 时沿用库值。
@@ -69,7 +69,7 @@ def start_session(db, *, agent: str, cwd: str, prompt: str, source: str = "",
     return sid
 
 
-class StartSkill(Skill):
+class StartTool(Tool):
     id = "coding.start"
     label = "开始编码会话"
     description = (
@@ -131,7 +131,7 @@ class StartSkill(Skill):
         })
 
 
-class SendSkill(Skill):
+class SendTool(Tool):
     id = "coding.send"
     label = "接续编码会话"
     description = (
@@ -208,7 +208,7 @@ class SendSkill(Skill):
             # 首条消息未建立上下文（cc_session_id 为空）：runner 未捕获会话 id——常见于
             # codex 新会话/CC→codex 交接首轮失败（CLI 启动异常、stdout 零事件等）。
             # 不再一刀切拒绝（否则上下文/历史全丢，用户只能开新对话）——自动降级：
-            # 以交接摘要在同一 sid 上重跑新会话（SessionBriefSkill 手动补救的自动化，
+            # 以交接摘要在同一 sid 上重跑新会话（SessionBriefTool 手动补救的自动化，
             # 同 _stream 的 codex resume fallback 模式），前端无感、消息流连贯；
             # 重跑成功后 cc_session_id 自动更新为新 thread_id。llm 缺失/失败用原文节选兜底。
             src = dst = "Codex" if agent == "codex" else "Claude Code"
@@ -231,7 +231,7 @@ class SendSkill(Skill):
         })
 
 
-class StopSkill(Skill):
+class StopTool(Tool):
     id = "coding.stop"
     label = "停止编码会话"
     description = "停止一个还在运行的 coding 会话（race-safe 取消：先落 stopped 再发取消信号）。"
@@ -290,7 +290,7 @@ def _live_state(sid: str) -> str:
     return "idle"
 
 
-class ListSkill(Skill):
+class ListTool(Tool):
     id = "coding.list"
     label = "编码会话列表"
     description = "列出 coding 会话（按创建时间倒序；每行带 live 活体状态：waiting/running/idle）。"
@@ -312,7 +312,7 @@ class ListSkill(Skill):
         return ActionResult(success=True, data={"sessions": sessions, "panel": "coding:studio"})
 
 
-class AttachSkill(Skill):
+class AttachTool(Tool):
     """打开 coding 面板并恢复指定会话（任务卡/studio 左栏「接管」点击路由）。
 
     只校验会话存在，真正的恢复在面板侧：api.toml 声明 panel="coding:studio"，

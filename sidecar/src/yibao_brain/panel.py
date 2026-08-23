@@ -34,7 +34,7 @@ async def _emit_refresh_panel(agent: AgentLoop, emit, refresh_tool: str) -> None
 
     刷新 tool 若意外需要确认/被拒，静默跳过（不弹确认——刷新不该打断用户）。
     """
-    action = agent.invoker.propose(ToolCall(id=f"pa_refresh_{id(emit)}", skill_id=refresh_tool, params={}))
+    action = agent.invoker.propose(ToolCall(id=f"pa_refresh_{id(emit)}", tool_id=refresh_tool, params={}))
     if agent.invoker.decide(action) != Decision.AUTO:
         return
     result = await _offload(agent.invoker.execute, action, {})
@@ -56,10 +56,10 @@ async def handle_panel_action(msg: dict, agent: AgentLoop, write_msg: WriteMsg, 
 
     rid = msg.get("id")
     method = ""
-    tag = Action(id=f"pa_{rid}", skill_id="?")  # 错误事件归属标签：壳侧桥按 pa_<rid> 认领，不误杀其他调用
+    tag = Action(id=f"pa_{rid}", tool_id="?")  # 错误事件归属标签：壳侧桥按 pa_<rid> 认领，不误杀其他调用
     try:
         method = str(msg.get("method", ""))
-        tag = Action(id=f"pa_{rid}", skill_id=method or "?")
+        tag = Action(id=f"pa_{rid}", tool_id=method or "?")
         params = msg.get("params") or {}
         api = get_api(method)
         if api is None:  # 白名单外：拒绝执行
@@ -70,7 +70,7 @@ async def handle_panel_action(msg: dict, agent: AgentLoop, write_msg: WriteMsg, 
             await run_text(_render_intent(api, params), rid)
             return
 
-        action = agent.invoker.propose(ToolCall(id=f"pa_{rid}", skill_id=api.handler, params=params))
+        action = agent.invoker.propose(ToolCall(id=f"pa_{rid}", tool_id=api.handler, params=params))
         action.id = f"pa_{rid}"  # propose 会重新发 id；壳侧桥靠 pa_<rid> 关联回包/确认/错误，必须保留
         if api.risk is not None:
             action.risk = max(action.risk, api.risk)  # api.toml 只许收紧，不许放宽
@@ -124,7 +124,7 @@ def _is_readonly_direct(msg: dict, agent: AgentLoop) -> bool:
     if api is None or not api.direct:
         return False
     action = agent.invoker.propose(
-        ToolCall(id=f"pa_{msg.get('id')}", skill_id=api.handler, params=msg.get("params") or {})
+        ToolCall(id=f"pa_{msg.get('id')}", tool_id=api.handler, params=msg.get("params") or {})
     )
     if api.risk is not None:
         action.risk = max(action.risk, api.risk)

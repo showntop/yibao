@@ -5,14 +5,14 @@ import { listen } from "@tauri-apps/api/event";
 import type { BrainEvent, BrainStatusMsg, PendingConfirm } from "../protocol/brain-types";
 
 /** 当前确认链支持：普通技能按 skill；后台命令按 command + cwd 精确记忆。 */
-export function canRememberSkill(skill: string): boolean {
+export function canRememberTool(skill: string): boolean {
   // coding 审批不经 invoker.apply_verdict（裁决走 confirmation_needed 直兑 future），
   // remember 勾了也不生效——复选框对 coding 隐藏，防误导（P2 审批统一 L2）
   if (skill === "coding") return false;
   return Boolean(skill);
 }
 
-export function rememberLabelForSkill(skill: string): string {
+export function rememberLabelForTool(skill: string): string {
   return skill === "watch_command" ? "本会话允许相同命令" : "本会话不再询问";
 }
 
@@ -72,8 +72,8 @@ if ("__TAURI_INTERNALS__" in window) void listen<BrainEvent>("brain-event", (ev)
       .filter((a) => a?.id && !_pc.some((p) => p.id === a.id))
       .map((a) => ({
         id: a.id as string,
-        skill: a.skill_id ?? "",
-        label: a.label ?? a.skill_id ?? "",
+        tool_id: a.tool_id ?? "",
+        label: a.label ?? a.tool_id ?? "",
         desc: a.description ?? "",
         params: a.params,
         risk: a.risk,

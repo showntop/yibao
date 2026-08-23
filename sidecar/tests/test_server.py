@@ -33,7 +33,7 @@ def make_reader(msgs):
 
 def test_serve_streams_events_and_run_done(tmp_path):
     provider = _TwoStepProvider(
-        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="echo", params={"text": "hi"})]),
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="echo", params={"text": "hi"})]),
         second=FakeProvider(text="echoed: hi"),
     )
     loop = build_loop(make_reader([{"id": 1, "type": "run", "text": "hi"}]),
@@ -46,15 +46,15 @@ def test_serve_streams_events_and_run_done(tmp_path):
 
 
 def test_serve_round_trips_confirmation(tmp_path):
-    from yibao_brain.skills import Skill, SkillRegistry
+    from yibao_brain.tools import Tool, ToolRegistry
     from yibao_brain.ipc import ActionResult, RiskLevel
 
-    class DangerSkill(Skill):
+    class DangerTool(Tool):
         id = "danger"; description = "危险占位"; default_risk = RiskLevel.L3_HIGH
         def run(self, params, ctx): return ActionResult(success=True, data={"did": True})
 
     provider = _TwoStepProvider(
-        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="danger", params={})]),
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="danger", params={})]),
         second=FakeProvider(text="done"),
     )
     inbox = [
@@ -62,7 +62,7 @@ def test_serve_round_trips_confirmation(tmp_path):
         {"id": 2, "type": "confirm", "confirmation_id": "x", "approved": False},
     ]
     loop = build_loop(make_reader(inbox), use_real=False, db_path=str(tmp_path / "a.db"),
-                      provider=provider, skills_factory=lambda: _registry_with(DangerSkill()))
+                      provider=provider, skills_factory=lambda: _registry_with(DangerTool()))
     out = []
     serve(loop, make_reader(inbox), lambda m: out.append(m))
     kinds = [m["event"]["kind"] for m in out if m["type"] == "event"]
@@ -73,8 +73,8 @@ def test_serve_round_trips_confirmation(tmp_path):
 
 
 def _registry_with(*skills):
-    from yibao_brain.skills import SkillRegistry
-    reg = SkillRegistry()
+    from yibao_brain.tools import ToolRegistry
+    reg = ToolRegistry()
     for s in skills:
         reg.register(s)
     return reg
@@ -89,7 +89,7 @@ def _run_async(coro):
 
 def test_serve_async_streams_events_and_run_done(tmp_path):
     provider = _TwoStepProvider(
-        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="echo", params={"text": "hi"})]),
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="echo", params={"text": "hi"})]),
         second=FakeProvider(chunks=["echoed:", " hi"]),
     )
     out = []
@@ -328,10 +328,10 @@ def test_targeted_interrupt_keeps_other_conversation_confirm_alive(tmp_path):
     批准后 A 照常执行、完整收尾；confirmation_needed 事件带会话归属。"""
     import queue as _queue
 
-    from yibao_brain.skills import Skill
+    from yibao_brain.tools import Tool
     from yibao_brain.ipc import ActionResult, RiskLevel
 
-    class DangerSkill(Skill):
+    class DangerTool(Tool):
         id = "danger"; description = "危险占位"; default_risk = RiskLevel.L3_HIGH
         def run(self, params, ctx): return ActionResult(success=True, data={"did": True})
 
@@ -345,7 +345,7 @@ def test_targeted_interrupt_keeps_other_conversation_confirm_alive(tmp_path):
             joined = " ".join(str(m.get("content")) for m in messages)
             if "危险" in joined and not self._danger_prompted:
                 self._danger_prompted = True
-                src = FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="danger", params={})])
+                src = FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="danger", params={})])
             elif "危险" in joined:
                 src = FakeProvider(text="A 做完了")
             else:
@@ -384,7 +384,7 @@ def test_targeted_interrupt_keeps_other_conversation_confirm_alive(tmp_path):
             use_real=False,
             db_path=str(tmp_path / "a.db"),
             provider=_Mix(),
-            skills_factory=lambda: _registry_with(DangerSkill()),
+            skills_factory=lambda: _registry_with(DangerTool()),
         )
     )
     # B 被打断，A 没有
@@ -572,15 +572,15 @@ def test_serve_async_confirm_roundtrip(tmp_path):
     """
     import queue as _queue
 
-    from yibao_brain.skills import Skill
+    from yibao_brain.tools import Tool
     from yibao_brain.ipc import ActionResult, RiskLevel
 
-    class DangerSkill(Skill):
+    class DangerTool(Tool):
         id = "danger"; description = "危险占位"; default_risk = RiskLevel.L3_HIGH
         def run(self, params, ctx): return ActionResult(success=True, data={"did": True})
 
     provider = _TwoStepProvider(
-        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="danger", params={})]),
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="danger", params={})]),
         second=FakeProvider(text="done"),
     )
     out: list = []
@@ -608,7 +608,7 @@ def test_serve_async_confirm_roundtrip(tmp_path):
             use_real=False,
             db_path=str(tmp_path / "a.db"),
             provider=provider,
-            skills_factory=lambda: _registry_with(DangerSkill()),
+            skills_factory=lambda: _registry_with(DangerTool()),
         )
     )
     kinds = [m["event"]["kind"] for m in out if m["type"] == "event"]
@@ -626,10 +626,10 @@ def test_serve_async_confirm_remember_skips_future_prompts(tmp_path):
     import threading as _th
     import time as _time
 
-    from yibao_brain.skills import Skill
+    from yibao_brain.tools import Tool
     from yibao_brain.ipc import ActionResult, RiskLevel
 
-    class DangerSkill(Skill):
+    class DangerTool(Tool):
         id = "danger"; description = "危险占位"; default_risk = RiskLevel.L3_HIGH
         def run(self, params, ctx): return ActionResult(success=True, data={"did": True})
 
@@ -647,9 +647,9 @@ def test_serve_async_confirm_remember_skips_future_prompts(tmp_path):
                 yield d
 
     provider = _SeqProvider([
-        FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="danger", params={})]),
+        FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="danger", params={})]),
         FakeProvider(text="第一次完成"),
-        FakeProvider(tool_calls=[ToolCall(id="t2", skill_id="danger", params={})]),
+        FakeProvider(tool_calls=[ToolCall(id="t2", tool_id="danger", params={})]),
         FakeProvider(text="第二次完成"),
     ])
     out: list = []
@@ -682,7 +682,7 @@ def test_serve_async_confirm_remember_skips_future_prompts(tmp_path):
             use_real=False,
             db_path=str(tmp_path / "a.db"),
             provider=provider,
-            skills_factory=lambda: _registry_with(DangerSkill()),
+            skills_factory=lambda: _registry_with(DangerTool()),
         )
     )
     confirms = [m for m in out
@@ -705,18 +705,18 @@ def test_confirm_batch_resolves_multiple_futures(tmp_path):
     """
     import queue as _queue
 
-    from yibao_brain.skills import Skill
+    from yibao_brain.tools import Tool
     from yibao_brain.ipc import ActionResult, RiskLevel
 
-    class DangerSkill(Skill):
+    class DangerTool(Tool):
         id = "danger"; description = "危险占位"; default_risk = RiskLevel.L3_HIGH
         def run(self, params, ctx):
             return ActionResult(success=True, data={"did": True, "n": params.get("n")})
 
     provider = _TwoStepProvider(
         first=FakeProvider(tool_calls=[
-            ToolCall(id="t1", skill_id="danger", params={"n": 1}),
-            ToolCall(id="t2", skill_id="danger", params={"n": 2}),
+            ToolCall(id="t1", tool_id="danger", params={"n": 1}),
+            ToolCall(id="t2", tool_id="danger", params={"n": 2}),
         ]),
         second=FakeProvider(text="done"),
     )
@@ -746,7 +746,7 @@ def test_confirm_batch_resolves_multiple_futures(tmp_path):
             use_real=False,
             db_path=str(tmp_path / "a.db"),
             provider=provider,
-            skills_factory=lambda: _registry_with(DangerSkill()),
+            skills_factory=lambda: _registry_with(DangerTool()),
         )
     )
     evs = [m["event"] for m in out if m["type"] == "event"]
@@ -820,15 +820,15 @@ def test_serve_async_stdin_close_cancels_pending_confirmation(tmp_path):
     """stdin 关闭时卡在确认等待的任务必须被取消、限时退出（防孤儿 brain 占 qdrant 锁）。"""
     import time as _time
 
-    from yibao_brain.skills import Skill, SkillRegistry
+    from yibao_brain.tools import Tool, ToolRegistry
     from yibao_brain.ipc import ActionResult, RiskLevel
 
-    class DangerSkill(Skill):
+    class DangerTool(Tool):
         id = "danger"; description = "危险占位"; default_risk = RiskLevel.L3_HIGH
         def run(self, params, ctx): return ActionResult(success=True, data={"did": True})
 
     provider = _TwoStepProvider(
-        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="danger", params={})]),
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="danger", params={})]),
         second=FakeProvider(text="done"),
     )
     inbox = iter([{"id": 1, "type": "run", "text": "做危险的事"}])
@@ -849,7 +849,7 @@ def test_serve_async_stdin_close_cancels_pending_confirmation(tmp_path):
             use_real=False,
             db_path=str(tmp_path / "a.db"),
             provider=provider,
-            skills_factory=lambda: _registry_with(DangerSkill()),
+            skills_factory=lambda: _registry_with(DangerTool()),
         )
     )
     elapsed = _time.monotonic() - t0
@@ -1128,7 +1128,7 @@ def test_serve_async_activity_tool_observes_live_model_access_setting(tmp_path, 
             tool_calls=[
                 ToolCall(
                     id="t1",
-                    skill_id="load_user_activity",
+                    tool_id="load_user_activity",
                     params={"start_at": start.isoformat(), "end_at": end.isoformat()},
                 )
             ]
@@ -1170,7 +1170,7 @@ def test_load_plugins_safe_wires_registry(tmp_path, monkeypatch, capsys):
     """build_loop 的插件接线：YIBAO_PLUGINS_DIR 指向 tmp，加载结果进 registry 并打印 stderr。"""
     from yibao_brain.memory import FakeMemory
     from yibao_brain.server import _load_plugins_safe
-    from yibao_brain.skills import SkillRegistry
+    from yibao_brain.tools import ToolRegistry
 
     plugin = tmp_path / "notes"
     plugin.mkdir()
@@ -1183,7 +1183,7 @@ def test_load_plugins_safe_wires_registry(tmp_path, monkeypatch, capsys):
     )
     monkeypatch.setenv("YIBAO_PLUGINS_DIR", str(tmp_path))
     monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path / "data"))
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     _load_plugins_safe(reg, FakeMemory(), FakeProvider(), None)
     assert reg.get("notes.keep").id == "notes.keep"
     assert "[yibao] 插件 notes: ok" in capsys.readouterr().err
@@ -1193,10 +1193,10 @@ def test_load_plugins_safe_never_raises(tmp_path, monkeypatch):
     """插件系统整体异常也不许拖垮底座启动（外层兜底 try）。"""
     from yibao_brain.memory import FakeMemory
     from yibao_brain.server import _load_plugins_safe
-    from yibao_brain.skills import SkillRegistry
+    from yibao_brain.tools import ToolRegistry
 
     monkeypatch.setenv("YIBAO_PLUGINS_DIR", str(tmp_path / "nonexistent"))
-    _load_plugins_safe(SkillRegistry(), FakeMemory(), FakeProvider(), None)  # 不抛
+    _load_plugins_safe(ToolRegistry(), FakeMemory(), FakeProvider(), None)  # 不抛
 
 
 def test_load_plugins_safe_passes_reminders_store(tmp_path, monkeypatch):
@@ -1205,7 +1205,7 @@ def test_load_plugins_safe_passes_reminders_store(tmp_path, monkeypatch):
     from yibao_brain.memory import FakeMemory
     from yibao_brain.reminders import ReminderStore
     from yibao_brain.server import _load_plugins_safe
-    from yibao_brain.skills import SkillRegistry
+    from yibao_brain.tools import ToolRegistry
 
     plugin = tmp_path / "rem"
     (plugin / "tools").mkdir(parents=True)
@@ -1215,8 +1215,8 @@ def test_load_plugins_safe_passes_reminders_store(tmp_path, monkeypatch):
     )
     (plugin / "tools" / "x.py").write_text(
         "from yibao_brain.ipc import ActionResult, RiskLevel\n"
-        "from yibao_brain.skills import Skill\n"
-        "class X(Skill):\n"
+        "from yibao_brain.tools import Tool\n"
+        "class X(Tool):\n"
         '    id = "rem.x"\n'
         '    description = "x"\n'
         "    default_risk = RiskLevel.L0_READONLY\n"
@@ -1231,7 +1231,7 @@ def test_load_plugins_safe_passes_reminders_store(tmp_path, monkeypatch):
     )
     monkeypatch.setenv("YIBAO_PLUGINS_DIR", str(tmp_path))
     monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path / "data"))
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     store = ReminderStore(str(tmp_path / "data" / "reminders.json"))
     _load_plugins_safe(reg, FakeMemory(), FakeProvider(), None, reminders=store)
     sk = reg.get("rem.x")
@@ -1241,13 +1241,13 @@ def test_load_plugins_safe_passes_reminders_store(tmp_path, monkeypatch):
 # ---------- ⑦py：panel_action（面板直调方法，过白名单 + 闸门）----------
 
 
-class _RecSkill:
+class _RecTool:
     """记录执行的删除 tool（plugin 命名空间注册）。"""
 
     @staticmethod
     def make(executed, ref=None, risk=RiskLevel.L1_LOW):
         from yibao_brain.ipc import ActionResult as AR
-        from yibao_brain.skills import Skill as _S
+        from yibao_brain.tools import Tool as _S
 
         class Rec(_S):
             id = "tdel.delete"
@@ -1262,11 +1262,11 @@ class _RecSkill:
 
 
 def _pa_factory(executed, ref=None, risk=RiskLevel.L1_LOW):
-    from yibao_brain.skills import SkillRegistry
+    from yibao_brain.tools import ToolRegistry
 
     def factory():
-        reg = SkillRegistry()
-        reg.register(_RecSkill.make(executed, ref, risk), plugin="tdel")
+        reg = ToolRegistry()
+        reg.register(_RecTool.make(executed, ref, risk), plugin="tdel")
         return reg
 
     return factory
@@ -1434,7 +1434,9 @@ def test_panel_action_write_still_preempts_run(tmp_path, monkeypatch):
             lambda m: out.append(m),
             use_real=False,
             db_path=str(tmp_path / "a.db"),
-            provider=FakeProvider(text="你好"),
+            # delay：让 run 在面板消息到达时仍在跑——否则 FakeProvider 秒回，run 已
+            # 完成、final_reply 已发出，抢占只能发生在收尾阶段（测试意图落空）
+            provider=FakeProvider(text="你好", delay=0.2),
             skills_factory=_pa_factory(executed),
         )
     )
@@ -1514,7 +1516,7 @@ def test_panel_action_refresh_replaces_stale_panel_data(tmp_path, monkeypatch):
     """api.toml method 声明 refresh：直调成功后面板拿到的是刷新查询的新数据，而非操作回执。"""
     from yibao_brain import plugins
     from yibao_brain.ipc import ActionResult as AR
-    from yibao_brain.skills import Skill as _S, SkillRegistry
+    from yibao_brain.tools import Tool as _S, ToolRegistry
 
     executed = []
 
@@ -1530,7 +1532,7 @@ def test_panel_action_refresh_replaces_stale_panel_data(tmp_path, monkeypatch):
             return AR(success=True, data={"rows": [{"id": "r2", "text": "还剩这条"}]}, panel="tdel:list")
 
     def factory():
-        reg = SkillRegistry()
+        reg = ToolRegistry()
         reg.register(Del(), plugin="tdel")
         reg.register(List_(), plugin="tdel")
         return reg
@@ -1585,10 +1587,10 @@ def test_panel_action_quiet_suppresses_panel_event(tmp_path, monkeypatch):
 def test_load_api_parses_quiet(tmp_path):
     """api.toml quiet = true 解析进 ApiMethod.quiet（缺省 False）。"""
     from yibao_brain import plugins
-    from yibao_brain.skills import SkillRegistry
+    from yibao_brain.tools import ToolRegistry
 
-    reg = SkillRegistry()
-    reg.register(_RecSkill.make([]), plugin="tdel")
+    reg = ToolRegistry()
+    reg.register(_RecTool.make([]), plugin="tdel")
     api = tmp_path / "api.toml"
     api.write_text(
         '[[method]]\nname = "save"\nhandler = "tdel.delete"\ndirect = true\nquiet = true\n'
@@ -1837,13 +1839,13 @@ def test_serve_async_feed_stats_roundtrip(tmp_path):
 
 def test_serve_async_feed_includes_running_watch_command(tmp_path):
     from yibao_brain.background_jobs import BackgroundJobManager
-    from yibao_brain.skills import SkillRegistry
+    from yibao_brain.tools import ToolRegistry
 
     jobs = BackgroundJobManager()
     started = jobs.start("sleep 5", cwd=str(tmp_path), name="后台构建")
 
     def skills_factory():
-        registry = SkillRegistry()
+        registry = ToolRegistry()
         registry.background_jobs = jobs
         return registry
 
@@ -1940,7 +1942,7 @@ def test_serve_async_feed_mark_all_read(tmp_path):
 
 def _seed_audit_calls(db_path, counts: dict[str, int]) -> None:
     """直接往 audit.db 的 actions 表插若干行（按 plugin id 指定次数）。
-    skill_id 用 `<plugin>.x` 形式以匹配 plugin_call_counts 的前缀解析。
+    tool_id 用 `<plugin>.x` 形式以匹配 plugin_call_counts 的前缀解析。
     先经 AuditLog 建表（避免 raw sqlite 撞「no such table」）。"""
     from yibao_brain.audit import AuditLog
 
@@ -1949,7 +1951,7 @@ def _seed_audit_calls(db_path, counts: dict[str, int]) -> None:
         for pid, n in counts.items():
             for _ in range(n):
                 log.conn.execute(
-                    "INSERT INTO actions (skill_id, success) VALUES (?, 1)",
+                    "INSERT INTO actions (tool_id, success) VALUES (?, 1)",
                     (f"{pid}.x",),
                 )
         log.conn.commit()
@@ -2604,19 +2606,19 @@ def test_confirm_mobile_unknown_bound_and_shell_cross_surface_dedup(tmp_path):
 
 def test_confirm_meta_summary_readable_k_v(tmp_path):
     """confirm_meta.summary 可读化：params 非空 dict → k=v 逗号形式（不再是 dict-repr），
-    空 params 回落 skill_id。手机审批页直接展示该字段。"""
+    空 params 回落 tool_id。手机审批页直接展示该字段。"""
 
     async def main():
         import os
 
-        from yibao_brain.skills import Skill
+        from yibao_brain.tools import Tool
         from yibao_brain.ipc import ActionResult
 
-        class DangerSkill(Skill):
+        class DangerTool(Tool):
             id = "danger"; description = "危险占位"; default_risk = RiskLevel.L3_HIGH
             def run(self, params, ctx): return ActionResult(success=True)
 
-        class BareSkill(Skill):
+        class BareTool(Tool):
             id = "bare"; description = "无参占位"; default_risk = RiskLevel.L3_HIGH
             def run(self, params, ctx): return ActionResult(success=True)
 
@@ -2637,9 +2639,9 @@ def test_confirm_meta_summary_readable_k_v(tmp_path):
                     yield d
 
         provider = _ChainProvider([
-            FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="danger",
+            FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="danger",
                                               params={"path": "/tmp/x", "force": True})]),
-            FakeProvider(tool_calls=[ToolCall(id="t2", skill_id="bare", params={})]),
+            FakeProvider(tool_calls=[ToolCall(id="t2", tool_id="bare", params={})]),
             FakeProvider(text="done"),
         ])
         out: list = []
@@ -2677,7 +2679,7 @@ def test_confirm_meta_summary_readable_k_v(tmp_path):
             serve_task = asyncio.ensure_future(S.serve_async(
                 inbox.get, writer, use_real=False,
                 db_path=str(tmp_path / "sm.db"), provider=provider, http_enabled=True,
-                skills_factory=lambda: _registry_with(DangerSkill(), BareSkill())))
+                skills_factory=lambda: _registry_with(DangerTool(), BareTool())))
             # 第一轮：确认挂起时拉 state → 批准 t1
             await wait_for(lambda: any(m.get("type") == "event"
                                        and m["event"].get("kind") == "confirmation_needed" for m in out))
@@ -2699,7 +2701,7 @@ def test_confirm_meta_summary_readable_k_v(tmp_path):
         # action id 由 loop 自动生成（act_*），按 summary 内容断言
         vals = list(summaries.values())
         assert "path=/tmp/x, force=True" in vals  # k=v 可读形式（非 dict-repr）
-        assert "bare" in vals                     # 空 params → 回落 skill_id
+        assert "bare" in vals                     # 空 params → 回落 tool_id
 
     asyncio.run(main())
 
@@ -2924,15 +2926,15 @@ class _DirectInvoker:
         self.calls = []
 
     def propose(self, call):
-        self.calls.append(("propose", call.skill_id, dict(call.params)))
-        return self._Action(id=call.id, skill_id=call.skill_id)
+        self.calls.append(("propose", call.tool_id, dict(call.params)))
+        return self._Action(id=call.id, tool_id=call.tool_id)
 
     def decide(self, action):
-        self.calls.append(("decide", action.skill_id))
+        self.calls.append(("decide", action.tool_id))
         return self.decision
 
     def execute(self, action, params):
-        self.calls.append(("execute", action.skill_id, dict(params)))
+        self.calls.append(("execute", action.tool_id, dict(params)))
         return self.result
 
 
@@ -3198,7 +3200,7 @@ def test_serve_feed_running_coding_session_waiting_flag(tmp_path, monkeypatch):
 
 def test_mobile_state_merges_coding_perm_pending(tmp_path, monkeypatch):
     """_PERM 挂起项只读合并进 /v1/state 的 pending（真 HTTP 路径，serve_async 级）：
-    挂起（allow is None）出现且字段齐（id/skill_id/summary/risk/created_at），
+    挂起（allow is None）出现且字段齐（id/tool_id/summary/risk/created_at），
     已裁决（allow 非 None）不出现；手机裁决后条目从 pending 收敛。
     顺带钉死 _confirm_mobile 的 perm_ 分支：未知 rid → 404（不再恒 200 假 ok）。"""
     import os
@@ -3250,7 +3252,7 @@ def test_mobile_state_merges_coding_perm_pending(tmp_path, monkeypatch):
                 pend = await get_state()
                 assert [p["id"] for p in pend] == ["perm_cs1_1"]  # 已裁决项不出现
                 item = pend[0]
-                assert item["skill_id"] == "coding"
+                assert item["tool_id"] == "coding"
                 assert item["summary"] == "rm -rf /tmp/x"
                 assert item["risk"] == 1
                 assert item["created_at"] == 1700000000

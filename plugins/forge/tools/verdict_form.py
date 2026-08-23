@@ -3,10 +3,10 @@
 文件自包含（加载器按文件独立 importlib 加载，禁止跨文件 import）。
 """
 from yibao_brain.ipc import ActionResult, RiskLevel
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 
-class VerdictForm(Skill):
+class VerdictForm(Tool):
     id = "forge.verdict_form"
     label = "评审表单"
     description = "打开某条需求的裁决表单（面板交互）：返回需求 id/title，表单提交走 forge.verdict"

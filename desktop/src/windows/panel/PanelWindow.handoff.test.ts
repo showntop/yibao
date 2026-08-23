@@ -19,8 +19,8 @@ vi.mock("../../lib/brain", () => ({
   interrupt: vi.fn(() => Promise.resolve()),
   reportPanelContext: vi.fn(() => Promise.resolve()),
   setSurface: vi.fn(),
-  canRememberSkill: vi.fn(() => false),
-  rememberLabelForSkill: vi.fn(() => ""),
+  canRememberTool: vi.fn(() => false),
+  rememberLabelForTool: vi.fn(() => ""),
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(() => Promise.resolve(null)) }));
 vi.mock("@tauri-apps/api/window", () => ({

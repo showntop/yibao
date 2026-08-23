@@ -4,10 +4,10 @@ from __future__ import annotations
 from typing import Any
 
 from yibao_brain.ipc import ActionResult, RiskLevel
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 
-class OpenFunSkill(Skill):
+class OpenFunTool(Tool):
     id = "fun.open"
     label = "打开娱乐"
     description = (
@@ -50,5 +50,5 @@ class OpenFunSkill(Skill):
         return ActionResult(success=True, data=data, panel="fun:main", explicit=True)
 
 
-def make_tools(ctx: Any) -> list[Skill]:
-    return [OpenFunSkill()]
+def make_tools(ctx: Any) -> list[Tool]:
+    return [OpenFunTool()]

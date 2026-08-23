@@ -22,11 +22,11 @@ export type BrainEventKind =
 
 export interface BrainAction {
   id?: string;
-  skill_id?: string;
+  tool_id?: string;
   description?: string;
   params?: Record<string, unknown>;
   risk?: number;
-  /** 过程展示短标签（sidecar 从技能 label 填，回退 skill_id） */
+  /** 过程展示短标签（sidecar 从技能 label 填，回退 tool_id） */
   label?: string;
   /** 发起面板（coding 审批经广播通道时顶层 surface 为空，action 自带） */
   surface?: string;
@@ -300,8 +300,8 @@ export const EMPTY_DOCK: DockListResponse = { dock: [] };
 
 export interface PendingConfirm {
   id: string; // confirmation_id（= action.id）
-  skill: string;
-  label: string; // 技能短标签（回退 skill_id）
+  tool_id: string;
+  label: string; // 技能短标签（回退 tool_id）
   desc: string;
   /** 确认卡只读取与决策有关的公开参数（如 command/cwd），不在 UI 展示未知字段。 */
   params?: Record<string, unknown>;

@@ -19,7 +19,7 @@ from typing import Any
 from . import config
 from .ipc import ActionResult, RiskLevel
 from .plugins import register_panel, unregister_panel
-from .skills import Skill
+from .tools import Tool
 
 PANEL_PID = "gen"  # gen 面板固定 pid（前端 invoke 粗筛 + 无 api 白名单，天然无调用能力）
 
@@ -179,12 +179,12 @@ def load_saved_panels() -> int:
     return n
 
 
-def make_skills(llm) -> list[Skill]:
+def make_skills(llm) -> list[Tool]:
     """底座注册口（server.build_loop 照 reminders 的方式用）：llm 需有 chat(prompt) -> str。"""
-    return [PanelGenSkill(llm), PanelOpenSkill(), PanelListSkill(), PanelDeleteSkill()]
+    return [PanelGenTool(llm), PanelOpenTool(), PanelListTool(), PanelDeleteTool()]
 
 
-class PanelGenSkill(Skill):
+class PanelGenTool(Tool):
     id = "panel_gen"
     label = "生成面板"
     description = (
@@ -255,7 +255,7 @@ class PanelGenSkill(Skill):
             return None
 
 
-class PanelOpenSkill(Skill):
+class PanelOpenTool(Tool):
     id = "panel_open"
     label = "打开面板"
     description = "重新打开一个之前生成过的面板（不知道有哪些时先 panel_list）。"
@@ -292,7 +292,7 @@ class PanelOpenSkill(Skill):
         return ActionResult(success=True, panel=f"{PANEL_PID}:{slug}", data={})
 
 
-class PanelListSkill(Skill):
+class PanelListTool(Tool):
     id = "panel_list"
     label = "列出面板"
     description = "列出生成过的所有面板（name/title/用途/创建时间）。"
@@ -315,7 +315,7 @@ class PanelListSkill(Skill):
         )
 
 
-class PanelDeleteSkill(Skill):
+class PanelDeleteTool(Tool):
     id = "panel_delete"
     label = "删除面板"
     description = "删除一个生成过的面板（先 panel_list 拿 name；用户说「删掉那个面板」时用）。"

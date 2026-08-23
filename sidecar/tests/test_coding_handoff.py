@@ -2,7 +2,7 @@
 from __future__ import annotations
 import json, os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "plugins", "coding", "skills"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "plugins", "coding", "tools"))
 from _codex_reader import list_sessions, read_conversation, git_summary  # noqa: E402
 
 
@@ -91,15 +91,15 @@ def test_start_session_records_source_when_provided():
 
 
 def test_start_session_source_defaults_empty():
-    """用户直起（不传 source）→ 行 source == ''，保证既有 StartSkill 调用人不破。"""
+    """用户直起（不传 source）→ 行 source == ''，保证既有 StartTool 调用人不破。"""
     db = _FakeDB()
     sid = start_session(db, agent="claude-code", cwd="/tmp/p", prompt="hi")
     assert db.rows[sid]["source"] == ""
 
 
-# ---------- Task 4: HandoffListSkill + HandoffBriefSkill ----------
+# ---------- Task 4: HandoffListTool + HandoffBriefTool ----------
 import coding as codingmod  # noqa: E402
-from coding import HandoffListSkill, HandoffBriefSkill  # noqa: E402
+from coding import HandoffListTool, HandoffBriefTool  # noqa: E402
 
 
 class _Ctx:
@@ -110,22 +110,22 @@ class _Ctx:
 
 
 def test_handoff_list_skill(tmp_path, monkeypatch):
-    """HandoffListSkill 经 monkeypatch 后的 root 读 tmp session → 返回 sessions 列表。"""
+    """HandoffListTool 经 monkeypatch 后的 root 读 tmp session → 返回 sessions 列表。"""
     root = str(tmp_path / "sessions"); proj = str(tmp_path / "p"); os.makedirs(proj)
     _write_session(root, "2026/08/05/a.jsonl", proj, "sid-a", "2026-08-05T10:00:00Z", [("user", "hi")])
     monkeypatch.setattr(codingmod, "_codex_sessions_root", lambda: root)
-    r = HandoffListSkill().run({"cwd": proj}, _Ctx())
+    r = HandoffListTool().run({"cwd": proj}, _Ctx())
     assert r.success and r.data["sessions"][0]["session_id"] == "sid-a"
 
 
 def test_handoff_list_skill_cwd_empty():
     """cwd 缺失 → success=False，便于前端提示用户选目录。"""
-    r = HandoffListSkill().run({}, _Ctx())
+    r = HandoffListTool().run({}, _Ctx())
     assert not r.success and "cwd" in r.error
 
 
 def test_handoff_brief_skill(tmp_path, monkeypatch):
-    """HandoffBriefSkill：monkeypatch root + _build_brief → 返回 brief='BRIEF'，sid 透传。"""
+    """HandoffBriefTool：monkeypatch root + _build_brief → 返回 brief='BRIEF'，sid 透传。"""
     root = str(tmp_path / "sessions"); proj = str(tmp_path / "p"); os.makedirs(proj)
     _write_session(root, "2026/08/05/a.jsonl", proj, "sid-a", "2026-08-05T10:00:00Z",
                    [("user", "实现登录"), ("assistant", "好的")])
@@ -137,7 +137,7 @@ def test_handoff_brief_skill(tmp_path, monkeypatch):
             @staticmethod
             def chat(m, timeout=None): return type("R", (), {"text": "BRIEF"})()
 
-    r = HandoffBriefSkill().run({"session_id": "sid-a", "cwd": proj}, _CtxWithLlm())
+    r = HandoffBriefTool().run({"session_id": "sid-a", "cwd": proj}, _CtxWithLlm())
     assert r.success and r.data["brief"] == "BRIEF" and r.data["session_id"] == "sid-a"
 
 
@@ -147,7 +147,7 @@ def test_handoff_brief_skill_session_not_found(tmp_path, monkeypatch):
     _write_session(root, "2026/08/05/a.jsonl", proj, "sid-a", "2026-08-05T10:00:00Z",
                    [("user", "hi")])
     monkeypatch.setattr(codingmod, "_codex_sessions_root", lambda: root)
-    r = HandoffBriefSkill().run({"session_id": "nope", "cwd": proj}, _Ctx())
+    r = HandoffBriefTool().run({"session_id": "nope", "cwd": proj}, _Ctx())
     assert not r.success and "nope" in r.error
 
 
@@ -158,14 +158,14 @@ def test_handoff_brief_skill_no_llm(tmp_path, monkeypatch):
                    [("user", "hi")])
     monkeypatch.setattr(codingmod, "_codex_sessions_root", lambda: root)
     # _Ctx 默认 llm=None
-    r = HandoffBriefSkill().run({"session_id": "sid-a", "cwd": proj}, _Ctx())
+    r = HandoffBriefTool().run({"session_id": "sid-a", "cwd": proj}, _Ctx())
     assert not r.success and "llm" in r.error
 
 
-# ---------- Task 6: _cc_reader + HistorySkill（会话历史抽屉）----------
+# ---------- Task 6: _cc_reader + HistoryTool（会话历史抽屉）----------
 # _cc_reader 与 _codex_reader 同为 skills 自包含兄弟模块：sys.path 已含 skills 目录（:5），直import
 from _cc_reader import read_transcript  # noqa: E402
-from coding import HistorySkill  # noqa: E402
+from coding import HistoryTool  # noqa: E402
 
 
 def _write_cc_transcript(home, proj_name, cc_sid, lines):
@@ -217,11 +217,11 @@ def test_history_skill_returns_messages(tmp_path, monkeypatch):
     db.insert("sessions", {"id": "s1", "cc_session_id": "cc-abc-123", "cwd": "/tmp/p",
                            "prompt": "hi", "status": "done"})
     ctx = _Ctx(); ctx.db = db
-    r = HistorySkill().run({"id": "s1"}, ctx)
+    r = HistoryTool().run({"id": "s1"}, ctx)
     assert r.success
     assert r.data["session_id"] == "s1" and r.data["cc_session_id"] == "cc-abc-123"
     assert [m["text"] for m in r.data["messages"]] == ["第一句话", "回答一"]
-    r2 = HistorySkill().run({"id": "nope"}, ctx)
+    r2 = HistoryTool().run({"id": "nope"}, ctx)
     assert not r2.success and "nope" in r2.error
 
 

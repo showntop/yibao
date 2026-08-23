@@ -9,23 +9,23 @@ from yibao_brain.llm import FakeProvider, ToolCall
 from yibao_brain.loop import AgentLoop
 from yibao_brain.memory import FakeMemory
 from yibao_brain.safety import Gate, GatePolicy, RiskClassifier
-from yibao_brain.skills import EchoSkill, Skill, SkillRegistry, UsePluginSkill
+from yibao_brain.tools import EchoTool, Tool, ToolRegistry, UsePluginTool
 
 _SUMMARIES = {"p": {"name": "测试插件", "description": "演示用"}}
 
 
-class _PSkill(Skill):
+class _PTool(Tool):
     id = "p.x"
 
     def run(self, params, ctx):
         return ActionResult(success=True, data={"ok": True})
 
 
-def _registry(active: set) -> SkillRegistry:
-    reg = SkillRegistry()
-    reg.register(EchoSkill())
-    reg.register(_PSkill(), plugin="p")
-    reg.register(UsePluginSkill(reg, active, _SUMMARIES))
+def _registry(active: set) -> ToolRegistry:
+    reg = ToolRegistry()
+    reg.register(EchoTool())
+    reg.register(_PTool(), plugin="p")
+    reg.register(UsePluginTool(reg, active, _SUMMARIES))
     return reg
 
 
@@ -106,7 +106,7 @@ def _loop(tmp_path, provider, active, focus=None):
 def test_loop_plugin_hidden_then_expanded(tmp_path):
     active: set = set()
     provider = _RecProvider([
-        FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="use_plugin", params={"plugin": "p"})]),
+        FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="use_plugin", params={"plugin": "p"})]),
         FakeProvider(text="好了"),
     ])
     events = list(_loop(tmp_path, provider, active).run("用 p 插件"))
@@ -128,7 +128,7 @@ def test_loop_focus_plugin_counts_active(tmp_path):
 def test_loop_direct_plugin_call_auto_activates(tmp_path):
     active: set = set()
     provider = _RecProvider([
-        FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="p_x", params={})]),  # LLM 直接猜名
+        FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="p_x", params={})]),  # LLM 直接猜名
         FakeProvider(text="done"),
     ])
     events = list(_loop(tmp_path, provider, active).run("直接调"))
@@ -140,7 +140,7 @@ def test_loop_direct_plugin_call_auto_activates(tmp_path):
 def test_loop_arun_same_routing(tmp_path):
     active: set = set()
     provider = _RecProvider([
-        FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="use_plugin", params={"plugin": "p"})]),
+        FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="use_plugin", params={"plugin": "p"})]),
         FakeProvider(text="好了"),
     ])
 

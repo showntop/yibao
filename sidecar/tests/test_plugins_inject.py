@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from yibao_brain.plugins import _inline_vendor, _load_panels, get_panel
-from yibao_brain.skills import SkillRegistry
+from yibao_brain.tools import ToolRegistry
 
 REPO_PLUGINS_DIR = Path(__file__).resolve().parents[2] / "plugins"
 
@@ -113,7 +113,7 @@ def test_load_panels_inlines_vendor(tmp_path):
         "<html><script><!--inject:vendor/lib.js--></script></html>",
     )
     manifest = {"name": "注入测试", "panel": [{"type": "webview", "name": "main", "src": "panel/chat.html"}]}
-    _load_panels(child, "inj", manifest, SkillRegistry())
+    _load_panels(child, "inj", manifest, ToolRegistry())
     html = get_panel("inj:main")["html"]
     assert "var libLoaded=true;" in html and "<!--inject:" not in html
 
@@ -126,5 +126,5 @@ def test_repo_webview_panels_passthrough(pid, panel_ref, src):
     """回归：仓内无占位符的 webview 面板（tools.html / editor.html）加载后 html 与磁盘原文逐字节一致。"""
     child = REPO_PLUGINS_DIR / pid
     manifest = tomllib.loads((child / "manifest.toml").read_text(encoding="utf-8"))
-    _load_panels(child, pid, manifest, SkillRegistry())
+    _load_panels(child, pid, manifest, ToolRegistry())
     assert get_panel(panel_ref)["html"] == (child / src).read_text(encoding="utf-8")

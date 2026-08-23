@@ -5,13 +5,13 @@
 import time
 
 from yibao_brain.ipc import ActionResult, RiskLevel
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 # 合法裁决值：直接作为需求终态落库，必须白名单校验
 VERDICTS = ("已立项", "已搁置", "已否决")
 
 
-class Verdict(Skill):
+class Verdict(Tool):
     id = "forge.verdict"
     label = "评审打分"
     description = "用户对需求做出最终裁决（立项/搁置/否决）时调用；裁决理由落库该需求的 verdict_reason"

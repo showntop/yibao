@@ -19,7 +19,7 @@ from typing import Any
 from PIL import Image, ImageOps
 
 from yibao_brain.ipc import ActionResult, RiskLevel
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 _MM_TO_PT = 72.0 / 25.4  # 1mm = 72/25.4 pt
 _PAPER_PT = {  # 纸型 → (宽, 高) pt
@@ -91,7 +91,7 @@ def _page_image(img: Image.Image, pt_w: float, pt_h: float, dpi: int,
     return canvas
 
 
-class Img2PdfSkill(Skill):
+class Img2PdfTool(Tool):
     id = "toolbox.img2pdf"
     label = "图片转 PDF"
     description = (
@@ -254,5 +254,5 @@ class Img2PdfSkill(Skill):
         )
 
 
-def make_tools(ctx: Any) -> list[Skill]:
-    return [Img2PdfSkill()]
+def make_tools(ctx: Any) -> list[Tool]:
+    return [Img2PdfTool()]

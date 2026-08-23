@@ -1,11 +1,11 @@
-"""coding 引擎 chip 跨引擎切换：SessionBriefSkill（DB 消息双向交接摘要）+ build_brief src/dst wording。"""
+"""coding 引擎 chip 跨引擎切换：SessionBriefTool（DB 消息双向交接摘要）+ build_brief src/dst wording。"""
 from __future__ import annotations
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "plugins", "coding", "skills"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "plugins", "coding", "tools"))
 
 import coding as codingmod  # noqa: E402
-from coding import SessionBriefSkill  # noqa: E402
+from coding import SessionBriefTool  # noqa: E402
 from _brief import build_brief  # noqa: E402
 
 
@@ -47,12 +47,12 @@ def _mk_session(db, sid="s1", agent="claude-code", cwd="/p", msgs=()):
 
 
 def test_session_brief_not_found():
-    r = SessionBriefSkill().run({"id": "nope"}, _Ctx(_FakeDB()))
+    r = SessionBriefTool().run({"id": "nope"}, _Ctx(_FakeDB()))
     assert not r.success and "nope" in r.error
 
 
 def test_session_brief_requires_id():
-    r = SessionBriefSkill().run({}, _Ctx(_FakeDB()))
+    r = SessionBriefTool().run({}, _Ctx(_FakeDB()))
     assert not r.success
 
 
@@ -64,7 +64,7 @@ def test_session_brief_llm_brief_and_direction_wording(monkeypatch):
     monkeypatch.setattr(codingmod._sess, "_build_brief",
                         lambda llm, turns, git, src, dst: seen.update(src=src, dst=dst) or "BRIEF")
     monkeypatch.setattr(codingmod._codex, "git_summary", lambda cwd: "")
-    r = SessionBriefSkill().run({"id": "s1", "target": "codex"}, _Ctx(db, _FakeLlm()))
+    r = SessionBriefTool().run({"id": "s1", "target": "codex"}, _Ctx(db, _FakeLlm()))
     assert r.success and r.data["brief"] == "BRIEF" and r.data["session_id"] == "s1"
     assert seen == {"src": "Claude Code", "dst": "Codex"}
 
@@ -77,7 +77,7 @@ def test_session_brief_default_target_is_opposite(monkeypatch):
     monkeypatch.setattr(codingmod._sess, "_build_brief",
                         lambda llm, turns, git, src, dst: seen.update(src=src, dst=dst) or "B")
     monkeypatch.setattr(codingmod._codex, "git_summary", lambda cwd: "")
-    r = SessionBriefSkill().run({"id": "s1"}, _Ctx(db, _FakeLlm()))
+    r = SessionBriefTool().run({"id": "s1"}, _Ctx(db, _FakeLlm()))
     assert r.success and seen == {"src": "Codex", "dst": "Claude Code"}
 
 
@@ -85,7 +85,7 @@ def test_session_brief_no_llm_falls_back_to_excerpt():
     """llm 未声明 → 兜底原文节选（含最近消息），不报错不挡路。"""
     db = _FakeDB()
     _mk_session(db, msgs=[("user", "改一下入口"), ("assistant", "已改 main.rs")])
-    r = SessionBriefSkill().run({"id": "s1"}, _Ctx(db))   # llm=None
+    r = SessionBriefTool().run({"id": "s1"}, _Ctx(db))   # llm=None
     assert r.success
     assert "节选" in r.data["brief"] and "改一下入口" in r.data["brief"]
 
@@ -96,7 +96,7 @@ def test_session_brief_llm_failure_falls_back_to_excerpt(monkeypatch):
     _mk_session(db, msgs=[("user", "加个日志")])
     monkeypatch.setattr(codingmod._sess, "_build_brief", lambda *a: None)
     monkeypatch.setattr(codingmod._codex, "git_summary", lambda cwd: "")
-    r = SessionBriefSkill().run({"id": "s1"}, _Ctx(db, _FakeLlm()))
+    r = SessionBriefTool().run({"id": "s1"}, _Ctx(db, _FakeLlm()))
     assert r.success and "节选" in r.data["brief"] and "加个日志" in r.data["brief"]
 
 
@@ -105,7 +105,7 @@ def test_session_brief_empty_history():
     db = _FakeDB()
     _mk_session(db, msgs=())
     llm = _FakeLlm()
-    r = SessionBriefSkill().run({"id": "s1"}, _Ctx(db, llm))
+    r = SessionBriefTool().run({"id": "s1"}, _Ctx(db, llm))
     assert r.success and "无历史消息" in r.data["brief"]
     assert llm.calls == []
 

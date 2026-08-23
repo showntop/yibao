@@ -122,7 +122,7 @@ function hydrate(messages: ConversationHistoryMessage[]) {
 function onEvent(event: BrainEvent) {
   switch (event.kind) {
     case "action_proposed": {
-      if (!event.action || event.action.skill_id === "use_plugin") break;
+      if (!event.action || event.action.tool_id === "use_plugin") break;
       const row = push({
         kind: "activity",
         text: event.action.description || "正在调用能力",

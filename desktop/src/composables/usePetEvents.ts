@@ -17,6 +17,7 @@ import {
   type SurfaceAttr,
 } from "../lib/surface/pet-surface";
 import { procLabel, procResultSuffix, procSkip } from "../lib/proc";
+import { isTaskLogEvent } from "../lib/work-thread";
 import type { usePetState } from "./usePetState";
 import type { usePetSpeech } from "./usePetSpeech";
 import type { usePetBubbles, BubbleMsg } from "./usePetBubbles";
@@ -107,7 +108,7 @@ export function usePetEvents(ctx: PetEventsCtx) {
           procIdx.delete(e.action!.id!);
         }
         // 唤起条/扩展存素材回执：LLM 摘要打标完成后到标题（quiet 不弹面板，气泡即凭证）
-        if (e.action?.skill_id === "zimeiti.mat_save" && e.action?.id?.startsWith("pa_") && e.result?.success) {
+        if (e.action?.tool_id === "zimeiti.mat_save" && e.action?.id?.startsWith("pa_") && e.result?.success) {
           const title = (e.result as { data?: { title?: string } }).data?.title;
           const receipt = title ? `已存素材：《${title}》` : "已存素材";
           if (!expanded.value) {
@@ -199,7 +200,6 @@ export function usePetEvents(ctx: PetEventsCtx) {
         const text = e.text ?? "到点了";
         const isRecap = e.type === "morning_recap";
         const recapDay = e.day;
-        bubbles.value.push({ role: "ai", text, icon: "clock", recap: isRecap ? recapDay : undefined });
         // —— 反应式渲染（C 最小版）：确定性信号 → 一次性闪现；提醒纪律（档位/互斥/TTS）不变 ——
         const taskDone = e.task?.status === "done" || (e.type === "watch_command" && e.status === "completed");
         const taskFail = e.task?.status === "failed" || (e.type === "watch_command" && e.status === "failed");
@@ -207,16 +207,16 @@ export function usePetEvents(ctx: PetEventsCtx) {
           flashState("stretch", 1500); // 久坐 → 一套伸展操
         } else if (e.type === "late_night") {
           flashState("drowsy", 3000); // 深夜 → 打哈欠（Zz）
-        } else if (taskDone || taskFail) {
-          // 任务结果 = 轻反应：闪现 + 4s 自收气泡。不弹窗/不常驻/不标「有事找你」——
-          // 欢呼不该以打断姿态出现（记录照落 bubbles/Feed，窗藏时闪现不可见也无妨）
-          flashState(taskDone ? "success" : "error", taskDone ? 1200 : 900);
+        } else if (taskDone || taskFail || isTaskLogEvent(e)) {
+          // 任务结果 = 轻反应：闪现 + 4s 自收气泡。不插对话胶囊——蓝色提醒会打断当轮输出。
+          flashState(taskDone ? "success" : taskFail ? "error" : "success", taskDone ? 1200 : 900);
           speech.value = text;
           speechStreaming.value = false;
           showSpeechBubble();
           speechScheduleHide(4000);
           break;
         }
+        bubbles.value.push({ role: "ai", text, icon: "clock", recap: isRecap ? recapDay : undefined });
         void (async () => {
           try {
             // 大小窗互斥：大窗开着时提醒由大窗呈现，别把宠物窗再弹出来

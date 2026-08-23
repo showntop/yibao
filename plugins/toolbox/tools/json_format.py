@@ -5,7 +5,7 @@ import json
 from typing import Any
 
 from yibao_brain.ipc import ActionResult, RiskLevel
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 _MAX_BYTES = 512 * 1024
 
@@ -47,7 +47,7 @@ def _unescape(text: str) -> str:
              .replace("\\\\", "\\"))
 
 
-class JsonFormatSkill(Skill):
+class JsonFormatTool(Tool):
     id = "toolbox.json_format"
     label = "JSON 格式化"
     description = (
@@ -137,5 +137,5 @@ class JsonFormatSkill(Skill):
         )
 
 
-def make_tools(ctx: Any) -> list[Skill]:
-    return [JsonFormatSkill()]
+def make_tools(ctx: Any) -> list[Tool]:
+    return [JsonFormatTool()]

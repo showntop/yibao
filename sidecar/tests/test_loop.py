@@ -4,7 +4,7 @@ import time
 
 from yibao_brain.loop import AgentLoop, SYSTEM_PROMPT
 from yibao_brain.llm import FakeProvider, ToolCall, LLMDelta, ToolCallDelta
-from yibao_brain.skills import SkillRegistry, EchoSkill, Skill, SkillContext
+from yibao_brain.tools import ToolRegistry, EchoTool, Tool, ToolContext
 from yibao_brain.safety import RiskClassifier, Gate, GatePolicy
 from yibao_brain.audit import AuditLog
 from yibao_brain.history import ConversationHistory
@@ -12,7 +12,7 @@ from yibao_brain.memory import FakeMemory
 from yibao_brain.ipc import ActionResult, RiskLevel
 
 
-class _SensitiveSkill(Skill):
+class _SensitiveTool(Tool):
     id = "sensitive"
     description = "返回敏感数据"
     default_risk = RiskLevel.L0_READONLY
@@ -29,8 +29,8 @@ class _SensitiveSkill(Skill):
 
 
 def build_loop(tmp_path, provider, confirmer=lambda actions: {a.id: (True, False) for a in actions}):
-    reg = SkillRegistry()
-    reg.register(EchoSkill())
+    reg = ToolRegistry()
+    reg.register(EchoTool())
     return AgentLoop(
         provider=provider,
         skills=reg,
@@ -43,8 +43,8 @@ def build_loop(tmp_path, provider, confirmer=lambda actions: {a.id: (True, False
 
 
 def _build_sensitive_loop(tmp_path, provider):
-    reg = SkillRegistry()
-    reg.register(_SensitiveSkill())
+    reg = ToolRegistry()
+    reg.register(_SensitiveTool())
     return AgentLoop(
         provider=provider,
         skills=reg,
@@ -59,7 +59,7 @@ def _build_sensitive_loop(tmp_path, provider):
 def test_loop_executes_tool_then_replies(tmp_path):
     # 第一轮模型调用 echo，第二轮给出最终回复
     provider = _TwoStepProvider(
-        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="echo", params={"text": "hi"})]),
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="echo", params={"text": "hi"})]),
         second=FakeProvider(text="echoed: hi"),
     )
     loop = build_loop(tmp_path, provider)
@@ -72,7 +72,7 @@ def test_loop_executes_tool_then_replies(tmp_path):
 
 def test_loop_sensitive_result_is_full_for_model_but_safe_for_shell_and_history(tmp_path):
     first = FakeProvider(
-        tool_calls=[ToolCall(id="t1", skill_id="sensitive", params={})]
+        tool_calls=[ToolCall(id="t1", tool_id="sensitive", params={})]
     )
     second = FakeProvider(text="你刚才在 Window Secret")
     loop = _build_sensitive_loop(tmp_path, _TwoStepProvider(first, second))
@@ -92,7 +92,7 @@ def test_loop_sensitive_result_is_full_for_model_but_safe_for_shell_and_history(
 
 
 def test_loop_confirms_high_risk(tmp_path):
-    class DangerSkill(Skill):
+    class DangerTool(Tool):
         id = "danger"
         description = "危险占位"
         default_risk = RiskLevel.L3_HIGH
@@ -100,11 +100,11 @@ def test_loop_confirms_high_risk(tmp_path):
         def run(self, params, ctx):
             return ActionResult(success=True, data={"did": True})
 
-    reg = SkillRegistry()
-    reg.register(DangerSkill())
+    reg = ToolRegistry()
+    reg.register(DangerTool())
     loop = AgentLoop(
         provider=_TwoStepProvider(
-            first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="danger", params={})]),
+            first=FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="danger", params={})]),
             second=FakeProvider(text="done"),
         ),
         skills=reg,
@@ -192,8 +192,8 @@ def test_system_prompt_steers_interactive_coding_to_panel():
 
 def test_loop_sync_reserves_final_reply_after_tool_budget(tmp_path):
     provider = _SequenceProvider([
-        FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="echo", params={"text": "1"})]),
-        FakeProvider(tool_calls=[ToolCall(id="t2", skill_id="echo", params={"text": "2"})]),
+        FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="echo", params={"text": "1"})]),
+        FakeProvider(tool_calls=[ToolCall(id="t2", tool_id="echo", params={"text": "2"})]),
         FakeProvider(text="已到安全上限，停止继续操作"),
     ])
     loop = build_loop(tmp_path, provider)
@@ -210,8 +210,8 @@ def test_loop_sync_reserves_final_reply_after_tool_budget(tmp_path):
 
 def test_loop_arun_reserves_final_reply_after_tool_budget(tmp_path):
     provider = _SequenceProvider([
-        FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="echo", params={"text": "1"})]),
-        FakeProvider(tool_calls=[ToolCall(id="t2", skill_id="echo", params={"text": "2"})]),
+        FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="echo", params={"text": "1"})]),
+        FakeProvider(tool_calls=[ToolCall(id="t2", tool_id="echo", params={"text": "2"})]),
         FakeProvider(text="已到安全上限，停止继续操作"),
     ])
     loop = build_loop(tmp_path, provider)
@@ -228,7 +228,7 @@ def test_loop_arun_reserves_final_reply_after_tool_budget(tmp_path):
 
 def test_loop_arun_executes_tool_then_streams_reply(tmp_path):
     provider = _TwoStepProvider(
-        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="echo", params={"text": "hi"})]),
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="echo", params={"text": "hi"})]),
         second=FakeProvider(chunks=["echoed:", " hi"]),
     )
     loop = build_loop(tmp_path, provider)
@@ -242,19 +242,19 @@ def test_loop_arun_executes_tool_then_streams_reply(tmp_path):
 
 def test_loop_arun_exposes_threadsafe_cancel_to_interactive_skill(tmp_path):
     from yibao_brain.ipc import ActionResult
-    from yibao_brain.skills import Skill, SkillRegistry
+    from yibao_brain.tools import Tool, ToolRegistry
 
-    class UserPreemptSkill(Skill):
+    class UserPreemptTool(Tool):
         id = "user_preempt"
 
         def run(self, params, ctx):
             ctx.meta["request_cancel"]()
             return ActionResult(success=False, error="检测到用户正在操作")
 
-    reg = SkillRegistry()
-    reg.register(UserPreemptSkill())
+    reg = ToolRegistry()
+    reg.register(UserPreemptTool())
     provider = _TwoStepProvider(
-        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="user_preempt", params={})]),
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="user_preempt", params={})]),
         second=FakeProvider(text="不应继续生成"),
     )
     loop = AgentLoop(
@@ -276,7 +276,7 @@ def test_loop_arun_exposes_threadsafe_cancel_to_interactive_skill(tmp_path):
 
 def test_loop_arun_sensitive_result_is_full_for_model_but_safe_for_shell_and_history(tmp_path):
     first = FakeProvider(
-        tool_calls=[ToolCall(id="t1", skill_id="sensitive", params={})]
+        tool_calls=[ToolCall(id="t1", tool_id="sensitive", params={})]
     )
     second = FakeProvider(chunks=["你刚才在 ", "Window Secret"])
     loop = _build_sensitive_loop(tmp_path, _TwoStepProvider(first, second))
@@ -319,7 +319,7 @@ def test_loop_arun_interrupt_mid_stream(tmp_path):
 def test_loop_arun_passes_cancel_into_running_skill(tmp_path):
     seen = {"cancel": False}
 
-    class WaitSkill(Skill):
+    class WaitTool(Tool):
         id = "wait"
         description = "等待中断"
 
@@ -334,10 +334,10 @@ def test_loop_arun_passes_cancel_into_running_skill(tmp_path):
             return ActionResult(success=True)
 
     async def _go():
-        reg = SkillRegistry()
-        reg.register(WaitSkill())
+        reg = ToolRegistry()
+        reg.register(WaitTool())
         provider = _TwoStepProvider(
-            first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="wait", params={})]),
+            first=FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="wait", params={})]),
             second=FakeProvider(text="done"),
         )
         loop = AgentLoop(
@@ -364,7 +364,7 @@ def test_loop_arun_passes_cancel_into_running_skill(tmp_path):
 
 
 def test_loop_arun_async_confirmer_rejected(tmp_path):
-    class DangerSkill(Skill):
+    class DangerTool(Tool):
         id = "danger"
         description = "危险占位"
         default_risk = RiskLevel.L3_HIGH
@@ -372,8 +372,8 @@ def test_loop_arun_async_confirmer_rejected(tmp_path):
         def run(self, params, ctx):
             return ActionResult(success=True, data={"did": True})
 
-    reg = SkillRegistry()
-    reg.register(DangerSkill())
+    reg = ToolRegistry()
+    reg.register(DangerTool())
 
     async def confirmer(actions):
         # 异步批量 confirmer：全拒绝
@@ -381,7 +381,7 @@ def test_loop_arun_async_confirmer_rejected(tmp_path):
 
     loop = AgentLoop(
         provider=_TwoStepProvider(
-            first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="danger", params={})]),
+            first=FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="danger", params={})]),
             second=FakeProvider(text="done"),
         ),
         skills=reg,
@@ -403,9 +403,9 @@ def test_loop_arun_async_confirmer_rejected(tmp_path):
 
 
 def test_loop_arun_remember_verdict_adds_to_session_allowed(tmp_path):
-    """Task 1：verdict 含 remember=True 且 approved → loop 把 skill_id 写进 gate.session_allowed，
+    """Task 1：verdict 含 remember=True 且 approved → loop 把 tool_id 写进 gate.session_allowed，
     后续同 skill 即便风险高也走 AUTO（不弹 confirmation_needed）。"""
-    class DangerSkill(Skill):
+    class DangerTool(Tool):
         id = "danger"
         description = "危险占位"
         default_risk = RiskLevel.L3_HIGH
@@ -413,8 +413,8 @@ def test_loop_arun_remember_verdict_adds_to_session_allowed(tmp_path):
         def run(self, params, ctx):
             return ActionResult(success=True, data={"did": True})
 
-    reg = SkillRegistry()
-    reg.register(DangerSkill())
+    reg = ToolRegistry()
+    reg.register(DangerTool())
 
     # 一次批量 confirmer：对第一个 action 批准+remember，后续全 AUTO 不再调 confirmer
     calls = []
@@ -435,9 +435,9 @@ def test_loop_arun_remember_verdict_adds_to_session_allowed(tmp_path):
                 yield d
 
     provider = _SeqProvider([
-        FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="danger", params={})]),
+        FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="danger", params={})]),
         FakeProvider(text="第一次完成"),
-        FakeProvider(tool_calls=[ToolCall(id="t2", skill_id="danger", params={})]),
+        FakeProvider(tool_calls=[ToolCall(id="t2", tool_id="danger", params={})]),
         FakeProvider(text="第二次完成"),
     ])
     loop = AgentLoop(
@@ -472,7 +472,7 @@ def test_loop_arun_assistant_msg_carries_tool_calls(tmp_path):
             if self._n == 1:
                 yield LLMDelta(
                     tool_call_deltas=[
-                        ToolCallDelta(index=0, id="c1", skill_id="echo", arguments='{"text":"hi"}')
+                        ToolCallDelta(index=0, id="c1", tool_id="echo", arguments='{"text":"hi"}')
                     ]
                 )
             else:
@@ -502,7 +502,7 @@ class _RaisingLog:
 def test_loop_survives_audit_failure(tmp_path):
     # 审计写库失败不应炸掉整个 run，用户仍拿到回复
     provider = _TwoStepProvider(
-        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="echo", params={"text": "hi"})]),
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="echo", params={"text": "hi"})]),
         second=FakeProvider(text="echoed: hi"),
     )
     loop = build_loop(tmp_path, provider)
@@ -524,7 +524,7 @@ def test_arun_runs_skill_and_memory_off_loop_thread(tmp_path):
     main_tid = threading.get_ident()
     seen: dict[str, int] = {}
 
-    class SlowEcho(EchoSkill):
+    class SlowEcho(EchoTool):
         def run(self, params, ctx):
             seen["skill"] = threading.get_ident()
             return super().run(params, ctx)
@@ -539,11 +539,11 @@ def test_arun_runs_skill_and_memory_off_loop_thread(tmp_path):
             return super().add(text, user_id)
 
     provider = _TwoStepProvider(
-        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="echo", params={"text": "hi"})]),
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="echo", params={"text": "hi"})]),
         second=FakeProvider(text="done"),
     )
     loop = build_loop(tmp_path, provider)
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     reg.register(SlowEcho())
     loop.skills = reg
     loop.memory = SpyMemory()
@@ -559,19 +559,19 @@ def test_arun_runs_skill_and_memory_off_loop_thread(tmp_path):
 
 def test_arun_skill_exception_becomes_tool_error(tmp_path):
     """技能抛异常 → 失败的 action_result 喂回模型，run 继续到 final_reply（不死）。"""
-    class BoomSkill(Skill):
+    class BoomTool(Tool):
         id = "boom"
         description = "必炸"
         def run(self, params, ctx):
             raise RuntimeError("炸了")
 
     provider = _TwoStepProvider(
-        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="boom", params={})]),
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="boom", params={})]),
         second=FakeProvider(text="换个法子完成了"),
     )
     loop = build_loop(tmp_path, provider)
-    reg = SkillRegistry()
-    reg.register(BoomSkill())
+    reg = ToolRegistry()
+    reg.register(BoomTool())
     loop.skills = reg
 
     async def _go():
@@ -588,19 +588,19 @@ def test_arun_skill_exception_becomes_tool_error(tmp_path):
 
 def test_run_skill_exception_becomes_tool_error(tmp_path):
     """同步 run() 路径同上。"""
-    class BoomSkill(Skill):
+    class BoomTool(Tool):
         id = "boom"
         description = "必炸"
         def run(self, params, ctx):
             raise RuntimeError("炸了")
 
     provider = _TwoStepProvider(
-        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="boom", params={})]),
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="boom", params={})]),
         second=FakeProvider(text="换个法子完成了"),
     )
     loop = build_loop(tmp_path, provider)
-    reg = SkillRegistry()
-    reg.register(BoomSkill())
+    reg = ToolRegistry()
+    reg.register(BoomTool())
     loop.skills = reg
     events = list(loop.run("炸一下"))
     kinds = [e.kind for e in events]
@@ -611,7 +611,7 @@ def test_run_skill_exception_becomes_tool_error(tmp_path):
 # ---------- ⑤a：action_result 之后的 panel 事件 ----------
 
 
-class _PanelSkill(Skill):
+class _PanelTool(Tool):
     """返回带 panel 引用的结果（ref 由测试用 monkeypatch 注入 _PANELS）。"""
 
     id = "paneldemo"
@@ -626,7 +626,7 @@ class _PanelSkill(Skill):
 
 
 def _build_panel_loop(tmp_path, provider, skill):
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     reg.register(skill)
     return AgentLoop(
         provider=provider,
@@ -644,10 +644,10 @@ def test_run_emits_panel_event_after_action_result(tmp_path, monkeypatch):
     monkeypatch.setitem(plugins._PANELS, "notes:list", {"type": "list"})
     monkeypatch.delitem(plugins._PANEL_TITLES, "notes:list", raising=False)  # 全局注册表可能被其他测试写入，隔离为缺省 ref
     provider = _TwoStepProvider(
-        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="paneldemo", params={})]),
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="paneldemo", params={})]),
         second=FakeProvider(text="done"),
     )
-    loop = _build_panel_loop(tmp_path, provider, _PanelSkill())
+    loop = _build_panel_loop(tmp_path, provider, _PanelTool())
     events = list(loop.run("go"))
     kinds = [e.kind for e in events]
     assert kinds.index("panel") == kinds.index("action_result") + 1  # 紧跟其后
@@ -667,10 +667,10 @@ def test_arun_emits_panel_event_after_action_result(tmp_path, monkeypatch):
     monkeypatch.setitem(plugins._PANELS, "notes:list", {"type": "list"})
     monkeypatch.delitem(plugins._PANEL_TITLES, "notes:list", raising=False)  # 全局注册表可能被其他测试写入，隔离为缺省 ref
     provider = _TwoStepProvider(
-        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="paneldemo", params={})]),
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="paneldemo", params={})]),
         second=FakeProvider(text="done"),
     )
-    loop = _build_panel_loop(tmp_path, provider, _PanelSkill())
+    loop = _build_panel_loop(tmp_path, provider, _PanelTool())
     events = asyncio.run(_collect_events(loop.arun("go")))
     kinds = [e.kind for e in events]
     assert kinds.index("panel") == kinds.index("action_result") + 1
@@ -681,10 +681,10 @@ def test_arun_emits_panel_event_after_action_result(tmp_path, monkeypatch):
 def test_panel_event_unknown_schema_gives_none(tmp_path):
     # schema 找不到：payload.schema = None，不炸（前端做未知降级）
     provider = _TwoStepProvider(
-        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="paneldemo", params={})]),
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="paneldemo", params={})]),
         second=FakeProvider(text="done"),
     )
-    loop = _build_panel_loop(tmp_path, provider, _PanelSkill(ref="zz:ghost"))
+    loop = _build_panel_loop(tmp_path, provider, _PanelTool(ref="zz:ghost"))
     events = list(loop.run("go"))
     pe = next(e for e in events if e.kind == "panel")
     assert pe.payload["panel"] == "zz:ghost"
@@ -695,7 +695,7 @@ def test_panel_event_unknown_schema_gives_none(tmp_path):
 
 def test_no_panel_event_without_ref(tmp_path):
     provider = _TwoStepProvider(
-        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="echo", params={"text": "x"})]),
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="echo", params={"text": "x"})]),
         second=FakeProvider(text="done"),
     )
     loop = build_loop(tmp_path, provider)
@@ -706,17 +706,17 @@ def test_no_panel_event_without_ref(tmp_path):
 def test_plugin_tool_names_are_llm_safe(tmp_path):
     """插件 tool id 带点号（notes.keep），DeepSeek/OpenAI 要求 function name ^[a-zA-Z0-9_-]+$：
     发给 LLM 的 schema 用安全名（点→下划线），回调时映射回真实 id。"""
-    from yibao_brain.skills import SkillRegistry
+    from yibao_brain.tools import ToolRegistry
 
-    class Keep(Skill):
+    class Keep(Tool):
         id = "notes.keep"
         description = "记"
 
         def run(self, params, ctx):
             raise NotImplementedError
 
-    reg = SkillRegistry()
-    reg.register(EchoSkill())
+    reg = ToolRegistry()
+    reg.register(EchoTool())
     reg.register(Keep(), plugin="notes")
 
     names = [t["name"] for t in reg.openai_tools()]
@@ -731,20 +731,20 @@ def test_plugin_tool_names_are_llm_safe(tmp_path):
 def test_loop_executes_plugin_tool_called_by_safe_name(tmp_path):
     """端到端：LLM 回调安全名 notes_keep，loop 映射回 notes.keep 并执行。"""
     provider = _TwoStepProvider(
-        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="notes_keep", params={"text": "hi"})]),
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="notes_keep", params={"text": "hi"})]),
         second=FakeProvider(text="记好了"),
     )
     loop = build_loop(tmp_path, provider)
-    from yibao_brain.skills import SkillRegistry
+    from yibao_brain.tools import ToolRegistry
     from yibao_brain.ipc import ActionResult as AR
 
-    class Keep(Skill):
+    class Keep(Tool):
         id = "notes.keep"
         description = "记"
         def run(self, params, ctx):
             return AR(success=True, data={"kept": params.get("text")})
 
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     reg.register(Keep(), plugin="notes")
     loop.skills = reg
     events = list(loop.run("记一下 hi"))
@@ -756,8 +756,8 @@ def test_loop_executes_plugin_tool_called_by_safe_name(tmp_path):
 
 
 def _build_focus_loop(tmp_path, provider, focus):
-    reg = SkillRegistry()
-    reg.register(EchoSkill())
+    reg = ToolRegistry()
+    reg.register(EchoTool())
     return AgentLoop(
         provider=provider,
         skills=reg,
@@ -818,8 +818,8 @@ def test_focus_provider_exception_is_ignored(tmp_path):
     def boom():
         raise RuntimeError("focus gone")
 
-    reg = SkillRegistry()
-    reg.register(EchoSkill())
+    reg = ToolRegistry()
+    reg.register(EchoTool())
     loop = AgentLoop(
         provider=provider,
         skills=reg,
@@ -838,7 +838,7 @@ def test_focus_provider_exception_is_ignored(tmp_path):
 # ---------- refresh 传参交集 + focus 重定向到 webview ----------
 
 
-class _SaveSkill(Skill):
+class _SaveTool(Tool):
     """写操作：panel=detail、refresh=get，入参 {id, content}。"""
 
     id = "w.save"
@@ -849,7 +849,7 @@ class _SaveSkill(Skill):
         return ActionResult(success=True, data={"id": params.get("id")}, panel="w:detail")
 
 
-class _GetSkill(Skill):
+class _GetTool(Tool):
     """只读查询：声明接受 {id, version}；记录实际收到的 params。"""
 
     id = "w.get"
@@ -876,12 +876,12 @@ class _GetSkill(Skill):
 
 
 def _build_w_loop(tmp_path, get_skill, focus=None):
-    reg = SkillRegistry()
-    reg.register(_SaveSkill(), plugin="w")
+    reg = ToolRegistry()
+    reg.register(_SaveTool(), plugin="w")
     reg.register(get_skill, plugin="w")
     return AgentLoop(
         provider=_TwoStepProvider(
-            first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="w.save", params={"id": "t1", "content": "正文"})]),
+            first=FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="w.save", params={"id": "t1", "content": "正文"})]),
             second=FakeProvider(text="已保存"),
         ),
         skills=reg,
@@ -898,7 +898,7 @@ def test_refresh_receives_param_intersection(tmp_path, monkeypatch):
     from yibao_brain import plugins
 
     monkeypatch.setitem(plugins._PANELS, "w:detail", {"type": "detail"})
-    get = _GetSkill()
+    get = _GetTool()
     loop = _build_w_loop(tmp_path, get)
     events = list(loop.run("存一下"))
     pe = next(e for e in events if e.kind == "panel")
@@ -913,7 +913,7 @@ def test_focus_redirects_panel_to_webview_editor(tmp_path, monkeypatch):
     monkeypatch.setitem(plugins._PANELS, "w:detail", {"type": "detail"})
     monkeypatch.setitem(plugins._PANELS, "w:editor", {"type": "webview", "html": "<html>editor</html>"})
     monkeypatch.setitem(plugins._PANEL_TITLES, "w:editor", "W · 编辑器")
-    get = _GetSkill()
+    get = _GetTool()
     focus = {"plugin": "w", "panel": "editor", "item": {"id": "t1", "title": "选题"}}
     loop = _build_w_loop(tmp_path, get, focus=focus)
     events = list(loop.run("改一下"))
@@ -930,7 +930,7 @@ def test_focus_other_item_does_not_redirect(tmp_path, monkeypatch):
 
     monkeypatch.setitem(plugins._PANELS, "w:detail", {"type": "detail"})
     monkeypatch.setitem(plugins._PANELS, "w:editor", {"type": "webview", "html": "<html>editor</html>"})
-    get = _GetSkill()
+    get = _GetTool()
     focus = {"plugin": "w", "panel": "editor", "item": {"id": "t9", "title": "别的"}}
     loop = _build_w_loop(tmp_path, get, focus=focus)
     events = list(loop.run("改一下"))
@@ -958,9 +958,9 @@ class _NoopMem(FakeMemory):
         return False
 
 
-def _empty_reg() -> SkillRegistry:
+def _empty_reg() -> ToolRegistry:
     """空技能注册表：无工具调用场景下给 AgentLoop 占位。"""
-    return SkillRegistry()
+    return ToolRegistry()
 
 
 def test_loop_writes_feed_when_memory_added(tmp_path):
@@ -998,7 +998,7 @@ def test_loop_skips_feed_when_memory_noop(tmp_path):
 # ---------- Task 2：一轮多 CONFIRM 攒批 + 按 LLM 顺序执行 ----------
 
 
-class _HighSkill(Skill):
+class _HighTool(Tool):
     """L3 高危技能，默认走 CONFIRM；run 记录调用顺序到共享 list。"""
 
     id = "h"
@@ -1017,8 +1017,8 @@ class _HighSkill(Skill):
 
 def _build_batch_loop(tmp_path, provider, confirmer, reg=None):
     if reg is None:
-        reg = SkillRegistry()
-        reg.register(_HighSkill())
+        reg = ToolRegistry()
+        reg.register(_HighTool())
     return AgentLoop(
         provider=provider,
         skills=reg,
@@ -1034,8 +1034,8 @@ def test_run_batches_multiple_confirms_one_event(tmp_path):
     """一轮两个 CONFIRM tool_call → 一次 confirmation_needed（actions 长 2，旧 action=actions[0]）。"""
     provider = _TwoStepProvider(
         first=FakeProvider(tool_calls=[
-            ToolCall(id="a", skill_id="h", params={"x": "A"}),
-            ToolCall(id="b", skill_id="h", params={"x": "B"}),
+            ToolCall(id="a", tool_id="h", params={"x": "A"}),
+            ToolCall(id="b", tool_id="h", params={"x": "B"}),
         ]),
         second=FakeProvider(text="done"),
     )
@@ -1055,13 +1055,13 @@ def test_arun_batches_multiple_confirms_executes_in_llm_order(tmp_path):
     order: list[str] = []
     provider = _TwoStepProvider(
         first=FakeProvider(tool_calls=[
-            ToolCall(id="a", skill_id="h", params={"x": "A"}),
-            ToolCall(id="b", skill_id="h", params={"x": "B"}),
+            ToolCall(id="a", tool_id="h", params={"x": "A"}),
+            ToolCall(id="b", tool_id="h", params={"x": "B"}),
         ]),
         second=FakeProvider(text="done"),
     )
-    reg = SkillRegistry()
-    reg.register(_HighSkill(log=order))
+    reg = ToolRegistry()
+    reg.register(_HighTool(log=order))
     loop = _build_batch_loop(
         tmp_path, provider, confirmer=lambda actions: {a.id: (True, False) for a in actions}, reg=reg
     )
@@ -1079,8 +1079,8 @@ def test_arun_batch_confirm_rejected_skips_and_records_message(tmp_path):
     second = FakeProvider(text="done")
     provider = _TwoStepProvider(
         first=FakeProvider(tool_calls=[
-            ToolCall(id="a", skill_id="h", params={"x": "A"}),
-            ToolCall(id="b", skill_id="h", params={"x": "B"}),
+            ToolCall(id="a", tool_id="h", params={"x": "A"}),
+            ToolCall(id="b", tool_id="h", params={"x": "B"}),
         ]),
         second=second,
     )
@@ -1105,7 +1105,7 @@ def test_arun_batch_confirm_preserves_llm_order_with_dependency(tmp_path):
     攒批后 a 先执行出结果、b 再用——AUTO 不抢在 CONFIRM 前重排（破坏依赖）。spec §3.1。"""
     shared: dict[str, str] = {}
 
-    class Store(Skill):
+    class Store(Tool):
         id = "store"
         description = "写入共享态（高危）"
         default_risk = RiskLevel.L3_HIGH
@@ -1114,7 +1114,7 @@ def test_arun_batch_confirm_preserves_llm_order_with_dependency(tmp_path):
             shared["v"] = "from_a"
             return ActionResult(success=True, data={"v": "from_a"})
 
-    class Read(Skill):
+    class Read(Tool):
         id = "read"
         description = "读共享态（只读）"
         default_risk = RiskLevel.L0_READONLY
@@ -1122,13 +1122,13 @@ def test_arun_batch_confirm_preserves_llm_order_with_dependency(tmp_path):
         def run(self, params, ctx):
             return ActionResult(success=True, data={"got": shared.get("v", "EMPTY")})
 
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     reg.register(Store())
     reg.register(Read())
     provider = _TwoStepProvider(
         first=FakeProvider(tool_calls=[
-            ToolCall(id="a", skill_id="store", params={}),
-            ToolCall(id="b", skill_id="read", params={}),
+            ToolCall(id="a", tool_id="store", params={}),
+            ToolCall(id="b", tool_id="read", params={}),
         ]),
         second=FakeProvider(text="done"),
     )
@@ -1137,13 +1137,13 @@ def test_arun_batch_confirm_preserves_llm_order_with_dependency(tmp_path):
     )
     events = asyncio.run(_collect_events(loop.arun("先存后读")))
     results = [e for e in events if e.kind == "action_result"]
-    assert [r.action.skill_id for r in results] == ["store", "read"]  # LLM 顺序不乱
+    assert [r.action.tool_id for r in results] == ["store", "read"]  # LLM 顺序不乱
     assert results[1].result.data == {"got": "from_a"}                # b 拿到 a 的结果
 
 
 def test_arun_batch_confirm_remember_adds_all_to_session_allowed(tmp_path):
     """批量勾「本会话不再询问」→ 多个 skill 都进 session_allowed（remember 批量生效）。"""
-    class HSkill(Skill):
+    class HTool(Tool):
         id = "h"
         description = "高危"
         default_risk = RiskLevel.L3_HIGH
@@ -1151,10 +1151,10 @@ def test_arun_batch_confirm_remember_adds_all_to_session_allowed(tmp_path):
         def run(self, params, ctx):
             return ActionResult(success=True, data={"did": True})
 
-    reg = SkillRegistry()
-    reg.register(HSkill())
+    reg = ToolRegistry()
+    reg.register(HTool())
     provider = _TwoStepProvider(
-        first=FakeProvider(tool_calls=[ToolCall(id="a", skill_id="h", params={"x": "A"})]),
+        first=FakeProvider(tool_calls=[ToolCall(id="a", tool_id="h", params={"x": "A"})]),
         second=FakeProvider(text="done"),
     )
     # 批量 confirmer：批准 + remember
@@ -1172,7 +1172,7 @@ def test_arun_batch_confirm_remember_adds_all_to_session_allowed(tmp_path):
 
 def test_arun_batch_confirm_two_skills_remember(tmp_path):
     """两个不同高危 skill 同轮 CONFIRM、全批+remember → 两个 skill 都进 session_allowed。"""
-    class H1(Skill):
+    class H1(Tool):
         id = "h1"
         description = "高危1"
         default_risk = RiskLevel.L3_HIGH
@@ -1180,7 +1180,7 @@ def test_arun_batch_confirm_two_skills_remember(tmp_path):
         def run(self, params, ctx):
             return ActionResult(success=True, data={})
 
-    class H2(Skill):
+    class H2(Tool):
         id = "h2"
         description = "高危2"
         default_risk = RiskLevel.L3_HIGH
@@ -1188,13 +1188,13 @@ def test_arun_batch_confirm_two_skills_remember(tmp_path):
         def run(self, params, ctx):
             return ActionResult(success=True, data={})
 
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     reg.register(H1())
     reg.register(H2())
     provider = _TwoStepProvider(
         first=FakeProvider(tool_calls=[
-            ToolCall(id="a", skill_id="h1", params={}),
-            ToolCall(id="b", skill_id="h2", params={}),
+            ToolCall(id="a", tool_id="h1", params={}),
+            ToolCall(id="b", tool_id="h2", params={}),
         ]),
         second=FakeProvider(text="done"),
     )
@@ -1208,7 +1208,7 @@ def test_arun_batch_confirm_two_skills_remember(tmp_path):
 def test_single_confirm_size_one_unchanged(tmp_path):
     """单 CONFIRM（batch size=1）行为不变：confirmation_needed 带单个 action、actions 长 1。"""
     provider = _TwoStepProvider(
-        first=FakeProvider(tool_calls=[ToolCall(id="a", skill_id="h", params={"x": "A"})]),
+        first=FakeProvider(tool_calls=[ToolCall(id="a", tool_id="h", params={"x": "A"})]),
         second=FakeProvider(text="done"),
     )
     loop = _build_batch_loop(
@@ -1226,7 +1226,7 @@ def test_single_confirm_size_one_unchanged(tmp_path):
 def test_arun_single_confirm_rejected_still_emits_error(tmp_path):
     """单 CONFIRM 被拒（batch size=1）仍发 error、不执行——回归 test_loop_arun_async_confirmer_rejected 同语义。"""
     provider = _TwoStepProvider(
-        first=FakeProvider(tool_calls=[ToolCall(id="a", skill_id="h", params={"x": "A"})]),
+        first=FakeProvider(tool_calls=[ToolCall(id="a", tool_id="h", params={"x": "A"})]),
         second=FakeProvider(text="done"),
     )
     loop = _build_batch_loop(
@@ -1242,7 +1242,7 @@ def test_arun_single_confirm_rejected_still_emits_error(tmp_path):
 # ---------- Phase 1 Task 1：表面提示下沉（presentation/attention/object/origin） ----------
 
 
-class _SurfaceSkill(Skill):
+class _SurfaceTool(Tool):
     """带表面提示的 panel 技能：presentation/attention/object 随 ActionResult 透传。"""
 
     id = "surface_demo"
@@ -1272,13 +1272,13 @@ def test_panel_event_carries_surface_hints(tmp_path, monkeypatch):
 
     monkeypatch.setitem(plugins._PANELS, "notes:list", {"type": "list"})
     monkeypatch.delitem(plugins._PANEL_TITLES, "notes:list", raising=False)
-    skill = _SurfaceSkill(
+    skill = _SurfaceTool(
         presentation="inline",
         attention="quiet",
         object_={"type": "note", "id": "7", "title": "读书笔记"},
     )
     provider = _TwoStepProvider(
-        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="surface_demo", params={})]),
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="surface_demo", params={})]),
         second=FakeProvider(text="done"),
     )
     loop = _build_panel_loop(tmp_path, provider, skill)
@@ -1297,9 +1297,9 @@ def test_panel_event_defaults_when_skill_silent(tmp_path, monkeypatch):
 
     monkeypatch.setitem(plugins._PANELS, "notes:list", {"type": "list"})
     monkeypatch.delitem(plugins._PANEL_TITLES, "notes:list", raising=False)
-    skill = _SurfaceSkill(ref="notes:list")
+    skill = _SurfaceTool(ref="notes:list")
     provider = _TwoStepProvider(
-        first=FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="surface_demo", params={})]),
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="surface_demo", params={})]),
         second=FakeProvider(text="done"),
     )
     loop = _build_panel_loop(tmp_path, provider, skill)

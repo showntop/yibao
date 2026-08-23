@@ -10,7 +10,7 @@ from yibao_brain.llm import FakeProvider, ToolCall
 from yibao_brain.memory import FakeMemory
 from yibao_brain.plugins import LlmChat, ScopedMemory, load_plugins
 from yibao_brain.safety import Gate, GatePolicy, RiskClassifier
-from yibao_brain.skills import EchoSkill, Skill, SkillContext, SkillRegistry
+from yibao_brain.tools import EchoTool, Tool, ToolContext, ToolRegistry
 
 
 # ---------- 测试素材 ----------
@@ -99,7 +99,7 @@ def data_dir(tmp_path, monkeypatch):
 def test_emit_event_injected_when_passed(data_dir, tmp_path):
     """load_plugins 传了 emit_event：插件 ctx.emit_event 即该通道（线程安全由底座包装保证）。"""
     _write_plugin(tmp_path, "notes", NOTES_MANIFEST)
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     sent: list[dict] = []
 
     def emit(ev: dict) -> None:
@@ -116,7 +116,7 @@ def test_emit_event_injected_when_passed(data_dir, tmp_path):
 def test_emit_event_defaults_to_none(data_dir, tmp_path):
     """load_plugins 不传 emit_event（兼容老调用方）：ctx.emit_event is None，插件应静默跳过。"""
     _write_plugin(tmp_path, "notes", NOTES_MANIFEST)
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     assert _load(tmp_path, reg) == {"notes": "ok"}
     assert reg.get("notes.keep").plugin_ctx.emit_event is None
 
@@ -128,7 +128,7 @@ def test_process_capability_accepted(data_dir, tmp_path):
     _write_plugin(tmp_path, "badcap", NOTES_MANIFEST.replace(
         'id = "notes"', 'id = "badcap"').replace(
         'capabilities = ["db"]', 'capabilities = ["db", "teleport"]'))
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     results = _load(tmp_path, reg)
     assert results["notes"] == "ok"
     assert reg.get("notes.keep").plugin_capabilities == frozenset({"db", "process"})
@@ -140,7 +140,7 @@ def test_process_capability_accepted(data_dir, tmp_path):
 
 def test_db_tool_end_to_end(data_dir, tmp_path):
     _write_plugin(tmp_path, "notes", NOTES_MANIFEST)
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     results = _load(tmp_path, reg)
     assert results == {"notes": "ok"}
 
@@ -159,7 +159,7 @@ def test_db_tool_end_to_end(data_dir, tmp_path):
 
 def test_db_tool_openai_schema_uses_manifest(data_dir, tmp_path):
     _write_plugin(tmp_path, "notes", NOTES_MANIFEST)
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     _load(tmp_path, reg)
     schema = reg.get("notes.keep").openai_schema()
     assert schema["name"] == "notes.keep"
@@ -172,7 +172,7 @@ def test_db_tool_openai_schema_uses_manifest(data_dir, tmp_path):
 
 def test_capability_scoping_unset_capabilities_are_none(data_dir, tmp_path):
     _write_plugin(tmp_path, "notes", NOTES_MANIFEST)  # 只声明 db
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     _load(tmp_path, reg)
     ctx = reg.get("notes.keep").plugin_ctx
     assert ctx.db is not None
@@ -194,7 +194,7 @@ template = "请总结：{{text}}"
 """
     _write_plugin(tmp_path, "badp", bad)
     _write_plugin(tmp_path, "notes", NOTES_MANIFEST)
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     results = _load(tmp_path, reg)
     assert results["notes"] == "ok"          # 坏插件不拖累好插件
     assert "llm" in results["badp"]          # 报错指明缺的能力
@@ -216,7 +216,7 @@ description = "空编排"
 steps = []
 """
     _write_plugin(tmp_path, "memo", manifest)
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     _load(tmp_path, reg)
     ctx = reg.get("memo.noop").plugin_ctx
     assert isinstance(ctx.memory, ScopedMemory)
@@ -254,7 +254,7 @@ template = "请总结：{{text}}"
 """
     _write_plugin(tmp_path, "writer", manifest)
     prov = FakeProvider(text="摘要")
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     _load(tmp_path, reg, llm=LlmChat(prov))
     skill = reg.get("writer.sum")
     r = skill.run({"text": "一长段"}, skill.plugin_ctx)
@@ -279,7 +279,7 @@ url = "https://api.example.com/items/{{eid}}"
 """
     _write_plugin(tmp_path, "fetcher", manifest)
     http = FakeHttp({"id": "7", "name": "x"})
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     _load(tmp_path, reg, http=http)
     skill = reg.get("fetcher.fetch")
     r = skill.run({"eid": "7"}, skill.plugin_ctx)
@@ -340,7 +340,7 @@ steps = [
 """
     _write_plugin(tmp_path, "notes", manifest)
     prov = FakeProvider(text="摘要")
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     results = _load(tmp_path, reg, llm=LlmChat(prov))
     assert results == {"notes": "ok"}
 
@@ -384,7 +384,7 @@ steps = [
 ]
 """
     _write_plugin(tmp_path, "notes", manifest)
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     _load(tmp_path, reg)
     combo = reg.get("notes.combo")
     r = combo.run({}, combo.plugin_ctx)
@@ -395,24 +395,24 @@ steps = [
 # ---------- 命名空间强制 ----------
 
 
-class _SomeSkill(Skill):
+class _SomeTool(Tool):
     id = "s"
     description = "占位"
 
-    def run(self, params: dict, ctx: SkillContext) -> ActionResult:
+    def run(self, params: dict, ctx: ToolContext) -> ActionResult:
         return ActionResult(success=True)
 
 
 def test_plugin_tool_without_prefix_rejected():
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     with pytest.raises(ValueError):
-        reg.register(_SomeSkill(), plugin="notes")  # id "s" 不带 "notes." 前缀
+        reg.register(_SomeTool(), plugin="notes")  # id "s" 不带 "notes." 前缀
 
 
 def test_plugin_tool_with_prefix_ok():
-    reg = SkillRegistry()
+    reg = ToolRegistry()
 
-    class P(Skill):
+    class P(Tool):
         id = "notes.keep"
 
         def run(self, params, ctx):
@@ -423,16 +423,16 @@ def test_plugin_tool_with_prefix_ok():
 
 
 def test_duplicate_id_rejected():
-    reg = SkillRegistry()
-    reg.register(EchoSkill())
+    reg = ToolRegistry()
+    reg.register(EchoTool())
     with pytest.raises(ValueError):
-        reg.register(EchoSkill())
+        reg.register(EchoTool())
 
 
 def test_duplicate_plugin_tool_id_rejected():
-    reg = SkillRegistry()
+    reg = ToolRegistry()
 
-    class P(Skill):
+    class P(Tool):
         id = "notes.keep"
 
         def run(self, params, ctx):
@@ -443,10 +443,10 @@ def test_duplicate_plugin_tool_id_rejected():
         reg.register(P(), plugin="notes")
 
 
-def test_base_skill_id_with_dot_rejected():
-    reg = SkillRegistry()
+def test_base_tool_id_with_dot_rejected():
+    reg = ToolRegistry()
 
-    class Evil(Skill):
+    class Evil(Tool):
         id = "notes.fake"  # 底座注册伪装成插件 id
 
         def run(self, params, ctx):
@@ -462,7 +462,7 @@ def test_base_skill_id_with_dot_rejected():
 def test_failure_isolation_bad_manifest(data_dir, tmp_path):
     _write_plugin(tmp_path, "broken", 'id = [unclosed')  # TOML 语法错误
     _write_plugin(tmp_path, "notes", NOTES_MANIFEST)
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     results = _load(tmp_path, reg)
     assert results["notes"] == "ok"
     assert results["broken"] != "ok" and results["broken"]  # 有错误信息
@@ -471,14 +471,14 @@ def test_failure_isolation_bad_manifest(data_dir, tmp_path):
 
 def test_skip_underscore_dirs(data_dir, tmp_path):
     _write_plugin(tmp_path, "_staging", NOTES_MANIFEST.replace('id = "notes"', 'id = "stg"'))
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     results = _load(tmp_path, reg)
     assert results == {}  # _staging 暂存区不加载也不上报
     assert reg.list() == []
 
 
 def test_missing_plugins_dir_is_noop(tmp_path):
-    assert _load(tmp_path / "nonexistent", SkillRegistry()) == {}
+    assert _load(tmp_path / "nonexistent", ToolRegistry()) == {}
 
 
 # ---------- 代码插件（最小支持）----------
@@ -498,10 +498,10 @@ entry = "tools"
 """
     hello_py = '''
 from yibao_brain.ipc import ActionResult
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 
-class Hello(Skill):
+class Hello(Tool):
     id = "coder.hello"
     description = "代码插件示例"
 
@@ -513,7 +513,7 @@ def make_tools(ctx):
     return [Hello()]
 '''
     _write_plugin(tmp_path, "coder", manifest, {"tools/hello.py": hello_py})
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     results = _load(tmp_path, reg)
     assert results == {"coder": "ok"}
     skill = reg.get("coder.hello")
@@ -538,7 +538,7 @@ def _make_invoker(tmp_path, reg, host=None):
 def test_invoker_uses_plugin_ctx_and_grafts_host(tmp_path):
     rec = {}
 
-    class Probe(Skill):
+    class Probe(Tool):
         id = "probe.host"
 
         def run(self, params, ctx):
@@ -546,13 +546,13 @@ def test_invoker_uses_plugin_ctx_and_grafts_host(tmp_path):
             return ActionResult(success=True)
 
     skill = Probe()
-    skill.plugin_ctx = SkillContext()  # 加载器构造的 ctx：host 为 None
+    skill.plugin_ctx = ToolContext()  # 加载器构造的 ctx：host 为 None
     skill.plugin_capabilities = frozenset({"host"})
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     reg.register(skill, plugin="probe")
     sentinel = object()
     inv = _make_invoker(tmp_path, reg, host=sentinel)
-    action = inv.propose(ToolCall(id="t", skill_id="probe.host", params={}))
+    action = inv.propose(ToolCall(id="t", tool_id="probe.host", params={}))
     assert inv.execute(action, {}).success
     assert rec["ctx"] is skill.plugin_ctx      # 用的是插件 ctx，不是新建的
     assert rec["ctx"].host is sentinel          # 声明了 host capability → invoker 嫁接
@@ -561,7 +561,7 @@ def test_invoker_uses_plugin_ctx_and_grafts_host(tmp_path):
 def test_invoker_no_host_graft_without_capability(tmp_path):
     rec = {}
 
-    class Probe(Skill):
+    class Probe(Tool):
         id = "probe.nohost"
 
         def run(self, params, ctx):
@@ -569,12 +569,12 @@ def test_invoker_no_host_graft_without_capability(tmp_path):
             return ActionResult(success=True)
 
     skill = Probe()
-    skill.plugin_ctx = SkillContext()
+    skill.plugin_ctx = ToolContext()
     skill.plugin_capabilities = frozenset({"db"})  # 没声明 host
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     reg.register(skill, plugin="probe")
     inv = _make_invoker(tmp_path, reg, host=object())
-    action = inv.propose(ToolCall(id="t", skill_id="probe.nohost", params={}))
+    action = inv.propose(ToolCall(id="t", tool_id="probe.nohost", params={}))
     assert inv.execute(action, {}).success
     assert rec["ctx"].host is None  # 未声明 host capability → 不给
 
@@ -651,7 +651,7 @@ def test_panel_schema_registered_and_tool_result_carries_ref(data_dir, tmp_path)
     from yibao_brain.plugins import get_panel
 
     _write_plugin(tmp_path, "notes", NOTES_PANEL_MANIFEST, {"panel/list.schema.json": LIST_SCHEMA})
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     assert _load(tmp_path, reg) == {"notes": "ok"}
     assert get_panel("notes:list")["type"] == "list"
     assert get_panel("notes:list")["bind"] == {"items": "$data.rows"}
@@ -662,7 +662,7 @@ def test_panel_schema_registered_and_tool_result_carries_ref(data_dir, tmp_path)
 
 def test_panel_ref_not_set_on_failure(data_dir, tmp_path):
     _write_plugin(tmp_path, "notes", NOTES_PANEL_MANIFEST, {"panel/list.schema.json": LIST_SCHEMA})
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     _load(tmp_path, reg)
     combo = reg.get("notes.combo_fail")
     r = combo.run({}, combo.plugin_ctx)
@@ -671,7 +671,7 @@ def test_panel_ref_not_set_on_failure(data_dir, tmp_path):
 
 def test_tool_required_params_in_schema(data_dir, tmp_path):
     _write_plugin(tmp_path, "notes", NOTES_PANEL_MANIFEST, {"panel/list.schema.json": LIST_SCHEMA})
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     _load(tmp_path, reg)
     schema = reg.get("notes.keep").openai_schema()
     assert schema["parameters"]["required"] == ["text"]
@@ -681,7 +681,7 @@ def test_tool_with_panel_advertises_panel_opening(data_dir, tmp_path):
     """声明 panel 的 tool，LLM 可见描述尾部带「会打开面板」提示——模型本不知道面板存在，
     不告诉它，「打开看板」这类请求它只会用文字列数据、不调工具。"""
     _write_plugin(tmp_path, "notes", NOTES_PANEL_MANIFEST, {"panel/list.schema.json": LIST_SCHEMA})
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     _load(tmp_path, reg)
     schema = reg.get("notes.list").openai_schema()
     assert schema["description"] == "列出闪念（调用成功会在屏幕面板窗打开「notes · list」）"
@@ -695,7 +695,7 @@ def test_webview_panel_loaded_as_html(data_dir, tmp_path):
     _write_plugin(tmp_path, "webv", manifest, {"panel/list.schema.json": "<html><body>hi</body></html>"})
     from yibao_brain.plugins import get_panel
 
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     assert _load(tmp_path, reg) == {"webv": "ok"}
     assert get_panel("webv:list")["type"] == "webview"
     assert get_panel("webv:list")["html"] == "<html><body>hi</body></html>"
@@ -708,7 +708,7 @@ def test_unknown_panel_type_skipped(data_dir, tmp_path, capsys):
     _write_plugin(tmp_path, "holo", manifest, {"panel/list.schema.json": LIST_SCHEMA})
     from yibao_brain.plugins import get_panel
 
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     assert _load(tmp_path, reg) == {"holo": "ok"}  # panel 跳过不拖垮插件
     assert get_panel("holo:list") is None
     assert "跳过" in capsys.readouterr().err
@@ -719,7 +719,7 @@ def test_panel_missing_src_skipped(data_dir, tmp_path, capsys):
     _write_plugin(tmp_path, "nosrc", manifest)  # 不写 list.schema.json
     from yibao_brain.plugins import get_panel
 
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     assert _load(tmp_path, reg) == {"nosrc": "ok"}
     assert get_panel("nosrc:list") is None
     assert "跳过" in capsys.readouterr().err
@@ -735,7 +735,7 @@ def test_panel_declares_supported_surfaces(data_dir, tmp_path):
         'type = "schema"\nname = "list"\nsurfaces = ["peek", "stage"]\nmin_width = 720',
     )
     _write_plugin(tmp_path, "notes", manifest, {"panel/list.schema.json": LIST_SCHEMA})
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     assert _load(tmp_path, reg) == {"notes": "ok"}
     from yibao_brain.plugins import get_panel
 
@@ -747,7 +747,7 @@ def test_panel_declares_supported_surfaces(data_dir, tmp_path):
 def test_panel_surfaces_default_all(data_dir, tmp_path):
     """未声明 → 默认全档支持（inline/peek/stage/focus），宿主裁决不误伤。"""
     _write_plugin(tmp_path, "notes", NOTES_PANEL_MANIFEST, {"panel/list.schema.json": LIST_SCHEMA})
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     _load(tmp_path, reg)
     from yibao_brain.plugins import get_panel
 
@@ -761,7 +761,7 @@ def test_panel_surfaces_invalid_filtered(data_dir, tmp_path):
         'type = "schema"\nname = "list"\nsurfaces = ["fullscreen", "peek", "bogus"]',
     )
     _write_plugin(tmp_path, "notes", manifest, {"panel/list.schema.json": LIST_SCHEMA})
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     assert _load(tmp_path, reg) == {"notes": "ok"}
     from yibao_brain.plugins import get_panel
 
@@ -773,7 +773,7 @@ def test_panel_surfaces_invalid_filtered(data_dir, tmp_path):
         'type = "schema"\nname = "list"\nsurfaces = ["hologram"]',
     )
     _write_plugin(tmp_path, "notes2", manifest2.replace('id = "notes"', 'id = "notes2"').replace("notes:", "notes2:"), {"panel/list.schema.json": LIST_SCHEMA})
-    reg2 = SkillRegistry()
+    reg2 = ToolRegistry()
     assert _load(tmp_path, reg2)["notes2"] == "ok"
     assert get_panel("notes2:list")["surfaces"] == ["inline", "peek", "stage", "focus"]
 
@@ -785,7 +785,7 @@ def test_panel_payload_webview_shape(data_dir, tmp_path):
     manifest = NOTES_PANEL_MANIFEST.replace('type = "schema"', 'type = "webview"').replace('id = "notes"', 'id = "webv"')
     manifest = manifest.replace("notes:", "webv:").replace('"notes.', '"webv.').replace('table = "notes"', 'table = "webv"')
     _write_plugin(tmp_path, "webv", manifest, {"panel/list.schema.json": "<html>wv</html>"})
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     _load(tmp_path, reg)
 
     r = ActionResult(success=True, data={"rows": [1]}, panel="webv:list")
@@ -813,7 +813,7 @@ def test_panel_input_declared_passthrough(data_dir, tmp_path):
         'type = "schema"\nname = "list"\ninput = "handoff"',
     )
     _write_plugin(tmp_path, "notes", manifest, {"panel/list.schema.json": LIST_SCHEMA})
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     assert _load(tmp_path, reg) == {"notes": "ok"}
     assert get_panel("notes:list")["input"] == "handoff"
     p = panel_payload(ActionResult(success=True, data={"rows": []}, panel="notes:list"))
@@ -825,7 +825,7 @@ def test_panel_input_absent_no_key(data_dir, tmp_path):
     from yibao_brain.plugins import get_panel, panel_payload
 
     _write_plugin(tmp_path, "notes", NOTES_PANEL_MANIFEST, {"panel/list.schema.json": LIST_SCHEMA})
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     _load(tmp_path, reg)
     assert "input" not in get_panel("notes:list")
     p = panel_payload(ActionResult(success=True, data={"rows": []}, panel="notes:list"))
@@ -841,7 +841,7 @@ def test_panel_input_invalid_warns_and_drops(data_dir, tmp_path, capsys):
         'type = "schema"\nname = "list"\ninput = "takeover"',
     )
     _write_plugin(tmp_path, "notes", manifest, {"panel/list.schema.json": LIST_SCHEMA})
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     assert _load(tmp_path, reg) == {"notes": "ok"}
     assert "input" not in get_panel("notes:list")
     assert "inherit" in capsys.readouterr().err
@@ -852,7 +852,7 @@ def test_panel_input_invalid_warns_and_drops(data_dir, tmp_path, capsys):
 
 def test_db_insert_auto_unixts(data_dir, tmp_path):
     _write_plugin(tmp_path, "notes", NOTES_PANEL_MANIFEST, {"panel/list.schema.json": LIST_SCHEMA})
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     _load(tmp_path, reg)
     keep = reg.get("notes.keep")
     before = int(__import__("time").time())
@@ -866,7 +866,7 @@ def test_db_insert_auto_unixts(data_dir, tmp_path):
 def test_db_insert_auto_unknown_kind_fails(data_dir, tmp_path):
     manifest = NOTES_PANEL_MANIFEST.replace('auto = {created_at = "unixts"}', 'auto = {created_at = "bogus"}')
     _write_plugin(tmp_path, "notes", manifest, {"panel/list.schema.json": LIST_SCHEMA})
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     _load(tmp_path, reg)
     keep = reg.get("notes.keep")
     r = keep.run({"text": "x"}, keep.plugin_ctx)
@@ -920,7 +920,7 @@ def test_api_toml_parsed(data_dir, tmp_path, capsys):
         "panel/list.schema.json": LIST_SCHEMA,
         "api.toml": API_TOML,
     })
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     assert _load(tmp_path, reg) == {"notes": "ok"}
 
     api = get_api("notes.delete")
@@ -969,7 +969,7 @@ direct = true
         "panel/list.schema.json": LIST_SCHEMA,
         "api.toml": api_toml,
     })
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     assert _load(tmp_path, reg) == {"notes": "ok"}
 
     assert get_api("notes.open_editor").panel == "notes:list"
@@ -989,7 +989,7 @@ def test_repo_notes_plugin_loads(data_dir):
     """仓库根 plugins/notes 必须能被 load_plugins 无错加载（⑥ 的验收）。"""
     from yibao_brain.plugins import get_api, get_panel
 
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     results = _load(REPO_PLUGINS_DIR, reg)
     assert results["notes"] == "ok"
     for tid in ("notes.keep", "notes.list", "notes.delete"):
@@ -1076,10 +1076,10 @@ def test_chat_write_tool_panel_carries_refresh_data(data_dir, tmp_path):
     from yibao_brain.loop import AgentLoop
 
     _write_plugin(tmp_path, "notes", REFRESH_MANIFEST)
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     assert _load(tmp_path, reg) == {"notes": "ok"}
     provider = _SeqProvider(
-        FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="notes_keep", params={"text": "牛奶"})]),
+        FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="notes_keep", params={"text": "牛奶"})]),
         FakeProvider(text="记下了"),
     )
     loop = AgentLoop(
@@ -1097,13 +1097,13 @@ def test_chat_write_tool_panel_carries_refresh_data(data_dir, tmp_path):
 
 def test_refresh_cross_plugin_rejected(data_dir, tmp_path):
     _write_plugin(tmp_path, "notes", REFRESH_MANIFEST.replace('refresh = "list"', 'refresh = "other.list"'))
-    results = _load(tmp_path, SkillRegistry())
+    results = _load(tmp_path, ToolRegistry())
     assert results["notes"].startswith("ValueError") and "本插件" in results["notes"]
 
 
 def test_refresh_unregistered_tool_rejected(data_dir, tmp_path):
     _write_plugin(tmp_path, "notes", REFRESH_MANIFEST.replace('refresh = "list"', 'refresh = "ghost"'))
-    results = _load(tmp_path, SkillRegistry())
+    results = _load(tmp_path, ToolRegistry())
     assert results["notes"].startswith("ValueError") and "未注册" in results["notes"]
 
 
@@ -1169,7 +1169,7 @@ def test_declarative_tool_carries_surface_hints(data_dir, tmp_path):
     notes/reminders 这批最该走 Inline 的插件全是声明式的；Phase 1 只给
     ActionResult 加了字段，等于把它们排除在表面模型之外。"""
     _write_plugin(tmp_path, "notes", SURFACE_MANIFEST)
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     _load(tmp_path, reg)
 
     keep = reg.get("notes.keep")
@@ -1182,7 +1182,7 @@ def test_declarative_tool_carries_surface_hints(data_dir, tmp_path):
 def test_declarative_tool_invalid_presentation_ignored(data_dir, tmp_path):
     """非法值静默过滤（与 [[panel]].surfaces 既有约定一致），不抛错、不阻断加载。"""
     _write_plugin(tmp_path, "notes", SURFACE_MANIFEST)
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     assert _load(tmp_path, reg) == {"notes": "ok"}
 
     bad = reg.get("notes.bad")
@@ -1196,7 +1196,7 @@ def test_declarative_tool_silent_defaults(data_dir, tmp_path):
 
     这条锁住向后兼容：旧插件行为完全不变。"""
     _write_plugin(tmp_path, "notes", SURFACE_MANIFEST)
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     _load(tmp_path, reg)
 
     silent = reg.get("notes.silent")
@@ -1211,7 +1211,7 @@ def test_declarative_tool_failure_carries_no_hints(data_dir, tmp_path):
 
     与既有「失败不放 panel 引用」共用同一个 if result.success 判断。"""
     _write_plugin(tmp_path, "notes", SURFACE_MANIFEST)
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     _load(tmp_path, reg)
 
     boom = reg.get("notes.boom")

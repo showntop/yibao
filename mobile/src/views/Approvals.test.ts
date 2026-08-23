@@ -17,7 +17,7 @@ import { useApprovals } from "../state/approvals";
 import Approvals from "./Approvals.vue";
 
 const CONN = { host: "http://x", token: "t" };
-const PA_1 = { id: "pa_1", skill_id: "code_exec", summary: "cmd=rm x", risk: 3, created_at: 1 };
+const PA_1 = { id: "pa_1", tool_id: "code_exec", summary: "cmd=rm x", risk: 3, created_at: 1 };
 
 /** 与真实 useApprovals 同形的最小假体：pendings/decide/error 可逐测定制 */
 function fakeApprovals() {

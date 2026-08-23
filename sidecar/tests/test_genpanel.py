@@ -4,7 +4,7 @@ import json
 import pytest
 
 from yibao_brain import genpanel, plugins
-from yibao_brain.skills import SkillContext, SkillRegistry
+from yibao_brain.tools import ToolContext, ToolRegistry
 
 GOOD_HTML = """<!DOCTYPE html>
 <html lang="zh-CN">
@@ -62,15 +62,15 @@ def _clean_gen_panels():
         plugins.unregister_panel(ref)
 
 
-def _ctx() -> SkillContext:
-    return SkillContext()
+def _ctx() -> ToolContext:
+    return ToolContext()
 
 
 def _gen(llm, name="weather", title="天气看板", purpose="展示一周天气", data=None):
     params = {"name": name, "title": title, "purpose": purpose}
     if data is not None:
         params["data"] = data
-    return genpanel.PanelGenSkill(llm).run(params, _ctx())
+    return genpanel.PanelGenTool(llm).run(params, _ctx())
 
 
 # ---------- 注册口（plugins.register_panel/unregister_panel） ----------
@@ -179,7 +179,7 @@ def test_gen_llm_failure_modes(data_dir):
     assert not _gen(_BoomLlm()).success  # LLM 异常
     r = _gen(_FakeLlm(""))  # 返回空
     assert not r.success and plugins.get_panel("gen:weather") is None
-    r2 = genpanel.PanelGenSkill(None).run(
+    r2 = genpanel.PanelGenTool(None).run(
         {"name": "w", "title": "t", "purpose": "p"}, _ctx())
     assert not r2.success and "LLM" in r2.error  # 底座无 LLM
     r3 = _gen(_FakeLlm(GOOD_HTML), title="", purpose="")  # 缺参数
@@ -211,7 +211,7 @@ def _gen_two(data_dir):
 def test_open_list_delete_flow(data_dir):
     _gen_two(data_dir)
 
-    lst = genpanel.PanelListSkill().run({}, _ctx())
+    lst = genpanel.PanelListTool().run({}, _ctx())
     assert lst.success
     names = {p["name"] for p in lst.data["panels"]}
     assert names == {"weather", "stocks"}
@@ -219,31 +219,31 @@ def test_open_list_delete_flow(data_dir):
     assert w["title"] == "天气看板" and w["purpose"] == "看天气" and w["created_at"] > 0
 
     # open 不存在：error 附现有面板清单
-    r = genpanel.PanelOpenSkill().run({"name": "nope"}, _ctx())
+    r = genpanel.PanelOpenTool().run({"name": "nope"}, _ctx())
     assert not r.success
     assert "weather" in r.error and "stocks" in r.error and "panel_list" in r.error
 
     # open 存在：从盘上读回注册并发 panel 事件
     plugins.unregister_panel("gen:weather")  # 模拟重启后未注册
-    r = genpanel.PanelOpenSkill().run({"name": "weather"}, _ctx())
+    r = genpanel.PanelOpenTool().run({"name": "weather"}, _ctx())
     assert r.success and r.panel == "gen:weather" and r.data == {}
     assert plugins.get_panel("gen:weather") == {"type": "webview", "html": GOOD_HTML}
     assert plugins.get_panel_title("gen:weather") == "译宝 · 天气看板"
 
     # delete：文件 + 注册一起清
-    r = genpanel.PanelDeleteSkill().run({"name": "weather"}, _ctx())
+    r = genpanel.PanelDeleteTool().run({"name": "weather"}, _ctx())
     assert r.success
     assert plugins.get_panel("gen:weather") is None
     assert not (data_dir / "gen_panels" / "weather.html").exists()
     assert not (data_dir / "gen_panels" / "weather.meta.json").exists()
-    assert {p["name"] for p in genpanel.PanelListSkill().run({}, _ctx()).data["panels"]} == {"stocks"}
+    assert {p["name"] for p in genpanel.PanelListTool().run({}, _ctx()).data["panels"]} == {"stocks"}
 
     # delete 不存在 → error
-    assert not genpanel.PanelDeleteSkill().run({"name": "weather"}, _ctx()).success
+    assert not genpanel.PanelDeleteTool().run({"name": "weather"}, _ctx()).success
 
 
 def test_list_empty(data_dir):
-    r = genpanel.PanelListSkill().run({}, _ctx())
+    r = genpanel.PanelListTool().run({}, _ctx())
     assert r.success and r.data["panels"] == []
 
 
@@ -281,7 +281,7 @@ def test_load_saved_panels_no_dir(data_dir):
 
 
 def test_skills_register_as_base_skills_without_dots():
-    reg = SkillRegistry()
+    reg = ToolRegistry()
     for sk in genpanel.make_skills(_FakeLlm(GOOD_HTML)):
         reg.register(sk)  # 底座 id 不带点号才过校验
     assert {s.id for s in reg.list()} == {"panel_gen", "panel_open", "panel_list", "panel_delete"}

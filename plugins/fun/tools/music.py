@@ -13,7 +13,7 @@ import urllib.request
 from typing import Any
 
 from yibao_brain.ipc import ActionResult, RiskLevel
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 _FETCH_TIMEOUT = 8
 _MAX_SONGS = 6
@@ -111,7 +111,7 @@ def _fetch_chart(playlist_id: str, limit: int) -> list[dict]:
     return out
 
 
-class MusicSkill(Skill):
+class MusicTool(Tool):
     id = "fun.music"
     label = "听音乐"
     description = (
@@ -187,5 +187,5 @@ class MusicSkill(Skill):
         return result
 
 
-def make_tools(ctx: Any) -> list[Skill]:
-    return [MusicSkill()]
+def make_tools(ctx: Any) -> list[Tool]:
+    return [MusicTool()]

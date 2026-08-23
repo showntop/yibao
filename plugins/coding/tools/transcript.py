@@ -15,6 +15,11 @@ from datetime import datetime
 from pathlib import Path
 
 
+def make_tools(ctx):
+    """辅助模块不直接贡献工具（工具统一由 coding.py 提供）；空实现通过插件加载器检查。"""
+    return []
+
+
 def _sibling(stem: str):
     """按路径加载同目录兄弟模块并缓存进 sys.modules（R-35 归一：加载逻辑在 _common.load_sibling，薄委托）。
 
@@ -55,7 +60,7 @@ def _codex_sessions_root() -> str:
 
 
 # sid -> {"cancel": threading.Event, ...}。stop 经此拿 cancel 信号；线程收尾后 pop。
-# entry 可选键：steer（运行中督导补充队列，spec §A——SendSkill 对 running 会话的 prompt
+# entry 可选键：steer（运行中督导补充队列，spec §A——SendTool 对 running 会话的 prompt
 def _cc_projects_base() -> Path:
     """CC transcript 根目录 ~/.claude/projects（测试 monkeypatch HOME 改道 tmp，同 _cc_reader）。"""
     return Path(os.path.expanduser("~/.claude/projects"))

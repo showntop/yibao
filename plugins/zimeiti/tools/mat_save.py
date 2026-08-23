@@ -13,7 +13,7 @@ import urllib.request
 from typing import Any
 
 from yibao_brain.ipc import ActionResult, RiskLevel
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 _MAX_FETCH_BYTES = 2_000_000  # 网页下载上限（防超大页拖死）
 _MAX_CONTENT = 8000  # 入库正文截断
@@ -63,7 +63,7 @@ def _summarize(llm: Any, text: str) -> dict:
     return {"title": head, "summary": text[:200], "tags": []}
 
 
-class MatSave(Skill):
+class MatSave(Tool):
     id = "zimeiti.mat_save"
     label = "存素材"
     description = (
@@ -149,5 +149,5 @@ class MatSave(Skill):
         return result
 
 
-def make_tools(ctx: Any) -> list[Skill]:
+def make_tools(ctx: Any) -> list[Tool]:
     return [MatSave()]

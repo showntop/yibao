@@ -21,9 +21,9 @@ def env(data_dir):
     from yibao_brain.llm import FakeProvider
     from yibao_brain.memory import FakeMemory
     from yibao_brain.plugins import LlmChat, load_plugins
-    from yibao_brain.skills import SkillRegistry
+    from yibao_brain.tools import ToolRegistry
 
-    reg = SkillRegistry()
+    reg = ToolRegistry()
 
     class _Http:
         def get(self, url, **kw):

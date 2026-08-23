@@ -1,7 +1,7 @@
 // 小窗待批确认域：确认卡队列（归属过滤）+ 快批裁决（单条/整批）+ 回执占位（approval-guard）。
 // 依赖经 deps 注入（App.vue 持有气泡流/窗口状态），本 composable 不触碰其他窗口域。
 import { computed, ref, type Ref } from "vue";
-import { canRememberSkill, onPendingConfirms, sendConfirmBatch, type PendingConfirm } from "../lib/brain";
+import { canRememberTool, onPendingConfirms, sendConfirmBatch, type PendingConfirm } from "../lib/brain";
 import type { PetAvatarState } from "./usePetState";
 
 export interface PetApprovalDeps {
@@ -21,7 +21,7 @@ export function usePetApproval(deps: PetApprovalDeps) {
 
   const pendingConfirms = ref<PendingConfirm[]>([]);
   const pending = computed(() => pendingConfirms.value[0] ?? null);
-  const pendingCanRemember = computed(() => canRememberSkill(pending.value?.skill ?? ""));
+  const pendingCanRemember = computed(() => canRememberTool(pending.value?.tool_id ?? ""));
   const rememberPending = ref(false);
   /** 回执占位（吸收连点，避免同一位置瞬间变成「停止」） */
   const approvalGuard = ref<null | "allowed" | "denied">(null);

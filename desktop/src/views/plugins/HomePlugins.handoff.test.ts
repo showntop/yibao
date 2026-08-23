@@ -18,8 +18,8 @@ vi.mock("../../lib/brain", () => ({
   interrupt: vi.fn(() => Promise.resolve()),
   reportPanelContext: vi.fn(() => Promise.resolve()),
   setSurface: vi.fn(),
-  canRememberSkill: vi.fn(() => false),
-  rememberLabelForSkill: vi.fn(() => ""),
+  canRememberTool: vi.fn(() => false),
+  rememberLabelForTool: vi.fn(() => ""),
 }));
 // list_plugins 须回 [](回 null 会让列表模板 plugins.length 抛错);get_current_panel 回 null(无缓存)
 vi.mock("@tauri-apps/api/core", () => ({

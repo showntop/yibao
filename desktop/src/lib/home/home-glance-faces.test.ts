@@ -59,7 +59,7 @@ describe("remind faces", () => {
 describe("task faces", () => {
   it("marks the running job as waiting when a confirm is outstanding", () => {
     const tasks = [{ id: "t1", kind: "agent" as const, label: "写摘要", prompt: "", status: "running" as const, created_at: 1 }];
-    const approvals = [{ id: "a1", skill: "coding", label: "跑命令", desc: "" }] as PendingConfirm[];
+    const approvals = [{ id: "a1", tool_id: "coding", label: "跑命令", desc: "" }] as PendingConfirm[];
     expect(taskFaces(tasks as RunningTask[], approvals)).toEqual([
       { id: "t1", label: "写摘要", stuck: "等你" },
     ]);

@@ -265,7 +265,7 @@ def test_v1_confirm_and_state_routes():
 
         def state():
             return {"running": {"surface": "mobile"},
-                    "pending": [{"id": "pa_1", "skill_id": "danger", "summary": "rm -rf", "risk": 3, "created_at": 1}]}
+                    "pending": [{"id": "pa_1", "tool_id": "danger", "summary": "rm -rf", "risk": 3, "created_at": 1}]}
 
         deps = MobileDeps(confirm=confirm, state=state)
         app = build_app(get_bridge_token=lambda: "btok", get_mobile_token=lambda: "mtok",

@@ -10,6 +10,7 @@ import type { MessageInput } from "../state/domains/conversation";
 import type { Message } from "../state/types";
 import { procDetail, procLabel, procResultSuffix, procSkip } from "../lib/proc";
 import { squashSpaces, truncate } from "../lib/text";
+import { isTaskLogEvent } from "../lib/work-thread";
 
 export interface ChatFlowDeps {
   /** 当前会话 id（气泡持久化/会话归属过滤用） */
@@ -295,6 +296,8 @@ export function useChatFlow(deps: ChatFlowDeps) {
         }
         break;
       case "reminder":
+        // 任务收尾（沙箱/agent）只写 Feed：插进对话会盖蓝色提醒胶囊、拆开当轮 run。
+        if (isTaskLogEvent(e)) break;
         // 主动提醒：落气泡 + 通知父级切回本页（大窗已可见，宠物窗自己管亮窗，两边互不抢）
         {
           const reminderBubble: BubbleMsg = { role: "ai", text: e.text ?? "到点了", icon: "clock", ts: Date.now() };

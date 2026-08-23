@@ -21,10 +21,10 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
-from .config import search_api_key, search_engine, search_provider, search_searxng_url
-from .http_client import fetch_url_text, get_bytes, post_bytes
-from .ipc import ActionResult, RiskLevel
-from .skills import Skill, SkillContext, SkillRegistry
+from ..config import search_api_key, search_engine, search_provider, search_searxng_url
+from ..http_client import fetch_url_text, get_bytes, post_bytes
+from ..ipc import ActionResult, RiskLevel
+from .core import Tool, ToolContext, ToolRegistry
 
 _SEARCH_ENGINES = {
     "baidu": "https://www.baidu.com/s?wd=",
@@ -178,7 +178,7 @@ def _search_api(provider: str, query: str, key: str) -> list[dict]:
     return []
 
 
-class FindFileSkill(Skill):
+class FindFileTool(Tool):
     id = "find_file"
     label = "找文件"
     description = "在本机全盘搜索文件（Spotlight），按文件名或内容关键词匹配，返回最相关的前 10 个路径。配合 open_path 打开结果。"
@@ -195,7 +195,7 @@ class FindFileSkill(Skill):
             },
         }
 
-    def run(self, params: dict, ctx: SkillContext) -> ActionResult:
+    def run(self, params: dict, ctx: ToolContext) -> ActionResult:
         query = str(params.get("query", "")).strip()
         if not query:
             return ActionResult(success=False, error="缺少 query 参数")
@@ -207,7 +207,7 @@ class FindFileSkill(Skill):
         return ActionResult(success=True, data={"paths": paths, "count": len(paths)})
 
 
-class WebSearchSkill(Skill):
+class WebSearchTool(Tool):
     id = "web_search"
     label = "联网搜索"
     description = (
@@ -234,7 +234,7 @@ class WebSearchSkill(Skill):
             },
         }
 
-    def run(self, params: dict, ctx: SkillContext) -> ActionResult:
+    def run(self, params: dict, ctx: ToolContext) -> ActionResult:
         query = str(params.get("query", "")).strip()
         if not query:
             return ActionResult(success=False, error="缺少 query 参数")
@@ -288,7 +288,7 @@ class WebSearchSkill(Skill):
         })
 
 
-class ExtractUrlSkill(Skill):
+class ExtractUrlTool(Tool):
     id = "extract_url"
     label = "读网页"
     description = (
@@ -312,7 +312,7 @@ class ExtractUrlSkill(Skill):
             },
         }
 
-    def run(self, params: dict, ctx: SkillContext) -> ActionResult:
+    def run(self, params: dict, ctx: ToolContext) -> ActionResult:
         url = str(params.get("url") or "").strip()
         if not re.match(r"^https?://", url):
             return ActionResult(success=False, error=f"不是合法 http(s) 链接：{url}")
@@ -332,7 +332,7 @@ class ExtractUrlSkill(Skill):
         })
 
 
-class OpenPathSkill(Skill):
+class OpenPathTool(Tool):
     id = "open_path"
     label = "打开文件"
     description = "用默认应用打开一个本地文件/目录；reveal=true 时改为在 Finder 中定位显示该文件。"
@@ -352,7 +352,7 @@ class OpenPathSkill(Skill):
             },
         }
 
-    def run(self, params: dict, ctx: SkillContext) -> ActionResult:
+    def run(self, params: dict, ctx: ToolContext) -> ActionResult:
         path = str(params.get("path", "")).strip()
         if not path:
             return ActionResult(success=False, error="缺少 path 参数")
@@ -369,7 +369,7 @@ class OpenPathSkill(Skill):
         return ActionResult(success=True, data={"path": path, "reveal": reveal})
 
 
-class WriteNoteSkill(Skill):
+class WriteNoteTool(Tool):
     id = "write_note"
     label = "记笔记"
     description = "打开文本编辑应用（默认 TextEdit）并写入一段文字（新建草稿，不落盘）。适合起草、记录、写文案。"
@@ -389,7 +389,7 @@ class WriteNoteSkill(Skill):
             },
         }
 
-    def run(self, params: dict, ctx: SkillContext) -> ActionResult:
+    def run(self, params: dict, ctx: ToolContext) -> ActionResult:
         if ctx.host is None:
             return ActionResult(success=False, error="无执行基座 host（ctx.host 为空）")
         text = str(params.get("text", ""))
@@ -407,7 +407,7 @@ class WriteNoteSkill(Skill):
         return ActionResult(success=True, data={"method": "type", "app": app, "chars": len(text)})
 
 
-def register_composite_skills(reg: SkillRegistry) -> None:
+def register_composite_tools(reg: ToolRegistry) -> None:
     """把 5 个复合技能注册到 registry。"""
-    for skill in (FindFileSkill(), WebSearchSkill(), ExtractUrlSkill(), OpenPathSkill(), WriteNoteSkill()):
+    for skill in (FindFileTool(), WebSearchTool(), ExtractUrlTool(), OpenPathTool(), WriteNoteTool()):
         reg.register(skill)

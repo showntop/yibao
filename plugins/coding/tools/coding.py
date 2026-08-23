@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from yibao_brain.ipc import ActionResult, RiskLevel
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 
 def _sibling(stem: str):
@@ -62,7 +62,7 @@ _runner = _sibling("_runner")
 ClaudeCodeRunner = _runner.ClaudeCodeRunner   # 生产默认 runner factory（claude-code/cc）
 _codex_runner = _sibling("_codex_runner")
 CodexCliRunner = _codex_runner.CodexCliRunner  # codex CLI 子进程 runner factory
-_PERM = _runner._PERM                         # can_use_tool 裁决注册表（rid → {event, allow, tool, summary, params}；DecideSkill 消费，perm_pending 读展示字段）
+_PERM = _runner._PERM                         # can_use_tool 裁决注册表（rid → {event, allow, tool, summary, params}；DecideTool 消费，perm_pending 读展示字段）
 
 
 def _runner_for(agent: str):
@@ -98,11 +98,11 @@ _tr = _sibling("transcript")  # 转录解析域（transcript.py）
 _session_skills = _sibling("_session_skills")  # 会话生命周期技能域（R-15 拆出：start/send/stop/list/attach）
 start_session = _session_skills.start_session          # re-export：测试 codingmod.start_session 直打
 _live_state = _session_skills._live_state              # re-export：活体状态判定
-StartSkill = _session_skills.StartSkill                # re-export：测试/装配沿用 coding 命名空间
-SendSkill = _session_skills.SendSkill
-StopSkill = _session_skills.StopSkill
-ListSkill = _session_skills.ListSkill
-AttachSkill = _session_skills.AttachSkill
+StartTool = _session_skills.StartTool                # re-export：测试/装配沿用 coding 命名空间
+SendTool = _session_skills.SendTool
+StopTool = _session_skills.StopTool
+ListTool = _session_skills.ListTool
+AttachTool = _session_skills.AttachTool
 
 
 def _codex_sessions_root() -> str:
@@ -115,7 +115,7 @@ def _codex_sessions_root() -> str:
 
 
 
-class StudioSkill(Skill):
+class StudioTool(Tool):
     """打开 coding:studio 多工位面板(R4 module 面板,新 coding UI 骨架)。
 
     L0 只读:只发 panel 事件。数据消费全部走面板内 invoke(coding.list 等既有方法),
@@ -140,7 +140,7 @@ class StudioSkill(Skill):
         return ActionResult(success=True, data={}, panel="coding:studio")
 
 
-class HandoffListSkill(Skill):
+class HandoffListTool(Tool):
     """列指定项目下 Codex 的会话（跨 agent 交接入口；只读）。
 
     经模块级 `_tr._codex_sessions_root()` 取 session 根 → `_codex.list_sessions(cwd)`，
@@ -182,7 +182,7 @@ class HandoffListSkill(Skill):
         return ActionResult(success=True, data={"sessions": sessions})
 
 
-class HandoffBriefSkill(Skill):
+class HandoffBriefTool(Tool):
     """针对某条 Codex 会话生成交接 Brief（LLM 凝练 → Claude Code 接续上下文）。
 
     流程：list_sessions 匹配 session_id → read_conversation + git_summary →
@@ -248,7 +248,7 @@ class HandoffBriefSkill(Skill):
         })
 
 
-class SessionBriefSkill(Skill):
+class SessionBriefTool(Tool):
     """针对会话库里的任一会话生成交接 Brief（引擎 chip 跨引擎切换：摘要移植到另一引擎）。
 
     与 handoff_brief（读 codex rollout 文件，单向 Codex→CC）不同：本 skill 读插件 messages 表
@@ -300,7 +300,7 @@ class SessionBriefSkill(Skill):
         return ActionResult(success=True, data={"brief": brief, "session_id": sid})
 
 
-class HistorySkill(Skill):
+class HistoryTool(Tool):
     """读某个 coding 会话的信息与最近消息（历史抽屉恢复旧会话用）。
 
     消息优先读本插件 messages 表（_stream 流式落库的 transcript，取最近 40 条——
@@ -349,7 +349,7 @@ class HistorySkill(Skill):
         })
 
 
-class ModeSkill(Skill):
+class ModeTool(Tool):
     id = "coding.mode"
     label = "切换权限模式"
     description = "切换某个 coding 会话的权限模式（acceptEdits=自动改文件 / plan=只读规划）：落库下轮生效；会话在跑则通知 runner 运行中切换。"
@@ -379,7 +379,7 @@ class ModeSkill(Skill):
 
 def _rewind_fresh_client(cc_sid: str, cwd: str, uuid: str) -> None:
     """非 live 路径：新开 client（resume + checkpointing on）执行 rewind_files。CLI 侧 checkpoint 持久，跨实例应可；
-    失败抛给调用方（RewindSkill 降级成 error 事件）。"""
+    失败抛给调用方（RewindTool 降级成 error 事件）。"""
     runner = ClaudeCodeRunner()
     factory = runner._default_factory  # 复用 options（checkpointing/replay 已开）
 
@@ -398,7 +398,7 @@ def _rewind_fresh_client(cc_sid: str, cwd: str, uuid: str) -> None:
         loop.close()
 
 
-class RewindSkill(Skill):
+class RewindTool(Tool):
     id = "coding.rewind"
     label = "回滚文件检查点"
     description = "把会话改过的文件回滚到某条用户消息时的状态（Claude Code 文件检查点）。会话在跑则下条消息前执行；已结束则新开 client 执行。"
@@ -448,7 +448,7 @@ class RewindSkill(Skill):
         return ActionResult(success=True, data={"ok": True, "live": False})
 
 
-class DecideSkill(Skill):
+class DecideTool(Tool):
     id = "coding.decide"
     label = "裁决工具权限"
     description = "对 can_use_tool 弹出的权限请求做允许/拒绝裁决（rid 来自 permission_request 事件）。"
@@ -471,7 +471,7 @@ class DecideSkill(Skill):
         return ActionResult(success=True, data={"ok": True})
 
 
-class PermPendingSkill(Skill):
+class PermPendingTool(Tool):
     """待批权限清单（studio review 栏挂载快照；quiet 只读）。
 
     面板晚开错过 permission_request 流事件时补齐全量挂起项；之后的增删由流事件驱动
@@ -503,7 +503,7 @@ class PermPendingSkill(Skill):
 _FILES_EXCLUDE = {".git", "node_modules", "dist", "target", ".venv", "build", "out", "__pycache__", ".next", ".cache"}
 
 
-class FilesSkill(Skill):
+class FilesTool(Tool):
     id = "coding.files"
     label = "项目文件模糊搜索"
     description = "在 cwd 下按文件名模糊匹配（@ 补全用）：限深 6 层、限 200 条、排除依赖/构建目录。"
@@ -552,7 +552,7 @@ def attach_cc_session(db, *, cc_session_id: str, cwd: str) -> str | None:
     sessions 行：agent="cc"、source="import"、status="done"；created_at/finished_at 取
     transcript 内容时间（首/末消息行 timestamp），兜底文件 mtime。messages 表写整段
     transcript（seq 1..n；user 行带 CC uuid 作 rewind 锚点，对齐 _stream._persist 先例）。
-    导入的会话 send 时走既有 resume 链路（SendSkill 读库 cc_session_id → SDK resume），无需特殊处理。
+    导入的会话 send 时走既有 resume 链路（SendTool 读库 cc_session_id → SDK resume），无需特殊处理。
     """
     rows = db.query("sessions", where={"cc_session_id": cc_session_id})
     if rows:
@@ -585,7 +585,7 @@ def attach_cc_session(db, *, cc_session_id: str, cwd: str) -> str | None:
     return sid
 
 
-class LastSessionsSkill(Skill):
+class LastSessionsTool(Tool):
     """统一接续 popover 区 1「上次会话」：跨源检测（cc + codex 每源最新一条，源不存在 → null）。"""
     id = "coding.last_sessions"
     label = "上次会话检测"
@@ -614,11 +614,11 @@ class LastSessionsSkill(Skill):
         })
 
 
-class AttachCcSkill(Skill):
+class AttachCcTool(Tool):
     """把译宝 DB 外的 Claude Code 会话导入 DB（统一接续 popover 的 cc 卡「继续」前置）。
 
     导入后前端走现有 resumeSession（coding.history 读本 DB id 的 messages 表）；
-    发新消息时 SendSkill 拿库里的 cc_session_id 走 SDK resume 原生续，上下文完整。
+    发新消息时 SendTool 拿库里的 cc_session_id 走 SDK resume 原生续，上下文完整。
     """
     id = "coding.attach_cc"
     label = "导入 cc 会话"
@@ -672,7 +672,7 @@ def _detect_drivers() -> list[dict]:
     return drivers
 
 
-class DriversSkill(Skill):
+class DriversTool(Tool):
     """编码引擎探测（ctx-row 引擎 chip 数据源）：claude-code 恒可用；codex 探测二进制+版本。
     L0 quiet（api.toml 无 panel）——chip 初始化/刷新时直调，不开面板。"""
     id = "coding.drivers"
@@ -700,7 +700,7 @@ def attach_codex_session(db, *, thread_id: str) -> str | None:
     prompt=首条 user 摘要截 60；created_at/finished_at 取 session_meta timestamp，兜底文件 mtime。
     messages 表写整段 rollout 对话（seq 1..n、role user/assistant、ts 有则带），
     resumeSession 经 coding.history 读回完整对话；导入后 send 走既有 resume 链路
-    （SendSkill 按 agent=codex → codex exec resume thread_id）。
+    （SendTool 按 agent=codex → codex exec resume thread_id）。
     """
     rows = db.query("sessions", where={"cc_session_id": thread_id})
     if rows:
@@ -737,11 +737,11 @@ def attach_codex_session(db, *, thread_id: str) -> str | None:
     return sid
 
 
-class AttachCodexSkill(Skill):
+class AttachCodexTool(Tool):
     """codex 会话原生续导入（接续 popover codex 卡「原生续」前置）。
 
     建 DB 行（agent="codex" + cc_session_id=thread_id）并导入 rollout 对话消息进 messages 表，
-    前端走现有 resumeSession（coding.history 读回完整对话）；发新消息时 SendSkill 按 agent=codex
+    前端走现有 resumeSession（coding.history 读回完整对话）；发新消息时 SendTool 按 agent=codex
     走 codex exec resume 原生续，上下文完整。幂等按 cc_session_id；既有空消息行补导。
     """
     id = "coding.attach_codex"
@@ -799,11 +799,11 @@ def _reconcile_stale_running(ctx: Any) -> None:
             print(f"[yibao/coding] 会话 {sid} 对账落库失败：{e}", file=sys.stderr)
 
 
-def make_tools(ctx: Any) -> list[Skill]:
+def make_tools(ctx: Any) -> list[Tool]:
     """插件加载器入口（_load_code_tools 遍历 skills/*.py 调本函数）。"""
     _reconcile_stale_running(ctx)
-    return [_session_skills.StartSkill(), _session_skills.SendSkill(), _session_skills.StopSkill(),
-            _session_skills.ListSkill(), _session_skills.AttachSkill(),
-            HandoffListSkill(), HandoffBriefSkill(), HistorySkill(), ModeSkill(),
-            RewindSkill(), DecideSkill(), PermPendingSkill(), FilesSkill(), LastSessionsSkill(), AttachCcSkill(),
-            DriversSkill(), AttachCodexSkill(), SessionBriefSkill(), StudioSkill()]
+    return [_session_skills.StartTool(), _session_skills.SendTool(), _session_skills.StopTool(),
+            _session_skills.ListTool(), _session_skills.AttachTool(),
+            HandoffListTool(), HandoffBriefTool(), HistoryTool(), ModeTool(),
+            RewindTool(), DecideTool(), PermPendingTool(), FilesTool(), LastSessionsTool(), AttachCcTool(),
+            DriversTool(), AttachCodexTool(), SessionBriefTool(), StudioTool()]

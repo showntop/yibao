@@ -51,7 +51,7 @@ import {
   type BrainPermissions,
   type BrainStatusMsg,
 } from "../../lib/brain";
-import { groupPages, groupThread, paperErrorNotice, paperStamps, runAnswer, runIsLive } from "../../lib/work-thread";
+import { groupPages, groupThread, paperErrorNotice, paperStamps, runAnswer, runShowFooter as footerReady } from "../../lib/work-thread";
 import { formatContextPrefix, type InputContext } from "../../lib/at-mention";
 import { sessionStore } from "../../state/store";
 import YbIcon from "../../components/common/YbIcon.vue";
@@ -386,14 +386,13 @@ function flipPage(delta: number) {
   pageIndex.value = Math.min(n - 1, Math.max(0, pageIndex.value + delta));
 }
 
-function runBusy(indices: number[]): boolean {
-  return runIsLive(bubbles.value, indices, streamingIdx.value);
-}
 function runHalted(indices: number[]): boolean {
   return indices.some((i) => bubbles.value[i].halted);
 }
 function runShowFooter(indices: number[]): boolean {
-  return !runBusy(indices) || runHalted(indices);
+  // 工具栏只属于已收束的 AI 回答：纯工具轮、进行中的当前轮都不露复制/赞/重写。
+  const agentBusy = state.value === "think" || state.value === "work" || state.value === "say";
+  return footerReady(bubbles.value, indices, streamingIdx.value, agentBusy);
 }
 function pageNotice(text: string, icon?: string) {
   if (icon === "alert") return paperErrorNotice(text) ?? { summary: text.trim() || "出错了", detail: text };

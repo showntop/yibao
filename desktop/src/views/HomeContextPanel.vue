@@ -7,8 +7,8 @@ import {
   onFeed,
   onWidgets,
   panelAction,
-  canRememberSkill,
-  rememberLabelForSkill,
+  canRememberTool,
+  rememberLabelForTool,
   type FeedStats,
   type RunningTask,
   type WidgetPayload,
@@ -288,9 +288,9 @@ onUnmounted(() => {
               <span v-if="approvalCwd(approval)">{{ approvalCwd(approval) }}</span>
             </div>
             <p v-if="approvalErrors[approval.id]" class="approval-error" role="alert">{{ approvalErrors[approval.id] }}</p>
-            <label v-if="canRememberSkill(approval.skill)" class="approval-remember">
+            <label v-if="canRememberTool(approval.tool_id)" class="approval-remember">
               <input type="checkbox" :checked="approvalRemember(approval.id)" @change="setApprovalRemember(approval.id, $event)" />
-              <span>{{ rememberLabelForSkill(approval.skill) }}</span>
+              <span>{{ rememberLabelForTool(approval.tool_id) }}</span>
             </label>
             <div class="approval-actions">
               <button type="button" class="approval-btn reject" :disabled="isDeciding(approval.id)" @click="decideApproval(approval, false)">拒绝</button>

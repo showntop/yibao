@@ -10,7 +10,7 @@ _FILE_EDIT_TOOLS = {"Write", "Edit", "MultiEdit"}
 #（review 栏快照源，coding.perm_pending 直读；summary/params 由
 # _summarize_tool_input/_public_params 生成）；created_at 供手机 /v1/state 待批卡展示。
 # 回调（runner 线程的 asyncio loop）发 permission_request 后在 asyncio.to_thread 里等
-# event.wait（不堵 loop）；面板审批卡按钮 → coding.decide（DecideSkill）写 allow + set。
+# event.wait（不堵 loop）；面板审批卡按钮 → coding.decide（DecideTool）写 allow + set。
 _PERM: dict = {}
 _perm_seq = itertools.count(1)
 
@@ -55,7 +55,7 @@ def _emit_perm_confirmation(emit_event, rid: str, tool_name, input) -> None:
     label = str(tool_name)
     action = {
         "id": rid,
-        "skill_id": "coding",
+        "tool_id": "coding",
         "label": label,
         "description": _summarize_tool_input(tool_name, input) or label,
         "params": _public_params(input),
@@ -80,7 +80,7 @@ def _emit_perm_outcome(emit_event, rid: str, tool_name, outcome: str) -> None:
     try:
         emit_event({"kind": "action_result",
                     "text": f"编码审批{text}：{tool_name}",
-                    "action": {"id": rid, "skill_id": "coding", "label": str(tool_name)},
+                    "action": {"id": rid, "tool_id": "coding", "label": str(tool_name)},
                     "result": {"success": outcome == "allow",
                                "error": "" if outcome == "allow" else text}})
     except Exception:

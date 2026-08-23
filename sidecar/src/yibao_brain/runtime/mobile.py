@@ -104,7 +104,7 @@ class MobileDomain:
         条目带 conversation_id/surface 归属）
         + coding 审批只读合并 _PERM 挂起项（allow is None；confirmation_needed 只广播
         不落 confirm_meta，故在此补源）——生命周期随裁决/超时/stop 的 _PERM.pop 收敛，
-        无需出队钩子。元素键名对齐 confirm_meta：id/skill_id/summary/risk/created_at。"""
+        无需出队钩子。元素键名对齐 confirm_meta：id/tool_id/summary/risk/created_at。"""
         run_slots = self.ctx.run_slots
         busy = next((s for s in run_slots.values()
                      if s["task"] is not None and not s["task"].done()), None)
@@ -114,7 +114,7 @@ class MobileDomain:
         if perm:
             for rid, entry in list(perm.items()):
                 if isinstance(entry, dict) and entry.get("allow") is None:
-                    pending.append({"id": rid, "skill_id": "coding",
+                    pending.append({"id": rid, "tool_id": "coding",
                                     "summary": str(entry.get("summary") or entry.get("tool") or "编码审批"),
                                     "risk": 1,
                                     "created_at": int(entry.get("created_at") or 0)})

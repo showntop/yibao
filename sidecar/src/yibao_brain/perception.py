@@ -13,7 +13,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 
 from .ipc import ActionResult, RiskLevel
-from .skills import Skill, SkillContext
+from .tools import Tool, ToolContext
 from .perception_store import PerceptionKeyUnavailable, PerceptionStore, key_from_macos_keychain  # noqa: F401  re-export：存储层已拆出，路径兼容
 from .perception_sensors import (  # noqa: F401  re-export：传感器域已拆出，路径兼容
     PerceptionSensors,
@@ -97,7 +97,7 @@ def build_activity_segments(
     return segments, truncated
 
 
-class LoadUserActivitySkill(Skill):
+class LoadUserActivityTool(Tool):
     """按模型选择的时间窗口加载本机 A/C 感知记录。"""
 
     id = "load_user_activity"
@@ -178,7 +178,7 @@ class LoadUserActivitySkill(Skill):
             raise ValueError("end_at 不能位于未来 5 分钟以后")
         return start, end
 
-    def run(self, params: dict, ctx: SkillContext) -> ActionResult:
+    def run(self, params: dict, ctx: ToolContext) -> ActionResult:
         blocked = self.precheck(params)
         if blocked:
             return ActionResult(success=False, error=blocked)
@@ -257,7 +257,7 @@ class LoadUserActivitySkill(Skill):
         return None
 
 
-class LoadScreenContentSkill(Skill):
+class LoadScreenContentTool(Tool):
     """按模型选择的回看分钟数加载本机屏幕内容记录（B 源：tree/vision 文本）。"""
 
     id = "load_screen_content"
@@ -313,7 +313,7 @@ class LoadScreenContentSkill(Skill):
             return default
         return max(lo, min(hi, parsed))
 
-    def run(self, params: dict, ctx: SkillContext) -> ActionResult:
+    def run(self, params: dict, ctx: ToolContext) -> ActionResult:
         blocked = self.precheck(params)
         if blocked:
             return ActionResult(success=False, error=blocked)

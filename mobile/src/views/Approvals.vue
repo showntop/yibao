@@ -79,7 +79,7 @@ async function onDecide(p: PendingConfirm, approved: boolean) {
           :class="{ high: p.risk >= 3 }"
         >
           <div class="row">
-            <span class="skill">{{ p.skill_id }}</span>
+            <span class="skill">{{ p.tool_id }}</span>
             <span class="risk" :class="p.risk >= 3 ? 'r3' : 'r2'">风险 L{{ p.risk }}</span>
           </div>
           <p class="summary">{{ p.summary }}</p>

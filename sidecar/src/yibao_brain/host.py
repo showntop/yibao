@@ -1,6 +1,6 @@
-"""感知/执行基座抽象：技能经 SkillContext.host 访问截图、a11y、键鼠注入。
+"""感知/执行基座抽象：技能经 ToolContext.host 访问截图、a11y、键鼠注入。
 
-设计：host 只提供「原语」，技能（skills_real.py）负责编排三级回退逻辑
+设计：host 只提供「原语」，技能（core_tools.py）负责编排三级回退逻辑
 （AX 动作 → AX 设值 → 坐标）。handle 为平台相关的不透明对象
 （macOS = AXUIElementRef），跨平台代码不要假设其内部结构。
 """
@@ -70,7 +70,7 @@ class UserInputGuard(Protocol):
 
 
 class Host(Protocol):
-    """执行/感知基座聚合体，注入 SkillContext.host。"""
+    """执行/感知基座聚合体，注入 ToolContext.host。"""
 
     screenshotter: Screenshotter
     a11y: A11yReader

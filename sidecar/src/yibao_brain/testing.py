@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .memory import FakeMemory
 from .plugindb import PluginDb
-from .skills import SkillContext
+from .tools import ToolContext
 
 
 class FakeHttp:
@@ -58,10 +58,10 @@ def make_ctx(
     host=None,
     http: FakeHttp | None = None,
     llm: FakeLlm | None = None,
-) -> SkillContext:
+) -> ToolContext:
     """一键构造插件测试 ctx：按 capabilities 注入（未声明的能力为 None，与线上一致）。"""
     data_dir = Path(tmp_path) / "plugins" / plugin_id
-    return SkillContext(
+    return ToolContext(
         host=host,
         db=PluginDb(plugin_id, str(data_dir / "data.db")) if "db" in capabilities else None,
         memory=FakeMemory() if "memory" in capabilities else None,

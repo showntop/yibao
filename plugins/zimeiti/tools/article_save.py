@@ -9,10 +9,10 @@ import time
 from pathlib import Path
 
 from yibao_brain.ipc import ActionResult, RiskLevel
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 
-class ArticleSave(Skill):
+class ArticleSave(Tool):
     id = "zimeiti.article_save"
     label = "保存稿件"
     description = (

@@ -26,7 +26,7 @@ _STREAM_IDLE_TIMEOUT = 60.0
 
 class ToolCall(BaseModel):
     id: str
-    skill_id: str
+    tool_id: str
     params: dict = Field(default_factory=dict)
 
 
@@ -57,7 +57,7 @@ class ToolCallDelta(BaseModel):
 
     index: int = 0
     id: str = ""
-    skill_id: str = ""  # function.name（增量，最终拼接）
+    tool_id: str = ""  # function.name（增量，最终拼接）
     arguments: str = ""  # function.arguments 片段（增量拼接，整体是 JSON 字符串）
 
 
@@ -129,11 +129,11 @@ def merge_tool_call_deltas(deltas: list[ToolCallDelta]) -> list[ToolCall]:
     """把跨 chunk 的 ToolCallDelta 按 index 聚合成完整 ToolCall 列表。"""
     acc: dict[int, dict] = {}
     for d in deltas:
-        slot = acc.setdefault(d.index, {"id": "", "skill_id": "", "arguments": ""})
+        slot = acc.setdefault(d.index, {"id": "", "tool_id": "", "arguments": ""})
         if d.id:
             slot["id"] = d.id
-        if d.skill_id:
-            slot["skill_id"] += d.skill_id
+        if d.tool_id:
+            slot["tool_id"] += d.tool_id
         slot["arguments"] += d.arguments
     out: list[ToolCall] = []
     for idx in sorted(acc):
@@ -145,7 +145,7 @@ def merge_tool_call_deltas(deltas: list[ToolCallDelta]) -> list[ToolCall]:
         out.append(
             ToolCall(
                 id=slot["id"] or f"call_{idx}",
-                skill_id=slot["skill_id"],
+                tool_id=slot["tool_id"],
                 params=params,
             )
         )
@@ -190,7 +190,7 @@ class FakeProvider:
                     ToolCallDelta(
                         index=i,
                         id=tc.id,
-                        skill_id=tc.skill_id,
+                        tool_id=tc.tool_id,
                         arguments=json.dumps(tc.params, ensure_ascii=False),
                     )
                     for i, tc in enumerate(self._tool_calls)
@@ -264,7 +264,7 @@ class OpenAICompatProvider:
                 params = json.loads(fn.arguments or "{}")
             except json.JSONDecodeError:
                 params = {}
-            tool_calls.append(ToolCall(id=tc.id, skill_id=fn.name, params=params))
+            tool_calls.append(ToolCall(id=tc.id, tool_id=fn.name, params=params))
         usage = _usage_from_openai(getattr(resp, "usage", None))
         return LLMResponse(text=msg.content or "", tool_calls=tool_calls, usage=usage)
 
@@ -318,7 +318,7 @@ class OpenAICompatProvider:
                     ToolCallDelta(
                         index=getattr(tc, "index", 0) or 0,
                         id=getattr(tc, "id", "") or "",
-                        skill_id=(getattr(fn, "name", "") or "") if fn else "",
+                        tool_id=(getattr(fn, "name", "") or "") if fn else "",
                         arguments=(getattr(fn, "arguments", "") or "") if fn else "",
                     )
                 )

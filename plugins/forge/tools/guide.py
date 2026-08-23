@@ -1,17 +1,17 @@
-"""forge.guide：按需加载方法论文档——Skill 能力包雏形，方法论不占常驻上下文，用时才读。
+"""forge.guide：按需加载方法论文档——Tool 能力包雏形，方法论不占常驻上下文，用时才读。
 
 文件自包含（加载器按文件独立 importlib 加载，禁止跨文件 import）。
 """
 from pathlib import Path
 
 from yibao_brain.ipc import ActionResult, RiskLevel
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 # 白名单：name 直接拼文件路径，必须挡住目录穿越和任意文件读取
 GUIDES = ("triage", "challenge", "scan", "prd")
 
 
-class Guide(Skill):
+class Guide(Tool):
     id = "forge.guide"
     label = "查看挑战指南"
     description = (

@@ -9,12 +9,12 @@ import time
 from typing import Any
 
 from yibao_brain.ipc import ActionResult, RiskLevel
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 _STATUSES = ("候选", "写作中", "待发布", "已发布")
 
 
-class SetStatusSkill(Skill):
+class SetStatusTool(Tool):
     id = "zimeiti.set_status"
     label = "更新选题状态"
     description = "流转选题状态（静默版：不发面板事件，编辑器内调用用）。"
@@ -58,5 +58,5 @@ class SetStatusSkill(Skill):
         return ActionResult(success=True, data={"id": tid, "status": status})
 
 
-def make_tools(ctx: Any) -> list[Skill]:
-    return [SetStatusSkill()]
+def make_tools(ctx: Any) -> list[Tool]:
+    return [SetStatusTool()]

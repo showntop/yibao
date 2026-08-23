@@ -22,7 +22,7 @@ class AuditLog:
                 CREATE TABLE IF NOT EXISTS actions (
                     id TEXT PRIMARY KEY,
                     ts TEXT DEFAULT (datetime('now')),
-                    skill_id TEXT,
+                    tool_id TEXT,
                     params TEXT,
                     risk INTEGER,
                     success INTEGER,
@@ -37,11 +37,11 @@ class AuditLog:
     def record(self, action: Action, result: ActionResult, screenshot_path: str | None = None) -> None:
         with self._lock:
             self.conn.execute(
-                "INSERT INTO actions (id, skill_id, params, risk, success, error, data, screenshot_path)"
+                "INSERT INTO actions (id, tool_id, params, risk, success, error, data, screenshot_path)"
                 " VALUES (?,?,?,?,?,?,?,?)",
                 (
                     action.id,
-                    action.skill_id,
+                    action.tool_id,
                     json.dumps(action.params, ensure_ascii=False),
                     int(action.risk),
                     1 if result.success else 0,
@@ -61,18 +61,18 @@ class AuditLog:
     def plugin_call_counts(self) -> dict[str, int]:
         """按 plugin id 聚合已执行 tool 次数（Dock 频率排序用）。
 
-        audit 表无独立 plugin 列，但 skill_id 恒为 `<plugin_id>.<tool>`（DeclarativeTool
-        强制前缀），取首个 `.` 前缀即 plugin id。NULL/空 skill_id 跳过；无记录返回 {}。
+        audit 表无独立 plugin 列，但 tool_id 恒为 `<plugin_id>.<tool>`（DeclarativeTool
+        强制前缀），取首个 `.` 前缀即 plugin id。NULL/空 tool_id 跳过；无记录返回 {}。
         """
         with self._lock:
             rows = self.conn.execute(
-                "SELECT skill_id, COUNT(*) FROM actions GROUP BY skill_id"
+                "SELECT tool_id, COUNT(*) FROM actions GROUP BY tool_id"
             ).fetchall()
         counts: dict[str, int] = {}
-        for skill_id, n in rows:
-            if not skill_id:
+        for tool_id, n in rows:
+            if not tool_id:
                 continue
-            plugin = skill_id.split(".", 1)[0]
+            plugin = tool_id.split(".", 1)[0]
             counts[plugin] = counts.get(plugin, 0) + n
         return counts
 

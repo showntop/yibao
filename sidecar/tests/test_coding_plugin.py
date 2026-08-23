@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio, os, sys, time
 from types import SimpleNamespace
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-# 插件 skills 不在 src 下，单独加路径
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "plugins", "coding", "skills"))
+# 插件 tools 不在 src 下，单独加路径
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "plugins", "coding", "tools"))
 from _runner import ClaudeCodeRunner, normalize  # noqa: E402
 
 
@@ -334,11 +334,11 @@ def test_stream_preserves_stopped_and_still_records_cc_session_id():
 
 
 # ---------- Task 3: coding.send（resume 接续）----------
-from coding import SendSkill, StartSkill  # noqa: E402
+from coding import SendTool, StartTool  # noqa: E402
 
 
 class _Ctx:
-    """最小 ctx 鸭式：db + emit_event（SendSkill.run 只用这俩）。"""
+    """最小 ctx 鸭式：db + emit_event（SendTool.run 只用这俩）。"""
     def __init__(self, db): self.db = db; self.emit_event = lambda *a, **k: None
 
 
@@ -350,7 +350,7 @@ def test_send_skill_resumes_with_cc_session_id(monkeypatch):
     monkeypatch.setattr(
         codingmod, "_spawn_stream",
         lambda *a, **k: captured.update({"args": a, "kwargs": k}))
-    res = SendSkill().run({"id": "s1", "prompt": "再来一轮"}, _Ctx(db))
+    res = SendTool().run({"id": "s1", "prompt": "再来一轮"}, _Ctx(db))
     assert res.success is True
     assert res.data["session_id"] == "s1"
     # resume 透传到 _spawn_stream
@@ -366,7 +366,7 @@ def test_send_skill_missing_row_errors(monkeypatch):
     called = {"n": 0}
     monkeypatch.setattr(codingmod, "_spawn_stream",
                         lambda *a, **k: called.__setitem__("n", called["n"] + 1))
-    res = SendSkill().run({"id": "ghost", "prompt": "x"}, _Ctx(db))
+    res = SendTool().run({"id": "ghost", "prompt": "x"}, _Ctx(db))
     assert res.success is False and "不存在" in res.error
     assert called["n"] == 0
 
@@ -380,7 +380,7 @@ def test_send_skill_empty_cc_session_id_rebuilds_context(monkeypatch):
     captured = {}
     monkeypatch.setattr(codingmod, "_spawn_stream",
                         lambda *a, **k: captured.update({"args": a, "kwargs": k}))
-    res = SendSkill().run({"id": "s2", "prompt": "继续"}, _Ctx(db))
+    res = SendTool().run({"id": "s2", "prompt": "继续"}, _Ctx(db))
     assert res.success is True
     assert res.data["session_id"] == "s2"
     assert captured["kwargs"].get("resume_session_id") is None   # 降级走新会话而非 resume
@@ -407,7 +407,7 @@ def test_send_skill_empty_cc_rebuild_uses_llm_brief(monkeypatch):
     class _CtxLLM(_Ctx):
         llm = object()
 
-    res = SendSkill().run({"id": "s2", "prompt": "继续"}, _CtxLLM(db))
+    res = SendTool().run({"id": "s2", "prompt": "继续"}, _CtxLLM(db))
     assert res.success is True
     assert "摘要:Codex->Codex" in captured["args"][3]
     assert captured["kwargs"].get("resume_session_id") is None
@@ -419,13 +419,13 @@ def test_send_skill_missing_prompt_errors(monkeypatch):
     called = {"n": 0}
     monkeypatch.setattr(codingmod, "_spawn_stream",
                         lambda *a, **k: called.__setitem__("n", called["n"] + 1))
-    res = SendSkill().run({"id": "s1"}, _Ctx(db))   # 无 prompt
+    res = SendTool().run({"id": "s1"}, _Ctx(db))   # 无 prompt
     assert res.success is False and "prompt" in res.error
     assert called["n"] == 0
 
 
 def test_send_skill_openai_schema_shape():
-    schema = SendSkill().openai_schema()
+    schema = SendTool().openai_schema()
     assert schema["function"]["name"] == "coding.send"
     props = schema["function"]["parameters"]["properties"]
     assert set(props.keys()) == {"id", "prompt"}
@@ -447,13 +447,13 @@ def test_make_tools_includes_send():
 
 
 def test_start_skill_does_not_pass_resume(monkeypatch):
-    """回归保护：StartSkill 调 _spawn_stream 不传 resume_session_id（fresh）。"""
+    """回归保护：StartTool 调 _spawn_stream 不传 resume_session_id（fresh）。"""
     db = _FakeDB()
     captured = {}
     monkeypatch.setattr(codingmod, "_spawn_stream",
                         lambda *a, **k: captured.update({"kwargs": k}))
     monkeypatch.setattr(codingmod, "ClaudeCodeRunner", lambda: object())
-    StartSkill().run({"cwd": "/tmp", "prompt": "p"}, _Ctx(db))
+    StartTool().run({"cwd": "/tmp", "prompt": "p"}, _Ctx(db))
     assert captured["kwargs"].get("resume_session_id") is None
 
 
@@ -484,9 +484,9 @@ def test_send_running_session_queues_steer_instead_of_rejecting(monkeypatch):
     monkeypatch.setattr(codingmod._sess, "_SESSIONS", {"sid-1": entry})
     events = []
     ctx.emit_event = events.append
-    r = SendSkill().run({"id": "sid-1", "prompt": "先补一句"}, ctx)
+    r = SendTool().run({"id": "sid-1", "prompt": "先补一句"}, ctx)
     assert r.success and r.data["queued"] is True and r.data["position"] == 1
-    r2 = SendSkill().run({"id": "sid-1", "prompt": "再补一句"}, ctx)
+    r2 = SendTool().run({"id": "sid-1", "prompt": "再补一句"}, ctx)
     assert r2.data["position"] == 2
     assert entry["steer"] == ["先补一句", "再补一句"]       # 按序排队
     assert spawned["n"] == 0                                # 不当轮打断、不另起 runner
@@ -498,11 +498,11 @@ def test_send_running_session_queues_steer_instead_of_rejecting(monkeypatch):
     assert len(db_marks) == 2 and "已排队" in db_marks[0]["text"]
     # 无活体 entry 的陈旧 running（如底座重启 mid-run、对账前的缝）→ 直送 resume 放行
     monkeypatch.setattr(codingmod._sess, "_SESSIONS", {})
-    r3 = SendSkill().run({"id": "sid-1", "prompt": "续跑"}, ctx)
+    r3 = SendTool().run({"id": "sid-1", "prompt": "续跑"}, ctx)
     assert r3.success and spawned["n"] == 1
     # 终态会话放行
     ctx2 = _make_ctx_with_session(status="done")
-    r4 = SendSkill().run({"id": "sid-1", "prompt": "再来一条"}, ctx2)
+    r4 = SendTool().run({"id": "sid-1", "prompt": "再来一条"}, ctx2)
     assert r4.success, r4.error
 
 
@@ -513,8 +513,8 @@ from yibao_brain.ipc import RiskLevel  # noqa: E402
 def test_start_send_are_l1_no_confirm():
     """会话启动/续聊 = L1（直调不弹确认）：文件改动已由 SDK permission_mode=acceptEdits 管理，
     高频对话循环不该每次弹风险确认。"""
-    assert StartSkill.default_risk == RiskLevel.L1_LOW
-    assert SendSkill.default_risk == RiskLevel.L1_LOW
+    assert StartTool.default_risk == RiskLevel.L1_LOW
+    assert SendTool.default_risk == RiskLevel.L1_LOW
 
 
 # ---------- Task 4: 透明渲染（thinking / tool_result / done.usage）----------
@@ -548,7 +548,7 @@ def test_normalize_done_carries_usage():
 
 
 # ---------- 终审修复：stop 无 live runner 补发终态 / send 查 live entry ----------
-from coding import StopSkill  # noqa: E402
+from coding import StopTool  # noqa: E402
 
 
 class _EmitCtx:
@@ -567,7 +567,7 @@ def test_stop_stale_running_emits_stopped_terminal(monkeypatch):
     db.rows["s-stale"] = {"id": "s-stale", "status": "running"}
     monkeypatch.setattr(codingmod._sess, "_SESSIONS", {})   # 无 live runner
     ctx = _EmitCtx(db)
-    res = StopSkill().run({"id": "s-stale"}, ctx)
+    res = StopTool().run({"id": "s-stale"}, ctx)
     assert res.success is True
     assert db.rows["s-stale"]["status"] == "stopped"          # db 已落 stopped
     term = [e for e in ctx.events
@@ -580,13 +580,13 @@ def test_stop_stale_running_emits_stopped_terminal(monkeypatch):
 
 def test_stop_with_live_runner_no_extra_terminal(monkeypatch):
     """有 live runner：_stop_session 走正常 cancel（runner 取消路径自发 stopped），
-    StopSkill 不补发——否则面板「已中断」marker 翻倍。"""
+    StopTool 不补发——否则面板「已中断」marker 翻倍。"""
     db = _FakeDB()
     db.rows["s-live"] = {"id": "s-live", "status": "running"}
     cancel = _threading.Event()
     monkeypatch.setattr(codingmod._sess, "_SESSIONS", {"s-live": {"cancel": cancel}})
     ctx = _EmitCtx(db)
-    res = StopSkill().run({"id": "s-live"}, ctx)
+    res = StopTool().run({"id": "s-live"}, ctx)
     assert res.success is True and cancel.is_set()
     # 不重复补发终态 panel_data（live runner 的终态由流式线程收尾发，stop 不再补）
     assert [e for e in ctx.events if e.get("kind") == "panel_data"] == []
@@ -600,11 +600,11 @@ def test_send_rejects_when_runner_finishing(monkeypatch):
                         lambda *a, **k: called.__setitem__("n", called["n"] + 1))
     ctx = _make_ctx_with_session(status="stopped")   # sid-1：db 已 terminal
     monkeypatch.setattr(codingmod._sess, "_SESSIONS", {"sid-1": {"cancel": _threading.Event()}})
-    r = SendSkill().run({"id": "sid-1", "prompt": "再来一条"}, ctx)
+    r = SendTool().run({"id": "sid-1", "prompt": "再来一条"}, ctx)
     assert not r.success and "收尾" in (r.error or "")
     assert called["n"] == 0
     monkeypatch.setattr(codingmod._sess, "_SESSIONS", {})   # runner 线程退清 → 放行
-    r2 = SendSkill().run({"id": "sid-1", "prompt": "再来一条"}, ctx)
+    r2 = SendTool().run({"id": "sid-1", "prompt": "再来一条"}, ctx)
     assert r2.success, r2.error
 
 
@@ -662,7 +662,7 @@ def test_cancel_calls_client_interrupt_before_stopped():
 
 
 # ---------- R2 Task 2: transcript 落库（messages 表 + history 读库优先）----------
-from coding import HistorySkill  # noqa: E402
+from coding import HistoryTool  # noqa: E402
 
 
 class _EventsRunner:
@@ -702,7 +702,7 @@ def test_history_prefers_db_transcript_over_cc_reader(monkeypatch):
     monkeypatch.setattr(
         codingmod._sibling("_cc_reader"), "read_transcript",
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("不该读 jsonl")))
-    r = HistorySkill().run({"id": "sid-1"}, ctx)
+    r = HistoryTool().run({"id": "sid-1"}, ctx)
     assert r.success and r.data["messages"] == [{"role": "user", "text": "旧任务", "uuid": ""}]
 
 
@@ -712,7 +712,7 @@ def test_history_returns_latest_40_in_ascending_order():
     ctx = _make_ctx_with_session(
         status="done",
         with_messages=[("assistant", f"m{i}") for i in range(1, 46)])
-    r = HistorySkill().run({"id": "sid-1"}, ctx)
+    r = HistoryTool().run({"id": "sid-1"}, ctx)
     assert r.success
     texts = [m["text"] for m in r.data["messages"]]
     assert len(texts) == 40
@@ -744,7 +744,7 @@ def test_stream_seq_continues_across_rounds():
 
 
 # ---------- R2 Task 3: plan mode 切换（db mode + 透传 + 运行中 set_permission_mode）----------
-from coding import ModeSkill  # noqa: E402
+from coding import ModeTool  # noqa: E402
 
 
 def test_start_and_send_persist_mode(monkeypatch):
@@ -754,7 +754,7 @@ def test_start_and_send_persist_mode(monkeypatch):
     # 不真起线程：_spawn_stream 占位，只记录 kwargs
     monkeypatch.setattr(codingmod, "_spawn_stream", lambda *a, **k: captured.append(k))
     monkeypatch.setattr(codingmod, "ClaudeCodeRunner", lambda: object())
-    r = StartSkill().run({"cwd": "/tmp", "prompt": "x", "mode": "plan"}, _Ctx(db))
+    r = StartTool().run({"cwd": "/tmp", "prompt": "x", "mode": "plan"}, _Ctx(db))
     assert r.success, r.error
     sid = r.data["session_id"]
     assert db.rows[sid]["mode"] == "plan"                     # mode 落列
@@ -762,13 +762,13 @@ def test_start_and_send_persist_mode(monkeypatch):
     # send 不带 mode → 沿用库里的 plan
     db.rows[sid]["status"] = "done"
     db.rows[sid]["cc_session_id"] = "cc-1"
-    r2 = SendSkill().run({"id": sid, "prompt": "再来"}, _Ctx(db))
+    r2 = SendTool().run({"id": sid, "prompt": "再来"}, _Ctx(db))
     assert r2.success, r2.error
     assert captured[-1].get("permission_mode") == "plan"
     assert db.rows[sid]["mode"] == "plan"                     # 库值不被重置
     # send 带 mode → 覆盖并回写库
     db.rows[sid]["status"] = "done"
-    r3 = SendSkill().run({"id": sid, "prompt": "再来", "mode": "acceptEdits"}, _Ctx(db))
+    r3 = SendTool().run({"id": sid, "prompt": "再来", "mode": "acceptEdits"}, _Ctx(db))
     assert r3.success, r3.error
     assert captured[-1].get("permission_mode") == "acceptEdits"
     assert db.rows[sid]["mode"] == "acceptEdits"
@@ -779,7 +779,7 @@ def test_send_mode_defaults_accept_edits_when_db_missing(monkeypatch):
     captured = []
     monkeypatch.setattr(codingmod, "_spawn_stream", lambda *a, **k: captured.append(k))
     ctx = _make_ctx_with_session(status="done")   # sid-1 行无 mode 键
-    r = SendSkill().run({"id": "sid-1", "prompt": "再来"}, ctx)
+    r = SendTool().run({"id": "sid-1", "prompt": "再来"}, ctx)
     assert r.success, r.error
     assert captured[-1].get("permission_mode") == "acceptEdits"
     assert ctx.db.rows["sid-1"]["mode"] == "acceptEdits"
@@ -810,14 +810,14 @@ def test_mode_skill_updates_db_and_live_pending(monkeypatch):
     ctx = _make_ctx_with_session(status="running")
     entry = {"cancel": _threading.Event()}
     monkeypatch.setattr(codingmod._sess, "_SESSIONS", {"sid-1": entry})
-    r = ModeSkill().run({"id": "sid-1", "mode": "plan"}, ctx)
+    r = ModeTool().run({"id": "sid-1", "mode": "plan"}, ctx)
     assert r.success and r.data["live"] is True            # 有 live entry → mode_pending 已置
     assert entry["mode_pending"] == "plan"
     assert ctx.db.query("sessions", where={"id": "sid-1"})[0]["mode"] == "plan"
     assert r.data["ok"] is True and r.data["mode"] == "plan"
     # 非 live（会话已结束/无 runner）：只落库，不置 pending
     monkeypatch.setattr(codingmod._sess, "_SESSIONS", {})
-    r2 = ModeSkill().run({"id": "sid-1", "mode": "acceptEdits"}, ctx)
+    r2 = ModeTool().run({"id": "sid-1", "mode": "acceptEdits"}, ctx)
     assert r2.success and r2.data["live"] is False
     assert ctx.db.rows["sid-1"]["mode"] == "acceptEdits"
 
@@ -825,9 +825,9 @@ def test_mode_skill_updates_db_and_live_pending(monkeypatch):
 def test_mode_skill_rejects_bad_mode_and_unknown_session():
     """非法 mode / 不存在会话 → 友好错误，不碰库。"""
     ctx = _make_ctx_with_session(status="running")
-    r = ModeSkill().run({"id": "sid-1", "mode": "yolo"}, ctx)
+    r = ModeTool().run({"id": "sid-1", "mode": "yolo"}, ctx)
     assert not r.success and "不支持" in (r.error or "")
-    r2 = ModeSkill().run({"id": "ghost", "mode": "plan"}, ctx)
+    r2 = ModeTool().run({"id": "ghost", "mode": "plan"}, ctx)
     assert not r2.success and "不存在" in (r2.error or "")
     assert "mode" not in ctx.db.rows["sid-1"]              # 均未落库
 
@@ -882,8 +882,8 @@ def test_runner_pending_mode_set_failure_is_silent():
     assert [e["kind"] for e in events] == ["text_delta", "done"]
 
 
-# ---------- R2 Task 4: rewind 检查点回滚（RewindSkill + runner rewind_pending）----------
-from coding import RewindSkill  # noqa: E402
+# ---------- R2 Task 4: rewind 检查点回滚（RewindTool + runner rewind_pending）----------
+from coding import RewindTool  # noqa: E402
 
 
 class _NeverSet:
@@ -899,7 +899,7 @@ def test_rewind_live_session_defers_to_runner(monkeypatch):
     # sessions_registry 挂到 ctx 上（仿 mode 测试的 _SESSIONS monkeypatch 约定）
     ctx.sessions_registry = {"sid-1": {"cancel": _NeverSet()}}
     monkeypatch.setattr(codingmod._sess, "_SESSIONS", ctx.sessions_registry)
-    r = RewindSkill().run({"id": "sid-1", "user_msg_id": "u-1"}, ctx)
+    r = RewindTool().run({"id": "sid-1", "user_msg_id": "u-1"}, ctx)
     assert r.success and r.data["live"] is True
     assert ctx.sessions_registry["sid-1"]["rewind_pending"] == "u-1"
     assert ctx.sessions_registry["sid-1"]["cancel"].set_calls == 0   # rewind 不触碰 cancel
@@ -929,7 +929,7 @@ def test_rewind_idle_session_uses_fresh_client(monkeypatch):
             return client
 
     monkeypatch.setattr(codingmod, "ClaudeCodeRunner", lambda: _FakeRunner())
-    r = RewindSkill().run({"id": "sid-1", "user_msg_id": "u-1"}, ctx)
+    r = RewindTool().run({"id": "sid-1", "user_msg_id": "u-1"}, ctx)
     assert r.success and r.data["live"] is False
     assert client.calls == ["connect", ("rewind_files", "u-1"), "disconnect"]
     assert seen["resume"] == "cc-old-1" and seen["cwd"] == "/tmp/p"
@@ -956,7 +956,7 @@ def test_rewind_fresh_client_failure_emits_error(monkeypatch):
         def _default_factory(self, cwd, tools, resume=None): return _BadClient()
 
     monkeypatch.setattr(codingmod, "ClaudeCodeRunner", lambda: _FakeRunner())
-    r = RewindSkill().run({"id": "sid-1", "user_msg_id": "u-1"}, ctx)
+    r = RewindTool().run({"id": "sid-1", "user_msg_id": "u-1"}, ctx)
     assert not r.success and "回滚失败" in (r.error or "")
     errs = [e for e in events if e.get("kind") == "panel_data"
             and e["payload"]["data"]["event"].get("kind") == "error"]
@@ -968,18 +968,18 @@ def test_rewind_failure_degrades(monkeypatch):
     db = _FakeDB()
     db.rows["sid-1"] = {"id": "sid-1", "cwd": "/tmp/p", "cc_session_id": "", "status": "done"}
     monkeypatch.setattr(codingmod._sess, "_SESSIONS", {})
-    r = RewindSkill().run({"id": "sid-1", "user_msg_id": "u-1"}, _Ctx(db))
+    r = RewindTool().run({"id": "sid-1", "user_msg_id": "u-1"}, _Ctx(db))
     assert not r.success and "无检查点" in (r.error or "")
     # 缺锚点 / 不存在会话 → 友好错误，不碰库不碰 runner
-    r2 = RewindSkill().run({"id": "sid-1"}, _Ctx(db))       # 无 user_msg_id
+    r2 = RewindTool().run({"id": "sid-1"}, _Ctx(db))       # 无 user_msg_id
     assert not r2.success and "user_msg_id" in (r2.error or "")
-    r3 = RewindSkill().run({"id": "ghost", "user_msg_id": "u-1"}, _Ctx(db))
+    r3 = RewindTool().run({"id": "ghost", "user_msg_id": "u-1"}, _Ctx(db))
     assert not r3.success and "不存在" in (r3.error or "")
 
 
 def test_rewind_is_l1_no_confirm():
     """⏪ 回滚 = L1（direct+quiet 面板直调不弹确认）：回滚目标由用户显式点击的消息锚定。"""
-    assert RewindSkill.default_risk == RiskLevel.L1_LOW
+    assert RewindTool.default_risk == RiskLevel.L1_LOW
 
 
 def test_runner_applies_pending_rewind_before_next_message():
@@ -1036,11 +1036,11 @@ def test_runner_pending_rewind_failure_emits_error_event():
 
 
 # ---------- R2 Task 5: can_use_tool 权限交互（回调桥 + coding.decide）----------
-from coding import DecideSkill  # noqa: E402
+from coding import DecideTool  # noqa: E402
 
-# coding.py 的 `_runner` 是 _sibling 加载的模块单例（DecideSkill 查的 _PERM 就在它上面）；
+# coding.py 的 `_runner` 是 _sibling 加载的模块单例（DecideTool 查的 _PERM 就在它上面）；
 # 本文件顶部 `from _runner import ...` 是另一个模块实例（sys.modules["_runner"]），
-# Task 5 测试一律走 codingmod._runner，保证回调桥与 DecideSkill 共享同一注册表。
+# Task 5 测试一律走 codingmod._runner，保证回调桥与 DecideTool 共享同一注册表。
 _runner_mod = codingmod._runner
 
 
@@ -1057,7 +1057,7 @@ def test_can_use_tool_roundtrip_approve_and_deny():
             while not events:
                 await asyncio.sleep(0.005)
             rid = events[0]["rid"]
-            r = DecideSkill().run({"rid": rid, "allow": allow}, _Ctx(_FakeDB()))
+            r = DecideTool().run({"rid": rid, "allow": allow}, _Ctx(_FakeDB()))
             assert r.success, r.error
 
         decider = asyncio.create_task(_decide())
@@ -1098,11 +1098,11 @@ def test_decide_skill_resolves_pending():
     ev = _threading.Event()
     _runner_mod._PERM["perm_1"] = {"event": ev, "allow": None}
     try:
-        r = DecideSkill().run({"rid": "perm_1", "allow": True}, _Ctx(_FakeDB()))
+        r = DecideTool().run({"rid": "perm_1", "allow": True}, _Ctx(_FakeDB()))
         assert r.success
         assert _runner_mod._PERM["perm_1"]["allow"] is True and _runner_mod._PERM["perm_1"]["event"].is_set()
         # 未知 rid → 友好错误（权限请求不存在或已超时），不炸
-        r2 = DecideSkill().run({"rid": "perm_ghost", "allow": True}, _Ctx(_FakeDB()))
+        r2 = DecideTool().run({"rid": "perm_ghost", "allow": True}, _Ctx(_FakeDB()))
         assert not r2.success and "不存在" in (r2.error or "")
     finally:
         _runner_mod._PERM.pop("perm_1", None)
@@ -1159,12 +1159,12 @@ def test_stream_passes_can_use_tool_to_runner():
     assert callable(runner.called_with["can_use_tool"])
 
 
-# ---------- R2 Task 6: @files 上下文（FilesSkill 模糊搜索）----------
-from coding import FilesSkill  # noqa: E402
+# ---------- R2 Task 6: @files 上下文（FilesTool 模糊搜索）----------
+from coding import FilesTool  # noqa: E402
 
 
 def _ctx():
-    """FilesSkill.run 不触 ctx；沿用 _Ctx/_FakeDB 约定造最小鸭式。"""
+    """FilesTool.run 不触 ctx；沿用 _Ctx/_FakeDB 约定造最小鸭式。"""
     return _Ctx(_FakeDB())
 
 
@@ -1173,19 +1173,19 @@ def test_files_fuzzy_match_and_excludes(tmp_path):
     (tmp_path / "src" / "login.ts").write_text("x")
     (tmp_path / "node_modules").mkdir()
     (tmp_path / "node_modules" / "junk.js").write_text("x")
-    r = FilesSkill().run({"cwd": str(tmp_path), "q": "login"}, _ctx())
+    r = FilesTool().run({"cwd": str(tmp_path), "q": "login"}, _ctx())
     files = r.data["files"]
     assert any(f["rel"] == "src/login.ts" for f in files)
     assert not any("node_modules" in f["rel"] for f in files)
 
 
 def test_files_caps_results_and_bad_cwd(tmp_path):
-    r = FilesSkill().run({"cwd": str(tmp_path / "ghost"), "q": ""}, _ctx())
+    r = FilesTool().run({"cwd": str(tmp_path / "ghost"), "q": ""}, _ctx())
     assert r.success and r.data["files"] == []
 
 
 # ---------- P2 B1：审批统一进 L2 确认体系（confirmation_needed + action_result 出队）----------
-from coding import ListSkill  # noqa: E402
+from coding import ListTool  # noqa: E402
 
 
 def test_can_use_tool_emits_confirmation_and_action_result():
@@ -1202,7 +1202,7 @@ def test_can_use_tool_emits_confirmation_and_action_result():
         async def _decide():
             while not events:               # 等 permission_request 发出
                 await asyncio.sleep(0.005)
-            r = DecideSkill().run({"rid": events[0]["rid"], "allow": True}, _Ctx(_FakeDB()))
+            r = DecideTool().run({"rid": events[0]["rid"], "allow": True}, _Ctx(_FakeDB()))
             assert r.success, r.error
 
         decider = asyncio.create_task(_decide())
@@ -1219,7 +1219,7 @@ def test_can_use_tool_emits_confirmation_and_action_result():
     assert len(cn) == 1
     assert cn[0]["confirmation_id"] == rid and cn[0]["action"]["id"] == rid
     a = cn[0]["actions"][0]
-    assert a["id"] == rid and a["skill_id"] == "coding" and a["label"] == "Bash"
+    assert a["id"] == rid and a["tool_id"] == "coding" and a["label"] == "Bash"
     assert a["description"] == "npm test" and a["params"] == {"command": "npm test"}
     assert a["surface"] == "panel:coding" and a["risk"] == 1
     # 出队：action_result 带 action.id（前端 brain.ts 按 action.id 出队）
@@ -1241,7 +1241,7 @@ def test_can_use_tool_outcome_deny_and_timeout_action_result():
         async def _decide():
             while not events:
                 await asyncio.sleep(0.005)
-            DecideSkill().run({"rid": events[0]["rid"], "allow": False}, _Ctx(_FakeDB()))
+            DecideTool().run({"rid": events[0]["rid"], "allow": False}, _Ctx(_FakeDB()))
 
         d = asyncio.create_task(_decide())
         res = await cb("Bash", {"command": "rm -rf /tmp/x"})
@@ -1343,12 +1343,12 @@ def test_list_skill_live_states():
     codingmod._sess._SESSIONS["b"] = {"cancel": _threading.Event()}
     codingmod._sess._SESSIONS["c"] = {"cancel": _threading.Event()}
     try:
-        res = ListSkill().run({}, _Ctx(db))
+        res = ListTool().run({}, _Ctx(db))
         live = {s["id"]: s["live"] for s in res.data["sessions"]}
         assert live == {"a": "idle", "b": "running", "c": "waiting"}
         # 已裁决（allow 非 None）不再算 waiting → 回落 running
         _runner_mod._PERM["perm_c_7"]["allow"] = True
-        res2 = ListSkill().run({}, _Ctx(db))
+        res2 = ListTool().run({}, _Ctx(db))
         live2 = {s["id"]: s["live"] for s in res2.data["sessions"]}
         assert live2["c"] == "running"
     finally:
@@ -1361,12 +1361,12 @@ def test_start_skill_background_param(monkeypatch):
     """background=true → data.panel=None（不开面板，静默执行）；缺省 → coding:studio 照开。"""
     db = _FakeDB()
     monkeypatch.setattr(codingmod, "_spawn_stream", lambda *a, **k: None)
-    r = StartSkill().run({"cwd": "/tmp", "prompt": "后台改 X", "background": True}, _Ctx(db))
+    r = StartTool().run({"cwd": "/tmp", "prompt": "后台改 X", "background": True}, _Ctx(db))
     assert r.success and r.data["panel"] is None
     assert "后台" in r.data["human"]
-    r2 = StartSkill().run({"cwd": "/tmp", "prompt": "普通任务"}, _Ctx(db))
+    r2 = StartTool().run({"cwd": "/tmp", "prompt": "普通任务"}, _Ctx(db))
     assert r2.success and r2.data["panel"] == "coding:studio"
-    props = StartSkill().openai_schema()["function"]["parameters"]["properties"]
+    props = StartTool().openai_schema()["function"]["parameters"]["properties"]
     assert props["background"]["type"] == "boolean"
 
 
@@ -1445,7 +1445,7 @@ def test_stream_no_report_when_emit_event_none():
 
 
 # ---------- P2 B3：coding.attach 接管（任务卡点击 → 打开面板恢复会话）----------
-from coding import AttachSkill  # noqa: E402
+from coding import AttachTool  # noqa: E402
 
 
 def test_attach_returns_session_and_attach_flag():
@@ -1453,13 +1453,13 @@ def test_attach_returns_session_and_attach_flag():
     任何终态/运行态会话都可接管（恢复/围观由面板侧处理）。"""
     db = _FakeDB()
     db.rows["s-att"] = {"id": "s-att", "status": "done"}
-    res = AttachSkill().run({"session_id": "s-att"}, _Ctx(db))
+    res = AttachTool().run({"session_id": "s-att"}, _Ctx(db))
     assert res.success, res.error
     assert res.data["session_id"] == "s-att"
     assert res.data["attach"] is True
     db2 = _FakeDB()
     db2.rows["s-run"] = {"id": "s-run", "status": "running"}
-    res2 = AttachSkill().run({"session_id": "s-run"}, _Ctx(db2))
+    res2 = AttachTool().run({"session_id": "s-run"}, _Ctx(db2))
     assert res2.success and res2.data["attach"] is True
 
 
@@ -1468,30 +1468,30 @@ def test_attach_payload_carries_agent():
     老行缺 agent 列 → 缺省 claude-code（同 _stream/_runner_for 缺省）。"""
     db = _FakeDB()
     db.rows["s-cx"] = {"id": "s-cx", "status": "done", "agent": "codex"}
-    res = AttachSkill().run({"session_id": "s-cx"}, _Ctx(db))
+    res = AttachTool().run({"session_id": "s-cx"}, _Ctx(db))
     assert res.success and res.data["agent"] == "codex"
     db2 = _FakeDB()
     db2.rows["s-old"] = {"id": "s-old", "status": "done"}    # 老行无 agent 列
-    res2 = AttachSkill().run({"session_id": "s-old"}, _Ctx(db2))
+    res2 = AttachTool().run({"session_id": "s-old"}, _Ctx(db2))
     assert res2.success and res2.data["agent"] == "claude-code"
 
 
 def test_attach_rejects_unknown_session_and_missing_param():
     """会话不存在 → 明确错误（面板不开）；缺 session_id → 同样拒绝。"""
     db = _FakeDB()
-    res = AttachSkill().run({"session_id": "no-such"}, _Ctx(db))
+    res = AttachTool().run({"session_id": "no-such"}, _Ctx(db))
     assert not res.success and "不存在" in (res.error or "")
-    res2 = AttachSkill().run({}, _Ctx(db))
+    res2 = AttachTool().run({}, _Ctx(db))
     assert not res2.success and "session_id" in (res2.error or "")
 
 
 def test_attach_is_l0_readonly():
     """attach 只校验存在 + 开面板，不改状态 → L0（直调不弹确认，任务卡点击零摩擦）。"""
-    assert AttachSkill.default_risk == RiskLevel.L0_READONLY
+    assert AttachTool.default_risk == RiskLevel.L0_READONLY
 
 
 def test_attach_skill_openai_schema_shape():
-    schema = AttachSkill().openai_schema()
+    schema = AttachTool().openai_schema()
     assert schema["function"]["name"] == "coding.attach"
     props = schema["function"]["parameters"]["properties"]
     assert set(props.keys()) == {"session_id"}
@@ -1501,7 +1501,7 @@ def test_attach_skill_openai_schema_shape():
 # ---------- P1 C1：统一接续 popover —— coding.last_sessions / coding.attach_cc ----------
 import json as _json  # noqa: E402
 from datetime import datetime as _dt  # noqa: E402
-from coding import LastSessionsSkill, AttachCcSkill  # noqa: E402
+from coding import LastSessionsTool, AttachCcTool  # noqa: E402
 
 _C1_CWD = "/tmp/proj"            # slug = -tmp-proj（re.sub(r"[^A-Za-z0-9-]", "-", cwd)）
 _C1_SLUG = "-tmp-proj"
@@ -1564,7 +1564,7 @@ def test_last_sessions_dual_source(tmp_path, monkeypatch):
                     [("user", "别的项目")])
     monkeypatch.setenv("HOME", home)
     monkeypatch.setattr(codingmod, "_codex_sessions_root", lambda: root)
-    res = LastSessionsSkill().run({"cwd": _C1_CWD}, _Ctx(_FakeDB()))
+    res = LastSessionsTool().run({"cwd": _C1_CWD}, _Ctx(_FakeDB()))
     assert res.success
     cc = res.data["cc"]
     assert cc["cc_session_id"] == "cc-new"          # mtime 最新，而非 cc-old
@@ -1584,13 +1584,13 @@ def test_last_sessions_cc_only_and_empty(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", home)
     monkeypatch.setattr(codingmod, "_codex_sessions_root", lambda: root)
     _c1_write_cc(home, "cc-1.jsonl", _C1_CC_LINES, mtime=1500)
-    res = LastSessionsSkill().run({"cwd": _C1_CWD}, _Ctx(_FakeDB()))
+    res = LastSessionsTool().run({"cwd": _C1_CWD}, _Ctx(_FakeDB()))
     assert res.data["cc"]["cc_session_id"] == "cc-1"
     assert res.data["cc"]["message_count"] == 3     # 2 user + 1 assistant
     assert res.data["cc"]["summary"] == "第一句话"
     assert res.data["codex"] is None
     # 全空：另一个无记录的 cwd
-    res2 = LastSessionsSkill().run({"cwd": "/tmp/nowhere"}, _Ctx(_FakeDB()))
+    res2 = LastSessionsTool().run({"cwd": "/tmp/nowhere"}, _Ctx(_FakeDB()))
     assert res2.success and res2.data == {"cc": None, "codex": None}
 
 
@@ -1605,13 +1605,13 @@ def test_last_sessions_excludes_subagents_and_tool_results(tmp_path, monkeypatch
         {"type": "user", "message": {"content": "子代理"}}], mtime=9999)
     _c1_write_cc(home, "11112222/tool-results/r.jsonl", [
         {"type": "user", "message": {"content": "工具结果"}}], mtime=8888)
-    res = LastSessionsSkill().run({"cwd": _C1_CWD}, _Ctx(_FakeDB()))
+    res = LastSessionsTool().run({"cwd": _C1_CWD}, _Ctx(_FakeDB()))
     assert res.data["cc"]["cc_session_id"] == "cc-main"
     assert res.data["cc"]["summary"] == "第一句话"
 
 
 def test_last_sessions_missing_cwd_errors():
-    res = LastSessionsSkill().run({}, _Ctx(_FakeDB()))
+    res = LastSessionsTool().run({}, _Ctx(_FakeDB()))
     assert not res.success and "cwd" in res.error
 
 
@@ -1622,7 +1622,7 @@ def test_attach_cc_imports_transcript(tmp_path, monkeypatch):
     _c1_write_cc(home, "cc-imp.jsonl", _C1_CC_LINES, mtime=5000)
     monkeypatch.setenv("HOME", home)
     db = _FakeDB()
-    res = AttachCcSkill().run({"cc_session_id": "cc-imp", "cwd": _C1_CWD}, _Ctx(db))
+    res = AttachCcTool().run({"cc_session_id": "cc-imp", "cwd": _C1_CWD}, _Ctx(db))
     assert res.success
     sid = res.data["session_id"]
     row = db.rows[sid]
@@ -1638,7 +1638,7 @@ def test_attach_cc_imports_transcript(tmp_path, monkeypatch):
     assert [m["uuid"] for m in msgs] == ["u1", "", "u2"]   # user 带 uuid（rewind 锚点）
     assert all(m["session_id"] == sid for m in msgs)
     # 幂等：再导一次 → 同 id，不重复插
-    res2 = AttachCcSkill().run({"cc_session_id": "cc-imp", "cwd": _C1_CWD}, _Ctx(db))
+    res2 = AttachCcTool().run({"cc_session_id": "cc-imp", "cwd": _C1_CWD}, _Ctx(db))
     assert res2.success and res2.data["session_id"] == sid
     assert len(db.rows) == 1 and len(db._tables["messages"]) == 3
 
@@ -1648,7 +1648,7 @@ def test_attach_cc_idempotent_with_existing_db_row(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))   # 无 transcript 也应命中幂等分支
     db = _FakeDB()
     db.rows["s-have"] = {"id": "s-have", "cc_session_id": "cc-1", "status": "done"}
-    res = AttachCcSkill().run({"cc_session_id": "cc-1", "cwd": _C1_CWD}, _Ctx(db))
+    res = AttachCcTool().run({"cc_session_id": "cc-1", "cwd": _C1_CWD}, _Ctx(db))
     assert res.success and res.data["session_id"] == "s-have"
     assert len(db.rows) == 1
 
@@ -1656,13 +1656,13 @@ def test_attach_cc_idempotent_with_existing_db_row(tmp_path, monkeypatch):
 def test_attach_cc_missing_transcript_and_bad_params(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     db = _FakeDB()
-    res = AttachCcSkill().run({"cc_session_id": "ghost", "cwd": _C1_CWD}, _Ctx(db))
+    res = AttachCcTool().run({"cc_session_id": "ghost", "cwd": _C1_CWD}, _Ctx(db))
     assert not res.success and "ghost" in res.error
-    res2 = AttachCcSkill().run({"cc_session_id": "../escape", "cwd": _C1_CWD}, _Ctx(db))
+    res2 = AttachCcTool().run({"cc_session_id": "../escape", "cwd": _C1_CWD}, _Ctx(db))
     assert not res2.success                       # 白名单挡路径逃逸（同 _cc_reader）
-    res3 = AttachCcSkill().run({"cwd": _C1_CWD}, _Ctx(db))
+    res3 = AttachCcTool().run({"cwd": _C1_CWD}, _Ctx(db))
     assert not res3.success and "cc_session_id" in res3.error
-    res4 = AttachCcSkill().run({"cc_session_id": "x"}, _Ctx(db))
+    res4 = AttachCcTool().run({"cc_session_id": "x"}, _Ctx(db))
     assert not res4.success and "cwd" in res4.error
 
 
@@ -1672,7 +1672,7 @@ def test_attach_cc_finds_transcript_outside_cwd_slug(tmp_path, monkeypatch):
     _c1_write_cc(home, "cc-else.jsonl", _C1_CC_LINES, slug="-tmp-otherproj")
     monkeypatch.setenv("HOME", home)
     db = _FakeDB()
-    res = AttachCcSkill().run({"cc_session_id": "cc-else", "cwd": _C1_CWD}, _Ctx(db))
+    res = AttachCcTool().run({"cc_session_id": "cc-else", "cwd": _C1_CWD}, _Ctx(db))
     assert res.success
     assert db.rows[res.data["session_id"]]["cc_session_id"] == "cc-else"
 
@@ -1684,16 +1684,16 @@ def test_send_on_imported_session_resumes_cc_natively(tmp_path, monkeypatch):
     _c1_write_cc(home, "cc-r.jsonl", _C1_CC_LINES)
     monkeypatch.setenv("HOME", home)
     db = _FakeDB()
-    sid = AttachCcSkill().run({"cc_session_id": "cc-r", "cwd": _C1_CWD}, _Ctx(db)).data["session_id"]
+    sid = AttachCcTool().run({"cc_session_id": "cc-r", "cwd": _C1_CWD}, _Ctx(db)).data["session_id"]
     captured = {}
     monkeypatch.setattr(
         codingmod, "_spawn_stream",
         lambda *a, **k: captured.update({"args": a, "kwargs": k}))
-    res = SendSkill().run({"id": sid, "prompt": "继续干"}, _Ctx(db))
+    res = SendTool().run({"id": sid, "prompt": "继续干"}, _Ctx(db))
     assert res.success
     assert captured["kwargs"].get("resume_session_id") == "cc-r"   # SDK resume 原生续
     # history 按 DB id 读回导入的 transcript（resumeSession 链路）
-    h = HistorySkill().run({"id": sid}, _Ctx(db))
+    h = HistoryTool().run({"id": sid}, _Ctx(db))
     assert h.success and [m["text"] for m in h.data["messages"]] == ["第一句话", "回答一", "第二句话"]
 
 
@@ -1711,7 +1711,7 @@ def test_api_toml_registers_last_sessions_and_attach_cc():
 
 
 # ---------- attach_codex 导入 rollout 消息（验收修：原生续恢复完整对话 + 空行补导）----------
-from coding import AttachCodexSkill  # noqa: E402
+from coding import AttachCodexTool  # noqa: E402
 
 _D2_CWD = "/tmp/proj"
 
@@ -1764,7 +1764,7 @@ def test_attach_codex_imports_rollout_messages(tmp_path, monkeypatch):
                       "2026-08-16T10:00:00Z", _D2_LINES)
     monkeypatch.setattr(codingmod, "_codex_sessions_root", lambda: root)
     db = _FakeDB()
-    res = AttachCodexSkill().run({"session_id": "t-msg"}, _Ctx(db))
+    res = AttachCodexTool().run({"session_id": "t-msg"}, _Ctx(db))
     assert res.success
     sid = res.data["session_id"]
     row = db.rows[sid]
@@ -1780,7 +1780,7 @@ def test_attach_codex_imports_rollout_messages(tmp_path, monkeypatch):
     assert msgs[3]["ts"] == row["created_at"]              # 无行 timestamp → 会话 ts 兜底
     assert all(m["session_id"] == sid and m["uuid"] == "" for m in msgs)
     # resumeSession 链路核实：coding.history 读本 DB id 的 messages 表
-    h = HistorySkill().run({"id": sid}, _Ctx(db))
+    h = HistoryTool().run({"id": sid}, _Ctx(db))
     assert h.success and [m["text"] for m in h.data["messages"]] == _D2_TEXTS
 
 
@@ -1790,9 +1790,9 @@ def test_attach_codex_idempotent_keeps_messages(tmp_path, monkeypatch):
     _d2_write_rollout(root, "r.jsonl", "t-idem", _D2_CWD, "2026-08-16T10:00:00Z", _D2_LINES)
     monkeypatch.setattr(codingmod, "_codex_sessions_root", lambda: root)
     db = _FakeDB()
-    sid = AttachCodexSkill().run({"session_id": "t-idem"}, _Ctx(db)).data["session_id"]
+    sid = AttachCodexTool().run({"session_id": "t-idem"}, _Ctx(db)).data["session_id"]
     assert len(db._tables["messages"]) == 4
-    res2 = AttachCodexSkill().run({"session_id": "t-idem"}, _Ctx(db))
+    res2 = AttachCodexTool().run({"session_id": "t-idem"}, _Ctx(db))
     assert res2.success and res2.data["session_id"] == sid
     assert len(db.rows) == 1 and len(db._tables["messages"]) == 4
 
@@ -1806,14 +1806,14 @@ def test_attach_codex_backfills_empty_session_row(tmp_path, monkeypatch):
     db = _FakeDB()
     db.rows["s-old"] = {"id": "s-old", "agent": "codex", "cc_session_id": "t-old",
                         "status": "done", "created_at": 1234}
-    res = AttachCodexSkill().run({"session_id": "t-old"}, _Ctx(db))
+    res = AttachCodexTool().run({"session_id": "t-old"}, _Ctx(db))
     assert res.success and res.data["session_id"] == "s-old"
     assert len(db.rows) == 1                                 # 不新建 sessions 行
     msgs = db._tables["messages"]
     assert [m["text"] for m in msgs] == _D2_TEXTS
     assert all(m["session_id"] == "s-old" for m in msgs)
     assert msgs[3]["ts"] == 1234                             # 兜底 ts 取既有行 created_at
-    res2 = AttachCodexSkill().run({"session_id": "t-old"}, _Ctx(db))
+    res2 = AttachCodexTool().run({"session_id": "t-old"}, _Ctx(db))
     assert res2.data["session_id"] == "s-old" and len(db._tables["messages"]) == 4
 
 
@@ -1823,7 +1823,7 @@ def test_attach_codex_backfill_rollout_gone_is_silent(tmp_path, monkeypatch):
     db = _FakeDB()
     db.rows["s-old"] = {"id": "s-old", "agent": "codex", "cc_session_id": "t-gone",
                         "status": "done", "created_at": 1234}
-    res = AttachCodexSkill().run({"session_id": "t-gone"}, _Ctx(db))
+    res = AttachCodexTool().run({"session_id": "t-gone"}, _Ctx(db))
     assert res.success and res.data["session_id"] == "s-old"
     assert db._tables.get("messages", []) == []
 
@@ -1839,17 +1839,17 @@ def test_attach_codex_bad_rollout_degrades(tmp_path, monkeypatch):
     ])
     monkeypatch.setattr(codingmod, "_codex_sessions_root", lambda: root)
     db = _FakeDB()
-    res = AttachCodexSkill().run({"session_id": "t-bad"}, _Ctx(db))
+    res = AttachCodexTool().run({"session_id": "t-bad"}, _Ctx(db))
     assert res.success
     assert [m["text"] for m in db._tables["messages"]] == ["好行", "也好"]
     with open(os.path.join(root, "broken.jsonl"), "w") as f:  # 首行即坏 → 扫描找不到
         f.write("{ totally broken\n")
-    res2 = AttachCodexSkill().run({"session_id": "t-x"}, _Ctx(db))
+    res2 = AttachCodexTool().run({"session_id": "t-x"}, _Ctx(db))
     assert not res2.success and "t-x" in res2.error
 
 
 # ---------- R4 阶段四 Task 1: coding.perm_pending（review 栏挂载快照源）----------
-from coding import PermPendingSkill  # noqa: E402
+from coding import PermPendingTool  # noqa: E402
 
 
 def test_perm_pending_lists_only_undecided():
@@ -1862,7 +1862,7 @@ def test_perm_pending_lists_only_undecided():
             "tool": "Edit", "summary": "a.py", "params": {"file_path": "a.py"}}
         _runner_mod._PERM["perm_my_sid_9"] = {"event": _threading.Event(), "allow": None,
             "tool": "Read", "summary": "b.py", "params": {"file_path": "b.py"}}
-        r = PermPendingSkill().run({}, _Ctx(_FakeDB()))
+        r = PermPendingTool().run({}, _Ctx(_FakeDB()))
         assert r.success
         pending = r.data["pending"]
         assert [p["rid"] for p in pending] == ["perm_s1_1", "perm_my_sid_9"]
@@ -1880,7 +1880,7 @@ def test_perm_pending_legacy_entry_missing_fields():
     _runner_mod._PERM.clear()
     try:
         _runner_mod._PERM["perm_old_1"] = {"event": _threading.Event(), "allow": None}
-        r = PermPendingSkill().run({}, _Ctx(_FakeDB()))
+        r = PermPendingTool().run({}, _Ctx(_FakeDB()))
         assert r.success
         item = r.data["pending"][0]
         assert item["rid"] == "perm_old_1" and item["sid"] == "old"
@@ -1904,7 +1904,7 @@ def test_perm_entry_carries_tool_summary_params():
             assert entry["tool"] == "Bash"
             assert entry["summary"] == "ls -la"
             assert entry["params"] == {"command": "ls -la"}
-            r = DecideSkill().run({"rid": rid, "allow": True}, _Ctx(_FakeDB()))
+            r = DecideTool().run({"rid": rid, "allow": True}, _Ctx(_FakeDB()))
             assert r.success, r.error
 
         decider = asyncio.create_task(_decide())
@@ -2058,7 +2058,7 @@ def test_stream_drains_steer_arriving_mid_continuation(monkeypatch):
 
     def _on_run(n):
         if n == 2:
-            entry["steer"].append("第二轮补充")      # 模拟续跑进行中 SendSkill 新入队
+            entry["steer"].append("第二轮补充")      # 模拟续跑进行中 SendTool 新入队
 
     runner = _SteerRunner(on_run=_on_run)
     _run(_stream(db, "st2", "/tmp/p", "原始任务", runner, emit_event=None,
@@ -2108,7 +2108,7 @@ def test_make_tools_reconciles_stale_running(monkeypatch):
     assert db.rows["done-1"]["status"] == "done"                   # 非 running 不动
     # 对账后 interrupted 会话可直接 send 续跑（走既有 resume 链路）
     monkeypatch.setattr(codingmod, "_spawn_stream", lambda *a, **k: None)
-    r = SendSkill().run({"id": "old-run", "prompt": "续跑"}, _Ctx(db))
+    r = SendTool().run({"id": "old-run", "prompt": "续跑"}, _Ctx(db))
     assert r.success, r.error
     # db=None（测试/无 db capability 形态）→ 跳过，不炸
     assert codingmod.make_tools(type("C", (), {"db": None, "emit_event": None})())

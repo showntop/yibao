@@ -28,7 +28,7 @@ from typing import Any
 
 from yibao_brain import config
 from yibao_brain.ipc import ActionResult, RiskLevel
-from yibao_brain.skills import Skill
+from yibao_brain.tools import Tool
 
 
 def _sibling(stem: str):
@@ -163,7 +163,7 @@ def _wait(proc, task_id: str, agent: str, prompt: str, log_path: str, timeout_s:
 _ONE_SHOT_KEYWORDS = ("统计", "转换", "整理", "计算", "格式化", "生成文件")
 
 
-class DispatchTaskSkill(Skill):
+class DispatchTaskTool(Tool):
     id = "agents.dispatch_task"
     label = "派任务给智能体"
     description = (
@@ -269,7 +269,7 @@ class DispatchTaskSkill(Skill):
         })
 
 
-class TaskStatusSkill(Skill):
+class TaskStatusTool(Tool):
     id = "agents.task_status"
     label = "查任务状态"
     description = "查看一个智能体任务的状态与日志尾部"
@@ -307,7 +307,7 @@ class TaskStatusSkill(Skill):
         })
 
 
-class TaskStopSkill(Skill):
+class TaskStopTool(Tool):
     id = "agents.task_stop"
     label = "停止任务"
     description = "停止一个还在运行的智能体任务（终止其子进程）"
@@ -396,6 +396,6 @@ def _reconcile_orphans(ctx: Any) -> None:
         print(f"[agents] 对账：任务 {task_id} 进程已不在，落 interrupted", file=sys.stderr)
 
 
-def make_tools(ctx: Any) -> list[Skill]:
+def make_tools(ctx: Any) -> list[Tool]:
     _reconcile_orphans(ctx)
-    return [DispatchTaskSkill(), TaskStatusSkill(), TaskStopSkill()]
+    return [DispatchTaskTool(), TaskStatusTool(), TaskStopTool()]
