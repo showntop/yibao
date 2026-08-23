@@ -464,3 +464,46 @@ def test_panel_payload_passes_explicit(env):
     assert p and p.get("explicit") is True
     p2 = panel_payload(ActionResult(success=True, data={}, panel="fun:main"))
     assert p2 and "explicit" not in p2
+
+
+def test_loop_panel_event_carries_explicit(env, monkeypatch, tmp_path):
+    """对话链路端到端：LLM 调 fun.music → loop 发出的 panel 事件 payload 带 explicit（能触发宿主开窗）。"""
+    from yibao_brain.audit import AuditLog
+    from yibao_brain.llm import FakeProvider, ToolCall
+    from yibao_brain.loop import AgentLoop
+    from yibao_brain.memory import FakeMemory
+    from yibao_brain.safety import Gate, GatePolicy, RiskClassifier
+
+    reg, _ = env
+    _fake_netease(monkeypatch, reg, chart=_CHART_RAW)
+
+    class _TwoStepProvider:
+        """第一轮返回 first（tool_call 调 fun.music），之后返回 second（最终回复）。"""
+
+        def __init__(self, first, second):
+            self._first = first
+            self._second = second
+            self._n_stream = 0
+
+        async def astream(self, messages, tools=None):
+            self._n_stream += 1
+            src = self._first if self._n_stream == 1 else self._second
+            async for d in src.astream(messages, tools):
+                yield d
+
+    loop = AgentLoop(
+        provider=_TwoStepProvider(
+            FakeProvider(tool_calls=[ToolCall(id="t1", skill_id="fun.music", params={"kw": "七里香"})]),
+            FakeProvider(text="已打开音乐面板"),
+        ),
+        skills=reg,
+        classifier=RiskClassifier(),
+        gate=Gate(GatePolicy()),
+        memory=FakeMemory(),
+        log=AuditLog(tmp_path / "a.db"),
+        confirmer=lambda actions: {a.id: (True, False) for a in actions},
+    )
+    events = [e for e in loop.run("听七里香")]
+    panel_ev = next((e for e in events if e.kind == "panel"), None)
+    assert panel_ev is not None, f"应有 panel 事件，实际：{[e.kind for e in events]}"
+    assert panel_ev.payload.get("explicit") is True

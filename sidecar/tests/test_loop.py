@@ -789,13 +789,15 @@ def test_focus_injected_as_system_message(tmp_path):
 
 
 def test_focus_none_injects_nothing(tmp_path):
-    """无焦点（None / 空 dict / 缺 plugin）时不注入额外 system 消息。"""
+    """无焦点（None / 空 dict / 缺 plugin）：不注入「正在看」消息，但注入「没有打开的面板窗」提示
+    ——防止 LLM 凭对话历史误判面板仍开着（面板可能已被收起，用户再说「打开」须重新调工具）。"""
     for focus in (None, {}, {"panel": "board"}):
         provider = FakeProvider(text="你好")
         loop = _build_focus_loop(tmp_path, provider, focus)
         list(loop.run("你好"))
         messages = provider.astream_calls[0]["messages"]
         assert not any("用户当前正在看" in m["content"] for m in messages if m["role"] == "system")
+        assert any("没有打开任何面板窗" in m["content"] for m in messages if m["role"] == "system")
 
 
 def test_focus_without_item_has_no_pronoun_hint(tmp_path):

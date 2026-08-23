@@ -107,28 +107,6 @@ describe("conversation domain", () => {
     expect(appended.seq).toBe(42); // 接续已恢复消息的最大 seq，而非 list.length
   });
 
-  it("upsertPanelLink updates existing instead of duplicating", async () => {
-    const conv = await domain.createConversation();
-    domain.upsertPanelLink(conv.id, "⇢ 正在和「A」协作");
-    domain.upsertPanelLink(conv.id, "⇢ 正在和「B」协作");
-    const links = domain.getMessages(conv.id).filter((m) => m.payload.panelLink);
-    expect(links).toHaveLength(1);
-    expect(links[0].payload.text).toBe("⇢ 正在和「B」协作");
-  });
-
-  it("panelLink survives hydrate without duplicate (restart re-push bug)", async () => {
-    // 恢复后内存已有 panelLink，再来 panel 事件应原地更新而非新增
-    backend.seedConversation({ id: "c1", title: "", preview: "", createdAt: 1, updatedAt: 2, messageCount: 1 });
-    backend.seedMessages("c1", [{ ...msg("m1", "c1", 0, "ai", "⇢ 正在和「A」协作"), payload: { text: "⇢ 正在和「A」协作", panelLink: true } }]);
-    backend.seedActive("c1");
-    const fresh = new ConversationDomain(backend, store);
-    await fresh.hydrate();
-    fresh.upsertPanelLink("c1", "⇢ 正在和「B」协作");
-    const links = fresh.getMessages("c1").filter((m) => m.payload.panelLink);
-    expect(links).toHaveLength(1);
-    expect(links[0].payload.text).toBe("⇢ 正在和「B」协作");
-  });
-
   it("trims messages beyond maxMessagesPerConversation (memory view)", async () => {
     const ctx = makeDomain({ maxMessages: 3 });
     const conv = await ctx.domain.createConversation();

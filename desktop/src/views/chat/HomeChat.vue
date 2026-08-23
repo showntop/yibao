@@ -480,6 +480,9 @@ async function submit(text: string, contexts: InputContext[] = []) {
   state.value = "think";
   try {
     // 15s 超时兜底：runInput invoke 挂起会让 state 一直卡 think（主按钮变"打断"，发不出新消息）
+    // 注意：大窗对话与宠物窗共享 surface="pet"（pet 场景会话标记，HomeFeed/useChatFlow 同款），
+    // 具体会话靠第三个参数 currentSessionId 区分（M3）——**勿用 surface 判定"来自哪个窗口"**，
+    // 两者无法区分（曾因此误判弹窗策略）。面板展示分流看 braind 兜底的 home 可见性，不看 surface。
     await Promise.race([
       runInput(messageText, "pet", currentSessionId.value),
       new Promise<never>((_, rej) => setTimeout(() => rej(new Error("大脑响应超时")), 15000)),

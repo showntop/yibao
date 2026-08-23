@@ -47,6 +47,41 @@ pub fn open_data_dir(app: AppHandle) -> Result<(), String> {
         .map_err(|e| format!("打开数据目录失败：{e}"))
 }
 
+/// macOS：transparent 浮窗圆角裁切 + 阴影。transparent 窗体默认方角，webview 矩形内容外露系统背景灰；
+/// WKWebView layer cornerRadius + masksToBounds 把内容裁圆角（根除方角内容露灰），
+/// NSWindow setCornerRadius + setHasShadow 让窗口外观与内容一致。
+/// radius 0 = 不设圆角（snip 全屏框选层等）。
+#[cfg(target_os = "macos")]
+pub(crate) fn apply_window_chrome(win: &tauri::WebviewWindow, radius: f64) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    use objc2_app_kit::NSView;
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    if let Ok(h) = win.window_handle() {
+        if let RawWindowHandle::AppKit(h) = h.as_raw() {
+            unsafe {
+                let view = &*(h.ns_view.as_ptr().cast::<NSView>());
+                let _: () = msg_send![view, setWantsLayer: true];
+                if radius > 0.0 {
+                    let layer: *mut AnyObject = msg_send![view, layer];
+                    let _: () = msg_send![layer, setCornerRadius: radius];
+                    let _: () = msg_send![layer, setMasksToBounds: true];
+                }
+                if let Some(window) = view.window() {
+                    if radius > 0.0 {
+                        let _: () = msg_send![&*window, setCornerRadius: radius];
+                    }
+                    let _: () = msg_send![&*window, setHasShadow: true];
+                }
+            }
+        }
+    }
+}
+
+/// 非 macOS 平台：no-op 占位（透明度由 wry/platform 处理）。
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn apply_window_chrome(_win: &tauri::WebviewWindow, _radius: f64) {}
+
 /// 用系统默认浏览器打开外链（娱乐等插件的「看视频/听音乐」跳转通道）。
 /// webview iframe 无 Tauri IPC，面板经 WebviewPanel `native:` 白名单旁路直调本命令。
 /// 只放 http/https，防任意 scheme（file:/yibao: 等）被利用。
@@ -277,24 +312,39 @@ pub fn close_home_window(app: AppHandle) -> Result<(), String> {
 /// 大窗模式下不弹浮窗：面板嵌入大窗主区渲染（panel 事件大窗同样收到）。
 #[tauri::command]
 pub fn open_panel_window(app: AppHandle) -> Result<(), String> {
-    if let Some(home) = app.get_webview_window("home") {
-        if home.is_visible().unwrap_or(false) {
-            return Ok(());
+    show_panel_window_impl(&app, false)
+}
+
+/// 面板窗 show + focus + emit panel-shown（open_panel_window 与 braind 兜底共用）。
+/// force=true 跳过大窗守卫：宠物窗对话（surface=pet）触发的面板事件必弹浮窗——
+/// 用户注意力在小窗，大窗内嵌渲染用户看不见（「说了打开却没弹」的根）。
+pub fn show_panel_window_impl(app: &AppHandle, force: bool) -> Result<(), String> {
+    if !force {
+        if let Some(home) = app.get_webview_window("home") {
+            if home.is_visible().unwrap_or(false) {
+                return Ok(()); // 大窗模式不弹浮窗
+            }
         }
     }
     if let Some(win) = app.get_webview_window("panel") {
         win.show().map_err(|e| e.to_string())?;
         win.set_focus().map_err(|e| e.to_string())?;
+        // show 成功→通知前端面板窗重推最新 init 数据（解决「收起后再次打开时 iframe
+        // 停在旧数据」：隐藏期间 WebviewPanel 的 postMessage 可能因 WKWebView 挂起丢失）
+        let _ = app.emit("panel-shown", ());
         return Ok(());
     }
     let win =
-        tauri::WebviewWindowBuilder::new(&app, "panel", tauri::WebviewUrl::App("panel.html".into()))
+        tauri::WebviewWindowBuilder::new(app, "panel", tauri::WebviewUrl::App("panel.html".into()))
             .title("译宝面板")
             .transparent(true)
             .decorations(false)
             .inner_size(780.0, 580.0)
             .build()
             .map_err(|e| format!("创建面板窗失败：{e}"))?;
+    // macOS：transparent 窗体默认方角，圆角内容外会露出系统背景灰——原生裁圆角 + 开阴影。
+    #[cfg(target_os = "macos")]
+    crate::commands::apply_window_chrome(&win, 18.0);
     if let Ok(Some(mon)) = win.current_monitor() {
         let s = mon.scale_factor();
         let mx = mon.position().x as f64 / s;
@@ -306,6 +356,8 @@ pub fn open_panel_window(app: AppHandle) -> Result<(), String> {
         let y = my + (sh - 580.0) / 2.0;
         let _ = win.set_position(tauri::LogicalPosition::new(x, y));
     }
+    // 新建面板窗同样发：前端 onMounted 时 iframe 已 load，事件保险无意义但保持一致
+    let _ = app.emit("panel-shown", ());
     Ok(())
 }
 

@@ -331,6 +331,8 @@ export function useChatFlow(deps: ChatFlowDeps) {
         state.value = "say";
         break;
       case "panel": {
+        // 面板已弹出：置标记即可。对话流不再产生「⇢ 正在和 X 协作」气泡（机制已去除，
+        // 与 Rust 落库一致）；面板入口由工作面本身承担。
         deps.panelOpen.value = true;
         break;
       }

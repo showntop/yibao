@@ -5,6 +5,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 import SchemaPanel from "../../components/panel/SchemaPanel.vue";
 import WebviewPanel from "../../components/panel/WebviewPanel.vue";
 import Avatar from "../../components/pet/Avatar.vue";
@@ -49,6 +50,7 @@ const pendingCanRemember = computed(() => canRememberSkill(pending.value?.skill 
 const rememberPending = ref(false);
 let unlisten: (() => void) | null = null;
 let unlistenFocus: (() => void) | null = null;
+let unlistenPanelShown: (() => void) | null = null;
 let unlistenApprovals: (() => void) | null = null;
 
 // ---- 工作台条状态 ----
@@ -391,6 +393,13 @@ function onPanelEvent(name: string, payload: any) {
 
 onMounted(async () => {
   unlisten = await onBrainEvent(onEvent);
+  // 面板窗从隐藏恢复时（Rust open_panel_window show 后主动 emit）→ 重推最新 data 给 iframe，
+  // 解决「收起后再次打开 iframe 停在旧数据」：隐藏期 WKWebView postMessage 可能丢，不能依赖 focus 事件兜底
+  unlistenPanelShown = await listen("panel-shown", () => {
+    if (current.value !== null) {
+      void nextTick(() => webviewRef.value?.postToIframe({ type: "init", data: current.value?.data }));
+    }
+  });
   unlistenApprovals = onPendingConfirms((items) => {
     pendingConfirms.value = items.filter((item) => item.surface?.startsWith("panel"));
     if (pendingConfirms.value.length === 0) {
@@ -401,14 +410,23 @@ onMounted(async () => {
   });
   // 首开竞态：panel 事件先于本窗口订阅发出，从 Rust 缓存补拉最近一次面板
   await pullCache();
-  // 兜底：窗口再聚焦时若仍是占位页，重拉一次（覆盖旧壳残留窗口等边角）
+  // 兜底：窗口再聚焦时——若仍是占位页重拉缓存；若有面板，重推最新 init 数据。
+  // 后者关键：面板窗关闭=隐藏（不销毁），隐藏期间 WebviewPanel watch(data) 的 postMessage
+  // 可能因 WKWebView 挂起而丢失（第二次对话打开时 iframe 还停在旧数据，看起来"打不开"）；
+  // show 后重推 init，iframe onInit 拿到最新 data 自动定位/播放。
   unlistenFocus = await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
-    if (focused && current.value === null) void pullCache();
+    if (!focused) return;
+    if (current.value === null) {
+      void pullCache();
+    } else {
+      void nextTick(() => webviewRef.value?.postToIframe({ type: "init", data: current.value?.data }));
+    }
   });
 });
 onUnmounted(() => {
   unlisten?.();
   unlistenFocus?.();
+  unlistenPanelShown?.();
   unlistenApprovals?.();
   if (collapseTimer !== null) clearTimeout(collapseTimer);
   // 窗口销毁（重载等）也清焦点，避免大脑留着旧上下文

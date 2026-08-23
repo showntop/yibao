@@ -224,6 +224,8 @@ onBeforeUnmount(() => {
   height: 100%;
   border: none;
   border-radius: var(--yb-card-radius);
-  background: var(--yb-surface-1);
+  /* iframe 背景必须透明：border-radius 只裁 iframe 元素本身、不裁内部文档，
+     不透明背景会在圆角外（内部文档矩形方角）漏出灰块——四角「灰」的根源 */
+  background: transparent;
 }
 </style>

@@ -263,8 +263,8 @@ fn spawn_bridge(app: AppHandle, mut rx: tauri::async_runtime::Receiver<CommandEv
                                     }
                                 }
                                 // 对话事件落库（Rust 是 conversation 域唯一写者；webview 只读渲染）。
-                                // 归属主会话：panel 事件（panelLink）全收；其余仅 pet/无 surface 的主对话，
-                                // 面板工作台（surface=panel:xxx）的瞬时消息不持久化。
+                                // 归属主会话：其余仅 pet/无 surface 的主对话，面板工作台（surface=panel:xxx）
+                                // 的瞬时消息不持久化。（panel 事件已不落 panelLink 协作气泡）
                                 {
                                     let kind = payload.get("kind").and_then(|k| k.as_str()).unwrap_or("");
                                     let surface = payload.get("surface").and_then(|s| s.as_str()).unwrap_or("");
@@ -288,7 +288,16 @@ fn spawn_bridge(app: AppHandle, mut rx: tauri::async_runtime::Receiver<CommandEv
                                         }
                                     }
                                 }
-                                let _ = app.emit("brain-event", payload);
+                                let _ = app.emit("brain-event", payload.clone());
+                                // 兜底：不论前端 PetWindow 是否裁决通过（conversationId 过滤/未重编译等
+                                // 导致 openPanelWindow 没被调的面板弹不出场景），Rust 主动 show 面板窗。
+                                // 用户体验层：对话里点名的面板操作必弹；裁决仍由前端做（精细控制），
+                                // 这里只在 Rust 这层补漏。
+                                if payload.get("kind").and_then(|k| k.as_str()) == Some("panel") {
+                                    // 兜底：panel 事件到达时确保面板窗显示（大窗可见时按设计不弹浮窗——
+                                    // 面板由大窗内嵌渲染；宠物窗/小窗模式才弹浮窗）。
+                                    let _ = crate::commands::show_panel_window_impl(&app, false);
+                                }
                             }
                             Some("run_done") => {
                                 let _ = app.emit("brain-run-done", v);

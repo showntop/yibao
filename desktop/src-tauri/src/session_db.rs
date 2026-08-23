@@ -218,7 +218,7 @@ impl SessionDb {
         })
     }
 
-    /// 更新既有消息的载荷（流式终态 / proc 收尾 / panelLink 文案更新）
+    /// 更新既有消息的载荷（流式终态 / proc 收尾）
     pub fn update_message_payload(
         &self,
         conversation_id: &str,
@@ -245,47 +245,6 @@ impl SessionDb {
         let now = now_ms();
         Self::touch_conversation(&conn, conversation_id, None, now)?;
         Ok(())
-    }
-
-    /// panelLink 查重：找最近一条 panelLink 消息，有则更新文案，无则新增。
-    /// 返回最终消息（供调用方对齐 id）。
-    pub fn upsert_panel_link(
-        &self,
-        conversation_id: &str,
-        text: &str,
-        id: &str,
-        ts: i64,
-    ) -> Result<Message, String> {
-        let conn = self.conn.lock().map_err(|e| e.to_string())?;
-        let existing: Option<(String, i64)> = conn
-            .query_row(
-                "SELECT id, seq FROM messages
-                 WHERE conversation_id=?1 AND json_extract(payload,'$.panelLink')=1
-                 ORDER BY seq DESC LIMIT 1",
-                params![conversation_id],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .ok();
-        if let Some((exist_id, seq)) = existing {
-            let payload = serde_json::json!({ "text": text, "panelLink": true });
-            conn.execute(
-                "UPDATE messages SET payload=?1 WHERE conversation_id=?2 AND id=?3",
-                params![payload.to_string(), conversation_id, exist_id],
-            )
-            .map_err(|e| e.to_string())?;
-            return Ok(Message {
-                id: exist_id,
-                conversation_id: conversation_id.into(),
-                seq,
-                role: "ai".into(),
-                payload,
-                ts,
-                ephemeral: false,
-            });
-        }
-        drop(conn);
-        let payload = serde_json::json!({ "text": text, "panelLink": true });
-        self.append_message(conversation_id, id, "ai", payload, ts, false)
     }
 
     pub fn get_messages(&self, conversation_id: &str, limit: i64) -> Result<Vec<Message>, String> {

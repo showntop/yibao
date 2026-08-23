@@ -81,7 +81,7 @@ impl EventRecorder {
             "notice" => self.append_simple(db, conv_id, "sys", e, None),
             "reminder" => self.append_simple(db, conv_id, "ai", e, Some("clock")),
             "error" => self.append_simple(db, conv_id, "ai", e, Some("alert")),
-            "panel" => self.on_panel(db, conv_id, e),
+            // panel 事件不再落 panelLink 协作气泡（对话流已去除该机制，避免消息库里残留「⇢ 正在和 X 协作」）
             _ => {}
         }
     }
@@ -242,17 +242,6 @@ impl EventRecorder {
         } else {
             self.append(db, conv_id, "ai", json!({ "text": "已打断", "halted": true }), now_ms());
         }
-    }
-
-    fn on_panel(&mut self, db: &SessionDb, conv_id: &str, e: &Value) {
-        let payload = e.get("payload").cloned().unwrap_or(Value::Null);
-        let title = payload
-            .get("title")
-            .or_else(|| payload.get("panel"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("插件面板");
-        let text = format!("⇢ 正在和「{title}」协作");
-        let _ = db.upsert_panel_link(conv_id, &text, &new_id(), now_ms());
     }
 
     /// sidecar 掉线/重启：残留的流式缓冲按 interrupted 兜底落库（防"说了半句消失"）。

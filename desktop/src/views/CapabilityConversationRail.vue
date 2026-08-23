@@ -171,14 +171,7 @@ function onEvent(event: BrainEvent) {
     case "listening_done":
       if (event.text) push({ kind: "user", text: event.text });
       break;
-    case "panel":
-      push({
-        kind: "activity",
-        text: "工作面已准备好，可随时展开或收起",
-        label: event.payload?.title || event.payload?.panel || "插件工作面",
-        status: "done",
-      });
-      break;
+    // panel 事件不再记「工作面已准备好」活动条（与对话流协作气泡一并去除，减少弱提示噪音）
     case "error":
       push({ kind: "activity", text: event.text || "能力运行失败", label: "译宝", status: "failed" });
       break;

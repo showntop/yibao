@@ -20,10 +20,12 @@
     --toast-bg: rgba(219, 228, 238, 0.92);
   }
 }
-html, body { height: 100%; }
+/* 背景透明：面板在 peek 白卡 / 独立浮窗（透桌面）里由宿主底色托底，
+   body 不透明会在 iframe 圆角外漏出灰块（四角「灰」的根源）——内容卡片自带底色 */
+html, body { height: 100%; background: transparent; }
 body {
   font: 13px/1.6 -apple-system, "PingFang SC", sans-serif;
-  background: var(--bg); color: var(--text); padding: 14px;
+  color: var(--text); padding: 14px;
   display: flex; flex-direction: column;
 }
 .hidden { display: none !important; }

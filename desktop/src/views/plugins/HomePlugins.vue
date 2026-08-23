@@ -201,13 +201,14 @@ function setCurrent(v: NonNullable<typeof current.value>, silent = false) {
     objectTitle: typeof focus.value?.item?.title === "string" ? focus.value.item.title : undefined,
   };
   emit("surface", meta);
-  if (isNewPanel && !silent) {
-    // 表面裁决输入：本地时间窗推断只是 explicit 的来源之一；后端 explicit 信号（对话点名要娱乐）并入
-    const explicit = (requestedPlugin === plugin && Date.now() <= requestedUntil)
-      || v.hints?.explicit === true;
+  // 同面板默认不重复 emit（防数据刷新反复触发展示裁决）；但用户点名（explicit，如对话里
+  // 「再打开」）的同面板事件必须 emit——工作面可能已收起，HomeWindow 要靠这个信号重新展开。
+  const explicitNow = (requestedPlugin === plugin && Date.now() <= requestedUntil)
+    || v.hints?.explicit === true;
+  if ((isNewPanel || explicitNow) && !silent) {
     emit("panel", {
       ...meta,
-      explicit,
+      explicit: explicitNow,
       suggested: v.hints?.presentation ?? null,
       attention: v.hints?.attention ?? "suggest",
       supported: v.hints?.surfaces ?? undefined,

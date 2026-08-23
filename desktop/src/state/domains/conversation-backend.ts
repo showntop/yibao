@@ -3,7 +3,7 @@
  *
  * 架构：消息/会话的权威存储在 Rust 主进程（SQLite，Rust 是唯一写者）。
  * webview 的"写"分两类：
- * - 事件驱动消息（AI 回复 / proc / panelLink / notice…）：Rust EventRecorder 在事件流处
+ * - 事件驱动消息（AI 回复 / proc / notice…）：Rust EventRecorder 在事件流处
  *   统一落库，webview 不写——从架构上消灭多窗双写。
  * - 会话管理 / 截断（用户操作，单窗口发起）：webview 经本后端调 Rust command。
  * 读：启动 hydrate 时从本后端拉取。

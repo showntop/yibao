@@ -3,8 +3,8 @@
  *
  * 架构（Rust 统一持久化后）：
  * - 消息/会话元数据的权威存储在 Rust 主进程 SQLite（Rust 是唯一写者）。
- * - 事件驱动消息（AI 回复 / proc / panelLink / notice…）：Rust EventRecorder 在事件流处
- *   落库；webview 的 appendMessage/syncMessage/upsertPanelLink 只更新内存（实时渲染），不写库。
+ * - 事件驱动消息（AI 回复 / proc / notice…）：Rust EventRecorder 在事件流处
+ *   落库；webview 的 appendMessage/syncMessage 只更新内存（实时渲染），不写库。
  * - 会话管理 / 截断（用户操作，单窗口发起）：经 ConversationBackend 调 Rust command。
  * - UIState（draft/scrollTop/filter/processed/pending）是单窗 UI 状态，仍走本地 KVStore。
  * - 内存缓存为渲染视图；启动 hydrate 从 Rust 拉取重建（恢复以 Rust 为准）。
@@ -294,18 +294,6 @@ export class ConversationDomain {
       return existing;
     }
     return this.appendMessage(conversationId, input);
-  }
-
-  /** 协作信号查重（内存）：最近一条 panelLink 存在则原地更新文案，否则追加。 */
-  upsertPanelLink(conversationId: string, text: string): Message {
-    const list = this.messagesByConv.get(conversationId) ?? [];
-    const last = [...list].reverse().find((m) => m.payload.panelLink === true);
-    if (last) {
-      last.payload.text = text;
-      last.ts = Date.now();
-      return last;
-    }
-    return this.appendMessage(conversationId, { role: "ai", payload: { text, panelLink: true } });
   }
 
   /** 截断到前 keepCount 条（重新生成/编辑重发：其后对话作废）。用户操作，经后端写 Rust。 */
