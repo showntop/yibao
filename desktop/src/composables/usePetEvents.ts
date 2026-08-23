@@ -275,7 +275,9 @@ export function usePetEvents(ctx: PetEventsCtx) {
         const titleParts = title.split(" · ").map((part) => part.trim()).filter(Boolean);
         const surfaceTitle = titleParts[titleParts.length - 1] || title;
         const plugin = panel.split(":", 1)[0] || panel;
-        const explicit = requestedPlugin === plugin;
+        // explicit：点过插件启动器/行（requestedPlugin）或后端声明的用户点名信号（payload.explicit，
+        // 如对话里「听 XX/看 XX」→ fun 直达方法置 True）——两者都代表用户明确意图，允许开浮窗
+        const explicit = requestedPlugin === plugin || e.payload?.explicit === true;
 
         // cast 与 HomePlugins.vue:391-393 同款：PanelPayload 里这些字段是宽类型，
         // 而裁决器要窄联合。安全性由 sidecar 保证——_load_panels 已按

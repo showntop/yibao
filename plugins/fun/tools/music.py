@@ -183,6 +183,7 @@ class MusicSkill(Skill):
                 data["chart_failed"] = True  # 榜单挂了不拖垮：平台入口照常给
         result = ActionResult(success=True, data=data)
         result.panel = "fun:main"
+        result.explicit = True  # 对话点名要听 → 直接弹面板
         return result
 
 

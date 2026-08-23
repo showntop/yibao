@@ -139,7 +139,7 @@ const current = ref<{
   webview: WebviewPayload | null;
   data: Record<string, unknown>;
   input?: "inherit" | "coexist" | "handoff" | "none";
-  hints?: { presentation: Presentation | null; attention: Attention; surfaces?: Presentation[] };
+  hints?: { presentation: Presentation | null; attention: Attention; surfaces?: Presentation[]; explicit?: boolean };
 } | null>(null);
 const errorText = ref(""); // 面板内顶部错误细条（不进对话气泡）
 let unlisten: (() => void) | null = null;
@@ -202,8 +202,9 @@ function setCurrent(v: NonNullable<typeof current.value>, silent = false) {
   };
   emit("surface", meta);
   if (isNewPanel && !silent) {
-    // 表面裁决输入：本地时间窗推断只是 explicit 的来源之一；presentation/attention 从后端透传
-    const explicit = requestedPlugin === plugin && Date.now() <= requestedUntil;
+    // 表面裁决输入：本地时间窗推断只是 explicit 的来源之一；后端 explicit 信号（对话点名要娱乐）并入
+    const explicit = (requestedPlugin === plugin && Date.now() <= requestedUntil)
+      || v.hints?.explicit === true;
     emit("panel", {
       ...meta,
       explicit,
@@ -286,6 +287,7 @@ function onEvent(e: BrainEvent) {
           presentation: (e.payload?.presentation as Presentation | null | undefined) ?? null,
           attention: (e.payload?.attention as Attention | undefined) ?? "suggest",
           surfaces: e.payload?.surfaces as Presentation[] | undefined,
+          explicit: e.payload?.explicit === true,
         },
       });
       break;

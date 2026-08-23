@@ -44,7 +44,8 @@ class OpenFunSkill(Skill):
         kw = str(params.get("kw") or "").strip()
         if kw:
             data["kw"] = kw  # 面板 onInit 消费：切 music tab + 自动搜播
-        return ActionResult(success=True, data=data, panel="fun:main")
+        # explicit：对话点名要娱乐 → 宿主裁决视为用户意图，直接弹面板浮窗
+        return ActionResult(success=True, data=data, panel="fun:main", explicit=True)
 
 
 def make_tools(ctx: Any) -> list[Skill]:

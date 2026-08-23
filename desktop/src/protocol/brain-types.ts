@@ -53,6 +53,8 @@ export interface PanelPayload {
   presentation?: "inline" | "peek" | "stage" | "focus" | null;
   /** 注意力级别；旧插件缺省 "suggest" */
   attention?: "quiet" | "suggest" | "focus";
+  /** 用户明确意图信号（sidecar 透传，如对话点名「听 XX/看 XX」→ fun 直达方法置 True）：宿主裁决视为 explicit */
+  explicit?: boolean;
   /** 跨应用接力对象 {type,id,title}；不依赖面板 DOM */
   object?: { type?: string; id?: string; title?: string } | null;
   /** 面板声明的支持表面范围（manifest [[panel]].surfaces）；缺省 = 全档 */

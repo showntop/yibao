@@ -356,12 +356,18 @@ def panel_payload(result) -> dict | None:
                 v = int((root / entry).stat().st_mtime)
             except OSError:
                 v = 0
-        return {"panel": result.panel, "title": title, "schema": None,
-                "webview": {"url": f"yibao-plugin://{pid}/{entry}", "v": v},
-                "data": result.data, **decl}
-    if isinstance(panel, dict) and panel.get("type") == "webview" and "html" in panel:
-        return {"panel": result.panel, "title": title, "schema": None, "webview": {"html": panel["html"]}, "data": result.data, **decl}
-    return {"panel": result.panel, "title": title, "schema": panel, "data": result.data, **decl}
+        payload: dict = {"panel": result.panel, "title": title, "schema": None,
+                         "webview": {"url": f"yibao-plugin://{pid}/{entry}", "v": v},
+                         "data": result.data, **decl}
+    elif isinstance(panel, dict) and panel.get("type") == "webview" and "html" in panel:
+        payload = {"panel": result.panel, "title": title, "schema": None,
+                   "webview": {"html": panel["html"]}, "data": result.data, **decl}
+    else:
+        payload = {"panel": result.panel, "title": title, "schema": panel, "data": result.data, **decl}
+    # 用户明确意图信号（对话点名「听 XX/看 XX」）：宿主裁决视为 explicit，可弹面板浮窗
+    if getattr(result, "explicit", False):
+        payload["explicit"] = True
+    return payload
 
 
 # vendor 占位注释：<!--inject:vendor/xxx.js-->（文件名白名单字符且必须 .js 结尾，无 / 天然防路径穿越）

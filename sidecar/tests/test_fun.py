@@ -432,3 +432,35 @@ def test_joke_all_failed(env, monkeypatch):
     monkeypatch.setitem(_joke_globals(reg), "_fetch_one", lambda url: None)
     r = _run(reg, "fun.joke", {})
     assert not r.success
+
+
+# ---------- explicit：对话点名要娱乐 → 宿主裁决可弹浮窗 ----------
+
+
+def test_fun_direct_methods_explicit(env, monkeypatch):
+    """fun 直达方法（用户点名「听 XX/看 XX/讲段子」）都带 explicit=True。"""
+    reg, _ = env
+    _fake_bili(monkeypatch, reg)
+    _fake_netease(monkeypatch, reg, chart=_CHART_RAW)
+    _fake_hitokoto(monkeypatch, reg)
+    monkeypatch.setitem(_joke_globals(reg), "_llm_joke", lambda ctx: "为什么手机要贴膜？因为怕划伤桌面。")
+    assert _run(reg, "fun.open", {"tab": "music", "kw": "七里香"}).explicit is True
+    assert _run(reg, "fun.videos", {}).explicit is True
+    assert _run(reg, "fun.videos", {"keyword": "牛来 电影解说"}).explicit is True
+    assert _run(reg, "fun.music", {}).explicit is True
+    assert _run(reg, "fun.music", {"kw": "七里香"}).explicit is True
+    assert _run(reg, "fun.music", {"kw": "七里香", "source": "qq"}).explicit is True
+    assert _run(reg, "fun.quote", {}).explicit is True
+    assert _run(reg, "fun.joke", {}).explicit is True
+
+
+def test_panel_payload_passes_explicit(env):
+    """explicit 只透传置位的结果；默认不掺入 payload（防误伤其他插件/普通结果）。"""
+    from yibao_brain.ipc import ActionResult
+    from yibao_brain.plugins import panel_payload
+
+    env[0]
+    p = panel_payload(ActionResult(success=True, data={}, panel="fun:main", explicit=True))
+    assert p and p.get("explicit") is True
+    p2 = panel_payload(ActionResult(success=True, data={}, panel="fun:main"))
+    assert p2 and "explicit" not in p2

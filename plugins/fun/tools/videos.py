@@ -185,6 +185,7 @@ class VideosSkill(Skill):
                 "failed": [],
             })
             result.panel = "fun:main"
+            result.explicit = True  # 对话点名要看 → 直接弹面板
             return result
 
         try:
@@ -229,6 +230,7 @@ class VideosSkill(Skill):
             "failed": errors,
         })
         result.panel = "fun:main"
+        result.explicit = True  # 对话点名要看 → 直接弹面板
         return result
 
 

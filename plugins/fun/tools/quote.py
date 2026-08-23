@@ -93,6 +93,7 @@ class JokeSkill(Skill):
         if text:
             result = ActionResult(success=True, data={"text": text, "from": "AI 段子手", "via": "llm"})
             result.panel = "fun:main"
+            result.explicit = True  # 对话点名要段子 → 直接弹面板
             return result
         fallback = _fallback_joke()
         if fallback:
@@ -100,6 +101,7 @@ class JokeSkill(Skill):
                 "text": fallback["text"], "from": fallback["from"], "via": "hitokoto",
             })
             result.panel = "fun:main"
+            result.explicit = True  # 对话点名要段子 → 直接弹面板
             return result
         return ActionResult(success=False, error="段子没生成出来，稍后再试")
 
@@ -169,6 +171,7 @@ class QuoteSkill(Skill):
             "failed": failed,
         })
         result.panel = "fun:main"
+        result.explicit = True  # 对话点名要一句 → 直接弹面板
         return result
 
 
