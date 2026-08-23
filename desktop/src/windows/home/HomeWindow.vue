@@ -489,6 +489,7 @@ function close() {
             @open-panel="showSurface"
             @reminder="navigate('home')"
             @close-work="hideSurface"
+            @shrink-work="shrinkWork"
             @focus-work="toggleFocus"
             @work-body="onWorkBody"
           />

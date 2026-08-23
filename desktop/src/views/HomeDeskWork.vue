@@ -13,6 +13,7 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{
   close: [];
+  shrink: [];
   focus: [];
   ask: [];
   body: [el: HTMLElement | null];
@@ -41,6 +42,7 @@ const label = computed(() => deskWho({
       <button class="act" type="button" :title="focused ? '退出专注' : '进入专注'" @click="$emit('focus')">
         {{ focused ? "退出专注" : "专注" }}
       </button>
+      <button class="act" type="button" title="缩为小窗（转回右下角探窗）" @click="$emit('shrink')">小窗</button>
       <button class="act" type="button" title="收起工位" @click="$emit('close')">收起</button>
     </header>
     <div ref="bodyEl" id="yb-desk-work-body" class="body" />

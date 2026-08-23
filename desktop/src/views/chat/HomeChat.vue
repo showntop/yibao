@@ -65,6 +65,7 @@ const emit = defineEmits<{
   openPanel: [];
   reminder: [];
   closeWork: [];
+  shrinkWork: [];
   focusWork: [];
   workBody: [el: HTMLElement | null];
 }>();
@@ -762,6 +763,7 @@ onUnmounted(() => {
           :lend-ear="props.lendEar"
           :kind="workKind"
           @close="emit('closeWork')"
+          @shrink="emit('shrinkWork')"
           @focus="emit('focusWork')"
           @ask="hostAskOpen = true"
           @body="emit('workBody', $event)"
