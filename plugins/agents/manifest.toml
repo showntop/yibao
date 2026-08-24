@@ -32,6 +32,7 @@ type = "db"
 description = "列出派给智能体的任务（按时间倒序）"
 risk = "L0"
 panel = "agents:tasks"
+explicit = true   # 对话点名「任务动态」→ 宿主可弹面板
 [tool.db]
 op = "query"
 table = "tasks"

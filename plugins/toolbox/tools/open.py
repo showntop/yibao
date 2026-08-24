@@ -38,7 +38,7 @@ class OpenToolboxTool(Tool):
         tool = params.get("tool") or "json"
         if tool not in _TOOLS:
             tool = "json"
-        return ActionResult(success=True, data={"tool": tool}, panel="toolbox:main")
+        return ActionResult(success=True, data={"tool": tool}, panel="toolbox:main", explicit=True)  # 对话点名要工具箱 → 直接弹面板（照 fun.open 先例）
 
 
 def make_tools(ctx: Any) -> list[Tool]:

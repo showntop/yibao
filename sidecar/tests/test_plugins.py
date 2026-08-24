@@ -1219,3 +1219,53 @@ def test_declarative_tool_failure_carries_no_hints(data_dir, tmp_path):
     assert not r.success
     assert r.presentation is None
 
+
+
+EXPLICIT_MANIFEST = """
+id = "notes"
+capabilities = ["db"]
+
+[[table]]
+name = "notes"
+columns = [
+  {name = "id", type = "text", pk = true},
+  {name = "created_at", type = "integer"},
+]
+
+[[tool]]
+id = "list"
+type = "db"
+description = "列出闪念"
+risk = "L0"
+explicit = true
+[tool.db]
+op = "query"
+table = "notes"
+
+[[tool]]
+id = "keep"
+type = "db"
+description = "记一条闪念"
+risk = "L1"
+[tool.db]
+op = "insert"
+table = "notes"
+"""
+
+
+def test_declarative_tool_explicit_declaration(data_dir, tmp_path):
+    """[[tool]] explicit = true → 成功后 result.explicit（对话点名 → 宿主可越过 AUTO_MAX 弹面板）。
+
+    纯声明式插件（zimeiti/forge/agents/notes）此前拿不到 explicit——只有 fun 代码工具
+    能手动置位；本测试锁定声明式补齐。"""
+    _write_plugin(tmp_path, "notes", EXPLICIT_MANIFEST)
+    reg = ToolRegistry()
+    assert _load(tmp_path, reg) == {"notes": "ok"}
+
+    list_tool = reg.get("notes.list")
+    r = list_tool.run({}, list_tool.plugin_ctx)
+    assert r.success and r.explicit is True
+
+    keep = reg.get("notes.keep")
+    r2 = keep.run({"created_at": 1}, keep.plugin_ctx)
+    assert r2.success and r2.explicit is False  # 未声明保持默认

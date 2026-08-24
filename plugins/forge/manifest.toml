@@ -52,6 +52,7 @@ type = "db"
 description = "列出需求看板（按更新时间倒序，最多 100 条）"
 risk = "L0"
 panel = "forge:board"
+explicit = true   # 对话点名「看看需求清单」→ 宿主可弹面板
 [tool.db]
 op = "query"
 table = "requirements"

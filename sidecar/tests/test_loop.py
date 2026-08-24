@@ -1308,3 +1308,56 @@ def test_panel_event_defaults_when_skill_silent(tmp_path, monkeypatch):
     assert ev.payload["presentation"] is None
     assert ev.payload["attention"] == "suggest"
     assert ev.payload["object"] is None
+
+
+class _ExplicitGetTool(_GetTool):
+    """list 类只读工具带 explicit（如声明了 explicit=true 的 zimeiti.list）。"""
+
+    def run(self, params, ctx):
+        r = super().run(params, ctx)
+        r.explicit = True
+        return r
+
+
+def test_refresh_does_not_inherit_explicit(tmp_path, monkeypatch):
+    """refresh 是内部跟单：refresh 目标工具带 explicit 也不许抬原调用的表面档位——
+    否则「记个选题」（save → refresh=list）每次都会 stage 抢页。"""
+    from yibao_brain import plugins
+
+    monkeypatch.setitem(plugins._PANELS, "w:detail", {"type": "detail"})
+    loop = _build_w_loop(tmp_path, _ExplicitGetTool())
+    events = list(loop.run("存一下"))
+    pe = next(e for e in events if e.kind == "panel")
+    assert "explicit" not in pe.payload  # save 没声明 explicit，refresh 的不算
+
+
+class _ExplicitSaveTool(_SaveTool):
+    def run(self, params, ctx):
+        r = super().run(params, ctx)
+        r.explicit = True
+        return r
+
+
+def test_refresh_preserves_origin_explicit(tmp_path, monkeypatch):
+    """反向：原调用工具带 explicit（用户直调），refresh 后 payload 保留 explicit。"""
+    from yibao_brain import plugins
+
+    monkeypatch.setitem(plugins._PANELS, "w:detail", {"type": "detail"})
+    reg = ToolRegistry()
+    reg.register(_ExplicitSaveTool(), plugin="w")
+    reg.register(_GetTool(), plugin="w")
+    loop = AgentLoop(
+        provider=_TwoStepProvider(
+            first=FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="w.save", params={"id": "t1", "content": "正文"})]),
+            second=FakeProvider(text="已保存"),
+        ),
+        skills=reg,
+        classifier=RiskClassifier(),
+        gate=Gate(GatePolicy()),
+        memory=FakeMemory(),
+        log=AuditLog(tmp_path / "a.db"),
+    )
+    events = list(loop.run("存一下"))
+    pe = next(e for e in events if e.kind == "panel")
+    assert pe.payload["explicit"] is True
+    assert pe.payload["data"] == {"rows": [{"id": "t1", "status": "写作中"}]}  # 刷新数据仍在

@@ -136,6 +136,9 @@ class DeclarativeTool(Tool):
         self._presentation = pres if pres in _SURFACE_LEVELS else None
         att = spec.get("attention")
         self._attention = att if att in ("quiet", "suggest", "focus") else None
+        # 用户明确意图信号（对话点名「看看 XX」）：成功后置 result.explicit，宿主可越过
+        # AUTO_MAX 弹 stage/浮窗（与 fun 代码工具手动置位同一语义，声明式补齐）
+        self._explicit = bool(spec.get("explicit"))
         self._registry = registry  # composite 顺序调用同 registry 的其他 tool
 
     def openai_schema(self) -> dict:
@@ -170,6 +173,8 @@ class DeclarativeTool(Tool):
                 result.presentation = self._presentation
             if self._attention:
                 result.attention = self._attention
+            if self._explicit:
+                result.explicit = True
         return result
 
     def _run_db(self, params: dict, ctx: ToolContext) -> ActionResult:

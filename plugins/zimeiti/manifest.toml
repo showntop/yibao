@@ -89,6 +89,7 @@ type = "db"
 description = "列出选题看板（按更新时间倒序，最多 100 条）"
 risk = "L0"
 panel = "zimeiti:board"
+explicit = true   # 对话点名「看看选题看板」→ 宿主可弹面板（写操作 refresh 跟单不抬档）
 [tool.db]
 op = "query"
 table = "topics"

@@ -4,6 +4,12 @@ name = "task_list"
 handler = "agents.task_list"
 direct = true
 
+# 插件页/启动器点击卡片约定调 <pid>.list（fun/zimeiti/notes/reminders/toolbox 均有）
+[[method]]
+name = "list"
+handler = "agents.task_list"
+direct = true
+
 [[method]]
 name = "task_status"
 handler = "agents.task_status"

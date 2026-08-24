@@ -210,7 +210,15 @@ class AgentLoop:
         if self.invoker.decide(r_action) != Decision.AUTO:
             return _with_surface_hints(self._redirect_to_focused_webview(payload), result, action.id)
         r_result = self.invoker.execute(r_action, r_params)
-        payload = panel_payload(r_result) or payload
+        refreshed = panel_payload(r_result)
+        if refreshed is not None:
+            # explicit 属于用户直调的工具；refresh 是内部跟单，不许借它抬表面档位
+            # （否则「记个选题」经 refresh=list 也会 stage 抢页）
+            if getattr(result, "explicit", False):
+                refreshed["explicit"] = True
+            else:
+                refreshed.pop("explicit", None)
+            payload = refreshed
         return _with_surface_hints(self._redirect_to_focused_webview(payload), result, action.id)
 
     def _redirect_to_focused_webview(self, payload: dict) -> dict:
