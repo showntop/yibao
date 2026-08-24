@@ -31,7 +31,7 @@ interface Cmd {
 
 const PAGES: { id: PaletteTab; label: string; icon: PaletteIcon; shortcut: string }[] = [
   { id: "home", label: "主屏", icon: "inbox", shortcut: "⌘1" },
-  { id: "plugins", label: "插件", icon: "plug", shortcut: "⌘2" },
+  { id: "plugins", label: "能力", icon: "plug", shortcut: "⌘2" },
   { id: "data", label: "数据", icon: "doc", shortcut: "⌘3" },
   { id: "settings", label: "设置", icon: "gear", shortcut: "⌘," },
 ];

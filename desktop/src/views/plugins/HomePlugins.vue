@@ -1,13 +1,13 @@
 <script setup lang="ts">
-// 大窗「插件」页：插件列表（点击直达主面板）+ 面板嵌入视图（SchemaPanel/WebviewPanel + 工作台条）。
+// 大窗「能力」页：能力总览（插件/技能/底座三段，CapabilityHome）+ 面板嵌入视图（SchemaPanel/WebviewPanel + 工作台条）。
 // 面板逻辑同源 PanelApp.vue（浮窗版）；差异：
-//   ① 面板嵌在主区不弹窗，「返回插件列表」≈ 浮窗的关闭（清焦点上下文）；
+//   ① 面板嵌在主区不弹窗，「返回能力总览」≈ 浮窗的关闭（清焦点上下文）；
 //   ② 与 HomeChat 同窗共享 JS 上下文，surface 一律显式传参（不走模块级 setSurface）。
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { emit as emitTauri } from "@tauri-apps/api/event";
 import SchemaPanel from "../../components/panel/SchemaPanel.vue";
 import CapabilityLedger from "./CapabilityLedger.vue";
-import PluginGrid from "./PluginGrid.vue";
+import CapabilityHome from "./CapabilityHome.vue";
 import WebviewPanel from "../../components/panel/WebviewPanel.vue";
 import Avatar from "../../components/pet/Avatar.vue";
 import InputBar from "../../components/common/InputBar.vue";
@@ -59,6 +59,7 @@ const emit = defineEmits<{
   shrink: [];
   focus: [];
   handoff: [active: boolean];
+  chat: [draft: string]; // 技能卡/能力条目 → 主屏输入条草稿（一句话直达）
 }>();
 
 // ---- 插件列表 ----
@@ -221,7 +222,7 @@ function setCurrent(v: NonNullable<typeof current.value>, silent = false) {
   if (wasList) void nextTick(() => growIn());
 }
 
-/** 返回插件列表 ≈ 浮窗的关闭：清焦点上下文（大脑不再注入旧面板），面板内容留着（再进秒开）。
+/** 返回能力总览 ≈ 浮窗的关闭：清焦点上下文（大脑不再注入旧面板），面板内容留着（再进秒开）。
  *  广播 panel-closed：对话页的「⇢ 协作」关联气泡收到收尾信号（浮窗模式由 Rust 窗隐发，大窗在这里发）。 */
 async function backToList() {
   await collapseOut();
@@ -517,18 +518,18 @@ onUnmounted(() => {
     <header v-if="!(props.scene && !viewingList)" class="page-head" :class="{ 'in-panel': !viewingList }" data-tauri-drag-region>
       <template v-if="viewingList">
         <div class="head-text" data-tauri-drag-region>
-          <h1 class="pg-title" data-tauri-drag-region>插件</h1>
-          <span class="pg-sub" data-tauri-drag-region>点开任意插件进入它的工作面板</span>
+          <h1 class="pg-title" data-tauri-drag-region>能力</h1>
+          <span class="pg-sub" data-tauri-drag-region>一句话能调动的全部本领</span>
         </div>
-        <button class="head-action" title="查看全部能力（插件 / 底座 / MCP）" @click="viewingLedger = true">
-          <YbIcon name="plug" :size="13" />能力台账
+        <button class="head-action subdued" title="管理台：停用/启用/卸载（插件 / 底座 / MCP 全形态）" @click="viewingLedger = true">
+          <YbIcon name="gear" :size="13" />管理
         </button>
       </template>
       <template v-else>
         <button class="back" :title="props.scene ? '收起工作面' : '返回插件列表'" @click="props.scene ? emit('close') : backToList()">
           <YbIcon name="x" :size="13" />
         </button>
-        <span class="crumb">{{ props.scene ? "当前任务" : "插件" }}</span>
+        <span class="crumb">{{ props.scene ? "当前任务" : "能力" }}</span>
         <span class="crumb-sep">›</span>
         <span class="pg-title panel-name">{{ current?.title ?? "面板" }}</span>
         <span v-if="props.scene" class="scene-spacer" />
@@ -544,13 +545,14 @@ onUnmounted(() => {
       </template>
     </header>
 
-    <!-- 插件列表：Launchpad 式网格（图标按 id 哈希配色），顶部搜索过滤 -->
-    <PluginGrid
+    <!-- 能力总览：插件/技能/底座三段分组（搜索跨组过滤；技能卡点击 → chat 草稿直达） -->
+    <CapabilityHome
       v-if="viewingList && !viewingLedger"
       :plugins="plugins"
       :err="pluginErr"
       @launch="launchPlugin"
       @open-panel="openPluginPanel"
+      @chat="(draft) => emit('chat', draft)"
     />
 
     <!-- 能力台账（P3）：全形态 Tool 只读表，back 回插件列表 -->
@@ -680,6 +682,17 @@ onUnmounted(() => {
 .head-action:hover {
   border-color: rgba(var(--yb-c-sky-rgb), 0.28);
   color: var(--yb-accent);
+}
+/* 管理台入口降级：浏览面（能力总览）是主角，管理操作退为不显眼文本钮 */
+.head-action.subdued {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: var(--yb-text-faint);
+}
+.head-action.subdued:hover {
+  border-color: var(--yb-card-border);
+  color: var(--yb-text-dim);
 }
 .pg-title {
   margin: 0;

@@ -328,6 +328,13 @@ function onPaletteNavigate(t: PaletteTab) {
   paletteOpen.value = false;
 }
 
+// 能力页技能卡等 → 主屏输入条草稿（单向同步给 HomeChat，填稿并切回主屏）
+const chatDraft = ref<string | undefined>(undefined);
+function onCapabilityChat(draft: string) {
+  chatDraft.value = draft;
+  navigate("home");
+}
+
 function navigate(target: Tab) {
   if (target === "plugins") {
     surfaceVisible.value = false;
@@ -344,7 +351,7 @@ function navigate(target: Tab) {
 // 全局快捷键：⌘K 命令面板；⌘1-3 / ⌘, 直接切页（macOS 标准）
 const NAV: { id: Tab; label: string; icon: "inbox" | "plug" | "doc"; shortcut: string }[] = [
   { id: "home", label: "主屏", icon: "inbox", shortcut: "1" },
-  { id: "plugins", label: "插件", icon: "plug", shortcut: "2" },
+  { id: "plugins", label: "能力", icon: "plug", shortcut: "2" },
   { id: "data", label: "数据", icon: "doc", shortcut: "3" },
 ];
 const TAB_SHORTCUTS: Record<string, Tab> = {
@@ -481,6 +488,7 @@ function close() {
         <div v-show="tab === 'home' && (!sceneActive || deskWork)" class="view-host chat-host">
           <HomeChat
             v-if="!qaMode"
+            :draft="chatDraft"
             :workstation="deskWork ? capability : null"
             :lend-ear="deskWork && pluginHandoff"
             :work-busy="activityBusy"
@@ -513,6 +521,7 @@ function close() {
           @close="sceneActive ? hideSurface() : closeCapability()"
           @shrink="shrinkWork"
           @focus="toggleFocus"
+          @chat="onCapabilityChat"
         />
         </div>
       </Transition>

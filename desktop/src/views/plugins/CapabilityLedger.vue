@@ -86,9 +86,9 @@ onMounted(load);
       <button class="back" title="返回插件列表" @click="emit('back')">
         <YbIcon name="x" :size="13" />
       </button>
-      <span class="crumb">插件</span>
+      <span class="crumb">能力</span>
       <span class="crumb-sep">›</span>
-      <span class="ledger-title">能力台账</span>
+      <span class="ledger-title">管理台</span>
       <span class="ledger-counts">
         <span v-for="(n, k) in counts" :key="k" class="count">
           <i :class="TYPE_TONE[k]" />{{ TYPE_LABEL[k] ?? k }} {{ n }}
