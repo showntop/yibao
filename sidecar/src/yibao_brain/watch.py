@@ -149,12 +149,16 @@ class Ambient:
     - 每日首活跃问候：当天首次进入 active（静默时段不算，留到出静默再问候），每日 1 次
     - 专注里程碑：同一活动段连续 active 满 focus_hours 小时夸一句，每日 1 次
     任一事件后 cooldown_hours 小时内不再出声；静默时段整体不触发。
-    与 HealthNudge（45min 久坐提醒）正交：信号不同源，互不互斥。"""
+    与 HealthNudge（45min 久坐提醒）正交：信号不同源，互不互斥。
+
+    state_path：可选状态落盘（JSON）——跨天计数/已问候标记/冷却时刻持久化，
+    大脑重启不再重发当日问候（此前状态全在内存，晚上重启也会再喊「新的一天开始吧」）。
+    _prev_state/_prev_idle_seconds 是 tick 间瞬态跟踪，不落盘。"""
     name = "ambient"
 
     def __init__(self, *, return_after_minutes: int = 30, focus_hours: float = 2.0,
                  welcome_max: int = 2, cooldown_hours: float = 2.0,
-                 quiet_hours: str = "23:00-07:00"):
+                 quiet_hours: str = "23:00-07:00", state_path: str | None = None):
         self._return_after_s = max(1, int(return_after_minutes)) * 60
         self._focus_s = float(focus_hours) * 3600
         self._welcome_max = max(0, int(welcome_max))
@@ -169,6 +173,46 @@ class Ambient:
         self._last_fired = 0.0              # 最近一次 ambient 事件时刻（snapshot.now 系）
         self._prev_state: str | None = None
         self._prev_idle_seconds = 0.0       # 上一段 idle 期间观测到的最大持续秒
+        self._state_path = state_path
+        self._load_state()
+
+    # ---- 状态落盘（可选）：坏文件/缺文件静默回默认值，写失败只记日志不炸行为 ----
+    def _load_state(self) -> None:
+        if not self._state_path:
+            return
+        try:
+            import json
+            with open(self._state_path, encoding="utf-8") as f:
+                d = json.load(f)
+            date = d.get("date")
+            if isinstance(date, list) and len(date) == 3:
+                self._date = tuple(date)
+            self._welcomes = int(d.get("welcomes", 0))
+            self._greeted = bool(d.get("greeted", False))
+            self._milestone_done = bool(d.get("milestone_done", False))
+            self._milestone_segment = d.get("milestone_segment")
+            self._last_fired = float(d.get("last_fired", 0.0))
+        except Exception:
+            pass
+
+    def _save_state(self) -> None:
+        if not self._state_path:
+            return
+        try:
+            import json
+            import os
+            os.makedirs(os.path.dirname(self._state_path), exist_ok=True)
+            with open(self._state_path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "date": list(self._date) if self._date else None,
+                    "welcomes": self._welcomes,
+                    "greeted": self._greeted,
+                    "milestone_done": self._milestone_done,
+                    "milestone_segment": self._milestone_segment,
+                    "last_fired": self._last_fired,
+                }, f)
+        except Exception as e:
+            log(f"ambient 状态落盘失败（跳过）：{e}")
 
     def _roll_day(self, now: float) -> None:
         lt = time.localtime(now)
@@ -179,11 +223,13 @@ class Ambient:
             self._greeted = False
             self._milestone_done = False
             self._milestone_segment = None  # 跨天清零：即便段 id 理论撞车也重新可夸
+            self._save_state()
 
     def _fire(self, now: float, text: str, signal: str) -> dict:
         self._last_fired = now
         # signal：三信号标识（greeting 首活跃/welcome 回归/milestone 专注里程碑），
         # 壳侧按它配不同的宠物反应（反应式渲染，对齐 task.status 先例）
+        self._save_state()
         return {"kind": "reminder", "type": "ambient", "signal": signal, "text": text}
 
     def tick(self, snapshot: WatchSnapshot, ctx: WatchCtx) -> dict | None:
@@ -301,7 +347,7 @@ class ProactiveChat:
 
 
 def build_behaviors(settings: dict, *, host=None, vision=None, budget=None, emit=None,
-                    frontmost=None) -> list:
+                    frontmost=None, ambient_state_path: str | None = None) -> list:
     """按 settings 构造 watch 行为集：健康节律 + 在场陪伴 +（视觉可用且白名单非空时）主动搭话。"""
     behaviors = [
         HealthNudge(
@@ -311,7 +357,7 @@ def build_behaviors(settings: dict, *, host=None, vision=None, budget=None, emit
         LateNightNudge(
             quiet_hours=str(settings.get("watch.quiet_hours", "23:00-07:00")),
         ),
-        Ambient(),
+        Ambient(state_path=ambient_state_path),
     ]
     observe_apps = settings.get("watch.observe_apps") or []
     if (vision is not None and host is not None and budget is not None and emit is not None

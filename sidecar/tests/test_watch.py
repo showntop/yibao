@@ -533,3 +533,33 @@ def test_ambient_events_carry_signal_for_shell_reaction():
     assert ev and ev["signal"] == "welcome"
     ev = a.tick(_snap(_lt(11, 40), "active", 3600 + 10, seg=2), WatchCtx())
     assert ev and ev["signal"] == "milestone"
+
+
+# ---------- Ambient 状态落盘（大脑重启不重发当日问候） ----------
+def test_ambient_state_persists_across_restart(tmp_path):
+    """当日问候/冷却时刻跨「重启」（新实例同路径）保留：不再重发首活跃问候。"""
+    p = str(tmp_path / "ambient.json")
+    a = Ambient(quiet_hours="", state_path=p)
+    a.tick(_snap(_lt(9, 0), "active", 1, seg=1), WatchCtx())  # 首问候 → 落盘
+    b = Ambient(quiet_hours="", state_path=p)  # 「重启」：新实例读同一文件
+    assert b._greeted is True and b._last_fired > 0
+    assert b.tick(_snap(_lt(9, 5), "active", 2, seg=2), WatchCtx()) is None  # 不重发
+
+
+def test_ambient_state_rolls_day_after_reload(tmp_path):
+    """跨天：落盘的昨日标记在新一天首次 tick 正常清零，当日问候照发。"""
+    p = str(tmp_path / "ambient.json")
+    a = Ambient(quiet_hours="", state_path=p)
+    a.tick(_snap(_day(2026, 8, 23, 9, 0), "active", 1, seg=1), WatchCtx())
+    b = Ambient(quiet_hours="", state_path=p)
+    ev = b.tick(_snap(_day(2026, 8, 24, 9, 0), "active", 1, seg=2), WatchCtx())
+    assert ev and ev["signal"] == "greeting"
+
+
+def test_ambient_state_bad_file_tolerated(tmp_path):
+    """坏状态文件静默回默认值（不炸行为、照常被闸）。"""
+    p = tmp_path / "ambient.json"
+    p.write_text("{oops", encoding="utf-8")
+    a = Ambient(quiet_hours="", state_path=str(p))
+    ev = a.tick(_snap(_lt(9, 0), "active", 1, seg=1), WatchCtx())
+    assert ev and ev["signal"] == "greeting"

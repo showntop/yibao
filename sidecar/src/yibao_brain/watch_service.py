@@ -1,8 +1,10 @@
 """Lifecycle owner for watch behaviors."""
 from __future__ import annotations
 
+from . import config
 from .log import log
 import asyncio
+import os
 import sys
 import time
 
@@ -100,6 +102,7 @@ class WatchService:
             budget=budget,
             emit=self.dispatcher.emit,
             frontmost=self.frontmost,
+            ambient_state_path=os.path.join(config.data_dir(), "ambient_state.json"),
         )
         if not self.settings.get("watch.enabled"):
             behaviors = [behavior for behavior in behaviors if behavior.name == "proactive_chat"]
