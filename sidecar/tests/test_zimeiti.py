@@ -67,6 +67,7 @@ def test_all_tools_registered_with_risks(env):
         "zimeiti.add": RiskLevel.L1_LOW,
         "zimeiti.list": RiskLevel.L0_READONLY,
         "zimeiti.get": RiskLevel.L0_READONLY,
+        "zimeiti.open_editor": RiskLevel.L0_READONLY,
         "zimeiti.move": RiskLevel.L1_LOW,
         "zimeiti.delete": RiskLevel.L2_MEDIUM,
         "zimeiti.article_save": RiskLevel.L2_MEDIUM,
@@ -107,6 +108,16 @@ def test_declarative_chain(env):
 
 
 # ---------- bundled skill（guides → skills/write/SKILL.md，2026-08-24 转化） ----------
+
+
+def test_open_editor_tool(env):
+    """对话直达编辑器（#2b）：模型调 zimeiti.open_editor{id} → explicit + editor 面板 +
+    rows 带选题（编辑器 onInit 凭 rows[0].id 自动加载最新稿）。"""
+    reg, _, _ = env
+    tid = _run(reg, "zimeiti.add", {"title": "T"}).data["id"]
+    r = _run(reg, "zimeiti.open_editor", {"id": tid})
+    assert r.success and r.panel == "zimeiti:editor" and r.explicit is True
+    assert r.data["rows"][0]["id"] == tid
 
 
 def test_bundled_write_skill_resolvable(env):

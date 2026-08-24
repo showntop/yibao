@@ -97,6 +97,21 @@ order = "updated_at DESC"
 limit = 100
 
 [[tool]]
+id = "open_editor"
+type = "db"
+description = "打开选题的写作编辑器（用户点名「打开编辑器」「进编辑器写稿」「打开选题X的编辑器」时用；面板自动加载该选题最新稿）。只是查看详情用 get。"
+risk = "L0"
+panel = "zimeiti:editor"
+explicit = true   # 用户点名要编辑器 → 宿主可弹 stage（写稿工作面）
+required = ["id"]
+[tool.params]
+id = {type = "string", description = "选题 id（zimeiti.list 返回的 id）"}
+[tool.db]
+op = "query"
+table = "topics"
+limit = 1
+
+[[tool]]
 id = "get"
 type = "db"
 description = "查看一条选题的详情（运行时 where 由调用方传，如 {where: {id: …}}）"
