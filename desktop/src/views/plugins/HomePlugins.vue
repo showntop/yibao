@@ -183,6 +183,7 @@ function setCurrent(v: NonNullable<typeof current.value>, silent = false) {
   const isNewPanel = current.value?.panel !== v.panel;
   const wasList = viewingList.value;
   current.value = v;
+  if (isNewPanel) errorText.value = ""; // 换面板清上一条失败残条（错误条按面板归属，不跨面板残留）
   viewingList.value = false;
   focus.value = computeFocus(v);
   // 面板载荷写入 surface 域：重启后恢复工作面的数据来源（Tauri last_panel 是内存态，重启即失）
