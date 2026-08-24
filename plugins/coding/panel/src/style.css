@@ -39,13 +39,17 @@
   --focus-ring: 0 0 0 2px var(--card), 0 0 0 4px rgba(77,144,196,0.5);
 }
 
-/* 深色:跟随系统(沙箱吃不到 tokens.css,无法读 data-theme)——语义色逐一移植
-   desktop/src/assets/tokens.css :402-533 系统跟随块(范式同 plugins/toolbox/panel/tools.html:24-44)。
+/* 深色双通道（范式同 desktop/src/assets/tokens.css :401-404）：
+   - 系统跟随：@media dark 且 :root:not([data-theme="light"])（未收宿主主题时的缺省路径）
+   - 显式通道：宿主 WebviewPanel 推 {type:"theme"} → main.js 写 <html data-theme>，
+     :root[data-theme="dark"] 无条件命中（宿主强制深色而系统是浅色时靠这条）
+   两块变量/覆盖必须逐条一致（style.dark.test.ts 按名单卡双块全量）。
+   语义色逐一移植 desktop/src/assets/tokens.css :402-533 系统跟随块(范式同 plugins/toolbox/panel/tools.html:24-44)。
    accent 两档语义反转:浅色 accent-deep=加深(hover/文字);深色下填充钮白字保对比需 accent 不下潜,
    文字/描边场景反而要提亮——故 accent 保持 #4d90c4,accent-deep 提亮为 #5ea0d2(hover=变亮)。
    --code-bg/--code-text 本身深底浅字,两色通用不覆盖。 */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     color-scheme: dark;
     --bg: #10161d;              /* tokens --yb-bg */
     --card: #18212b;            /* --yb-surface-1 */
@@ -73,16 +77,52 @@
     --focus-ring: 0 0 0 2px var(--card), 0 0 0 4px rgba(77,144,196,0.7);
   }
   /* 字面值写死的玻璃面/白井,深色逐条覆盖(tokens --yb-glass 系) */
-  header { background: rgba(24,33,43,0.94); }
-  .composer-bar {
+  :root:not([data-theme="light"]) header { background: rgba(24,33,43,0.94); }
+  :root:not([data-theme="light"]) .composer-bar {
     background: rgba(24,33,43,0.94);
     border-color: var(--border);
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.10), 0 1px 2px rgba(8,16,28,0.35), 0 6px 18px rgba(8,16,28,0.4);
   }
-  #errbar .err-detail { background: rgba(0,0,0,0.22); } /* 浅色是白井压红底;深色改黑井 */
+  :root:not([data-theme="light"]) #errbar .err-detail { background: rgba(0,0,0,0.22); } /* 浅色是白井压红底;深色改黑井 */
   /* --red 深色已提亮为文字色,实底钮沿用浅色实红保白字对比 */
-  .rail-stop { background: #b6554a; }
+  :root:not([data-theme="light"]) .rail-stop { background: #b6554a; }
 }
+/* 显式深色块：变量与玻璃面覆盖同上，逐条保持一致 */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #10161d;
+  --card: #18212b;
+  --surface-2: #1f2a36;
+  --surface-2h: #28323f;
+  --text: #dbe4ee;
+  --muted: #93a3b6;
+  --faint: #6d7f93;
+  --accent: #4d90c4;
+  --accent-deep: #5ea0d2;
+  --accent-soft: rgba(77,144,196,0.22);
+  --accent-line: rgba(77,144,196,0.32);
+  --border: rgba(255,255,255,0.10);
+  --border-strong: rgba(255,255,255,0.18);
+  --border-soft: rgba(255,255,255,0.06);
+  --line: rgba(255,255,255,0.08);
+  --green-bg: rgba(62,142,90,0.2); --green: #8fd0a6; --green-bar: #6fbf8e; --green-line: rgba(143,208,166,0.3);
+  --red-bg: rgba(192,87,75,0.2); --red: #f0aaa1; --red-bar: #e38a80;
+  --amber: #f0b25c; --amber-bg: rgba(242,160,60,0.18);
+  --amber-deep: #f0b25c;
+  --ai-bg: #1f2a36;
+  --user-bg: #4d90c4;
+  --shadow-card: 0 1px 2px rgba(8,16,28,0.35);
+  --shadow-pop: 0 2px 8px rgba(8,16,28,0.4), 0 12px 32px rgba(8,16,28,0.5);
+  --focus-ring: 0 0 0 2px var(--card), 0 0 0 4px rgba(77,144,196,0.7);
+}
+:root[data-theme="dark"] header { background: rgba(24,33,43,0.94); }
+:root[data-theme="dark"] .composer-bar {
+  background: rgba(24,33,43,0.94);
+  border-color: var(--border);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.10), 0 1px 2px rgba(8,16,28,0.35), 0 6px 18px rgba(8,16,28,0.4);
+}
+:root[data-theme="dark"] #errbar .err-detail { background: rgba(0,0,0,0.22); }
+:root[data-theme="dark"] .rail-stop { background: #b6554a; }
 html, body, #app { height: 100%; }
 body {
   font: 13px/1.6 var(--sans);

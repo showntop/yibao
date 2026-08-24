@@ -38,4 +38,32 @@ describe("style.css 深色模式", () => {
       expect(dark).toContain(sel);
     }
   });
+
+  it("显式深色块（:root[data-theme=\"dark\"]，宿主主题通道）存在且变量/玻璃面覆盖齐全", () => {
+    const m = css.match(/:root\[data-theme="dark"\] \{([\s\S]*?)\n\}/);
+    expect(m).toBeTruthy();
+    const explicit = m![1]!;
+    expect(explicit).toContain("color-scheme: dark");
+    for (const v of [
+      "--bg", "--card", "--surface-2", "--surface-2h",
+      "--text", "--muted", "--faint",
+      "--accent", "--accent-deep", "--accent-soft", "--accent-line",
+      "--border", "--border-strong", "--border-soft", "--line",
+      "--green-bg", "--green", "--green-bar", "--green-line",
+      "--red-bg", "--red", "--red-bar",
+      "--amber", "--amber-bg", "--amber-deep",
+      "--ai-bg", "--user-bg",
+      "--shadow-card", "--shadow-pop", "--focus-ring",
+    ]) {
+      expect(explicit).toContain(v + ":");
+    }
+    for (const sel of [
+      ':root[data-theme="dark"] header',
+      ':root[data-theme="dark"] .composer-bar',
+      ':root[data-theme="dark"] #errbar .err-detail',
+      ':root[data-theme="dark"] .rail-stop',
+    ]) {
+      expect(css).toContain(sel);
+    }
+  });
 });

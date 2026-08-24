@@ -6,6 +6,7 @@
 //   iframe → 父：{src:"yibao-webview", event, payload}       事件上报（无 id 无回包，父侧 emit "panel-event"）
 //   父 → iframe：{src:"yibao-host", id, ok, result|error}    回包
 //   父 → iframe：{src:"yibao-host", type:"init", data}            面板事件 data（iframe 加载完成 & data 变更时推）
+//   父 → iframe：{src:"yibao-host", type:"theme", theme}          宿主有效主题（"light"|"dark"，加载完成 & 变更时推）
 //   父 → iframe：{src:"yibao-host", ...任意消息}                  postToIframe（如 {type:"ping"}，iframe 经 yibao.onMessage 收）
 // 父侧只做命名空间粗筛（method 须以当前面板插件 id 开头）+ event.source 校验；L2 确认条由 PanelApp 闭环。
 // module 面板(R4):props.url 非空时走 iframe src(yibao-plugin://),桥由协议层注入;srcdoc 路径行为不变。
@@ -159,6 +160,7 @@ watch(() => [props.url, props.v, props.html], () => { loaded = false; });
 function onIframeLoad() {
   loaded = true;
   postInit();
+  postTheme();
   if (stashed) {
     const m = stashed;
     stashed = null;
@@ -177,14 +179,35 @@ function postToIframe(msg: Record<string, unknown>) {
 }
 defineExpose({ postToIframe });
 
+// ---- 主题通道：module 面板是独立文档，吃不到宿主 tokens.css 的 data-theme 显式通道，
+// 由宿主算好有效主题（data-theme 显式值 > 系统媒体查询）推给 iframe（面板侧写自己的 data-theme）。
+// 覆盖 HomePlugins（home 窗）与 PanelWindow（浮窗）两宿主——本组件读的是自己所在文档。 ----
+const themeMedia = window.matchMedia?.("(prefers-color-scheme: dark)");
+function effectiveTheme(): "light" | "dark" {
+  const dt = document.documentElement.dataset.theme;
+  if (dt === "light" || dt === "dark") return dt;
+  return themeMedia?.matches ? "dark" : "light";
+}
+function postTheme() {
+  if (!loaded) return; // 首帧主题由 onIframeLoad 补推；不走 stash（stash 只有一格，会顶掉 handoff 草稿）
+  postToIframe({ type: "theme", theme: effectiveTheme() });
+}
+let themeObserver: MutationObserver | null = null;
+
 let unlisten: (() => void) | null = null;
 onMounted(async () => {
   window.addEventListener("message", onMessage);
   unlisten = await onBrainEvent(onEvent);
+  // 主题变更监听：data-theme 属性（显式三态切换）+ 系统媒体查询（system 档随 OS 翻转）
+  themeObserver = new MutationObserver(postTheme);
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  themeMedia?.addEventListener?.("change", postTheme);
 });
 onBeforeUnmount(() => {
   window.removeEventListener("message", onMessage);
   unlisten?.();
+  themeObserver?.disconnect();
+  themeMedia?.removeEventListener?.("change", postTheme);
   for (const bid of [...pending.keys()]) settle(bid, undefined, new Error("面板已关闭"));
 });
 </script>
