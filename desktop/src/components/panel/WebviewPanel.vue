@@ -49,7 +49,11 @@ const urlSource = computed(() => {
 /** 插件 HTML + 桥 JS 合成 srcdoc（桥注入到插件脚本之前；无 <head> 时整体放最前）。 */
 const srcdoc = computed(() => {
   const html = props.html ?? "";
-  const tag = CSP_META + SCRIPT_OPEN + bridgeJs + SCRIPT_CLOSE;
+  // 桥体内出现 script 闭合标签字面量会提前终止注入的脚本块（残文渲染成可见文本、
+  // window.yibao 未定义——2026-08-24 编辑器「正在等译宝把选题送过来」的根因）；
+  // 注入前统一转义（JS 字符串/注释里 \/ === /，无语义影响）。
+  const safeBridge = bridgeJs.replace(/<\/script/gi, "<\\/script");
+  const tag = CSP_META + SCRIPT_OPEN + safeBridge + SCRIPT_CLOSE;
   const headAt = html.toLowerCase().indexOf("<head>");
   return headAt >= 0
     ? html.slice(0, headAt + 6) + tag + html.slice(headAt + 6)

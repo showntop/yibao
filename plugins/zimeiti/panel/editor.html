@@ -8,7 +8,8 @@
 <title>写作编辑器</title>
 <style>
   /* 设计 token 整段照抄 tools.html（iframe 沙箱内吃不到 tokens.css，内联写死）：
-     浅色为默认（slate + sky 蓝 accent），深色走 prefers-color-scheme 跟随系统 */
+     浅色为默认（slate + sky 蓝 accent）；深色双通道——系统媒体查询 +
+     宿主主题通道（WebviewPanel 推 {type:"theme"} → 主脚本写 data-theme 命中显式块） */
   * { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
     --bg: #f0f4f8; --card: #ffffff;
@@ -20,7 +21,8 @@
     --mono: 12.5px/1.6 "SF Mono", ui-monospace, Menlo, monospace;
   }
   @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
       --bg: #10161d; --card: #18212b;
       --border: rgba(255, 255, 255, 0.09); --border-soft: rgba(255, 255, 255, 0.06); --border-strong: rgba(255, 255, 255, 0.18);
       --text: #dbe4ee; --muted: #93a3b6; --faint: #6d7f93;
@@ -28,6 +30,16 @@
       --green-bg: rgba(62, 142, 90, 0.2); --green: #8fd0a6; --green-bar: #6fbf8e;
       --red-bg: rgba(192, 87, 75, 0.2); --red: #f0aaa1; --red-bar: #e38a80;
     }
+  }
+  /* 显式深色块：与媒体查询块逐条一致（宿主强制深色而系统浅色时靠这条命中） */
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #10161d; --card: #18212b;
+    --border: rgba(255, 255, 255, 0.09); --border-soft: rgba(255, 255, 255, 0.06); --border-strong: rgba(255, 255, 255, 0.18);
+    --text: #dbe4ee; --muted: #93a3b6; --faint: #6d7f93;
+    --accent: #5ea0d2; --accent-deep: #4d90c4; --accent-soft: rgba(77, 144, 196, 0.22);
+    --green-bg: rgba(62, 142, 90, 0.2); --green: #8fd0a6; --green-bar: #6fbf8e;
+    --red-bg: rgba(192, 87, 75, 0.2); --red: #f0aaa1; --red-bar: #e38a80;
   }
   html, body { height: 100%; }
   body {
@@ -303,6 +315,15 @@
 
 <script>
 (function () {
+  // 宿主主题通道（WebviewPanel 推 {type:"theme"}）：显式值写 data-theme 命中显式深色块；
+  // 未收到则跟随系统（媒体查询块）。srcdoc 沙箱吃不到宿主 document，必须经桥收。
+  if (window.yibao && window.yibao.onMessage) {
+    window.yibao.onMessage(function (m) {
+      if (!m || m.type !== "theme") return;
+      if (m.theme === "light" || m.theme === "dark") document.documentElement.dataset.theme = m.theme;
+      else delete document.documentElement.dataset.theme;
+    });
+  }
   var topicId = "";
   var version = 0;
   var saving = false;
