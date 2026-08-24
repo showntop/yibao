@@ -252,7 +252,8 @@ class ToolListTool(Tool):
     """能力台账（P3 管理面地基）：列出全部已注册 Tool，附来源形态/风险/展开态/特权标记。
 
     四形态归位：core（底座 id 无点号）、plugin（两段 id，含 skills 桥）、
-    mcp（三段 id，mcp.<server>.<tool>）。skill 域本身不注册 Tool（只见 skills.run）。
+    mcp（三段 id，mcp.<server>.<tool>）。skill 域不注册 Tool，另列 data.skills 段
+    （独立技能 skill:* + 插件包内 <pid>:*，只读展示，展开用 use_skill）。
     """
 
     id = "tool_list"
@@ -288,8 +289,23 @@ class ToolListTool(Tool):
         by_type: dict[str, int] = {}
         for r in rows:
             by_type[r["source_type"]] = by_type.get(r["source_type"], 0) + 1
+        # skill 域（不注册 Tool，单列一段）：独立技能 skill:* + 插件包内 <pid>:*
+        from . import skills_index
+
+        skill_rows = [
+            {
+                "id": sid,
+                "source_type": "skill" if sid.startswith("skill:") else "plugin_skill",
+                "owner": None if sid.startswith("skill:") else sid.split(":", 1)[0],
+                "name": str(entry.get("name") or sid),
+                "description": str(entry.get("description") or ""),
+            }
+            for sid, entry in sorted(skills_index.index().items())
+        ]
         human = "；".join(f"{k} {v} 个" for k, v in sorted(by_type.items())) or "（空）"
-        return ActionResult(success=True, data={"tools": rows, "human": f"能力台账：{human}"})
+        if skill_rows:
+            human += f"；技能 {len(skill_rows)} 个"
+        return ActionResult(success=True, data={"tools": rows, "skills": skill_rows, "human": f"能力台账：{human}"})
 
 
 class ToolRegistry:

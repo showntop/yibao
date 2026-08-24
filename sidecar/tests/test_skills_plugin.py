@@ -206,3 +206,17 @@ def test_refresh_index_preserves_bundled(env):
     env
     refresh_index()
     assert "zimeiti:write" in index()
+
+
+def test_tool_list_includes_skill_rows(env):
+    """能力台账补 skill 域（#8）：data.skills 单列独立技能与插件包内技能（不注册 Tool 不进 tools 段）。"""
+    from yibao_brain.tools.core import ToolListTool
+
+    reg, _ = env
+    r = ToolListTool(reg, set(), {}).run({}, None)
+    assert r.success
+    ids = {s["id"]: s for s in r.data["skills"]}
+    assert ids["skill:sample"]["source_type"] == "skill" and ids["skill:sample"]["owner"] is None
+    assert ids["zimeiti:write"]["source_type"] == "plugin_skill" and ids["zimeiti:write"]["owner"] == "zimeiti"
+    assert "技能" in r.data["human"]
+    assert not any(t["id"].startswith(("skill:", "zimeiti:")) for t in r.data["tools"])  # 不进 tools 段

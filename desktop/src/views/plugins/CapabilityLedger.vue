@@ -15,9 +15,18 @@ interface LedgerRow {
   privileged?: boolean;
 }
 
+interface SkillRow {
+  id: string; // skill:xxx（独立）或 <pid>:xxx（插件包内）
+  source_type: "skill" | "plugin_skill";
+  owner: string | null;
+  name: string;
+  description: string;
+}
+
 const emit = defineEmits<{ back: [] }>();
 
 const rows = ref<LedgerRow[]>([]);
+const skills = ref<SkillRow[]>([]);
 const err = ref("");
 const loading = ref(false);
 const lastUpdated = ref("");
@@ -44,6 +53,7 @@ async function load() {
   try {
     const res = await runPanelAction("tool_ledger");
     rows.value = (res?.tools as LedgerRow[]) ?? [];
+    skills.value = (res?.skills as SkillRow[]) ?? [];
     lastUpdated.value = new Date().toLocaleTimeString();
   } catch (e) {
     err.value = String(e);
@@ -140,6 +150,28 @@ onMounted(load);
           </tr>
         </tbody>
       </table>
+
+      <!-- skill 域（不注册 Tool，单列一段）：独立技能 + 插件包内技能，只读 -->
+      <template v-if="skills.length">
+        <div class="skills-head">
+          技能 {{ skills.length }} 个
+          <span class="skills-hint">展开用 use_skill · 安装/固化用 skills.list</span>
+        </div>
+        <table class="ledger-table">
+          <tbody>
+            <tr v-for="s in skills" :key="s.id">
+              <td class="col-id"><code>{{ s.id }}</code></td>
+              <td class="col-type">
+                <span class="badge" :class="s.source_type === 'skill' ? 't-mcp' : 't-plugin'">
+                  {{ s.source_type === "skill" ? "独立" : `包内 · ${s.owner}` }}
+                </span>
+              </td>
+              <td class="col-skill-name">{{ s.name }}</td>
+              <td class="col-skill-desc">{{ s.description }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </template>
     </div>
   </div>
 </template>
@@ -249,6 +281,18 @@ onMounted(load);
 .col-state { width: 13%; }
 .col-note { width: 23%; }
 .col-op { width: 10%; text-align: right; }
+.skills-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--yb-space-3);
+  margin: var(--yb-space-4) 0 var(--yb-space-2);
+  font-size: var(--yb-fs-lg);
+  font-weight: var(--yb-fw-bold);
+  color: var(--yb-text-strong);
+}
+.skills-hint { font-size: var(--yb-fs-xs); font-weight: normal; color: var(--yb-text-faint); }
+.col-skill-name { width: 14%; color: var(--yb-text); }
+.col-skill-desc { color: var(--yb-text-dim); }
 .op-hint { font-size: var(--yb-fs-xs); color: var(--yb-text-faint); }
 .op {
   padding: 2px 8px;
