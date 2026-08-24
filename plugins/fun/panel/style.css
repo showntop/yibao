@@ -1,4 +1,5 @@
-/* 娱乐面板（module 面板）：配色对齐译宝主题（tokens.css 语义色，slate + sky 蓝 accent） */
+/* 娱乐面板（module 面板）：配色对齐译宝主题（tokens.css 语义色，slate + sky 蓝 accent）
+   深色双通道：系统媒体查询 + 宿主主题通道（app.js 收 {type:"theme"} 写 data-theme 命中显式块） */
 * { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
   --bg: #f0f4f8; --card: #ffffff;
@@ -10,7 +11,8 @@
   --toast-bg: rgba(61, 74, 92, 0.94);
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
     --bg: #10161d; --card: #18212b;
     --border: rgba(255, 255, 255, 0.09); --border-soft: rgba(255, 255, 255, 0.06); --border-strong: rgba(255, 255, 255, 0.18);
     --text: #dbe4ee; --muted: #93a3b6; --faint: #6d7f93;
@@ -19,6 +21,16 @@
     --red-bg: rgba(192, 87, 75, 0.2); --red: #f0aaa1; --red-bar: #e38a80;
     --toast-bg: rgba(219, 228, 238, 0.92);
   }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+    --bg: #10161d; --card: #18212b;
+    --border: rgba(255, 255, 255, 0.09); --border-soft: rgba(255, 255, 255, 0.06); --border-strong: rgba(255, 255, 255, 0.18);
+    --text: #dbe4ee; --muted: #93a3b6; --faint: #6d7f93;
+    --accent: #5ea0d2; --accent-deep: #4d90c4; --accent-soft: rgba(77, 144, 196, 0.22);
+    --segment-track: rgba(255, 255, 255, 0.1);
+    --red-bg: rgba(192, 87, 75, 0.2); --red: #f0aaa1; --red-bar: #e38a80;
+    --toast-bg: rgba(219, 228, 238, 0.92);
 }
 /* 背景透明：面板在 peek 白卡 / 独立浮窗（透桌面）里由宿主底色托底，
    body 不透明会在 iframe 圆角外漏出灰块（四角「灰」的根源）——内容卡片自带底色 */

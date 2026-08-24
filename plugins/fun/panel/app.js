@@ -474,6 +474,15 @@
   });
 
   // ---- 面板事件：对话流打开时定位 ----
+  // 宿主主题通道（WebviewPanel 推 {type:"theme"}）：显式值写 data-theme 命中显式深色块；
+  // 未收到则跟随系统（媒体查询块）。
+  if (window.yibao && window.yibao.onMessage) {
+    window.yibao.onMessage(function (m) {
+      if (!m || m.type !== "theme") return;
+      if (m.theme === "light" || m.theme === "dark") document.documentElement.dataset.theme = m.theme;
+      else delete document.documentElement.dataset.theme;
+    });
+  }
   window.yibao.onInit(function (data) {
     if (!data) return;
     // QQ 音乐原版：LLM 调 fun.music {kw, source:"qq"} → data 带 mode=qq + qq_search_url → 内嵌 QQ 搜索页
