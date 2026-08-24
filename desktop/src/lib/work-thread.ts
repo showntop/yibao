@@ -37,7 +37,9 @@ export function isTaskLogEvent(e: { task?: unknown; type?: string }): boolean {
   return Boolean(e.task) || e.type === "watch_command";
 }
 
-/** 已落库的任务收尾（沙箱/agent）带 clock 图标，文案是完成日志。 */
+/** 已落库的任务收尾（沙箱/agent）带 clock 图标，文案是完成日志。
+ *  emoji 前缀是协议事实：后端任务事件 text 保留 ✅/❌/⏰/⏹ 前缀（mobile raw text 依赖它），
+ *  desktop 展示层另行剥离（lib/text.ts stripTaskStatusEmoji），此正则只用于识别、不用于展示。 */
 export function isTaskLogBubble(bubble: WorkBubble): boolean {
   if (bubble.icon !== "clock") return false;
   const text = bubble.text.trim();

@@ -19,7 +19,7 @@ import {
   type FeedStats,
   type RunningTask,
 } from "../../lib/brain";
-import { squashSpaces, truncate } from "../../lib/text";
+import { squashSpaces, stripTaskStatusEmoji, truncate } from "../../lib/text";
 import { fmtHHMM, fmtMonthDay } from "../../lib/time";
 
 const emit = defineEmits<{ chat: [draft?: string]; unread: [n: number]; stats: [s: FeedStats, running: RunningTask[]] }>();
@@ -131,6 +131,11 @@ function kindIcon(it: FeedItem): "clock" | "check" | "x" | "chat" {
 
 function taskStatus(it: FeedItem): string {
   return String(it.meta?.status ?? "done");
+}
+
+/** 任务卡正文：剥 emoji 状态前缀（状态已由行首图标 + tl-tag 徽章表达，三重复反而吵）。 */
+function displayText(it: FeedItem): string {
+  return it.kind === "task" ? stripTaskStatusEmoji(it.text) : it.text;
 }
 
 function taskStatusLabel(it: FeedItem): string {
@@ -319,7 +324,7 @@ onUnmounted(() => {
               <YbIcon :name="kindIcon(it)" :size="13" />
             </span>
             <span class="tl-main">
-              <span class="tl-text">{{ it.text }}</span>
+              <span class="tl-text">{{ displayText(it) }}</span>
               <span v-if="it.kind === 'task'" class="tl-tag" :class="`tag-${taskStatus(it)}`">
                 {{ taskStatusLabel(it) }}
               </span>

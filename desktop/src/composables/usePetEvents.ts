@@ -17,6 +17,7 @@ import {
   type SurfaceAttr,
 } from "../lib/surface/pet-surface";
 import { procLabel, procResultSuffix, procSkip } from "../lib/proc";
+import { stripTaskStatusEmoji } from "../lib/text";
 import { isTaskLogEvent } from "../lib/work-thread";
 import type { usePetState } from "./usePetState";
 import type { usePetSpeech } from "./usePetSpeech";
@@ -209,8 +210,9 @@ export function usePetEvents(ctx: PetEventsCtx) {
           flashState("drowsy", 3000); // 深夜 → 打哈欠（Zz）
         } else if (taskDone || taskFail || isTaskLogEvent(e)) {
           // 任务结果 = 轻反应：闪现 + 4s 自收气泡。不插对话胶囊——蓝色提醒会打断当轮输出。
+          // 文案剥 emoji 状态前缀：成败已由 flashState 的 success/error 形象反应表达。
           flashState(taskDone ? "success" : taskFail ? "error" : "success", taskDone ? 1200 : 900);
-          speech.value = text;
+          speech.value = stripTaskStatusEmoji(text);
           speechStreaming.value = false;
           showSpeechBubble();
           speechScheduleHide(4000);

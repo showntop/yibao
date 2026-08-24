@@ -4,6 +4,7 @@
 import { onMounted, onUnmounted, ref } from "vue";
 import { getDistillTimelineOnce, onRecapOpen, type DistillDay } from "../../lib/brain";
 import { fmtHHMMFromSec, fmtHours } from "../../lib/time";
+import YbIcon from "../../components/common/YbIcon.vue";
 
 const emit = defineEmits<{ "open-recap": [day: string] }>();
 
@@ -82,8 +83,8 @@ onUnmounted(() => {
         </p>
         <p v-if="activeRangesLabel(d.stats)" class="rd-blocks">深度专注 {{ activeRangesLabel(d.stats) }}</p>
         <ul class="rd-items">
-          <li v-for="i in recapInsights(d)" :key="i.id" class="rd-item insight">💡 {{ i.text }}</li>
-          <li v-for="i in recapEvents(d)" :key="i.id" class="rd-item event">📌 {{ i.text }}</li>
+          <li v-for="i in recapInsights(d)" :key="i.id" class="rd-item insight"><YbIcon name="sparkle" :size="13" /> {{ i.text }}</li>
+          <li v-for="i in recapEvents(d)" :key="i.id" class="rd-item event"><YbIcon name="pin" :size="13" /> {{ i.text }}</li>
         </ul>
         <p
           v-if="!recapInsights(d).length && !recapEvents(d).length"

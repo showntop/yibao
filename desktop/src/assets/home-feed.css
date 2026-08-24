@@ -729,6 +729,10 @@
   font-size: var(--yb-fs-lg);
   line-height: var(--yb-lh-ui);
 }
+.rd-item .yb-icon {
+  vertical-align: -2px;
+  margin-right: 2px;
+}
 .rd-item.insight {
   color: var(--yb-text);
 }

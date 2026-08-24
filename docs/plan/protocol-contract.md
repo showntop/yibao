@@ -78,6 +78,19 @@ sidecar/Rust 落盘与 IPC 用 snake_case；desktop 前端协议层（`protocol/
 
 **desktop 内部单源化（已完成，R-29）**：`RunMetrics` 唯一定义于 `desktop/src/protocol/brain-types.ts`（state/types.ts re-export 兼容旧路径）；`AvatarState`（7 态共享集）唯一定义于 protocol/brain-types.ts，Home.vue/HomeFrame.vue/HomePlugins.vue/PanelApp.vue/usePetState（PetAvatarState 扩展）/useHomeChatSession（HomeAvatarState 别名）全部引用单源。
 
+### 3.2.2 任务收尾事件的 text 约定（2026-08-24 落档）
+
+插件任务（agents/sandbox/coding）收尾经 `emit_event({"kind": "reminder", "text": ..., "task": {...}})` 上报；`proactive.dispatch` 凭 `task` 落 Feed 为 `kind: "task"`（meta = task meta，含英文 `status: done|failed|stopped`）。
+
+**约定：`text` 保留 emoji 状态前缀（✅/❌/⏰/⏹），是协议事实**——mobile Feed 直显 raw text，前缀是其唯一状态信号；desktop 不做双写，展示层剥离：
+
+- Feed 时间线：`FeedTimeline.displayText()` 对 `kind === "task"` 剥前缀（状态已由行首 YbIcon + `tl-tag` 徽章双通道表达）；
+- 宠物气泡闪播：`usePetEvents` 任务结果分支剥前缀（成败由 `flashState` success/error 形象反应表达）；
+- 剥离函数单源：`desktop/src/lib/text.ts` `stripTaskStatusEmoji`；识别正则（非展示用）在 `lib/work-thread.ts` `isTaskLogBubble`；
+- 超时在 `task.status` 归并为 `failed`（⏰ 仅存于 text），desktop 不单独区分。
+
+**变更纪律**：新任务类事件沿用「text 带前缀 + task.status 结构化」双轨；任何一端要去掉 text 前缀，须先给 mobile Feed 补结构化状态渲染。
+
 ### 3.3 HTTP 端点（mobile/extension 侧，请求形状）
 
 | 端点 | 用途 | 请求体 |
