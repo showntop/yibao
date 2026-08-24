@@ -43,12 +43,16 @@ _sess = _sibling("sessions")  # 会话核心域（sessions.py）：_SESSIONS 等
 
 
 def _c():
-    """coding 主模块：生产经 _sibling 挂 yibao_plugin_coding_coding；测试直接
-    `import coding`（skills 目录在 sys.path）。两态都先挂后用，运行期必在表中。"""
+    """coding 主模块：测试直接 `import coding`（skills 目录在 sys.path）；
+    生产加载器不挂 sys.modules（见 plugins._import_file 注释），且无人 _sibling("coding")，
+    须现场兜底加载并挂表（2026-08-24 生产 KeyError('coding') 的根因）。"""
     mod = sys.modules.get("yibao_plugin_coding_coding")
     if mod is not None:
         return mod
-    return sys.modules["coding"]
+    mod = sys.modules.get("coding")
+    if mod is not None:
+        return mod
+    return _sibling("coding")
 
 
 def start_session(db, *, agent: str, cwd: str, prompt: str, source: str = "",

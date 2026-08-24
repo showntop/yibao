@@ -1218,3 +1218,4 @@ def test_declarative_tool_failure_carries_no_hints(data_dir, tmp_path):
     r = boom.run({"id": "x"}, boom.plugin_ctx)
     assert not r.success
     assert r.presentation is None
+

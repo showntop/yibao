@@ -2112,3 +2112,19 @@ def test_make_tools_reconciles_stale_running(monkeypatch):
     assert r.success, r.error
     # db=None（测试/无 db capability 形态）→ 跳过，不炸
     assert codingmod.make_tools(type("C", (), {"db": None, "emit_event": None})())
+
+
+def test_c_fallback_loads_main_module_when_unregistered(monkeypatch):
+    """回归（2026-08-24 生产「技能执行异常：'coding'」）：生产加载器不挂 sys.modules
+    （plugins._import_file），且无人 _sibling("coding")——两名字都不在表中时
+    _c() 须现场兜底加载主模块，而不是 KeyError。"""
+    import _session_skills
+
+    monkeypatch.delitem(sys.modules, "yibao_plugin_coding_coding", raising=False)
+    monkeypatch.delitem(sys.modules, "coding", raising=False)
+    mod = _session_skills._c()
+    assert hasattr(mod, "make_tools")
+    # 兜底经 _sibling 挂表：重复调用拿同一实例
+    assert _session_skills._c() is mod
+    # 不污染后续用例的 monkeypatch 约定（_c() 优先命中生产名实例）
+    sys.modules.pop("yibao_plugin_coding_coding", None)

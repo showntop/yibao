@@ -681,7 +681,10 @@ def _load_code_tools(child: Path, manifest: dict, ctx: ToolContext) -> list[Tool
 
 
 def _import_file(path: Path):
-    """按文件路径 import 插件模块（模块名加插件目录前缀防撞名）。"""
+    """按文件路径 import 插件模块（模块名加插件目录前缀防撞名）。
+    不挂 sys.modules：测试环境以 `import coding` 直挂主模块并 monkeypatch，
+    加载器挂表会让 _c() 优先命中加载器实例、击穿测试的 patch 约定（2026-08-24 实测 20 例翻车）；
+    生产侧主模块缺失由 _c() 自己的 _sibling 兜底（见 _session_skills._c）。"""
     name = f"yibao_plugin_{path.parent.parent.name}_{path.stem}"
     spec = importlib.util.spec_from_file_location(name, path)
     mod = importlib.util.module_from_spec(spec)
