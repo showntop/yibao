@@ -521,3 +521,15 @@ def test_build_behaviors_proactive_only_when_vision_and_allowlist():
     assert any(b.name == "proactive_chat" for b in build_behaviors({"watch.observe_apps": ["X"]}, **deps))
     assert not any(b.name == "proactive_chat" for b in build_behaviors({}, **deps))  # 白名单空
     assert not any(b.name == "proactive_chat" for b in build_behaviors({"watch.observe_apps": ["X"]}, host=object(), vision=None, budget=Budget(1, 1), emit=lambda e: None))
+
+
+def test_ambient_events_carry_signal_for_shell_reaction():
+    """三信号各带 signal 标识（壳侧按它配宠物反应：greeting/welcome→招手，milestone→星芒）。"""
+    a = Ambient(quiet_hours="", return_after_minutes=30, focus_hours=1.0, cooldown_hours=0.0)
+    ev = a.tick(_snap(_lt(9, 0), "active", 1, seg=1), WatchCtx())
+    assert ev and ev["signal"] == "greeting"
+    a.tick(_snap(_lt(10, 0), "idle", 1800, seg=1), WatchCtx())
+    ev = a.tick(_snap(_lt(10, 30), "active", 1, seg=2), WatchCtx())
+    assert ev and ev["signal"] == "welcome"
+    ev = a.tick(_snap(_lt(11, 40), "active", 3600 + 10, seg=2), WatchCtx())
+    assert ev and ev["signal"] == "milestone"

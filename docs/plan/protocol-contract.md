@@ -25,7 +25,7 @@
 | `error` | 错误 | ✅ | ✅ |
 | `listening` / `listening_done` | 语音状态 | ✅ | — |
 | `speaking` / `speaking_done` | 播报状态 | ✅ | ✅ |
-| `reminder` | 主动提醒（`type`/`day`/`task` 语义载荷） | ✅ | ✅ |
+| `reminder` | 主动提醒（`type`/`day`/`task`/`signal` 语义载荷；`signal`=ambient 三信号标识 greeting/welcome/milestone） | ✅ | ✅ |
 | `notice` | 排队提示 | ✅ | ✅ |
 | `panel` / `panel_data` | 面板事件 | ✅ | — |
 | `run_done` | 一轮 run 收口 | — | ✅ |

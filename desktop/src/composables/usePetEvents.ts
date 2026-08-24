@@ -208,6 +208,10 @@ export function usePetEvents(ctx: PetEventsCtx) {
           flashState("stretch", 1500); // 久坐 → 一套伸展操
         } else if (e.type === "late_night") {
           flashState("drowsy", 3000); // 深夜 → 打哈欠（Zz）
+        } else if (e.type === "ambient") {
+          // 在场陪伴（C 反应式同款思路：确定性信号 → 一次性闪现）：
+          // 专注里程碑 → success 星芒；每日首活跃/回归问候 → notify 招手。气泡走下方通用路径。
+          flashState(e.signal === "milestone" ? "success" : "notify", e.signal === "milestone" ? 1500 : 1200);
         } else if (taskDone || taskFail || isTaskLogEvent(e)) {
           // 任务结果 = 轻反应：闪现 + 4s 自收气泡。不插对话胶囊——蓝色提醒会打断当轮输出。
           // 文案剥 emoji 状态前缀：成败已由 flashState 的 success/error 形象反应表达。

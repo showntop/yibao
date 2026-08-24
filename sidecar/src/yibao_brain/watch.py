@@ -180,9 +180,11 @@ class Ambient:
             self._milestone_done = False
             self._milestone_segment = None  # 跨天清零：即便段 id 理论撞车也重新可夸
 
-    def _fire(self, now: float, text: str) -> dict:
+    def _fire(self, now: float, text: str, signal: str) -> dict:
         self._last_fired = now
-        return {"kind": "reminder", "type": "ambient", "text": text}
+        # signal：三信号标识（greeting 首活跃/welcome 回归/milestone 专注里程碑），
+        # 壳侧按它配不同的宠物反应（反应式渲染，对齐 task.status 先例）
+        return {"kind": "reminder", "type": "ambient", "signal": signal, "text": text}
 
     def tick(self, snapshot: WatchSnapshot, ctx: WatchCtx) -> dict | None:
         self._roll_day(snapshot.now)
@@ -207,19 +209,19 @@ class Ambient:
         # 每日首活跃问候（静默时段被抑制时不记账，出静默后仍可问候）
         if not self._greeted:
             self._greeted = True
-            return self._fire(snapshot.now, "你来啦，新的一天开始吧 ☀️")
+            return self._fire(snapshot.now, "你来啦，新的一天开始吧 ☀️", "greeting")
         # 回归问候：刚从 ≥30 分钟的 idle 回到 active
         if (prev_state == "idle" and prev_idle >= self._return_after_s
                 and self._welcomes < self._welcome_max):
             self._welcomes += 1
-            return self._fire(snapshot.now, "回来啦，接着忙吧 👋")
+            return self._fire(snapshot.now, "回来啦，接着忙吧 👋", "welcome")
         # 专注里程碑：同一活动段连续 active 满阈值，每日一句
         seg = act.get("segment_id") if act else None
         if (not self._milestone_done and seconds >= self._focus_s
                 and seg is not None and seg != self._milestone_segment):
             self._milestone_segment = seg
             self._milestone_done = True
-            return self._fire(snapshot.now, self._milestone_text)
+            return self._fire(snapshot.now, self._milestone_text, "milestone")
         return None
 
 

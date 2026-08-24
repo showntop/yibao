@@ -103,6 +103,8 @@ export interface BrainEvent {
   /** morning_recap 深链接：反刍提醒携带 type/day 供 deep-link */
   type?: string;
   day?: string;
+  /** ambient 在场陪伴三信号标识（greeting 首活跃/welcome 回归/milestone 专注里程碑），壳侧配宠物反应 */
+  signal?: string;
   /** 反应式渲染原料：agents 任务完成事件携带 */
   task?: { id?: string; status?: string; label?: string; prompt?: string };
   /** watch_command 完成事件携带（completed/failed/timed_out/cancelled） */
