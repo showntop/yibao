@@ -46,3 +46,28 @@ def test_plugin_call_counts_skips_null_skill(tmp_path):
         log.conn.execute("INSERT INTO actions (id, tool_id) VALUES (?, NULL)", ("dirty",))
         log.conn.commit()
     assert log.plugin_call_counts() == {"notes": 1}
+
+
+def test_migrate_legacy_skill_id_column(tmp_path):
+    """老库（2026-08-23 改名前）只有 skill_id 列：打开即迁移为 tool_id，存量行保留。"""
+    import sqlite3
+
+    db = tmp_path / "audit.db"
+    conn = sqlite3.connect(str(db))
+    conn.execute(
+        "CREATE TABLE actions (id TEXT PRIMARY KEY, ts TEXT DEFAULT (datetime('now')),"
+        " skill_id TEXT, params TEXT, risk INTEGER, success INTEGER, error TEXT, data TEXT,"
+        " screenshot_path TEXT)"
+    )
+    conn.execute("INSERT INTO actions (id, skill_id, success) VALUES ('old1', 'notes.keep', 1)")
+    conn.commit()
+    conn.close()
+
+    log = AuditLog(db)
+    log.record(Action(tool_id="forge.add", params={"x": 1}), ActionResult(success=True))
+    rows = log.recent(10)
+    assert len(rows) == 2
+    by_id = {r["id"]: r for r in rows}
+    assert by_id["old1"]["tool_id"] == "notes.keep"  # 存量行随迁
+    assert "skill_id" not in by_id["old1"]
+    assert log.plugin_call_counts() == {"notes": 1, "forge": 1}

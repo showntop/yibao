@@ -32,6 +32,13 @@ class AuditLog:
                 )
                 """
             )
+            # 幂等迁移：2026-08-23 协议改名 skill_id → tool_id 前的老库，
+            # CREATE IF NOT EXISTS 不会改已有表——缺 tool_id 列时 INSERT 静默失败、审计全丢。
+            if "tool_id" not in {r[1] for r in self.conn.execute("PRAGMA table_info(actions)")}:
+                if "skill_id" in {r[1] for r in self.conn.execute("PRAGMA table_info(actions)")}:
+                    self.conn.execute("ALTER TABLE actions RENAME COLUMN skill_id TO tool_id")
+                else:
+                    self.conn.execute("ALTER TABLE actions ADD COLUMN tool_id TEXT")
             self.conn.commit()
 
     def record(self, action: Action, result: ActionResult, screenshot_path: str | None = None) -> None:
