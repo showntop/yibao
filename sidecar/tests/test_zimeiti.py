@@ -1,6 +1,7 @@
 """zimeiti 插件（自媒体：选题+写作）端到端测试：加载真实 plugins/zimeiti/（数据目录重定向到 tmp）。
 
-覆盖：声明式 CRUD/状态流转全链 + 代码 tool（guide/article_save/article_read 版本管理）
+覆盖：声明式 CRUD/状态流转全链 + 代码 tool（article_save/article_read 版本管理）
++ bundled skill（skills/write/SKILL.md 成文框架，use_skill 展开）
 + api.toml 白名单 + 面板 schema 与 api 方法的一致性 + webview 编辑器面板。
 """
 import asyncio
@@ -68,7 +69,6 @@ def test_all_tools_registered_with_risks(env):
         "zimeiti.get": RiskLevel.L0_READONLY,
         "zimeiti.move": RiskLevel.L1_LOW,
         "zimeiti.delete": RiskLevel.L2_MEDIUM,
-        "zimeiti.guide": RiskLevel.L0_READONLY,
         "zimeiti.article_save": RiskLevel.L2_MEDIUM,
         "zimeiti.article_read": RiskLevel.L0_READONLY,
         "zimeiti.ai_edit": RiskLevel.L1_LOW,
@@ -106,19 +106,18 @@ def test_declarative_chain(env):
     assert _run(reg, "zimeiti.list", {}).data["rows"] == []
 
 
-# ---------- guide ----------
+# ---------- bundled skill（guides → skills/write/SKILL.md，2026-08-24 转化） ----------
 
 
-def test_guide_loads_methodology(env):
-    reg, _, _ = env
-    r = _run(reg, "zimeiti.guide", {"name": "write"})
-    assert r.success and "钩子" in r.data["text"]
+def test_bundled_write_skill_resolvable(env):
+    """插件包内技能随加载注册：owner 前缀与短名都可解析，正文完整（原 zimeiti.guide 替代面）。"""
+    from yibao_brain.tools.skills_index import index, resolve
 
-
-def test_guide_rejects_unknown_and_traversal(env):
-    reg, _, _ = env
-    for bad in ("nope", "../manifest", "../../etc/passwd"):
-        assert not _run(reg, "zimeiti.guide", {"name": bad}).success, bad
+    env
+    assert "zimeiti:write" in index()
+    key, entry = resolve("zimeiti:write")
+    assert key == "zimeiti:write" and "钩子" in entry["text"]
+    assert resolve("write")[0] == "zimeiti:write"  # owner 省略：短名唯一命中
 
 
 # ---------- article_save / article_read（版本管理） ----------

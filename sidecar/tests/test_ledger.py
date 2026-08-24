@@ -198,3 +198,33 @@ def test_source_store_persists_disabled_across_restart(tmp_path):
         if rec.status == "disabled":
             reg2.disable_source(rid)
     assert reg2.source_disabled("reload_a")
+
+
+def test_plugin_discover_fills_bundled_skills(tmp_path):
+    """PluginManager.discover 填 bundled_skills：包内 skills/**/SKILL.md 随加载注册的 id 列表。"""
+    root = tmp_path / "plugins"
+    d = _write_plugin(root, "reload_a", PLUGIN_A)
+    skill_dir = d / "skills" / "demo"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: demo\ndescription: 演示\n---\n\n# Demo\n", encoding="utf-8")
+    reg = ToolRegistry()
+    load_plugins(root, reg, memory=FakeMemory(), http=None, llm=None)
+    rec = {r.id: r for r in PluginManager(reg, root).discover()}["reload_a"]
+    assert rec.bundled_skills == ["reload_a:demo"]
+
+
+def test_unload_plugin_removes_bundled_skills(tmp_path):
+    """卸插件：包内技能一起走（spec：卸插件时包内 Skill 一起走）。"""
+    from yibao_brain.plugins import unload_plugin
+    from yibao_brain.tools.skills_index import index
+
+    root = tmp_path / "plugins"
+    d = _write_plugin(root, "reload_a", PLUGIN_A)
+    skill_dir = d / "skills" / "demo"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: demo\ndescription: 演示\n---\n\n# Demo\n", encoding="utf-8")
+    reg = ToolRegistry()
+    load_plugins(root, reg, memory=FakeMemory(), http=None, llm=None)
+    assert "reload_a:demo" in index()
+    unload_plugin(reg, "reload_a")
+    assert "reload_a:demo" not in index()

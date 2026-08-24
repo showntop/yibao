@@ -174,3 +174,35 @@ def test_skills_import_generates_loadable_plugin(env, tmp_path, monkeypatch):
     # 单形态激活（spec §G.3）：固化后桥条目停用，skills.list 不再显示该技能
     res2 = _run(reg, "skills.list", {})
     assert not any(r["id"] == "skill:sample" for r in res2.data["skills"])
+
+
+# ---------- 插件包内技能（bundled_skills，spec §对象模型） ----------
+
+
+def test_bundled_skills_registered_on_plugin_load(env):
+    """插件加载即注册包内 skills/**/SKILL.md（<pid>:* 命名空间），进全量索引。"""
+    from yibao_brain.tools.skills_index import bundled_for, index
+
+    _, results = env
+    assert results.get("zimeiti") == "ok" and results.get("forge") == "ok"
+    idx = index()
+    assert "zimeiti:write" in idx
+    for name in ("triage", "challenge", "scan", "prd"):
+        assert f"forge:{name}" in idx, name
+    assert bundled_for("forge") == ["forge:challenge", "forge:prd", "forge:scan", "forge:triage"]
+
+
+def test_use_skill_expands_bundled_skill(env):
+    """use_skill 经 owner 前缀 id 展开插件包内技能说明书（替代面：原 zimeiti.guide）。"""
+    reg, _ = env
+    res = _run(reg, "use_skill", {"skill": "zimeiti:write"})
+    assert res.success and "钩子" in res.data["text"]
+
+
+def test_refresh_index_preserves_bundled(env):
+    """refresh 重建根目录扫描不冲掉 bundled 注册（两条生命周期分离）。"""
+    from yibao_brain.tools.skills_index import index, refresh_index
+
+    env
+    refresh_index()
+    assert "zimeiti:write" in index()

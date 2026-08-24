@@ -236,7 +236,7 @@ class SkillsImportTool(Tool):
         }
 
     def run(self, params: dict, ctx: Any) -> ActionResult:
-        from yibao_brain.tools.skills_index import _INDEX
+        from yibao_brain.tools.skills_index import deactivate
 
         name_arg = str(params.get("skill") or "").strip()
         hit = resolve(name_arg)
@@ -258,7 +258,7 @@ class SkillsImportTool(Tool):
         except Exception as e:
             return ActionResult(success=False, error=f"固化失败：{e}")
         # 单形态激活（spec §G.3）：固化后桥条目停用，同一来源只激活插件形态
-        _INDEX.pop(key, None)
+        deactivate(key)  # 根目录/插件包内两注册表都摘
         return ActionResult(
             success=True,
             data={

@@ -133,6 +133,8 @@ class PluginManager(SourceManager):
             return child.name, False
 
     def discover(self) -> list[SourceRecord]:
+        from ..tools import skills_index
+
         out: list[SourceRecord] = []
         if not self._plugins_dir.is_dir():
             return out
@@ -147,6 +149,7 @@ class PluginManager(SourceManager):
                 source={"path": str(child), "installed_at": int(child.stat().st_mtime)},
                 privileged=privileged,
                 tools=list(self._reg.plugin_tools().get(pid, [])),
+                bundled_skills=skills_index.bundled_for(pid),
             ))
         return out
 

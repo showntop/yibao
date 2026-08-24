@@ -72,7 +72,7 @@ table = "requirements"
 [[tool]]
 id = "triage"
 type = "db"
-description = "存快筛结论并推进状态：快筛过/已搁置（快筛方法论先用 forge.guide 加载 triage）"
+description = "存快筛结论并推进状态：快筛过/已搁置（快筛方法论先用 use_skill 展开 forge:triage）"
 risk = "L1"
 panel = "forge:detail"
 refresh = "get"

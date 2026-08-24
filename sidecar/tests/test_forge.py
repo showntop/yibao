@@ -1,6 +1,7 @@
 """forge 插件（需求磨刀）端到端测试：加载真实 plugins/forge/（数据目录重定向到 tmp）。
 
-覆盖：声明式 CRUD 全链 + 代码 tool（guide/doc_save/verdict/verdict_form/proto_gen）
+覆盖：声明式 CRUD 全链 + 代码 tool（doc_save/verdict/verdict_form/proto_gen）
++ bundled skills（skills/{triage,challenge,scan,prd}/SKILL.md，use_skill 展开）
 + api.toml 白名单 + 面板 schema 与 api 方法的一致性。
 """
 import json
@@ -67,7 +68,6 @@ def test_all_tools_registered_with_risks(env):
         "forge.get": RiskLevel.L0_READONLY,
         "forge.triage": RiskLevel.L1_LOW,
         "forge.delete": RiskLevel.L2_MEDIUM,
-        "forge.guide": RiskLevel.L0_READONLY,
         "forge.doc_save": RiskLevel.L2_MEDIUM,
         "forge.verdict": RiskLevel.L2_MEDIUM,
         "forge.verdict_form": RiskLevel.L0_READONLY,
@@ -106,21 +106,19 @@ def test_declarative_chain(env):
     assert _run(reg, "forge.list", {}).data["rows"] == []
 
 
-# ---------- guide ----------
+# ---------- bundled skills（guides → skills/*/SKILL.md，2026-08-24 转化） ----------
 
 
-def test_guide_loads_methodology(env):
-    reg, _, _ = env
-    r = _run(reg, "forge.guide", {"name": "triage"})
-    assert r.success and "快筛" in r.data["text"]
-    for name in ("challenge", "scan", "prd"):
-        assert _run(reg, "forge.guide", {"name": name}).success, name
+def test_bundled_skills_resolvable(env):
+    """四篇方法论全部转为插件包内技能并随加载注册（原 forge.guide 替代面）。"""
+    from yibao_brain.tools.skills_index import index, resolve
 
-
-def test_guide_rejects_unknown_and_traversal(env):
-    reg, _, _ = env
-    for bad in ("nope", "../manifest", "../../etc/passwd"):
-        assert not _run(reg, "forge.guide", {"name": bad}).success, bad
+    env
+    idx = index()
+    for name in ("triage", "challenge", "scan", "prd"):
+        assert f"forge:{name}" in idx, name
+        assert resolve(name)[0] == f"forge:{name}", name  # owner 省略：短名唯一命中
+    assert "苏格拉底" in resolve("forge:challenge")[1]["text"]
 
 
 # ---------- doc_save ----------

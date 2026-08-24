@@ -36,18 +36,18 @@ direct = true
 # 交给 agent 多步完成（加载方法论 → 追问/搜索/生成 → 落盘），handler 仅作注册校验锚点
 [[method]]
 name = "challenge"
-handler = "forge.guide"
-intent = "对需求「{title}」发起挑战：先调用 forge.guide 加载 challenge 方法论，再多轮追问（id={id}）"
+handler = "forge.get"
+intent = "对需求「{title}」发起挑战：先用 use_skill 展开 forge:challenge 技能（挑战方法论），再多轮追问（id={id}）"
 
 [[method]]
 name = "scan"
-handler = "forge.guide"
-intent = "为需求「{title}」做竞品扫描：先调 forge.guide 加载 scan 方法论，用 web_search 搜索后把结论存进该需求（id={id}）"
+handler = "forge.get"
+intent = "为需求「{title}」做竞品扫描：先用 use_skill 展开 forge:scan 技能（竞品扫描方法论），用 web_search 搜索后把结论存进该需求（id={id}）"
 
 [[method]]
 name = "prd"
 handler = "forge.doc_save"
-intent = "为需求「{title}」撰写 PRD：先调 forge.guide 加载 prd 模板，用 forge.doc_save 落盘（id={id}）"
+intent = "为需求「{title}」撰写 PRD：先用 use_skill 展开 forge:prd 技能（PRD 模板），用 forge.doc_save 落盘（id={id}）"
 
 [[method]]
 name = "proto"

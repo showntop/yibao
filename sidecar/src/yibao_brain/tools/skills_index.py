@@ -20,6 +20,60 @@ _FRONT = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.S)
 
 _INDEX: dict[str, dict] = {}
 
+# 插件包内技能（spec §对象模型 bundled_skills）：pid → {skill_id: entry}。
+# 独立注册表而非混进 _INDEX——refresh_index() 重建根目录扫描时会整表替换，
+#  bundled 注册发生在插件加载期，两条生命周期不能互相覆盖。
+_BUNDLED: dict[str, dict[str, dict]] = {}
+
+
+def _scan_skills_dir(skills_dir: Path, key_of) -> dict[str, dict]:
+    """扫一个技能目录（含 SKILL.md 的子目录树）→ {skill_id: entry}；key_of(rel) 定 id。"""
+    skills: dict[str, dict] = {}
+    if not skills_dir.is_dir():
+        return skills
+    for md in sorted(skills_dir.rglob("SKILL.md")):
+        skill_dir = md.parent
+        rel = skill_dir.relative_to(skills_dir).as_posix()
+        if rel == "." or any(part.startswith("_") for part in skill_dir.relative_to(skills_dir).parts):
+            continue  # 根层直放 SKILL.md 不收（无目录名可命名）；_staging/ 等暂存段跳过
+        try:
+            text = md.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        fm = frontmatter(text)
+        skills[key_of(rel)] = {
+            "path": skill_dir,
+            "text": text,
+            "name": fm.get("name") or skill_dir.name,
+            "description": fm.get("description") or "",
+            "refs": _collect_refs(skill_dir),
+            "scripts": _collect_scripts(skill_dir),
+        }
+    return skills
+
+
+def register_bundled(pid: str, plugin_dir) -> list[str]:
+    """扫插件包内 skills/**/SKILL.md，以 <pid>:<rel> 命名空间注册（插件自带技能）。
+    返回注册的 skill id 列表（台账 bundled_skills 用）；插件目录无 skills/ 则登记空集。"""
+    found = _scan_skills_dir(Path(plugin_dir) / "skills", lambda rel: f"{pid}:{rel}")
+    _BUNDLED[pid] = found
+    return list(found)
+
+
+def unregister_bundled(pid: str) -> None:
+    _BUNDLED.pop(pid, None)
+
+
+def bundled_for(pid: str) -> list[str]:
+    return sorted(_BUNDLED.get(pid, {}))
+
+
+def deactivate(key: str) -> None:
+    """单形态激活（skill_import 固化后桥条目停用）：从所在注册表摘除该技能条目。"""
+    _INDEX.pop(key, None)
+    for entries in _BUNDLED.values():
+        entries.pop(key, None)
+
 
 def skills_root() -> Path:
     """技能根目录：$YIBAO_SKILLS_DIR 优先 → data_dir()/skills（每次读 env，避免缓存污染）。"""
@@ -51,51 +105,37 @@ def _collect_scripts(skill_dir: Path) -> list[str]:
 
 def scan(root: Path) -> dict[str, dict]:
     """递归扫描：所有含 SKILL.md 的目录 → 技能（id=skill:<相对路径>）。`_` 开头路径段跳过。"""
-    skills: dict[str, dict] = {}
-    if not root.is_dir():
-        return skills
-    for md in sorted(root.rglob("SKILL.md")):
-        skill_dir = md.parent
-        if any(part.startswith("_") for part in skill_dir.relative_to(root).parts):
-            continue  # _staging/ 等暂存段跳过
-        try:
-            text = md.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        fm = frontmatter(text)
-        rel = skill_dir.relative_to(root).as_posix()  # "ppt" 或 "slides/skills/pptx"
-        skills[f"skill:{rel}"] = {
-            "path": skill_dir,
-            "text": text,
-            "name": fm.get("name") or skill_dir.name,
-            "description": fm.get("description") or "",
-            "refs": _collect_refs(skill_dir),
-            "scripts": _collect_scripts(skill_dir),
-        }
-    return skills
+    return _scan_skills_dir(root, lambda rel: f"skill:{rel}")
 
 
 def refresh_index(root: Path | None = None) -> dict[str, dict]:
-    """重建缓存索引（skills.refresh / 启动时调用）。"""
+    """重建根目录扫描缓存（skills.refresh / 启动时调用）；返回合并 bundled 后的全量视图。"""
     global _INDEX
     _INDEX = scan(root or skills_root())
-    return _INDEX
+    return index()
 
 
 def index() -> dict[str, dict]:
-    return _INDEX
+    """全量技能视图：根目录扫描（skill:* 命名空间）+ 插件包内（<pid>:* 命名空间）。"""
+    out = dict(_INDEX)
+    for entries in _BUNDLED.values():
+        out.update(entries)
+    return out
 
 
 def resolve(name: str) -> tuple[str, dict] | None:
-    """解析技能名：完整相对路径（"skill:slides/skills/pptx" 或裸路径）直接命中；
-    短名（如 "pptx"）唯一命中（嵌套集合场景避免歧义）。"""
+    """解析技能名：完整 id（"skill:slides/skills/pptx" / 裸路径 / owner 前缀 "zimeiti:write"）
+    直接命中；短名（如 "pptx" / "write"）唯一命中（spec：owner 可省略，多命中报歧义即不命中）。"""
+    idx = index()
     clean = name[6:] if name.startswith("skill:") else name
     key = f"skill:{clean}"
-    if key in _INDEX:
-        return key, _INDEX[key]
-    hits = [k for k, v in _INDEX.items() if v["path"].name == clean]
+    if key in idx:
+        return key, idx[key]
+    if name in idx:  # owner 前缀完整 id（插件自带技能）
+        return name, idx[name]
+    hits = [k for k, v in idx.items() if v["path"].name == clean]
     if len(hits) == 1:
-        return hits[0], _INDEX[hits[0]]
+        return hits[0], idx[hits[0]]
     return None
 
 

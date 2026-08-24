@@ -25,6 +25,7 @@ from .ipc import ActionResult, RiskLevel
 from .plugindb import PluginDb
 # 直接 import tools.core（不经 tools/__init__ 全量），避免 ledger→plugins 循环导入
 from .tools.core import Tool, ToolContext, ToolRegistry
+from .tools import skills_index
 
 
 # 合法 capability 集合（v2 §3.3）；host 不由加载器注入（invoker 执行时嫁接）
@@ -296,6 +297,7 @@ def unload_plugin(registry: ToolRegistry, pid: str) -> int:
         removed += 1
     _PLUGIN_INFO.pop(pid, None)
     _PLUGIN_DIRS.pop(pid, None)
+    skills_index.unregister_bundled(pid)  # 包内技能随插件一起卸（spec：卸插件 bundled_skills 一起走）
     return removed
 
 
@@ -662,6 +664,8 @@ def _load_one(child: Path, registry: ToolRegistry, *, memory, http, llm, emit_pa
     api_file = child / "api.toml"  # 面板可调方法白名单（可选）
     if api_file.is_file():
         _load_api(pid, api_file, registry)
+    # 插件自带技能（spec §对象模型 bundled_skills）：扫 skills/**/SKILL.md 注册 <pid>:* 命名空间
+    skills_index.register_bundled(pid, child)
     return pid
 
 

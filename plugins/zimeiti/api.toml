@@ -131,12 +131,12 @@ quiet = true
 # 交给 agent 多步完成（加载方法论 → 生成/改写 → 落盘存版本），handler 仅作注册校验锚点
 [[method]]
 name = "draft"
-handler = "zimeiti.guide"
-intent = "为选题「{title}」写初稿：先调 zimeiti.guide 加载 write 方法论，成稿后用 zimeiti.article_save 落盘存版本（id={id}）"
+handler = "zimeiti.article_save"
+intent = "为选题「{title}」写初稿：先用 use_skill 展开 zimeiti:write 技能（成文框架），成稿后用 zimeiti.article_save 落盘存版本（id={id}）"
 
 [[method]]
 name = "revise"
-handler = "zimeiti.guide"
+handler = "zimeiti.article_read"
 intent = "修改选题「{title}」的稿件：先用 zimeiti.article_read 读最新稿（id={id}），问我修改意见或直接按对话里的意见改写，用 zimeiti.article_save 存新版本"
 
 [[method]]
