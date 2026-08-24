@@ -106,7 +106,7 @@ function fmt(n: number): string {
   opacity: 0;
   pointer-events: none;
   transform: translateY(-4px);
-  transition: opacity 0.15s ease, transform 0.15s ease;
+  transition: opacity var(--yb-dur-fast) var(--yb-ease-out), transform var(--yb-dur-fast) var(--yb-ease-out);
   z-index: 30;
   font-size: 12px;
   color: var(--yb-text);

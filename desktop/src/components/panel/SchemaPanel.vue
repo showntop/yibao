@@ -519,12 +519,12 @@ const fallbackJson = computed(() =>
 }
 /* 卡片跨列移动过渡（视觉回响） */
 .card-move-move {
-  transition: transform 0.25s ease;
+  transition: transform var(--yb-dur) var(--yb-ease-out);
 }
 .card-move-enter-active {
   transition:
-    opacity 0.2s ease,
-    transform 0.25s ease;
+    opacity var(--yb-dur) var(--yb-ease-out),
+    transform var(--yb-dur) var(--yb-ease-out);
 }
 .card-move-enter-from {
   opacity: 0;

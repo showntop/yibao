@@ -1008,7 +1008,7 @@ onUnmounted(() => {
   transform: translateY(-10px);
 }
 .quick-leave-active {
-  transition: opacity 0.16s ease-in, transform 0.18s ease-in;
+  transition: opacity var(--yb-dur-fast) var(--yb-ease-inout), transform var(--yb-dur) var(--yb-ease-inout);
 }
 .quick-leave-to {
   opacity: 0;
