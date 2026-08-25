@@ -924,9 +924,15 @@ def test_ai_edit_title_unparseable_errors(env):
 def test_ai_edit_full_length_limits(env):
     reg, _, _ = env
     t = _ai_skill(reg)
+    # v2 #15：polish 长文不再踢出编辑器，走分段润色队列（8001 字硬切成 2 段）
     r = t.run({"selection": "x" * 8001, "mode": "polish"}, t.plugin_ctx)
-    assert not r.success and "8001" in r.error  # 全文上限 8000
+    assert r.success and r.data["chunks"] == 2 and r.data["replacement"] == "改写后的表达\n\n改写后的表达"
     assert t.run({"selection": "x" * 8000, "mode": "polish"}, t.plugin_ctx).success
+    # platform 改写需整文视角，长文仍拒（引导走对话改稿）
+    r = t.run({"selection": "x" * 8001, "mode": "platform", "platform": "小红书"}, t.plugin_ctx)
+    assert not r.success and "8001" in r.error
+    # title 长文截断取要，不踢出
+    assert t.run({"selection": "x" * 8001, "mode": "title"}, t.plugin_ctx).success
     r = t.run({"selection": "x" * 4001}, t.plugin_ctx)
     assert not r.success and "4001" in r.error  # 选段上限 4000（回归）
 
@@ -1032,3 +1038,11 @@ def test_publish_records_version_and_copies_plain_text(env, monkeypatch):
     assert "**" not in copied["text"] and "· 列表项" in copied["text"]
     row = _run(reg, "zimeiti.get", {"id": tid}).data["rows"][0]
     assert row["published_version"] == 1
+
+
+def test_strip_md_plain_semantics(env):
+    """v2 #12：发布纯文本与编辑器 toPlain 同语义（标题/列表/引用/图片/链接/行内代码全剥）。"""
+    reg, _, _ = env
+    strip = type(reg.get("zimeiti.publish")).run.__globals__["_strip_md"]
+    src = "# 标题\n- 要点一\n> 引用一句\n![图alt](https://x/1.png)\n[文字](https://x/2) 和 `code`"
+    assert strip(src).splitlines() == ["标题", "· 要点一", "引用一句", "图alt", "文字（https://x/2） 和 code"]

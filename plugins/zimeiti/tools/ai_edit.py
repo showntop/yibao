@@ -2,7 +2,8 @@
 
 编辑器（webview）→ 桥调本工具 → 返回 replacement/titles 给 iframe 做 diff 预览或挑选，
 用户确认后才落稿；落盘仍走 article_save（L2 确认），本工具不写任何数据。
-选段模式处理「选中片段」（上限 4000）；polish/title/platform 为全文模式，selection 即整文（上限 8000）。
+选段模式处理「选中片段」（上限 4000）；polish/title/platform 为全文模式（selection 即整文）——
+polish 超 8000 自动分段润色队列，title 截断取要，platform 需整文视角仍限 8000。
 """
 from __future__ import annotations
 
@@ -14,7 +15,7 @@ from yibao_brain.ipc import ActionResult, RiskLevel
 from yibao_brain.tools import Tool
 
 _MAX_SELECTION = 4000  # 片段太长说明该走对话改稿，不是选段润色
-_MAX_FULL = 8000  # 全文三模式（polish/title/platform）的上限
+_MAX_FULL = 8000  # platform 模式上限（需整文视角）；polish 超上限自动分段润色，title 截断取要
 _MAX_CONTEXT = 3000  # 全文只作语境，截断防 prompt 爆炸
 
 _MODES = {
@@ -124,6 +125,33 @@ def _unwrap(text: str) -> str:
     return t
 
 
+def _chunks(text: str, max_len: int) -> list[str]:
+    """长文切段（polish 分段队列用）：按空行分段组装，每段 ≤ max_len；单段超长硬切。"""
+    paras = re.split(r"\n{2,}", text)
+    chunks: list[str] = []
+    cur: list[str] = []
+    size = 0
+
+    def flush() -> None:
+        nonlocal size
+        if cur:
+            chunks.append("\n\n".join(cur))
+            cur.clear()
+            size = 0
+
+    for p in paras:
+        while len(p) > max_len:  # 单段超长：先冲当前段，再硬切
+            flush()
+            chunks.append(p[:max_len])
+            p = p[max_len:]
+        if cur and size + len(p) + 2 > max_len:
+            flush()
+        cur.append(p)
+        size += len(p) + 2
+    flush()
+    return [c for c in chunks if c.strip()]
+
+
 class AiEditTool(Tool):
     id = "zimeiti.ai_edit"
     label = "AI 改稿"
@@ -163,10 +191,10 @@ class AiEditTool(Tool):
         if not selection:
             return ActionResult(success=False, error="没有选中文字")
         mode = str(params.get("mode") or "rewrite")
-        if mode in _FULL_MODES:
-            if len(selection) > _MAX_FULL:
-                return ActionResult(success=False, error=f"文章太长（{len(selection)} 字），先拆段或走对话改稿")
-        elif len(selection) > _MAX_SELECTION:
+        if mode == "platform" and len(selection) > _MAX_FULL:
+            # 平台改写要整文视角（调结构/压篇幅），分段会碎——长文走对话改稿
+            return ActionResult(success=False, error=f"文章太长（{len(selection)} 字），平台改写需要整文视角：先走对话改稿压缩，再回编辑器做平台改写")
+        if mode not in _FULL_MODES and len(selection) > _MAX_SELECTION:
             return ActionResult(success=False, error=f"选中片段太长（{len(selection)} 字），选短一点或走对话改稿")
         instruction = str(params.get("instruction") or "").strip()
         platform = str(params.get("platform") or "").strip()
@@ -179,8 +207,11 @@ class AiEditTool(Tool):
         context = str(params.get("context") or "")[:_MAX_CONTEXT].strip()
         brief = str(params.get("brief") or "").strip()
 
+        # polish 长文：分段润色队列（逐段调 LLM 后拼接），不再把长文踢出编辑器
+        if mode == "polish" and len(selection) > _MAX_FULL:
+            return self._polish_chunked(llm, selection, brief)
         if mode == "title":
-            prompt = _build_title_prompt(selection, platform)
+            prompt = _build_title_prompt(selection[:_MAX_FULL], platform)  # 起标题取要即可，长文截断不踢出
         elif mode in ("polish", "platform"):
             prompt = _build_full_prompt(mode, selection, platform, brief)
         else:
@@ -198,6 +229,20 @@ class AiEditTool(Tool):
         if not replacement:
             return ActionResult(success=False, error="AI 返回了空内容，换个说法再试")
         return ActionResult(success=True, data={"replacement": replacement, "mode": mode})
+
+    def _polish_chunked(self, llm: Any, text: str, brief: str) -> ActionResult:
+        """长文分段润色：逐段调 LLM，拼接返回（data.chunks 给编辑器状态栏展示「分 N 段」）。"""
+        chunks = _chunks(text, _MAX_FULL)
+        parts: list[str] = []
+        for i, chunk in enumerate(chunks, 1):
+            try:
+                piece = _unwrap(llm.chat(_build_full_prompt("polish", chunk, "", brief)))
+            except Exception as e:
+                return ActionResult(success=False, error=f"分段润色第 {i}/{len(chunks)} 段失败：{e}")
+            if not piece:
+                return ActionResult(success=False, error=f"分段润色第 {i}/{len(chunks)} 段返回空，换个说法再试")
+            parts.append(piece)
+        return ActionResult(success=True, data={"replacement": "\n\n".join(parts), "mode": "polish", "chunks": len(parts)})
 
 
 def make_tools(ctx: Any) -> list[Tool]:

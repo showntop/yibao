@@ -32,7 +32,12 @@
 > （published_at=0 显 1970 一项查证为已修：schema `|date` 管道对 0/负值返回空串）。
 >
 > 2026-08-25 第三批：#17 / A8 已落地——新增 mat_search（q 扫标题/摘要/标签/正文 + tag/topic 过滤，结果不带正文），
-> write SKILL 改「先 mat_search 再 mat_list」；补 defer/mat_enrich、invoke_* quiet 注册测试。余项：#15 / #12。
+> write SKILL 改「先 mat_search 再 mat_list」；补 defer/mat_enrich、invoke_* quiet 注册测试。
+>
+> 2026-08-25 第四批：#15 / #12 已落地，backlog 清零（D8 跨平台按原计划挂起）——
+> polish 长文分段润色队列（_chunks 按空行组装 ≤8000/段，超长按硬切；platform 仍需整文视角、title 截断取要）；
+> 编辑器 diff 预览折叠未变段落（foldSame：>6 行头尾各留 2，中间「N 行未变」）；
+> toPlain 与 publish._strip_md 语义对齐（补引用/图片/链接/行内代码剥除），发布弹层新增「知乎 · 纯文本」。
 
 | # | 问题 | 证据 | 建议修法 | 量级 |
 |---|---|---|---|---|

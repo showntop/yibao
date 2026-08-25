@@ -161,6 +161,8 @@
   #diff-body .d { background: var(--red-bg); color: var(--red); border-radius: 6px; padding: 1px 6px; margin: 1px 0; text-decoration: line-through; }
   #diff-body .a { background: var(--green-bg); color: var(--green); border-radius: 6px; padding: 1px 6px; margin: 1px 0; }
   #diff-body .s { color: var(--muted); padding: 1px 6px; margin: 1px 0; }
+  /* 未变段落折叠带：长文全文润色时不再被大段原文淹没 */
+  #diff-body .f { color: var(--muted); text-align: center; font-size: 12px; padding: 5px 6px; margin: 3px 0; border-top: 1px dashed var(--border); border-bottom: 1px dashed var(--border); }
 
   /* ---- 发布弹层（格式化复制 + 标为已发布）/ 平台选择弹层（共用 opt 选项样式）---- */
   #pub-card, #pf-card { width: min(400px, 92%); }
@@ -269,7 +271,11 @@
       </button>
       <button class="opt" id="pub-xhs">
         <div class="t">小红书 · 纯文本</div>
-        <div class="s">去掉 markdown 符号，段落分明，适合直接粘贴</div>
+        <div class="s">去掉 markdown 符号（标题不保留层级），段落分明，适合直接粘贴</div>
+      </button>
+      <button class="opt" id="pub-zhihu">
+        <div class="t">知乎 · 纯文本</div>
+        <div class="s">同套纯文本，小标题保留为独立行，论述结构不丢</div>
       </button>
     </div>
     <footer>
@@ -412,13 +418,17 @@
     return out.join("") || "<p style=\"color:var(--faint)\">（预览为空）</p>";
   }
 
-  // ---- 小红书纯文本：去 markdown 符号，保留段落 ----
+  // ---- 纯文本导出（小红书/知乎）：与 publish.py _strip_md 同语义——标题去 #、
+  // 列表换小点、图片留 alt、链接留「文字（地址）」、引用去 >、粗体/行内代码去记号 ----
   function toPlain(src) {
     return src.split(/\r?\n/).map(function (line) {
       var t = line.trim();
       t = t.replace(/^#{1,6}\s*/, "");
       t = t.replace(/^[-*]\s+/, "· ");
-      t = t.replace(/\*\*([^*]+)\*\*/g, "$1");
+      t = t.replace(/^>\s?/, "");
+      t = t.replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1");
+      t = t.replace(/\[([^\]]+)\]\(([^)]*)\)/g, "$1（$2）");
+      t = t.replace(/\*\*([^*]+)\*\*/g, "$1").replace(/`([^`]+)`/g, "$1");
       return t;
     }).join("\n").replace(/\n{3,}/g, "\n\n").trim();
   }
@@ -658,12 +668,30 @@
     return out;
   }
 
+  // 未变段落折叠：连续 s 行超过 6 行时头尾各留 2 行，中间收成一条「N 行未变」
+  function foldSame(rows) {
+    var out = [], i = 0, j, run;
+    while (i < rows.length) {
+      if (rows[i].t !== "s") { out.push(rows[i]); i++; continue; }
+      j = i;
+      while (j < rows.length && rows[j].t === "s") j++;
+      run = rows.slice(i, j);
+      if (run.length > 6) {
+        out.push(run[0], run[1], { t: "f", s: "…… " + (run.length - 4) + " 行未变 ……" }, run[run.length - 2], run[run.length - 1]);
+      } else {
+        for (var k = 0; k < run.length; k++) out.push(run[k]);
+      }
+      i = j;
+    }
+    return out;
+  }
+
   var diffApplyFn = null;
 
   function showDiff(label, oldText, newText, applyLabel, applyFn) {
     $("diff-mode").textContent = label;
     $("diff-apply").textContent = applyLabel;
-    var html = diffLines(oldText, newText).map(function (r) {
+    var html = foldSame(diffLines(oldText, newText)).map(function (r) {
       return "<div class=\"" + r.t + "\">" + (esc(r.s) || " ") + "</div>";
     }).join("");
     $("diff-body").innerHTML = html;
@@ -855,6 +883,15 @@
     if (ok) {
       $("pub-overlay").hidden = true;
       setStatus("已复制纯文本，去小红书粘贴（⌘V）");
+    } else {
+      setStatus("复制失败：剪贴板被浏览器拒绝", true);
+    }
+  });
+  $("pub-zhihu").addEventListener("click", function () {
+    var ok = copyPlain(toPlain($("editor").value));
+    if (ok) {
+      $("pub-overlay").hidden = true;
+      setStatus("已复制纯文本，去知乎编辑器粘贴（⌘V）");
     } else {
       setStatus("复制失败：剪贴板被浏览器拒绝", true);
     }

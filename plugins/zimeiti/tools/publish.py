@@ -24,6 +24,7 @@ def _strip_md(text: str) -> str:
     for line in text.splitlines():
         line = re.sub(r"^#{1,6}\s*", "", line)                       # 标题
         line = re.sub(r"^(\s*)[-*+]\s+", r"\1· ", line)              # 列表
+        line = re.sub(r"^>\s?", "", line)                            # 引用（与编辑器 toPlain 同语义）
         line = re.sub(r"!\[([^\]]*)\]\([^)]*\)", r"\1", line)        # 图片留 alt
         line = re.sub(r"\[([^\]]+)\]\(([^)]*)\)", r"\1（\2）", line)  # 链接留文字+地址
         line = line.replace("**", "").replace("__", "").replace("`", "")
