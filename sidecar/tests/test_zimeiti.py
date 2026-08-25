@@ -78,6 +78,7 @@ def test_all_tools_registered_with_risks(env):
         "zimeiti.publish": RiskLevel.L2_MEDIUM,
         "zimeiti.hot_topics": RiskLevel.L1_LOW,
         "zimeiti.stat_add": RiskLevel.L1_LOW,
+        "zimeiti.mat_search": RiskLevel.L0_READONLY,
     }
     for tid, risk in expected.items():
         assert reg.get(tid).default_risk == risk, tid
@@ -635,6 +636,53 @@ def test_mat_delete_flow(env):
     r = _run(reg, "zimeiti.mat_delete", {"id": rid})
     assert r.success
     assert _run(reg, "zimeiti.mat_list", {}).data["rows"] == []
+
+
+def test_mat_defer_then_enrich(env):
+    """#17：defer 先存后整理——即席元数据秒落库，mat_enrich 后台补标题/摘要/标签。"""
+    reg, _, _ = env
+    t = reg.get("zimeiti.mat_save")
+    t.plugin_ctx.llm = LlmChat(FakeProvider())  # defer 不经过 LLM，给个保底即可
+    r = t.run({"text": "即席首行标题\n正文正文", "defer": True}, t.plugin_ctx)
+    assert r.success and r.data["pending"] is True and r.data["title"] == "即席首行标题"
+    mid = r.data["id"]
+    row = _run(reg, "zimeiti.mat_get", {"id": mid}).data["rows"][0]
+    assert row["tags"] == ""  # 即席落库：标签待补
+
+    e = reg.get("zimeiti.mat_enrich")
+    e.plugin_ctx.llm = LlmChat(FakeProvider(text='{"title": "精整标题", "summary": "精整摘要", "tags": ["AI", "硬件"]}'))
+    r2 = e.run({"id": mid}, e.plugin_ctx)
+    assert r2.success and r2.data["title"] == "精整标题"
+    row = _run(reg, "zimeiti.mat_get", {"id": mid}).data["rows"][0]
+    assert row["title"] == "精整标题" and row["summary"] == "精整摘要" and row["tags"] == "AI,硬件"
+    assert not e.run({"id": "missing"}, e.plugin_ctx).success
+
+
+def test_invoke_apis_registered_quiet(env):
+    """#17：唤起条/浏览器扩展的静默直调方法已注册且 quiet（不弹面板）。"""
+    _ = env
+    for name in ("zimeiti.invoke_mat_save", "zimeiti.invoke_add_topic"):
+        api = get_api(name)
+        assert api is not None and api.direct and api.quiet, name
+
+
+def test_mat_search(env):
+    """A8：关键词扫标题/正文、tag 精确过滤、topic 过滤；结果不带正文；三参全空报错。"""
+    reg, _, _ = env
+    t = reg.get("zimeiti.mat_save")
+    t.plugin_ctx.llm = LlmChat(FakeProvider())
+    a = t.run({"text": "K3 实测：续航拉胯", "defer": True, "title": "K3 评测"}, t.plugin_ctx).data["id"]
+    tid = _run(reg, "zimeiti.add", {"title": "T"}).data["id"]
+    b = t.run({"text": "茅台价格又跌了", "defer": True, "title": "茅台", "topic_id": tid}, t.plugin_ctx).data["id"]
+    t.plugin_ctx.db.update("materials", a, {"tags": "AI,硬件"})
+
+    r = _run(reg, "zimeiti.mat_search", {"q": "续航"})
+    assert [row["id"] for row in r.data["rows"]] == [a]
+    assert "content" not in r.data["rows"][0]  # 检索结果省 payload，全文走 mat_get
+    assert [row["id"] for row in _run(reg, "zimeiti.mat_search", {"tag": "硬件"}).data["rows"]] == [a]
+    assert [row["id"] for row in _run(reg, "zimeiti.mat_search", {"topic_id": tid}).data["rows"]] == [b]
+    assert _run(reg, "zimeiti.mat_search", {"q": "不存在的东西"}).data["rows"] == []
+    assert not _run(reg, "zimeiti.mat_search", {}).success
 
 
 # ---------- hot_topics（热点雷达：多平台热榜聚合） ----------

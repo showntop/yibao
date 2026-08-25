@@ -29,7 +29,10 @@
 > 2026-08-25 第二批：#13 / #14 / #16 / #18 已落地——stat_add 代码承接（stat_add.py：同选题同平台同日去重，
 > 没传的字段保留旧值；post_stats 加 favorites/shares 列）；get 代码承接（get_topic.py：按 id 查拼 draft/materials 聚合，
 > 详情页新增「稿件/素材/链接」行）；topics 加 url 列（热点转选题带原文链接）；详情页冗余「已发布」按钮并入「复制成稿」
-> （published_at=0 显 1970 一项查证为已修：schema `|date` 管道对 0/负值返回空串）。余项：#15 / #12 / #17 / A8。
+> （published_at=0 显 1970 一项查证为已修：schema `|date` 管道对 0/负值返回空串）。
+>
+> 2026-08-25 第三批：#17 / A8 已落地——新增 mat_search（q 扫标题/摘要/标签/正文 + tag/topic 过滤，结果不带正文），
+> write SKILL 改「先 mat_search 再 mat_list」；补 defer/mat_enrich、invoke_* quiet 注册测试。余项：#15 / #12。
 
 | # | 问题 | 证据 | 建议修法 | 量级 |
 |---|---|---|---|---|
