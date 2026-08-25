@@ -205,11 +205,29 @@ describe("zimeiti board.schema.json（拖拽 + 快捷新增）", () => {
   it("拖拽落列上抛 zimeiti.move：$column 解析为目标列 key", async () => {
     const w = mountPanel(schema, { rows });
     const card = w.findAll(".board-col")[0].find(".card");
-    await card.trigger("dragstart");
+    const written: string[] = [];
+    // WKWebView 回归守卫：dragstart 必须写 dataTransfer，否则真机拖拽会话不建立
+    const dt = { setData: (t: string, v: string) => written.push(`${t}:${v}`), effectAllowed: "", dropEffect: "" };
+    await card.trigger("dragstart", { dataTransfer: dt });
+    expect(written).toEqual(["text/plain:t1"]);
+    expect(dt.effectAllowed).toBe("move");
     await w.findAll(".board-col")[1].trigger("drop"); // 写作中
     expect(w.emitted("action")).toEqual([
       [{ method: "zimeiti.move", params: { id: "t1", status: "写作中" } }],
     ]);
+  });
+
+  it("卡片 badge 行：platform + updated_at 相对时间，空 platform 跳过", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const w = mountPanel(schema, {
+      rows: [
+        { id: "t3", title: "选题C", angle: "", status: "候选", platform: "小红书", updated_at: now - 120 },
+        { id: "t4", title: "选题D", angle: "", status: "写作中", platform: "", updated_at: now - 7200 },
+      ],
+    });
+    const cols = w.findAll(".board-col");
+    expect(cols[0].findAll(".card-badge").map((b) => b.text())).toEqual(["小红书", "2 分钟前"]);
+    expect(cols[1].findAll(".card-badge").map((b) => b.text())).toEqual(["2 小时前"]);
   });
 });
 

@@ -698,7 +698,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="chat-page" :class="{ 'lend-ear': props.lendEar, 'at-work': Boolean(props.workstation) }">
+  <div class="chat-page" :class="{ 'lend-ear': props.lendEar, 'at-work': Boolean(props.workstation), 'rail-folded': !leftOpen, 'peek-folded': !peekOpen }">
     <SetupWizard v-if="setupNeeded" :model="setupCfg.model" :base-url="setupCfg.baseUrl" :voice="setupCfg.voice" @saved="onSetupSaved" />
 
     <HomeFrame
@@ -805,7 +805,7 @@ onUnmounted(() => {
 
       <template #composer>
         <div v-if="!props.lendEar" class="input-slot">
-          <div v-if="chatFace === 'thread'" class="skill-row">
+          <div v-if="chatFace === 'thread' && !props.workFocus" class="skill-row">
             <span class="skill-hint">呼出技能</span>
             <button v-for="c in skillChips" :key="c.key" class="skill-chip" :title="c.draft" @click="onSkillChip(c)">
               <YbIcon :name="c.icon" :size="11" />{{ c.label }}
@@ -837,6 +837,13 @@ onUnmounted(() => {
 }
 .chat-page.lend-ear :deep(.host.kind-input) {
   display: none;
+}
+/* 栏位折叠时折叠把手常驻舞台角落（8px 边距 + 24px 把手），工位条两端让位防压字 */
+.chat-page.at-work.rail-folded :deep(.desk-work .bar) {
+  padding-left: 44px;
+}
+.chat-page.at-work.peek-folded :deep(.desk-work .bar) {
+  padding-right: 44px;
 }
 .host-ask-slot {
   position: absolute;

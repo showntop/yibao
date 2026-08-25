@@ -4,6 +4,7 @@
 import { computed, reactive, ref, watchEffect } from "vue";
 import { resolve, resolveParams, type ActionDecl, type BindCtx, type BoardColumn } from "../../lib/schema";
 import { renderMarkdownLite } from "../../lib/markdown";
+import { relativeTime } from "../../lib/time";
 
 const props = defineProps<{
   panel: string; // 面板引用（plugin_id:name），当前仅用于调试展示
@@ -46,12 +47,39 @@ const itemTpl = computed(() => props.schema?.item ?? {});
 // ---- board（items 解析复用 list 的 listItems）----
 const boardColumns = computed<BoardColumn[]>(() => props.schema?.columns ?? []);
 const cardTpl = computed(() => props.schema?.card ?? {});
+
+/** 卡片徽章行（协议扩展：card.badges = [{text: 绑定, color?, format?: "time"}]，空值跳过）。 */
+type BadgeDecl = { text: unknown; color?: string; format?: string };
+const badgeDecls = computed<BadgeDecl[]>(() => props.schema?.card?.badges ?? []);
+function cardBadges(it: Record<string, unknown>): { text: string; color?: string }[] {
+  const out: { text: string; color?: string }[] = [];
+  for (const b of badgeDecls.value) {
+    const v = resolve(b.text, { data: props.data, item: it });
+    if (v === undefined || v === null || v === "") continue;
+    const s = b.format === "time" ? relativeTime(Number(v)) : String(v);
+    if (s) out.push({ text: s, color: b.color });
+  }
+  return out;
+}
 const dragDecl = computed(() => props.schema?.drag);
 const quickAddDecl = computed(() => props.schema?.quick_add);
 /** 拖拽中的卡片 + 悬停目标列（drag-over 高亮用）。 */
 const draggingItem = ref<Record<string, unknown> | null>(null);
 const dragOverCol = ref<string | null>(null);
 const quickAddText = ref("");
+
+/** 拖拽开始：WKWebView 下 dragstart 必须写 dataTransfer，否则拖拽会话根本不建立（drop 永不触发）。 */
+function onCardDragStart(e: DragEvent, it: Record<string, unknown>) {
+  draggingItem.value = it;
+  e.dataTransfer?.setData("text/plain", String(it.id ?? ""));
+  if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+}
+
+/** 悬停列：高亮 + 声明 dropEffect（缺了它部分内核不派 drop）。 */
+function onColDragOver(e: DragEvent, colKey: string) {
+  dragOverCol.value = colKey;
+  if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+}
 
 /** 触发拖拽流转：$column 解析为目标列 key，其余绑定照旧。 */
 function dropOn(colKey: string) {
@@ -170,7 +198,7 @@ const fallbackJson = computed(() =>
         :key="g.column.key"
         class="board-col"
         :class="{ 'drag-over': dragOverCol === g.column.key }"
-        @dragover.prevent="dragOverCol = g.column.key"
+        @dragover.prevent="onColDragOver($event, g.column.key)"
         @dragleave="dragOverCol === g.column.key && (dragOverCol = null)"
         @drop.prevent="dropOn(g.column.key)"
       >
@@ -190,13 +218,21 @@ const fallbackJson = computed(() =>
               clickable: !!cardTpl.actions?.length,
             }"
             :draggable="!!dragDecl"
-            @dragstart="draggingItem = it"
+            @dragstart="onCardDragStart($event, it)"
             @dragend="draggingItem = null; dragOverCol = null"
             @click="cardTpl.actions?.length && fire(cardTpl.actions[0], it)"
           >
             <div class="card-main">
               <div class="card-title">{{ text(cardTpl.title, it) }}</div>
               <div v-if="cardTpl.subtitle" class="card-sub">{{ text(cardTpl.subtitle, it) }}</div>
+            </div>
+            <div v-if="badgeDecls.length" class="card-badges">
+              <span
+                v-for="(b, bi) in cardBadges(it)"
+                :key="bi"
+                class="card-badge"
+                :style="b.color ? { color: b.color } : {}"
+              >{{ b.text }}</span>
             </div>
             <div v-if="cardTpl.actions?.length" class="card-hover-acts" @click.stop>
               <button
@@ -404,6 +440,20 @@ const fallbackJson = computed(() =>
   color: var(--yb-text-dim);
   margin-top: 2px;
 }
+/* 卡片徽章行：平台 / 相对时间等弱信息，次要表面药丸 */
+.card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+.card-badge {
+  font-size: var(--yb-fs-sm);
+  color: var(--yb-text-faint);
+  background: var(--yb-well);
+  border-radius: var(--yb-radius-pill);
+  padding: 1px 8px;
+}
 .card-actions {
   display: flex;
   gap: 6px;
@@ -419,8 +469,7 @@ const fallbackJson = computed(() =>
   padding: 2px;
 }
 .board-col {
-  flex: 1 0 176px;
-  min-width: 176px;
+  flex: 0 0 296px; /* 固定列宽左对齐 + 横向滚动，不再均分拉伸 */
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
