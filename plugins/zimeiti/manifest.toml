@@ -4,7 +4,7 @@
 id = "zimeiti"
 name = "内容创作"
 description = "内容创作选题与写作：选题看板、写稿改稿、版本管理、素材库（收藏链接/资料，写作时当论据召回）"
-capabilities = ["db", "llm"]
+capabilities = ["db", "llm", "process"]   # process：本插件会 spawn 子进程（wewrite CLI）
 
 [code]
 entry = "tools"

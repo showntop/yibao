@@ -1046,3 +1046,170 @@ def test_strip_md_plain_semantics(env):
     strip = type(reg.get("zimeiti.publish")).run.__globals__["_strip_md"]
     src = "# 标题\n- 要点一\n> 引用一句\n![图alt](https://x/1.png)\n[文字](https://x/2) 和 `code`"
     assert strip(src).splitlines() == ["标题", "· 要点一", "引用一句", "图alt", "文字（https://x/2） 和 code"]
+
+
+
+# ---------- wewrite CLI（ww_hotspots / ww_score：subprocess 薄封装，WEWRITE_HOME 指插件数据目录） ----------
+
+
+def _completed(stdout="", stderr="", returncode=0):
+    class _R:
+        def __init__(self):
+            self.stdout, self.stderr, self.returncode = stdout, stderr, returncode
+    return _R()
+
+
+_HOTSPOTS_JSON = json.dumps({
+    "sources": ["baidu", "toutiao", "weibo"],
+    "sources_failed": ["weibo"],
+    "items": [
+        {"title": "AI 编程工具大战", "source": "今日头条", "hot": 24442080,
+         "hot_normalized": 100.0, "url": "https://www.toutiao.com/trending/1/", "description": ""},
+        {"title": "高考分数线公布", "source": "百度", "hot": 0,
+         "hot_normalized": 98.5, "url": "https://m.baidu.com/s?word=x", "description": "热"},
+    ],
+})
+
+_SCORE_JSON = json.dumps({
+    "quality_score": 76.88,
+    "composite_score": 23.12,
+    "char_count": 1200,
+    "tier1": {k: {"score": 1.0, "detail": f"d-{k}"} for k in (
+        "sentence_length_stddev", "sentence_length_range", "paragraph_length_variance",
+        "vocabulary_richness", "emotional_balance", "adverb_density")} | {"_summary": {"mean_score": 1.0}},
+    "tier2": {k: {"score": 0.5, "detail": f"d-{k}"} for k in (
+        "banned_words", "sentence_integrity", "real_sources",
+        "register_consistency", "insertion_control")} | {"_summary": {"mean_score": 0.5}},
+    "tier3": {"score": None, "source": "not_available"},
+})
+
+
+def test_ww_tools_registered_readonly(env):
+    """两个 wewrite 工具随插件加载注册，只读级风险（ subprocess 只拉数据/打分，不改状态）。"""
+    from yibao_brain.ipc import RiskLevel
+
+    reg, _, _ = env
+    assert reg.get("zimeiti.ww_hotspots").default_risk == RiskLevel.L0_READONLY
+    assert reg.get("zimeiti.ww_score").default_risk == RiskLevel.L0_READONLY
+
+
+def test_ww_hotspots_parses_json_and_wewrite_home(env, monkeypatch, data_dir):
+    """正常 JSON 解析：items 六字段 + sources_failed 透传；WEWRITE_HOME 落插件数据目录 wewrite/。"""
+    import subprocess
+
+    seen = {}
+
+    def _fake(cmd, **kw):
+        seen["cmd"], seen["env"] = cmd, kw.get("env") or {}
+        return _completed(stdout=_HOTSPOTS_JSON)
+
+    monkeypatch.setattr(subprocess, "run", _fake)
+    reg, _, _ = env
+    r = _run(reg, "zimeiti.ww_hotspots", {"limit": 5})
+    assert r.success and r.data["sources_failed"] == ["weibo"]
+    items = r.data["items"]
+    assert [it["title"] for it in items] == ["AI 编程工具大战", "高考分数线公布"]
+    assert set(items[0]) == {"title", "source", "hot", "hot_normalized", "url", "description"}
+    assert items[1]["hot_normalized"] == 98.5
+    assert seen["cmd"][1:] == ["hotspots", "--limit", "5"]
+    home = seen["env"]["WEWRITE_HOME"]
+    assert str(data_dir) in home and home.endswith("wewrite")  # 不写默认 ~/.wewrite
+
+
+def test_ww_hotspots_limit_default_and_clamp(env, monkeypatch):
+    import subprocess
+
+    calls = []
+    monkeypatch.setattr(subprocess, "run",
+                        lambda cmd, **kw: calls.append(cmd) or _completed(stdout=_HOTSPOTS_JSON))
+    reg, _, _ = env
+    _run(reg, "zimeiti.ww_hotspots", {})
+    _run(reg, "zimeiti.ww_hotspots", {"limit": 999})
+    _run(reg, "zimeiti.ww_hotspots", {"limit": "abc"})
+    assert calls[0][-1] == "20" and calls[1][-1] == "50" and calls[2][-1] == "20"
+
+
+def test_ww_hotspots_cli_missing(env, monkeypatch):
+    import subprocess
+
+    def _fake(cmd, **kw):
+        raise FileNotFoundError(cmd[0])
+
+    monkeypatch.setattr(subprocess, "run", _fake)
+    reg, _, _ = env
+    r = _run(reg, "zimeiti.ww_hotspots", {})
+    assert not r.success and "wewrite" in r.error and "install" in r.error
+
+
+def test_ww_hotspots_nonzero_exit(env, monkeypatch):
+    import subprocess
+
+    monkeypatch.setattr(subprocess, "run",
+                        lambda cmd, **kw: _completed(returncode=2, stderr="boom: 网络不通"))
+    reg, _, _ = env
+    r = _run(reg, "zimeiti.ww_hotspots", {})
+    assert not r.success and "退出码 2" in r.error and "boom" in r.error
+
+
+def test_ww_hotspots_timeout_and_bad_json(env, monkeypatch):
+    import subprocess
+
+    def _timeout(cmd, **kw):
+        raise subprocess.TimeoutExpired(cmd, 60)
+
+    monkeypatch.setattr(subprocess, "run", _timeout)
+    reg, _, _ = env
+    assert "超时" in _run(reg, "zimeiti.ww_hotspots", {}).error
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: _completed(stdout="不是 JSON"))
+    assert "解析失败" in _run(reg, "zimeiti.ww_hotspots", {}).error
+
+
+def test_ww_score_happy(env, monkeypatch):
+    """对最新稿跑 wewrite score：临时稿文件喂 CLI、跑完即删；返回分数 + 11 项检测（_summary 不计）。"""
+    import subprocess
+
+    seen = {}
+
+    def _fake(cmd, **kw):
+        seen["cmd"] = cmd
+        seen["existed"] = Path(cmd[2]).is_file()
+        seen["content"] = Path(cmd[2]).read_text(encoding="utf-8")
+        return _completed(stdout=_SCORE_JSON)
+
+    monkeypatch.setattr(subprocess, "run", _fake)
+    reg, _, _ = env
+    tid = _run(reg, "zimeiti.add", {"title": "T"}).data["id"]
+    _run(reg, "zimeiti.article_save", {"id": tid, "content": "# 初稿\n正文"})
+    _run(reg, "zimeiti.article_save", {"id": tid, "content": "# 二稿\n正文"})
+    r = _run(reg, "zimeiti.ww_score", {"topic_id": tid})
+    assert r.success and r.data["version"] == 2  # 打的是最新版稿
+    assert r.data["quality_score"] == 76.88 and r.data["composite_score"] == 23.12
+    assert r.data["char_count"] == 1200 and r.data["tier3_score"] is None
+    checks = r.data["checks"]
+    assert len(checks) == 11 and sum(c["tier"] == "tier1" for c in checks) == 6
+    assert checks[0]["name"] == "sentence_length_stddev" and checks[0]["detail"] == "d-sentence_length_stddev"
+    assert seen["cmd"][1] == "score" and seen["cmd"][3] == "--json"
+    assert seen["existed"] and seen["content"] == "# 二稿\n正文"
+    assert not Path(seen["cmd"][2]).exists()  # 临时稿文件跑完清理
+
+
+def test_ww_score_rejects_bad_input(env):
+    """无稿/选题不存在/缺参都给友好错误（不调 CLI）。"""
+    reg, _, _ = env
+    tid = _run(reg, "zimeiti.add", {"title": "T"}).data["id"]
+    r = _run(reg, "zimeiti.ww_score", {"topic_id": tid})
+    assert not r.success and "还没有稿件" in r.error
+    assert not _run(reg, "zimeiti.ww_score", {"topic_id": "missing"}).success
+    assert not _run(reg, "zimeiti.ww_score", {}).success
+
+
+def test_ww_score_cli_failure(env, monkeypatch):
+    import subprocess
+
+    monkeypatch.setattr(subprocess, "run",
+                        lambda cmd, **kw: _completed(returncode=1, stderr="score boom"))
+    reg, _, _ = env
+    tid = _run(reg, "zimeiti.add", {"title": "T"}).data["id"]
+    _run(reg, "zimeiti.article_save", {"id": tid, "content": "x"})
+    r = _run(reg, "zimeiti.ww_score", {"topic_id": tid})
+    assert not r.success and "退出码 1" in r.error and "score boom" in r.error
