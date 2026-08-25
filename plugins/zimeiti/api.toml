@@ -132,7 +132,7 @@ quiet = true
 [[method]]
 name = "draft"
 handler = "zimeiti.article_save"
-intent = "为选题「{title}」写初稿：先用 use_skill 展开 zimeiti:write 技能（成文框架），成稿后用 zimeiti.article_save 落盘存版本（id={id}）"
+intent = "为选题「{title}」写初稿：先用 zimeiti.get 取选题详情（id={id}，拿 angle/platform/source 对齐写作方向），再用 use_skill 展开 zimeiti:write 技能（成文框架+平台规格+发布前自检），成稿后用 zimeiti.article_save 落盘存版本（id={id}）"
 
 [[method]]
 name = "revise"

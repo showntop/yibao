@@ -12,6 +12,7 @@
     "title": "$item.title",
     "subtitle": "$item.angle",
     "actions": [
+      {"label": "写稿", "method": "zimeiti.open_editor", "params": {"id": "$item.id"}},
       {"label": "详情", "method": "zimeiti.get", "params": {"id": "$item.id"}}
     ]
   },

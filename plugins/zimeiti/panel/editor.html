@@ -113,6 +113,8 @@
   /* ---- 状态栏 ---- */
   #status { padding: 0 4px; font-size: 11.5px; color: var(--muted); min-height: 22px; flex: none; }
   #status.err { color: var(--red); }
+  #status.undoable { cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+  #status.undoable:hover { color: var(--accent); }
 
   /* ---- 选段浮动条（选中文字后浮出：AI 改写/扩写/缩写/自定义）---- */
   [hidden] { display: none !important; }
@@ -325,6 +327,8 @@
     });
   }
   var topicId = "";
+  var topicBrief = "";    // 选题简报（标题/角度/平台），onInit 时填，ai_edit 的 brief 参数
+  var topicPlatform = ""; // 选题目标平台（标题模式默认贴合它）
   var version = 0;
   var saving = false;
   var dirty = false; // 有未保存修改：译宝的版本更新不直接冲掉编辑区
@@ -336,6 +340,29 @@
     s.className = isErr ? "err" : "";
   }
   function emsg(e) { return e && e.message ? e.message : String(e || ""); }
+
+  // ---- AI 修改撤销：el.value=/setRangeText 会破坏 textarea 原生 undo 栈，
+  // 应用 AI 建议前快照，状态栏给「点此处撤销」（一次性快照，够救最近一次）----
+  var aiBackup = null;
+  function applyWithUndo(applyFn, okMsg) {
+    var el = $("editor");
+    aiBackup = el.value;
+    applyFn(el);
+    el.dispatchEvent(new Event("input"));
+    el.focus();
+    setStatus(okMsg + "（点此处撤销）");
+    $("status").classList.add("undoable");
+  }
+  $("status").addEventListener("click", function () {
+    if (aiBackup === null) return;
+    var el = $("editor");
+    el.value = aiBackup;
+    aiBackup = null;
+    el.dispatchEvent(new Event("input"));
+    $("status").classList.remove("undoable");
+    el.focus();
+    setStatus("已撤销 AI 修改");
+  });
 
   // ---- 极简 markdown 渲染（标题/粗体/列表/段落；先转义 HTML，不引库）----
   // styled=true 时带内联样式（公众号编辑器只认内联样式；预览用默认 false）
@@ -403,6 +430,8 @@
 
   // ---- 返回详情（zimeiti.get 直调回详情页；还没载入选题时退回看板）----
   $("back").addEventListener("click", function () {
+    // 丢稿保护：有未保存修改先确认（dirty 此前只防外部推送冲掉编辑区，不防用户自己离开）
+    if (dirty && !window.confirm("有未保存的修改，确定返回吗？")) return;
     var method = topicId ? "zimeiti.get" : "zimeiti.list";
     var params = topicId ? { id: topicId } : {};
     window.yibao.invoke(method, params).catch(function (e) {
@@ -445,6 +474,11 @@
       return;
     }
     topicId = String(row.id);
+    // 选题简报：ai_edit 的 brief 参数——编辑器 AI 与对话初稿共用同一写作方向
+    topicBrief = "选题：" + String(row.title || "") +
+      (row.angle ? "；角度：" + row.angle : "") +
+      (row.platform ? "；目标平台：" + row.platform : "");
+    topicPlatform = String(row.platform || "");
     $("title").textContent = String(row.title || "写作编辑器");
     loadArticle(sameTopic ? "译宝更新到" : undefined);
   });
@@ -525,17 +559,15 @@
     setStatus("AI 正在" + MODE_LABEL[mode] + "…");
     window.yibao.invoke("zimeiti.ai_edit", {
       selection: selRange.text, mode: mode, instruction: instruction,
-      context: $("editor").value.slice(0, 3000)
+      context: $("editor").value.slice(0, 3000), brief: topicBrief
     }).then(function (r) {
       pendingReplacement = (r && r.replacement) || "";
       if (!pendingReplacement) { setStatus("AI 返回了空内容", true); return; }
       var range = { start: selRange.start, end: selRange.end };
       showDiff(MODE_LABEL[mode] || mode, selRange.text, pendingReplacement, "应用替换", function (text) {
-        var el = $("editor");
-        el.setRangeText(text, range.start, range.end, "end");
-        el.dispatchEvent(new Event("input"));
-        el.focus();
-        setStatus("已替换为 AI 建议 · 满意的话「保存为新版本」");
+        applyWithUndo(function (el) {
+          el.setRangeText(text, range.start, range.end, "end");
+        }, "已替换为 AI 建议 · 满意的话「保存为新版本」");
       });
       setStatus("确认后应用替换");
     }).catch(function (e) {
@@ -558,19 +590,16 @@
     if (full.length > 8000) { setStatus("文章太长（" + full.length + " 字），先拆段或走对话改稿", true); return; }
     setBusy(true);
     setStatus("AI 处理中…");
-    var params = { selection: full, mode: mode };
+    var params = { selection: full, mode: mode, brief: topicBrief };
     if (platform) params.platform = platform;
+    if (mode === "title" && !platform && topicPlatform) params.platform = topicPlatform; // 标题贴合选题目标平台
     window.yibao.invoke("zimeiti.ai_edit", params).then(function (r) {
       if (mode === "title") { showTitles((r && r.titles) || []); return; }
       var rep = (r && r.replacement) || "";
       if (!rep) { setStatus("AI 返回了空内容", true); return; }
       pendingReplacement = rep;
       showDiff(mode === "polish" ? "全文润色" : ("平台改写 · " + platform), full, rep, "应用替换", function (text) {
-        var el = $("editor");
-        el.value = text;
-        el.dispatchEvent(new Event("input"));
-        el.focus();
-        setStatus("已应用 · 满意的话「保存为新版本」");
+        applyWithUndo(function (el) { el.value = text; }, "已应用 · 满意的话「保存为新版本」");
       });
       setStatus("确认后应用替换");
     }).catch(function (e) {
@@ -587,12 +616,10 @@
       btn.className = "mrow";
       btn.innerHTML = "<div class=\"mt\">" + esc(t) + "</div>";
       btn.addEventListener("click", function () {
-        var el = $("editor");
-        el.value = /^# /.test(el.value) ? el.value.replace(/^# [^\n]*/, "# " + t) : "# " + t + "\n\n" + el.value;
-        el.dispatchEvent(new Event("input"));
+        applyWithUndo(function (el) {
+          el.value = /^# /.test(el.value) ? el.value.replace(/^# [^\n]*/, "# " + t) : "# " + t + "\n\n" + el.value;
+        }, "已换标题 · 满意的话「保存为新版本」");
         $("tt-overlay").hidden = true;
-        el.focus();
-        setStatus("已换标题 · 满意的话「保存为新版本」");
       });
       $("tt-body").appendChild(btn);
     });

@@ -26,46 +26,63 @@ _MODES = {
 # 全文模式：selection 即整文，不走选段那套「片段+语境」prompt
 _FULL_MODES = ("polish", "title", "platform")
 
-# platform 模式的平台风格要点（没列出的平台直接把平台名交给模型发挥）
+# 语气规则（与 skills/write/SKILL.md 同一套——编辑器 AI 与对话初稿必须同文风）：
+#   口语优先、短句、段落 ≤4 行、克制形容词与惊叹号、具体数字/名字/场景优于抽象判断
+_TONE = ("语气规则：口语优先，短句优先，一段不超过 4 行；不堆形容词，不用「非常」「极其」，"
+         "惊叹号全文不超过 2 个；数字、名字、具体场景优于抽象判断；事实与来源括注一律保留。")
+
+# platform 模式的平台规格（没列出的平台直接把平台名交给模型发挥）——与 SKILL.md 平台适配节对齐
 _PLATFORMS = {
-    "小红书": "短段落、口语化、适当 emoji 点缀，文末加 3-5 个话题标签（#话题）",
-    "知乎": "论述感强、逻辑连接词清晰、表达克制，不滥用 emoji",
-    "公众号": "阅读节奏好、小标题分段、段落不宜过长",
+    "小红书": "正文 ≤1000 字，短段落清单体，emoji 分段点缀；标题 ≤20 字且带搜索关键词；"
+              "首图文案即标题；文末加 3-5 个话题标签（#话题，选用户会搜的词）",
+    "知乎": "首段直接亮观点，论述结构清晰、逻辑连接词明确，表达克制，不滥用 emoji；"
+            "小标题推进论证，结尾给可讨论的问题",
+    "公众号": "标题带悬念或利益点；导语 3 行内给钩子；小标题分段、段落 ≤4 行；"
+              "配图位留标注（如【配图：xxx】）",
 }
 
 
-def _build_prompt(mode: str, selection: str, instruction: str, context: str) -> str:
+def _build_prompt(mode: str, selection: str, instruction: str, context: str, brief: str) -> str:
     task = _MODES[mode] if mode in _MODES else f"按这个要求处理这段文字：{instruction}"
     parts = [
-        f"你是中文自媒体写作助手。任务：{task}。",
+        f"你是中文内容创作写作助手。任务：{task}。",
         "要求：只输出处理后的文本本身——不要解释、不要「好的」等前后缀、不要代码围栏；"
-        "保持 markdown 格式与原文语气；处理对象是「选中片段」，不要重写全文。",
+        f"保持 markdown 格式。{_TONE}处理对象是「选中片段」，不要重写全文。",
     ]
+    if brief:
+        parts.append(f"选题简报（理解写作方向，不要输出它）：{brief}")
     if context:
         parts.append(f"全文语境（仅供理解上下文，不要输出它）：\n{context}")
     parts.append(f"选中片段：\n{selection}")
     return "\n\n".join(parts)
 
 
-def _build_full_prompt(mode: str, text: str, platform: str) -> str:
+def _build_full_prompt(mode: str, text: str, platform: str, brief: str) -> str:
     if mode == "polish":
-        task = "全文润色：保持 markdown 结构、事实与语气不变，只提升表达流畅度与节奏"
+        task = "全文润色：保持 markdown 结构、事实与来源括注不变，只提升表达流畅度与节奏"
     else:  # platform
-        task = f"按「{platform}」的平台风格改写全文"
+        task = f"按「{platform}」的平台规格改写全文"
         style = _PLATFORMS.get(platform)
         if style:
-            task += f"（{platform} 风格要点：{style}）"
-    return (
-        f"你是中文自媒体写作助手。任务：{task}。\n"
+            task += f"（{platform} 规格：{style}）"
+    parts = [
+        f"你是中文内容创作写作助手。任务：{task}",
         "要求：只输出处理后的全文本身——不要解释、不要「好的」等前后缀、不要代码围栏；"
-        "保持 markdown 格式。\n\n"
-        f"全文：\n{text}"
-    )
+        f"保持 markdown 格式。{_TONE}",
+    ]
+    if brief:
+        parts.append(f"选题简报（理解写作方向，不要输出它）：{brief}")
+    parts.append(f"全文：\n{text}")
+    return "\n\n".join(parts)
 
 
-def _build_title_prompt(text: str) -> str:
+def _build_title_prompt(text: str, platform: str) -> str:
+    plat = ""
+    if platform:
+        spec = _PLATFORMS.get(platform, "")
+        plat = f"目标平台是「{platform}」，标题要贴合该平台调性{('（' + spec + '）') if spec else ''}。"
     return (
-        "你是中文自媒体写作助手。基于下面的全文起 5 个候选标题，风格各异"
+        f"你是中文内容创作写作助手。{plat}基于下面的全文起 5 个候选标题，风格各异"
         "（悬念/干货/情绪/数字/提问）。只输出 JSON 数组字符串，"
         '形如 ["标题一","标题二","标题三","标题四","标题五"]，不要任何其它内容。\n\n'
         f"全文：\n{text}"
@@ -131,6 +148,7 @@ class AiEditTool(Tool):
                         "instruction": {"type": "string", "description": "自定义处理要求（mode=custom 时必填）"},
                         "platform": {"type": "string", "description": "platform 模式的目标平台，如 小红书/知乎/公众号"},
                         "context": {"type": "string", "description": "全文（仅作语境，可选）"},
+                        "brief": {"type": "string", "description": "选题简报（标题/角度/目标平台一句话，编辑器自动带上）"},
                     },
                     "required": ["selection"],
                 },
@@ -159,13 +177,14 @@ class AiEditTool(Tool):
         if mode not in _MODES and mode not in _FULL_MODES and mode != "custom":
             return ActionResult(success=False, error=f"未知模式：{mode}")
         context = str(params.get("context") or "")[:_MAX_CONTEXT].strip()
+        brief = str(params.get("brief") or "").strip()
 
         if mode == "title":
-            prompt = _build_title_prompt(selection)
+            prompt = _build_title_prompt(selection, platform)
         elif mode in ("polish", "platform"):
-            prompt = _build_full_prompt(mode, selection, platform)
+            prompt = _build_full_prompt(mode, selection, platform, brief)
         else:
-            prompt = _build_prompt(mode, selection, instruction, context)
+            prompt = _build_prompt(mode, selection, instruction, context, brief)
         try:
             out = llm.chat(prompt)
         except Exception as e:

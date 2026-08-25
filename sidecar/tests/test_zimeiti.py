@@ -231,8 +231,8 @@ def test_editor_webview_panel_loaded(env):
     html = p["html"]
     assert "<textarea" in html and "window.yibao =" not in html  # 桥 JS 由父侧注入，插件不自带
     # 面板事件 size 可控：编辑器承载 AI diff（选段 + 全文三模式）/ 版本历史 / 发布格式化 / 素材抽屉
-    # / 标题候选与平台选择弹层，上限放到 40KB 防失控增长
-    assert len(html.encode("utf-8")) < 40 * 1024
+    # / 标题候选与平台选择弹层 / 主题通道 / AI 撤销与丢稿保护，上限放到 48KB 防失控增长
+    assert len(html.encode("utf-8")) < 48 * 1024
 
     payload = panel_payload(ActionResult(success=True, data={"rows": []}, panel="zimeiti:editor"))
     assert payload["schema"] is None
@@ -438,8 +438,9 @@ def test_publish_copies_and_marks(env, monkeypatch):
     _run(reg, "zimeiti.article_save", {"id": tid, "content": "# 正文"})
     r = _run(reg, "zimeiti.publish", {"id": tid})
     assert r.success and r.data["opened_url"] == ""
-    assert copied["text"] == "K3 是垃圾\n\n# 正文"
-    assert r.data["chars"] == len("K3 是垃圾\n\n# 正文")
+    # 剪贴板给纯文本（2026-08-25 起剥 markdown，与编辑器小红书纯文本同语义）
+    assert copied["text"] == "K3 是垃圾\n\n正文"
+    assert r.data["chars"] == len("K3 是垃圾\n\n正文")
     row = _run(reg, "zimeiti.get", {"id": tid}).data["rows"][0]
     assert row["status"] == "已发布" and row["published_at"] > 0
 
@@ -823,3 +824,73 @@ def test_review_api_registered_intent(env):
     assert api is not None and not api.direct and api.handler == "zimeiti.stat_list"
     assert "{title}" in api.intent and "{id}" in api.intent
     assert "zimeiti.stat_list" in api.intent and "zimeiti.article_read" in api.intent
+
+
+# ---------- 2026-08-25 内容创作 v1：数据完整性与发布留痕 ----------
+
+
+def test_move_rejects_invalid_status_and_marks_publish(env):
+    """MoveTool（声明式 move 的代码承接）：非法状态拒绝；已发布写 published_at + published_version。"""
+    reg, _, _ = env
+    tid = _run(reg, "zimeiti.add", {"title": "T"}).data["id"]
+    bad = _run(reg, "zimeiti.move", {"id": tid, "status": "火星"})
+    assert not bad.success and "未知状态" in bad.error
+
+    _run(reg, "zimeiti.article_save", {"id": tid, "content": "# v1"})
+    _run(reg, "zimeiti.article_save", {"id": tid, "content": "# v2"})
+    ok = _run(reg, "zimeiti.move", {"id": tid, "status": "已发布"})
+    assert ok.success and ok.panel == "zimeiti:detail"
+    row = _run(reg, "zimeiti.get", {"id": tid}).data["rows"][0]
+    assert row["published_at"] > 0 and row["published_version"] == 2
+
+
+def test_update_tool_edits_topic_fields(env):
+    """选题可编辑（v1 新增）：只更新传入字段，不动其他。"""
+    reg, _, _ = env
+    tid = _run(reg, "zimeiti.add", {"title": "旧标题", "angle": "旧角度"}).data["id"]
+    r = _run(reg, "zimeiti.update", {"id": tid, "title": "新标题", "platform": "小红书"})
+    assert r.success
+    row = _run(reg, "zimeiti.get", {"id": tid}).data["rows"][0]
+    assert row["title"] == "新标题" and row["platform"] == "小红书" and row["angle"] == "旧角度"
+
+
+def test_article_save_stores_relative_path_and_prunes(env):
+    """content_path 落相对路径（迁移不炸）；版本治理：保留最近 20 版。"""
+    reg, _, _ = env
+    tid = _run(reg, "zimeiti.add", {"title": "T"}).data["id"]
+    _run(reg, "zimeiti.article_save", {"id": tid, "content": "v1"})
+    rows = reg.get("zimeiti.list").plugin_ctx.db.query("articles", where={"topic_id": tid})
+    assert rows[0]["content_path"].startswith("articles/")  # 相对路径
+    # article_read 兼容解析（相对 → 拼数据根）
+    r = _run(reg, "zimeiti.article_read", {"id": tid})
+    assert r.success and r.data["content"] == "v1"
+    # 写 25 版 → 只剩 20 版且最旧被清
+    for i in range(2, 26):
+        _run(reg, "zimeiti.article_save", {"id": tid, "content": f"v{i}"})
+    rows = reg.get("zimeiti.list").plugin_ctx.db.query("articles", where={"topic_id": tid}, order="version DESC")
+    assert len(rows) == 20 and rows[0]["version"] == 25 and rows[-1]["version"] == 6
+
+
+def test_publish_records_version_and_copies_plain_text(env, monkeypatch):
+    """发布记 published_version；剪贴板给纯文本（剥 markdown），不再带 `#`/`**`。"""
+    import subprocess
+
+    copied = {}
+
+    class _R:
+        returncode = 0
+
+    def _fake_run(cmd, input=None, check=False):
+        copied["text"] = (input or b"").decode("utf-8")
+        return _R()
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    reg, _, _ = env
+    tid = _run(reg, "zimeiti.add", {"title": "T"}).data["id"]
+    _run(reg, "zimeiti.article_save", {"id": tid, "content": "# 大标题\n\n**加粗** 和 `代码`\n\n- 列表项"})
+    r = _run(reg, "zimeiti.publish", {"id": tid})
+    assert r.success
+    assert "# 大标题" not in copied["text"] and "大标题" in copied["text"]
+    assert "**" not in copied["text"] and "· 列表项" in copied["text"]
+    row = _run(reg, "zimeiti.get", {"id": tid}).data["rows"][0]
+    assert row["published_version"] == 1

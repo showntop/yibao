@@ -2,8 +2,8 @@
 # 对话式工作流：录选题 → 看板管理 →（对话）写初稿/改稿 → 版本落盘 → 待发布/已发布。
 # 声明式 tool 管 topics CRUD/流转；方法论加载/文章版本落盘走 tools/ 代码 tool。
 id = "zimeiti"
-name = "自媒体"
-description = "自媒体选题与写作：选题看板、写稿改稿、版本管理、素材库（收藏链接/资料，写作时当论据召回）"
+name = "内容创作"
+description = "内容创作选题与写作：选题看板、写稿改稿、版本管理、素材库（收藏链接/资料，写作时当论据召回）"
 capabilities = ["db", "llm"]
 
 [code]
@@ -19,6 +19,7 @@ columns = [
   {name = "source", type = "text", default = ""},
   {name = "status", type = "text", default = "候选"},
   {name = "published_at", type = "integer", default = 0},
+  {name = "published_version", type = "integer", default = 0},   # 发布时的稿版本（复盘对齐数据与稿）
   {name = "created_at", type = "integer"},
   {name = "updated_at", type = "integer"},
 ]
@@ -112,6 +113,24 @@ table = "topics"
 limit = 1
 
 [[tool]]
+id = "update"
+type = "db"
+description = "改选题的标题/角度/目标平台（只更新传入的字段；改状态用 move）"
+risk = "L1"
+panel = "zimeiti:detail"
+refresh = "get"
+required = ["id"]
+[tool.params]
+id = {type = "string", description = "选题 id"}
+title = {type = "string", description = "新标题（可选）"}
+angle = {type = "string", description = "新角度（可选）"}
+platform = {type = "string", description = "新目标平台（可选）"}
+[tool.db]
+op = "update"
+table = "topics"
+auto = {updated_at = "unixts"}
+
+[[tool]]
 id = "get"
 type = "db"
 description = "查看一条选题的详情（运行时 where 由调用方传，如 {where: {id: …}}）"
@@ -122,22 +141,6 @@ id = {type = "string", description = "选题 id（传了就按 id 查；同时�
 [tool.db]
 op = "query"
 table = "topics"
-
-[[tool]]
-id = "move"
-type = "db"
-description = "选题状态流转：候选/写作中/待发布/已发布"
-risk = "L1"
-panel = "zimeiti:detail"
-refresh = "get"
-required = ["id", "status"]
-[tool.params]
-id = {type = "string", description = "选题 id"}
-status = {type = "string", description = "目标状态：候选 / 写作中 / 待发布 / 已发布"}
-[tool.db]
-op = "update"
-table = "topics"
-auto = {updated_at = "unixts"}
 
 [[tool]]
 id = "delete"

@@ -3,6 +3,7 @@
 文件自包含（加载器按文件独立 importlib 加载，禁止跨文件 import）。
 """
 from pathlib import Path
+import os
 
 from yibao_brain.ipc import ActionResult, RiskLevel
 from yibao_brain.tools import Tool
@@ -42,8 +43,11 @@ class ArticleRead(Tool):
         if not rows:
             return ActionResult(success=False, error=f"选题 {tid} 还没有稿件")
         row = rows[0]
+        cp = Path(str(row["content_path"]))
+        # 2026-08-25 起 content_path 落相对路径（相对插件数据根）；老库的绝对路径原样兼容
+        path = cp if cp.is_absolute() else Path(os.path.dirname(ctx.db.path)) / cp
         try:
-            content = Path(row["content_path"]).read_text(encoding="utf-8")
+            content = path.read_text(encoding="utf-8")
         except OSError as e:
             return ActionResult(success=False, error=f"稿件读取失败（{row['content_path']}）：{e}")
         return ActionResult(

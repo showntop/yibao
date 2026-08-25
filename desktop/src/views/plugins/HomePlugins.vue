@@ -465,12 +465,12 @@ watch(state, (s) => emit("state", s));
 onMounted(async () => {
   const qaMode = import.meta.env.DEV && new URLSearchParams(window.location.search).get("qa") === "capability";
   if (qaMode) {
-    plugins.value = [{ id: "zimeiti", name: "自媒体" }];
+    plugins.value = [{ id: "zimeiti", name: "内容创作" }];
     requestedPlugin = "zimeiti";
     requestedUntil = Date.now() + 8000;
     setCurrent({
       panel: "zimeiti:board",
-      title: "自媒体 · 选题看板",
+      title: "内容创作 · 选题看板",
       schema: {
         version: 1,
         type: "board",

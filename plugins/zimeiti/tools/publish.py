@@ -6,6 +6,8 @@ macOS）；open_platform=true 顺手用默认浏览器打开平台后台。文�
 """
 from __future__ import annotations
 
+import os
+import re
 import subprocess
 import time
 import webbrowser
@@ -13,6 +15,20 @@ from pathlib import Path
 from typing import Any
 
 from yibao_brain.ipc import ActionResult, RiskLevel
+
+
+def _strip_md(text: str) -> str:
+    """剥 markdown 符号成纯文本（标题/粗斜体/行内代码去掉记号；列表符号换小点；
+    链接留「文字（地址）」；与编辑器「小红书纯文本」复制同一语义）。"""
+    out = []
+    for line in text.splitlines():
+        line = re.sub(r"^#{1,6}\s*", "", line)                       # 标题
+        line = re.sub(r"^(\s*)[-*+]\s+", r"\1· ", line)              # 列表
+        line = re.sub(r"!\[([^\]]*)\]\([^)]*\)", r"\1", line)        # 图片留 alt
+        line = re.sub(r"\[([^\]]+)\]\(([^)]*)\)", r"\1（\2）", line)  # 链接留文字+地址
+        line = line.replace("**", "").replace("__", "").replace("`", "")
+        out.append(line)
+    return "\n".join(out)
 from yibao_brain.tools import Tool
 
 # 平台 → 后台首页（open_platform 用）；子串包含匹配（platform 是自由文本，如「公众号+小红书」）
@@ -66,11 +82,18 @@ class PublishTool(Tool):
         if not latest:
             return ActionResult(success=False, error="还没有稿件：先写初稿再发布")
         try:
-            content = Path(latest[0]["content_path"]).read_text(encoding="utf-8")
+            cp = Path(str(latest[0]["content_path"]))
+            # content_path 2026-08-25 起落相对路径（相对插件数据根）；老库绝对路径兼容
+            content = (cp if cp.is_absolute() else Path(os.path.dirname(ctx.db.path)) / cp).read_text(encoding="utf-8")
         except OSError as e:
             return ActionResult(success=False, error=f"读稿失败：{e}")
         title = str(topic.get("title") or "").strip()
-        payload = f"{title}\n\n{content}" if title else content
+        version = int(latest[0]["version"])
+        # 剪贴板给纯文本（与编辑器「小红书纯文本」同一语义）：剥 markdown 符号，
+        # 不再把 `# 标题`、`**粗体**` 原样塞给用户（详情页 publish 与编辑器富文本
+        # 曾是两条输出不一致的链路；公众号富文本复制仍在编辑器内做）
+        plain = _strip_md(content)
+        payload = f"{title}\n\n{plain}" if title else plain
         try:
             subprocess.run(["pbcopy"], input=payload.encode("utf-8"), check=True)
         except (OSError, subprocess.CalledProcessError) as e:
@@ -87,13 +110,14 @@ class PublishTool(Tool):
                 except Exception:
                     pass
         now = int(time.time())
-        db.update("topics", tid, {"status": "已发布", "published_at": now, "updated_at": now})
+        db.update("topics", tid, {"status": "已发布", "published_at": now, "updated_at": now,
+                                  "published_version": version})  # 发布的是哪版稿：复盘对齐数据与稿
         return ActionResult(
             success=True,
             data={
                 "id": tid,
                 "title": title,
-                "version": int(latest[0]["version"]),
+                "version": version,
                 "chars": len(payload),
                 "published_at": now,
                 "opened_url": opened,
