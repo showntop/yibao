@@ -563,3 +563,10 @@ def test_ambient_state_bad_file_tolerated(tmp_path):
     a = Ambient(quiet_hours="", state_path=str(p))
     ev = a.tick(_snap(_lt(9, 0), "active", 1, seg=1), WatchCtx())
     assert ev and ev["signal"] == "greeting"
+
+
+def test_ambient_greeting_text_by_hour():
+    """首活跃问候按时段分文案（晚间重启不再喊「新的一天」）。"""
+    a = Ambient(quiet_hours="")
+    for h, frag in ((8, "新的一天"), (12, "中午好"), (15, "下午好"), (20, "晚上好"), (2, "夜深了")):
+        assert frag in a._greeting_text(time.mktime((2026, 8, 24, h, 30, 0, 0, 0, -1))), h

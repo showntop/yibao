@@ -125,3 +125,35 @@ def test_recap_decide_returns_text_and_day():
         last_recap_day=None, today="2026-08-05",
         yesterday_items=[_item("insight", "切了14次——建议…", 0.9)])
     assert r is not None and "建议" in r["text"] and r["day"] is not None
+
+
+def test_build_recap_text_morning_report_shape():
+    """晨报结构：时段问候 + 昨日反刍 + 今日提醒（可只有其一）。"""
+    sel = [_item("insight", "建议A")]
+    todays = [{"fire_at": 1750000000, "text": "开战会"}]
+    txt = build_recap_text(sel, hour=9, todays=todays)
+    assert txt.startswith("早上好") and "昨天我注意到" in txt and "今天的提醒" in txt and "开战会" in txt
+    # 只今日提醒（昨日无产物）也成报
+    txt2 = build_recap_text([], hour=20, todays=todays)
+    assert txt2.startswith("晚上好") and "昨天我注意到" not in txt2 and "今天的提醒" in txt2
+    # 时段问候
+    assert build_recap_text(sel, hour=12).startswith("中午好")
+    assert build_recap_text(sel, hour=16).startswith("下午好")
+    assert build_recap_text(sel, hour=1).startswith("夜深了")
+    assert build_recap_text([], todays=[]) == ""
+
+
+def test_recap_decide_fires_with_only_todays_reminders():
+    """昨日无提炼产物但今日有提醒 → 晨报照出（每日仪式的底线）。"""
+    settings = {"perception.master": True, "perception.distill": True, "perception.recap": True}
+    r = _recap_decide(settings=settings, last_recap_day=None, today="2026-08-05",
+                      yesterday_items=[], hour=9,
+                      todays_reminders=[{"fire_at": 1750000000, "text": "喝水"}])
+    assert r and "今天的提醒" in r["text"] and "喝水" in r["text"]
+
+
+def test_recap_decide_no_content_and_no_reminders():
+    """昨日无产物且今日无提醒 → 不出（老语义：无内容不出）。"""
+    settings = {"perception.master": True, "perception.distill": True, "perception.recap": True}
+    assert _recap_decide(settings=settings, last_recap_day=None, today="2026-08-05",
+                         yesterday_items=[], hour=9, todays_reminders=[]) is None

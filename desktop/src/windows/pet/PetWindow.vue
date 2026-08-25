@@ -466,7 +466,8 @@ function onAvatarClick() {
   }, 450);
 }
 
-/** morning_recap 气泡点击 → 确保 home 窗可见 + 通知 HomeFeed 切到回顾 mode 并跳到当天。 */
+/** morning_recap 晨报气泡点击 → 打开主屏（回顾视图已退役，晨报正文自足在气泡里；
+ *  emitRecapOpen 的事件通道留着，暂无监听者——将来回顾页回归时即插即用）。 */
 function onRecapClick(day?: string) {
   if (!day) return;
   void openHomeWindow().catch(() => {});

@@ -212,13 +212,32 @@ def recap_select(items: list[dict]) -> list[dict]:
     return []
 
 
-def build_recap_text(items: list[dict]) -> str:
-    """模板拼昨日简报。空输入返空串（调用方据此跳过）。"""
-    if not items:
+def build_recap_text(items: list[dict], *, hour: int | None = None,
+                     todays: list[dict] | None = None) -> str:
+    """模板拼晨报：时段问候 + 昨日反刍（如有）+ 今日提醒（如有）。
+    两段都空返空串（调用方据此跳过）；hour=None 时问候按「早上好」（兼容旧调用）。"""
+    if not items and not todays:
         return ""
-    nums = "①②③④⑤⑥⑦⑧⑨⑩"
-    lines = [f"{nums[i]} {it['text']}" for i, it in enumerate(items[:3])]
-    return "早上好。昨天我注意到：\n" + "\n".join(lines)
+    greeting = "早上好"
+    if hour is not None:
+        if 11 <= hour < 14:
+            greeting = "中午好"
+        elif 14 <= hour < 18:
+            greeting = "下午好"
+        elif 18 <= hour < 23:
+            greeting = "晚上好"
+        elif hour >= 23 or hour < 5:
+            greeting = "夜深了"
+    parts: list[str] = []
+    if items:
+        nums = "①②③④⑤⑥⑦⑧⑨⑩"
+        lines = [f"{nums[i]} {it['text']}" for i, it in enumerate(items[:3])]
+        parts.append("昨天我注意到：\n" + "\n".join(lines))
+    if todays:
+        lines = [f"· {time.strftime('%H:%M', time.localtime(float(r['fire_at'])))} {r['text']}"
+                 for r in todays[:5]]
+        parts.append("今天的提醒：\n" + "\n".join(lines))
+    return f"{greeting}。\n" + "\n\n".join(parts)
 
 
 class Distiller:

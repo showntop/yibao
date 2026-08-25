@@ -298,8 +298,10 @@ async def _reminder_loop(*, agent, settings, feed, voice, run_state, write_msg, 
 
 
 def _recap_decide(*, settings: dict, last_recap_day: str | None, today: str,
-                  yesterday_items: list[dict]) -> dict | None:
-    """反刍编排（纯逻辑，可单测）：闸门→去重→选材→拼装。返回 {text, day} 或 None。"""
+                  yesterday_items: list[dict], hour: int | None = None,
+                  todays_reminders: list[dict] | None = None) -> dict | None:
+    """晨报编排（纯逻辑，可单测）：闸门→去重→选材→拼装。返回 {text, day} 或 None。
+    昨日反刍与今日提醒任一非空即出（晨报不必依赖昨日有提炼产物）。"""
     if not (settings.get("perception.master") and settings.get("perception.distill")
             and settings.get("perception.recap")):
         return None
@@ -308,9 +310,7 @@ def _recap_decide(*, settings: dict, last_recap_day: str | None, today: str,
     from .distiller import recap_select, build_recap_text, yesterday_window
 
     selected = recap_select(yesterday_items)
-    if not selected:
-        return None
-    text = build_recap_text(selected)
+    text = build_recap_text(selected, hour=hour, todays=todays_reminders)
     if not text:
         return None
     _day, _s, _e = yesterday_window()   # 目标日 = 昨天

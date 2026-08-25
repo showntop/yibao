@@ -1003,10 +1003,24 @@ async def serve_async(
             write_msg({"type": "distill_now", "ok": True, "result": result})
 
     async def _h_recap_check(msg: dict) -> None:
-        # 晨间反刍（fire-and-forget）：闸门→去重→选材→emit reminder(morning_recap)→标记今天
+        # 晨报（fire-and-forget）：闸门→去重→选材(昨日反刍+今日提醒)→emit reminder(morning_recap)→标记今天
         try:
             import datetime as _dt
             today = _dt.date.today().isoformat()
+            # 今日提醒（晨报第二段）：pending 里 fire_at 落在今天的项，按时间升序
+            #（reminder_store 由 build_loop 建并挂在 agent 上——serve_async 作用域里没有这个名字）
+            now = time.time()
+            lt = time.localtime(now)
+            day_start = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1))
+            todays: list[dict] = []
+            rstore = getattr(agent, "reminder_store", None)
+            if rstore is not None:
+                todays = sorted(
+                    ({"fire_at": float(r["fire_at"]), "text": str(r.get("text") or "")}
+                     for r in rstore.list_pending()
+                     if day_start <= float(r.get("fire_at", 0)) < day_start + 86400),
+                    key=lambda r: r["fire_at"],
+                )
             decide = _recap_decide(
                 settings=settings,
                 last_recap_day=distiller.store.recap_last_day() if distiller else None,
@@ -1014,6 +1028,8 @@ async def serve_async(
                 yesterday_items=(distiller.store.day_items(
                     (_dt.date.today() - _dt.timedelta(days=1)).isoformat())
                     if distiller else []),
+                hour=lt.tm_hour,
+                todays_reminders=todays,
             )
             if decide is not None:
                 _emit_event({"kind": "reminder", "type": "morning_recap",

@@ -232,6 +232,20 @@ class Ambient:
         self._save_state()
         return {"kind": "reminder", "type": "ambient", "signal": signal, "text": text}
 
+    @staticmethod
+    def _greeting_text(now: float) -> str:
+        """首活跃问候按本地时段分文案（晚上重启不再喊「新的一天」）。"""
+        h = time.localtime(now).tm_hour
+        if 5 <= h < 11:
+            return "你来啦，新的一天开始吧 ☀️"
+        if 11 <= h < 14:
+            return "中午好，下午继续加油 🍵"
+        if 14 <= h < 18:
+            return "下午好，继续加油 🍵"
+        if 18 <= h < 23:
+            return "晚上好，还在忙呀 🌙"
+        return "夜深了，别太累 🌙"
+
     def tick(self, snapshot: WatchSnapshot, ctx: WatchCtx) -> dict | None:
         self._roll_day(snapshot.now)
         act = snapshot.activity
@@ -255,7 +269,7 @@ class Ambient:
         # 每日首活跃问候（静默时段被抑制时不记账，出静默后仍可问候）
         if not self._greeted:
             self._greeted = True
-            return self._fire(snapshot.now, "你来啦，新的一天开始吧 ☀️", "greeting")
+            return self._fire(snapshot.now, self._greeting_text(snapshot.now), "greeting")
         # 回归问候：刚从 ≥30 分钟的 idle 回到 active
         if (prev_state == "idle" and prev_idle >= self._return_after_s
                 and self._welcomes < self._welcome_max):

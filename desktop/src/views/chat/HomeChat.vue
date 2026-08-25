@@ -48,6 +48,7 @@ import {
   ensureActiveConversation,
   listPlugins,
   panelAction,
+  recapCheck,
   type BrainPermissions,
   type BrainStatusMsg,
 } from "../../lib/brain";
@@ -315,6 +316,7 @@ let unlistenStatus: (() => void) | null = null;
 let unlistenPerms: (() => void) | null = null;
 let unlistenPanelClosed: (() => void) | null = null;
 let unlistenSetup: (() => void) | null = null;
+let unlistenRecap: (() => void) | null = null;  // 晨报焦点监听
 let unlistenSetupErr: (() => void) | null = null;
 let unlistenSetupCfg: (() => void) | null = null;
 let unlistenUpdated: (() => void) | null = null;
@@ -611,6 +613,18 @@ provide(HOME_CHAT_SESSION, {
 
 onMounted(async () => {
   window.addEventListener("keydown", onHostAskEsc, true);
+  // 晨报触发（承接自退役的 HomeFeed）：开窗/聚焦时 fire-and-forget recap_check，
+  // 大脑侧按 recap_last_day 去重，重复 fire 无害
+  void (async () => {
+    try {
+      const win = getCurrentWindow();
+      const fire = () => { void recapCheck().catch(() => {}); };
+      if (await win.isVisible()) fire();
+      unlistenRecap = await win.onFocusChanged(async ({ payload: focused }) => {
+        if (focused && (await win.isVisible())) fire();
+      });
+    } catch { /* 非 tauri 环境（vitest）忽略 */ }
+  })();
   // SessionStore 恢复编排：hydrate 三域后按活跃会话恢复气泡（与小窗镜面共用同一条会话）
   await sessionStore.restore().catch(() => {});
   let activeId = sessionStore.conversation.getActiveConversationId();
@@ -673,6 +687,7 @@ onUnmounted(() => {
   unlistenPerms?.();
   unlistenPanelClosed?.();
   unlistenSetup?.();
+  unlistenRecap?.();
   unlistenSetupErr?.();
   unlistenSetupCfg?.();
   unlistenUpdated?.();
