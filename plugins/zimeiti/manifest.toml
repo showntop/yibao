@@ -17,6 +17,7 @@ columns = [
   {name = "angle", type = "text", default = ""},
   {name = "platform", type = "text", default = ""},
   {name = "source", type = "text", default = ""},
+  {name = "url", type = "text", default = ""},   # 来源链接（热点转选题带上原文地址，复盘可回溯）
   {name = "status", type = "text", default = "候选"},
   {name = "published_at", type = "integer", default = 0},
   {name = "published_version", type = "integer", default = 0},   # 发布时的稿版本（复盘对齐数据与稿）
@@ -62,6 +63,8 @@ columns = [
   {name = "views", type = "integer", default = 0},
   {name = "likes", type = "integer", default = 0},
   {name = "comments", type = "integer", default = 0},
+  {name = "favorites", type = "integer", default = 0},
+  {name = "shares", type = "integer", default = 0},
   {name = "recorded_at", type = "integer"},
 ]
 indexes = ["topic_id"]
@@ -79,6 +82,7 @@ title = {type = "string", description = "选题标题（一句话说清要写什
 angle = {type = "string", description = "切入角度：从哪个点写、给谁看"}
 platform = {type = "string", description = "目标平台（如公众号/小红书/播客）"}
 source = {type = "string", description = "选题来源（如灵感/读者反馈/热点）"}
+url = {type = "string", description = "来源链接（热点转选题时的原文地址，可选）"}
 [tool.db]
 op = "insert"
 table = "topics"
@@ -130,17 +134,7 @@ op = "update"
 table = "topics"
 auto = {updated_at = "unixts"}
 
-[[tool]]
-id = "get"
-type = "db"
-description = "查看一条选题的详情（运行时 where 由调用方传，如 {where: {id: …}}）"
-risk = "L0"
-panel = "zimeiti:detail"
-[tool.params]
-id = {type = "string", description = "选题 id（传了就按 id 查；同时是 refresh 传参交集的依据）"}
-[tool.db]
-op = "query"
-table = "topics"
+# get 已由 tools/get_topic.py 代码承接（按 id 查时拼稿件版本/字数/素材数聚合字段，v2 #14）
 
 # delete 已由 tools/delete_topic.py 代码承接（级联清理稿件文件/素材关联/发布数据）
 
@@ -196,22 +190,7 @@ op = "update"
 table = "materials"
 auto = {updated_at = "unixts"}
 
-[[tool]]
-id = "stat_add"
-type = "db"
-description = "记录某选题在某平台的发布数据（阅读/赞/评论），用于复盘"
-risk = "L1"
-required = ["topic_id", "platform"]
-[tool.params]
-topic_id = {type = "string", description = "选题 id"}
-platform = {type = "string", description = "发布平台（如 公众号/小红书/知乎）"}
-views = {type = "integer", description = "阅读数，没有就 0"}
-likes = {type = "integer", description = "点赞数，没有就 0"}
-comments = {type = "integer", description = "评论数，没有就 0"}
-[tool.db]
-op = "insert"
-table = "post_stats"
-auto = {recorded_at = "unixts"}
+# stat_add 已由 tools/stat_add.py 代码承接（同选题同平台同日去重 + 收藏/转发指标）
 
 [[tool]]
 id = "stat_list"

@@ -269,12 +269,12 @@ describe("zimeiti record.schema.json（录数据表单）", () => {
     await w.setProps({ schema: schemaOf("zimeiti/panel/record.schema.json"), data: { rows: [{ id: "t9" }] } });
     const text = w.find('input[type="text"]');
     const nums = w.findAll('input[type="number"]');
-    expect(nums).toHaveLength(3);
+    expect(nums).toHaveLength(5);
     await text.setValue("小红书");
     await nums[0].setValue(100);
     await w.find("form").trigger("submit");
     expect(w.emitted("action")).toEqual([
-      [{ method: "zimeiti.stat_add", params: { topic_id: "t9", platform: "小红书", views: 100, likes: null, comments: null } }],
+      [{ method: "zimeiti.stat_add", params: { topic_id: "t9", platform: "小红书", views: 100, likes: null, comments: null, favorites: null, shares: null } }],
     ]);
   });
 });

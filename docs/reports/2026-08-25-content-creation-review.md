@@ -24,7 +24,12 @@
 
 > 2026-08-25 续：#5 / #9 / #11 已落地——delete 级联代码工具（tools/delete_topic.py：稿件行+文件+目录、素材摘关联、发布数据）；
 > 详情页「录数据」表单（record 面板 + api record/stat_add，SchemaPanel form 提交加 declared-fields 防串护栏）+ 素材「查看」正文面板（matdoc）；
-> 热点并行抓取 + 10min 缓存（失败回退陈缓存）。余项不变。
+> 热点并行抓取 + 10min 缓存（失败回退陈缓存）。
+>
+> 2026-08-25 第二批：#13 / #14 / #16 / #18 已落地——stat_add 代码承接（stat_add.py：同选题同平台同日去重，
+> 没传的字段保留旧值；post_stats 加 favorites/shares 列）；get 代码承接（get_topic.py：按 id 查拼 draft/materials 聚合，
+> 详情页新增「稿件/素材/链接」行）；topics 加 url 列（热点转选题带原文链接）；详情页冗余「已发布」按钮并入「复制成稿」
+> （published_at=0 显 1970 一项查证为已修：schema `|date` 管道对 0/负值返回空串）。余项：#15 / #12 / #17 / A8。
 
 | # | 问题 | 证据 | 建议修法 | 量级 |
 |---|---|---|---|---|

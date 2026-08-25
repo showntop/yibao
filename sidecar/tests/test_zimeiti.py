@@ -77,6 +77,7 @@ def test_all_tools_registered_with_risks(env):
         "zimeiti.versions": RiskLevel.L0_READONLY,
         "zimeiti.publish": RiskLevel.L2_MEDIUM,
         "zimeiti.hot_topics": RiskLevel.L1_LOW,
+        "zimeiti.stat_add": RiskLevel.L1_LOW,
     }
     for tid, risk in expected.items():
         assert reg.get(tid).default_risk == risk, tid
@@ -132,6 +133,22 @@ def test_delete_rejects_missing_topic(env):
     reg, _, _ = env
     assert not _run(reg, "zimeiti.delete", {"id": "missing"}).success
     assert not _run(reg, "zimeiti.delete", {"id": ""}).success
+
+
+def test_get_enriches_single_topic(env):
+    """v2 #14：按 id 查时带聚合字段（稿件版本+字数/素材数）；无稿无素材给占位文案。"""
+    reg, _, _ = env
+    tid = _run(reg, "zimeiti.add", {"title": "T"}).data["id"]
+    row = _run(reg, "zimeiti.get", {"id": tid}).data["rows"][0]
+    assert row["draft"] == "还没写稿" and row["materials"] == "—"
+
+    _run(reg, "zimeiti.article_save", {"id": tid, "content": "一二三四五"})
+    mid = _mat_skill(reg).run({"text": "素材x"}, reg.get("zimeiti.mat_save").plugin_ctx).data["id"]
+    _run(reg, "zimeiti.mat_link", {"id": mid, "topic_id": tid})
+    row = _run(reg, "zimeiti.get", {"id": tid}).data["rows"][0]
+    assert row["draft"] == "v1 · 5 字" and row["materials"] == "1 条"
+    # 全量查询不拼聚合（列表路径不逐条读稿）
+    assert "draft" not in _run(reg, "zimeiti.get", {}).data["rows"][0]
 
 
 # ---------- bundled skill（guides → skills/write/SKILL.md，2026-08-24 转化） ----------
@@ -736,10 +753,26 @@ def test_hot_add_creates_topic_with_source(env, monkeypatch):
     reg, _, _ = env
     _fake_boards(monkeypatch, reg)
     row = _run(reg, "zimeiti.hot_topics", {"platforms": "zhihu", "limit": 1}).data["rows"][0]
-    r = _run(reg, "zimeiti.add", {"title": row["title"], "source": row["source_ref"]})
+    r = _run(reg, "zimeiti.add", {"title": row["title"], "source": row["source_ref"], "url": row["url"]})
     assert r.success
     topic = _run(reg, "zimeiti.get", {"id": r.data["id"]}).data["rows"][0]
     assert topic["title"] == "如何看待 K3 翻车？" and topic["source"] == "知乎热榜#1" and topic["status"] == "候选"
+    assert topic["url"] == "https://www.zhihu.com/question/123"  # 热点转选题带原文链接（v2 #16）
+
+
+def test_stat_add_dedup_same_day(env):
+    """v2 #13：同选题同平台同日去重——再录改旧行（没传的字段保留旧值）；不同平台不去重。"""
+    reg, _, _ = env
+    tid = _run(reg, "zimeiti.add", {"title": "T"}).data["id"]
+    r1 = _run(reg, "zimeiti.stat_add", {"topic_id": tid, "platform": "小红书", "views": 100, "favorites": 5})
+    assert r1.success and r1.data["updated"] is False
+    r2 = _run(reg, "zimeiti.stat_add", {"topic_id": tid, "platform": "小红书", "views": 200})
+    assert r2.success and r2.data["updated"] is True
+    rows = _run(reg, "zimeiti.stat_list", {}).data["rows"]
+    assert len(rows) == 1 and rows[0]["views"] == 200 and rows[0]["favorites"] == 5
+    _run(reg, "zimeiti.stat_add", {"topic_id": tid, "platform": "知乎", "views": 50})
+    assert len(_run(reg, "zimeiti.stat_list", {}).data["rows"]) == 2
+    assert not _run(reg, "zimeiti.stat_add", {"topic_id": "missing", "platform": "x"}).success
 
 
 # ---------- 素材打通（materials.topic_id / hot_mat_save / mat_link） ----------

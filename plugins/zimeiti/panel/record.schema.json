@@ -6,7 +6,9 @@
     {"name": "platform", "label": "平台（必填，如 公众号/小红书/知乎）", "input": "text"},
     {"name": "views", "label": "阅读数", "input": "number"},
     {"name": "likes", "label": "点赞数", "input": "number"},
-    {"name": "comments", "label": "评论数", "input": "number"}
+    {"name": "comments", "label": "评论数", "input": "number"},
+    {"name": "favorites", "label": "收藏数", "input": "number"},
+    {"name": "shares", "label": "转发数", "input": "number"}
   ],
   "submit": {"label": "记录", "method": "zimeiti.stat_add", "params": {"topic_id": "$data.rows.0.id"}}
 }
