@@ -22,6 +22,10 @@
 
 ## v2 backlog（按影响排序，未实施）
 
+> 2026-08-25 续：#5 / #9 / #11 已落地——delete 级联代码工具（tools/delete_topic.py：稿件行+文件+目录、素材摘关联、发布数据）；
+> 详情页「录数据」表单（record 面板 + api record/stat_add，SchemaPanel form 提交加 declared-fields 防串护栏）+ 素材「查看」正文面板（matdoc）；
+> 热点并行抓取 + 10min 缓存（失败回退陈缓存）。余项不变。
+
 | # | 问题 | 证据 | 建议修法 | 量级 |
 |---|---|---|---|---|
 | 5 | delete 无级联（稿件文件/素材关联/数据成孤儿） | manifest delete 声明式 | delete 改代码工具：删 articles 行+目录、清 materials.topic_id、删 post_stats | 中 |

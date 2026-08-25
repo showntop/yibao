@@ -142,10 +142,14 @@ watchEffect(() => {
 });
 function onSubmit() {
   if (!submitDecl.value) return;
+  // 只并入本表单声明的字段：formValues 是常驻 reactive，跨面板复用组件实例时会带上
+  // 上一个表单的残留键（如先开过 forge 裁决表再开来录数据表），全量合并会污染提交参数
+  const declared: Record<string, unknown> = {};
+  for (const f of formFields.value) declared[f.name] = formValues[f.name];
   // 提交时把表单值并入 params（协议：submit.params 里的绑定同样生效）
   emit("action", {
     method: submitDecl.value.method,
-    params: { ...resolveParams(submitDecl.value.params, ctx.value), ...formValues },
+    params: { ...resolveParams(submitDecl.value.params, ctx.value), ...declared },
   });
 }
 

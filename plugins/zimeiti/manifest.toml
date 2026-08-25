@@ -142,19 +142,7 @@ id = {type = "string", description = "选题 id（传了就按 id 查；同时�
 op = "query"
 table = "topics"
 
-[[tool]]
-id = "delete"
-type = "db"
-description = "删除一条选题"
-risk = "L2"
-panel = "zimeiti:board"
-refresh = "list"
-required = ["id"]
-[tool.params]
-id = {type = "string", description = "选题 id"}
-[tool.db]
-op = "delete"
-table = "topics"
+# delete 已由 tools/delete_topic.py 代码承接（级联清理稿件文件/素材关联/发布数据）
 
 [[tool]]
 id = "mat_list"
@@ -260,6 +248,18 @@ name = "materials"
 label = "素材库"
 src = "panel/materials.schema.json"
 open = "mat_list"   # 面板级入口：插件页子入口直调此 api 方法打开
+
+[[panel]]
+type = "schema"
+name = "record"
+label = "录数据"
+src = "panel/record.schema.json"
+
+[[panel]]
+type = "schema"
+name = "matdoc"
+label = "素材正文"
+src = "panel/matdoc.schema.json"
 
 [[panel]]
 type = "schema"

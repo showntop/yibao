@@ -246,6 +246,39 @@ describe("zimeiti hot.schema.json（双动作列表）", () => {
   });
 });
 
+// ---------- zimeiti：materials（查看/删除双动作） ----------
+
+describe("zimeiti materials.schema.json", () => {
+  it("条目两个动作：查看（mat_get 阅读面板）/ 删除", async () => {
+    const schema = schemaOf("zimeiti/panel/materials.schema.json");
+    const w = mountPanel(schema, { rows: [{ id: "m1", title: "K3 评测", summary: "三点硬伤" }] });
+    const btns = w.findAll(".card-actions button");
+    expect(btns.map((b) => b.text())).toEqual(["查看", "删除"]);
+    await btns[0].trigger("click");
+    expect(w.emitted("action")).toEqual([[{ method: "zimeiti.mat_get", params: { id: "m1" } }]]);
+  });
+});
+
+// ---------- zimeiti：record 录数据表单（declared-fields 提交护栏） ----------
+
+describe("zimeiti record.schema.json（录数据表单）", () => {
+  it("提交合并声明字段 + topic_id 绑定；跨表单残留键不混入", async () => {
+    // 先挂 forge 裁决表再切到录数据表（同一组件实例）：旧表单键不得污染提交
+    const w = mountPanel(schemaOf("forge/panel/verdict_form.schema.json"), { id: "r1", title: "x" });
+    await w.find('input[type="text"]').setValue("已立项");
+    await w.setProps({ schema: schemaOf("zimeiti/panel/record.schema.json"), data: { rows: [{ id: "t9" }] } });
+    const text = w.find('input[type="text"]');
+    const nums = w.findAll('input[type="number"]');
+    expect(nums).toHaveLength(3);
+    await text.setValue("小红书");
+    await nums[0].setValue(100);
+    await w.find("form").trigger("submit");
+    expect(w.emitted("action")).toEqual([
+      [{ method: "zimeiti.stat_add", params: { topic_id: "t9", platform: "小红书", views: 100, likes: null, comments: null } }],
+    ]);
+  });
+});
+
 // ---------- agents：tasks board ----------
 
 describe("agents tasks.schema.json", () => {

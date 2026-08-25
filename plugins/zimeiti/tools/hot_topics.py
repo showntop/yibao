@@ -3,12 +3,16 @@
 免登录公开端点 + urllib（与 mat_save 同套抓取姿势，不引第三方库）。平台级失败隔离：
 单平台挂了/结构变了不拖垮整体，failed 如实上报；全挂才算失败。结果面板化（zimeiti:hot），
 面板「转选题」走 zimeiti.hot_add（api.toml 映射 zimeiti.add）。文件自包含（禁止跨文件 import）。
+2026-08-25 v2：多平台并行抓取（最坏耗时从串行 30s+ 收敛到单平台超时 10s）+ 10 分钟缓存
+（转选题/刷新跟单不再重打网络）；抓取失败回退陈缓存，不把一个平台整列抹掉。
 """
 from __future__ import annotations
 
 import json
 import re
+import time
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable
 
 from yibao_brain.ipc import ActionResult, RiskLevel
@@ -16,7 +20,11 @@ from yibao_brain.tools import Tool
 
 _FETCH_TIMEOUT = 10
 _MAX_LIMIT = 20
+_CACHE_TTL = 600  # 热点 10 分钟缓存
 _UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+
+# 平台 → (抓取时间, 解析好的条目，按 _MAX_LIMIT 截断)。模块级：同一大脑进程内共享。
+_CACHE: dict[str, tuple[float, list[dict]]] = {}
 
 
 def _fetch_json(url: str) -> dict:
@@ -101,6 +109,24 @@ _PLATFORMS: dict[str, tuple[str, str, Callable[[dict, int], list[dict]]]] = {
 }
 
 
+def _platform_items(name: str) -> list[dict]:
+    """取一个平台的热榜条目（上限 _MAX_LIMIT）：鲜缓存直用；过期/没有就抓并写缓存；
+    抓挂了回退陈缓存，连陈缓存都没有返回 []（上层记 failed）。"""
+    _, url, parser = _PLATFORMS[name]
+    now = time.time()
+    hit = _CACHE.get(name)
+    if hit and now - hit[0] < _CACHE_TTL:
+        return hit[1]
+    try:
+        items = parser(_fetch_json(url), _MAX_LIMIT)
+    except Exception:
+        items = []
+    if items:
+        _CACHE[name] = (now, items)
+        return items
+    return hit[1] if hit else []
+
+
 class HotTopicsTool(Tool):
     id = "zimeiti.hot_topics"
     label = "查热点选题"
@@ -143,16 +169,15 @@ class HotTopicsTool(Tool):
             )
         rows: list[dict] = []
         failed: list[str] = []
-        for name in names:
-            cn, url, parser = _PLATFORMS[name]
-            try:
-                items = parser(_fetch_json(url), limit)
-            except Exception:
-                items = []
+        # 多平台并行：顺序保持 names 声明序（pool.map 按输入序返回）
+        with ThreadPoolExecutor(max_workers=len(names)) as pool:
+            per_platform = list(pool.map(_platform_items, names))
+        for name, items in zip(names, per_platform):
+            cn = _PLATFORMS[name][0]
             if not items:  # 网络挂了和「拿到响应但一条都解析不出（结构变了）」同等对待：如实报失败
                 failed.append(cn)
                 continue
-            for i, it in enumerate(items, 1):
+            for i, it in enumerate(items[:limit], 1):
                 rows.append({
                     "rank": i,
                     "platform": name,

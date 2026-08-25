@@ -33,6 +33,26 @@ name = "mat_list"
 handler = "zimeiti.mat_list"
 direct = true
 
+# 详情页「录数据」：get 拿选题上下文，panel 覆盖到录数据表单（同 open_editor 的 panel 覆盖姿势）
+[[method]]
+name = "record"
+handler = "zimeiti.get"
+direct = true
+panel = "zimeiti:record"
+
+# 录数据表单提交：直调落库（无 panel 引用 → 不回弹面板，表单停留可连续录；回执走 action_result）
+[[method]]
+name = "stat_add"
+handler = "zimeiti.stat_add"
+direct = true
+
+# 素材库条目「查看」：取正文进阅读面板（doc 渲染）
+[[method]]
+name = "mat_get"
+handler = "zimeiti.mat_get"
+direct = true
+panel = "zimeiti:matdoc"
+
 # 编辑器素材抽屉取数：只回数据、不发 panel 事件（quiet）——
 # 抽屉并发查全量+关联两条，非 quiet 时 0 行的关联查询会发空面板事件把 12 行的全量面板冲掉（last-write-wins）
 [[method]]

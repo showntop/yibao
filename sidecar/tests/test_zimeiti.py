@@ -107,6 +107,33 @@ def test_declarative_chain(env):
     assert _run(reg, "zimeiti.list", {}).data["rows"] == []
 
 
+def test_delete_cascades_articles_materials_stats(env):
+    """delete 代码承接（2026-08-25）：级联清稿件（行+文件+目录）、素材关联、发布数据。"""
+    reg, _, _ = env
+    tid = _run(reg, "zimeiti.add", {"title": "T"}).data["id"]
+    p1 = Path(_run(reg, "zimeiti.article_save", {"id": tid, "content": "# v1"}).data["path"])
+    p2 = Path(_run(reg, "zimeiti.article_save", {"id": tid, "content": "# v2"}).data["path"])
+    mid = _mat_skill(reg).run({"text": "素材x"}, reg.get("zimeiti.mat_save").plugin_ctx).data["id"]
+    assert _run(reg, "zimeiti.mat_link", {"id": mid, "topic_id": tid}).success
+    assert _run(reg, "zimeiti.stat_add", {"topic_id": tid, "platform": "小红书", "views": 100}).success
+
+    r = _run(reg, "zimeiti.delete", {"id": tid})
+    assert r.success and r.panel == "zimeiti:board" and reg.get("zimeiti.delete").refresh == "zimeiti.list"
+
+    db = reg.get("zimeiti.delete").plugin_ctx.db
+    assert db.query("articles", where={"topic_id": tid}) == []  # 稿件库行清掉
+    assert not p1.exists() and not p2.exists() and not p1.parent.exists()  # 文件+目录清掉
+    assert _run(reg, "zimeiti.mat_get", {"id": mid}).data["rows"][0]["topic_id"] == ""  # 素材本体保留、摘关联
+    assert _run(reg, "zimeiti.stat_list", {}).data["rows"] == []  # 发布数据清掉
+    assert _run(reg, "zimeiti.list", {}).data["rows"] == []
+
+
+def test_delete_rejects_missing_topic(env):
+    reg, _, _ = env
+    assert not _run(reg, "zimeiti.delete", {"id": "missing"}).success
+    assert not _run(reg, "zimeiti.delete", {"id": ""}).success
+
+
 # ---------- bundled skill（guides → skills/write/SKILL.md，2026-08-24 转化） ----------
 
 
@@ -195,6 +222,12 @@ def test_api_whitelist(env):
         assert api is not None and not api.direct and api.intent, name
     assert get_api("zimeiti.move").refresh == "zimeiti.list"
     assert get_api("zimeiti.delete").refresh == "zimeiti.list"
+    # 录数据表单 + 素材查看（2026-08-25 v2 #9）
+    for name in ("zimeiti.record", "zimeiti.stat_add", "zimeiti.mat_get"):
+        api = get_api(name)
+        assert api is not None and api.direct, name
+    assert get_api("zimeiti.record").panel == "zimeiti:record"
+    assert get_api("zimeiti.mat_get").panel == "zimeiti:matdoc"
 
 
 def test_panel_schemas_reference_whitelisted_methods(env):
@@ -664,6 +697,30 @@ def test_hot_topics_platforms_limit_and_unknown(env, monkeypatch):
     r = _run(reg, "zimeiti.hot_topics", {"platforms": "zhihu", "limit": 1})
     assert [row["title"] for row in r.data["rows"]] == ["如何看待 K3 翻车？"]
     assert not _run(reg, "zimeiti.hot_topics", {"platforms": "weibo"}).success
+
+
+def test_hot_topics_cache_and_stale_fallback(env, monkeypatch):
+    """v2 #11：10 分钟内重复拉取走缓存（不重打网络）；过期后抓取失败回退陈缓存。"""
+    reg, _, _ = env
+    g = type(reg.get("zimeiti.hot_topics")).run.__globals__
+    calls: list[str] = []
+
+    def _fake(url):
+        calls.append(url)
+        return _ZHIHU_JSON
+
+    monkeypatch.setitem(g, "_fetch_json", _fake)
+    _run(reg, "zimeiti.hot_topics", {"platforms": "zhihu"})
+    r = _run(reg, "zimeiti.hot_topics", {"platforms": "zhihu"})
+    assert len(calls) == 1 and r.data["failed"] == []  # 第二次走缓存
+
+    g["_CACHE"]["zhihu"] = (0, g["_CACHE"]["zhihu"][1])  # 手动过期
+    def _boom(url):
+        raise OSError("boom")
+
+    monkeypatch.setitem(g, "_fetch_json", _boom)
+    r = _run(reg, "zimeiti.hot_topics", {"platforms": "zhihu"})
+    assert r.success and r.data["failed"] == [] and r.data["rows"]  # 陈缓存顶上，不记 failed
 
 
 def test_hot_topics_api_registered(env):

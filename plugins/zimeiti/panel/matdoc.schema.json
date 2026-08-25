@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "type": "doc",
+  "back": {"label": "返回素材库", "method": "zimeiti.mat_list"},
+  "bind": {"title": "$data.rows.0.title", "text": "$data.rows.0.content"}
+}
