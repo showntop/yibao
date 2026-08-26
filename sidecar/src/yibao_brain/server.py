@@ -33,6 +33,7 @@ from .background import (
     _recap_decide,
     _recover_background_jobs,
     _perception_cleanup_loop,
+    _night_loop,
     _reminder_loop,
     _watch_tick,
 )
@@ -197,11 +198,16 @@ def build_loop(
 
     active_plugins: set | None = None  # None=全量暴露（测试/兼容）；集合=路由式暴露
     reminder_store = None
+    night_store = None
     if use_real and not skills_factory:
         # 底座提醒存储先建：提醒管理插件（reminders capability）与底座技能共享同一实例
         from .reminders import ReminderStore, make_skills
 
         reminder_store = ReminderStore(os.path.join(os.path.dirname(db_path), "reminders.json"))
+        # 守夜人（隔夜任务）：与 reminders.json 并列的存储，调度循环经 agent.night_store 取
+        from .nightwatch import NightStore, make_skills as _night_skills
+
+        night_store = NightStore(os.path.join(os.path.dirname(db_path), "nightwatch.json"))
         _load_plugins_safe(reg, memory, prov, host, reminders=reminder_store, emit_event=emit_event)
         # 能力热重载（P1 reload 地基）：增量扫描 plugins/，新插件免重启生效
         from pathlib import Path
@@ -304,6 +310,8 @@ def build_loop(
             )
         for sk in make_skills(reminder_store):
             reg.register(sk)
+        for sk in _night_skills(night_store, reg):  # night_set/list/cancel（注册需 reg 校验目标工具）
+            reg.register(sk)
         # gen 面板（LLM 生成 webview）：启动恢复已生成面板 + 注册 panel_gen/open/list/delete
         from . import genpanel
 
@@ -339,6 +347,7 @@ def build_loop(
     )
     if use_real and not skills_factory:
         agent.reminder_store = reminder_store  # serve 的调度循环经它触发提醒
+        agent.night_store = night_store  # serve 的 _night_loop 经它触发隔夜任务
     return agent
 
 
@@ -765,6 +774,9 @@ async def serve_async(
     reminder_task = asyncio.ensure_future(_reminder_loop(
         agent=agent, settings=settings, feed=feed, voice=voice,
         run_state=slots_idle_state, write_msg=write_msg, dispatcher=proactive_dispatcher))
+    night_task = asyncio.ensure_future(_night_loop(
+        agent=agent, settings=settings, feed=feed,
+        write_msg=write_msg, dispatcher=proactive_dispatcher))
 
     if http_enabled is None:
         http_enabled = use_real  # 测试默认关；生产（use_real=True）默认开
@@ -1351,6 +1363,7 @@ async def serve_async(
                     t.cancel()
             tick_task.cancel()
             reminder_task.cancel()
+            night_task.cancel()
             perception_cleanup_task.cancel()
             if bridge_server is not None:
                 tap.close()  # 先给 SSE 订阅者投哨兵：handler 立即退出，cleanup 不用等 30s 心跳

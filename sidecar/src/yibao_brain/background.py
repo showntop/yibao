@@ -297,6 +297,90 @@ async def _reminder_loop(*, agent, settings, feed, voice, run_state, write_msg, 
                              dispatcher=dispatcher)
 
 
+# ---------- 守夜人：隔夜任务调度（复用 reminder 分发通道，但永不 TTS） ----------
+
+
+async def _dispatch_night(job: dict, text: str, *, settings: dict, feed, history,
+                          write_msg, dispatcher=None) -> None:
+    """夜间任务结果分发：复用 reminder 通道（Feed/历史/气泡），但永不 TTS——凌晨不能出声。"""
+    level = _proactive_level(settings)
+    if dispatcher is not None:
+        await dispatcher.dispatch({"kind": "reminder", "type": "night_job",
+                                   "text": text, "nid": job.get("id")})
+    else:
+        feed.add("reminder", text, {"nid": job.get("id")})  # compatibility path for tests
+        if level != "quiet":
+            write_msg({"type": "event", "surface": "pet",
+                       "event": {"kind": "reminder", "type": "night_job",
+                                 "text": text, "level": level}})
+    if history is not None:  # 落历史：用户早上在对话里收到晨报并拍板
+        try:
+            await _offload(history.record_messages,
+                           [{"role": "assistant", "content": text}])
+        except Exception:
+            pass
+
+
+async def _night_tick(*, store, agent, settings, feed, write_msg, dispatcher) -> None:
+    """单轮到期夜间任务扫描：pop_due → 逐个在线程池执行（同步工具含 subprocess/LLM，
+    压事件循环会饿死看门狗 ping，15s 无 pong 被杀）→ 结果分发。
+
+    单任务失败不挡其余任务；失败也落消息（fail-closed：人必须知道夜里没跑成）。
+    """
+    try:
+        due = await _offload(store.pop_due, time.time())
+    except Exception as e:
+        log(f"夜间任务扫描失败：{e}")
+        return
+    for job in due:
+        log(f"夜间任务触发 id={job.get('id')} tool={job.get('tool')}")
+        name = str(job.get("name") or job.get("tool") or "?")
+        try:
+            tool = agent.skills.get(str(job.get("tool") or ""))
+        except Exception:  # registry.get 未注册抛 KeyError；其它异常同样按找不到处理
+            tool = None
+        if tool is None:
+            text = f"夜间任务失败：{name}——工具不存在（插件未加载？）：{job.get('tool')}"
+            try:
+                await _offload(store.mark_result, job["id"], False, text)
+            except Exception:
+                pass
+        else:
+            try:
+                result = await _offload(tool.run, dict(job.get("params") or {}), tool.plugin_ctx)
+            except Exception as e:
+                result = None
+                err = f"{type(e).__name__}: {e}"
+            if result is not None and result.success:
+                text = str((result.data or {}).get("human") or (result.data or {}).get("text")
+                           or f"夜间任务完成：{name}")
+                try:
+                    await _offload(store.mark_result, job["id"], True, None)
+                except Exception:
+                    pass
+            else:
+                err = (result.error or "未知错误") if result is not None else err
+                text = f"夜间任务失败：{name}——{err}"
+                try:
+                    await _offload(store.mark_result, job["id"], False, err)
+                except Exception:
+                    pass
+        await _dispatch_night(job, text, settings=settings, feed=feed,
+                              history=getattr(agent, "history", None),
+                              write_msg=write_msg, dispatcher=dispatcher)
+
+
+async def _night_loop(*, agent, settings, feed, write_msg, dispatcher) -> None:
+    """守夜人调度：每 10s 扫到期夜间任务 → 执行并分发晨报。无 night_store 则循环即退。"""
+    store = getattr(agent, "night_store", None)
+    if store is None:
+        return
+    while True:
+        await asyncio.sleep(10)
+        await _night_tick(store=store, agent=agent, settings=settings, feed=feed,
+                          write_msg=write_msg, dispatcher=dispatcher)
+
+
 def _recap_decide(*, settings: dict, last_recap_day: str | None, today: str,
                   yesterday_items: list[dict], hour: int | None = None,
                   todays_reminders: list[dict] | None = None) -> dict | None:

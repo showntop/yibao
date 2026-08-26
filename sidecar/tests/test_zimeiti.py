@@ -79,6 +79,7 @@ def test_all_tools_registered_with_risks(env):
         "zimeiti.hot_topics": RiskLevel.L1_LOW,
         "zimeiti.stat_add": RiskLevel.L1_LOW,
         "zimeiti.mat_search": RiskLevel.L0_READONLY,
+        "zimeiti.night_brief": RiskLevel.L1_LOW,  # 守夜人可调度上限 L1（夜间无人值守不弹确认）
     }
     for tid, risk in expected.items():
         assert reg.get(tid).default_risk == risk, tid
@@ -1247,3 +1248,158 @@ def test_ww_score_cli_failure(env, monkeypatch):
     _run(reg, "zimeiti.article_save", {"id": tid, "content": "x"})
     r = _run(reg, "zimeiti.ww_score", {"topic_id": tid})
     assert not r.success and "退出码 1" in r.error and "score boom" in r.error
+
+
+# ---------- night_brief（守夜人夜间流水线：抓热点 → 定选题 → 起稿 → 晨报） ----------
+
+
+class _SeqLlm:
+    """按调用顺序返回预置回复的 ctx.llm 替身（先选题 JSON、再初稿文本）。"""
+
+    def __init__(self, replies):
+        self._replies = list(replies)
+        self.prompts = []
+
+    def chat(self, prompt):
+        self.prompts.append(prompt)
+        return self._replies.pop(0)
+
+
+_PICKS_JSON = json.dumps([
+    {"title": "AI 编程工具大战，输家已经注定", "angle": "从开发者流失切入", "platform": "公众号",
+     "reason": "挂上头条热一", "url": "https://www.toutiao.com/trending/1/"},
+    {"title": "高考分数线背后的信号", "angle": "给家长看", "platform": "知乎",
+     "reason": "百度热二", "url": "https://m.baidu.com/s?word=x"},
+    {"title": "蹭热点第三条", "angle": "x", "platform": "小红书", "reason": "r", "url": ""},
+])
+
+_DRAFT = "字" * 700  # 初稿硬闸门：中文字数 ≥600
+
+
+def _night_env(env, monkeypatch, replies):
+    """加载插件 + 假 wewrite CLI（记调用）+ 假顺序 LLM；返回 (tool, llm, cli_calls)。"""
+    import subprocess
+
+    cli_calls = []
+
+    def _fake_run(cmd, **kw):
+        cli_calls.append(cmd)
+        return _completed(stdout=_HOTSPOTS_JSON)
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    reg, _, _ = env
+    t = reg.get("zimeiti.night_brief")
+    llm = _SeqLlm(replies)
+    t.plugin_ctx.llm = llm
+    return t, llm, cli_calls
+
+
+def test_night_brief_happy_path(env, monkeypatch):
+    """全链：热点 → LLM 定 3 个选题落库（source=守夜人）→ 头名起 v1 稿转写作中 → 晨报文本。"""
+    t, llm, cli_calls = _night_env(env, monkeypatch, [_PICKS_JSON, _DRAFT])
+    r = t.run({}, t.plugin_ctx)
+    assert r.success and r.panel is None  # 夜里不弹任何面板
+    assert r.data["drafted"] is True and len(r.data["topics"]) == 3
+    assert len(cli_calls) == 1 and "hotspots" in cli_calls[0]
+    assert len(llm.prompts) == 2  # 选题一次 + 起稿一次
+    assert "为什么现在写" in llm.prompts[0] and "钩子" in llm.prompts[1]  # 方法论进了 prompt
+
+    db = t.plugin_ctx.db
+    rows = db.query("topics", order="updated_at DESC", limit=100)
+    assert len(rows) == 3 and all(row["source"] == "守夜人" for row in rows)
+    top = next(row for row in rows if row["title"] == "AI 编程工具大战，输家已经注定")
+    assert top["status"] == "写作中" and top["url"] == "https://www.toutiao.com/trending/1/"
+    assert all(row["status"] == "候选" for row in rows if row["id"] != top["id"])  # 只头名起稿
+    arts = db.query("articles", where={"topic_id": top["id"]})
+    assert len(arts) == 1 and arts[0]["version"] == 1 and arts[0]["note"] == "守夜人初稿"
+    assert (t._root / arts[0]["content_path"]).is_file()  # 稿件照 article_save 约定落盘
+
+    human = r.data["human"]
+    assert "守夜人晨报" in human and "AI 编程工具大战，输家已经注定" in human
+    assert "要哪个直接说" in human  # 收尾：发布永远等用户拍板
+
+
+def test_night_brief_resume_skips_done_steps(env, monkeypatch):
+    """断点续跑：每步落盘 night/<date>.json，同日期重跑不再调 CLI / LLM，直接出晨报。"""
+    t, llm, cli_calls = _night_env(env, monkeypatch, [_PICKS_JSON, _DRAFT])
+    assert t.run({"date": "2026-08-26"}, t.plugin_ctx).success
+    assert len(cli_calls) == 1 and len(llm.prompts) == 2
+    r = t.run({"date": "2026-08-26"}, t.plugin_ctx)
+    assert r.success and len(cli_calls) == 1 and len(llm.prompts) == 2  # 零新增调用
+    assert "AI 编程工具大战，输家已经注定" in r.data["human"]
+    assert len(t.plugin_ctx.db.query("topics", limit=100)) == 3  # 不重复转选题
+
+
+def test_night_brief_pick_json_retry_once(env, monkeypatch):
+    """选题 JSON 解析失败重试一次：第一次垃圾、第二次 ```json 围栏 → 成功。"""
+    t, llm, _ = _night_env(env, monkeypatch,
+                           ["这不是 JSON", "```json\n" + _PICKS_JSON + "\n```", _DRAFT])
+    r = t.run({}, t.plugin_ctx)
+    assert r.success and len(llm.prompts) == 3  # 选题两次 + 起稿一次
+
+
+def test_night_brief_pick_unparseable_twice_fails_step(env, monkeypatch):
+    """两次都解析不了 → 整步报错（不硬编选题）；热点步已落盘，补跑从选题继续。"""
+    t, llm, cli_calls = _night_env(env, monkeypatch, ["垃圾", "还是垃圾"])
+    r = t.run({}, t.plugin_ctx)
+    assert not r.success and "定选题" in r.error
+    llm._replies = [_PICKS_JSON, _DRAFT]  # 补跑：CLI 不重调（热点已在状态里）
+    r2 = t.run({}, t.plugin_ctx)
+    assert r2.success and len(cli_calls) == 1
+
+
+def test_night_brief_dedupes_board_and_batch(env, monkeypatch):
+    """硬闸门：撞看板标题的丢、本批重复的丢、最多保留 3 个。"""
+    picks = json.dumps([
+        {"title": "已有选题", "angle": "", "platform": "公众号", "reason": "r", "url": ""},
+        {"title": "新选题 A", "angle": "", "platform": "公众号", "reason": "r", "url": ""},
+        {"title": "新选题 A", "angle": "", "platform": "知乎", "reason": "r", "url": ""},
+        {"title": "新选题 B", "angle": "", "platform": "知乎", "reason": "r", "url": ""},
+        {"title": "新选题 C", "angle": "", "platform": "小红书", "reason": "r", "url": ""},
+        {"title": "新选题 D", "angle": "", "platform": "小红书", "reason": "r", "url": ""},
+        {"title": "", "angle": "", "platform": "", "reason": "r", "url": ""},  # 空标题丢
+    ])
+    t, llm, _ = _night_env(env, monkeypatch, [picks, _DRAFT])
+    _run(env[0], "zimeiti.add", {"title": "已有选题"})
+    r = t.run({}, t.plugin_ctx)
+    assert r.success
+    titles = [row["title"] for row in t.plugin_ctx.db.query("topics", limit=100)]
+    assert sorted(titles) == ["已有选题", "新选题 A", "新选题 B", "新选题 C"]
+
+
+def test_night_brief_draft_too_short_marks_failed_continues(env, monkeypatch):
+    """起稿字数不够重试一次仍不够 → 该选题标「起稿失败」，整 run 不失败。"""
+    t, llm, _ = _night_env(env, monkeypatch, [_PICKS_JSON, "太短", "还是太短"])
+    r = t.run({}, t.plugin_ctx)
+    assert r.success and r.data["drafted"] is False
+    assert "起稿失败" in r.data["human"]
+    top = next(row for row in t.plugin_ctx.db.query("topics", limit=100)
+               if row["title"] == "AI 编程工具大战，输家已经注定")
+    assert top["status"] == "候选"  # 没写成稿不流转
+
+
+def test_night_brief_hotspots_failure_fails_run(env, monkeypatch):
+    """抓热点失败 → 整 run 报错（没热点不硬编），且不落任何状态。"""
+    import subprocess
+
+    monkeypatch.setattr(subprocess, "run",
+                        lambda cmd, **kw: _completed(returncode=1, stderr="boom"))
+    reg, _, _ = env
+    t = reg.get("zimeiti.night_brief")
+    t.plugin_ctx.llm = _SeqLlm([])
+    r = t.run({}, t.plugin_ctx)
+    assert not r.success and "抓热点" in r.error
+    assert t.plugin_ctx.db.query("topics", limit=100) == []
+
+
+def test_night_brief_rejects_bad_date_and_no_llm(env, monkeypatch):
+    import subprocess
+
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: _completed(stdout=_HOTSPOTS_JSON))
+    reg, _, _ = env
+    t = reg.get("zimeiti.night_brief")
+    t.plugin_ctx.llm = _SeqLlm([_PICKS_JSON, _DRAFT])
+    assert not t.run({"date": "昨天"}, t.plugin_ctx).success
+    t.plugin_ctx.llm = None
+    r = t.run({}, t.plugin_ctx)
+    assert not r.success and "LLM" in r.error
