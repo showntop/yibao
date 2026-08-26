@@ -176,6 +176,40 @@ def test_bundled_write_skill_resolvable(env):
     assert resolve("write")[0] == "zimeiti:write"  # owner 省略：短名唯一命中
 
 
+def test_bundled_topics_skill_resolvable(env):
+    """选题推荐技能（skills/topics/SKILL.md）：「今天写什么」类问题的处理流程，随插件加载注册。"""
+    from yibao_brain.tools.skills_index import index, resolve
+
+    env
+    assert "zimeiti:topics" in index()
+    key, entry = resolve("zimeiti:topics")
+    assert key == "zimeiti:topics" and "为什么现在写" in entry["text"]
+    assert "今天写什么" in entry["description"]  # frontmatter 描述带触发语，供模型选技能
+
+
+# ---------- quiet 保留参数（带面板的声明式 tool：只要数据、不弹面板） ----------
+
+
+def test_list_quiet_suppresses_panel(env):
+    """quiet=true：只要数据不弹面板（选题推荐等内部查询场景）；默认行为不变（仍弹看板）。"""
+    reg, _, _ = env
+    _run(reg, "zimeiti.add", {"title": "T1"})
+    r = _run(reg, "zimeiti.list", {"quiet": True})
+    assert r.success and r.panel is None and r.explicit is False
+    assert r.data["rows"][0]["title"] == "T1"
+    r2 = _run(reg, "zimeiti.list", {})
+    assert r2.success and r2.panel == "zimeiti:board" and r2.explicit is True
+
+
+def test_add_quiet_stripped_before_insert(env):
+    """quiet 是保留参数：写操作带 quiet 不当作列插库（未知列会报错），也不弹面板。"""
+    reg, _, _ = env
+    r = _run(reg, "zimeiti.add", {"title": "T2", "quiet": True})
+    assert r.success and r.panel is None
+    row = _run(reg, "zimeiti.list", {"quiet": True}).data["rows"][0]
+    assert row["title"] == "T2" and "quiet" not in row
+
+
 # ---------- article_save / article_read（版本管理） ----------
 
 

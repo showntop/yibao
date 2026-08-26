@@ -68,7 +68,8 @@ class WwHotspotsTool(Tool):
     description = (
         "用 wewrite CLI 拉取多平台热榜（百度/头条/微博），返回结构化热点"
         "（title/source/hot/hot_normalized/url/description）与抓取失败的源列表。"
-        "用户说「wewrite 热点」「看看微博/头条热榜」时用它；挑中后用 zimeiti.add 转选题。"
+        "用户说「今天写什么」「有什么热点能写」「看看微博/头条热榜」时用它"
+        "（选题推荐的完整流程见 skills/topics 技能）；挑中后用 zimeiti.add 转选题。"
     )
     default_risk = RiskLevel.L0_READONLY
 

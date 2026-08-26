@@ -3,7 +3,7 @@
 # 声明式 tool 管 topics CRUD/流转；方法论加载/文章版本落盘走 tools/ 代码 tool。
 id = "zimeiti"
 name = "内容创作"
-description = "内容创作选题与写作：选题看板、写稿改稿、版本管理、素材库（收藏链接/资料，写作时当论据召回）"
+description = "内容创作选题与写作：选题推荐（「今天写什么」→ skills/topics 技能）、选题看板、写稿改稿、版本管理、素材库（收藏链接/资料，写作时当论据召回）、热点雷达"
 capabilities = ["db", "llm", "process"]   # process：本插件会 spawn 子进程（wewrite CLI）
 
 [code]

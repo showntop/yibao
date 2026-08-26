@@ -147,17 +147,31 @@ class DeclarativeTool(Tool):
 
         声明了 panel 的 tool 在描述尾部追加「会打开面板」提示：模型不知道面板存在，
         不告诉它，「打开看板」这类请求它只会用文字列数据、不调工具。
+        同时给带面板的 tool 注一个保留参数 quiet：模型只是取数（如选题推荐流程里
+        盘点看板库存）时传 true，抑制弹面板——面板属于用户点名要看，不属于内部查询。
         """
         desc = self.description
+        props = self._params_schema
         if self._panel_ref:
             desc += f"（调用成功会在屏幕面板窗打开「{get_panel_title(self._panel_ref)}」）"
+            props = {
+                **self._params_schema,
+                "quiet": {"type": "boolean",
+                          "description": "取数不弹面板开关。只有用户明确说了「打开/看看 XX 看板/面板」"
+                                         "时才不传；你自己为回答问题而取数时必须传 true"},
+            }
         return {
             "name": self.id,
             "description": desc,
-            "parameters": {"type": "object", "properties": self._params_schema, "required": self._required},
+            "parameters": {"type": "object", "properties": props, "required": self._required},
         }
 
     def run(self, params: dict, ctx: ToolContext) -> ActionResult:
+        # quiet 是保留参数：剥掉再分发（防 insert 把它当列写库），且抑制面板/表面建议。
+        # 对应 api.toml 直调层的 quiet 标记，同一语义：要数据，不要弹面板。
+        quiet = bool((params or {}).get("quiet"))
+        if quiet:
+            params = {k: v for k, v in params.items() if k != "quiet"}
         handler = {
             "db": self._run_db,
             "http": self._run_http,
@@ -167,7 +181,7 @@ class DeclarativeTool(Tool):
         if handler is None:
             return ActionResult(success=False, error=f"未知 tool 类型：{self._type!r}")
         result = handler(params, ctx)
-        if result.success:  # 失败不放 panel 引用，也不带表面建议
+        if result.success and not quiet:  # 失败/quiet 不放 panel 引用，也不带表面建议
             if self._panel_ref:
                 result.panel = self._panel_ref
             if self._presentation:
