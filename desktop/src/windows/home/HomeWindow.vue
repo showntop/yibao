@@ -21,6 +21,7 @@ import appLogo from "../../assets/logo.png";
 import { onPendingConfirms, closeHomeWindow } from "../../lib/brain";
 import { decideSurface, type Attention, type Presentation } from "../../lib/surface/surface-policy";
 import type { AvatarState } from "../../protocol/brain-types";
+import { whenFace } from "../../lib/home/home-when-face.ts";
 
 // 主屏（home）= 对话 + 信息面板的融合体（AI 原生：对话是主入口，动态/回顾/插件一瞥都在右侧）
 type Tab = "home" | "plugins" | "data" | "settings";
@@ -29,6 +30,22 @@ const tab = ref<Tab>("home");
 const qaMode = import.meta.env.DEV && new URLSearchParams(window.location.search).get("qa") === "capability";
 const chatState = ref<AvatarState>("idle");
 const panelState = ref<AvatarState>("idle");
+const chatStatus = ref({ title: "新对话", state: "idle" as AvatarState, running: 0, done: 0 });
+const nowFace = ref(whenFace());
+let clockTimer: number | null = null;
+const presenceLabel = computed(() => {
+  if (chatState.value === "error" || panelState.value === "error") return "译宝需留意";
+  if (chatState.value === "think" || chatState.value === "work" || chatState.value === "say" || activityBusy.value) return "译宝在忙";
+  return "译宝在线";
+});
+const presenceTone = computed(() => chatState.value === "error" || panelState.value === "error" ? "error" : presenceLabel.value === "译宝在忙" ? "busy" : "online");
+const sessionStatusLine = computed(() => {
+  if (chatStatus.value.running) return `${chatStatus.value.title} · ${chatStatus.value.running} 步进行中`;
+  if (chatStatus.value.state === "think") return `${chatStatus.value.title} · 正在思考`;
+  if (chatStatus.value.state === "work") return `${chatStatus.value.title} · 正在执行`;
+  if (chatStatus.value.done) return `${chatStatus.value.title} · 刚完成 ${chatStatus.value.done} 步`;
+  return "";
+});
 
 // ---- 主题（顶栏切换按钮；三态：light / dark / system，与系统偏好对齐） ----
 type ThemeMode = "light" | "dark" | "system";
@@ -392,6 +409,7 @@ onMounted(async () => {
   if (!qaMode) unApprovals = onPendingConfirms((l) => (approvalCount.value = l.length));
   window.addEventListener("keydown", onGlobalKeydown);
   window.addEventListener("resize", syncWorkBox);
+  clockTimer = window.setInterval(() => { nowFace.value = whenFace(); }, 15_000);
   // 启动恢复：hydrate 后按 surface 域 scene 设置布局恢复窗口
   try {
     clearLegacySessionKeys();
@@ -409,6 +427,7 @@ onUnmounted(() => {
   unApprovals?.();
   window.removeEventListener("keydown", onGlobalKeydown);
   window.removeEventListener("resize", syncWorkBox);
+  if (clockTimer !== null) window.clearInterval(clockTimer);
   workRo?.disconnect();
 });
 
@@ -428,7 +447,13 @@ function close() {
           <!-- 顶栏品牌 = 项目 logo（阴阳鱼，与 src-tauri/icons/icon.png 一致）；
                宠物形象 Avatar 不放顶栏，归左栏身份头部（角色与产品品牌分离） -->
           <img class="tb-logo" :src="appLogo" alt="译宝" data-tauri-drag-region />
-          <span class="tb-wordmark" data-tauri-drag-region>译宝</span>
+          <span class="tb-presence" :class="`tone-${presenceTone}`" data-tauri-drag-region><i />{{ presenceLabel }}</span>
+        </div>
+
+        <div class="tb-status-strip" data-tauri-drag-region>
+          <span v-if="sessionStatusLine" class="tb-status-chip running"><YbIcon name="spinner" :size="11" :spin="chatStatus.running > 0" />{{ sessionStatusLine }}</span>
+          <span v-if="approvalCount > 0" class="tb-status-chip pending"><i />{{ approvalCount }} 件等你拍板</span>
+          <span class="tb-time-status"><time>{{ nowFace.clock }}</time>{{ nowFace.weekday }} · {{ nowFace.date }}</span>
         </div>
 
         <nav class="tb-nav" data-tauri-drag-region>
@@ -494,6 +519,7 @@ function close() {
             :work-busy="activityBusy"
             :work-focus="deskWork && presentation === 'focus'"
             @state="chatState = $event"
+            @session-status="chatStatus = $event"
             @open-panel="showSurface"
             @reminder="navigate('home')"
             @close-work="hideSurface"
@@ -625,6 +651,72 @@ function close() {
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+.tb-presence {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--yb-text-strong);
+  font-size: var(--yb-fs-md);
+  font-weight: var(--yb-fw-medium);
+  white-space: nowrap;
+}
+.tb-presence > i,
+.tb-status-chip.pending > i {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--yb-intent-ok);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--yb-intent-ok) 10%, transparent);
+}
+.tb-presence.tone-busy > i { background: var(--yb-accent); box-shadow: 0 0 0 4px var(--yb-accent-soft); }
+.tb-presence.tone-error > i { background: var(--yb-danger); box-shadow: 0 0 0 4px var(--yb-danger-soft); }
+.tb-status-strip {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tb-status-chip {
+  max-width: 220px;
+  min-height: 24px;
+  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--yb-border-base);
+  border-radius: var(--yb-radius-pill);
+  background: var(--yb-surface-2);
+  color: var(--yb-text-dim);
+  font-size: var(--yb-fs-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tb-status-chip.running :deep(svg) { flex: none; color: var(--yb-accent); }
+.tb-status-chip.pending {
+  border-color: color-mix(in srgb, var(--yb-intent-pending) 40%, var(--yb-border-base));
+  background: var(--yb-intent-pending-soft);
+  color: var(--yb-intent-pending-ink);
+}
+.tb-status-chip.pending > i {
+  width: 6px;
+  height: 6px;
+  background: var(--yb-intent-pending);
+  box-shadow: none;
+}
+.tb-time-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--yb-text-faint);
+  font-size: var(--yb-fs-xs);
+  white-space: nowrap;
+}
+.tb-time-status time {
+  color: var(--yb-text-dim);
+  font-variant-numeric: tabular-nums;
 }
 .tb-logo {
   width: 18px;
@@ -782,6 +874,7 @@ function close() {
   .tb-wordmark {
     display: none;
   }
+  .tb-status-strip { display: none; }
 }
 
 /* ---- 内容区 ---- */

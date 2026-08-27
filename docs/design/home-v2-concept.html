@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>译宝主屏 v2 概念稿</title>
+<style>
+  /* 概念稿：全部色值对齐 tokens.css 深色通道 */
+  :root {
+    --bg: #10161d;
+    --surface-1: #18212b;
+    --surface-2: #1f2a36;
+    --well: rgba(255, 255, 255, 0.06);
+    --text-strong: #e8eef6;
+    --text: #dbe4ee;
+    --text-dim: #93a3b6;
+    --text-faint: #6d7f93;
+    --line: rgba(255, 255, 255, 0.07);
+    --accent: #5ea0d2;
+    --accent-soft: rgba(77, 144, 196, 0.22);
+    --pending: #f0b25c;
+    --shadow-3: 0 10px 32px rgba(8, 16, 28, 0.5);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.6 -apple-system, "PingFang SC", "SF Pro Text", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+
+  /* ---- 窗口框 ---- */
+  .titlebar {
+    height: 40px;
+    display: flex; align-items: center;
+    padding: 0 16px 0 88px; /* 左让位红绿灯 */
+    border-bottom: 1px solid var(--line);
+  }
+  .tabs { display: flex; gap: 4px; margin: 0 auto; }
+  .tab {
+    padding: 3px 12px; border-radius: 7px;
+    color: var(--text-dim); font-size: 12px;
+  }
+  .tab.on { background: var(--well); color: var(--text-strong); font-weight: 600; }
+  .tb-right { display: flex; align-items: center; gap: 14px; color: var(--text-faint); font-size: 12px; }
+  .tb-kbd {
+    font: 11px/1 ui-monospace, Menlo, monospace;
+    border: 1px solid var(--line); border-radius: 4px; padding: 2px 5px;
+  }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 288px minmax(0, 1fr) 272px;
+    height: calc(100% - 40px);
+  }
+
+  /* ---- 栏间不用卡片堆叠，用发丝线分区 ---- */
+  .rail { padding: 24px 22px; overflow: hidden; }
+  .rail.left { border-right: 1px solid var(--line); }
+  .rail.right { border-left: 1px solid var(--line); }
+
+  .sect-label {
+    font-size: 11px; letter-spacing: 0.14em;
+    color: var(--text-faint);
+    margin: 26px 0 10px;
+  }
+  .sect-label:first-child { margin-top: 0; }
+  .hairline { border: 0; border-top: 1px solid var(--line); margin: 22px 0 0; }
+
+  /* ---- 在场：主角区（display 字阶状态句，不装卡片） ---- */
+  .presence { display: flex; align-items: center; gap: 10px; }
+  .avatar {
+    width: 34px; height: 34px; border-radius: 50%;
+    background: radial-gradient(circle at 34% 30%, #ffffff, #dfe7f0 70%);
+    position: relative; flex: none;
+    box-shadow: 0 2px 6px rgba(8,16,28,.4);
+  }
+  .avatar::before, .avatar::after {
+    content: ""; position: absolute; top: 13px;
+    width: 3.5px; height: 3.5px; border-radius: 50%; background: #33404f;
+  }
+  .avatar::before { left: 9px; } .avatar::after { right: 9px; }
+  .presence .name { font-weight: 600; color: var(--text-strong); }
+  .presence .state { font-size: 11px; color: var(--text-faint); display: flex; align-items: center; gap: 5px; }
+  .live-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+  .status-line {
+    margin-top: 16px;
+    font-size: 21px; line-height: 1.42; font-weight: 600;
+    color: var(--text-strong); letter-spacing: 0.01em;
+  }
+  .status-line em { font-style: normal; color: var(--accent); }
+  .status-sub { margin-top: 8px; font-size: 11.5px; color: var(--text-faint); }
+
+  /* ---- 当下：一瞥合并成条目流，accent 只给「需要你」的 ---- */
+  .now-item { display: flex; gap: 10px; padding: 7px 0; align-items: baseline; }
+  .now-item .mark { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--text-faint); transform: translateY(-1px); }
+  .now-item.need .mark { background: var(--pending); box-shadow: 0 0 0 3px rgba(242, 160, 60, 0.15); }
+  .now-item .t { color: var(--text); }
+  .now-item .t b { font-weight: 600; color: var(--text-strong); }
+  .now-item .s { display: block; font-size: 11px; color: var(--text-faint); }
+  .now-more { margin-top: 8px; font-size: 11.5px; color: var(--text-dim); }
+  .now-more span { border-bottom: 1px solid var(--line); padding-bottom: 1px; }
+
+  /* ---- 会话：安静列表，无卡片边 ---- */
+  .sess { padding: 6px 8px; margin: 0 -8px; border-radius: 7px; }
+  .sess .t { color: var(--text-dim); font-size: 12.5px; }
+  .sess .w { font-size: 10.5px; color: var(--text-faint); }
+  .sess.on { background: var(--well); }
+  .sess.on .t { color: var(--text-strong); }
+
+  /* ---- 中央：对话是唯一主角面 ---- */
+  .stage { padding: 14px 18px 16px; display: flex; }
+  .paper {
+    flex: 1; min-width: 0;
+    background: var(--surface-1);
+    border-radius: 16px;
+    box-shadow: var(--shadow-3);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .thread { flex: 1; padding: 28px 34px 20px; display: flex; flex-direction: column; gap: 18px; }
+  .msg-user {
+    align-self: flex-end; max-width: 70%;
+    background: var(--accent-soft); color: var(--text-strong);
+    border-radius: 14px 14px 4px 14px; padding: 9px 14px;
+  }
+  .msg-ai { max-width: 82%; color: var(--text); }
+  .msg-ai p + p { margin-top: 8px; }
+  /* 内联回执：动作结果原地收束成小票 */
+  .receipt {
+    margin-top: 10px; display: inline-flex; align-items: center; gap: 8px;
+    background: var(--well); border-radius: 9px; padding: 7px 12px;
+    font-size: 12px; color: var(--text-dim);
+  }
+  .receipt b { color: var(--text-strong); font-weight: 600; }
+  .receipt .ok { color: var(--accent); font-size: 13px; }
+  .composer {
+    margin: 0 18px 16px; padding: 11px 12px 11px 18px;
+    background: var(--well); border-radius: 12px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .composer .ph { flex: 1; color: var(--text-faint); }
+  .composer .hint { font-size: 10.5px; color: var(--text-faint); }
+  .send {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--accent); color: #0d141c;
+    display: grid; place-items: center; font-size: 14px; font-weight: 700;
+  }
+
+  /* ---- 右栏：本次（上下文），注释级灰度 ---- */
+  .ctx-card { margin-bottom: 14px; }
+  .ctx-card .k { font-size: 11px; color: var(--text-faint); margin-bottom: 3px; }
+  .ctx-card .v { color: var(--text); font-size: 12.5px; }
+  .ctx-card .v b { color: var(--text-strong); font-weight: 600; }
+  .ctx-link { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
+  .ctx-link .t { color: var(--text); font-size: 12.5px; }
+  .ctx-link .arrow { color: var(--text-faint); }
+</style>
+</head>
+<body>
+  <div class="titlebar">
+    <div class="tabs">
+      <span class="tab on">主屏</span><span class="tab">能力</span><span class="tab">数据</span>
+    </div>
+    <div class="tb-right">
+      <span class="tb-kbd">⌘K</span>
+    </div>
+  </div>
+
+  <div class="layout">
+    <!-- 左栏：在场 + 当下 + 入口 -->
+    <aside class="rail left">
+      <div class="presence">
+        <div class="avatar"></div>
+        <div>
+          <div class="name">译宝</div>
+          <div class="state"><span class="live-dot"></span>在场 · 刚回完你</div>
+        </div>
+      </div>
+      <p class="status-line">在盯 <em>3 个任务</em>，<br>下午有 2 个提醒。</p>
+      <p class="status-sub">感知 3 · 思考 20 · 行动 9 —— 昨夜复盘已就绪</p>
+
+      <hr class="hairline">
+      <div class="sect-label">现 在</div>
+      <div class="now-item need">
+        <span class="mark"></span>
+        <span class="t"><b>修 bug</b> 跑了 12 分钟<span class="s">智能体调度 · codex 在跑</span></span>
+      </div>
+      <div class="now-item">
+        <span class="mark"></span>
+        <span class="t">15:30 周会<span class="s">还有 1 小时 20 分</span></span>
+      </div>
+      <div class="now-item">
+        <span class="mark"></span>
+        <span class="t">选题看板有 3 条候选<span class="s">内容创作 · 等你挑一条写</span></span>
+      </div>
+      <div class="now-more"><span>全部动态 →</span></div>
+
+      <hr class="hairline">
+      <div class="sect-label">会 话</div>
+      <div class="sess on"><div class="t">主屏 v2 概念稿</div><div class="w">刚刚</div></div>
+      <div class="sess"><div class="t">看板拖拽修复</div><div class="w">22:26</div></div>
+      <div class="sess"><div class="t">内容创作深审</div><div class="w">昨天</div></div>
+      <div class="sess"><div class="t">选题看板实测</div><div class="w">昨天</div></div>
+    </aside>
+
+    <!-- 中央：对话主角 -->
+    <main class="stage">
+      <div class="paper">
+        <div class="thread">
+          <div class="msg-user">把「K3 是垃圾」那条选题移到写作中，顺便起个稿</div>
+          <div class="msg-ai">
+            <p>好，两件事都办了：</p>
+            <p>选题已流转，初稿按小红书规格起了——短段落清单体，控制在 900 字，文末带了 4 个话题标签。语气按你的规则压过了，惊叹号只用了 1 个。</p>
+            <div class="receipt"><span class="ok">✓</span>选题 <b>K3 是垃圾</b> → 写作中 · 初稿 <b>v1 · 912 字</b> 已落盘</div>
+          </div>
+          <div class="msg-ai">
+            <p>要我在编辑器里打开接着改，还是直接说改哪儿？</p>
+          </div>
+        </div>
+        <div class="composer">
+          <span class="ph">对译宝说点什么…</span>
+          <span class="hint">⌘K 命令 · / 技能</span>
+          <span class="send">↑</span>
+        </div>
+      </div>
+    </main>
+
+    <!-- 右栏：本次上下文 -->
+    <aside class="rail right">
+      <div class="sect-label">本 次</div>
+      <div class="ctx-card">
+        <div class="k">当前会话</div>
+        <div class="v">围绕「<b>主屏 v2 概念稿</b>」继续推进</div>
+      </div>
+      <div class="ctx-card">
+        <div class="k">关联能力</div>
+        <div class="ctx-link"><span class="t">内容创作 · 选题看板</span><span class="arrow">›</span></div>
+        <div class="ctx-link"><span class="t">智能体调度 · 任务动态</span><span class="arrow">›</span></div>
+        <div class="ctx-link"><span class="t">提醒 · 待办提醒</span><span class="arrow">›</span></div>
+      </div>
+    </aside>
+  </div>
+</body>
+</html>

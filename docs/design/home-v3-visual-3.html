@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>视觉方向 3 · 墨黑专业</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font: 13px/1.55 -apple-system, "PingFang SC", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    color: #e6e6e9;
+    overflow: hidden;
+    background:
+      radial-gradient(800px 400px at 50% -20%, rgba(94,106,210,0.10), transparent 60%),
+      #0a0a0c;
+  }
+  .titlebar {
+    height: 40px; display: flex; align-items: center;
+    padding: 0 16px 0 88px;
+    border-bottom: 1px solid rgba(255,255,255,0.07);
+  }
+  .tabs { display: flex; gap: 2px; margin: 0 auto; }
+  .tab { padding: 3px 11px; border-radius: 6px; color: #71717a; font-size: 12px; }
+  .tab.on { background: rgba(255,255,255,0.08); color: #fafafa; font-weight: 500; }
+  .tb-kbd { font: 11px/1 ui-monospace, Menlo, monospace; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 2px 5px; color: #52525b; }
+
+  .stage { height: calc(100% - 40px); max-width: 700px; margin: 0 auto; padding: 40px 28px 0; display: flex; flex-direction: column; }
+
+  .presence { display: flex; align-items: center; gap: 10px; }
+  .avatar {
+    width: 34px; height: 34px; border-radius: 50%; flex: none;
+    background: radial-gradient(circle at 34% 30%, #ffffff, #dfe7f0 70%);
+    position: relative;
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.12), 0 0 20px rgba(94,106,210,0.4);
+  }
+  .avatar::before, .avatar::after { content: ""; position: absolute; top: 13px; width: 4px; height: 4px; border-radius: 50%; background: #33404f; }
+  .avatar::before { left: 10px; } .avatar::after { right: 10px; }
+  .presence .state { font: 11px/1.5 ui-monospace, Menlo, monospace; color: #71717a; font-variant-numeric: tabular-nums; }
+  .presence .state b { color: #a1a1aa; font-weight: 500; }
+
+  .status {
+    margin: 22px 0 28px;
+    font-size: 28px; line-height: 1.35; font-weight: 650; letter-spacing: -0.02em;
+    color: #fafafa;
+  }
+  .status em { font-style: normal; color: #8b93f8; }
+  .status .amber { color: #fbbf24; }
+
+  /* 专业工具：紧圆角 + 细边 + 高对比 + mono 元信息 */
+  .brief {
+    border-radius: 12px;
+    background: #131316;
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 16px 40px rgba(0,0,0,0.55);
+    overflow: hidden;
+  }
+  .lane { padding: 10px 16px 8px; }
+  .lane + .lane { border-top: 1px solid rgba(255,255,255,0.06); }
+  .lane .h {
+    font: 10px/1 ui-monospace, Menlo, monospace; letter-spacing: 0.18em;
+    color: #52525b; margin-bottom: 4px; text-transform: uppercase;
+  }
+  .lane.need .h { color: #fbbf24; }
+  .b-item { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 6px 0; }
+  .b-item .t { font-size: 13px; color: #d4d4d8; }
+  .b-item .t b { color: #fafafa; font-weight: 600; }
+  .b-item .s { display: block; font: 10.5px/1.5 ui-monospace, Menlo, monospace; color: #52525b; margin-top: 1px; }
+  .b-item.done .t { color: #71717a; }
+  .ok { color: #34d399; margin-right: 5px; }
+  .runbar { width: 88px; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.08); overflow: hidden; flex: none; }
+  .runbar i { display: block; height: 100%; background: #8b93f8; box-shadow: 0 0 8px rgba(139,147,248,0.7); }
+
+  .btn {
+    font-size: 11px; padding: 3px 11px; border-radius: 6px; flex: none;
+    background: rgba(255,255,255,0.06); color: #a1a1aa;
+    border: 1px solid rgba(255,255,255,0.07);
+  }
+  .btn.go {
+    background: rgba(251,191,36,0.12); color: #fbbf24; font-weight: 600;
+    border-color: rgba(251,191,36,0.28);
+  }
+
+  .thread { display: flex; flex-direction: column; gap: 16px; margin-top: 26px; }
+  .msg-user {
+    align-self: flex-end; max-width: 68%;
+    background: rgba(139,147,248,0.16);
+    border: 1px solid rgba(139,147,248,0.24);
+    color: #eef0ff; border-radius: 12px 12px 3px 12px; padding: 9px 14px;
+  }
+
+  .composer {
+    margin-top: auto; margin-bottom: 18px;
+    display: flex; align-items: center; gap: 12px;
+    padding: 11px 11px 11px 18px;
+    border-radius: 12px;
+    background: #131316;
+    border: 1px solid rgba(255,255,255,0.1);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5), 0 0 0 1px rgba(139,147,248,0.06);
+  }
+  .composer .ph { flex: 1; color: #52525b; }
+  .composer .hint { font: 10.5px/1 ui-monospace, Menlo, monospace; color: #52525b; }
+  .send {
+    width: 26px; height: 26px; border-radius: 8px;
+    background: #8b93f8; color: #0a0a0c;
+    display: grid; place-items: center; font-size: 13px; font-weight: 700;
+    box-shadow: 0 0 16px rgba(139,147,248,0.45);
+  }
+</style>
+</head>
+<body>
+  <div class="titlebar">
+    <div class="tabs"><span class="tab on">主屏</span><span class="tab">能力</span><span class="tab">数据</span></div>
+    <span class="tb-kbd">⌘K</span>
+  </div>
+
+  <div class="stage">
+    <div class="presence">
+      <div class="avatar"></div>
+      <span class="state"><b>ACTIVE</b> · SENSE 3 · THINK 20 · ACT 9</span>
+    </div>
+    <p class="status">早上好。夜里办完了 <em>4 件事</em>，<br><span class="amber">2 件等你拍板</span>。</p>
+
+    <div class="brief">
+      <div class="lane need">
+        <div class="h">Awaiting · 2</div>
+        <div class="b-item">
+          <div><span class="t"><b>「K3 是垃圾」</b>初稿写好了</span><span class="s">v1 · 912 字 · 小红书规格</span></div>
+          <span class="btn go">审稿</span>
+        </div>
+        <div class="b-item">
+          <div><span class="t"><b>构建挂了</b>，已重试成功</span><span class="s">智能体调度 · 要发个版吗</span></div>
+          <span class="btn go">发版</span>
+        </div>
+      </div>
+      <div class="lane">
+        <div class="h">Running · 2</div>
+        <div class="b-item"><span class="t"><b>修 bug</b> · codex · 12m</span><span class="runbar"><i style="width:64%"></i></span></div>
+        <div class="b-item"><span class="t">热点抓取 · 5 平台</span><span class="runbar"><i style="width:30%"></i></span></div>
+      </div>
+      <div class="lane">
+        <div class="h">Done · 4</div>
+        <div class="b-item done"><span class="t"><span class="ok">✓</span>选题看板 3 条候选 · 复盘摘要 · 周会材料 · 闪念归档</span></div>
+      </div>
+    </div>
+
+    <div class="thread">
+      <div class="msg-user">先审 K3 那条，读给我听听</div>
+    </div>
+
+    <div class="composer">
+      <span class="ph">对译宝说点什么…</span>
+      <span class="hint">⌘K · /</span>
+      <span class="send">↑</span>
+    </div>
+  </div>
+</body>
+</html>

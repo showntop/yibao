@@ -76,7 +76,9 @@ const loaded = ref(false);
 const historyOpen = ref(false);
 
 // 浏览器设计预览（无 Tauri 桥）：展示假数据
-const browserPreview = typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window);
+const browserPreview = typeof window !== "undefined" && !(
+  window as unknown as { __TAURI_INTERNALS__?: { transformCallback?: unknown } }
+).__TAURI_INTERNALS__?.transformCallback;
 const previewDemo = browserPreview && new URLSearchParams(window.location.search).has("demo");
 
 const stateLabel = computed(() => {

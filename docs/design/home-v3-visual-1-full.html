@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>视觉方向 1 · 全构图</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font: 13px/1.65 -apple-system, "PingFang SC", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    color: #d7e2ef;
+    overflow: hidden;
+    background:
+      radial-gradient(1100px 620px at 78% -18%, rgba(58, 123, 213, 0.14), transparent 62%),
+      radial-gradient(900px 620px at 8% 108%, rgba(72, 160, 200, 0.09), transparent 60%),
+      #0b1017;
+  }
+  .titlebar {
+    height: 40px; display: flex; align-items: center;
+    padding: 0 16px 0 88px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+  }
+  .tabs { display: flex; gap: 4px; margin: 0 auto; }
+  .tab { padding: 3px 12px; border-radius: 7px; color: #7d8fa5; font-size: 12px; }
+  .tab.on { background: rgba(255,255,255,0.07); color: #f2f7fd; font-weight: 600; }
+  .tb-kbd { font: 11px/1 ui-monospace, Menlo, monospace; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 2px 5px; color: #5d6f84; }
+
+  /* 在场条：状态层，冲不掉 */
+  .presencebar {
+    height: 48px; flex: none;
+    display: flex; align-items: center; gap: 14px;
+    padding: 0 18px;
+    background: rgba(255,255,255,0.03);
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    backdrop-filter: blur(20px);
+  }
+  .avatar {
+    width: 26px; height: 26px; border-radius: 50%; flex: none;
+    background: radial-gradient(circle at 34% 30%, #ffffff, #dfe7f0 70%);
+    position: relative;
+    box-shadow: 0 0 0 4px rgba(106,165,224,0.12), 0 0 16px rgba(106,165,224,0.3);
+  }
+  .avatar::before, .avatar::after { content: ""; position: absolute; top: 10px; width: 3px; height: 3px; border-radius: 50%; background: #33404f; }
+  .avatar::before { left: 7px; } .avatar::after { right: 7px; }
+  .pb-state { font-size: 12px; color: #7d8fa5; }
+  .pb-state b { color: #e8eef6; font-weight: 600; }
+  .pb-sep { width: 1px; height: 18px; background: rgba(255,255,255,0.08); }
+  .runpill {
+    display: flex; align-items: center; gap: 8px;
+    background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 999px; padding: 3px 11px;
+    font-size: 11px; color: #a9bccd;
+  }
+  .runpill .bar { width: 30px; height: 2px; border-radius: 1px; background: rgba(255,255,255,0.1); overflow: hidden; }
+  .runpill .bar i { display: block; height: 100%; background: #6aa5e0; box-shadow: 0 0 6px rgba(106,165,224,0.7); }
+  .pb-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .awaitpill {
+    display: flex; align-items: center; gap: 7px;
+    background: rgba(242,178,92,0.1); border: 1px solid rgba(242,178,92,0.28);
+    border-radius: 999px; padding: 3px 12px;
+    font-size: 11.5px; color: #f2b25c; font-weight: 600;
+    box-shadow: 0 0 14px rgba(242,178,92,0.1);
+  }
+  .pb-next { font-size: 11px; color: #5d6f84; }
+  .pb-next b { color: #a9bccd; font-weight: 500; }
+
+  .layout { display: grid; grid-template-columns: 220px minmax(0,1fr); height: calc(100% - 88px); }
+
+  /* 左栏：会话 = 工作单——状态点 + 能力标签 + 最后一句 + 时间分组 */
+  .rail { border-right: 1px solid rgba(255,255,255,0.06); padding: 16px 12px; display: flex; flex-direction: column; }
+  .sect {
+    font-size: 10px; letter-spacing: 0.16em; color: #5d6f84;
+    margin: 16px 8px 6px; display: flex; justify-content: space-between; align-items: baseline;
+  }
+  .sect:first-child { margin-top: 2px; }
+  .sect .n { font-size: 9.5px; color: #47576a; }
+
+  .sess {
+    display: flex; gap: 9px; padding: 7px 8px; border-radius: 9px;
+    align-items: flex-start;
+  }
+  .sess.on { background: rgba(255,255,255,0.06); box-shadow: inset 0 1px 0 rgba(255,255,255,0.04); }
+  .sess .dot {
+    width: 6px; height: 6px; border-radius: 50%; flex: none;
+    margin-top: 6px; background: transparent;
+  }
+  .sess.live .dot { background: #6aa5e0; box-shadow: 0 0 0 3px rgba(106,165,224,0.15), 0 0 8px rgba(106,165,224,0.6); }
+  .sess.unseen .dot { background: #f2b25c; box-shadow: 0 0 0 3px rgba(242,178,92,0.12); }
+  .sess .body { min-width: 0; flex: 1; }
+  .sess .t { color: #93a5ba; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sess.on .t { color: #f2f7fd; font-weight: 600; }
+  .sess.unseen .t { color: #d7e2ef; font-weight: 500; }
+  .sess .pv {
+    font-size: 10.5px; color: #5d6f84; margin-top: 1px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .sess .meta { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+  .sess .cap {
+    font-size: 9.5px; padding: 1px 7px; border-radius: 999px;
+    background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.05);
+    color: #7d8fa5;
+  }
+  .sess .w { font-size: 9.5px; color: #47576a; font-variant-numeric: tabular-nums; }
+
+  .newchat {
+    margin: 10px 8px 0; padding: 6px 10px; border-radius: 8px;
+    border: 1px dashed rgba(255,255,255,0.12);
+    font-size: 11px; color: #5d6f84; text-align: center;
+  }
+
+  .mind-line {
+    margin-top: auto; padding-top: 14px;
+    border-top: 1px solid rgba(255,255,255,0.06);
+    font-size: 11px; color: #5d6f84; display: flex; align-items: center; gap: 7px;
+  }
+  .mind-dot { width: 5px; height: 5px; border-radius: 50%; background: #6aa5e0; box-shadow: 0 0 8px rgba(106,165,224,0.8); }
+
+  /* 中央：叙事层 */
+  .stage { display: flex; flex-direction: column; max-width: 720px; width: 100%; margin: 0 auto; padding: 0 30px; min-height: 0; }
+  .thread { flex: 1; padding: 28px 0 12px; display: flex; flex-direction: column; gap: 18px; overflow: hidden; }
+
+  .status {
+    font-size: 26px; line-height: 1.36; font-weight: 700; letter-spacing: -0.01em;
+    color: #f2f7fd;
+  }
+  .status em { font-style: normal; color: #6aa5e0; }
+  .status .amber { color: #f2b25c; }
+  .status-sub { font-size: 11.5px; color: #5d6f84; margin-top: -8px; }
+
+  .brief {
+    border-radius: 18px;
+    background: rgba(255,255,255,0.045);
+    border: 1px solid rgba(255,255,255,0.09);
+    backdrop-filter: blur(24px) saturate(150%);
+    box-shadow: 0 18px 50px rgba(3,8,16,0.5), inset 0 1px 0 rgba(255,255,255,0.06);
+    overflow: hidden;
+  }
+  .lane { padding: 12px 18px 10px; }
+  .lane + .lane { border-top: 1px solid rgba(255,255,255,0.06); }
+  .lane .h { font-size: 10px; letter-spacing: 0.16em; color: #5d6f84; margin-bottom: 4px; }
+  .lane.need .h { color: #f2b25c; }
+  .b-item { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 6px 0; }
+  .b-item .t { font-size: 13px; color: #d7e2ef; }
+  .b-item .t b { color: #f2f7fd; font-weight: 600; }
+  .b-item .s { display: block; font-size: 10.5px; color: #5d6f84; margin-top: 1px; }
+  .b-item.done .t { color: #7d8fa5; }
+  .ok { color: #6aa5e0; margin-right: 5px; }
+  .runbar { width: 84px; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.08); overflow: hidden; flex: none; }
+  .runbar i { display: block; height: 100%; border-radius: 2px; background: #6aa5e0; box-shadow: 0 0 8px rgba(106,165,224,0.6); }
+  .btn {
+    font-size: 11px; padding: 3px 12px; border-radius: 999px; flex: none;
+    background: rgba(255,255,255,0.07); color: #a9bccd;
+    border: 1px solid rgba(255,255,255,0.06);
+  }
+  .btn.go {
+    background: rgba(242,178,92,0.14); color: #f2b25c; font-weight: 600;
+    border-color: rgba(242,178,92,0.25);
+  }
+
+  .msg-user {
+    align-self: flex-end; max-width: 68%;
+    background: linear-gradient(135deg, rgba(106,165,224,0.22), rgba(106,165,224,0.12));
+    border: 1px solid rgba(106,165,224,0.18);
+    color: #eef4fb; border-radius: 16px 16px 4px 16px; padding: 9px 14px;
+  }
+  .msg-ai { max-width: 88%; color: #c6d3e2; font-size: 13px; }
+
+  .composer {
+    margin-bottom: 18px;
+    display: flex; align-items: center; gap: 12px;
+    padding: 11px 11px 11px 19px;
+    border-radius: 15px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.09);
+    backdrop-filter: blur(24px) saturate(150%);
+    box-shadow: 0 12px 36px rgba(3,8,16,0.45);
+  }
+  .composer .ph { flex: 1; color: #5d6f84; }
+  .composer .hint { font-size: 10.5px; color: #5d6f84; }
+  .send {
+    width: 27px; height: 27px; border-radius: 50%;
+    background: #6aa5e0; color: #0b1017;
+    display: grid; place-items: center; font-size: 13px; font-weight: 700;
+    box-shadow: 0 0 16px rgba(106,165,224,0.5);
+  }
+</style>
+</head>
+<body>
+  <div class="titlebar">
+    <div class="tabs"><span class="tab on">主屏</span><span class="tab">能力</span><span class="tab">数据</span></div>
+    <span class="tb-kbd">⌘K</span>
+  </div>
+
+  <!-- 状态层：常驻，冲不掉 -->
+  <div class="presencebar">
+    <div class="avatar"></div>
+    <span class="pb-state"><b>译宝在场</b> · 感知 3 · 思考 20 · 行动 9</span>
+    <span class="pb-sep"></span>
+    <span class="runpill">修 bug · 12m<span class="bar"><i style="width:64%"></i></span></span>
+    <span class="runpill">热点抓取<span class="bar"><i style="width:30%"></i></span></span>
+    <div class="pb-right">
+      <span class="awaitpill">● 2 件等你拍板</span>
+      <span class="pb-next"><b>15:30 周会</b> · 1h20m</span>
+    </div>
+  </div>
+
+  <div class="layout">
+    <!-- 左栏：会话工作单 + mind 降级为一行 -->
+    <aside class="rail">
+      <div class="sect">今 天 <span class="n">3</span></div>
+      <div class="sess on live">
+        <span class="dot"></span>
+        <div class="body">
+          <div class="t">主屏视觉方向</div>
+          <div class="pv">译宝：问题在结尾，我做了闭环——</div>
+          <div class="meta"><span class="cap">内容创作</span><span class="w">进行中</span></div>
+        </div>
+      </div>
+      <div class="sess unseen">
+        <span class="dot"></span>
+        <div class="body">
+          <div class="t">选题看板实测</div>
+          <div class="pv">译宝：拖拽修好了，真机验一下？</div>
+          <div class="meta"><span class="cap">内容创作</span><span class="w">08:41</span></div>
+        </div>
+      </div>
+      <div class="sess">
+        <span class="dot"></span>
+        <div class="body">
+          <div class="t">晨间热点</div>
+          <div class="pv">译宝：5 平台抓完，3 条值得写</div>
+          <div class="meta"><span class="w">07:40</span></div>
+        </div>
+      </div>
+
+      <div class="sect">昨 天 <span class="n">2</span></div>
+      <div class="sess">
+        <span class="dot"></span>
+        <div class="body">
+          <div class="t">看板拖拽修复</div>
+          <div class="pv">译宝：✓ 已提交 47adf6d</div>
+          <div class="meta"><span class="cap">编码</span><span class="w">22:26</span></div>
+        </div>
+      </div>
+      <div class="sess">
+        <span class="dot"></span>
+        <div class="body">
+          <div class="t">内容创作深审</div>
+          <div class="pv">译宝：✓ v2 全清，62c1547</div>
+          <div class="meta"><span class="cap">内容创作</span><span class="w">昨天</span></div>
+        </div>
+      </div>
+
+      <div class="newchat">+ 新对话</div>
+
+      <div class="mind-line"><span class="mind-dot"></span>昨夜新记忆 +3 · 复盘已就绪</div>
+    </aside>
+
+    <!-- 叙事层：晨报卡会被冲走，但状态层在顶上常驻 -->
+    <main class="stage">
+      <div class="thread">
+        <p class="status">早上好。夜里我办完了 <em>4 件事</em>，<br>现在有 <span class="amber">2 件等你拍板</span>。</p>
+        <div class="brief">
+          <div class="lane need">
+            <div class="h">等你拍板</div>
+            <div class="b-item">
+              <div><span class="t"><b>「K3 是垃圾」</b>初稿写好了</span><span class="s">v1 · 912 字 · 小红书规格</span></div>
+              <span class="btn go">审稿</span>
+            </div>
+            <div class="b-item">
+              <div><span class="t"><b>构建挂了</b>，已重试成功</span><span class="s">智能体调度 · 要发个版吗</span></div>
+              <span class="btn go">发版</span>
+            </div>
+          </div>
+          <div class="lane">
+            <div class="h">正在跑</div>
+            <div class="b-item"><span class="t"><b>修 bug</b> · codex · 12 分钟</span><span class="runbar"><i style="width:64%"></i></span></div>
+            <div class="b-item"><span class="t">热点抓取 · 5 平台</span><span class="runbar"><i style="width:30%"></i></span></div>
+          </div>
+          <div class="lane">
+            <div class="h">办完了</div>
+            <div class="b-item done"><span class="t"><span class="ok">✓</span>选题看板 3 条候选 · 复盘摘要 · 周会材料 · 闪念归档</span></div>
+          </div>
+        </div>
+        <div class="msg-user">先审 K3 那条，读给我听听</div>
+        <div class="msg-ai">读完了。问题在结尾：倒数第二段还在抛新观点，最后一段一句口号收不住。我把开头的意象收回来做了闭环——</div>
+      </div>
+
+      <div class="composer">
+        <span class="ph">对译宝说点什么…</span>
+        <span class="hint">⌘K 命令 · / 技能</span>
+        <span class="send">↑</span>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

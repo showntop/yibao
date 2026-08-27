@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
 import YbIcon from "../../components/common/YbIcon.vue";
-import { spineCaption, spineVisible, useLiveAssembly } from "../../lib/home/home-chrome.ts";
+import { spineCaption, spineVisible, useHomeChrome, useLiveAssembly } from "../../lib/home/home-chrome.ts";
 import { fmtClockToday } from "../../lib/time";
 import { faceOf, spineLimitOf } from "../../lib/home/home-assembly.ts";
 import { sessionStore } from "../../state/store";
@@ -20,6 +20,7 @@ const activeId = ref(sessionStore.conversation.getActiveConversationId() ?? "");
 
 const props = defineProps<{ variant?: "list" | "spine" | "cards" }>();
 const assembly = useLiveAssembly();
+const { id: presetId } = useHomeChrome();
 const face = computed(() =>
   (props.variant ?? faceOf(assembly.value, "sessions", "list")) as "list" | "spine" | "cards",
 );
@@ -105,7 +106,7 @@ defineExpose({ updateCurrent, newChat, sessions, sync });
 </script>
 
 <template>
-  <aside class="session" :class="face">
+  <aside class="session" :class="[face, { 'rail-list': presetId === 'rails' }]">
     <h2 v-if="face === 'list'" class="yb-widget-head">
       <span>会话 <span class="yb-widget-meta">{{ sessions.length ? `${sessions.length} 条` : "暂无" }}</span></span>
       <button class="echo-new" type="button" title="开始一段新对话" aria-label="开始一段新对话" @click="newChat">新对话</button>
@@ -165,6 +166,37 @@ button { font: inherit; }
   border-radius: calc(var(--yb-widget-radius) - 6px);
   background: var(--yb-note-mute);
   box-shadow: var(--yb-press);
+}
+.session.rail-list .yb-widget-head {
+  min-height: 32px;
+  padding: 12px 10px 4px;
+  letter-spacing: 0.08em;
+}
+.session.rail-list .echo-list {
+  margin: 2px 4px 6px;
+  padding: 2px 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.session.rail-list .echo-main {
+  min-height: 48px;
+  padding: 9px 30px 9px 10px;
+  border-radius: 10px;
+}
+.session.rail-list .echo-row + .echo-row {
+  margin-top: 2px;
+}
+.session.rail-list .echo-row.active .echo-main {
+  background: color-mix(in srgb, var(--yb-note-accent) 82%, transparent);
+  box-shadow: inset 3px 0 0 var(--yb-accent), var(--yb-glaze-hi);
+}
+.session.rail-list .echo-line1 strong {
+  font-size: 12px;
+}
+.session.rail-list .echo-preview {
+  margin-top: 2px;
+  font-size: 10px;
 }
 
 .session.list .echo-new {

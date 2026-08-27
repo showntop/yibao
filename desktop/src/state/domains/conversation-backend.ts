@@ -32,7 +32,10 @@ export interface ConversationBackend {
 }
 
 function isTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+  return typeof window !== "undefined" && Boolean(
+    (window as unknown as { __TAURI_INTERNALS__?: { transformCallback?: unknown } })
+      .__TAURI_INTERNALS__?.transformCallback,
+  );
 }
 
 /** 生产后端：调 Rust command（Rust SQLite 是权威）。 */

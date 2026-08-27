@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>视觉方向 1 · 深空玻璃</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font: 13px/1.65 -apple-system, "PingFang SC", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    color: #d7e2ef;
+    overflow: hidden;
+    background:
+      radial-gradient(1100px 620px at 78% -18%, rgba(58, 123, 213, 0.16), transparent 62%),
+      radial-gradient(900px 620px at 8% 108%, rgba(72, 160, 200, 0.10), transparent 60%),
+      radial-gradient(700px 420px at 30% 118%, rgba(120, 90, 220, 0.07), transparent 65%),
+      #0b1017;
+  }
+  .titlebar {
+    height: 40px; display: flex; align-items: center;
+    padding: 0 16px 0 88px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+  }
+  .tabs { display: flex; gap: 4px; margin: 0 auto; }
+  .tab { padding: 3px 12px; border-radius: 7px; color: #7d8fa5; font-size: 12px; }
+  .tab.on { background: rgba(255,255,255,0.07); color: #f2f7fd; font-weight: 600; }
+  .tb-kbd { font: 11px/1 ui-monospace, Menlo, monospace; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 2px 5px; color: #5d6f84; }
+
+  .stage { height: calc(100% - 40px); max-width: 780px; margin: 0 auto; padding: 46px 32px 0; display: flex; flex-direction: column; }
+
+  /* 在场：display 字阶是唯一主角 */
+  .presence { display: flex; align-items: center; gap: 12px; }
+  .avatar {
+    width: 42px; height: 42px; border-radius: 50%; flex: none;
+    background: radial-gradient(circle at 34% 30%, #ffffff, #dfe7f0 70%);
+    position: relative;
+    box-shadow: 0 0 0 6px rgba(106,165,224,0.12), 0 0 28px rgba(106,165,224,0.35);
+  }
+  .avatar::before, .avatar::after { content: ""; position: absolute; top: 16px; width: 5px; height: 5px; border-radius: 50%; background: #33404f; }
+  .avatar::before { left: 12px; } .avatar::after { right: 12px; }
+  .presence .state { font-size: 12px; color: #7d8fa5; display: flex; align-items: center; gap: 7px; }
+  .live { width: 6px; height: 6px; border-radius: 50%; background: #6aa5e0; box-shadow: 0 0 10px #6aa5e0; }
+
+  .status {
+    margin: 26px 0 34px;
+    font-size: 34px; line-height: 1.32; font-weight: 700; letter-spacing: -0.01em;
+    color: #f2f7fd;
+  }
+  .status em { font-style: normal; color: #6aa5e0; }
+  .status .amber { color: #f2b25c; }
+
+  /* 晨报卡：真玻璃 */
+  .brief {
+    border-radius: 20px;
+    background: rgba(255,255,255,0.045);
+    border: 1px solid rgba(255,255,255,0.09);
+    backdrop-filter: blur(24px) saturate(150%);
+    box-shadow: 0 18px 50px rgba(3,8,16,0.5), inset 0 1px 0 rgba(255,255,255,0.06);
+    overflow: hidden;
+  }
+  .lane { padding: 14px 20px 12px; }
+  .lane + .lane { border-top: 1px solid rgba(255,255,255,0.06); }
+  .lane .h { font-size: 10.5px; letter-spacing: 0.16em; color: #5d6f84; margin-bottom: 6px; }
+  .lane.need .h { color: #f2b25c; }
+  .b-item { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 7px 0; }
+  .b-item .t { font-size: 13.5px; color: #d7e2ef; }
+  .b-item .t b { color: #f2f7fd; font-weight: 600; }
+  .b-item .s { display: block; font-size: 11px; color: #5d6f84; margin-top: 1px; }
+  .b-item.done .t { color: #7d8fa5; }
+  .ok { color: #6aa5e0; margin-right: 5px; }
+  .runbar { width: 96px; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.08); overflow: hidden; flex: none; }
+  .runbar i { display: block; height: 100%; border-radius: 2px; background: linear-gradient(90deg, #4d86c6, #6aa5e0); box-shadow: 0 0 8px rgba(106,165,224,0.6); }
+
+  .btn {
+    font-size: 11.5px; padding: 4px 13px; border-radius: 999px; flex: none;
+    background: rgba(255,255,255,0.07); color: #a9bccd;
+    border: 1px solid rgba(255,255,255,0.06);
+  }
+  .btn.go {
+    background: rgba(242,178,92,0.14); color: #f2b25c; font-weight: 600;
+    border-color: rgba(242,178,92,0.25);
+    box-shadow: 0 0 16px rgba(242,178,92,0.12);
+  }
+
+  .msg-user {
+    align-self: flex-end; max-width: 68%;
+    background: linear-gradient(135deg, rgba(106,165,224,0.24), rgba(106,165,224,0.14));
+    border: 1px solid rgba(106,165,224,0.2);
+    color: #eef4fb; border-radius: 18px 18px 4px 18px; padding: 10px 15px;
+  }
+  .thread { display: flex; flex-direction: column; gap: 18px; margin-top: 30px; }
+
+  .composer {
+    margin-top: auto; margin-bottom: 20px;
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 12px 12px 20px;
+    border-radius: 16px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.09);
+    backdrop-filter: blur(24px) saturate(150%);
+    box-shadow: 0 12px 36px rgba(3,8,16,0.45);
+  }
+  .composer .ph { flex: 1; color: #5d6f84; }
+  .composer .hint { font-size: 10.5px; color: #5d6f84; }
+  .send {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: #6aa5e0; color: #0b1017;
+    display: grid; place-items: center; font-size: 14px; font-weight: 700;
+    box-shadow: 0 0 18px rgba(106,165,224,0.5);
+  }
+</style>
+</head>
+<body>
+  <div class="titlebar">
+    <div class="tabs"><span class="tab on">主屏</span><span class="tab">能力</span><span class="tab">数据</span></div>
+    <span class="tb-kbd">⌘K</span>
+  </div>
+
+  <div class="stage">
+    <div class="presence">
+      <div class="avatar"></div>
+      <span class="state"><span class="live"></span>在场 · 感知 3 · 思考 20 · 行动 9</span>
+    </div>
+    <p class="status">早上好。夜里我办完了 <em>4 件事</em>，<br>现在有 <span class="amber">2 件等你拍板</span>。</p>
+
+    <div class="brief">
+      <div class="lane need">
+        <div class="h">等你拍板</div>
+        <div class="b-item">
+          <div><span class="t"><b>「K3 是垃圾」</b>初稿写好了</span><span class="s">v1 · 912 字 · 小红书规格</span></div>
+          <span class="btn go">审稿</span>
+        </div>
+        <div class="b-item">
+          <div><span class="t"><b>构建挂了</b>，已重试成功</span><span class="s">智能体调度 · 要发个版吗</span></div>
+          <span class="btn go">发版</span>
+        </div>
+      </div>
+      <div class="lane">
+        <div class="h">正在跑</div>
+        <div class="b-item"><span class="t"><b>修 bug</b> · codex · 12 分钟</span><span class="runbar"><i style="width:64%"></i></span></div>
+        <div class="b-item"><span class="t">热点抓取 · 5 平台</span><span class="runbar"><i style="width:30%"></i></span></div>
+      </div>
+      <div class="lane">
+        <div class="h">办完了</div>
+        <div class="b-item done"><span class="t"><span class="ok">✓</span>选题看板 3 条候选 · 复盘摘要 · 周会材料 · 闪念归档</span></div>
+      </div>
+    </div>
+
+    <div class="thread">
+      <div class="msg-user">先审 K3 那条，读给我听听</div>
+    </div>
+
+    <div class="composer">
+      <span class="ph">对译宝说点什么…</span>
+      <span class="hint">⌘K 命令 · / 技能</span>
+      <span class="send">↑</span>
+    </div>
+  </div>
+</body>
+</html>

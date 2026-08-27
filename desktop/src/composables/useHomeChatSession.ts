@@ -15,6 +15,7 @@ export type ProcInfo = {
 };
 
 export type RunRef = { label: string; detail: string; ok: boolean };
+export type SessionProcess = { label: string; done: boolean; ok?: boolean };
 
 export type BubbleMsg = {
   id?: string;
@@ -36,6 +37,8 @@ export type HomeChatSession = {
   bubbles: Ref<BubbleMsg[]>;
   thread: ComputedRef<ThreadItem[]>;
   state: Ref<HomeAvatarState>;
+  sessionTitle: Ref<string>;
+  processes: ComputedRef<SessionProcess[]>;
   greeting: ComputedRef<string>;
   suggestChips: SuggestChip[];
   showTyping: ComputedRef<boolean>;

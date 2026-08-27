@@ -63,6 +63,7 @@ type SkillChip = { key: string; label: string; icon: "clock" | "doc" | "sparkle"
 /** 告警气泡：⚠️ 前缀改行首 alert 图标渲染（文案纯净，图标走 YbIcon） */
 const emit = defineEmits<{
   state: [AvatarState];
+  sessionStatus: [status: { title: string; state: AvatarState; running: number; done: number }];
   openPanel: [];
   reminder: [];
   closeWork: [];
@@ -77,6 +78,10 @@ const props = defineProps<{
   workBusy?: boolean;
   workFocus?: boolean;
 }>();
+const browserPreview = typeof window !== "undefined" && !(
+  window as unknown as { __TAURI_INTERNALS__?: { transformCallback?: unknown } }
+).__TAURI_INTERNALS__?.transformCallback;
+const previewDemo = browserPreview && new URLSearchParams(window.location.search).has("demo");
 
 // 本地草稿：父级 draft 单向同步；右侧信息面板点动态也经此填入（强制重置触发 InputBar watch）
 const draftRef = ref<string | undefined>(undefined);
@@ -272,6 +277,16 @@ const sessionProcesses = computed(() => bubbles.value
     done: bubble.proc.done,
     ok: bubble.proc.done ? procOk(bubble.proc) : undefined,
   })));
+watch(
+  [currentSessionTitle, state, sessionProcesses],
+  ([title, nextState, processes]) => emit("sessionStatus", {
+    title,
+    state: nextState,
+    running: processes.filter((item) => !item.done).length,
+    done: processes.filter((item) => item.done && item.ok !== false).length,
+  }),
+  { immediate: true, deep: true },
+);
 
 // ---- 思考状态文案：typing 时轮换"在干嘛"（需在 showTyping 定义后，避免 TDZ）----
 const THINK_NOTES = ["正在整理思路…", "正在翻阅记忆…", "正在连接工具…", "马上就好…"];
@@ -569,6 +584,8 @@ provide(HOME_CHAT_SESSION, {
   bubbles,
   thread,
   state,
+  sessionTitle: currentSessionTitle,
+  processes: sessionProcesses,
   greeting,
   suggestChips: SUGGEST_CHIPS,
   showTyping,
@@ -651,22 +668,24 @@ onMounted(async () => {
     closeDeskSurface();
   });
   // 首启引导（生产打包首跑：装 Python 环境/下模型，大脑还没起来，走 Tauri 事件直推）
-  unlistenSetup = await listen<{ stage: string; detail: string }>("setup-progress", (e) => {
-    const b: BubbleMsg = { role: "sys", text: e.payload.detail, ts: Date.now() };
-    pushBubble(b);
-  });
-  unlistenSetupErr = await listen<string>("setup-error", (e) => {
-    pushWarn(e.payload);
-  });
-  unlistenSetupCfg = await listen<string>("setup-config-needed", () => void onSetupNeeded());
-  // 跨窗镜面：小窗向当前会话发了消息 → 本页重拉（用户消息无事件流，只能靠此信号）
-  unlistenUpdated = await listen<{ conversationId: string; from: string }>("conversation-updated", (e) => {
-    const { conversationId, from } = e.payload;
-    if (from === getCurrentWindow().label) return; // 自己发的，本窗已渲染
-    if (!currentSessionId.value || conversationId !== currentSessionId.value) return; // 不是当前会话
-    if (streamingIdx.value !== null) return; // 流式中不抢刷新（会重建气泡打断渲染）
-    void restoreBubbles(conversationId);
-  });
+  if (!browserPreview) {
+    unlistenSetup = await listen<{ stage: string; detail: string }>("setup-progress", (e) => {
+      const b: BubbleMsg = { role: "sys", text: e.payload.detail, ts: Date.now() };
+      pushBubble(b);
+    });
+    unlistenSetupErr = await listen<string>("setup-error", (e) => {
+      pushWarn(e.payload);
+    });
+    unlistenSetupCfg = await listen<string>("setup-config-needed", () => void onSetupNeeded());
+    // 跨窗镜面：小窗向当前会话发了消息 → 本页重拉（用户消息无事件流，只能靠此信号）
+    unlistenUpdated = await listen<{ conversationId: string; from: string }>("conversation-updated", (e) => {
+      const { conversationId, from } = e.payload;
+      if (from === getCurrentWindow().label) return; // 自己发的，本窗已渲染
+      if (!currentSessionId.value || conversationId !== currentSessionId.value) return; // 不是当前会话
+      if (streamingIdx.value !== null) return; // 流式中不抢刷新（会重建气泡打断渲染）
+      void restoreBubbles(conversationId);
+    });
+  }
   // 小窗已改为固定会话（不跟随大窗，也不再广播切会话）→ 大窗无需订阅 active-conversation-changed
   // 主动拉一次配置：setup-config-needed 可能先于挂载发出而丢——靠拉取兜底
   try {
@@ -678,6 +697,24 @@ onMounted(async () => {
     syncPluginParts(result.widgets ?? []);
     unlistenWidgets = await onWidgets((payload) => syncPluginParts(payload?.widgets ?? []));
   } catch { /* sidecar unavailable */ }
+  if (previewDemo) {
+    currentSessionTitle.value = "站会结论与跟进";
+    sessionStarted = true;
+    bubbles.value = [
+      { role: "user", text: "整理刚才的站会，提取决定、待办和负责人", ts: Date.now() - 150_000 },
+      {
+        role: "sys",
+        text: "",
+        proc: { label: "读取会议记录", done: true, expanded: false, result: { success: true } },
+        ts: Date.now() - 120_000,
+      },
+      {
+        role: "ai",
+        text: "已整理出 3 项决定和 4 个待办；最后一项负责人还不明确，等你确认后我再写入项目看板。",
+        ts: Date.now() - 90_000,
+      },
+    ];
+  }
   emit("state", state.value); // 父级侧边栏团子拿初始态
 });
 onUnmounted(() => {
@@ -709,7 +746,14 @@ onUnmounted(() => {
       v-model:left="leftOpen"
     >
       <template #identity>
-        <AgentBrain :state="state" only="identity" @chat="onIdentityChat" />
+        <AgentBrain
+          :state="state"
+          only="identity"
+          :session-title="currentSessionTitle"
+          :session-processes="sessionProcesses"
+          :has-conversation="Boolean(bubbles.length)"
+          @chat="onIdentityChat"
+        />
       </template>
       <template #mind>
         <AgentBrain :state="state" only="mind" @chat="onInfoChat" />
@@ -898,4 +942,3 @@ onUnmounted(() => {
   transform: translateY(-1px);
 }
 </style>
-

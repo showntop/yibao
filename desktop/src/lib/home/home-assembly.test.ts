@@ -155,7 +155,7 @@ describe("resolveAssembly", () => {
     expect(rails.items.find((i) => i.id === "sessions")?.grow).toBe(true);
     expect(rails.items.find((i) => i.id === "chat")?.grow).toBe(true);
     expect(gridStageStyle(rails.grid!).display).toBe("grid");
-    expect(gridStageStyle(rails.grid!).gridTemplateColumns).toContain("264px");
+    expect(gridStageStyle(rails.grid!).gridTemplateColumns).toBe("300px minmax(0,1fr) 264px");
     expect(gridStageStyle(rails.grid!).gridTemplateAreas).toBe('"left main right"');
   });
 

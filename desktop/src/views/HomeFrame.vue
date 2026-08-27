@@ -91,6 +91,14 @@ function stackOf(area: string): ResolvedItem[] {
     .filter((item): item is ResolvedItem => Boolean(item));
 }
 
+function railOverviewOf(area: string): ResolvedItem[] {
+  return stackOf(area).filter((item) => item.id !== "sessions");
+}
+
+function railSessionsOf(area: string): ResolvedItem[] {
+  return stackOf(area).filter((item) => item.id === "sessions");
+}
+
 function foldLabel(fold: AssemblyFold): string {
   const side = fold.side === "start" ? "左栏" : "右栏";
   return fold.folded ? `展开${side}` : `收起${side}`;
@@ -180,6 +188,7 @@ function onMoveStart(item: ResolvedItem, e: PointerEvent) {
     :class="{ thinking, compact }"
     :data-place="assembly.place"
     :data-ground="grid?.ground"
+    :data-preset="presetId"
   >
     <div
       ref="stageEl"
@@ -195,14 +204,36 @@ function onMoveStart(item: ResolvedItem, e: PointerEvent) {
           :class="`area-${area}`"
           :style="{ gridArea: area }"
         >
-          <div
-            v-for="item in stackOf(area)"
-            :key="item.id"
-            class="host"
-            :class="[`kind-${item.kind}`, `part-${item.id}`, `face-${item.presentation}`, { grow: item.grow, 'pin-end': item.pinEnd }]"
-          >
-            <slot :name="item.id" />
-          </div>
+          <template v-if="presetId === 'rails' && area === 'left'">
+            <div class="rail-overview" aria-label="译宝概览">
+              <div
+                v-for="item in railOverviewOf(area)"
+                :key="item.id"
+                class="host"
+                :class="[`kind-${item.kind}`, `part-${item.id}`, `face-${item.presentation}`, { grow: item.grow, 'pin-end': item.pinEnd }]"
+              >
+                <slot :name="item.id" />
+              </div>
+            </div>
+            <div
+              v-for="item in railSessionsOf(area)"
+              :key="item.id"
+              class="host rail-sessions-host"
+              :class="[`kind-${item.kind}`, `part-${item.id}`, `face-${item.presentation}`, { grow: item.grow, 'pin-end': item.pinEnd }]"
+            >
+              <slot :name="item.id" />
+            </div>
+          </template>
+          <template v-else>
+            <div
+              v-for="item in stackOf(area)"
+              :key="item.id"
+              class="host"
+              :class="[`kind-${item.kind}`, `part-${item.id}`, `face-${item.presentation}`, { grow: item.grow, 'pin-end': item.pinEnd }]"
+            >
+              <slot :name="item.id" />
+            </div>
+          </template>
         </div>
       </template>
       <template v-else>
@@ -335,6 +366,97 @@ function onMoveStart(item: ResolvedItem, e: PointerEvent) {
 .area-end {
   gap: 8px;
   min-width: 0;
+}
+.frame[data-preset="rails"] .area-left {
+  gap: 0;
+  padding: 10px;
+  overflow: hidden;
+  border: 1px solid var(--yb-widget-border);
+  border-radius: calc(var(--yb-widget-radius) + 4px);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--yb-accent-soft) 18%, transparent), transparent 28%),
+    color-mix(in srgb, var(--yb-widget-bg) 90%, var(--yb-content-bg));
+  box-shadow: var(--yb-widget-shadow);
+}
+.frame[data-preset="rails"] .rail-overview {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  overscroll-behavior: contain;
+}
+.frame[data-preset="rails"] .area-left > .host,
+.frame[data-preset="rails"] .rail-overview > .host {
+  flex: none;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.frame[data-preset="rails"] .area-left > .host + .host,
+.frame[data-preset="rails"] .rail-overview > .host + .host {
+  border-top: 1px solid color-mix(in srgb, var(--yb-widget-border) 72%, transparent);
+}
+.frame[data-preset="rails"] .area-left > .host.grow,
+.frame[data-preset="rails"] .rail-overview > .host.grow {
+  flex: 1;
+  min-height: 160px;
+  overflow: hidden;
+}
+.frame[data-preset="rails"] .area-left > .host > :deep(.yb-widget),
+.frame[data-preset="rails"] .rail-overview > .host > :deep(.yb-widget) {
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.frame[data-preset="rails"] .area-left > .host > :deep(.yb-widget::after),
+.frame[data-preset="rails"] .rail-overview > .host > :deep(.yb-widget::after) {
+  display: none;
+}
+.frame[data-preset="rails"] .area-left > .part-identity,
+.frame[data-preset="rails"] .rail-overview > .part-identity {
+  margin-bottom: 4px;
+  border: 1px solid color-mix(in srgb, var(--yb-widget-border) 86%, transparent);
+  border-radius: var(--yb-widget-radius);
+  background: color-mix(in srgb, var(--yb-widget-bg) 88%, transparent);
+  box-shadow: var(--yb-glaze-hi), var(--yb-shadow-1);
+}
+.frame[data-preset="rails"] .area-left > .part-identity + .host,
+.frame[data-preset="rails"] .rail-overview > .part-identity + .host {
+  border-top: 0;
+}
+.frame[data-preset="rails"] .area-left > .host.rail-sessions-host.grow {
+  flex: 0 0 clamp(208px, 30dvh, 280px);
+  min-height: 208px;
+  overflow: hidden;
+  border-top: 1px solid color-mix(in srgb, var(--yb-widget-border) 82%, transparent);
+  background: color-mix(in srgb, var(--yb-widget-bg) 94%, var(--yb-content-bg));
+  box-shadow: 0 -10px 20px color-mix(in srgb, var(--yb-content-bg) 52%, transparent);
+}
+.frame[data-preset="rails"] .area-main,
+.frame[data-preset="rails"] .area-right {
+  padding-block: 2px;
+}
+@media (max-height: 780px) {
+  .frame[data-preset="rails"] .rail-overview > .part-mind :deep(.brain-stage) {
+    height: 132px;
+    min-height: 132px;
+    aspect-ratio: auto;
+  }
+  .frame[data-preset="rails"] .rail-overview > .part-today :deep(.stain-wrap) {
+    display: none;
+  }
+  .frame[data-preset="rails"] .rail-overview > .part-today :deep(.today-summary) {
+    margin: 2px 10px 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 .area-ident {
   justify-content: center;

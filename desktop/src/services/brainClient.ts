@@ -39,6 +39,16 @@ import { pcRemoveMany, pcRestore } from "../state/pending";
 // ---- 会话分流（v2 §5）：run/语音/面板调用带 surface 标签，大脑透传回事件流与历史 ----
 // 模块级当前 surface：宠物窗恒 pet；面板窗随焦点插件变化（PanelApp setSurface）。
 let _surface = "pet";
+const HAS_TAURI_BRIDGE = typeof window !== "undefined" && Boolean(
+  (window as unknown as { __TAURI_INTERNALS__?: { transformCallback?: unknown } })
+    .__TAURI_INTERNALS__?.transformCallback,
+);
+const NOOP_UNLISTEN: UnlistenFn = () => {};
+
+function listenIfAvailable<T>(event: string, cb: (payload: T) => void): Promise<UnlistenFn> {
+  if (!HAS_TAURI_BRIDGE) return Promise.resolve(NOOP_UNLISTEN);
+  return listen<T>(event, (ev) => cb(ev.payload));
+}
 
 /** 设置本窗口后续请求的 surface（面板窗焦点变化时调用）。 */
 export function setSurface(s: string): void {
@@ -58,6 +68,7 @@ function onceWithTimeout<T>(
   timeoutMs: number,
   match?: (payload: T) => boolean,
 ): Promise<T> {
+  if (!HAS_TAURI_BRIDGE) return Promise.resolve(fallback);
   const holder: { un: (() => void) | null } = { un: null };
   let settled = false;
   const resp = new Promise<T>((resolve) => {
@@ -298,7 +309,7 @@ export function fetchFeed(limit = 60): Promise<void> {
 
 /** 订阅主屏 Feed 响应（get_feed 查询的回包，经 Rust 转发）。 */
 export function onFeed(cb: (r: FeedResponse) => void): Promise<UnlistenFn> {
-  return listen<FeedResponse>("brain-feed", (ev) => cb(ev.payload));
+  return listenIfAvailable<FeedResponse>("brain-feed", cb);
 }
 
 /** 一次性取 Feed：发查询并等下一条 brain-feed；大脑不在线/超时返回空（主屏照常渲染空态）。 */
@@ -371,7 +382,7 @@ export function fetchWidgets(): Promise<void> {
 
 /** 订阅主屏 widget 响应（get_widgets 查询的回包，经 Rust 转发）。 */
 export function onWidgets(cb: (r: WidgetsResponse) => void): Promise<UnlistenFn> {
-  return listen<WidgetsResponse>("brain-widgets", (ev) => cb(ev.payload));
+  return listenIfAvailable<WidgetsResponse>("brain-widgets", cb);
 }
 
 /** 一次性取 widget：发查询并等下一条 brain-widgets；大脑不在线/超时返回空（主屏不显示卡片区）。 */
@@ -391,12 +402,12 @@ export function setDockPin(pid: string, on: boolean): Promise<void> {
 
 /** 订阅 Dock 列表响应（dock_list 查询的回包，经 Rust 转发）。 */
 export function onDockList(cb: (r: DockListResponse) => void): Promise<UnlistenFn> {
-  return listen<DockListResponse>("brain-dock-list", (ev) => cb(ev.payload));
+  return listenIfAvailable<DockListResponse>("brain-dock-list", cb);
 }
 
 /** 订阅 Dock 固定/取消回执（含最新 dock 数组，供主屏整体刷新）。 */
 export function onDockPinSet(cb: (p: DockPinSet) => void): Promise<UnlistenFn> {
-  return listen<DockPinSet>("brain-dock-pin-set", (ev) => cb(ev.payload));
+  return listenIfAvailable<DockPinSet>("brain-dock-pin-set", cb);
 }
 
 /** 一次性取 Dock：发查询并等下一条 brain-dock-list；大脑不在线/超时返回空（主屏渲染空 Dock）。 */
@@ -459,7 +470,7 @@ export async function setSettings(values: Partial<SettingsValues>, timeoutMs = 3
 
 /** 订阅设置变更回推（settings_set 生效后大脑广播 brain-settings）。 */
 export function onSettings(cb: (s: SettingsValues) => void): Promise<UnlistenFn> {
-  return listen<{ values: SettingsValues }>("brain-settings", (ev) => cb(ev.payload.values));
+  return listenIfAvailable<{ values: SettingsValues }>("brain-settings", (payload) => cb(payload.values));
 }
 
 /** 一次性取手机伴生端配对信息；超时返回 null。 */
@@ -513,37 +524,37 @@ export function clearPerception(timeoutMs = 5000): Promise<PerceptionCleared> {
 
 /** 订阅大脑事件流，返回取消监听函数。 */
 export function onBrainEvent(cb: (e: BrainEvent) => void): Promise<UnlistenFn> {
-  return listen<BrainEvent>("brain-event", (ev) => cb(ev.payload));
+  return listenIfAvailable<BrainEvent>("brain-event", cb);
 }
 
 /** 订阅一次 run 完成信号。 */
 export function onRunDone(cb: (v: unknown) => void): Promise<UnlistenFn> {
-  return listen("brain-run-done", (ev) => cb(ev.payload));
+  return listenIfAvailable("brain-run-done", cb);
 }
 
 /** 订阅大脑守护状态（up=在线 / down=掉线 / restarting=重启中）。 */
 export function onBrainStatus(cb: (m: BrainStatusMsg) => void): Promise<UnlistenFn> {
-  return listen<BrainStatusMsg>("brain-status", (ev) => cb(ev.payload));
+  return listenIfAvailable<BrainStatusMsg>("brain-status", cb);
 }
 
 /** 订阅面板窗关闭（隐藏）：宠物窗用它给「⇢ 协作中」关联气泡收尾。 */
 export function onPanelClosed(cb: () => void): Promise<UnlistenFn> {
-  return listen("panel-closed", () => cb());
+  return listenIfAvailable("panel-closed", () => cb());
 }
 
 /** 订阅 macOS 权限状态（hello / check_permissions / prompt_permission 都会触发）。 */
 export function onBrainPermissions(cb: (p: BrainPermissions) => void): Promise<UnlistenFn> {
-  return listen<BrainPermissions>("brain-permissions", (ev) => cb(ev.payload));
+  return listenIfAvailable<BrainPermissions>("brain-permissions", cb);
 }
 
 /** 唤起条动作广播（invoke-bar 窗 emit）：解释/翻译/存素材。 */
 export function onInvokeAction(cb: (action: string) => void): Promise<UnlistenFn> {
-  return listen<{ action: string }>("invoke-action", (e) => cb(e.payload.action));
+  return listenIfAvailable<{ action: string }>("invoke-action", (payload) => cb(payload.action));
 }
 
 /** 框选完成广播（finish_snip 后 Rust emit）：主窗展开 + chip 提示提问。 */
 export function onSnipCaptured(cb: (r: { width: number; height: number }) => void): Promise<UnlistenFn> {
-  return listen<{ width: number; height: number }>("snip-captured", (e) => cb(e.payload));
+  return listenIfAvailable<{ width: number; height: number }>("snip-captured", cb);
 }
 
 /** deep-link：pet 窗气泡点击 → 通知 home 窗切回顾 mode + 跳当天。 */
@@ -552,5 +563,5 @@ export function emitRecapOpen(day: string): Promise<void> {
 }
 
 export function onRecapOpen(cb: (day: string) => void): Promise<UnlistenFn> {
-  return listen<{ day: string }>("recap-open", (e) => cb(e.payload.day));
+  return listenIfAvailable<{ day: string }>("recap-open", (payload) => cb(payload.day));
 }

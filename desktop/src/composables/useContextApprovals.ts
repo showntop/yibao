@@ -53,7 +53,9 @@ function saveJson(key: string, value: unknown) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* 存储不可用时保留本次窗口状态 */ }
 }
 
-const browserPreview = typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window);
+const browserPreview = typeof window !== "undefined" && !(
+  window as unknown as { __TAURI_INTERNALS__?: { transformCallback?: unknown } }
+).__TAURI_INTERNALS__?.transformCallback;
 const previewDemo = browserPreview && new URLSearchParams(window.location.search).has("demo");
 const previewInterrupted = browserPreview && new URLSearchParams(window.location.search).get("demo") === "interrupted";
 

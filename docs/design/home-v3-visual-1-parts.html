@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>视觉方向 1 · 零件全保留版</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font: 13px/1.65 -apple-system, "PingFang SC", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    color: #d7e2ef;
+    overflow: hidden;
+    background:
+      radial-gradient(1100px 620px at 78% -18%, rgba(58, 123, 213, 0.15), transparent 62%),
+      radial-gradient(900px 620px at 6% 110%, rgba(72, 160, 200, 0.09), transparent 60%),
+      #0b1017;
+  }
+  .titlebar {
+    height: 40px; display: flex; align-items: center;
+    padding: 0 16px 0 88px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+  }
+  .tabs { display: flex; gap: 4px; margin: 0 auto; }
+  .tab { padding: 3px 12px; border-radius: 7px; color: #7d8fa5; font-size: 12px; }
+  .tab.on { background: rgba(255,255,255,0.07); color: #f2f7fd; font-weight: 600; }
+  .tb-kbd { font: 11px/1 ui-monospace, Menlo, monospace; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 2px 5px; color: #5d6f84; }
+
+  /* 在场条：状态层，常驻 */
+  .presencebar {
+    height: 46px; display: flex; align-items: center; gap: 12px;
+    padding: 0 18px;
+    background: rgba(255,255,255,0.03);
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+  }
+  .pb-state { font-size: 11.5px; color: #7d8fa5; display: flex; align-items: center; gap: 7px; }
+  .pb-state b { color: #e8eef6; font-weight: 600; }
+  .pb-live { width: 6px; height: 6px; border-radius: 50%; background: #6aa5e0; box-shadow: 0 0 10px #6aa5e0; }
+  .pb-sep { width: 1px; height: 18px; background: rgba(255,255,255,0.08); }
+  .runpill {
+    display: flex; align-items: center; gap: 8px;
+    background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 999px; padding: 3px 11px; font-size: 11px; color: #a9bccd;
+  }
+  .runpill .bar { width: 30px; height: 2px; border-radius: 1px; background: rgba(255,255,255,0.1); overflow: hidden; }
+  .runpill .bar i { display: block; height: 100%; background: #6aa5e0; box-shadow: 0 0 6px rgba(106,165,224,0.7); }
+  .pb-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .awaitpill {
+    display: flex; align-items: center; gap: 7px;
+    background: rgba(242,178,92,0.1); border: 1px solid rgba(242,178,92,0.28);
+    border-radius: 999px; padding: 3px 12px;
+    font-size: 11.5px; color: #f2b25c; font-weight: 600;
+  }
+  .pb-next { font-size: 11px; color: #5d6f84; }
+  .pb-next b { color: #a9bccd; font-weight: 500; }
+
+  .layout { display: grid; grid-template-columns: 268px minmax(0,1fr); height: calc(100% - 86px); }
+
+  /* 左栏：零件全保留，换装深空玻璃，按层级排 */
+  .rail {
+    border-right: 1px solid rgba(255,255,255,0.06);
+    padding: 16px 14px; display: flex; flex-direction: column; gap: 12px;
+    overflow: hidden;
+  }
+  .widget {
+    border-radius: 16px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 10px 28px rgba(3,8,16,0.35), inset 0 1px 0 rgba(255,255,255,0.05);
+    padding: 14px 16px;
+  }
+  .w-label { font-size: 10px; letter-spacing: 0.16em; color: #5d6f84; margin-bottom: 10px; }
+
+  /* 主角：identity hero——display 状态句 */
+  .w-hero {
+    background: linear-gradient(160deg, rgba(106,165,224,0.10), rgba(255,255,255,0.03) 55%);
+    border-color: rgba(106,165,224,0.16);
+  }
+  .w-hero .row { display: flex; align-items: center; gap: 11px; }
+  .avatar {
+    width: 44px; height: 44px; border-radius: 50%; flex: none;
+    background: radial-gradient(circle at 34% 30%, #ffffff, #dfe7f0 70%);
+    position: relative;
+    box-shadow: 0 0 0 5px rgba(106,165,224,0.12), 0 0 24px rgba(106,165,224,0.3);
+  }
+  .avatar::before, .avatar::after { content: ""; position: absolute; top: 17px; width: 5px; height: 5px; border-radius: 50%; background: #33404f; }
+  .avatar::before { left: 12.5px; } .avatar::after { right: 12.5px; }
+  .w-hero .name { font-size: 13.5px; font-weight: 600; color: #f2f7fd; }
+  .w-hero .sub { font-size: 10.5px; color: #7d8fa5; }
+  .w-hero .status {
+    margin-top: 12px;
+    font-size: 19px; line-height: 1.42; font-weight: 700; letter-spacing: -0.01em;
+    color: #f2f7fd;
+  }
+  .w-hero .status em { font-style: normal; color: #6aa5e0; }
+  .w-hero .status .amber { color: #f2b25c; }
+
+  /* mind 星座：保留，深色下更出彩 */
+  .w-mind { padding: 12px 16px 10px; }
+  .constellation { position: relative; height: 108px; }
+  .constellation svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .cn {
+    position: absolute; width: 7px; height: 7px; border-radius: 50%;
+    background: #8fa8c4; box-shadow: 0 0 6px rgba(143,168,196,0.6);
+  }
+  .cn.hot { background: #6aa5e0; box-shadow: 0 0 0 4px rgba(106,165,224,0.14), 0 0 12px rgba(106,165,224,0.8); }
+  .cn.big { width: 9px; height: 9px; }
+  .c-label {
+    position: absolute; font-size: 9.5px; color: #7d8fa5; transform: translate(-50%, 0);
+    white-space: nowrap;
+  }
+  .c-label b { color: #c6d3e2; font-weight: 600; }
+  .w-mind .foot { font-size: 10px; color: #5d6f84; margin-top: 6px; display: flex; align-items: center; gap: 6px; }
+  .w-mind .foot .md { width: 5px; height: 5px; border-radius: 50%; background: #6aa5e0; box-shadow: 0 0 8px rgba(106,165,224,0.8); }
+
+  /* today 墨迹：保留，小一号 */
+  .ink { display: flex; align-items: flex-end; gap: 7px; height: 40px; }
+  .ink i {
+    flex: 1; border-radius: 3px 3px 2px 2px;
+    background: linear-gradient(180deg, rgba(106,165,224,0.85), rgba(106,165,224,0.25));
+  }
+  .ink i.dim { background: rgba(255,255,255,0.08); }
+  .w-today .foot { font-size: 10px; color: #5d6f84; margin-top: 8px; }
+
+  /* 会话工作单 */
+  .w-sess { flex: 1; min-height: 0; padding: 12px 10px 10px; overflow: hidden; }
+  .w-sess .w-label { display: flex; justify-content: space-between; padding: 0 6px; margin-bottom: 8px; }
+  .sess { display: flex; gap: 8px; padding: 6px 8px; border-radius: 8px; align-items: flex-start; }
+  .sess.on { background: rgba(255,255,255,0.06); }
+  .sess .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; margin-top: 6px; }
+  .sess.live .dot { background: #6aa5e0; box-shadow: 0 0 0 3px rgba(106,165,224,0.15), 0 0 8px rgba(106,165,224,0.6); }
+  .sess.unseen .dot { background: #f2b25c; }
+  .sess.plain .dot { background: rgba(255,255,255,0.12); }
+  .sess .body { min-width: 0; flex: 1; }
+  .sess .t { color: #93a5ba; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sess.on .t { color: #f2f7fd; font-weight: 600; }
+  .sess.unseen .t { color: #d7e2ef; }
+  .sess .pv { font-size: 10px; color: #5d6f84; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* 中央：叙事层 */
+  .stage { display: flex; flex-direction: column; max-width: 700px; width: 100%; margin: 0 auto; padding: 0 28px; min-height: 0; }
+  .thread { flex: 1; padding: 26px 0 12px; display: flex; flex-direction: column; gap: 18px; overflow: hidden; }
+
+  .brief {
+    border-radius: 18px;
+    background: rgba(255,255,255,0.045);
+    border: 1px solid rgba(255,255,255,0.09);
+    backdrop-filter: blur(24px) saturate(150%);
+    box-shadow: 0 18px 50px rgba(3,8,16,0.5), inset 0 1px 0 rgba(255,255,255,0.06);
+    overflow: hidden;
+  }
+  .lane { padding: 12px 18px 10px; }
+  .lane + .lane { border-top: 1px solid rgba(255,255,255,0.06); }
+  .lane .h { font-size: 10px; letter-spacing: 0.16em; color: #5d6f84; margin-bottom: 4px; }
+  .lane.need .h { color: #f2b25c; }
+  .b-item { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 6px 0; }
+  .b-item .t { font-size: 13px; color: #d7e2ef; }
+  .b-item .t b { color: #f2f7fd; font-weight: 600; }
+  .b-item .s { display: block; font-size: 10.5px; color: #5d6f84; margin-top: 1px; }
+  .b-item.done .t { color: #7d8fa5; }
+  .ok { color: #6aa5e0; margin-right: 5px; }
+  .runbar { width: 84px; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.08); overflow: hidden; flex: none; }
+  .runbar i { display: block; height: 100%; border-radius: 2px; background: #6aa5e0; box-shadow: 0 0 8px rgba(106,165,224,0.6); }
+  .btn {
+    font-size: 11px; padding: 3px 12px; border-radius: 999px; flex: none;
+    background: rgba(255,255,255,0.07); color: #a9bccd; border: 1px solid rgba(255,255,255,0.06);
+  }
+  .btn.go { background: rgba(242,178,92,0.14); color: #f2b25c; font-weight: 600; border-color: rgba(242,178,92,0.25); }
+
+  .msg-user {
+    align-self: flex-end; max-width: 68%;
+    background: linear-gradient(135deg, rgba(106,165,224,0.22), rgba(106,165,224,0.12));
+    border: 1px solid rgba(106,165,224,0.18);
+    color: #eef4fb; border-radius: 16px 16px 4px 16px; padding: 9px 14px;
+  }
+  .msg-ai { max-width: 88%; color: #c6d3e2; font-size: 13px; }
+
+  .composer {
+    margin-bottom: 18px;
+    display: flex; align-items: center; gap: 12px;
+    padding: 11px 11px 11px 19px;
+    border-radius: 15px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.09);
+    backdrop-filter: blur(24px) saturate(150%);
+    box-shadow: 0 12px 36px rgba(3,8,16,0.45);
+  }
+  .composer .ph { flex: 1; color: #5d6f84; }
+  .composer .hint { font-size: 10.5px; color: #5d6f84; }
+  .send {
+    width: 27px; height: 27px; border-radius: 50%;
+    background: #6aa5e0; color: #0b1017;
+    display: grid; place-items: center; font-size: 13px; font-weight: 700;
+    box-shadow: 0 0 16px rgba(106,165,224,0.5);
+  }
+</style>
+</head>
+<body>
+  <div class="titlebar">
+    <div class="tabs"><span class="tab on">主屏</span><span class="tab">能力</span><span class="tab">数据</span></div>
+    <span class="tb-kbd">⌘K</span>
+  </div>
+
+  <div class="presencebar">
+    <span class="pb-state"><span class="pb-live"></span><b>译宝在场</b> · 感知 3 · 思考 20 · 行动 9</span>
+    <span class="pb-sep"></span>
+    <span class="runpill">修 bug · 12m<span class="bar"><i style="width:64%"></i></span></span>
+    <span class="runpill">热点抓取<span class="bar"><i style="width:30%"></i></span></span>
+    <div class="pb-right">
+      <span class="awaitpill">● 2 件等你拍板</span>
+      <span class="pb-next"><b>15:30 周会</b> · 1h20m</span>
+    </div>
+  </div>
+
+  <div class="layout">
+    <aside class="rail">
+      <!-- 主角：identity 升 hero，display 状态句 -->
+      <section class="widget w-hero">
+        <div class="row">
+          <div class="avatar"></div>
+          <div>
+            <div class="name">译宝</div>
+            <div class="sub">在场 12 小时</div>
+          </div>
+        </div>
+        <p class="status">夜里办完了 <em>4 件事</em>，<br><span class="amber">2 件等你拍板</span>。</p>
+      </section>
+
+      <!-- mind 星座：保留 -->
+      <section class="widget w-mind">
+        <div class="constellation">
+          <svg viewBox="0 0 220 108" preserveAspectRatio="none">
+            <g stroke="rgba(143,168,196,0.25)" stroke-width="1">
+              <line x1="40" y1="34" x2="110" y2="52"/>
+              <line x1="110" y1="52" x2="178" y2="30"/>
+              <line x1="110" y1="52" x2="150" y2="84"/>
+              <line x1="110" y1="52" x2="58" y2="80"/>
+              <line x1="40" y1="34" x2="58" y2="80"/>
+              <line x1="178" y1="30" x2="150" y2="84"/>
+              <line x1="110" y1="52" x2="196" y2="66"/>
+            </g>
+          </svg>
+          <span class="cn hot big" style="left:106px; top:48px"></span>
+          <span class="cn" style="left:37px; top:31px"></span>
+          <span class="cn" style="left:175px; top:27px"></span>
+          <span class="cn" style="left:147px; top:81px"></span>
+          <span class="cn" style="left:55px; top:77px"></span>
+          <span class="cn" style="left:193px; top:63px"></span>
+          <span class="c-label" style="left:40px; top:14px">感知 <b>3</b></span>
+          <span class="c-label" style="left:110px; top:66px">思考 <b>20</b></span>
+          <span class="c-label" style="left:185px; top:10px">行动 <b>9</b></span>
+          <span class="c-label" style="left:150px; top:94px">记忆 <b>+3</b></span>
+        </div>
+        <div class="foot"><span class="md"></span>思考中 · 昨夜复盘已就绪</div>
+      </section>
+
+      <!-- today 墨迹：保留 -->
+      <section class="widget w-today">
+        <div class="w-label">今 天</div>
+        <div class="ink">
+          <i class="dim" style="height:18%"></i><i class="dim" style="height:30%"></i>
+          <i style="height:46%"></i><i style="height:62%"></i>
+          <i style="height:88%"></i><i style="height:70%"></i>
+          <i class="dim" style="height:34%"></i><i class="dim" style="height:12%"></i>
+        </div>
+        <div class="foot">午后是你的高产段 · 现在正忙</div>
+      </section>
+
+      <!-- 会话工作单 -->
+      <section class="widget w-sess">
+        <div class="w-label"><span>会 话</span><span>5</span></div>
+        <div class="sess on live">
+          <span class="dot"></span>
+          <div class="body"><div class="t">主屏视觉方向</div><div class="pv">问题在结尾，我做了闭环——</div></div>
+        </div>
+        <div class="sess unseen">
+          <span class="dot"></span>
+          <div class="body"><div class="t">选题看板实测</div><div class="pv">拖拽修好了，真机验一下？</div></div>
+        </div>
+        <div class="sess plain">
+          <span class="dot"></span>
+          <div class="body"><div class="t">晨间热点</div><div class="pv">5 平台抓完，3 条值得写</div></div>
+        </div>
+        <div class="sess plain">
+          <span class="dot"></span>
+          <div class="body"><div class="t">看板拖拽修复</div><div class="pv">✓ 已提交 47adf6d</div></div>
+        </div>
+      </section>
+    </aside>
+
+    <!-- 叙事层 -->
+    <main class="stage">
+      <div class="thread">
+        <div class="brief">
+          <div class="lane need">
+            <div class="h">等你拍板</div>
+            <div class="b-item">
+              <div><span class="t"><b>「K3 是垃圾」</b>初稿写好了</span><span class="s">v1 · 912 字 · 小红书规格</span></div>
+              <span class="btn go">审稿</span>
+            </div>
+            <div class="b-item">
+              <div><span class="t"><b>构建挂了</b>，已重试成功</span><span class="s">智能体调度 · 要发个版吗</span></div>
+              <span class="btn go">发版</span>
+            </div>
+          </div>
+          <div class="lane">
+            <div class="h">正在跑</div>
+            <div class="b-item"><span class="t"><b>修 bug</b> · codex · 12 分钟</span><span class="runbar"><i style="width:64%"></i></span></div>
+            <div class="b-item"><span class="t">热点抓取 · 5 平台</span><span class="runbar"><i style="width:30%"></i></span></div>
+          </div>
+          <div class="lane">
+            <div class="h">办完了</div>
+            <div class="b-item done"><span class="t"><span class="ok">✓</span>选题看板 3 条候选 · 复盘摘要 · 周会材料 · 闪念归档</span></div>
+          </div>
+        </div>
+        <div class="msg-user">先审 K3 那条，读给我听听</div>
+        <div class="msg-ai">读完了。问题在结尾：倒数第二段还在抛新观点，最后一段一句口号收不住。我把开头的意象收回来做了闭环——</div>
+      </div>
+
+      <div class="composer">
+        <span class="ph">对译宝说点什么…</span>
+        <span class="hint">⌘K 命令 · / 技能</span>
+        <span class="send">↑</span>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

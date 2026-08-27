@@ -15,7 +15,7 @@ import { truncate } from "../../lib/text";
 import NeuralBrain from "./NeuralBrain.vue";
 import Avatar from "../../components/pet/Avatar.vue";
 import HomeWidget from "../HomeWidget.vue";
-import { useLiveAssembly } from "../../lib/home/home-chrome.ts";
+import { useHomeChrome, useLiveAssembly } from "../../lib/home/home-chrome.ts";
 import { faceOf } from "../../lib/home/home-assembly.ts";
 
 type AgentState = "idle" | "listen" | "think" | "work" | "say" | "success" | "error";
@@ -37,9 +37,14 @@ const props = defineProps<{
   state: AgentState;
   compact?: boolean;
   only?: "identity" | "mind" | "today";
+  sessionTitle?: string;
+  sessionProcesses?: { label: string; done: boolean; ok?: boolean }[];
+  hasConversation?: boolean;
 }>();
 const emit = defineEmits<{ chat: [draft: string] }>();
 const assembly = useLiveAssembly();
+const { id: presetId } = useHomeChrome();
+const isRails = computed(() => presetId.value === "rails");
 const mindFace = computed(() => {
   const face = faceOf(assembly.value, "mind", "map");
   return face === "tile" ? "tile" as const : "map" as const;
@@ -155,6 +160,33 @@ const STATE_LINES: Record<AgentState, string> = {
   error: "需要留意",
 };
 const stateText = computed(() => avatarState.value === "notify" ? "有事找你" : STATE_LINES[props.state]);
+const identitySummary = computed(() => {
+  const processRows = props.sessionProcesses ?? [];
+  const completed = processRows.filter((item) => item.done && item.ok !== false).length;
+  const running = processRows.filter((item) => !item.done).length;
+  if (completed || running) return `刚完成 ${completed} 步，${running} 步正在推进。`;
+  if (props.hasConversation && props.sessionTitle && props.sessionTitle !== "新对话") {
+    return `正在和你推进「${truncate(props.sessionTitle, 12)}」。`;
+  }
+  if (stats.value.done_24h || approvals.value) {
+    return `刚刚办完了 ${stats.value.done_24h} 件事，${approvals.value} 件等你拍板。`;
+  }
+  if (stats.value.running_tasks) return `正在推进 ${stats.value.running_tasks} 件事，随时可以接力。`;
+  if (memories.value.length || plugins.value.length) {
+    return `已整理 ${memories.value.length} 条记忆，${plugins.value.length} 个能力待命。`;
+  }
+  return "今天还没有新任务，随时可以一起开工。";
+});
+const mindSummary = computed(() => {
+  if (activeGroup.value) return `${activeGroup.value.label} · ${activeGroup.value.detail}`;
+  if (props.state === "think" || props.state === "work") return `${stateText.value} · 正在连接记忆与工具`;
+  return `${stateText.value} · ${memories.value.length} 条记忆可用`;
+});
+const todaySummary = computed(() => {
+  if (stain.value.empty) return "今天的工作节律还在形成";
+  const total = stats.value.done_24h + todayChats.value + todayNewMems.value;
+  return `今天已留下 ${total} 次有效活动 · 继续保持节奏`;
+});
 
 const capabilityGroups = computed(() => [
   { id: "sense" as const, label: "感知", count: 3, detail: "屏幕 · 语音 · 上下文" },
@@ -212,23 +244,28 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <aside class="agent" :class="[state, { compact }]">
+  <aside class="agent" :class="[state, { compact, rails: isRails }]">
     <HomeWidget v-if="!only || only === 'identity'" id="identity" class="identity-widget" :class="{ 'is-seat': identityFace === 'seat' }">
       <button class="identity" type="button" title="和译宝聊聊它的记忆与能力" @click="greet">
         <span class="identity-avatar">
-          <Avatar :state="avatarState" :size="identityFace === 'seat' ? 108 : 40" :compact="false" />
+          <Avatar :state="avatarState" :size="identityFace === 'seat' ? 108 : (isRails ? 58 : 40)" :compact="false" />
         </span>
-        <span class="identity-copy">
+          <span class="identity-copy">
           <span class="identity-line">
             <strong>译宝</strong>
             <i class="state-dot" :class="avatarState" />
             <em class="identity-state">{{ stateText }}</em>
+            </span>
+            <span v-if="isRails" class="identity-summary">{{ identitySummary }}</span>
           </span>
-        </span>
       </button>
     </HomeWidget>
 
     <HomeWidget v-if="!only || only === 'mind'" id="mind" class="mind-widget" aria-label="译宝的记忆、感知和行动能力">
+      <div v-if="isRails" class="rail-section-head">
+        <span>感知 · 思考 · 行动</span>
+        <small>{{ memories.length + plugins.length + 3 }}</small>
+      </div>
       <div class="mind-well">
         <NeuralBrain
           :state="state"
@@ -246,6 +283,10 @@ onUnmounted(() => {
           @status="greet"
         />
       </div>
+      <button v-if="isRails" class="mind-status" type="button" @click="greet">
+        <i class="state-dot" :class="avatarState" />
+        <span>{{ mindSummary }}</span>
+      </button>
 
       <Transition name="cap-detail">
         <div v-if="activeGroup" class="capability-detail">
@@ -262,12 +303,17 @@ onUnmounted(() => {
 
     <!-- 今日概要：加载中显示骨架；加载完无当日活动数据则整块隐藏（不让空白零件占屏） -->
     <HomeWidget v-if="!only || only === 'today'" id="today" class="today-widget" :class="{ 'is-loading': !todayLoaded }" aria-label="今日概要">
-      <div v-if="todayLoaded" class="stain" aria-hidden="true">
-        <i v-for="(band, index) in stain.values" :key="index" :style="{ opacity: 0.16 + band * 0.84 }" />
+      <div v-if="isRails" class="rail-section-head"><span>今天</span></div>
+      <div class="stain-wrap">
+        <div v-if="todayLoaded" class="stain" aria-hidden="true">
+          <i v-for="(band, index) in stain.values" :key="index" :style="{ opacity: 0.16 + band * 0.84, transform: `scaleY(${0.34 + band * 0.66})` }" />
+        </div>
+        <div v-else class="stain skeleton" aria-hidden="true">
+          <i v-for="n in 8" :key="n" />
+        </div>
+        <div v-if="isRails" class="stain-times" aria-hidden="true"><span>09</span><span>12</span><span>15</span><span>18</span></div>
       </div>
-      <div v-else class="stain skeleton" aria-hidden="true">
-        <i v-for="n in 8" :key="n" />
-      </div>
+      <p v-if="isRails" class="today-summary">{{ todaySummary }}</p>
     </HomeWidget>
   </aside>
 </template>
@@ -320,6 +366,35 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.rails .identity {
+  min-height: 118px;
+  padding: 16px 18px;
+  align-items: flex-start;
+  gap: 12px;
+}
+.rails .identity-copy {
+  flex: 1;
+  gap: 12px;
+  overflow: visible;
+}
+.rails .identity-line strong {
+  font-size: 16px;
+  letter-spacing: 0.02em;
+}
+.rails .identity-state {
+  font-size: 11px;
+}
+.rails .identity-summary {
+  max-width: 190px;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  color: var(--yb-paper-ink);
+  font-size: 18px;
+  font-weight: var(--yb-fw-medium);
+  line-height: 1.48;
+  letter-spacing: -0.01em;
 }
 
 :deep(.is-seat) {
@@ -399,6 +474,49 @@ button {
 .mind-widget {
   flex: none;
 }
+.rail-section-head {
+  min-height: 32px;
+  padding: 12px 10px 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--yb-paper-ink-dim);
+  font-size: 11px;
+  font-weight: var(--yb-fw-medium);
+  letter-spacing: 0.08em;
+}
+.rail-section-head small {
+  font-size: 10px;
+  font-weight: var(--yb-fw-regular);
+  font-variant-numeric: tabular-nums;
+  opacity: 0.72;
+}
+.rails .mind-well {
+  margin: 2px 2px 0;
+  border-radius: 12px;
+  background: transparent;
+  box-shadow: none;
+  opacity: 0.9;
+}
+.mind-status {
+  width: calc(100% - 16px);
+  margin: 0 8px 10px;
+  padding: 5px 2px;
+  border: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: transparent;
+  color: var(--yb-paper-ink-dim);
+  font-size: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+.mind-status span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .mind-well {
   margin: 6px 8px 8px;
@@ -468,6 +586,40 @@ button {
   border-radius: calc(var(--yb-widget-radius) - 8px);
   background: var(--yb-note-mute);
   box-shadow: var(--yb-press);
+}
+.rails .stain-wrap {
+  margin: 0 8px;
+  padding: 6px 6px 2px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--yb-note-mute) 78%, transparent);
+  box-shadow: var(--yb-press);
+}
+.rails .stain {
+  height: 44px;
+  margin: 0;
+  padding: 4px 2px 0;
+  align-items: end;
+  background: transparent;
+  box-shadow: none;
+}
+.rails .stain i {
+  transform-origin: bottom;
+  min-height: 8px;
+}
+.stain-times {
+  padding: 3px 2px 0;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  color: var(--yb-text-faint);
+  font-size: 8px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.today-summary {
+  margin: 7px 10px 12px;
+  color: var(--yb-paper-ink-dim);
+  font-size: 10px;
+  line-height: 1.4;
 }
 .stain i {
   display: block;

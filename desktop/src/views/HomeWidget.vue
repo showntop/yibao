@@ -63,6 +63,7 @@ onUnmounted(() => document.removeEventListener("mousedown", onDoc));
       { 'yb-widget-fill': fill },
     ]"
     :data-widget="id"
+    :data-preset="presetId"
     :style="{ '--yb-widget-order': String(spec.order) }"
   >
     <div class="yb-widget-tools">
@@ -116,6 +117,23 @@ onUnmounted(() => document.removeEventListener("mousedown", onDoc));
 </template>
 
 <style scoped>
+.yb-widget[data-preset="rails"]:is([data-widget="mind"], [data-widget="today"], [data-widget="spark"]) {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.yb-widget[data-preset="rails"]:is([data-widget="mind"], [data-widget="today"], [data-widget="spark"])::after {
+  display: none;
+}
+.yb-widget[data-preset="rails"][data-widget="identity"] {
+  border-color: color-mix(in srgb, var(--yb-widget-border) 70%, transparent);
+  background: color-mix(in srgb, var(--yb-widget-bg) 88%, transparent);
+  box-shadow: var(--yb-glaze-hi), var(--yb-shadow-1);
+}
+.yb-widget[data-preset="rails"][data-widget="identity"]::after {
+  opacity: calc(var(--yb-widget-grain-opacity) * 0.45);
+}
 .yb-widget-tools {
   position: absolute;
   top: 6px;

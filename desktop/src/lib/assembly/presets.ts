@@ -60,7 +60,8 @@ export type PlaceItem = {
 const SPINE_W = "40px";
 const NOTE_W = "188px";
 const TILE = "164px";
-const RAIL = "264px";
+const LEFT_RAIL = "300px";
+const RIGHT_RAIL = "264px";
 
 export const HOME_PRESETS = {
   rails: {
@@ -92,9 +93,9 @@ export const HOME_PRESETS = {
       pad: 8,
       gap: 8,
       tracks: [
-        { area: "left", size: RAIL, fold: true },
+        { area: "left", size: LEFT_RAIL, fold: true },
         { area: "main", size: "minmax(0,1fr)" },
-        { area: "right", size: RAIL, fold: true },
+        { area: "right", size: RIGHT_RAIL, fold: true },
       ],
       stacks: {
         // 三栏左栏：保留核心可视化（脑图/今日/余光）+ 会话；去掉信息卡（提醒/动态/需要/刚复制），会话列表才有空间

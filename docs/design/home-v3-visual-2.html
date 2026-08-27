@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>视觉方向 2 · 瓷白编辑</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font: 13px/1.7 -apple-system, "PingFang SC", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    color: #2a2e35;
+    overflow: hidden;
+    background: #f2efe8;
+  }
+  .titlebar {
+    height: 40px; display: flex; align-items: center;
+    padding: 0 16px 0 88px;
+    border-bottom: 1px solid rgba(28,31,36,0.08);
+  }
+  .tabs { display: flex; gap: 4px; margin: 0 auto; }
+  .tab { padding: 3px 12px; border-radius: 7px; color: #8a8578; font-size: 12px; }
+  .tab.on { background: rgba(28,31,36,0.06); color: #1c1f24; font-weight: 600; }
+  .tb-kbd { font: 11px/1 ui-monospace, Menlo, monospace; border: 1px solid rgba(28,31,36,0.12); border-radius: 4px; padding: 2px 5px; color: #a39e90; }
+
+  .stage { height: calc(100% - 40px); max-width: 740px; margin: 0 auto; padding: 52px 32px 0; display: flex; flex-direction: column; }
+
+  .presence { display: flex; align-items: center; gap: 12px; }
+  .avatar {
+    width: 42px; height: 42px; border-radius: 50%; flex: none;
+    background: radial-gradient(circle at 34% 30%, #ffffff, #eef0f2 70%);
+    position: relative;
+    box-shadow: 0 2px 8px rgba(28,31,36,0.14), 0 0 0 1px rgba(28,31,36,0.05);
+  }
+  .avatar::before, .avatar::after { content: ""; position: absolute; top: 16px; width: 5px; height: 5px; border-radius: 50%; background: #3a4048; }
+  .avatar::before { left: 12px; } .avatar::after { right: 12px; }
+  .presence .state { font-size: 12px; color: #8a8578; display: flex; align-items: center; gap: 7px; }
+  .live { width: 6px; height: 6px; border-radius: 50%; background: #3d7a52; }
+
+  /* 编辑感：serif display + 排版对比 */
+  .status {
+    margin: 30px 0 36px;
+    font-family: "Songti SC", "STSong", serif;
+    font-size: 36px; line-height: 1.4; font-weight: 700; letter-spacing: 0.01em;
+    color: #1c1f24;
+  }
+  .status em { font-style: normal; border-bottom: 3px solid rgba(185,127,46,0.35); padding-bottom: 2px; }
+
+  .brief {
+    background: #fbfaf5;
+    border-radius: 4px;
+    border-top: 2.5px solid #1c1f24;
+    box-shadow: 0 1px 2px rgba(28,31,36,0.05), 0 12px 32px rgba(28,31,36,0.07);
+    overflow: hidden;
+  }
+  .lane { padding: 16px 22px 12px; }
+  .lane + .lane { border-top: 1px solid rgba(28,31,36,0.07); }
+  .lane .h { font-size: 10.5px; letter-spacing: 0.22em; color: #a39e90; margin-bottom: 8px; }
+  .lane.need .h { color: #b97f2e; }
+  .b-item { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 6px 0; }
+  .b-item .t { font-size: 14px; color: #2a2e35; }
+  .b-item .t b { font-weight: 600; color: #1c1f24; }
+  .b-item .s { display: block; font-size: 11px; color: #a39e90; margin-top: 1px; }
+  .b-item.done .t { color: #8a8578; }
+  .ok { color: #3d7a52; margin-right: 5px; }
+  .runmeta { font: 11px/1 ui-monospace, Menlo, monospace; color: #8a8578; flex: none; font-variant-numeric: tabular-nums; }
+
+  .btn {
+    font-size: 11.5px; padding: 4px 14px; border-radius: 3px; flex: none;
+    border: 1px solid rgba(28,31,36,0.16); color: #5d5a4f; background: transparent;
+  }
+  .btn.go { background: #1c1f24; color: #f2efe8; border-color: #1c1f24; font-weight: 600; }
+
+  .thread { display: flex; flex-direction: column; gap: 18px; margin-top: 34px; }
+  .msg-user {
+    align-self: flex-end; max-width: 68%;
+    background: #1c1f24; color: #f2efe8;
+    border-radius: 3px; padding: 11px 16px;
+  }
+
+  .composer {
+    margin-top: auto; margin-bottom: 22px;
+    display: flex; align-items: center; gap: 12px;
+    padding: 13px 12px 13px 20px;
+    background: #fbfaf5; border: 1px solid rgba(28,31,36,0.12);
+    border-radius: 4px;
+    box-shadow: 0 8px 28px rgba(28,31,36,0.08);
+  }
+  .composer .ph { flex: 1; color: #a39e90; }
+  .composer .hint { font-size: 10.5px; color: #a39e90; }
+  .send {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: #1c1f24; color: #f2efe8;
+    display: grid; place-items: center; font-size: 14px; font-weight: 700;
+  }
+</style>
+</head>
+<body>
+  <div class="titlebar">
+    <div class="tabs"><span class="tab on">主屏</span><span class="tab">能力</span><span class="tab">数据</span></div>
+    <span class="tb-kbd">⌘K</span>
+  </div>
+
+  <div class="stage">
+    <div class="presence">
+      <div class="avatar"></div>
+      <span class="state"><span class="live"></span>在场 · 感知 3 · 思考 20 · 行动 9</span>
+    </div>
+    <p class="status">早上好。夜里办完了 <em>4 件事</em>，<br>现在 <em>2 件等你拍板</em>。</p>
+
+    <div class="brief">
+      <div class="lane need">
+        <div class="h">等你拍板</div>
+        <div class="b-item">
+          <div><span class="t"><b>「K3 是垃圾」</b>初稿写好了</span><span class="s">v1 · 912 字 · 小红书规格</span></div>
+          <span class="btn go">审稿</span>
+        </div>
+        <div class="b-item">
+          <div><span class="t"><b>构建挂了</b>，已重试成功</span><span class="s">智能体调度 · 要发个版吗</span></div>
+          <span class="btn go">发版</span>
+        </div>
+      </div>
+      <div class="lane">
+        <div class="h">正在跑</div>
+        <div class="b-item"><span class="t"><b>修 bug</b> · codex</span><span class="runmeta">12:04 / ~18:00</span></div>
+        <div class="b-item"><span class="t">热点抓取 · 5 平台</span><span class="runmeta">知乎 ✓ 微博 ✓</span></div>
+      </div>
+      <div class="lane">
+        <div class="h">办完了</div>
+        <div class="b-item done"><span class="t"><span class="ok">✓</span>选题看板 3 条候选 · 复盘摘要 · 周会材料 · 闪念归档</span></div>
+      </div>
+    </div>
+
+    <div class="thread">
+      <div class="msg-user">先审 K3 那条，读给我听听</div>
+    </div>
+
+    <div class="composer">
+      <span class="ph">对译宝说点什么…</span>
+      <span class="hint">⌘K 命令 · / 技能</span>
+      <span class="send">↑</span>
+    </div>
+  </div>
+</body>
+</html>

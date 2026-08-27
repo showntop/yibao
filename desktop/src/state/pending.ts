@@ -18,6 +18,10 @@ export function rememberLabelForTool(skill: string): string {
 
 let _pc: PendingConfirm[] = [];
 const _pcSubs = new Set<(l: PendingConfirm[]) => void>();
+const hasTauriBridge = Boolean(
+  (window as unknown as { __TAURI_INTERNALS__?: { transformCallback?: unknown } })
+    .__TAURI_INTERNALS__?.transformCallback,
+);
 
 function _pcEmit(): void {
   const l = [..._pc];
@@ -62,7 +66,7 @@ export function onPendingConfirms(cb: (l: PendingConfirm[]) => void): () => void
 // ---- 模块级副作用：消费大脑事件流维护队列 ----
 
 // 普通浏览器只用于本地 UI QA，没有 Tauri event bridge；避免模块加载时产生无意义的未处理错误。
-if ("__TAURI_INTERNALS__" in window) void listen<BrainEvent>("brain-event", (ev) => {
+if (hasTauriBridge) void listen<BrainEvent>("brain-event", (ev) => {
   const e = ev.payload;
   if (e.kind === "confirmation_needed") {
     // Task 2 攒批：一轮可能多 CONFIRM，actions 带全部待批 action；
@@ -101,7 +105,7 @@ if ("__TAURI_INTERNALS__" in window) void listen<BrainEvent>("brain-event", (ev)
   }
 });
 
-if ("__TAURI_INTERNALS__" in window) void listen<BrainStatusMsg>("brain-status", (ev) => {
+if (hasTauriBridge) void listen<BrainStatusMsg>("brain-status", (ev) => {
   if (ev.payload.status === "up") return;
   if (_pc.length) {
     _pc = [];
