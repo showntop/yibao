@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>译宝 · 家态 specimen</title>
+<link rel="stylesheet" href="../../../desktop/src/assets/tokens.css">
+<style>
+  /* specimen 专用：display 字阶与 serif 字族（拟新增 token 的预览） */
+  :root {
+    --yb-fs-display-l: 48px;
+    --yb-fs-display-m: 32px;
+    --yb-serif: "Songti SC", "Noto Serif SC", "Source Han Serif SC", serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--yb-font);
+    color: var(--yb-text);
+    background:
+      radial-gradient(130% 100% at 12% -10%, rgba(255,255,255,0.95), transparent 50%),
+      radial-gradient(90% 70% at 88% 108%, rgba(var(--yb-c-sky-rgb), 0.10), transparent 60%),
+      linear-gradient(160deg, #f2f5fa 0%, var(--yb-desk) 45%, #d3dcea 100%);
+    overflow: hidden;
+    position: relative;
+  }
+  /* 桌面颗粒 */
+  body::before {
+    content: "";
+    position: absolute; inset: 0;
+    background-image: var(--yb-widget-grain);
+    opacity: 0.22;
+    mix-blend-mode: multiply;
+    pointer-events: none;
+  }
+  /* 四角轻 vignette，把视线收向中央 */
+  body::after {
+    content: "";
+    position: absolute; inset: 0;
+    background: radial-gradient(120% 100% at 50% 42%, transparent 62%, rgba(var(--yb-c-slate-rgb), 0.10));
+    pointer-events: none;
+  }
+
+  .stage {
+    position: relative;
+    height: 100vh;
+    padding: 28px 36px 52px; /* 底部留给地平线 */
+    display: grid;
+    grid-template-columns: 46% 27% 1fr;
+    gap: 28px;
+  }
+
+  /* ============ 对话区（46%，主角） ============ */
+  .stream-zone { display: flex; flex-direction: column; min-width: 0; }
+  .brand {
+    font-size: var(--yb-fs-lg); font-weight: var(--yb-fw-bold);
+    color: var(--yb-text-strong); letter-spacing: 0.02em;
+  }
+  .day-title {
+    font-family: var(--yb-serif);
+    font-size: 54px;
+    font-weight: 700;
+    color: var(--yb-text-strong);
+    letter-spacing: 0.01em;
+    margin-top: 12px;
+    line-height: 1.12;
+    text-shadow: 0 1px 0 rgba(255,255,255,0.8);
+  }
+  .day-sub {
+    margin-top: 6px;
+    font-family: var(--yb-mono);
+    font-size: var(--yb-fs-sm);
+    color: var(--yb-text-faint);
+    font-variant-numeric: tabular-nums;
+  }
+  .stream {
+    flex: 1; min-height: 0;
+    max-width: 480px; /* 气泡列收拢，右侧留"气"，不成之字 */
+    display: flex; flex-direction: column; justify-content: flex-end;
+    gap: 14px;
+    padding: 28px 0 18px;
+    mask-image: linear-gradient(180deg, transparent, #000 12%);
+    -webkit-mask-image: linear-gradient(180deg, transparent, #000 12%);
+  }
+  .bubble {
+    max-width: 420px;
+    padding: 10px 14px;
+    border-radius: 18px;
+    font-size: var(--yb-fs-lg);
+    line-height: var(--yb-lh-base);
+    border: 1px solid var(--yb-widget-border);
+    box-shadow: var(--yb-glaze-hi), var(--yb-shadow-2);
+    width: fit-content;
+  }
+  .bubble.ai {
+    align-self: flex-start;
+    background: linear-gradient(180deg, #ffffff, var(--yb-widget-bg));
+    color: var(--yb-text);
+    border-bottom-left-radius: 6px;
+  }
+  /* 团子的主动 = 主角：更大更重 */
+  .bubble.ai.lead {
+    font-family: var(--yb-serif);
+    font-size: 19px;
+    line-height: 1.5;
+    padding: 16px 20px;
+    color: var(--yb-text-strong);
+    box-shadow: var(--yb-glaze-hi), var(--yb-note-shadow-lift);
+  }
+  .bubble.me {
+    align-self: flex-end;
+    background: var(--yb-bubble-user);
+    color: var(--yb-text-strong);
+    border-bottom-right-radius: 6px;
+  }
+  .bubble time {
+    display: block;
+    margin-top: 4px;
+    font-family: var(--yb-mono);
+    font-size: var(--yb-fs-xs);
+    color: var(--yb-text-faint);
+  }
+  /* 溪口：团子 + 输入 */
+  .estuary {
+    display: flex; align-items: flex-end; gap: 14px;
+    padding-top: 8px;
+  }
+  .tuanzi { position: relative; width: 64px; height: 64px; flex: none; }
+  /* 窑变微光（idle 时极弱呼吸） */
+  .tuanzi::after {
+    content: "";
+    position: absolute; left: -18px; bottom: -10px;
+    width: 100px; height: 40px;
+    background: radial-gradient(50% 50% at 50% 50%, var(--yb-think-mist), transparent 70%);
+    pointer-events: none;
+  }
+  .composer {
+    flex: 1; max-width: 520px;
+    display: flex; align-items: center; gap: 10px;
+    padding: 13px 20px;
+    border-radius: var(--yb-radius-pill);
+    background: linear-gradient(180deg, #ffffff, var(--yb-widget-bg));
+    border: 1px solid var(--yb-widget-border);
+    box-shadow: var(--yb-glaze-hi), var(--yb-note-shadow-lift);
+    color: var(--yb-text-faint);
+    font-size: var(--yb-fs-lg);
+  }
+  .composer .caret { width: 1.5px; height: 16px; background: var(--yb-accent); flex: none; }
+  .composer .send { margin-left: auto; color: var(--yb-accent); font-size: 15px; }
+
+  /* ============ 今日枢轴 ============ */
+  .tile {
+    position: relative;
+    border: 1px solid var(--yb-widget-border);
+    border-radius: var(--yb-widget-radius);
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.65), transparent 46%),
+      var(--yb-widget-bg);
+    box-shadow: var(--yb-glaze-hi), var(--yb-note-shadow-lift);
+    overflow: hidden;
+  }
+  .tile::after {
+    content: ""; position: absolute; inset: 0; z-index: 1;
+    border-radius: inherit; pointer-events: none;
+    opacity: var(--yb-widget-grain-opacity);
+    mix-blend-mode: multiply;
+    background-image: var(--yb-widget-grain);
+  }
+  .tile > * { position: relative; z-index: 2; }
+  .tile-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    padding: 14px 16px 8px;
+    color: var(--yb-paper-ink-dim);
+    font-size: var(--yb-fs-sm); font-weight: var(--yb-fw-medium);
+    letter-spacing: var(--yb-kicker-track);
+  }
+  .tile-head .more { color: var(--yb-accent); letter-spacing: 0; }
+
+  .today { padding-bottom: 10px; align-self: start; margin-top: 96px; }
+  .week {
+    display: grid; grid-template-columns: repeat(7, 1fr);
+    padding: 2px 14px 10px;
+    text-align: center;
+    font-size: var(--yb-fs-sm); color: var(--yb-text-dim);
+  }
+  .week .d { padding: 4px 0; border-radius: 8px; font-variant-numeric: tabular-nums; }
+  .week .d.head { color: var(--yb-text-faint); font-size: var(--yb-fs-xs); }
+  .week .d.now {
+    background: var(--yb-accent); color: var(--yb-text-on-accent);
+    font-weight: var(--yb-fw-bold);
+  }
+  .agenda { padding: 0 16px; display: flex; flex-direction: column; }
+  .agenda .row {
+    display: flex; align-items: baseline; gap: 10px;
+    padding: 8px 0;
+    border-top: 1px solid var(--yb-card-row-line);
+    font-size: var(--yb-fs-md);
+  }
+  .agenda .row:first-child { border-top: none; }
+  .agenda time { font-family: var(--yb-mono); color: var(--yb-text-faint); font-size: var(--yb-fs-xs); flex: none; }
+  .agenda .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--yb-accent); flex: none; align-self: center; }
+  .agenda .dot.amber { background: var(--yb-intent-pending); }
+  .agenda .t { color: var(--yb-text); }
+  .agenda .tag {
+    margin-left: auto; flex: none;
+    font-size: var(--yb-fs-xs); color: var(--yb-accent-deep);
+    background: var(--yb-accent-soft);
+    padding: 2px 8px; border-radius: var(--yb-radius-pill);
+  }
+  .agenda .tag.amber { color: var(--yb-intent-pending-ink); background: var(--yb-intent-pending-soft); }
+
+  /* ============ 器物架 ============ */
+  .shelf { display: flex; flex-direction: column; gap: 14px; min-width: 0; align-self: start; margin-top: 96px; }
+  .shelf .tile { flex: none; }
+  .remind .row {
+    display: flex; align-items: baseline; gap: 8px;
+    padding: 8px 16px;
+    border-top: 1px solid var(--yb-card-row-line);
+    font-size: var(--yb-fs-md); color: var(--yb-text);
+  }
+  .remind .row:first-of-type { border-top: none; }
+  .remind time { font-family: var(--yb-mono); font-size: var(--yb-fs-xs); color: var(--yb-text-faint); flex: none; }
+  .remind .st { margin-left: auto; font-size: var(--yb-fs-xs); }
+  .remind .st.amber { color: var(--yb-intent-pending-ink); }
+  .remind .st.ok { color: var(--yb-intent-ok); }
+  .mini { display: flex; align-items: center; gap: 12px; padding: 12px 16px 14px; }
+  .mini .num {
+    font-family: var(--yb-mono); font-size: 30px; font-weight: 600;
+    color: var(--yb-text-strong); font-variant-numeric: tabular-nums;
+  }
+  .mini .lbl { font-size: var(--yb-fs-sm); color: var(--yb-text-dim); line-height: 1.4; }
+  .mini .go { margin-left: auto; font-size: var(--yb-fs-xs); color: var(--yb-accent); }
+  .shelf-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+
+  /* ============ 地平线仪器条 ============ */
+  .horizon {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    height: 36px;
+    display: flex; align-items: center; gap: 24px;
+    padding: 0 20px;
+    border-top: 1px solid var(--yb-line);
+    background: var(--yb-paper-sticky);
+    backdrop-filter: var(--yb-blur);
+    font-family: var(--yb-mono);
+    font-size: var(--yb-fs-xs);
+    color: var(--yb-text-faint);
+  }
+  .horizon .nodes { display: flex; align-items: center; gap: 26px; }
+  .horizon .node { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+  .horizon .node i { width: 6px; height: 6px; border-radius: 50%; background: var(--yb-c-slate-300); }
+  .horizon .node.hot i { background: var(--yb-accent); box-shadow: 0 0 6px rgba(var(--yb-c-sky-rgb), 0.5); }
+  .horizon .node span { font-size: 9px; letter-spacing: 0; }
+  .horizon .echo { color: var(--yb-text-dim); }
+  .horizon .echo em { font-style: normal; color: var(--yb-intent-ok); }
+  .horizon .entries { margin-left: auto; display: flex; gap: 18px; }
+  .horizon .entries b { font-weight: var(--yb-fw-medium); color: var(--yb-text-dim); }
+  .horizon .ctx { color: var(--yb-text-faint); }
+</style>
+</head>
+<body>
+  <div class="stage">
+    <!-- 对话区：主角 -->
+    <section class="stream-zone">
+      <div class="brand">译宝</div>
+      <h1 class="day-title">8月28日 · 星期四</h1>
+      <div class="day-sub">晴 · 已陪伴你 128 天</div>
+
+      <div class="stream">
+        <div class="bubble ai">早，夜里我把评审材料归拢好了。<time>07:58</time></div>
+        <div class="bubble me">辛苦了。今天什么节奏？<time>08:12</time></div>
+        <div class="bubble ai lead">上午十点有个评审，素材库攒了 3 张卡，需要我先起个草稿吗？<time>08:30</time></div>
+        <div class="bubble me">先不用，等我喝完咖啡。<time>08:31</time></div>
+        <div class="bubble ai">好，那我把评审材料先归拢到一处。<time>08:31</time></div>
+      </div>
+
+      <div class="estuary">
+        <div class="tuanzi">
+          <!-- 原样复刻 desktop/src/components/pet/Avatar.vue（idle 态，静态化） -->
+          <svg viewBox="0 0 120 120" width="64" height="64" aria-hidden="true">
+            <defs>
+              <linearGradient id="yb-body" x1="34%" y1="6%" x2="66%" y2="100%">
+                <stop offset="0%" stop-color="var(--yb-body-hi)" />
+                <stop offset="46%" stop-color="var(--yb-body-mid)" />
+                <stop offset="100%" stop-color="var(--yb-body-lo)" />
+              </linearGradient>
+              <radialGradient id="yb-hi" cx="36%" cy="22%" r="32%">
+                <stop offset="0%" stop-color="#ffffff" stop-opacity="0.95" />
+                <stop offset="100%" stop-color="#ffffff" stop-opacity="0" />
+              </radialGradient>
+              <radialGradient id="yb-sh" cx="74%" cy="80%" r="46%">
+                <stop offset="0%" stop-color="var(--yb-body-core-shadow)" stop-opacity="0.42" />
+                <stop offset="100%" stop-color="var(--yb-body-core-shadow)" stop-opacity="0" />
+              </radialGradient>
+              <radialGradient id="yb-dot-glow" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stop-color="var(--yb-state-idle)" stop-opacity="0.55" />
+                <stop offset="100%" stop-color="var(--yb-state-idle)" stop-opacity="0" />
+              </radialGradient>
+              <radialGradient id="yb-aura" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stop-color="var(--yb-accent)" stop-opacity="0.42" />
+                <stop offset="55%" stop-color="var(--yb-accent)" stop-opacity="0.22" />
+                <stop offset="100%" stop-color="var(--yb-accent)" stop-opacity="0" />
+              </radialGradient>
+              <clipPath id="yb-clip">
+                <path d="M60 27.24 C76 27.24 84 39.72 84 57.66 C84 78.72 74 92.76 60 92.76 C46 92.76 36 78.72 36 57.66 C36 39.72 44 27.24 60 27.24 Z" />
+              </clipPath>
+              <filter id="yb-b1"><feGaussianBlur stdDeviation="1.4" /></filter>
+              <filter id="yb-b2"><feGaussianBlur stdDeviation="3.2" /></filter>
+              <filter id="yb-b3"><feGaussianBlur stdDeviation="5.5" /></filter>
+            </defs>
+            <ellipse cx="63" cy="100.56" rx="33" ry="5.07" fill="var(--yb-shadow-ink)" opacity="0.16" filter="url(#yb-b3)" />
+            <ellipse cx="60" cy="64" rx="30" ry="24" fill="url(#yb-aura)" />
+            <g>
+              <path d="M60 27.24 C76 27.24 84 39.72 84 57.66 C84 78.72 74 92.76 60 92.76 C46 92.76 36 78.72 36 57.66 C36 39.72 44 27.24 60 27.24 Z" fill="url(#yb-body)" />
+              <g clip-path="url(#yb-clip)">
+                <rect x="28" y="21" width="86" height="78" fill="url(#yb-sh)" />
+                <ellipse cx="44" cy="39.72" rx="28" ry="18.72" fill="url(#yb-hi)" />
+                <ellipse cx="60" cy="95.88" rx="28" ry="7.8" fill="var(--yb-body-contact)" opacity="0.26" filter="url(#yb-b2)" />
+              </g>
+              <path d="M40 38.16 C37.6 49.86 37.8 70.14 44 86.52" fill="none" stroke="#ffffff" stroke-opacity="0.9" stroke-width="2" filter="url(#yb-b1)" />
+              <ellipse cx="33" cy="63.12" rx="7.5" ry="8.97" fill="url(#yb-body)" transform="rotate(-14 33 63.12)" />
+              <ellipse cx="34" cy="60" rx="3" ry="3.9" fill="#ffffff" opacity="0.5" transform="rotate(-14 34 60)" />
+              <ellipse cx="87" cy="63.12" rx="7.5" ry="8.97" fill="url(#yb-body)" transform="rotate(14 87 63.12)" />
+              <ellipse cx="88" cy="60" rx="3" ry="3.9" fill="var(--yb-body-core-shadow)" opacity="0.32" transform="rotate(14 88 60)" />
+              <path d="M46 45.96 Q60 52.2 74 45.96" fill="none" stroke="var(--yb-accent)" stroke-width="2.9" stroke-linecap="round" />
+              <path d="M46 45.18 Q60 51.42 74 45.18" fill="none" stroke="#ffffff" stroke-opacity="0.5" stroke-width="0.9" stroke-linecap="round" />
+              <ellipse cx="47" cy="66" rx="4.2" ry="2.5" fill="var(--yb-body-blush)" opacity="0.24" />
+              <ellipse cx="73" cy="66" rx="4.2" ry="2.5" fill="var(--yb-body-blush)" opacity="0.24" />
+              <ellipse cx="51" cy="60" rx="3.2" ry="4.5" fill="var(--yb-body-ink)" />
+              <ellipse cx="69" cy="60" rx="3.2" ry="4.5" fill="var(--yb-body-ink)" />
+              <circle cx="52.2" cy="58.4" r="1.05" fill="#fff" />
+              <circle cx="70.2" cy="58.4" r="1.05" fill="#fff" />
+              <path d="M55 69 Q60 72 65 69" fill="none" stroke="var(--yb-body-ink)" stroke-width="2.4" stroke-linecap="round" />
+            </g>
+            <g>
+              <ellipse cx="47" cy="94.32" rx="7.5" ry="3.9" fill="url(#yb-body)" transform="rotate(-9 47 94.32)" />
+              <ellipse cx="73" cy="95.88" rx="7.5" ry="3.9" fill="url(#yb-body)" transform="rotate(11 73 95.88)" />
+              <path d="M41 95.88 Q47 98.22 53 95.88" fill="none" stroke="var(--yb-body-core-shadow)" stroke-opacity="0.4" stroke-width="1.35" stroke-linecap="round" />
+              <path d="M67 97.44 Q73 99.78 79 97.44" fill="none" stroke="var(--yb-body-core-shadow)" stroke-opacity="0.4" stroke-width="1.35" stroke-linecap="round" />
+            </g>
+            <line x1="60" y1="28.8" x2="60" y2="21.78" stroke="var(--yb-body-stem)" stroke-width="2" stroke-linecap="round" />
+            <circle cx="60" cy="19.44" r="6" fill="url(#yb-dot-glow)" />
+            <circle cx="60" cy="19.44" r="3.4" fill="var(--yb-state-idle)" />
+          </svg>
+        </div>
+        <div class="composer"><span class="caret"></span>对译宝说点什么…<span class="send">➤</span></div>
+      </div>
+    </section>
+
+    <!-- 今日枢轴 -->
+    <section class="tile today">
+      <div class="tile-head"><span>今日</span><span class="more">+ 新建</span></div>
+      <div class="week">
+        <span class="d head">一</span><span class="d head">二</span><span class="d head">三</span><span class="d head">四</span><span class="d head">五</span><span class="d head">六</span><span class="d head">日</span>
+        <span class="d">25</span><span class="d">26</span><span class="d">27</span><span class="d now">28</span><span class="d">29</span><span class="d">30</span><span class="d">31</span>
+      </div>
+      <div class="agenda">
+        <div class="row"><time>10:00</time><span class="dot amber"></span><span class="t">产品评审会</span><span class="tag amber">待你定</span></div>
+        <div class="row"><time>14:00</time><span class="dot"></span><span class="t">方案迭代同步</span><span class="tag">已安排</span></div>
+        <div class="row"><time>16:30</time><span class="dot"></span><span class="t">用户反馈整理 · 预留 90 分钟</span></div>
+        <div class="row"><time>19:00</time><span class="dot"></span><span class="t">晚间复盘</span></div>
+      </div>
+    </section>
+
+    <!-- 器物架 -->
+    <section class="shelf">
+      <div class="tile remind">
+        <div class="tile-head"><span>提醒</span><span class="more">全部 3</span></div>
+        <div class="row"><time>09:30</time><span>提交评审材料</span><span class="st amber">等待你</span></div>
+        <div class="row"><time>昨天</time><span>设计走查反馈</span><span class="st ok">已完成</span></div>
+      </div>
+      <div class="shelf-pair">
+        <div class="tile"><div class="mini"><span class="num">12</span><span class="lbl">素材<br>张卡片</span><span class="go">去看看 →</span></div></div>
+        <div class="tile"><div class="mini"><span class="num">2</span><span class="lbl">闪念<br>条未处理</span><span class="go">去处理 →</span></div></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- 地平线仪器条 -->
+  <footer class="horizon">
+    <div class="nodes">
+      <div class="node hot"><i></i><span>08:24</span></div>
+      <div class="node"><i></i><span>08:26</span></div>
+      <div class="node"><i></i><span>08:27</span></div>
+      <div class="node hot"><i></i><span>08:30</span></div>
+    </div>
+    <div class="echo">echo: <em>reminders.set(评审材料, 09:30) ✓</em></div>
+    <div class="entries"><b>今日</b><b>会话</b><b>器物</b></div>
+    <div class="ctx">ctx: desk · idle</div>
+  </footer>
+</body>
+</html>

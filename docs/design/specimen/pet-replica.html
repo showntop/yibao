@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>pet replica test</title>
+<style>
+  body {
+    margin: 0; height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(160deg, #eef1f4, #dde3e9);
+  }
+  .pet { position: relative; width: 240px; height: 260px; }
+
+  /* 球体：左上主光 + 右下形阴 + 底部接触暗部 */
+  .ball {
+    position: absolute; left: 20px; bottom: 26px;
+    width: 200px; height: 200px; border-radius: 50%;
+    background:
+      radial-gradient(38% 30% at 32% 24%, rgba(255,255,255,0.98), rgba(255,255,255,0) 62%),
+      radial-gradient(75% 75% at 68% 78%, rgba(148,163,178,0.55), rgba(148,163,178,0) 70%),
+      radial-gradient(90% 90% at 50% 100%, rgba(120,135,152,0.35), rgba(120,135,152,0) 55%),
+      radial-gradient(closest-side, #fbfcfe, #eef1f5 78%, #dde4eb);
+    box-shadow:
+      inset -14px -18px 34px rgba(120,135,152,0.28),
+      inset 10px 12px 26px rgba(255,255,255,0.9),
+      0 18px 30px -8px rgba(80,100,125,0.30);
+  }
+  /* 镜面高光点 */
+  .spec {
+    position: absolute; left: 66px; top: 42px;
+    width: 46px; height: 26px; border-radius: 50%;
+    background: radial-gradient(closest-side, rgba(255,255,255,0.95), rgba(255,255,255,0));
+    filter: blur(2px);
+    transform: rotate(-18deg);
+  }
+  /* 眼睛 */
+  .eye {
+    position: absolute; top: 138px;
+    width: 11px; height: 12px; border-radius: 50%;
+    background: radial-gradient(circle at 38% 32%, #4a5563, #1c2733 70%);
+  }
+  .eye.l { left: 84px; } .eye.r { left: 148px; }
+  /* 小脚：与球体同色系，靠底部暗部分出 */
+  .foot {
+    position: absolute; bottom: 20px;
+    width: 34px; height: 20px; border-radius: 50%;
+    background: radial-gradient(60% 60% at 42% 32%, #f6f8fb, #d3dce5);
+    box-shadow: 0 4px 8px rgba(80,100,125,0.25), inset -3px -4px 8px rgba(120,135,152,0.25);
+  }
+  .foot.l { left: 44px; transform: rotate(-6deg); }
+  .foot.r { left: 162px; transform: rotate(6deg); }
+  /* 落地投影 */
+  .ground {
+    position: absolute; left: 34px; bottom: 8px;
+    width: 172px; height: 22px; border-radius: 50%;
+    background: radial-gradient(closest-side, rgba(70,88,110,0.35), rgba(70,88,110,0));
+    filter: blur(4px);
+  }
+  /* 天线：杆与灯为一个整体，杆底插进球体，灯坐杆尖，整体微倾 */
+  .antenna {
+    position: absolute; left: 114px; top: 0px;
+    width: 20px; height: 76px;
+    transform: rotate(6deg);
+    transform-origin: 50% 100%;
+  }
+  .antenna .stem {
+    position: absolute; left: 9px; bottom: 0;
+    width: 2.4px; height: 58px;
+    background: linear-gradient(180deg, #8b9cad, #5f7185);
+    border-radius: 2px;
+  }
+  .antenna .orb {
+    position: absolute; left: 1px; top: 0;
+    width: 18px; height: 18px; border-radius: 50%;
+    background: radial-gradient(circle at 36% 30%, #eaf7ff, #8ecdf2 45%, #4d90c4 82%);
+    box-shadow:
+      0 0 10px 4px rgba(77,144,196,0.8),
+      0 0 34px 12px rgba(77,144,196,0.38),
+      inset -2px -3px 5px rgba(30,70,110,0.35);
+  }
+</style>
+</head>
+<body>
+  <div class="pet">
+    <div class="ground"></div>
+    <div class="foot l"></div><div class="foot r"></div>
+    <div class="ball"></div>
+    <div class="spec"></div>
+    <div class="eye l"></div><div class="eye r"></div>
+    <div class="antenna"><span class="stem"></span><span class="orb"></span></div>
+  </div>
+</body>
+</html>
