@@ -18,6 +18,7 @@ import HomePluginGlance from "../plugins/HomePluginGlance.vue";
 import HomeContextPanel from "../HomeContextPanel.vue";
 import HomeWidget from "../HomeWidget.vue";
 import SessionList from "./SessionList.vue";
+import HorizonBar from "./HorizonBar.vue";
 import HomeFrame from "../HomeFrame.vue";
 import HomeDeskWork from "../HomeDeskWork.vue";
 import HomeHostAsk from "../HomeHostAsk.vue";
@@ -272,6 +273,17 @@ const sessionProcesses = computed(() => bubbles.value
     done: bubble.proc.done,
     ok: bubble.proc.done ? procOk(bubble.proc) : undefined,
   })));
+// 地平线 echo 位：最近一条过程行（HorizonBar 自己管 feed 刻度）
+const horizonProc = computed(() => {
+  const list = sessionProcesses.value;
+  return list.length ? list[list.length - 1] : null;
+});
+
+/** 地平线入口：接现有可见性开关（器物架待 P1 peek 落地再进）。 */
+function onHorizonEntry(id: "sessions" | "today") {
+  if (id === "sessions") leftOpen.value = !leftOpen.value;
+  else peekOpen.value = !peekOpen.value;
+}
 
 // ---- 思考状态文案：typing 时轮换"在干嘛"（需在 showTyping 定义后，避免 TDZ）----
 const THINK_NOTES = ["正在整理思路…", "正在翻阅记忆…", "正在连接工具…", "马上就好…"];
@@ -824,6 +836,7 @@ onUnmounted(() => {
         @close="hostAskOpen = false"
       />
     </div>
+    <HorizonBar :state="state" :proc="horizonProc" @entry="onHorizonEntry" />
   </div>
 </template>
 
@@ -849,7 +862,7 @@ onUnmounted(() => {
   position: absolute;
   z-index: 8;
   left: 16px;
-  bottom: 16px;
+  bottom: 52px; /* 36px 地平线 + 16px 边距，栖息在文档缘不被仪器条盖住 */
   max-width: calc(100% - 32px);
 }
 .input-slot {
