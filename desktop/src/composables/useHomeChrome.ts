@@ -71,6 +71,7 @@ export const HOME_CHROMES = {
   desk: chromeView("desk"),
   salon: chromeView("salon"),
   canvas: chromeView("canvas"),
+  field: chromeView("field"),
 } as const;
 
 export type HomeChrome = (typeof HOME_CHROMES)[HomeChromeId];
@@ -81,6 +82,7 @@ export const HOME_CHROME_LIST: HomeChrome[] = [
   HOME_CHROMES.desk,
   HOME_CHROMES.salon,
   HOME_CHROMES.canvas,
+  HOME_CHROMES.field,
 ];
 
 const KEY = "yibao-chrome";

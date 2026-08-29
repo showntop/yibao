@@ -13,10 +13,12 @@ import HomeWhen from "../views/HomeWhen.vue";
 import HomeLine from "../views/HomeLine.vue";
 import HomeJot from "../views/HomeJot.vue";
 import HomeBench from "../views/HomeBench.vue";
+import HomeDayTitle from "../views/HomeDayTitle.vue";
 import HomePluginGlance from "../views/plugins/HomePluginGlance.vue";
 
 export const PART_VIEWS: Record<string, Record<string, Component>> = {
   chat: { thread: HomeChatThread, paper: HomeChatPaper, talk: HomeChatTalk },
+  dayTitle: { title: HomeDayTitle },
   sessions: { list: SessionList, spine: SessionList, cards: SessionList },
   now: { inspector: HomeContextPanel, note: HomeContextPanel },
   composer: { bar: InputBar },

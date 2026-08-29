@@ -64,6 +64,7 @@ export type ResolvedGrid = {
   areas: string;
   stacks: Record<string, string[]>;
   fold: AssemblyFold[];
+  bubbleMax?: string;
 };
 
 export type Assembly = {
@@ -315,6 +316,7 @@ function resolveGrid(
     areas: tracks ? `"${tracks.map((track) => track.area).join(" ")}"` : (foldedAreas.areas ?? src.areas ?? "."),
     stacks: visibleStacks,
     fold,
+    bubbleMax: src.bubbleMax,
   };
   return { preset: presetId, place: "grid", items, grid };
 }
@@ -329,6 +331,7 @@ export function gridStageStyle(grid: ResolvedGrid): Record<string, string> {
     padding: `${grid.pad}px`,
     justifyContent: grid.justify,
     alignContent: grid.align,
+    ...(grid.bubbleMax ? { "--yb-bubble-max": grid.bubbleMax } : {}),
     minWidth: "0",
     minHeight: "0",
     height: "100%",

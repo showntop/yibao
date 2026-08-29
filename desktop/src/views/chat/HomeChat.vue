@@ -19,6 +19,7 @@ import HomeContextPanel from "../HomeContextPanel.vue";
 import HomeWidget from "../HomeWidget.vue";
 import SessionList from "./SessionList.vue";
 import HorizonBar from "./HorizonBar.vue";
+import HomeDayTitle from "../HomeDayTitle.vue";
 import HomeFrame from "../HomeFrame.vue";
 import HomeDeskWork from "../HomeDeskWork.vue";
 import HomeHostAsk from "../HomeHostAsk.vue";
@@ -781,6 +782,9 @@ onUnmounted(() => {
         </HomeWidget>
       </template>
 
+      <template #dayTitle>
+        <HomeDayTitle />
+      </template>
       <template #chat>
         <HomeDeskWork
           v-if="props.workstation"
