@@ -41,3 +41,13 @@ export function jotFace(
     open: String(hit?.open ?? "notes.list"),
   };
 }
+
+/** 闪念统计卡（wb-prototype）：未处理条数 = notes widget 的 rows 数；open 沿用面板直达。 */
+export function flashesStatFace(
+  widgets: ReadonlyArray<Pick<WidgetPayload, "panel" | "data" | "open">>,
+): { count: number; open: string } {
+  const hit = widgets.find((widget) => widget.panel.startsWith("notes:"));
+  const data = asRecord(hit?.data);
+  const rows = data && Array.isArray(data.rows) ? data.rows : [];
+  return { count: rows.length, open: String(hit?.open ?? "notes.list") };
+}

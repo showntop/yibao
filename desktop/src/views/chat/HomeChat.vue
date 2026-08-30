@@ -21,6 +21,8 @@ import SessionList from "./SessionList.vue";
 import HorizonBar from "./HorizonBar.vue";
 import HomeDayTitle from "../HomeDayTitle.vue";
 import Avatar from "../../components/pet/Avatar.vue";
+import HomeMaterialsStat from "../HomeMaterialsStat.vue";
+import HomeFlashesStat from "../HomeFlashesStat.vue";
 import type { LiveSelection } from "../../lib/surface/selection-store.ts";
 import HomeFrame from "../HomeFrame.vue";
 import HomeDeskWork from "../HomeDeskWork.vue";
@@ -807,7 +809,13 @@ onUnmounted(() => {
         <HomeGlance only="tasks" @chat="onInfoChat" />
       </template>
       <template #remind>
-        <HomeGlance only="remind" @chat="onInfoChat" />
+        <component :is="viewOf('remind', faceOf(assembly, 'remind', 'tile'))" only="remind" @chat="onInfoChat" />
+      </template>
+      <template #materials>
+        <HomeMaterialsStat />
+      </template>
+      <template #flashes>
+        <HomeFlashesStat />
       </template>
       <template #spark>
         <HomeLife only="spark" @chat="onInfoChat" />

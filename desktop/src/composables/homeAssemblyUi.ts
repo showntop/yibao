@@ -15,6 +15,9 @@ import HomeJot from "../views/HomeJot.vue";
 import HomeBench from "../views/HomeBench.vue";
 import HomeDayTitle from "../views/HomeDayTitle.vue";
 import HomeTodayPanel from "../views/HomeTodayPanel.vue";
+import HomeRemindCard from "../views/HomeRemindCard.vue";
+import HomeMaterialsStat from "../views/HomeMaterialsStat.vue";
+import HomeFlashesStat from "../views/HomeFlashesStat.vue";
 import HomePluginGlance from "../views/plugins/HomePluginGlance.vue";
 
 export const PART_VIEWS: Record<string, Record<string, Component>> = {
@@ -30,9 +33,11 @@ export const PART_VIEWS: Record<string, Record<string, Component>> = {
   line: { tile: HomeLine },
   jot: { tile: HomeJot },
   bench: { tile: HomeBench },
+  materials: { stat: HomeMaterialsStat },
+  flashes: { stat: HomeFlashesStat },
   need: { tile: HomeGlance },
+  remind: { tile: HomeGlance, card: HomeRemindCard },
   tasks: { tile: HomeGlance },
-  remind: { tile: HomeGlance },
   spark: { tile: HomeLife },
   glimpse: { tile: HomeLife },
   catch: { tile: HomeLife },

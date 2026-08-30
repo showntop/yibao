@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   catchFace,
   glimpseFace,
+  remindCardFaces,
   pickSpark,
   pluginGlanceLine,
   pluginHasGlance,
@@ -145,5 +146,40 @@ describe("local scratch and spark dismiss", () => {
     writeSparkDismiss("m2", "2026-08-21", storage);
     expect(readSparkDismiss(storage, "2026-08-21")).toBe("m2");
     expect(readSparkDismiss(storage, "2026-08-22")).toBeNull();
+  });
+});
+
+describe("remindCardFaces", () => {
+  const NOW = new Date("2026-08-30T10:15:00");
+
+  it("derives card state from feed timestamps: past=已响, today-upcoming=待响", () => {
+    const cards = remindCardFaces(
+      undefined,
+      [
+        feed({ id: 1, text: "09:00 开战会", ts: new Date("2026-08-30T09:00:00").getTime() }),
+        feed({ id: 2, text: "该交周报了", ts: new Date("2026-08-30T14:00:00").getTime() }),
+        feed({ id: 3, text: "昨天的事", ts: new Date("2026-08-29T09:00:00").getTime() }),
+        feed({ id: 4, text: "已忽略", ts: new Date("2026-08-30T08:00:00").getTime(), status: "ignore" }),
+      ],
+      NOW,
+    );
+    expect(cards).toEqual([
+      { text: "09:00 开战会", when: "09:00", state: "done" },
+      { text: "该交周报了", when: "14:00", state: "due" },
+    ]);
+  });
+
+  it("appends recurring widget rows with a daily tag and no fake state", () => {
+    const cards = remindCardFaces(
+      [{ text: "喝水", when: "每天 10:20" }],
+      [feed({ id: 1, text: "09:00 开战会", ts: new Date("2026-08-30T09:00:00").getTime() })],
+      NOW,
+    );
+    expect(cards[1]).toEqual({ text: "喝水", when: "每天", state: "daily" });
+    expect(cards).toHaveLength(2);
+  });
+
+  it("empty everything renders no rows", () => {
+    expect(remindCardFaces(undefined, [], NOW)).toEqual([]);
   });
 });

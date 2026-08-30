@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { jotFace, jotWhen } from "./home-jot-face.ts";
+import { flashesStatFace, jotFace, jotWhen } from "./home-jot-face.ts";
 
 describe("jotFace", () => {
   it("reads the latest notes widget row", () => {
@@ -28,5 +28,21 @@ describe("jotWhen", () => {
   it("drops the year when it is this year", () => {
     expect(jotWhen(0)).toBe("");
     expect(jotWhen(1735689600, new Date("2026-08-22"))).toBe("2025年1月1日");
+  });
+});
+
+describe("flashesStatFace", () => {
+  it("counts notes rows and keeps the panel-open path", () => {
+    expect(flashesStatFace([
+      {
+        panel: "notes:widget",
+        open: "notes.list",
+        data: { rows: [{ text: "a" }, { text: "b" }, { text: "c" }] },
+      },
+    ])).toEqual({ count: 3, open: "notes.list" });
+  });
+
+  it("is zero and falls back when notes is offline", () => {
+    expect(flashesStatFace([])).toEqual({ count: 0, open: "notes.list" });
   });
 });
