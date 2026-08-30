@@ -210,12 +210,31 @@ function parseAreas(areas?: string): string[][] {
   return rows;
 }
 
+/** 按顶层空格切分 track 串：minmax(0, 1fr) 内部的空格不是分隔符（foldColumnAreas 存量 bug 根因）。 */
+function splitTracks(s: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of s) {
+    if (ch === "(") depth += 1;
+    else if (ch === ")") depth = Math.max(0, depth - 1);
+    if (depth === 0 && /\s/.test(ch)) {
+      if (cur) out.push(cur);
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
 /** 从 columns/areas 字符串预设中移除已折叠的区域列（连同相邻纯间隙列，避免留下双空隙）。 */
 function foldColumnAreas(
   src: NonNullable<Snapshot["grid"]>,
   folded: ReadonlySet<string>,
 ): { columns?: string; areas?: string } {
-  const cols = (src.columns ?? "").split(" ").filter(Boolean);
+  const cols = splitTracks(src.columns ?? "");
   const rows = parseAreas(src.areas);
   if (!cols.length || !rows.length) return {};
   let removed = false;
