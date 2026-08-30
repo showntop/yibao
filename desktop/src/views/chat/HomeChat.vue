@@ -27,7 +27,7 @@ import HomeDeskWork from "../HomeDeskWork.vue";
 import HomeHostAsk from "../HomeHostAsk.vue";
 import HomeFloatNotes from "../HomeFloatNotes.vue";
 import { useLiveAssembly } from "../../lib/home/home-chrome.ts";
-import { defaultPeek, faceOf } from "../../lib/home/home-assembly.ts";
+import { collapsibleSidesOf, defaultPeek, faceOf } from "../../lib/home/home-assembly.ts";
 import { viewOf } from "../../lib/home/home-assembly-ui.ts";
 import { livePluginIds } from "../../composables/useAssembly";
 import { syncPluginParts } from "../../lib/assembly/parts";
@@ -287,11 +287,25 @@ const horizonProc = computed(() => {
   return list.length ? list[list.length - 1] : null;
 });
 
-/** 地平线入口：接现有可见性开关；器物入口只在降级档（架已收起）亮出。 */
+/** 地平线入口：会话按装配分流——有会话列的摊法折栏，没有的（溪场）peek 出列表（§5 列表不常驻）。 */
+const sessionsPlaced = computed(() => assembly.value.items.some((item) => item.id === "sessions"));
+const sessionsPeek = ref(false);
 function onHorizonEntry(id: "sessions" | "today" | "shelf") {
-  if (id === "sessions") leftOpen.value = !leftOpen.value;
-  else if (id === "shelf") shelfPeek.value = !shelfPeek.value;
-  else peekOpen.value = !peekOpen.value;
+  if (id === "sessions") {
+    if (sessionsPlaced.value) leftOpen.value = !leftOpen.value;
+    else sessionsPeek.value = !sessionsPeek.value;
+  } else if (id === "shelf") shelfPeek.value = !shelfPeek.value;
+  else {
+    // 今日 → 折叠今日轴：按折叠机制实际分的侧别切模型（切错模型=点了没反应）
+    const side = collapsibleSidesOf(assembly.value.preset)["axis"];
+    if (side === "end") peekOpen.value = !peekOpen.value;
+    else leftOpen.value = !leftOpen.value;
+  }
+}
+
+function onPeekSessionSelect(id: string) {
+  onSessionSelect(id);
+  sessionsPeek.value = false; // 用完收回
 }
 
 // ---- 降级多断点（design §8）：与 HomeFrame 同款窗口 MQ，驱动地平线器物入口 + 器物 peek ----
@@ -781,8 +795,12 @@ onUnmounted(() => {
     <div class="yb-kiln" :class="{ on: kilnOn, paused: kilnPaused }" aria-hidden="true"><div class="yb-kiln-glaze"></div></div>
     <SetupWizard v-if="setupNeeded" :model="setupCfg.model" :base-url="setupCfg.baseUrl" :voice="setupCfg.voice" @saved="onSetupSaved" />
 
+    <div v-else class="frame-row">
+    <!-- 会话停靠抽屉（§5 列表不常驻）：从地平线拉出时是结构列，推内容不让位成浮层 -->
+    <aside v-if="sessionsPeek && !sessionsPlaced" class="sessions-dock yb-craze">
+      <SessionList ref="sessionRef" @select="onPeekSessionSelect" @active="onSessionActive" @new-chat="onSessionNew" />
+    </aside>
     <HomeFrame
-      v-else
       :thinking="state === 'think'"
       :state="state"
       v-model:peek="peekOpen"
@@ -911,6 +929,7 @@ onUnmounted(() => {
         </div>
       </template>
     </HomeFrame>
+    </div>
     <div v-if="hostAskOpen && props.workstation" class="host-ask-slot yb-craze">
       <HomeHostAsk
         :busy="busy"
@@ -927,6 +946,7 @@ onUnmounted(() => {
       <HomeBench />
       <HomeJot />
     </div>
+    <!-- 会话 peek 已改为 frame-row 内的停靠抽屉（结构列，推内容不让位） -->
   </div>
 </template>
 
@@ -966,6 +986,23 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+/* 框架行：会话停靠抽屉 + 装配网格，地平线之上的整行 */
+.frame-row {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  min-width: 0;
+}
+/* 会话停靠抽屉（§5 列表不常驻）：结构列，推开内容而不是盖在上面 */
+.sessions-dock {
+  flex: none;
+  width: min(260px, 42%);
+  min-height: 0;
+  overflow-y: auto;
+  border-right: 1px solid var(--yb-line);
+  background: var(--yb-paper-sticky);
+  padding: 8px 8px 8px 12px;
 }
 /* focus 阅读室（design §4/§10-P3）：单一器近乎全屏，地平线收成发丝线，只留线本身 */
 .chat-page.work-focus :deep(.horizon) {

@@ -169,7 +169,7 @@ export function collapsibleSidesOf(presetId: HomePresetId): Record<string, FoldS
     });
     return out;
   }
-  const cols = (grid.columns ?? "").split(" ").filter(Boolean).length;
+  const cols = splitTracks(grid.columns ?? "").length;
   const row0 = parseAreas(grid.areas)[0] ?? [];
   const out: Record<string, FoldSide> = {};
   for (const name of grid.fold ?? []) {

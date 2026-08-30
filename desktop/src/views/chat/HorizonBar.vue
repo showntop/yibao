@@ -60,6 +60,8 @@ const echo = computed(() => horizonEcho({ state: props.state, proc: props.proc }
 
 <template>
   <footer class="horizon">
+    <!-- 左端=历史：「会话」在最左端，抽屉同侧展开 -->
+    <button class="entry sessions-entry" title="会话列表" @click="emit('entry', 'sessions')">会话</button>
     <div class="nodes" :class="{ empty: !nodes.length }">
       <div
         v-for="n in nodes"
@@ -78,7 +80,6 @@ const echo = computed(() => horizonEcho({ state: props.state, proc: props.proc }
     <div class="entries">
       <button v-if="props.shelf" class="entry" title="器物架" @click="emit('entry', 'shelf')">器物</button>
       <button class="entry" title="今日一瞥" @click="emit('entry', 'today')">今日</button>
-      <button class="entry" title="会话列表" @click="emit('entry', 'sessions')">会话</button>
     </div>
     <div class="ctx">ctx: home · {{ state }}</div>
   </footer>
