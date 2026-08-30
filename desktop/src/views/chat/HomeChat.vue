@@ -780,7 +780,7 @@ onUnmounted(() => {
         <HomeBench />
       </template>
       <template #today>
-        <AgentBrain :state="state" only="today" @chat="onInfoChat" />
+        <component :is="viewOf('today', faceOf(assembly, 'today', 'tile'))" :state="state" only="today" @chat="onInfoChat" />
       </template>
       <template #need>
         <HomeGlance only="need" @chat="onInfoChat" />
