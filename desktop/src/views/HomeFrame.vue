@@ -598,7 +598,9 @@ function onMoveStart(item: ResolvedItem, e: PointerEvent) {
 .stage.canvas .host.kind-glance:active {
   cursor: grabbing;
 }
-.host.kind-glance:not(:has(.yb-widget, .plugin-card)) {
+/* 空槽不占格子：槽位没渲染出任何元素（未填充只剩注释节点）才藏。
+   不能限定必须 .yb-widget——日题这类"题在空间里"的裸字零件也是合法 glance 面 */
+.host.kind-glance:not(:has(*)) {
   display: none;
 }
 .host.kind-input {

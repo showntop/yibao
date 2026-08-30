@@ -25,7 +25,8 @@ describe("home frame place engines", () => {
   });
 
   it("collapses empty glance hosts so vacant tiles leave the desk", () => {
-    expect(frame).toMatch(/\.host\.kind-glance:not\(:has\(\.yb-widget, \.plugin-card\)\) \{[\s\S]*?display: none;/);
+    // 空槽（未填充只剩注释节点、无任何元素子节点）才藏；裸字零件（如日题）合法占位
+    expect(frame).toMatch(/\.host\.kind-glance:not\(:has\(\*\)\) \{[\s\S]*?display: none;/);
   });
 
   it("only snaps and drags on the canvas engine", () => {

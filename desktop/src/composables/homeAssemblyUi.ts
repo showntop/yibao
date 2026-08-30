@@ -14,11 +14,13 @@ import HomeLine from "../views/HomeLine.vue";
 import HomeJot from "../views/HomeJot.vue";
 import HomeBench from "../views/HomeBench.vue";
 import HomeDayTitle from "../views/HomeDayTitle.vue";
+import HomeTodayPanel from "../views/HomeTodayPanel.vue";
 import HomePluginGlance from "../views/plugins/HomePluginGlance.vue";
 
 export const PART_VIEWS: Record<string, Record<string, Component>> = {
   chat: { thread: HomeChatThread, paper: HomeChatPaper, talk: HomeChatTalk },
   dayTitle: { title: HomeDayTitle },
+  today: { tile: AgentBrain, panel: HomeTodayPanel },
   sessions: { list: SessionList, spine: SessionList, cards: SessionList },
   now: { inspector: HomeContextPanel, note: HomeContextPanel },
   composer: { bar: InputBar },
@@ -28,7 +30,6 @@ export const PART_VIEWS: Record<string, Record<string, Component>> = {
   line: { tile: HomeLine },
   jot: { tile: HomeJot },
   bench: { tile: HomeBench },
-  today: { tile: AgentBrain },
   need: { tile: HomeGlance },
   tasks: { tile: HomeGlance },
   remind: { tile: HomeGlance },
