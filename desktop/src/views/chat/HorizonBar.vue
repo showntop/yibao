@@ -71,6 +71,8 @@ const echo = computed(() => horizonEcho({ state: props.state, proc: props.proc }
         <i></i><span>{{ n.label }}</span>
       </div>
     </div>
+    <!-- 左端=历史：时间刻度旁的「会话」，与左缘抽屉同侧 -->
+    <button class="entry sessions-entry" title="会话列表" @click="emit('entry', 'sessions')">会话</button>
     <div class="echo">
       <template v-if="echo">echo: <em :class="`tone-${echo.tone}`">{{ echo.text }}</em></template>
       <template v-else>echo: <span class="idle">待命中</span></template>
@@ -78,7 +80,6 @@ const echo = computed(() => horizonEcho({ state: props.state, proc: props.proc }
     <div class="entries">
       <button v-if="props.shelf" class="entry" title="器物架" @click="emit('entry', 'shelf')">器物</button>
       <button class="entry" title="今日一瞥" @click="emit('entry', 'today')">今日</button>
-      <button class="entry" title="会话列表" @click="emit('entry', 'sessions')">会话</button>
     </div>
     <div class="ctx">ctx: home · {{ state }}</div>
   </footer>
