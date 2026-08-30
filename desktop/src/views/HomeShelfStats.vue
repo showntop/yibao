@@ -41,8 +41,12 @@ onMounted(async () => {
   try {
     unWidgets = await onWidgets((payload) => { widgets.value = payload?.widgets ?? []; });
   } catch { /* 闪念盘不在线显示 0 */ }
-  await refreshMat();
-  timer = setInterval(refreshMat, 60_000);
+  // 启动期首刷延迟：panel_action 走 brain 往返（秒级），页面还在加载时响应会撞上
+  // WebKit 已取消的 scheme task → ObjC 异常穿过 Rust 直接 abort（真机 4/4 复现）
+  timer = setTimeout(() => {
+    refreshMat();
+    timer = setInterval(refreshMat, 60_000);
+  }, 5_000);
 });
 
 onUnmounted(() => {
