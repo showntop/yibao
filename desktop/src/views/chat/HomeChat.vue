@@ -27,7 +27,7 @@ import HomeDeskWork from "../HomeDeskWork.vue";
 import HomeHostAsk from "../HomeHostAsk.vue";
 import HomeFloatNotes from "../HomeFloatNotes.vue";
 import { useLiveAssembly } from "../../lib/home/home-chrome.ts";
-import { defaultPeek, faceOf } from "../../lib/home/home-assembly.ts";
+import { collapsibleSidesOf, defaultPeek, faceOf } from "../../lib/home/home-assembly.ts";
 import { viewOf } from "../../lib/home/home-assembly-ui.ts";
 import { livePluginIds } from "../../composables/useAssembly";
 import { syncPluginParts } from "../../lib/assembly/parts";
@@ -290,7 +290,12 @@ function onHorizonEntry(id: "sessions" | "today" | "shelf") {
     if (sessionsPlaced.value) leftOpen.value = !leftOpen.value;
     else sessionsPeek.value = !sessionsPeek.value;
   } else if (id === "shelf") shelfPeek.value = !shelfPeek.value;
-  else peekOpen.value = !peekOpen.value;
+  else {
+    // 今日 → 折叠今日轴：按折叠机制实际分的侧别切模型（切错模型=点了没反应）
+    const side = collapsibleSidesOf(assembly.value.preset)["axis"];
+    if (side === "end") peekOpen.value = !peekOpen.value;
+    else leftOpen.value = !leftOpen.value;
+  }
 }
 
 function onPeekSessionSelect(id: string) {

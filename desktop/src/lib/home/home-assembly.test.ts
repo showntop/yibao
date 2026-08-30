@@ -202,6 +202,12 @@ describe("resolveAssembly", () => {
     expect(collapsibleSidesOf("canvas")).toEqual({});
   });
 
+  it("counts minmax tracks as one column when assigning fold sides", () => {
+    // 回归：field 的 columns 全是带空格的 minmax——split(" ") 会把 3 列数成 6，
+    // 侧别判定错乱，「今日」入口切错折叠模型
+    expect(collapsibleSidesOf("field")).toEqual({ axis: "start" });
+  });
+
   it("parks fold handles in the stage corners", () => {
     const stage = { width: 1280, height: 800 };
     const rails = resolveAssembly("rails", defaultLayout(), { stage });
