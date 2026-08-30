@@ -72,6 +72,11 @@ onUnmounted(() => {
   grid-template-columns: 1fr 1fr;
   gap: 10px;
   min-width: 0;
+  max-width: 100%;
+}
+.mini {
+  min-width: 0;
+  max-width: 100%;
 }
 /* mini 瓷片：自带瓷皮（HomeWidget 的 placed 判定对组合零件不适用） */
 .mini {

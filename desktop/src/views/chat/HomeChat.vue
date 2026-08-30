@@ -974,6 +974,10 @@ onUnmounted(() => {
   background: var(--yb-paper-sticky);
   padding: 8px 8px 8px 12px;
 }
+/* 器物架右缘呼吸：卡片影和窗缘之间留出桌面（原型右留白更宽，贴边显挤） */
+.chat-page :deep(.area-shelf) {
+  padding-right: 12px;
+}
 /* focus 阅读室（design §4/§10-P3）：单一器近乎全屏，地平线收成发丝线，只留线本身 */
 .chat-page.work-focus :deep(.horizon) {
   height: 12px;

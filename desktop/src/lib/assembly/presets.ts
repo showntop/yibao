@@ -294,7 +294,7 @@ export const HOME_PRESETS = {
     },
     absent: ["now", "mind", "identity", "line", "need", "tasks", "glimpse", "catch", "scratch", "when", "spark", "sessions", "bench", "jot"],
     grid: {
-      pad: 20,
+      pad: 24,
       gap: 16,
       rowGap: 12,
       ground: "desk",

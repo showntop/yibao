@@ -71,6 +71,11 @@ const BADGE: Partial<Record<RemindCardItem["state"], string>> = { done: "已响"
 
 <style scoped>
 .remind-card { display: contents; }
+/* 宽度硬约束：任何内容都不把卡片撑出列宽（真机长文本溢出防护） */
+.remind-card :deep(.yb-widget) {
+  min-width: 0;
+  max-width: 100%;
+}
 .head {
   display: flex;
   align-items: baseline;
