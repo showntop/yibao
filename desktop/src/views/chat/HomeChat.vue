@@ -763,8 +763,12 @@ onUnmounted(() => {
     <div class="yb-kiln" :class="{ on: kilnOn, paused: kilnPaused }" aria-hidden="true"><div class="yb-kiln-glaze"></div></div>
     <SetupWizard v-if="setupNeeded" :model="setupCfg.model" :base-url="setupCfg.baseUrl" :voice="setupCfg.voice" @saved="onSetupSaved" />
 
+    <div v-else class="frame-row">
+    <!-- 会话停靠抽屉（§5 列表不常驻）：从地平线拉出时是结构列，推内容不让位成浮层 -->
+    <aside v-if="sessionsPeek && !sessionsPlaced" class="sessions-dock yb-craze">
+      <SessionList ref="sessionRef" @select="onPeekSessionSelect" @active="onSessionActive" @new-chat="onSessionNew" />
+    </aside>
     <HomeFrame
-      v-else
       :thinking="state === 'think'"
       :state="state"
       v-model:peek="peekOpen"
@@ -886,6 +890,7 @@ onUnmounted(() => {
         </div>
       </template>
     </HomeFrame>
+    </div>
     <div v-if="hostAskOpen && props.workstation" class="host-ask-slot yb-craze">
       <HomeHostAsk
         :busy="busy"
@@ -902,10 +907,7 @@ onUnmounted(() => {
       <HomeBench />
       <HomeJot />
     </div>
-    <!-- 会话 peek：溪场不常驻会话列（§5），从地平线"会话"入口浮出档案列 -->
-    <div v-if="sessionsPeek && !sessionsPlaced" class="sessions-peek yb-craze">
-      <SessionList ref="sessionRef" @select="onPeekSessionSelect" @active="onSessionActive" @new-chat="onSessionNew" />
-    </div>
+    <!-- 会话 peek 已改为 frame-row 内的停靠抽屉（结构列，推内容不让位） -->
   </div>
 </template>
 
@@ -946,22 +948,22 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 8px;
 }
-/* 会话 peek（§5 列表不常驻）：左缘档案列，配今日轴对称。自带瓷皮（HomeWidget
-   的 placed 判定在溪场下恒 false，不能用） */
-.sessions-peek {
-  position: absolute;
-  z-index: 8;
-  left: 16px;
-  bottom: 52px;
-  width: min(260px, calc(100% - 32px));
-  max-height: min(70vh, 560px);
-  min-height: 200px;
+/* 框架行：会话停靠抽屉 + 装配网格，地平线之上的整行 */
+.frame-row {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  min-width: 0;
+}
+/* 会话停靠抽屉（§5 列表不常驻）：结构列，推开内容而不是盖在上面 */
+.sessions-dock {
+  flex: none;
+  width: min(260px, 42%);
+  min-height: 0;
   overflow-y: auto;
-  border: 1px solid var(--yb-widget-border);
-  border-radius: var(--yb-widget-radius);
-  background: var(--yb-widget-glaze), var(--yb-widget-bg);
-  box-shadow: var(--yb-shadow-3);
-  padding: 6px;
+  border-right: 1px solid var(--yb-line);
+  background: var(--yb-paper-sticky);
+  padding: 8px 8px 8px 12px;
 }
 /* focus 阅读室（design §4/§10-P3）：单一器近乎全屏，地平线收成发丝线，只留线本身 */
 .chat-page.work-focus :deep(.horizon) {
