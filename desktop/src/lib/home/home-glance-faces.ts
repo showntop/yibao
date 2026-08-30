@@ -215,3 +215,54 @@ export function readSparkDismiss(storage: Pick<Storage, "getItem"> | null, day: 
 export function writeSparkDismiss(id: string, day: string, storage: Pick<Storage, "setItem"> | null): void {
   try { storage?.setItem(SPARK_DISMISS_KEY, JSON.stringify({ id, day })); } catch { /* ignore */ }
 }
+
+// ---- 提醒卡（wb-prototype home.png 右列）：圆圈状态只从时间推导，不编造完成态 ----
+
+export type RemindCardState = "done" | "due" | "daily";
+
+export interface RemindCardItem {
+  text: string;
+  when: string;
+  state: RemindCardState;
+}
+
+function sameLocalDay(a: Date, b: Date): boolean {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+/** 提醒卡行：feed 里今天的真实提醒（已响/待响）+ 提醒库存量行（每天/周期，不标状态）。 */
+export function remindCardFaces(
+  widgetRows: ReadonlyArray<{ text?: unknown; when?: unknown }> | undefined,
+  feed: readonly FeedItem[],
+  now = new Date(),
+): RemindCardItem[] {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const todays = feed
+    .filter((it) => it.kind === "reminder" && it.status !== "ignore")
+    .filter((it) => sameLocalDay(new Date(it.ts), now))
+    .sort((a, b) => a.ts - b.ts)
+    .map((it) => {
+      const d = new Date(it.ts);
+      return {
+        text: it.text,
+        when: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
+        state: (it.ts <= now.getTime() ? "done" : "due") as RemindCardState,
+      };
+    });
+  const recurring = (widgetRows ?? [])
+    .map((row) => ({ text: String(row.text ?? "").trim(), when: String(row.when ?? "").trim() }))
+    .filter((row) => row.text)
+    .map((row) => {
+      // 带时刻的周期提醒同样推导状态（每天 HH:MM vs 现在），没时刻的才不标
+      const match = row.when.match(/(\d{1,2}):(\d{2})/);
+      if (!match) {
+        return { text: row.text, when: row.when || "周期", state: "daily" as RemindCardState };
+      }
+      const due = new Date(now);
+      due.setHours(Number(match[1]), Number(match[2]), 0, 0);
+      const state: RemindCardState = due.getTime() <= now.getTime() ? "done" : "due";
+      const prefix = row.when.includes("每天") ? "每天 " : "";
+      return { text: row.text, when: `${prefix}${match[1].padStart(2, "0")}:${match[2]}`, state };
+    });
+  return [...todays, ...recurring];
+}

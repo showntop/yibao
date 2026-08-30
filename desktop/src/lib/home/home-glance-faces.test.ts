@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   catchFace,
   glimpseFace,
+  remindCardFaces,
   pickSpark,
   pluginGlanceLine,
   pluginHasGlance,
@@ -145,5 +146,47 @@ describe("local scratch and spark dismiss", () => {
     writeSparkDismiss("m2", "2026-08-21", storage);
     expect(readSparkDismiss(storage, "2026-08-21")).toBe("m2");
     expect(readSparkDismiss(storage, "2026-08-22")).toBeNull();
+  });
+});
+
+describe("remindCardFaces", () => {
+  const NOW = new Date("2026-08-30T10:15:00");
+
+  it("derives card state from feed timestamps: past=已响, today-upcoming=待响", () => {
+    const cards = remindCardFaces(
+      undefined,
+      [
+        feed({ id: 1, text: "09:00 开战会", ts: new Date("2026-08-30T09:00:00").getTime() }),
+        feed({ id: 2, text: "该交周报了", ts: new Date("2026-08-30T14:00:00").getTime() }),
+        feed({ id: 3, text: "昨天的事", ts: new Date("2026-08-29T09:00:00").getTime() }),
+        feed({ id: 4, text: "已忽略", ts: new Date("2026-08-30T08:00:00").getTime(), status: "ignore" }),
+      ],
+      NOW,
+    );
+    expect(cards).toEqual([
+      { text: "09:00 开战会", when: "09:00", state: "done" },
+      { text: "该交周报了", when: "14:00", state: "due" },
+    ]);
+  });
+
+  it("derives recurring rows' state from their HH:MM and keeps 每天 in the when line", () => {
+    const cards = remindCardFaces(
+      [
+        { text: "喝水", when: "每天 10:20" }, // 未来 5 分钟 → 待响
+        { text: "开战会", when: "每天 09:00" }, // 已过 → 已响
+        { text: "没时刻的", when: "工作日" },
+      ],
+      [],
+      NOW,
+    );
+    expect(cards).toEqual([
+      { text: "喝水", when: "每天 10:20", state: "due" },
+      { text: "开战会", when: "每天 09:00", state: "done" },
+      { text: "没时刻的", when: "工作日", state: "daily" },
+    ]);
+  });
+
+  it("empty everything renders no rows", () => {
+    expect(remindCardFaces(undefined, [], NOW)).toEqual([]);
   });
 });

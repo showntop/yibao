@@ -21,6 +21,7 @@ import SessionList from "./SessionList.vue";
 import HorizonBar from "./HorizonBar.vue";
 import HomeDayTitle from "../HomeDayTitle.vue";
 import Avatar from "../../components/pet/Avatar.vue";
+import HomeShelfStats from "../HomeShelfStats.vue";
 import type { LiveSelection } from "../../lib/surface/selection-store.ts";
 import HomeFrame from "../HomeFrame.vue";
 import HomeDeskWork from "../HomeDeskWork.vue";
@@ -841,7 +842,10 @@ onUnmounted(() => {
         <HomeGlance only="tasks" @chat="onInfoChat" />
       </template>
       <template #remind>
-        <HomeGlance only="remind" @chat="onInfoChat" />
+        <component :is="viewOf('remind', faceOf(assembly, 'remind', 'tile'))" only="remind" @chat="onInfoChat" />
+      </template>
+      <template #stats>
+        <HomeShelfStats />
       </template>
       <template #spark>
         <HomeLife only="spark" @chat="onInfoChat" />
@@ -1003,6 +1007,17 @@ onUnmounted(() => {
   border-right: 1px solid var(--yb-line);
   background: var(--yb-paper-sticky);
   padding: 8px 8px 8px 12px;
+}
+/* 器物架右缘呼吸：卡片影和窗缘之间留出桌面（原型右留白更宽，贴边显挤） */
+.chat-page :deep(.area-shelf) {
+  padding-right: 12px;
+}
+/* 卡内容留白（原型卡内距 ≈16）：按 presentation 面键控（face-* 是装配类，非 preset 名），
+   只抬溪场三张卡；老四套的 tile 面维持原 12px */
+.chat-page :deep(.host.face-card .yb-widget-body),
+.chat-page :deep(.host.face-pair .yb-widget-body),
+.chat-page :deep(.host.face-panel .yb-widget-body) {
+  padding-inline: 16px;
 }
 /* focus 阅读室（design §4/§10-P3）：单一器近乎全屏，地平线收成发丝线，只留线本身 */
 .chat-page.work-focus :deep(.horizon) {

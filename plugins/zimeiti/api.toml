@@ -3,6 +3,7 @@
 name = "list"
 handler = "zimeiti.list"
 direct = true
+panel = "zimeiti:board"   # 看板数据自带看板引用：素材统计卡「去看看」直达（refresh 链路同享）
 
 [[method]]
 name = "add"

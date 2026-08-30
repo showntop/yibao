@@ -12,6 +12,7 @@ export const HOME_WIDGETS = [
   { id: "need", label: "需要你", defaultSize: "m", defaultMaterial: "porcelain" },
   { id: "tasks", label: "进行中", defaultSize: "m", defaultMaterial: "porcelain" },
   { id: "remind", label: "提醒", defaultSize: "s", defaultMaterial: "porcelain" },
+  { id: "stats", label: "统计对", defaultSize: "s", defaultMaterial: "porcelain" },
   { id: "spark", label: "想起", defaultSize: "m", defaultMaterial: "porcelain" },
   { id: "glimpse", label: "余光", defaultSize: "s", defaultMaterial: "glass" },
   { id: "catch", label: "接到", defaultSize: "m", defaultMaterial: "porcelain" },

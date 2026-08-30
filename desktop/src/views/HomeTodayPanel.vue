@@ -89,6 +89,13 @@ const STATUS_LABEL: Record<AgendaStatus, string> = { done: "已完成", active: 
   flex-direction: column;
   gap: 10px;
   min-width: 0;
+  /* 今日瓷片：原型里是厚瓷片卡，不是裸排桌面 */
+  box-sizing: border-box;
+  padding: 14px 16px;
+  border: 1px solid var(--yb-widget-border);
+  border-radius: var(--yb-widget-radius);
+  background: var(--yb-widget-glaze), var(--yb-widget-bg);
+  box-shadow: var(--yb-shadow-2);
 }
 .head {
   display: flex;
