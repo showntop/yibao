@@ -3,6 +3,7 @@
  * 模块级单例——同窗内 WebviewPanel（浮窗/大窗各一份）与聊天壳共享，不进装配体系。 */
 import { ref } from "vue";
 import type { DocAnchor } from "../../protocol/brain-types";
+import { docWordsOf } from "../home/doc-status.ts";
 
 export interface LiveSelection extends DocAnchor {
   panel: string;
@@ -46,6 +47,28 @@ export function noteSelection(panel: string, payload: Record<string, unknown>): 
     start,
     end,
     quote: String(payload.quote ?? ""),
+    ts: Date.now(),
+  };
+}
+
+/** 器文档快照态（focus 地平线文档行，wb-prototype focus.png）：标题 + 字数。 */
+export interface DocInfo {
+  panel: string;
+  docId: string;
+  title: string;
+  words: number;
+  ts: number;
+}
+
+export const docInfo = ref<DocInfo | null>(null);
+
+/** WebviewPanel 收到器的 doc_snapshot 上行时调用（字数在此一次算清） */
+export function noteDoc(panel: string, payload: Record<string, unknown>): void {
+  docInfo.value = {
+    panel,
+    docId: String(payload.id ?? ""),
+    title: String(payload.title ?? ""),
+    words: docWordsOf(String(payload.content ?? "")),
     ts: Date.now(),
   };
 }

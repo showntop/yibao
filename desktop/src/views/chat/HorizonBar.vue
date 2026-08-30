@@ -12,6 +12,8 @@ const props = defineProps<{
   proc: { label: string; done: boolean; ok?: boolean } | null;
   /** 器物架已收进降级档（<1280）时亮出"器物"入口（design §8） */
   shelf?: boolean;
+  /** 器文档在场信息（focus 地平线文档行）：标题 + 字数 */
+  doc?: { title: string; words: number } | null;
 }>();
 const emit = defineEmits<{ entry: [id: "sessions" | "today" | "shelf"] }>();
 
@@ -75,6 +77,12 @@ const echo = computed(() => horizonEcho({ state: props.state, proc: props.proc }
       >
         <i></i><span>{{ n.label }}</span>
       </div>
+    </div>
+    <!-- 文档行（wb-prototype focus.png）：器文档在场时的标题+字数 -->
+    <div v-if="props.doc" class="doc-line">
+      <span class="doc-title">{{ props.doc.title }}</span>
+      <span class="doc-sep">·</span>
+      <span class="doc-words">{{ props.doc.words }} 字</span>
     </div>
     <div class="echo">
       <template v-if="echo">echo: <em :class="`tone-${echo.tone}`">{{ echo.text }}</em></template>
@@ -205,5 +213,22 @@ const echo = computed(() => horizonEcho({ state: props.state, proc: props.proc }
 .ctx {
   color: var(--yb-text-faint);
   white-space: nowrap;
+}
+/* 文档行（focus 态）：器文档标题 + 字数，mono 弱化 */
+.doc-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  color: var(--yb-text-faint);
+  white-space: nowrap;
+}
+.doc-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.doc-words {
+  flex: none;
+  font-variant-numeric: tabular-nums;
 }
 </style>

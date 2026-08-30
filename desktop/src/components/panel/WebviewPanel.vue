@@ -13,7 +13,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { onBrainEvent, panelAction, sendPanelEvent, sendSurfaceResult, type BrainEvent } from "../../lib/brain";
-import { noteSelection, registerRevealHost, unregisterRevealHost } from "../../lib/surface/selection-store.ts";
+import { noteDoc, noteSelection, registerRevealHost, unregisterRevealHost } from "../../lib/surface/selection-store.ts";
 import { resolveWebviewSource } from "../../lib/webview-source";
 
 const props = defineProps<{
@@ -101,8 +101,9 @@ function onMessage(ev: MessageEvent) {
     if (d.event === "surface_result" && typeof payload.sid === "string") {
       sendSurfaceResult(payload.sid, payload.ok !== false, payload.result as Record<string, unknown> | undefined, payload.error as string | undefined);
     } else {
-      // 器的选区上行进共享态（边说边指/批注回指的数据源，design §4）
+      // 器的选区/文档快照上行进共享态（边说边指、focus 文档行的数据源，design §4）
       if (d.event.endsWith(".selection_changed")) noteSelection(props.panel, payload);
+      if (d.event.endsWith(".doc_snapshot")) noteDoc(props.panel, payload);
       sendPanelEvent(props.panel, d.event, payload);
     }
     return;
