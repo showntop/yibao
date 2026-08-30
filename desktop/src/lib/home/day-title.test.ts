@@ -16,4 +16,22 @@ describe("dayTitleFace", () => {
     expect(dayTitleFace(new Date("2026-08-28T23:59:59")).main).toBe("8月28日 · 星期五");
     expect(dayTitleFace(new Date("2026-08-29T00:00:00")).main).toBe("8月29日 · 星期六");
   });
+
+  it("counts companion days as full days elapsed since first_seen", () => {
+    const first = new Date("2026-06-01T10:00:00").getTime();
+    expect(dayTitleFace(new Date("2026-08-30T09:00:00"), first).sub).toBe("已陪伴你 90 天");
+  });
+
+  it("anchors the count to midnight so the number does not flicker within a day", () => {
+    const first = new Date("2025-08-30T23:59:00").getTime();
+    const early = dayTitleFace(new Date("2026-08-30T00:01:00"), first).sub;
+    const late = dayTitleFace(new Date("2026-08-30T23:59:00"), first).sub;
+    expect(early).toBe(late);
+  });
+
+  it("hides the sub on day one and when first_seen is unknown", () => {
+    const now = new Date("2026-08-30T09:00:00");
+    expect(dayTitleFace(now, new Date("2026-08-30T08:00:00").getTime()).sub).toBeNull();
+    expect(dayTitleFace(now).sub).toBeNull();
+  });
 });

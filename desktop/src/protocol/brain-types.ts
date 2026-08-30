@@ -353,6 +353,7 @@ export interface SettingsValues {
   proactive_voice: boolean; // 主动开口：提醒触发时语音播报
   "proactive.level": "quiet" | "bubble" | "full"; // 自主权旋钮：触达强度三档
   "tts.provider": "edge" | "cosyvoice" | "cosyvoice_cloud"; // TTS 引擎（重启生效）
+  "shell.first_seen": string; // 首启时刻 ISO（sidecar 生成落盘，日题陪伴天数用）
   "watch.enabled": boolean; // 健康节律，即时生效
   "watch.screen_enabled": boolean; // 屏幕建议，即时生效
   "watch.cadence": number;

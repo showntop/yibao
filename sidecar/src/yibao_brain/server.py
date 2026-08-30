@@ -37,7 +37,7 @@ from .background import (
     _reminder_loop,
     _watch_tick,
 )
-from .config import a11y_enabled, computer_use_enabled, computer_use_max_steps, history_path, http_port, llm_api_key, load_settings, perception_db_path, save_settings, screenshot_dir, stt_model_dir, tts_voice, vad_max_seconds, vad_min_silence, vad_model_path, vision_api_key, voice_enabled
+from .config import a11y_enabled, computer_use_enabled, computer_use_max_steps, ensure_first_seen, history_path, http_port, llm_api_key, load_settings, perception_db_path, save_settings, screenshot_dir, stt_model_dir, tts_voice, vad_max_seconds, vad_min_silence, vad_model_path, vision_api_key, voice_enabled
 from .feed import FeedStore
 from .distiller import Distiller, DistillerStore
 from .jobstore import JobsStore
@@ -521,6 +521,7 @@ async def serve_async(
 
     # 用户设置是运行期共享状态，主动分发器、感知与 watch service 都读同一字典。
     settings = load_settings()
+    ensure_first_seen(settings)  # 首启时刻落盘（幂等），日题"已陪伴你 N 天"读它
 
     async def batch_confirmer(actions) -> dict[str, tuple[bool, bool]]:
         """批量确认（Task 3 多槽）：list[Action] -> {action.id: (approved, remember)}。

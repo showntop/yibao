@@ -328,6 +328,7 @@ _SETTINGS_DEFAULTS: dict = {
     "watch.look_max_per_day": 50,          # 主动搭话每日上限
     "http.token": "",  # 浏览器扩展桥共享 token（空 = 启动时生成并持久化）
     "http.mobile_token": "",  # 手机伴生端 token（与扩展桥隔离，可单独重置）
+    "shell.first_seen": "",  # 首启时刻（ISO，本地时；空 = 启动时生成并持久化，日题"已陪伴你 N 天"用）
     "http.bind": "127.0.0.1",  # HTTP 面监听地址：127.0.0.1 仅本机；0.0.0.0 局域网（手机浏览器体验，token 把关）
     "http.public_url": "",    # 对外域名（VPS Caddy）；配对二维码用，空=仅局域网调试
     "push.devices": [],       # 已注册推送设备 [{registration_id, platform, added_at}]
@@ -359,6 +360,19 @@ def load_settings() -> dict:
         if k in raw:
             out[k] = raw[k]
     return out
+
+
+def ensure_first_seen(settings: dict) -> str:
+    """首启时刻（ISO 本地时）：空则生成并持久化。日题"已陪伴你 N 天"的数据源。
+    与 http.token 同款语义——空 = 生成即落盘，之后只读不改。"""
+    val = str(settings.get("shell.first_seen") or "")
+    if not val:
+        import datetime
+
+        val = datetime.datetime.now().isoformat(timespec="seconds")
+        save_settings({"shell.first_seen": val})
+        settings["shell.first_seen"] = val
+    return val
 
 
 def save_settings(values: dict) -> None:
