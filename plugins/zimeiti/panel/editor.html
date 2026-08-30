@@ -80,6 +80,23 @@
     box-shadow: 0 1px 2px rgba(45, 60, 80, .04), 0 6px 16px rgba(45, 60, 80, .05);
     overflow: hidden; margin-bottom: 10px;
   }
+  /* ---- 阅读态（wb-prototype focus.png）：serif 通读视图 ---- */
+  #read-view { flex: 1; min-width: 0; overflow-y: auto; background: var(--card); }
+  #read-body {
+    max-width: 38em; margin: 0 auto; padding: 44px 52px 72px;
+    font-family: "Songti SC", "Noto Serif SC", "STSong", serif;
+    font-size: 16.5px; line-height: 2; color: var(--text);
+  }
+  #read-body h1 { font-size: 30px; line-height: 1.35; margin: 0 0 8px; }
+  #read-body h2 { font-size: 21px; margin: 1.6em 0 .5em; }
+  #read-body h3 { font-size: 18px; margin: 1.4em 0 .4em; }
+  #read-body p { margin: .9em 0; }
+  #read-body ul, #read-body ol { padding-left: 1.5em; margin: .8em 0; }
+  #read-body blockquote { margin: 1em 0; padding: .1em 1em; border-left: 3px solid var(--border); color: var(--muted); }
+  #read-body code { font-family: var(--mono); font-size: .88em; background: rgba(45,60,80,.07); padding: .1em .35em; border-radius: 4px; }
+  #read-body pre { background: rgba(45,60,80,.07); padding: 12px 14px; border-radius: 8px; overflow-x: auto; }
+  #read-body pre code { background: none; padding: 0; }
+  #read-body img { max-width: 100%; }
   #editor {
     flex: 1; min-width: 0; border: none; outline: none; resize: none; padding: 12px 14px;
     font: var(--mono); background: transparent; color: var(--text);
@@ -220,11 +237,15 @@
   <button id="ai-polish" class="act ghost" title="全文润色：事实结构不变，表达更顺">润色</button>
   <button id="ai-title" class="act ghost" title="基于全文出 5 个候选标题">标题</button>
   <button id="ai-platform" class="act ghost" title="按目标平台风格改写全文">平台</button>
+  <button id="read-toggle" class="act ghost" title="阅读态：serif 排版通读全文（专注模式）">阅读</button>
   <button id="publish" class="act ghost">发布…</button>
   <button id="save" class="act">保存为新版本</button>
 </header>
 <main>
   <textarea id="editor" placeholder="在这里写稿（markdown）；也可以对译宝说「写初稿 / 改稿 / 读稿」，它会直接改这里" spellcheck="false"></textarea>
+  <div id="read-view" hidden>
+    <article id="read-body"></article>
+  </div>
   <div id="preview-wrap">
     <div id="preview"></div>
     <div id="empty-state">
@@ -476,7 +497,8 @@
   // 面板事件 data：打开编辑器时是 zimeiti.get 的 {rows:[选题]}。
   // 同选题 rows 重推 = 译宝在对话里保存了新版本（focus 重定向，loop._panel_with_refresh）→ 刷新稿件；
   // 但编辑区有未保存修改时不冲掉，只在状态栏提示。保存回执等无 rows 形状忽略（不动当前编辑状态）。
-  window.yibao.onInit(function (data) {
+  if (window.yibao && window.yibao.onInit) {
+    window.yibao.onInit(function (data) {
     var row = data && data.rows && data.rows[0];
     if (!row || !row.id) return;
     var sameTopic = String(row.id) === topicId;
@@ -493,6 +515,7 @@
     $("title").textContent = String(row.title || "写作编辑器");
     loadArticle(sameTopic ? "译宝更新到" : undefined);
   });
+  }
 
   // ---- 保存为新版本（article_save 为 L2，确认条在面板窗顶部弹出，允许后才会执行）----
   $("save").addEventListener("click", function () {
@@ -947,10 +970,31 @@
     snapTimer = setTimeout(reportSnapshot, 1500);
   });
 
-  // -- 文档快照上行（打开/保存时全量；surface.read 的数据源） --
+  // -- 文档快照上行（打开/保存/输入停顿时全量；surface.read 与 focus 文档行的数据源） --
   function reportSnapshot() {
-    emit("zimeiti.doc_snapshot", { id: topicId, content: $("editor").value });
+    emit("zimeiti.doc_snapshot", { id: topicId, title: $("title").textContent, content: $("editor").value });
   }
+
+  // ---- 阅读态（wb-prototype focus.png）：serif 通读视图，「编辑」返回 ----
+  var reading = false;
+  var readTimer = null;
+  function renderRead() {
+    $("read-body").innerHTML = md($("editor").value, false);
+  }
+  $("read-toggle").addEventListener("click", function () {
+    reading = !reading;
+    $("read-view").hidden = !reading;
+    $("editor").hidden = reading;
+    $("preview-wrap").hidden = reading;
+    $("read-toggle").textContent = reading ? "编辑" : "阅读";
+    if (reading) { renderRead(); $("read-view").scrollTop = 0; setStatus("阅读态：通读全文，「编辑」返回"); }
+    else setStatus("回到编辑");
+  });
+  $("editor").addEventListener("input", function () {
+    if (!reading) return;
+    if (readTimer) clearTimeout(readTimer);
+    readTimer = setTimeout(renderRead, 400); // 阅读态下输入（罕见）也保持渲染同步
+  });
 
   // -- 锚点解析：偏移漂移时按引文回找（文章被编辑过仍能落到正确段落） --
   function resolveAnchor(start, end, quote) {

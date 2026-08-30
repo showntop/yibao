@@ -23,6 +23,7 @@ import HomeDayTitle from "../HomeDayTitle.vue";
 import Avatar from "../../components/pet/Avatar.vue";
 import HomeShelfStats from "../HomeShelfStats.vue";
 import type { LiveSelection } from "../../lib/surface/selection-store.ts";
+import { docInfo } from "../../lib/surface/selection-store.ts";
 import HomeFrame from "../HomeFrame.vue";
 import HomeDeskWork from "../HomeDeskWork.vue";
 import HomeHostAsk from "../HomeHostAsk.vue";
@@ -320,6 +321,14 @@ const kilnPaused = ref(false);
 function onKilnFocusChange() {
   kilnPaused.value = !document.hasFocus();
 }
+
+// focus 地平线文档行：当前工位器的文档快照（标题+字数，selection-store 上行缓存）
+const workFocusDoc = computed(() => {
+  if (!props.workFocus || !props.workstation) return null;
+  const d = docInfo.value;
+  if (!d || d.panel !== props.workstation.panel) return null;
+  return { title: d.title, words: d.words };
+});
 
 // ---- 思考状态文案：typing 时轮换"在干嘛"（需在 showTyping 定义后，避免 TDZ）----
 const THINK_NOTES = ["正在整理思路…", "正在翻阅记忆…", "正在连接工具…", "马上就好…"];
@@ -909,7 +918,7 @@ onUnmounted(() => {
         @close="hostAskOpen = false"
       />
     </div>
-    <HorizonBar :state="state" :proc="horizonProc" :shelf="shelfCollapsed" @entry="onHorizonEntry" />
+    <HorizonBar :state="state" :proc="horizonProc" :shelf="shelfCollapsed" :doc="workFocusDoc" @entry="onHorizonEntry" />
     <!-- 器物 peek：架收进降级档后，从地平线"器物"入口浮出（design §8），出生走开片 -->
     <div v-if="shelfPeek && shelfCollapsed" class="shelf-peek yb-craze">
       <HomeLife only="spark" @chat="onInfoChat" />
@@ -985,13 +994,11 @@ onUnmounted(() => {
 .chat-page :deep(.host.face-panel .yb-widget-body) {
   padding-inline: 16px;
 }
-/* focus 阅读室（design §4/§10-P3）：单一器近乎全屏，地平线收成发丝线，只留线本身 */
+/* focus 阅读室（design §4/§10-P3 + wb-prototype focus.png）：地平线=节点+文档行，
+   隐 echo/入口/ctx；文档行由 HorizonBar :doc 传入 */
 .chat-page.work-focus :deep(.horizon) {
-  height: 12px;
-  gap: 0;
-  padding: 0;
+  height: 30px;
 }
-.chat-page.work-focus :deep(.horizon .nodes),
 .chat-page.work-focus :deep(.horizon .echo),
 .chat-page.work-focus :deep(.horizon .entries),
 .chat-page.work-focus :deep(.horizon .ctx) {
