@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject } from "vue";
+import { inject } from "vue";
 import Avatar from "../../components/pet/Avatar.vue";
 import Bubble from "../../components/common/Bubble.vue";
 import YbIcon from "../../components/common/YbIcon.vue";
@@ -15,8 +15,6 @@ const {
   bubbles,
   thread,
   state,
-  sessionTitle,
-  processes,
   greeting,
   suggestChips,
   showTyping,
@@ -45,29 +43,6 @@ const {
   onBubblesScroll,
   scrollBubbles,
 } = chat;
-
-const latestRequest = computed(() => {
-  const row = [...bubbles.value].reverse().find((bubble) => bubble.role === "user");
-  return row?.text.trim() || "等待你给出下一步目标";
-});
-const activeProcesses = computed(() => processes.value.filter((item) => !item.done).slice(0, 2));
-const doneProcesses = computed(() => processes.value.filter((item) => item.done && item.ok !== false).slice(-3).reverse());
-const completedRuns = computed(() => thread.value.filter((item) => item.type === "run").length);
-const missionState = computed(() => {
-  if (state.value === "think") return "正在思考";
-  if (state.value === "work") return "正在执行";
-  if (state.value === "listen") return "正在接收";
-  if (state.value === "say") return "正在整理结果";
-  if (state.value === "error") return "需要留意";
-  if (state.value === "success") return "刚刚完成";
-  return "等待下一步";
-});
-const fallbackAction = computed(() => {
-  if (state.value === "think") return "梳理问题与相关上下文";
-  if (state.value === "work") return "连接能力并执行任务";
-  if (state.value === "say") return "收束结果并准备回复";
-  return "等待你的下一步指令";
-});
 
 // ---- 消息操作（策略层驱动）：按钮由 actionsOf(role) 决定，只做渲染与分发，不写条件 ----
 /** run 组底部的操作：固定为 AI 回答的能力（复制/反馈/重写）。 */
@@ -106,32 +81,6 @@ function dispatchUserAction(a: MsgAction, i: number) {
 <template>
   <div class="surface-thread">
     <div class="bubbles" ref="bubblesRef" @scroll="onBubblesScroll">
-      <section v-if="bubbles.length || showTyping" class="mission-board" aria-labelledby="mission-title">
-        <header class="mission-head">
-          <div>
-            <span class="mission-kicker">本次任务</span>
-            <h2 id="mission-title">{{ sessionTitle || "新对话" }}</h2>
-          </div>
-          <span class="mission-state" :class="`state-${state}`"><i />{{ missionState }}</span>
-        </header>
-        <p class="mission-request">{{ latestRequest }}</p>
-        <div class="mission-columns">
-          <section>
-            <h3>正在做</h3>
-            <ul>
-              <li v-for="item in activeProcesses" :key="item.label"><YbIcon name="spinner" :size="11" spin />{{ item.label }}</li>
-              <li v-if="!activeProcesses.length"><i class="mission-node" />{{ fallbackAction }}</li>
-            </ul>
-          </section>
-          <section>
-            <h3>已完成</h3>
-            <ul>
-              <li v-for="item in doneProcesses" :key="item.label"><YbIcon name="check" :size="11" />{{ item.label }}</li>
-              <li v-if="!doneProcesses.length"><YbIcon name="check" :size="11" />已完成 {{ completedRuns }} 轮协作</li>
-            </ul>
-          </section>
-        </div>
-      </section>
       <div v-if="!bubbles.length && !showTyping" class="empty-hint">
         <div class="eh-glow"><Avatar :state="state" :size="64" /></div>
         <p class="eh-title">{{ greeting }}</p>
@@ -142,7 +91,6 @@ function dispatchUserAction(a: MsgAction, i: number) {
           </button>
         </div>
       </div>
-      <div v-if="bubbles.length || showTyping" class="record-head"><span>协作记录</span><small>{{ bubbles.length }} 条</small></div>
       <template v-for="item in thread" :key="threadKey(item)">
         <div v-if="item.type === 'day'" class="date-divider"><span>{{ fmtDay(bubbles[item.index].ts) }}</span></div>
 
@@ -278,111 +226,6 @@ function dispatchUserAction(a: MsgAction, i: number) {
   scrollbar-width: thin;
   mask-image: linear-gradient(180deg, transparent, #000 14px);
   -webkit-mask-image: linear-gradient(180deg, transparent, #000 14px);
-}
-.mission-board {
-  box-sizing: border-box;
-  width: min(100%, 780px);
-  align-self: center;
-  padding: 18px 20px 16px;
-  border: 1px solid var(--yb-widget-border);
-  border-radius: calc(var(--yb-widget-radius) + 2px);
-  background: var(--yb-widget-bg);
-  box-shadow: var(--yb-glaze-hi), var(--yb-shadow-1);
-}
-.mission-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-.mission-kicker,
-.mission-columns h3,
-.record-head {
-  color: var(--yb-text-faint);
-  font-size: var(--yb-fs-xs);
-  font-weight: var(--yb-fw-medium);
-  letter-spacing: var(--yb-kicker-track);
-}
-.mission-head h2 {
-  margin: 4px 0 0;
-  color: var(--yb-text-strong);
-  font-size: 17px;
-  font-weight: var(--yb-fw-bold);
-  line-height: 1.35;
-}
-.mission-state {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 24px;
-  padding: 0 9px;
-  border: 1px solid var(--yb-widget-border);
-  border-radius: var(--yb-radius-pill);
-  color: var(--yb-text-dim);
-  font-size: var(--yb-fs-xs);
-}
-.mission-state i,
-.mission-node {
-  width: 6px;
-  height: 6px;
-  flex: none;
-  border-radius: 50%;
-  background: var(--yb-state-idle);
-}
-.mission-state.state-think i,
-.mission-state.state-work i,
-.mission-state.state-say i { background: var(--yb-accent); }
-.mission-state.state-error i { background: var(--yb-danger); }
-.mission-state.state-success i { background: var(--yb-intent-ok); }
-.mission-request {
-  margin: 12px 0 14px;
-  color: var(--yb-text);
-  font-size: var(--yb-fs-md);
-  line-height: 1.55;
-  overflow-wrap: anywhere;
-}
-.mission-columns {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  padding-top: 13px;
-  border-top: 1px solid var(--yb-line);
-}
-.mission-columns section { min-width: 0; }
-.mission-columns h3 { margin: 0 0 7px; }
-.mission-columns ul {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.mission-columns li {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--yb-text-dim);
-  font-size: var(--yb-fs-sm);
-  line-height: 1.4;
-}
-.mission-columns li :deep(svg) { flex: none; color: var(--yb-intent-ok); }
-.record-head {
-  width: min(100%, 780px);
-  align-self: center;
-  display: flex;
-  justify-content: space-between;
-  padding: 4px 2px 0;
-}
-.record-head small {
-  font: inherit;
-  letter-spacing: normal;
-}
-@media (max-width: 760px) {
-  .mission-board { padding: 15px; }
-  .mission-columns { grid-template-columns: minmax(0, 1fr); }
 }
 .bubbles :deep(.bubble) {
   max-width: min(88%, 720px);
