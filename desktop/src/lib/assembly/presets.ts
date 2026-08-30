@@ -50,7 +50,7 @@ export type HomePreset = {
   label: string;
   hint: string;
   place: PlaceKind;
-} & Snapshot & { compact?: Snapshot };
+} & Snapshot & { compact?: Snapshot; slim?: Snapshot; narrow?: Snapshot };
 
 export type PlaceItem = {
   id: PartId;
@@ -315,6 +315,65 @@ export const HOME_PRESETS = {
       grow: ["chat"],
       bubbleMax: "420px", // 行长 25–35 字（design §8）
     },
+    // <1280 器物架收成地平线"器物"入口的 peek（design §8）：三区，轴保周条+提醒
+    narrow: {
+      presentations: {
+        chat: "thread",
+        dayTitle: "title",
+        composer: "bar",
+        sessions: "spine",
+        when: "tile",
+        remind: "tile",
+      },
+      absent: ["now", "mind", "identity", "line", "today", "need", "tasks", "glimpse", "catch", "scratch", "spark", "bench", "jot"],
+      grid: {
+        pad: 16,
+        gap: 14,
+        rowGap: 12,
+        ground: "desk",
+        fold: ["spine"],
+        columns: `${SPINE_W} minmax(420px, 58fr) minmax(0, 42fr)`,
+        rows: "minmax(0,1fr) minmax(min-content, auto)",
+        areas: `"spine chat axis" ". compose ."`,
+        stacks: {
+          spine: ["sessions"],
+          chat: ["dayTitle", "chat"],
+          axis: ["when", "remind"],
+          compose: ["composer"],
+        },
+        grow: ["chat"],
+        bubbleMax: "420px",
+      },
+    },
+    // <1100 今日收成周视图条（axis 只留 when）：对话进一步吃宽
+    slim: {
+      presentations: {
+        chat: "thread",
+        dayTitle: "title",
+        composer: "bar",
+        sessions: "spine",
+        when: "tile",
+      },
+      absent: ["now", "mind", "identity", "line", "today", "need", "tasks", "glimpse", "catch", "scratch", "spark", "bench", "jot", "remind"],
+      grid: {
+        pad: 14,
+        gap: 12,
+        rowGap: 12,
+        ground: "desk",
+        fold: ["spine"],
+        columns: `${SPINE_W} minmax(420px, 70fr) minmax(200px, 30fr)`,
+        rows: "minmax(0,1fr) minmax(min-content, auto)",
+        areas: `"spine chat axis" ". compose ."`,
+        stacks: {
+          spine: ["sessions"],
+          chat: ["dayTitle", "chat"],
+          axis: ["when"],
+          compose: ["composer"],
+        },
+        grow: ["chat"],
+        bubbleMax: "420px",
+      },
+    },
     compact: {
       presentations: { chat: "thread", composer: "bar" },
       grid: {
@@ -326,6 +385,7 @@ export const HOME_PRESETS = {
         areas: `"chat" "compose"`,
         stacks: { chat: ["dayTitle", "chat"], compose: ["composer"] },
         grow: ["chat"],
+        bubbleMax: "420px",
       },
     },
   },

@@ -280,10 +280,28 @@ const horizonProc = computed(() => {
   return list.length ? list[list.length - 1] : null;
 });
 
-/** 地平线入口：接现有可见性开关（器物架待 P1 peek 落地再进）。 */
-function onHorizonEntry(id: "sessions" | "today") {
+/** 地平线入口：接现有可见性开关；器物入口只在降级档（架已收起）亮出。 */
+function onHorizonEntry(id: "sessions" | "today" | "shelf") {
   if (id === "sessions") leftOpen.value = !leftOpen.value;
+  else if (id === "shelf") shelfPeek.value = !shelfPeek.value;
   else peekOpen.value = !peekOpen.value;
+}
+
+// ---- 降级多断点（design §8）：与 HomeFrame 同款窗口 MQ，驱动地平线器物入口 + 器物 peek ----
+const shelfPeek = ref(false);
+const shelfCollapsed = ref(false);
+let mqNarrow: MediaQueryList | null = null;
+let mqSlim: MediaQueryList | null = null;
+function onShelfMqChange() {
+  shelfCollapsed.value = Boolean(mqNarrow?.matches || mqSlim?.matches);
+  if (!shelfCollapsed.value) shelfPeek.value = false;
+}
+
+// ---- 窑变微光（design §6）：think/work 才点火，失焦停帧，循环只存在于脑活动态 ----
+const kilnOn = computed(() => state.value === "think" || state.value === "work");
+const kilnPaused = ref(false);
+function onKilnFocusChange() {
+  kilnPaused.value = !document.hasFocus();
 }
 
 // ---- 思考状态文案：typing 时轮换"在干嘛"（需在 showTyping 定义后，避免 TDZ）----
@@ -692,8 +710,21 @@ onMounted(async () => {
     unlistenWidgets = await onWidgets((payload) => syncPluginParts(payload?.widgets ?? []));
   } catch { /* sidecar unavailable */ }
   emit("state", state.value); // 父级侧边栏团子拿初始态
+  // 窑变硬约束：窗口失焦即停（design §6）
+  window.addEventListener("blur", onKilnFocusChange);
+  window.addEventListener("focus", onKilnFocusChange);
+  // 降级断点：与 HomeFrame 同款阈值（design §8）
+  mqNarrow = window.matchMedia("(max-width: 1280px)");
+  mqSlim = window.matchMedia("(max-width: 1100px)");
+  mqNarrow.addEventListener("change", onShelfMqChange);
+  mqSlim.addEventListener("change", onShelfMqChange);
+  onShelfMqChange();
 });
 onUnmounted(() => {
+  mqNarrow?.removeEventListener("change", onShelfMqChange);
+  mqSlim?.removeEventListener("change", onShelfMqChange);
+  window.removeEventListener("blur", onKilnFocusChange);
+  window.removeEventListener("focus", onKilnFocusChange);
   window.removeEventListener("keydown", onHostAskEsc, true);
   unlisten?.();
   unlistenStatus?.();
@@ -712,6 +743,8 @@ onUnmounted(() => {
 
 <template>
   <div class="chat-page" :class="{ 'lend-ear': props.lendEar, 'at-work': Boolean(props.workstation), 'rail-folded': !leftOpen, 'peek-folded': !peekOpen }">
+    <!-- 窑变微光（design §6）：脑活动=窑火，失焦停帧 -->
+    <div class="yb-kiln" :class="{ on: kilnOn, paused: kilnPaused }" aria-hidden="true"><div class="yb-kiln-glaze"></div></div>
     <SetupWizard v-if="setupNeeded" :model="setupCfg.model" :base-url="setupCfg.baseUrl" :voice="setupCfg.voice" @saved="onSetupSaved" />
 
     <HomeFrame
@@ -831,7 +864,7 @@ onUnmounted(() => {
         </div>
       </template>
     </HomeFrame>
-    <div v-if="hostAskOpen && props.workstation" class="host-ask-slot">
+    <div v-if="hostAskOpen && props.workstation" class="host-ask-slot yb-craze">
       <HomeHostAsk
         :busy="busy"
         :listening="state === 'listen'"
@@ -840,7 +873,13 @@ onUnmounted(() => {
         @close="hostAskOpen = false"
       />
     </div>
-    <HorizonBar :state="state" :proc="horizonProc" @entry="onHorizonEntry" />
+    <HorizonBar :state="state" :proc="horizonProc" :shelf="shelfCollapsed" @entry="onHorizonEntry" />
+    <!-- 器物 peek：架收进降级档后，从地平线"器物"入口浮出（design §8），出生走开片 -->
+    <div v-if="shelfPeek && shelfCollapsed" class="shelf-peek yb-craze">
+      <HomeLife only="spark" @chat="onInfoChat" />
+      <HomeBench />
+      <HomeJot />
+    </div>
   </div>
 </template>
 
@@ -868,6 +907,18 @@ onUnmounted(() => {
   left: 16px;
   bottom: 52px; /* 36px 地平线 + 16px 边距，栖息在文档缘不被仪器条盖住 */
   max-width: calc(100% - 32px);
+}
+.shelf-peek {
+  position: absolute;
+  z-index: 8;
+  right: 16px;
+  bottom: 52px;
+  width: min(340px, calc(100% - 32px));
+  max-height: min(60vh, 480px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 .input-slot {
   box-sizing: border-box;

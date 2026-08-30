@@ -32,7 +32,7 @@ const label = computed(() => deskWho({
 </script>
 
 <template>
-  <section class="desk-work" aria-label="工位">
+  <section class="desk-work yb-craze" aria-label="工位">
     <header class="bar">
       <span v-if="face === 'worker'" class="ask">译宝请来</span>
       <span class="who">{{ label }}</span>

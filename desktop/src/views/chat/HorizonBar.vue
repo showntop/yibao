@@ -9,8 +9,10 @@ import type { HomeAvatarState } from "../../lib/home/home-chat-session.ts";
 const props = defineProps<{
   state: HomeAvatarState;
   proc: { label: string; done: boolean; ok?: boolean } | null;
+  /** 器物架已收进降级档（<1280）时亮出"器物"入口（design §8） */
+  shelf?: boolean;
 }>();
-const emit = defineEmits<{ entry: [id: "sessions" | "today"] }>();
+const emit = defineEmits<{ entry: [id: "sessions" | "today" | "shelf"] }>();
 
 const items = ref<FeedItem[]>([]);
 const pulseId = ref<number | null>(null);
@@ -73,6 +75,7 @@ const echo = computed(() => horizonEcho({ state: props.state, proc: props.proc }
       <template v-if="echo">echo: <em :class="`tone-${echo.tone}`">{{ echo.text }}</em></template>
     </div>
     <div class="entries">
+      <button v-if="props.shelf" class="entry" title="器物架" @click="emit('entry', 'shelf')">器物</button>
       <button class="entry" title="今日一瞥" @click="emit('entry', 'today')">今日</button>
       <button class="entry" title="会话列表" @click="emit('entry', 'sessions')">会话</button>
     </div>
