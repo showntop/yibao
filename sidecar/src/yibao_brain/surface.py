@@ -31,7 +31,8 @@ class SurfaceBridge:
 
     def __init__(self) -> None:
         self._emit = None  # ProactiveDispatcher.emit（线程安全），未 bind 前发射拒答
-        self.latest: dict[str, dict] = {}  # pid -> {"name","payload","ts"} 各面板最新上行
+        # pid -> name -> {"payload","ts"}：每面板每类事件各留最新（doc 与 selection 互不顶掉）
+        self.latest: dict[str, dict[str, dict]] = {}
 
     def bind(self, emit) -> None:
         self._emit = emit
@@ -53,12 +54,9 @@ class SurfaceBridge:
                 "hint": "命令已呈给前端器；写类命令由人在器的确认 UI 裁决，结果走上行事件"}
 
     def record(self, pid: str, name: str, payload: dict) -> None:
-        """上行事件入缓存（面板选区/文档快照/surface_result）。只留最新，读侧自己取舍。"""
-        self.latest[pid] = {"name": name, "payload": payload, "ts": time.time()}
+        """上行事件入缓存（面板选区/文档快照/surface_result）。每类各留最新。"""
+        self.latest.setdefault(pid, {})[name] = {"payload": payload, "ts": time.time()}
 
     def snapshot(self, pid: str, name: str) -> dict | None:
         """读某面板某类事件的最新缓存（surface.read 的数据源）。"""
-        cur = self.latest.get(pid)
-        if cur and cur.get("name") == name:
-            return cur.get("payload") or None
-        return None
+        return (self.latest.get(pid) or {}).get(name, {}).get("payload") or None

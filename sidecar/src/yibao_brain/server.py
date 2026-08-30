@@ -50,6 +50,7 @@ from .memory import FakeMemory, LazyMem0Memory
 from .proactive import ProactiveDispatcher
 from .plugins import LlmChat, get_plugin_events, get_plugin_summaries
 from .surface import RESERVED_EVENTS, SurfaceBridge
+from .surface_tools import make_surface_tools
 from .runtime import RuntimeCtx
 from .runtime import helpers
 from .runtime.mobile import MobileDomain
@@ -608,6 +609,10 @@ async def serve_async(
         feed=feed,
     )
     agent.invoker.emit_event = _emit_event  # 真实技能（watch_command）后台通知走同一条 gated 通道
+    # 表面层 tool（design §3）：与插件 tool 平级、always_visible（不参与 use_plugin 折叠）。
+    # 不变量在 tool 侧把守：surface.open 只收 inline/peek；editor.* 写类发射即回执。
+    for _st in make_surface_tools(surface_bridge):
+        agent.skills.register(_st, plugin=_st.id.split(".", 1)[0], always_visible=True)
     # watch_command 跨重启恢复：任务落 jobs.db；上代进程的 running 孤儿重跑或标失败，全部 Feed 记账
     jobs_store = JobsStore(os.path.join(os.path.dirname(db_path), "jobs.db"))
     _recover_background_jobs(feed, getattr(agent.skills, "background_jobs", None),

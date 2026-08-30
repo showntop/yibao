@@ -22,6 +22,14 @@ export type BrainEventKind =
   /** 表面层命令（design §3）：tool→前端器单向发射，payload 带 panel/command/params(sid) */
   | "surface_command";
 
+/** 对象模型锚点（design §3）：文档内区间的可寻址表达。offset 为器内正文字符偏移，
+ * quote 是原文引文——器按它校验漂移、漂移后按引文回找。 */
+export interface DocAnchor {
+  start: number;
+  end: number;
+  quote: string;
+}
+
 export interface BrainAction {
   id?: string;
   tool_id?: string;

@@ -13,6 +13,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { onBrainEvent, panelAction, sendPanelEvent, sendSurfaceResult, type BrainEvent } from "../../lib/brain";
+import { noteSelection, registerRevealHost, unregisterRevealHost } from "../../lib/surface/selection-store.ts";
 import { resolveWebviewSource } from "../../lib/webview-source";
 
 const props = defineProps<{
@@ -100,6 +101,8 @@ function onMessage(ev: MessageEvent) {
     if (d.event === "surface_result" && typeof payload.sid === "string") {
       sendSurfaceResult(payload.sid, payload.ok !== false, payload.result as Record<string, unknown> | undefined, payload.error as string | undefined);
     } else {
+      // 器的选区上行进共享态（边说边指/批注回指的数据源，design §4）
+      if (d.event.endsWith(".selection_changed")) noteSelection(props.panel, payload);
       sendPanelEvent(props.panel, d.event, payload);
     }
     return;
@@ -218,6 +221,8 @@ let unlisten: (() => void) | null = null;
 onMounted(async () => {
   window.addEventListener("message", onMessage);
   unlisten = await onBrainEvent(onEvent);
+  // 器回指注册（design §4 批注点击 → 器滚动选中）：本面板在场时才能收到 surface-command
+  registerRevealHost(props.panel, (msg) => postToIframe(msg as Parameters<typeof postToIframe>[0]));
   // 主题变更监听：data-theme 属性（显式三态切换）+ 系统媒体查询（system 档随 OS 翻转）
   themeObserver = new MutationObserver(postTheme);
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
@@ -226,6 +231,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener("message", onMessage);
   unlisten?.();
+  unregisterRevealHost(props.panel);
   themeObserver?.disconnect();
   themeMedia?.removeEventListener?.("change", postTheme);
   for (const bid of [...pending.keys()]) settle(bid, undefined, new Error("面板已关闭"));

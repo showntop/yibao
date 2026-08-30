@@ -20,6 +20,7 @@ import HomeWidget from "../HomeWidget.vue";
 import SessionList from "./SessionList.vue";
 import HorizonBar from "./HorizonBar.vue";
 import HomeDayTitle from "../HomeDayTitle.vue";
+import type { LiveSelection } from "../../lib/surface/selection-store.ts";
 import HomeFrame from "../HomeFrame.vue";
 import HomeDeskWork from "../HomeDeskWork.vue";
 import HomeHostAsk from "../HomeHostAsk.vue";
@@ -525,7 +526,12 @@ async function submit(text: string, contexts: InputContext[] = []) {
   }
 }
 
-function onHostAsk(text: string) {
+function onHostAsk(text: string, sel: LiveSelection | null) {
+  // 边说边指（design §4）：引文随消息落进对话流（纯文本内嵌，持久且大脑可见）
+  if (sel && sel.quote) {
+    void submit(`${text}\n【指着这一段】${sel.quote}`);
+    return;
+  }
   void submit(text);
 }
 
@@ -742,7 +748,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="chat-page" :class="{ 'lend-ear': props.lendEar, 'at-work': Boolean(props.workstation), 'rail-folded': !leftOpen, 'peek-folded': !peekOpen }">
+  <div class="chat-page" :class="{ 'lend-ear': props.lendEar, 'at-work': Boolean(props.workstation), 'work-focus': Boolean(props.workFocus), 'rail-folded': !leftOpen, 'peek-folded': !peekOpen }">
     <!-- 窑变微光（design §6）：脑活动=窑火，失焦停帧 -->
     <div class="yb-kiln" :class="{ on: kilnOn, paused: kilnPaused }" aria-hidden="true"><div class="yb-kiln-glaze"></div></div>
     <SetupWizard v-if="setupNeeded" :model="setupCfg.model" :base-url="setupCfg.baseUrl" :voice="setupCfg.voice" @saved="onSetupSaved" />
@@ -919,6 +925,18 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+/* focus 阅读室（design §4/§10-P3）：单一器近乎全屏，地平线收成发丝线，只留线本身 */
+.chat-page.work-focus :deep(.horizon) {
+  height: 12px;
+  gap: 0;
+  padding: 0;
+}
+.chat-page.work-focus :deep(.horizon .nodes),
+.chat-page.work-focus :deep(.horizon .echo),
+.chat-page.work-focus :deep(.horizon .entries),
+.chat-page.work-focus :deep(.horizon .ctx) {
+  display: none;
 }
 .input-slot {
   box-sizing: border-box;

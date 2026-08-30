@@ -22,10 +22,13 @@ def test_dispatch_whitelist_is_the_invariant():
     assert bad["ok"] is False and "白名单" in bad["error"]
 
 
-def test_record_and_snapshot_cache_latest_only():
+def test_record_and_snapshot_cache_latest_per_name():
     b = SurfaceBridge()
     b.record("zimeiti", "zimeiti.selection_changed", {"start": 3})
     b.record("zimeiti", "zimeiti.doc_snapshot", {"content": "全文"})
+    # 每面板每类各留最新：doc 与 selection 互不顶掉
     assert b.snapshot("zimeiti", "zimeiti.doc_snapshot") == {"content": "全文"}
-    assert b.snapshot("zimeiti", "zimeiti.selection_changed") is None  # 被更新事件顶掉
+    assert b.snapshot("zimeiti", "zimeiti.selection_changed") == {"start": 3}
+    b.record("zimeiti", "zimeiti.selection_changed", {"start": 9})
+    assert b.snapshot("zimeiti", "zimeiti.selection_changed") == {"start": 9}  # 同类只留最新
     assert b.snapshot("coding", "x") is None  # 别的面板没有
