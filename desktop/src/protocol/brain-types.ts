@@ -18,7 +18,9 @@ export type BrainEventKind =
   | "reminder"
   | "notice"
   | "panel"
-  | "panel_data";
+  | "panel_data"
+  /** 表面层命令（design §3）：tool→前端器单向发射，payload 带 panel/command/params(sid) */
+  | "surface_command";
 
 export interface BrainAction {
   id?: string;

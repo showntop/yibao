@@ -618,6 +618,35 @@ pub fn set_settings(state: tauri::State<Brain>, values: serde_json::Value) -> Re
     brain_cmd_with(&state, "settings_set", serde_json::json!({ "values": values }))
 }
 
+/// 面板事件上行（design §3 事件通道）：iframe 经 yibao.emitEvent 上报（如 zimeiti 选区变化），
+/// sidecar 按 api.toml [[event]] 白名单校验后路由（surface_result 协议保留名除外）。
+#[tauri::command]
+pub fn panel_event(
+    state: tauri::State<Brain>,
+    panel: String,
+    name: String,
+    payload: serde_json::Value,
+) -> Result<(), String> {
+    brain_cmd_with(&state, "panel_event", serde_json::json!({ "panel": panel, "name": name, "payload": payload }))
+}
+
+/// surface 命令回执（design §3 表面层 tool 化）：前端代为执行 editor.* 等命令后，
+/// 把结果按 sid 送回 sidecar 的 SurfaceBridge，tool 调用随之收敛。
+#[tauri::command]
+pub fn surface_result(
+    state: tauri::State<Brain>,
+    sid: String,
+    ok: bool,
+    result: Option<serde_json::Value>,
+    error: Option<String>,
+) -> Result<(), String> {
+    brain_cmd_with(
+        &state,
+        "surface_result",
+        serde_json::json!({ "sid": sid, "ok": ok, "result": result, "error": error }),
+    )
+}
+
 /// 感知日志：分页查询（回 perception，经 brain-perception 广播）。
 #[tauri::command]
 pub fn get_perception(

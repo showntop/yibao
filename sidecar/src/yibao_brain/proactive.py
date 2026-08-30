@@ -52,6 +52,11 @@ class ProactiveDispatcher:
             # 流式面板数据：直送 shell 转发对应 panel，绝不进 feed（否则每条 chunk 一条空 feed 记录）
             self.write_msg({"type": "event", "surface": None, "event": event})
             return
+        if event.get("kind") == "surface_command":
+            # 表面命令（design §3）：tool → 前端器，单向发射（人在器的确认 UI 裁决）。
+            # 直送不落 feed，与 panel_data 同理。
+            self.write_msg({"type": "event", "surface": None, "event": event})
+            return
         if event.get("kind") in ("confirmation_needed", "action_result"):
             # 审批请求/裁决是确认条与收件箱的入出队信号：落 Feed 只剩噪音
             # （coding 每次审批两条且计 unread）；仍照常广播 brain-event。

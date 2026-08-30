@@ -48,7 +48,8 @@ from .llm import FakeProvider, OpenAICompatProvider
 from .loop import AgentLoop, _offload
 from .memory import FakeMemory, LazyMem0Memory
 from .proactive import ProactiveDispatcher
-from .plugins import LlmChat, get_plugin_summaries
+from .plugins import LlmChat, get_plugin_events, get_plugin_summaries
+from .surface import RESERVED_EVENTS, SurfaceBridge
 from .runtime import RuntimeCtx
 from .runtime import helpers
 from .runtime.mobile import MobileDomain
@@ -598,6 +599,9 @@ async def serve_async(
         loop=ai_loop,
     )
     _emit_event = proactive_dispatcher.emit
+    # 表面层桥（design §3）：surface/editor tool 与前端器的通道，不变量在 sidecar
+    surface_bridge = SurfaceBridge()
+    surface_bridge.bind(_emit_event)
     agent = build_loop(
         read_msg, use_real, db_path, provider, skills_factory, confirmer=batch_confirmer,
         emit_event=_emit_event,
@@ -1196,6 +1200,29 @@ async def serve_async(
     async def _h_settings_get(msg: dict) -> None:
         write_msg({"type": "settings", "values": {**settings, "watch.status": watch_service.status()}})
 
+    async def _h_panel_event(msg: dict) -> None:
+        """面板事件上行（design §3 事件通道）：api.toml [[event]] 白名单 + surface 保留名。
+        校验过的入 SurfaceBridge 缓存（选区/文档快照/surface_result）；未声明的拒收只记日志。"""
+        panel = str(msg.get("panel") or "")
+        name = str(msg.get("name") or "")
+        payload = msg.get("payload") if isinstance(msg.get("payload"), dict) else {}
+        pid = panel.split(":")[0]
+        if not panel or not name:
+            return
+        if name not in RESERVED_EVENTS and name not in get_plugin_events(pid):
+            log.warning(f"[surface] 未声明的事件拒收：{panel}#{name}（api.toml [[event]] 白名单外）")
+            return
+        surface_bridge.record(pid, name, payload)
+
+    async def _h_surface_result(msg: dict) -> None:
+        """surface_result 走独立命令（前端 surface_result invoke），协议保留名直达缓存。"""
+        surface_bridge.record("panel", "surface_result", {
+            "sid": str(msg.get("sid") or ""),
+            "ok": bool(msg.get("ok")),
+            "result": msg.get("result"),
+            "error": msg.get("error"),
+        })
+
     async def _h_http_pair_info(msg: dict) -> None:
         # 配对信息（手机设置页扫码/手输 URL 用）：内网 IP + 实际监听口/绑定地址
         write_msg({"type": "http_pair_info", "lan_ip": _lan_ip(),
@@ -1330,6 +1357,8 @@ async def serve_async(
     _handlers["settings_get"] = _h_settings_get
     _handlers["http_pair_info"] = _h_http_pair_info
     _handlers["settings_set"] = _h_settings_set
+    _handlers["panel_event"] = _h_panel_event
+    _handlers["surface_result"] = _h_surface_result
     _handlers["dock_list"] = _h_dock_list
     _handlers["set_dock_pin"] = _h_set_dock_pin
     _handlers["perception_list"] = _h_perception_list
