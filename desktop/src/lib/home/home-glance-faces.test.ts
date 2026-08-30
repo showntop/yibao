@@ -169,14 +169,21 @@ describe("remindCardFaces", () => {
     ]);
   });
 
-  it("appends recurring widget rows with a daily tag and no fake state", () => {
+  it("derives recurring rows' state from their HH:MM and keeps 每天 in the when line", () => {
     const cards = remindCardFaces(
-      [{ text: "喝水", when: "每天 10:20" }],
-      [feed({ id: 1, text: "09:00 开战会", ts: new Date("2026-08-30T09:00:00").getTime() })],
+      [
+        { text: "喝水", when: "每天 10:20" }, // 未来 5 分钟 → 待响
+        { text: "开战会", when: "每天 09:00" }, // 已过 → 已响
+        { text: "没时刻的", when: "工作日" },
+      ],
+      [],
       NOW,
     );
-    expect(cards[1]).toEqual({ text: "喝水", when: "每天", state: "daily" });
-    expect(cards).toHaveLength(2);
+    expect(cards).toEqual([
+      { text: "喝水", when: "每天 10:20", state: "due" },
+      { text: "开战会", when: "每天 09:00", state: "done" },
+      { text: "没时刻的", when: "工作日", state: "daily" },
+    ]);
   });
 
   it("empty everything renders no rows", () => {

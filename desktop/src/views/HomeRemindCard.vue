@@ -44,7 +44,7 @@ const reminderRows = computed(() => {
   return data.rows as Array<{ text?: unknown; when?: unknown }>;
 });
 
-const BADGE: Record<RemindCardItem["state"], string> = { done: "已响", due: "待响", daily: "每天" };
+const BADGE: Partial<Record<RemindCardItem["state"], string>> = { done: "已响", due: "待响" };
 </script>
 
 <template>
@@ -59,9 +59,11 @@ const BADGE: Record<RemindCardItem["state"], string> = { done: "已响", due: "�
         <span class="ring" :class="{ filled: r.state === 'done' }">
           <svg v-if="r.state === 'done'" viewBox="0 0 10 10" class="tick"><path d="M2 5.2 4.2 7.4 8 3" /></svg>
         </span>
-        <span class="text">{{ r.text }}</span>
-        <time v-if="r.state !== 'daily'" class="when">{{ r.when }}</time>
-        <span class="badge" :class="r.state">{{ BADGE[r.state] }}</span>
+        <span class="col">
+          <span class="text">{{ r.text }}</span>
+          <span class="when">{{ r.when }}</span>
+        </span>
+        <span v-if="r.state !== 'daily'" class="badge" :class="r.state">{{ BADGE[r.state] }}</span>
       </div>
     </HomeWidget>
   </aside>
@@ -93,40 +95,50 @@ const BADGE: Record<RemindCardItem["state"], string> = { done: "已响", due: "�
 }
 .row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
-  padding: 5px 0;
+  padding: 6px 0;
   min-width: 0;
 }
 .ring {
   flex: none;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   border: 1.5px solid var(--yb-border-strong);
   display: flex;
   align-items: center;
   justify-content: center;
+  margin-top: 1px;
+}
+.row[data-state="due"] .ring {
+  border-color: var(--yb-c-amber-500);
 }
 .ring.filled {
   border-color: var(--yb-intent-ok);
   background: var(--yb-intent-ok);
 }
 .tick {
-  width: 8px;
-  height: 8px;
+  width: 9px;
+  height: 9px;
   fill: none;
   stroke: #fff;
   stroke-width: 1.6;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.text {
+.col {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.text {
   overflow: hidden;
   color: var(--yb-text);
   font-size: var(--yb-fs-sm);
+  line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -134,7 +146,6 @@ const BADGE: Record<RemindCardItem["state"], string> = { done: "已响", due: "�
   color: var(--yb-text-faint);
 }
 .when {
-  flex: none;
   color: var(--yb-text-faint);
   font-family: var(--yb-mono);
   font-size: 10px;
@@ -142,11 +153,10 @@ const BADGE: Record<RemindCardItem["state"], string> = { done: "已响", due: "�
 }
 .badge {
   flex: none;
+  align-self: center;
   padding: 1px 8px;
   border-radius: var(--yb-radius-pill);
   font-size: 10px;
-  background: var(--yb-btn-neutral);
-  color: var(--yb-text-dim);
 }
 .badge.due {
   background: var(--yb-intent-pending-soft);

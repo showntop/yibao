@@ -242,7 +242,8 @@ function onPanelAvailable(surface: CapabilitySurfaceEvent) {
     peekPanel.value = sessionStore.surface.getPanel();
     return;
   }
-  // stage/focus：进入主屏场景（走既有场景布局）
+  // stage/focus：进入主屏场景（走既有场景布局）；旧 peek 一并收起，别跟工作面叠着
+  closePeek();
   presentation.value = p;
   showSurface();
 }
@@ -266,6 +267,8 @@ function openExplicit(surface: CapabilitySurfaceEvent | null) {
     peekPanel.value = sessionStore.surface.getPanel();
     return;
   }
+  // stage/focus：同 onPanelAvailable——工作面登场前收旧 peek，防同内容双展示
+  closePeek();
   presentation.value = p;
   showSurface();
 }

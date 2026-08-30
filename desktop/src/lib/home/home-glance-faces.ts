@@ -252,10 +252,17 @@ export function remindCardFaces(
   const recurring = (widgetRows ?? [])
     .map((row) => ({ text: String(row.text ?? "").trim(), when: String(row.when ?? "").trim() }))
     .filter((row) => row.text)
-    .map((row) => ({
-      text: row.text,
-      when: row.when.includes("每天") ? "每天" : row.when || "周期",
-      state: "daily" as RemindCardState,
-    }));
+    .map((row) => {
+      // 带时刻的周期提醒同样推导状态（每天 HH:MM vs 现在），没时刻的才不标
+      const match = row.when.match(/(\d{1,2}):(\d{2})/);
+      if (!match) {
+        return { text: row.text, when: row.when || "周期", state: "daily" as RemindCardState };
+      }
+      const due = new Date(now);
+      due.setHours(Number(match[1]), Number(match[2]), 0, 0);
+      const state: RemindCardState = due.getTime() <= now.getTime() ? "done" : "due";
+      const prefix = row.when.includes("每天") ? "每天 " : "";
+      return { text: row.text, when: `${prefix}${match[1].padStart(2, "0")}:${match[2]}`, state };
+    });
   return [...todays, ...recurring];
 }
