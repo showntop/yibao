@@ -17,9 +17,9 @@ describe("dayTitleFace", () => {
     expect(dayTitleFace(new Date("2026-08-29T00:00:00")).main).toBe("8月29日 · 星期六");
   });
 
-  it("counts companion days as full days elapsed since first_seen", () => {
+  it("counts companion days inclusively (day one shows 1)", () => {
     const first = new Date("2026-06-01T10:00:00").getTime();
-    expect(dayTitleFace(new Date("2026-08-30T09:00:00"), first).sub).toBe("已陪伴你 90 天");
+    expect(dayTitleFace(new Date("2026-08-30T09:00:00"), first).sub).toBe("已陪伴你 91 天");
   });
 
   it("anchors the count to midnight so the number does not flicker within a day", () => {
@@ -29,9 +29,9 @@ describe("dayTitleFace", () => {
     expect(early).toBe(late);
   });
 
-  it("hides the sub on day one and when first_seen is unknown", () => {
+  it("keeps the sub only when first_seen is known", () => {
     const now = new Date("2026-08-30T09:00:00");
-    expect(dayTitleFace(now, new Date("2026-08-30T08:00:00").getTime()).sub).toBeNull();
+    expect(dayTitleFace(now, new Date("2026-08-30T08:00:00").getTime()).sub).toBe("已陪伴你 1 天");
     expect(dayTitleFace(now).sub).toBeNull();
   });
 });

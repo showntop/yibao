@@ -7,6 +7,10 @@ describe("docWordsOf", () => {
     expect(docWordsOf("你好世界")).toBe(4);
   });
 
+  it("no relevant chars is zero", () => {
+    expect(docWordsOf("...")).toBe(0);
+  });
+
   it("counts latin words as one each, mixed with CJK", () => {
     expect(docWordsOf("# 标题\n\nHello world 世界")).toBe(6); // 标题(2)+hello+world+世界(2)
   });

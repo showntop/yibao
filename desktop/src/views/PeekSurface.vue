@@ -113,7 +113,7 @@ onBeforeUnmount(() => {
 .peek-surface {
   position: fixed;
   right: 22px;
-  bottom: 22px;
+  bottom: 58px; /* 36px 地平线 + 22px 边距：不压仪器条 */
   z-index: var(--yb-z-peek);
   width: min(460px, calc(100vw - 44px));
   height: min(420px, calc(100vh - 44px));

@@ -23,7 +23,7 @@ import HomeDayTitle from "../HomeDayTitle.vue";
 import Avatar from "../../components/pet/Avatar.vue";
 import HomeShelfStats from "../HomeShelfStats.vue";
 import type { LiveSelection } from "../../lib/surface/selection-store.ts";
-import { docInfo } from "../../lib/surface/selection-store.ts";
+import { docInfo, postToPanel } from "../../lib/surface/selection-store.ts";
 import HomeFrame from "../HomeFrame.vue";
 import HomeDeskWork from "../HomeDeskWork.vue";
 import HomeHostAsk from "../HomeHostAsk.vue";
@@ -329,6 +329,15 @@ const workFocusDoc = computed(() => {
   if (!d || d.panel !== props.workstation.panel) return null;
   return { title: d.title, words: d.words };
 });
+
+// focus 态联动器的阅读稿（wb-prototype focus.png）：进专注=serif 通读，退出=回编辑
+watch(
+  () => [props.workFocus, props.workstation?.panel] as const,
+  ([focused, panel]) => {
+    if (!panel) return;
+    postToPanel(panel, { type: "reading-mode", on: focused });
+  },
+);
 
 // ---- 思考状态文案：typing 时轮换"在干嘛"（需在 showTyping 定义后，避免 TDZ）----
 const THINK_NOTES = ["正在整理思路…", "正在翻阅记忆…", "正在连接工具…", "马上就好…"];

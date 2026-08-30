@@ -30,9 +30,14 @@ export function unregisterRevealHost(panel: string): void {
 
 /** 把锚点指给器看（批注气泡点击 → 器滚动选中）。器不在场时静默失败。 */
 export function revealAnchor(panel: string, anchor: DocAnchor, sid = `ui_${Date.now() % 2 ** 31}`): boolean {
+  return postToPanel(panel, { type: "surface-command", command: "editor.reveal_anchor", params: { ...anchor, sid } });
+}
+
+/** 向器的宿主转发任意消息（reading-mode 联动等）。器不在场时返回 false。 */
+export function postToPanel(panel: string, msg: Record<string, unknown>): boolean {
   const post = revealHosts.get(panel);
   if (!post) return false;
-  post({ type: "surface-command", command: "editor.reveal_anchor", params: { ...anchor, sid } });
+  post(msg);
   return true;
 }
 

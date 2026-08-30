@@ -513,6 +513,7 @@
       (row.platform ? "；目标平台：" + row.platform : "");
     topicPlatform = String(row.platform || "");
     $("title").textContent = String(row.title || "写作编辑器");
+    reportSnapshot(); // 空稿也上报：focus 文档行/surface.read 有内容可显
     loadArticle(sameTopic ? "译宝更新到" : undefined);
   });
   }
@@ -981,15 +982,17 @@
   function renderRead() {
     $("read-body").innerHTML = md($("editor").value, false);
   }
-  $("read-toggle").addEventListener("click", function () {
-    reading = !reading;
+  function setReading(on) {
+    if (reading === on) return;
+    reading = on;
     $("read-view").hidden = !reading;
     $("editor").hidden = reading;
     $("preview-wrap").hidden = reading;
     $("read-toggle").textContent = reading ? "编辑" : "阅读";
     if (reading) { renderRead(); $("read-view").scrollTop = 0; setStatus("阅读态：通读全文，「编辑」返回"); }
     else setStatus("回到编辑");
-  });
+  }
+  $("read-toggle").addEventListener("click", function () { setReading(!reading); });
   $("editor").addEventListener("input", function () {
     if (!reading) return;
     if (readTimer) clearTimeout(readTimer);
@@ -1031,7 +1034,9 @@
 
   if (window.yibao && window.yibao.onMessage) {
     window.yibao.onMessage(function (m) {
-      if (!m || m.type !== "surface-command") return;
+      if (!m) return;
+      if (m.type === "reading-mode") { setReading(!!m.on); return; } // focus 态联动（宿主专注=阅读稿）
+      if (m.type !== "surface-command") return;
       var cmd = m.command, p = m.params || {};
       if (cmd === "editor.set_selection" || cmd === "editor.reveal_anchor") {
         var r = resolveAnchor(p.start, p.end, p.quote);
