@@ -47,7 +47,7 @@ onUnmounted(() => {
 .day-title {
   margin: 0;
   font-family: var(--yb-font-serif);
-  font-size: var(--yb-display-2);
+  font-size: var(--yb-display-1); /* 空间题字·大档：原型日题 ≈48px，题在空间里 */
   font-weight: var(--yb-fw-normal);
   line-height: 1.25;
   color: var(--yb-text-strong);

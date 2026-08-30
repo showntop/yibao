@@ -73,6 +73,7 @@ const echo = computed(() => horizonEcho({ state: props.state, proc: props.proc }
     </div>
     <div class="echo">
       <template v-if="echo">echo: <em :class="`tone-${echo.tone}`">{{ echo.text }}</em></template>
+      <template v-else>echo: <span class="idle">待命中</span></template>
     </div>
     <div class="entries">
       <button v-if="props.shelf" class="entry" title="器物架" @click="emit('entry', 'shelf')">器物</button>
@@ -102,17 +103,28 @@ const echo = computed(() => horizonEcho({ state: props.state, proc: props.proc }
 }
 .nodes {
   display: flex;
-  align-items: center;
-  gap: 26px;
+  align-items: flex-start;
+  gap: 18px;
   min-width: 0;
   overflow: hidden;
 }
 .node {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 3px;
   flex: none;
+}
+/* 节点连线（wb-prototype）：点与点之间一条细线，时间线是"线"不是散点 */
+.node:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: calc(100% + 2px);
+  width: 14px;
+  height: 1px;
+  background: var(--yb-line);
 }
 .node i {
   width: 6px;
@@ -158,6 +170,9 @@ const echo = computed(() => horizonEcho({ state: props.state, proc: props.proc }
 }
 .echo .tone-warn {
   color: var(--yb-c-amber-500); /* 待你定/异常 = 琥珀；红只留给不可逆外发（design §7） */
+}
+.echo .idle {
+  color: var(--yb-text-faint);
 }
 .entries {
   margin-left: auto;
