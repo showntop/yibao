@@ -290,8 +290,7 @@ export const HOME_PRESETS = {
       sessions: "spine",
       today: "panel",
       remind: "card",
-      materials: "stat",
-      flashes: "stat",
+      stats: "pair",
     },
     absent: ["now", "mind", "identity", "line", "need", "tasks", "glimpse", "catch", "scratch", "when", "spark", "sessions", "bench", "jot"],
     grid: {
@@ -307,7 +306,7 @@ export const HOME_PRESETS = {
       stacks: {
         chat: ["dayTitle", "chat"],
         axis: ["today"],
-        shelf: ["remind", "materials", "flashes"],
+        shelf: ["remind", "stats"],
         compose: ["composer"],
       },
       grow: ["chat"],
