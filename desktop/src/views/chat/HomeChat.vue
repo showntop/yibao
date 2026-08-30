@@ -20,6 +20,7 @@ import HomeWidget from "../HomeWidget.vue";
 import SessionList from "./SessionList.vue";
 import HorizonBar from "./HorizonBar.vue";
 import HomeDayTitle from "../HomeDayTitle.vue";
+import Avatar from "../../components/pet/Avatar.vue";
 import type { LiveSelection } from "../../lib/surface/selection-store.ts";
 import HomeFrame from "../HomeFrame.vue";
 import HomeDeskWork from "../HomeDeskWork.vue";
@@ -866,7 +867,13 @@ onUnmounted(() => {
               <YbIcon :name="c.icon" :size="11" />{{ c.label }}
             </button>
           </div>
-          <InputBar :busy="busy" :listening="state === 'listen'" :draft="draftRef" @submit="submit" @mic="onMic" @interrupt="onInterrupt" @slash-local="onSlashLocal" @slash-plugin="onSlashPlugin" />
+          <div class="creek-row">
+            <!-- 团子进大窗（wb-prototype home.png）：坐在溪口左侧，脑活动=窑火同源状态 -->
+            <div class="pet-seat" :title="`译宝 · ${state}`">
+              <Avatar :state="state" :size="64" />
+            </div>
+            <InputBar :busy="busy" :listening="state === 'listen'" :draft="draftRef" @submit="submit" @mic="onMic" @interrupt="onInterrupt" @slash-local="onSlashLocal" @slash-plugin="onSlashPlugin" />
+          </div>
         </div>
       </template>
     </HomeFrame>
@@ -956,6 +963,27 @@ onUnmounted(() => {
   flex-direction: column;
   justify-content: flex-end;
   padding: 0;
+}
+/* 溪口一行：团子坐左，输入框占余（wb-prototype home.png） */
+.creek-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  min-height: 0;
+}
+.creek-row .pet-seat {
+  flex: none;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 2px;
+  /* 桌面接触投影：团子是坐在桌上的，不是浮在窗里 */
+  filter: drop-shadow(0 5px 8px rgba(var(--yb-c-slate-rgb), 0.22));
+}
+.creek-row :deep(.input-bar-wrap),
+.creek-row > :last-child {
+  flex: 1;
+  min-width: 0;
 }
 .skill-row {
   display: flex;
