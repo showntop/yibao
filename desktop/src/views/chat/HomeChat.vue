@@ -938,6 +938,16 @@ onUnmounted(() => {
 .chat-page.work-focus :deep(.horizon .ctx) {
   display: none;
 }
+/* focus 收器物区（验收发现#1）：含 axis/shelf 区的摊法下收区并让工作面吃满。
+   按区名键控（area-* 是布局数据，非 preset 名），不含这些区的摊法天然无作用 */
+.chat-page.work-focus :deep(.area-axis),
+.chat-page.work-focus :deep(.area-shelf) {
+  display: none;
+}
+.chat-page.work-focus :deep(.stage:has(.area-axis)) {
+  grid-template-columns: minmax(0, 1fr) !important;
+  grid-template-areas: "chat" "compose" !important;
+}
 .input-slot {
   box-sizing: border-box;
   height: 100%;

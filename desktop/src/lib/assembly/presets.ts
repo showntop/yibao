@@ -300,7 +300,7 @@ export const HOME_PRESETS = {
       gap: 16,
       rowGap: 12,
       ground: "desk",
-      fold: ["spine"],
+      fold: ["spine", "axis"], // 细脊+今日轴都可折（验收发现#2：地平线今日/会话入口各管一列）
       // 区宽呼吸，行长固定：对话保底 420px（design §8），46:27:24 分配富余
       columns: `${SPINE_W} minmax(420px, 46fr) minmax(0, 27fr) minmax(0, 24fr)`,
       rows: "minmax(0,1fr) minmax(min-content, auto)",
@@ -331,7 +331,7 @@ export const HOME_PRESETS = {
         gap: 14,
         rowGap: 12,
         ground: "desk",
-        fold: ["spine"],
+        fold: ["spine", "axis"],
         columns: `${SPINE_W} minmax(420px, 58fr) minmax(0, 42fr)`,
         rows: "minmax(0,1fr) minmax(min-content, auto)",
         areas: `"spine chat axis" ". compose ."`,
@@ -360,7 +360,7 @@ export const HOME_PRESETS = {
         gap: 12,
         rowGap: 12,
         ground: "desk",
-        fold: ["spine"],
+        fold: ["spine", "axis"],
         columns: `${SPINE_W} minmax(420px, 70fr) minmax(200px, 30fr)`,
         rows: "minmax(0,1fr) minmax(min-content, auto)",
         areas: `"spine chat axis" ". compose ."`,

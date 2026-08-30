@@ -60,8 +60,9 @@ class SurfaceReadTool(Tool):
     id = "surface.read"
     label = "读表面状态"
     description = (
-        "不截图读到器里此刻的内容：文档快照（打开/保存时全量）与用户当前选区"
-        "（start/end/quote 锚点）。器没开或还没上报过时返回空——先 surface.open 或让用户打开。"
+        "不截图读到器里此刻的内容：文档快照（打开/保存/输入停顿时全量，含未保存的"
+        "手打内容）与用户当前选区（start/end/quote 锚点）。"
+        "器没开或还没上报过时返回空——先 surface.open 或让用户打开。"
     )
     default_risk = RiskLevel.L0_READONLY
 

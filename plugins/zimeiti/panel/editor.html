@@ -940,6 +940,13 @@
   $("editor").addEventListener("mouseup", queueSelection);
   $("editor").addEventListener("focus", queueSelection);
 
+  // -- 文档快照随输入节流更新（验收发现#3：手动打字 agent 也要读得到"此刻"） --
+  var snapTimer = null;
+  $("editor").addEventListener("input", function () {
+    if (snapTimer) clearTimeout(snapTimer);
+    snapTimer = setTimeout(reportSnapshot, 1500);
+  });
+
   // -- 文档快照上行（打开/保存时全量；surface.read 的数据源） --
   function reportSnapshot() {
     emit("zimeiti.doc_snapshot", { id: topicId, content: $("editor").value });
