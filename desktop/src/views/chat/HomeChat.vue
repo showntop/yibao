@@ -282,11 +282,20 @@ const horizonProc = computed(() => {
   return list.length ? list[list.length - 1] : null;
 });
 
-/** 地平线入口：接现有可见性开关；器物入口只在降级档（架已收起）亮出。 */
+/** 地平线入口：会话按装配分流——有会话列的摊法折栏，没有的（溪场）peek 出列表（§5 列表不常驻）。 */
+const sessionsPlaced = computed(() => assembly.value.items.some((item) => item.id === "sessions"));
+const sessionsPeek = ref(false);
 function onHorizonEntry(id: "sessions" | "today" | "shelf") {
-  if (id === "sessions") leftOpen.value = !leftOpen.value;
-  else if (id === "shelf") shelfPeek.value = !shelfPeek.value;
+  if (id === "sessions") {
+    if (sessionsPlaced.value) leftOpen.value = !leftOpen.value;
+    else sessionsPeek.value = !sessionsPeek.value;
+  } else if (id === "shelf") shelfPeek.value = !shelfPeek.value;
   else peekOpen.value = !peekOpen.value;
+}
+
+function onPeekSessionSelect(id: string) {
+  onSessionSelect(id);
+  sessionsPeek.value = false; // 用完收回
 }
 
 // ---- 降级多断点（design §8）：与 HomeFrame 同款窗口 MQ，驱动地平线器物入口 + 器物 peek ----
@@ -893,6 +902,10 @@ onUnmounted(() => {
       <HomeBench />
       <HomeJot />
     </div>
+    <!-- 会话 peek：溪场不常驻会话列（§5），从地平线"会话"入口浮出档案列 -->
+    <div v-if="sessionsPeek && !sessionsPlaced" class="sessions-peek yb-craze">
+      <SessionList ref="sessionRef" @select="onPeekSessionSelect" @active="onSessionActive" @new-chat="onSessionNew" />
+    </div>
   </div>
 </template>
 
@@ -932,6 +945,23 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+/* 会话 peek（§5 列表不常驻）：左缘档案列，配今日轴对称。自带瓷皮（HomeWidget
+   的 placed 判定在溪场下恒 false，不能用） */
+.sessions-peek {
+  position: absolute;
+  z-index: 8;
+  left: 16px;
+  bottom: 52px;
+  width: min(260px, calc(100% - 32px));
+  max-height: min(70vh, 560px);
+  min-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--yb-widget-border);
+  border-radius: var(--yb-widget-radius);
+  background: var(--yb-widget-glaze), var(--yb-widget-bg);
+  box-shadow: var(--yb-shadow-3);
+  padding: 6px;
 }
 /* focus 阅读室（design §4/§10-P3）：单一器近乎全屏，地平线收成发丝线，只留线本身 */
 .chat-page.work-focus :deep(.horizon) {
