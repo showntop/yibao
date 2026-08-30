@@ -978,6 +978,13 @@ onUnmounted(() => {
 .chat-page :deep(.area-shelf) {
   padding-right: 12px;
 }
+/* 卡内容留白（原型卡内距 ≈16）：按 presentation 面键控（face-* 是装配类，非 preset 名），
+   只抬溪场三张卡；老四套的 tile 面维持原 12px */
+.chat-page :deep(.host.face-card .yb-widget-body),
+.chat-page :deep(.host.face-pair .yb-widget-body),
+.chat-page :deep(.host.face-panel .yb-widget-body) {
+  padding-inline: 16px;
+}
 /* focus 阅读室（design §4/§10-P3）：单一器近乎全屏，地平线收成发丝线，只留线本身 */
 .chat-page.work-focus :deep(.horizon) {
   height: 12px;

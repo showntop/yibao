@@ -71,10 +71,12 @@ const BADGE: Partial<Record<RemindCardItem["state"], string>> = { done: "已响"
 
 <style scoped>
 .remind-card { display: contents; }
-/* 宽度硬约束：任何内容都不把卡片撑出列宽（真机长文本溢出防护） */
+/* 卡内距：.yb-widget 本体无 padding，内容自带（12px 是老四套 tile 的默认观感，
+   提醒卡按原型放宽到 16） */
 .remind-card :deep(.yb-widget) {
   min-width: 0;
   max-width: 100%;
+  padding: 10px 16px 12px;
 }
 .head {
   display: flex;
