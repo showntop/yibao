@@ -7,6 +7,7 @@ export type PartSource = "core" | "plugin";
 
 export const HOME_PARTS = [
   { id: "chat", kind: "work" as const, presentations: ["thread", "paper", "talk"] as const },
+  { id: "dayTitle", kind: "glance" as const, presentations: ["title"] as const },
   { id: "composer", kind: "input" as const, presentations: ["bar"] as const },
   { id: "sessions", kind: "nav" as const, presentations: ["list", "spine", "cards"] as const },
   { id: "now", kind: "context" as const, presentations: ["inspector", "note"] as const },

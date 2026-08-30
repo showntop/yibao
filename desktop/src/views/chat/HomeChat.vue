@@ -18,6 +18,9 @@ import HomePluginGlance from "../plugins/HomePluginGlance.vue";
 import HomeContextPanel from "../HomeContextPanel.vue";
 import HomeWidget from "../HomeWidget.vue";
 import SessionList from "./SessionList.vue";
+import HorizonBar from "./HorizonBar.vue";
+import HomeDayTitle from "../HomeDayTitle.vue";
+import type { LiveSelection } from "../../lib/surface/selection-store.ts";
 import HomeFrame from "../HomeFrame.vue";
 import HomeDeskWork from "../HomeDeskWork.vue";
 import HomeHostAsk from "../HomeHostAsk.vue";
@@ -277,16 +280,35 @@ const sessionProcesses = computed(() => bubbles.value
     done: bubble.proc.done,
     ok: bubble.proc.done ? procOk(bubble.proc) : undefined,
   })));
-watch(
-  [currentSessionTitle, state, sessionProcesses],
-  ([title, nextState, processes]) => emit("sessionStatus", {
-    title,
-    state: nextState,
-    running: processes.filter((item) => !item.done).length,
-    done: processes.filter((item) => item.done && item.ok !== false).length,
-  }),
-  { immediate: true, deep: true },
-);
+// 地平线 echo 位：最近一条过程行（HorizonBar 自己管 feed 刻度）
+const horizonProc = computed(() => {
+  const list = sessionProcesses.value;
+  return list.length ? list[list.length - 1] : null;
+});
+
+/** 地平线入口：接现有可见性开关；器物入口只在降级档（架已收起）亮出。 */
+function onHorizonEntry(id: "sessions" | "today" | "shelf") {
+  if (id === "sessions") leftOpen.value = !leftOpen.value;
+  else if (id === "shelf") shelfPeek.value = !shelfPeek.value;
+  else peekOpen.value = !peekOpen.value;
+}
+
+// ---- 降级多断点（design §8）：与 HomeFrame 同款窗口 MQ，驱动地平线器物入口 + 器物 peek ----
+const shelfPeek = ref(false);
+const shelfCollapsed = ref(false);
+let mqNarrow: MediaQueryList | null = null;
+let mqSlim: MediaQueryList | null = null;
+function onShelfMqChange() {
+  shelfCollapsed.value = Boolean(mqNarrow?.matches || mqSlim?.matches);
+  if (!shelfCollapsed.value) shelfPeek.value = false;
+}
+
+// ---- 窑变微光（design §6）：think/work 才点火，失焦停帧，循环只存在于脑活动态 ----
+const kilnOn = computed(() => state.value === "think" || state.value === "work");
+const kilnPaused = ref(false);
+function onKilnFocusChange() {
+  kilnPaused.value = !document.hasFocus();
+}
 
 // ---- 思考状态文案：typing 时轮换"在干嘛"（需在 showTyping 定义后，避免 TDZ）----
 const THINK_NOTES = ["正在整理思路…", "正在翻阅记忆…", "正在连接工具…", "马上就好…"];
@@ -509,7 +531,12 @@ async function submit(text: string, contexts: InputContext[] = []) {
   }
 }
 
-function onHostAsk(text: string) {
+function onHostAsk(text: string, sel: LiveSelection | null) {
+  // 边说边指（design §4）：引文随消息落进对话流（纯文本内嵌，持久且大脑可见）
+  if (sel && sel.quote) {
+    void submit(`${text}\n【指着这一段】${sel.quote}`);
+    return;
+  }
   void submit(text);
 }
 
@@ -716,8 +743,21 @@ onMounted(async () => {
     ];
   }
   emit("state", state.value); // 父级侧边栏团子拿初始态
+  // 窑变硬约束：窗口失焦即停（design §6）
+  window.addEventListener("blur", onKilnFocusChange);
+  window.addEventListener("focus", onKilnFocusChange);
+  // 降级断点：与 HomeFrame 同款阈值（design §8）
+  mqNarrow = window.matchMedia("(max-width: 1280px)");
+  mqSlim = window.matchMedia("(max-width: 1100px)");
+  mqNarrow.addEventListener("change", onShelfMqChange);
+  mqSlim.addEventListener("change", onShelfMqChange);
+  onShelfMqChange();
 });
 onUnmounted(() => {
+  mqNarrow?.removeEventListener("change", onShelfMqChange);
+  mqSlim?.removeEventListener("change", onShelfMqChange);
+  window.removeEventListener("blur", onKilnFocusChange);
+  window.removeEventListener("focus", onKilnFocusChange);
   window.removeEventListener("keydown", onHostAskEsc, true);
   unlisten?.();
   unlistenStatus?.();
@@ -735,7 +775,9 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="chat-page" :class="{ 'lend-ear': props.lendEar, 'at-work': Boolean(props.workstation), 'rail-folded': !leftOpen, 'peek-folded': !peekOpen }">
+  <div class="chat-page" :class="{ 'lend-ear': props.lendEar, 'at-work': Boolean(props.workstation), 'work-focus': Boolean(props.workFocus), 'rail-folded': !leftOpen, 'peek-folded': !peekOpen }">
+    <!-- 窑变微光（design §6）：脑活动=窑火，失焦停帧 -->
+    <div class="yb-kiln" :class="{ on: kilnOn, paused: kilnPaused }" aria-hidden="true"><div class="yb-kiln-glaze"></div></div>
     <SetupWizard v-if="setupNeeded" :model="setupCfg.model" :base-url="setupCfg.baseUrl" :voice="setupCfg.voice" @saved="onSetupSaved" />
 
     <HomeFrame
@@ -813,6 +855,9 @@ onUnmounted(() => {
         </HomeWidget>
       </template>
 
+      <template #dayTitle>
+        <HomeDayTitle />
+      </template>
       <template #chat>
         <HomeDeskWork
           v-if="props.workstation"
@@ -859,7 +904,7 @@ onUnmounted(() => {
         </div>
       </template>
     </HomeFrame>
-    <div v-if="hostAskOpen && props.workstation" class="host-ask-slot">
+    <div v-if="hostAskOpen && props.workstation" class="host-ask-slot yb-craze">
       <HomeHostAsk
         :busy="busy"
         :listening="state === 'listen'"
@@ -867,6 +912,13 @@ onUnmounted(() => {
         @submit="onHostAsk"
         @close="hostAskOpen = false"
       />
+    </div>
+    <HorizonBar :state="state" :proc="horizonProc" :shelf="shelfCollapsed" @entry="onHorizonEntry" />
+    <!-- 器物 peek：架收进降级档后，从地平线"器物"入口浮出（design §8），出生走开片 -->
+    <div v-if="shelfPeek && shelfCollapsed" class="shelf-peek yb-craze">
+      <HomeLife only="spark" @chat="onInfoChat" />
+      <HomeBench />
+      <HomeJot />
     </div>
   </div>
 </template>
@@ -893,8 +945,42 @@ onUnmounted(() => {
   position: absolute;
   z-index: 8;
   left: 16px;
-  bottom: 16px;
+  bottom: 52px; /* 36px 地平线 + 16px 边距，栖息在文档缘不被仪器条盖住 */
   max-width: calc(100% - 32px);
+}
+.shelf-peek {
+  position: absolute;
+  z-index: 8;
+  right: 16px;
+  bottom: 52px;
+  width: min(340px, calc(100% - 32px));
+  max-height: min(60vh, 480px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* focus 阅读室（design §4/§10-P3）：单一器近乎全屏，地平线收成发丝线，只留线本身 */
+.chat-page.work-focus :deep(.horizon) {
+  height: 12px;
+  gap: 0;
+  padding: 0;
+}
+.chat-page.work-focus :deep(.horizon .nodes),
+.chat-page.work-focus :deep(.horizon .echo),
+.chat-page.work-focus :deep(.horizon .entries),
+.chat-page.work-focus :deep(.horizon .ctx) {
+  display: none;
+}
+/* focus 收器物区（验收发现#1）：含 axis/shelf 区的摊法下收区并让工作面吃满。
+   按区名键控（area-* 是布局数据，非 preset 名），不含这些区的摊法天然无作用 */
+.chat-page.work-focus :deep(.area-axis),
+.chat-page.work-focus :deep(.area-shelf) {
+  display: none;
+}
+.chat-page.work-focus :deep(.stage:has(.area-axis)) {
+  grid-template-columns: minmax(0, 1fr) !important;
+  grid-template-areas: "chat" "compose" !important;
 }
 .input-slot {
   box-sizing: border-box;

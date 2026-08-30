@@ -228,7 +228,7 @@ function dispatchUserAction(a: MsgAction, i: number) {
   -webkit-mask-image: linear-gradient(180deg, transparent, #000 14px);
 }
 .bubbles :deep(.bubble) {
-  max-width: min(88%, 720px);
+  max-width: min(88%, var(--yb-bubble-max, 720px)); /* 装配按摊法下传行长上限（field=420） */
 }
 .bubbles :deep(.bubble.icon-clock) {
   align-self: center;

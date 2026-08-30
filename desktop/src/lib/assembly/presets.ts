@@ -32,6 +32,8 @@ export type GridTemplate = {
   grow?: readonly string[];
   pinEnd?: readonly string[];
   pluginArea?: string;
+  /** 区内气泡行长上限（经 --yb-bubble-max 下传，缺省 720px）——"区宽呼吸，行长固定"（design §8） */
+  bubbleMax?: string;
 };
 
 export type Snapshot = {
@@ -48,7 +50,7 @@ export type HomePreset = {
   label: string;
   hint: string;
   place: PlaceKind;
-} & Snapshot & { compact?: Snapshot };
+} & Snapshot & { compact?: Snapshot; slim?: Snapshot; narrow?: Snapshot };
 
 export type PlaceItem = {
   id: PartId;
@@ -275,6 +277,119 @@ export const HOME_PRESETS = {
       },
     },
   },
+  field: {
+    // 第五套并行 preset「溪场」（design/2026-08-28 §4/§8/§10-P1）：家态——对话是溪，
+    // 今日在轴，器物在架，历史收成细脊；地平线在壳级（HomeChat 的 HorizonBar），不进装配。
+    id: "field",
+    label: "溪场",
+    hint: "对话是溪，今日在轴，器物在架。",
+    place: "grid" as const,
+    presentations: {
+      chat: "thread",
+      dayTitle: "title",
+      composer: "bar",
+      sessions: "spine",
+      when: "tile",
+      remind: "tile",
+      spark: "tile",
+      bench: "tile",
+      jot: "tile",
+    },
+    absent: ["now", "mind", "identity", "line", "today", "need", "tasks", "glimpse", "catch", "scratch"],
+    grid: {
+      pad: 20,
+      gap: 16,
+      rowGap: 12,
+      ground: "desk",
+      fold: ["spine", "axis"], // 细脊+今日轴都可折（验收发现#2：地平线今日/会话入口各管一列）
+      // 区宽呼吸，行长固定：对话保底 420px（design §8），46:27:24 分配富余
+      columns: `${SPINE_W} minmax(420px, 46fr) minmax(0, 27fr) minmax(0, 24fr)`,
+      rows: "minmax(0,1fr) minmax(min-content, auto)",
+      areas: `"spine chat axis shelf" ". compose . ."`,
+      stacks: {
+        spine: ["sessions"],
+        chat: ["dayTitle", "chat"],
+        axis: ["when", "remind"],
+        shelf: ["spark", "bench", "jot"],
+        compose: ["composer"],
+      },
+      grow: ["chat"],
+      bubbleMax: "420px", // 行长 25–35 字（design §8）
+    },
+    // <1280 器物架收成地平线"器物"入口的 peek（design §8）：三区，轴保周条+提醒
+    narrow: {
+      presentations: {
+        chat: "thread",
+        dayTitle: "title",
+        composer: "bar",
+        sessions: "spine",
+        when: "tile",
+        remind: "tile",
+      },
+      absent: ["now", "mind", "identity", "line", "today", "need", "tasks", "glimpse", "catch", "scratch", "spark", "bench", "jot"],
+      grid: {
+        pad: 16,
+        gap: 14,
+        rowGap: 12,
+        ground: "desk",
+        fold: ["spine", "axis"],
+        columns: `${SPINE_W} minmax(420px, 58fr) minmax(0, 42fr)`,
+        rows: "minmax(0,1fr) minmax(min-content, auto)",
+        areas: `"spine chat axis" ". compose ."`,
+        stacks: {
+          spine: ["sessions"],
+          chat: ["dayTitle", "chat"],
+          axis: ["when", "remind"],
+          compose: ["composer"],
+        },
+        grow: ["chat"],
+        bubbleMax: "420px",
+      },
+    },
+    // <1100 今日收成周视图条（axis 只留 when）：对话进一步吃宽
+    slim: {
+      presentations: {
+        chat: "thread",
+        dayTitle: "title",
+        composer: "bar",
+        sessions: "spine",
+        when: "tile",
+      },
+      absent: ["now", "mind", "identity", "line", "today", "need", "tasks", "glimpse", "catch", "scratch", "spark", "bench", "jot", "remind"],
+      grid: {
+        pad: 14,
+        gap: 12,
+        rowGap: 12,
+        ground: "desk",
+        fold: ["spine", "axis"],
+        columns: `${SPINE_W} minmax(420px, 70fr) minmax(200px, 30fr)`,
+        rows: "minmax(0,1fr) minmax(min-content, auto)",
+        areas: `"spine chat axis" ". compose ."`,
+        stacks: {
+          spine: ["sessions"],
+          chat: ["dayTitle", "chat"],
+          axis: ["when"],
+          compose: ["composer"],
+        },
+        grow: ["chat"],
+        bubbleMax: "420px",
+      },
+    },
+    compact: {
+      presentations: { chat: "thread", composer: "bar" },
+      grid: {
+        pad: 12,
+        gap: 12,
+        ground: "desk",
+        columns: "minmax(0,1fr)",
+        rows: "minmax(0,1fr) minmax(min-content, auto)",
+        areas: `"chat" "compose"`,
+        stacks: { chat: ["dayTitle", "chat"], compose: ["composer"] },
+        grow: ["chat"],
+        bubbleMax: "420px",
+      },
+    },
+  },
 } as const satisfies Record<string, HomePreset>;
 
 export type HomePresetId = keyof typeof HOME_PRESETS;
@@ -284,6 +399,7 @@ export const HOME_PRESET_LIST: HomePreset[] = [
   HOME_PRESETS.desk,
   HOME_PRESETS.salon,
   HOME_PRESETS.canvas,
+  HOME_PRESETS.field,
 ];
 
 export function isHomePresetId(v: string | null): v is HomePresetId {

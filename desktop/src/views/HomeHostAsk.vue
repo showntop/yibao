@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import InputBar from "../components/common/InputBar.vue";
+import { SELECTION_FRESH_MS, liveSelection, revealAnchor, type LiveSelection } from "../lib/surface/selection-store.ts";
 
 defineProps<{
   busy?: boolean;
@@ -8,14 +9,21 @@ defineProps<{
   notes?: { role: string; text: string }[];
 }>();
 const emit = defineEmits<{
-  submit: [text: string];
+  submit: [text: string, selection: LiveSelection | null];
   close: [];
 }>();
 
 const draft = ref<string | undefined>(undefined);
 
+/** 边说边指（design §4）：器选区还新鲜时，溪口亮出所指引文——锚定批注的入口形态 */
+const pointing = computed<LiveSelection | null>(() => {
+  const s = liveSelection.value;
+  if (!s || !s.quote || Date.now() - s.ts > SELECTION_FRESH_MS) return null;
+  return s;
+});
+
 function onSubmit(text: string) {
-  emit("submit", text);
+  emit("submit", text, pointing.value);
   draft.value = "";
 }
 </script>
@@ -27,6 +35,9 @@ function onSubmit(text: string) {
       <span class="hint">这块活仍在工位上</span>
       <button class="x" type="button" title="收起" @click="$emit('close')">×</button>
     </header>
+    <button v-if="pointing" class="pointing" type="button" title="点击在编辑器里定位这段" @click="revealAnchor(pointing.panel, pointing)">
+      <span class="p-label">指着</span><span class="p-quote">{{ pointing.quote }}</span>
+    </button>
     <div v-if="notes?.length" class="notes">
       <p v-for="(n, i) in notes" :key="i" class="note" :data-role="n.role">{{ n.text }}</p>
     </div>
@@ -101,4 +112,33 @@ function onSubmit(text: string) {
 }
 .note[data-role="user"] { color: var(--yb-paper-ink-dim); }
 .bar-input { width: 100%; }
+/* 边说边指：所指引文条（tether 视觉 = 左侧细线，点它回器定位） */
+.pointing {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0;
+  padding: 5px 8px;
+  border: 0;
+  border-left: 2px solid var(--yb-accent);
+  border-radius: 0 8px 8px 0;
+  background: var(--yb-accent-soft);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.p-label {
+  flex: none;
+  color: var(--yb-accent-deep, var(--yb-accent));
+  font-size: 11px;
+  font-weight: var(--yb-fw-medium);
+}
+.p-quote {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--yb-text-dim);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 </style>

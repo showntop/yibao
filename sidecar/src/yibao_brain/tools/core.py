@@ -312,6 +312,8 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._skills: dict[str, Tool] = {}
         self._by_plugin: dict[str, list[str]] = {}  # 插件 id → 其 tool id 列表（路由暴露用）
+        # 表面层伪插件（design §3）：always_visible 注册的来源组，不参与 use_plugin 折叠
+        self._always_visible: set[str] = set()
         # 停用的来源组 id（插件 id / mcp.<server> / skill:<name>）：不暴露、不可展开
         self.disabled_sources: set[str] = set()
 
@@ -340,13 +342,16 @@ class ToolRegistry:
                 return sid
         return name
 
-    def register(self, skill: Tool, plugin: str | None = None, replace: bool = False) -> None:
+    def register(self, skill: Tool, plugin: str | None = None, replace: bool = False,
+                 always_visible: bool = False) -> None:
         """注册技能。命名空间强制（v2 方案 §3.2）：
 
         - plugin 不为 None：skill.id 必须是「<plugin>.<x>」，否则 ValueError；
         - plugin 为 None（底座注册）：id 不允许带点号（防伪装成插件 id）；
         - 默认禁止覆盖已存在的 id；replace=True（能力热重载场景，见 capability_refresh）
           允许同 id 覆盖：_by_plugin 位置跟随 plugin 归属。
+        - always_visible=True（表面层伪插件，design §3）：不参与 use_plugin 折叠，
+          LLM 始终可见——表面层是一等操作面，不属于任何单个插件。
         """
         if plugin is not None:
             prefix = f"{plugin}."
@@ -368,6 +373,8 @@ class ToolRegistry:
         self._skills[skill.id] = skill
         if plugin is not None:
             self._by_plugin.setdefault(plugin, []).append(skill.id)
+            if always_visible:
+                self._always_visible.add(plugin)
 
     def unregister(self, tool_id: str) -> None:
         """注销技能（能力热重载）：从注册表与插件归属表移除；不存在则静默。"""
@@ -406,7 +413,7 @@ class ToolRegistry:
                 pid = s.id.rsplit(".", 1)[0]
                 if pid in self.disabled_sources:  # 停用来源：不暴露
                     continue
-                if pid not in active_plugins:
+                if pid not in active_plugins and pid not in self._always_visible:
                     continue
             schema = s.openai_schema()
             safe = self.llm_name(s.id)  # LLM 只见安全名；回调经 resolve_llm_name 映射回

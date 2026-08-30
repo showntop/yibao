@@ -444,6 +444,18 @@ export function memEdit(id: string, text: string, timeoutMs = 5000): Promise<Mem
   );
 }
 
+// ---- 表面层事件通道（design §3）----
+
+/** 面板事件上行：iframe emitEvent 的事件转送大脑（sidecar 按 [[event]] 白名单校验）。 */
+export function sendPanelEvent(panel: string, name: string, payload: Record<string, unknown>): void {
+  invoke("panel_event", { panel, name, payload }).catch(() => { /* 大脑不在：事件通道静默降级 */ });
+}
+
+/** surface 命令回执上行：前端器执行/裁决完 surface_command 后按 sid 送回结果。 */
+export function sendSurfaceResult(sid: string, ok: boolean, result?: Record<string, unknown>, error?: string): void {
+  invoke("surface_result", { sid, ok, result: result ?? null, error: error ?? null }).catch(() => { /* 静默 */ });
+}
+
 // ---- 用户设置 ----
 
 /** 一次性取设置：发查询等 brain-settings；超时返回 null（调用方用默认）。 */

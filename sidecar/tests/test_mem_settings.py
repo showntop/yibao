@@ -153,6 +153,7 @@ def test_settings_set_persists_and_ignores_unknown(tmp_path, monkeypatch):
     assert rs[1]["values"]["perception.model_access"] is True
     assert "hack" not in rs[0]["values"]                # 未知键不落
     disk = json.load(open(settings_path(), encoding="utf-8"))
+    assert disk.pop("shell.first_seen", "")  # 首启时刻：ensure_first_seen 启动即落盘
     assert disk == {
         "proactive_voice": False,
         "proactive.level": "full",
@@ -237,6 +238,7 @@ def test_settings_bad_file_falls_back_to_defaults(tmp_path, monkeypatch):
         "proactive_voice": True,
         "proactive.level": "full",
         "perception.master": False,
+        "shell.first_seen": "",
         "perception.app": False,
         "perception.activity": False,
         "perception.model_access": False,

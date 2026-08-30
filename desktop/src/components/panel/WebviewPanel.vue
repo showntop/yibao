@@ -12,7 +12,8 @@
 // module 面板(R4):props.url 非空时走 iframe src(yibao-plugin://),桥由协议层注入;srcdoc 路径行为不变。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { onBrainEvent, panelAction, type BrainEvent } from "../../lib/brain";
+import { onBrainEvent, panelAction, sendPanelEvent, sendSurfaceResult, type BrainEvent } from "../../lib/brain";
+import { noteSelection, registerRevealHost, unregisterRevealHost } from "../../lib/surface/selection-store.ts";
 import { resolveWebviewSource } from "../../lib/webview-source";
 
 const props = defineProps<{
@@ -92,9 +93,18 @@ function onMessage(ev: MessageEvent) {
   const iframe = iframeEl.value;
   if (!iframe || ev.source !== iframe.contentWindow) return; // 只收本 iframe 的消息
   const d = ev.data as { src?: string; id?: unknown; event?: unknown; payload?: unknown; method?: unknown; params?: unknown };
-  // 事件分流（无 id 无回包）：yibao.emitEvent 上报，转成组件 panel-event 抛给父组件
+  // 事件分流（无 id 无回包）：yibao.emitEvent 上报，转成组件 panel-event 抛给父组件；
+  // 同时上行大脑（design §3 事件通道）——surface_result 走保留名直达，其余按面板归属转发
   if (d && d.src === "yibao-webview" && typeof d.event === "string") {
     emit("panel-event", d.event, d.payload);
+    const payload = (d.payload as Record<string, unknown>) ?? {};
+    if (d.event === "surface_result" && typeof payload.sid === "string") {
+      sendSurfaceResult(payload.sid, payload.ok !== false, payload.result as Record<string, unknown> | undefined, payload.error as string | undefined);
+    } else {
+      // 器的选区上行进共享态（边说边指/批注回指的数据源，design §4）
+      if (d.event.endsWith(".selection_changed")) noteSelection(props.panel, payload);
+      sendPanelEvent(props.panel, d.event, payload);
+    }
     return;
   }
   if (!d || d.src !== "yibao-webview" || typeof d.id !== "number") return;
@@ -130,6 +140,15 @@ function onMessage(ev: MessageEvent) {
 }
 
 function onEvent(e: BrainEvent) {
+  // 表面命令下行（design §3）：只认发给本面板的，转成 iframe 内 surface-command 消息。
+  // 命令在器内执行，写类必须走器自己的确认 UI；回执经 emitEvent surface_result 上行。
+  if (e.kind === "surface_command") {
+    const p = (e as unknown as { panel?: string; command?: string; params?: Record<string, unknown> });
+    if (p.panel === props.panel && p.command) {
+      postToIframe({ type: "surface-command", command: p.command, params: p.params ?? {} });
+    }
+    return;
+  }
   if (e.kind === "action_result") {
     const aid = e.action?.id ?? "";
     for (const [bid, p] of [...pending]) {
@@ -202,6 +221,8 @@ let unlisten: (() => void) | null = null;
 onMounted(async () => {
   window.addEventListener("message", onMessage);
   unlisten = await onBrainEvent(onEvent);
+  // 器回指注册（design §4 批注点击 → 器滚动选中）：本面板在场时才能收到 surface-command
+  registerRevealHost(props.panel, (msg) => postToIframe(msg as Parameters<typeof postToIframe>[0]));
   // 主题变更监听：data-theme 属性（显式三态切换）+ 系统媒体查询（system 档随 OS 翻转）
   themeObserver = new MutationObserver(postTheme);
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
@@ -210,6 +231,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener("message", onMessage);
   unlisten?.();
+  unregisterRevealHost(props.panel);
   themeObserver?.disconnect();
   themeMedia?.removeEventListener?.("change", postTheme);
   for (const bid of [...pending.keys()]) settle(bid, undefined, new Error("面板已关闭"));

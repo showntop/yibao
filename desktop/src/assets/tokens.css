@@ -80,7 +80,20 @@
 
   /* 字体族：全局统一引用，组件不再各自声明 */
   --yb-font: -apple-system, "PingFang SC", sans-serif;
+  --yb-font-serif: "Songti SC", "Noto Serif SC", "STSong", serif; /* 日题/文档正文（design §8） */
   --yb-mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* 空间题字：display 两档封顶，仅日题/任务题名等"题在空间里"的大字，正文禁用（design §8） */
+  --yb-display-1: 48px;
+  --yb-display-2: 32px;
+
+  /* 天光（design §6）：石面桌底色温随真实时间变化。wash 用半透明叠色——
+     不改写各皮肤的 --yb-desk，一套 wash 通吃所有主题；时段由 lib/home/sky.ts 给，
+     HomeWindow 挂 [data-sky]，过渡 30s 只在换段时发生 */
+  --yb-sky-wash-dawn: rgba(222, 234, 246, 0.4); /* 晨：冷白 */
+  --yb-sky-wash-day: rgba(255, 246, 228, 0.16); /* 午：暖 */
+  --yb-sky-wash-dusk: rgba(246, 218, 178, 0.2); /* 暮：金 */
+  --yb-sky-wash-night: rgba(186, 204, 228, 0.26); /* 夜：深冷 */
 
   /* 圆角梯度（xs 仅用于气泡尾巴角、行内代码等微小件） */
   --yb-radius-xs: 4px;
@@ -1012,4 +1025,88 @@ pre {
 
 :where(button, [role="button"]):active:not(:disabled) {
   box-shadow: var(--yb-press);
+}
+
+/* ---- 天光绑定（design §6）：HomeWindow 挂 [data-sky]，叠 wash 于石面桌，不碰各皮肤底色 ---- */
+.home-shell[data-sky="dawn"] {
+  --yb-sky-wash: var(--yb-sky-wash-dawn);
+}
+.home-shell[data-sky="day"] {
+  --yb-sky-wash: var(--yb-sky-wash-day);
+}
+.home-shell[data-sky="dusk"] {
+  --yb-sky-wash: var(--yb-sky-wash-dusk);
+}
+.home-shell[data-sky="night"] {
+  --yb-sky-wash: var(--yb-sky-wash-night);
+}
+.home-shell[data-sky] .frame[data-ground="desk"]:not(.thinking) {
+  /* 换段一次性 30s 过渡：动效携带信息（天色变了），非循环 */
+  background:
+    linear-gradient(var(--yb-sky-wash), var(--yb-sky-wash)),
+    var(--yb-desk);
+  transition: background 30s linear;
+}
+
+/* ---- 窑变微光（design §6）：仅 think/work 态激活，瓷面晕开极慢釉变 ≤8%，状态结束沉淀回平静。
+   循环动效硬约束：只在脑活动态转；失焦由 HomeChat 的 .paused 停帧；reduced-motion 全局规则兜底 ---- */
+@keyframes yb-kiln-shift {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: translate3d(2.5%, -1.5%, 0) scale(1.05);
+  }
+}
+.yb-kiln {
+  position: absolute;
+  inset: -10%;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0;
+  background:
+    radial-gradient(42% 34% at 46% 42%, rgba(var(--yb-c-sky-rgb), 0.08), transparent 70%),
+    radial-gradient(30% 26% at 58% 52%, rgba(var(--yb-c-sky-rgb), 0.05), transparent 72%);
+  transition: opacity 2.8s ease; /* 沉淀回平静要慢，窑火熄了釉色不是瞬间没的 */
+}
+.yb-kiln.on {
+  opacity: 1;
+}
+.yb-kiln.on .yb-kiln-glaze {
+  animation: yb-kiln-shift 14s ease-in-out infinite;
+}
+.yb-kiln.paused .yb-kiln-glaze {
+  animation-play-state: paused;
+}
+.yb-kiln-glaze {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(36% 30% at 40% 38%, rgba(255, 255, 255, 0.05), transparent 70%),
+    radial-gradient(24% 20% at 62% 56%, rgba(var(--yb-c-sky-rgb), 0.04), transparent 75%);
+}
+
+/* ---- 开片过场（design §6）：表面诞生不滑入，从桌面开片结晶——裂缝闪过、瓷片浮现。一次性 ---- */
+@keyframes yb-craze-in {
+  0% {
+    opacity: 0;
+    clip-path: inset(46% 0 46% 0 round 2px);
+    filter: brightness(1.14);
+    transform: scale(0.985);
+  }
+  34% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+    clip-path: inset(0 0 0 0 round 0);
+    filter: brightness(1);
+    transform: scale(1);
+  }
+}
+.yb-craze {
+  animation: yb-craze-in 0.52s var(--yb-ease-out) 1 both;
 }

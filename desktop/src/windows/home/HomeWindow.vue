@@ -20,6 +20,7 @@ import SettingsView from "../../views/settings/SettingsView.vue";
 import appLogo from "../../assets/logo.png";
 import { onPendingConfirms, closeHomeWindow } from "../../lib/brain";
 import { decideSurface, type Attention, type Presentation } from "../../lib/surface/surface-policy";
+import { skyPhase } from "../../lib/home/sky.ts";
 import type { AvatarState } from "../../protocol/brain-types";
 import { whenFace } from "../../lib/home/home-when-face.ts";
 
@@ -28,6 +29,15 @@ type Tab = "home" | "plugins" | "data" | "settings";
 
 const tab = ref<Tab>("home");
 const qaMode = import.meta.env.DEV && new URLSearchParams(window.location.search).get("qa") === "capability";
+// 天光：石面桌底色温随真实时间换段（lib/home/sky.ts），60s 轮询只为跨段换字
+const sky = ref(skyPhase(new Date()));
+let skyTimer: ReturnType<typeof setInterval> | null = null;
+onMounted(() => {
+  skyTimer = setInterval(() => (sky.value = skyPhase(new Date())), 60_000);
+});
+onUnmounted(() => {
+  if (skyTimer) clearInterval(skyTimer);
+});
 const chatState = ref<AvatarState>("idle");
 const panelState = ref<AvatarState>("idle");
 const chatStatus = ref({ title: "新对话", state: "idle" as AvatarState, running: 0, done: 0 });
@@ -438,7 +448,7 @@ function close() {
 </script>
 
 <template>
-  <div class="home-shell">
+  <div class="home-shell" :data-sky="sky">
     <!-- 顶栏：红绿灯安全区 + 品牌 + 居中 tabs + 右侧命令/设置/收起 -->
     <header class="topbar">
       <div class="titlebar-safe" data-tauri-drag-region></div>

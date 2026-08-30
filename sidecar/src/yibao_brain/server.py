@@ -37,7 +37,7 @@ from .background import (
     _reminder_loop,
     _watch_tick,
 )
-from .config import a11y_enabled, computer_use_enabled, computer_use_max_steps, history_path, http_port, llm_api_key, load_settings, perception_db_path, save_settings, screenshot_dir, stt_model_dir, tts_voice, vad_max_seconds, vad_min_silence, vad_model_path, vision_api_key, voice_enabled
+from .config import a11y_enabled, computer_use_enabled, computer_use_max_steps, ensure_first_seen, history_path, http_port, llm_api_key, load_settings, perception_db_path, save_settings, screenshot_dir, stt_model_dir, tts_voice, vad_max_seconds, vad_min_silence, vad_model_path, vision_api_key, voice_enabled
 from .feed import FeedStore
 from .distiller import Distiller, DistillerStore
 from .jobstore import JobsStore
@@ -48,7 +48,9 @@ from .llm import FakeProvider, OpenAICompatProvider
 from .loop import AgentLoop, _offload
 from .memory import FakeMemory, LazyMem0Memory
 from .proactive import ProactiveDispatcher
-from .plugins import LlmChat, get_plugin_summaries
+from .plugins import LlmChat, get_plugin_events, get_plugin_summaries
+from .surface import RESERVED_EVENTS, SurfaceBridge
+from .surface_tools import make_surface_tools
 from .runtime import RuntimeCtx
 from .runtime import helpers
 from .runtime.mobile import MobileDomain
@@ -521,6 +523,7 @@ async def serve_async(
 
     # 用户设置是运行期共享状态，主动分发器、感知与 watch service 都读同一字典。
     settings = load_settings()
+    ensure_first_seen(settings)  # 首启时刻落盘（幂等），日题"已陪伴你 N 天"读它
 
     async def batch_confirmer(actions) -> dict[str, tuple[bool, bool]]:
         """批量确认（Task 3 多槽）：list[Action] -> {action.id: (approved, remember)}。
@@ -597,12 +600,19 @@ async def serve_async(
         loop=ai_loop,
     )
     _emit_event = proactive_dispatcher.emit
+    # 表面层桥（design §3）：surface/editor tool 与前端器的通道，不变量在 sidecar
+    surface_bridge = SurfaceBridge()
+    surface_bridge.bind(_emit_event)
     agent = build_loop(
         read_msg, use_real, db_path, provider, skills_factory, confirmer=batch_confirmer,
         emit_event=_emit_event,
         feed=feed,
     )
     agent.invoker.emit_event = _emit_event  # 真实技能（watch_command）后台通知走同一条 gated 通道
+    # 表面层 tool（design §3）：与插件 tool 平级、always_visible（不参与 use_plugin 折叠）。
+    # 不变量在 tool 侧把守：surface.open 只收 inline/peek；editor.* 写类发射即回执。
+    for _st in make_surface_tools(surface_bridge):
+        agent.skills.register(_st, plugin=_st.id.split(".", 1)[0], always_visible=True)
     # watch_command 跨重启恢复：任务落 jobs.db；上代进程的 running 孤儿重跑或标失败，全部 Feed 记账
     jobs_store = JobsStore(os.path.join(os.path.dirname(db_path), "jobs.db"))
     _recover_background_jobs(feed, getattr(agent.skills, "background_jobs", None),
@@ -1195,6 +1205,29 @@ async def serve_async(
     async def _h_settings_get(msg: dict) -> None:
         write_msg({"type": "settings", "values": {**settings, "watch.status": watch_service.status()}})
 
+    async def _h_panel_event(msg: dict) -> None:
+        """面板事件上行（design §3 事件通道）：api.toml [[event]] 白名单 + surface 保留名。
+        校验过的入 SurfaceBridge 缓存（选区/文档快照/surface_result）；未声明的拒收只记日志。"""
+        panel = str(msg.get("panel") or "")
+        name = str(msg.get("name") or "")
+        payload = msg.get("payload") if isinstance(msg.get("payload"), dict) else {}
+        pid = panel.split(":")[0]
+        if not panel or not name:
+            return
+        if name not in RESERVED_EVENTS and name not in get_plugin_events(pid):
+            log.warning(f"[surface] 未声明的事件拒收：{panel}#{name}（api.toml [[event]] 白名单外）")
+            return
+        surface_bridge.record(pid, name, payload)
+
+    async def _h_surface_result(msg: dict) -> None:
+        """surface_result 走独立命令（前端 surface_result invoke），协议保留名直达缓存。"""
+        surface_bridge.record("panel", "surface_result", {
+            "sid": str(msg.get("sid") or ""),
+            "ok": bool(msg.get("ok")),
+            "result": msg.get("result"),
+            "error": msg.get("error"),
+        })
+
     async def _h_http_pair_info(msg: dict) -> None:
         # 配对信息（手机设置页扫码/手输 URL 用）：内网 IP + 实际监听口/绑定地址
         write_msg({"type": "http_pair_info", "lan_ip": _lan_ip(),
@@ -1329,6 +1362,8 @@ async def serve_async(
     _handlers["settings_get"] = _h_settings_get
     _handlers["http_pair_info"] = _h_http_pair_info
     _handlers["settings_set"] = _h_settings_set
+    _handlers["panel_event"] = _h_panel_event
+    _handlers["surface_result"] = _h_surface_result
     _handlers["dock_list"] = _h_dock_list
     _handlers["set_dock_pin"] = _h_set_dock_pin
     _handlers["perception_list"] = _h_perception_list

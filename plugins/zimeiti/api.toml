@@ -168,3 +168,11 @@ intent = "读选题「{title}」的最新稿（id={id}）：用 zimeiti.article_
 name = "review"
 handler = "zimeiti.stat_list"
 intent = "复盘选题「{title}」（id={id}）：先用 zimeiti.stat_list 查它的发布数据（where 按 topic_id 过滤；没有数据就先问我数据或跳过），再用 zimeiti.article_read 读最新稿（id={id}），然后给我一份复盘：这篇内容好在哪、差在哪、数据反映了什么、下次同方向选题怎么改进。复盘要点存进长期记忆。"
+
+# ---- 事件白名单（design §3 事件通道）：面板经 yibao.emitEvent 上报，未声明的拒收 ----
+[[event]]
+name = "zimeiti.selection_changed"   # 编辑器选区变化（对象模型锚点上行，节流）
+[[event]]
+name = "zimeiti.doc_snapshot"        # 文档快照（打开/保存时全量，surface.read 数据源）
+[[event]]
+name = "zimeiti.editor_applied"      # 人在 diff 卡点了接受/拒绝（surface 命令裁决结果）

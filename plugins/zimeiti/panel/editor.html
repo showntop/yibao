@@ -460,6 +460,7 @@
       dirty = false; // 程序性加载不算用户修改（input 事件把 dirty 置了 true，这里归位）
       var note = r && r.note;
       setStatus((prefix || "已加载") + " v" + version + (note ? " · " + note : ""));
+      reportSnapshot();
     }).catch(function (e) {
       var msg = e && e.message ? e.message : String(e || "");
       version = 0;
@@ -508,6 +509,7 @@
       $("note").value = "";
       dirty = false; // 已落盘，不再是未保存修改
       setStatus("已保存为 v" + version);
+      reportSnapshot();
     }).catch(function (e) {
       setStatus("保存失败：" + emsg(e), true);
     }).finally(function () {
@@ -905,6 +907,122 @@
     }).catch(function (e) {
       setStatus("标记失败：" + emsg(e), true);
     }).finally(function () { $("pub-done").disabled = false; });
+  });
+
+  // ============================================================
+  // ---- 对象模型与表面命令（design §3/§4-P2）：锚点上行 + 器内裁决 ----
+  // 锚点 = {start, end, quote}：textarea 字符偏移 + 原文引文（宿主校验漂移用）。
+  // surface-command 下行命令在器内执行；写类（replace/insert）走既有 diff 卡，
+  // 人点接受才落稿——agent 提案与人点接受收敛到同一入口（design §2）。
+  // ============================================================
+
+  function emit(name, payload) {
+    if (window.yibao && window.yibao.emitEvent) window.yibao.emitEvent(name, payload);
+  }
+
+  // -- 选区上行（节流 400ms；空选区也报，锚点归零） --
+  var selTimer = null;
+  function reportSelection() {
+    var el = $("editor");
+    var s = el.selectionStart, e = el.selectionEnd;
+    emit("zimeiti.selection_changed", {
+      id: topicId,
+      start: s, end: e,
+      quote: s === e ? "" : el.value.slice(s, e).slice(0, 120),
+    });
+  }
+  function queueSelection() {
+    if (selTimer) clearTimeout(selTimer);
+    selTimer = setTimeout(reportSelection, 400);
+  }
+  $("editor").addEventListener("select", queueSelection);
+  $("editor").addEventListener("keyup", queueSelection);
+  $("editor").addEventListener("mouseup", queueSelection);
+  $("editor").addEventListener("focus", queueSelection);
+
+  // -- 文档快照随输入节流更新（验收发现#3：手动打字 agent 也要读得到"此刻"） --
+  var snapTimer = null;
+  $("editor").addEventListener("input", function () {
+    if (snapTimer) clearTimeout(snapTimer);
+    snapTimer = setTimeout(reportSnapshot, 1500);
+  });
+
+  // -- 文档快照上行（打开/保存时全量；surface.read 的数据源） --
+  function reportSnapshot() {
+    emit("zimeiti.doc_snapshot", { id: topicId, content: $("editor").value });
+  }
+
+  // -- 锚点解析：偏移漂移时按引文回找（文章被编辑过仍能落到正确段落） --
+  function resolveAnchor(start, end, quote) {
+    var text = $("editor").value;
+    if (typeof start === "number" && start >= 0 && start <= end && end <= text.length) {
+      var at = text.slice(start, end);
+      if (!quote || at.indexOf(quote.slice(0, 40)) >= 0) return { start: start, end: end };
+    }
+    if (quote) {
+      var i = text.indexOf(quote.slice(0, 40));
+      if (i >= 0) return { start: i, end: i + quote.length };
+    }
+    return null;
+  }
+
+  function reveal(start, end, label) {
+    var el = $("editor");
+    el.focus();
+    el.setSelectionRange(start, end);
+    // 滚到选区：行数比例近似（textarea 无行高 API，够用）
+    var ratio = el.value.slice(0, start).split("\n").length / Math.max(1, el.value.split("\n").length);
+    el.scrollTop = Math.max(0, el.scrollHeight * ratio - el.clientHeight / 2);
+    setStatus(label || "已定位到段落");
+  }
+
+  // -- surface 命令入口（WebviewPanel 下行 {type:"surface-command"}） --
+  var surfaceSid = null; // 进行中的 surface 提案，裁决后按 sid 回执
+
+  function surfaceReply(ok, extra) {
+    if (!surfaceSid) return;
+    emit("surface_result", Object.assign({ sid: surfaceSid, ok: ok }, extra || {}));
+    if (ok !== "pending") surfaceSid = null;
+  }
+
+  if (window.yibao && window.yibao.onMessage) {
+    window.yibao.onMessage(function (m) {
+      if (!m || m.type !== "surface-command") return;
+      var cmd = m.command, p = m.params || {};
+      if (cmd === "editor.set_selection" || cmd === "editor.reveal_anchor") {
+        var r = resolveAnchor(p.start, p.end, p.quote);
+        if (!r) { emit("surface_result", { sid: p.sid, ok: false, error: "锚点失效（原文已改动且引文找不到）" }); setStatus("锚点失效：原文已改动", true); return; }
+        reveal(r.start, r.end, cmd === "editor.reveal_anchor" ? "译宝指到这一段" : undefined);
+        emit("surface_result", { sid: p.sid, ok: true, result: { start: r.start, end: r.end } });
+      } else if (cmd === "editor.replace_range" || cmd === "editor.insert_text") {
+        var a = cmd === "editor.insert_text"
+          ? resolveAnchor(p.at, p.at, "")
+          : resolveAnchor(p.start, p.end, p.quote);
+        if (!a) { emit("surface_result", { sid: p.sid, ok: false, error: "锚点失效" }); setStatus("译宝的修改落不了位：原文已改动", true); return; }
+        var oldText = $("editor").value.slice(a.start, a.end);
+        surfaceSid = p.sid;
+        pendingReplacement = String(p.text ?? "");
+        showDiff("译宝的修改提案", oldText, pendingReplacement, "接受修改", function (text) {
+          applyWithUndo(function (el) {
+            el.setRangeText(text, a.start, a.end, "end");
+          }, "已应用译宝的修改 · 满意的话「保存为新版本」");
+          surfaceReply(true, { result: { start: a.start, end: a.end } });
+        });
+        setStatus("译宝提议修改这一段，确认后应用");
+      } else {
+        emit("surface_result", { sid: p.sid, ok: false, error: "未知命令：" + cmd });
+      }
+    });
+  }
+
+  // surface 提案被拒绝（取消按钮 / Escape 关 diff 卡）→ 按 sid 回执否决
+  $("diff-cancel").addEventListener("click", function () {
+    if (surfaceSid) surfaceReply(false, { error: "用户拒绝了修改提案" });
+  });
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape" && surfaceSid && !$("diff-overlay").hidden) {
+      surfaceReply(false, { error: "用户拒绝了修改提案" });
+    }
   });
 })();
 </script>

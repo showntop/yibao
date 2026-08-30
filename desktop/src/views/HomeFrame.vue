@@ -27,6 +27,9 @@ defineProps<{ thinking?: boolean; state?: AvatarState }>();
 const left = defineModel<boolean>("left", { default: true });
 const peek = defineModel<boolean>("peek", { default: true });
 const compact = ref(false);
+// 降级多断点（design §8）：<1280 器物收、<1100 今日收条、≤960 compact；取最紧命中档
+const narrow = ref(false);
+const slim = ref(false);
 const stageEl = ref<HTMLElement | null>(null);
 const stageSize = ref({ ...DEFAULT_STAGE });
 
@@ -35,10 +38,15 @@ const widgets = useHomeWidgets();
 const { ids: pluginIds } = useLivePluginIds();
 
 onMounted(() => {
-  const mq = window.matchMedia("(max-width: 960px)");
-  const apply = () => { compact.value = mq.matches; };
-  apply();
-  mq.addEventListener("change", apply);
+  const mqs = [
+    { q: window.matchMedia("(max-width: 960px)"), apply: (v: boolean) => (compact.value = v) },
+    { q: window.matchMedia("(max-width: 1100px)"), apply: (v: boolean) => (slim.value = v) },
+    { q: window.matchMedia("(max-width: 1280px)"), apply: (v: boolean) => (narrow.value = v) },
+  ];
+  for (const { q, apply } of mqs) {
+    apply(q.matches);
+    q.addEventListener("change", (e) => apply(e.matches));
+  }
   if (collapsibleOf(presetId.value).includes("left") && window.innerWidth <= 1180) left.value = false;
   const ro = new ResizeObserver((entries) => {
     const box = entries[0]?.contentRect;
@@ -47,7 +55,7 @@ onMounted(() => {
   });
   if (stageEl.value) ro.observe(stageEl.value);
   onUnmounted(() => {
-    mq.removeEventListener("change", apply);
+    for (const { q, apply } of mqs) q.removeEventListener("change", (e) => apply(e.matches));
     ro.disconnect();
   });
 });
@@ -65,6 +73,8 @@ const collapsed = computed(() => {
 const assembly = computed(() =>
   resolveAssembly(presetId.value, widgets.state, {
     compact: compact.value,
+    slim: slim.value,
+    narrow: narrow.value,
     stage: stageSize.value,
     collapsed: collapsed.value,
     pluginIds: pluginIds.value,
@@ -188,7 +198,6 @@ function onMoveStart(item: ResolvedItem, e: PointerEvent) {
     :class="{ thinking, compact }"
     :data-place="assembly.place"
     :data-ground="grid?.ground"
-    :data-preset="presetId"
   >
     <div
       ref="stageEl"

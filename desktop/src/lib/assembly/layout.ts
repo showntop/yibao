@@ -64,6 +64,7 @@ export type ResolvedGrid = {
   areas: string;
   stacks: Record<string, string[]>;
   fold: AssemblyFold[];
+  bubbleMax?: string;
 };
 
 export type Assembly = {
@@ -121,8 +122,12 @@ function defaultPresentation(id: PartId, placed?: string): string {
   return getPartMeta(id)?.presentations[0] ?? "tile";
 }
 
-function snapshotOf(preset: HomePreset, compact: boolean): Snapshot {
+/** 断点快照选择：自最紧档向下找第一个有定义的档，都没有则回 preset 本体。
+ * 降级顺序（design §8）：<1280 narrow（器物收）<1100 slim（今日收条）<960 compact。 */
+function snapshotOf(preset: HomePreset, compact: boolean, slim?: boolean, narrow?: boolean): Snapshot {
   if (compact && preset.compact) return preset.compact;
+  if (slim && preset.slim) return preset.slim;
+  if (narrow && preset.narrow) return preset.narrow;
   return preset;
 }
 
@@ -315,6 +320,7 @@ function resolveGrid(
     areas: tracks ? `"${tracks.map((track) => track.area).join(" ")}"` : (foldedAreas.areas ?? src.areas ?? "."),
     stacks: visibleStacks,
     fold,
+    bubbleMax: src.bubbleMax,
   };
   return { preset: presetId, place: "grid", items, grid };
 }
@@ -329,6 +335,7 @@ export function gridStageStyle(grid: ResolvedGrid): Record<string, string> {
     padding: `${grid.pad}px`,
     justifyContent: grid.justify,
     alignContent: grid.align,
+    ...(grid.bubbleMax ? { "--yb-bubble-max": grid.bubbleMax } : {}),
     minWidth: "0",
     minHeight: "0",
     height: "100%",
@@ -341,6 +348,8 @@ export function resolveAssembly(
   prefs: LayoutPrefs,
   opts?: {
     compact?: boolean;
+    slim?: boolean;
+    narrow?: boolean;
     extra?: readonly PlaceItem[];
     stage?: StageSize;
     collapsed?: readonly string[];
@@ -348,7 +357,7 @@ export function resolveAssembly(
   },
 ): Assembly {
   const preset: HomePreset = HOME_PRESETS[presetId];
-  const snap = snapshotOf(preset, opts?.compact === true);
+  const snap = snapshotOf(preset, opts?.compact === true, opts?.slim === true, opts?.narrow === true);
   const stage = opts?.stage ?? DEFAULT_STAGE;
   const pluginIds = opts?.pluginIds ?? [];
   const hidden = new Set<string>(prefs.hidden ?? []);
