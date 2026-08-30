@@ -250,3 +250,541 @@
     at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
     at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
     at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[   75150ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[   75150ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at onBrainEvent (http://localhost:1420/src/services/brainClient.ts:299:10)
+    at http://localhost:1420/src/lib/home/home-panel-run.ts:12:12
+    at new Promise (<anonymous>)
+    at runPanelAction (http://localhost:1420/src/lib/home/home-panel-run.ts:6:18)
+    at refreshMat (http://localhost:1420/src/views/HomeShelfStats.vue?t=1788090720201:18:28)
+[   87150ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[   99149ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  111150ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  123150ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  135150ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  135151ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at onBrainEvent (http://localhost:1420/src/services/brainClient.ts:299:10)
+    at http://localhost:1420/src/lib/home/home-panel-run.ts:12:12
+    at new Promise (<anonymous>)
+    at runPanelAction (http://localhost:1420/src/lib/home/home-panel-run.ts:6:18)
+    at refreshMat (http://localhost:1420/src/views/HomeShelfStats.vue?t=1788090720201:18:28)
+[  147149ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  159151ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  171151ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  183150ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  195151ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  195152ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at onBrainEvent (http://localhost:1420/src/services/brainClient.ts:299:10)
+    at http://localhost:1420/src/lib/home/home-panel-run.ts:12:12
+    at new Promise (<anonymous>)
+    at runPanelAction (http://localhost:1420/src/lib/home/home-panel-run.ts:6:18)
+    at refreshMat (http://localhost:1420/src/views/HomeShelfStats.vue?t=1788090720201:18:28)
+[  207151ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  219151ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  231152ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  243152ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  255151ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  255153ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at onBrainEvent (http://localhost:1420/src/services/brainClient.ts:299:10)
+    at http://localhost:1420/src/lib/home/home-panel-run.ts:12:12
+    at new Promise (<anonymous>)
+    at runPanelAction (http://localhost:1420/src/lib/home/home-panel-run.ts:6:18)
+    at refreshMat (http://localhost:1420/src/views/HomeShelfStats.vue?t=1788090720201:18:28)
+[  267151ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  279152ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  291152ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  303152ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  315154ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  315157ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at onBrainEvent (http://localhost:1420/src/services/brainClient.ts:299:10)
+    at http://localhost:1420/src/lib/home/home-panel-run.ts:12:12
+    at new Promise (<anonymous>)
+    at runPanelAction (http://localhost:1420/src/lib/home/home-panel-run.ts:6:18)
+    at refreshMat (http://localhost:1420/src/views/HomeShelfStats.vue?t=1788090720201:18:28)
+[  327155ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  339155ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  351154ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  363155ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  375155ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  375156ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at onBrainEvent (http://localhost:1420/src/services/brainClient.ts:299:10)
+    at http://localhost:1420/src/lib/home/home-panel-run.ts:12:12
+    at new Promise (<anonymous>)
+    at runPanelAction (http://localhost:1420/src/lib/home/home-panel-run.ts:6:18)
+    at refreshMat (http://localhost:1420/src/views/HomeShelfStats.vue?t=1788090720201:18:28)
+[  387157ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  399156ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  411156ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  423155ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  435156ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  435157ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at onBrainEvent (http://localhost:1420/src/services/brainClient.ts:299:10)
+    at http://localhost:1420/src/lib/home/home-panel-run.ts:12:12
+    at new Promise (<anonymous>)
+    at runPanelAction (http://localhost:1420/src/lib/home/home-panel-run.ts:6:18)
+    at refreshMat (http://localhost:1420/src/views/HomeShelfStats.vue?t=1788090720201:18:28)
+[  447155ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  457891ms] [WARNING] [Vue warn]: Failed to resolve component: YbIcon
+If this is a native custom element, make sure to exclude it from component resolution via compilerOptions.isCustomElement. 
+  at <HorizonBar state="idle" proc=null shelf=false  ... > 
+  at <HomeChat key=0 draft=undefined workstation=null  ... > 
+  at <BaseTransition appear=false persisted=true mode=undefined  ... > 
+  at <Transition name="view-fade" persisted="" > 
+  at <HomeWindow> @ http://localhost:1420/node_modules/.vite/deps/vue.js?v=318df923:2231
+[  459156ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  460570ms] [WARNING] [Vue warn]: Failed to resolve component: YbIcon
+If this is a native custom element, make sure to exclude it from component resolution via compilerOptions.isCustomElement. 
+  at <HorizonBar state="idle" proc=null shelf=false  ... > 
+  at <HomeChat key=0 draft=undefined workstation=null  ... > 
+  at <BaseTransition appear=false persisted=true mode=undefined  ... > 
+  at <Transition name="view-fade" persisted="" > 
+  at <HomeWindow> @ http://localhost:1420/node_modules/.vite/deps/vue.js?v=318df923:2231
+[  471156ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  483157ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  495157ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  495159ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at onBrainEvent (http://localhost:1420/src/services/brainClient.ts:299:10)
+    at http://localhost:1420/src/lib/home/home-panel-run.ts:12:12
+    at new Promise (<anonymous>)
+    at runPanelAction (http://localhost:1420/src/lib/home/home-panel-run.ts:6:18)
+    at refreshMat (http://localhost:1420/src/views/HomeShelfStats.vue?t=1788090720201:18:28)
+[  507157ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  519158ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  530541ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getFeedOnce (http://localhost:1420/src/services/brainClient.ts:150:10)
+    at http://localhost:1420/src/views/chat/HorizonBar.vue?t=1788093430313:27:28
+    at http://localhost:1420/node_modules/.vite/deps/vue.js?v=318df923:5342:40
+    at callWithErrorHandling (http://localhost:1420/node_modules/.vite/deps/vue.js?v=318df923:2379:19)
+[  531157ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  533543ms] [WARNING] [Vue warn]: Unhandled error during execution of mounted hook 
+  at <HorizonBar state="idle" proc=null shelf=false  ... > 
+  at <HomeChat key=0 draft=undefined workstation=null  ... > 
+  at <BaseTransition appear=false persisted=true mode=undefined  ... > 
+  at <Transition name="view-fade" persisted="" > 
+  at <HomeWindow> @ http://localhost:1420/node_modules/.vite/deps/vue.js?v=318df923:2231
+[  533545ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at onFeed (http://localhost:1420/src/services/brainClient.ts:147:10)
+    at http://localhost:1420/src/views/chat/HorizonBar.vue?t=1788093430313:32:22
+[  543157ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  555157ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  555158ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at onBrainEvent (http://localhost:1420/src/services/brainClient.ts:299:10)
+    at http://localhost:1420/src/lib/home/home-panel-run.ts:12:12
+    at new Promise (<anonymous>)
+    at runPanelAction (http://localhost:1420/src/lib/home/home-panel-run.ts:6:18)
+    at refreshMat (http://localhost:1420/src/views/HomeShelfStats.vue?t=1788090720201:18:28)
+[  567156ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14
+[  579158ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=318df923:22:37)
+    at listen (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:39:14)
+    at once (http://localhost:1420/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=318df923:45:10)
+    at http://localhost:1420/src/services/brainClient.ts:20:10
+    at new Promise (<anonymous>)
+    at onceWithTimeout (http://localhost:1420/src/services/brainClient.ts:19:16)
+    at getWidgetsOnce (http://localhost:1420/src/services/brainClient.ts:198:10)
+    at refresh (http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:51:30)
+    at http://localhost:1420/src/views/HomeFloatNotes.vue?t=1788089530969:59:14

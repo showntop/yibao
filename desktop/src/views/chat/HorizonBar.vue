@@ -2,6 +2,7 @@
      规格：specimen/home-field.html；节点映射与 echo 文案的纯逻辑在 lib/home/horizon.ts。 -->
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
+import YbIcon from "../../components/common/YbIcon.vue";
 import { getFeedOnce, onFeed, type FeedItem, type FeedResponse } from "../../lib/brain";
 import { horizonEcho, horizonNodes } from "../../lib/home/horizon.ts";
 import type { HomeAvatarState } from "../../lib/home/home-chat-session.ts";
@@ -61,7 +62,9 @@ const echo = computed(() => horizonEcho({ state: props.state, proc: props.proc }
 <template>
   <footer class="horizon">
     <!-- 左端=历史：「会话」在最左端，抽屉同侧展开 -->
-    <button class="entry sessions-entry" title="会话列表" @click="emit('entry', 'sessions')">会话</button>
+    <button class="entry sessions-entry" title="会话列表" @click="emit('entry', 'sessions')">
+      <YbIcon name="chat" :size="11" />会话
+    </button>
     <div class="nodes" :class="{ empty: !nodes.length }">
       <div
         v-for="n in nodes"
@@ -78,8 +81,12 @@ const echo = computed(() => horizonEcho({ state: props.state, proc: props.proc }
       <template v-else>echo: <span class="idle">待命中</span></template>
     </div>
     <div class="entries">
-      <button v-if="props.shelf" class="entry" title="器物架" @click="emit('entry', 'shelf')">器物</button>
-      <button class="entry" title="今日一瞥" @click="emit('entry', 'today')">今日</button>
+      <button v-if="props.shelf" class="entry" title="器物架" @click="emit('entry', 'shelf')">
+        <YbIcon name="box" :size="11" />器物
+      </button>
+      <button class="entry" title="今日一瞥" @click="emit('entry', 'today')">
+        <YbIcon name="calendar" :size="11" />今日
+      </button>
     </div>
     <div class="ctx">ctx: home · {{ state }}</div>
   </footer>
@@ -188,6 +195,9 @@ const echo = computed(() => horizonEcho({ state: props.state, proc: props.proc }
   font-weight: var(--yb-fw-medium);
   color: var(--yb-text-dim);
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 .entry:hover {
   color: var(--yb-accent);

@@ -16,7 +16,8 @@ export type IconName =
   | "sliders" | "sun" | "moon"
   | "info"
   | "more" | "grip"
-  | "token" | "coin" | "timer";
+  | "token" | "coin" | "timer"
+  | "calendar" | "box";
 
 withDefaults(
   defineProps<{
@@ -116,6 +117,12 @@ const paths: Record<IconName, string> = {
   // 耗时：圆+底部两点（沙漏抽象，比 clock 更"耗时"少"时刻"）
   timer:
     '<path d="M5 5h14M9 5v3.2L7 17h10l-2-8.8V5"/><line x1="8" y1="20" x2="16" y2="20"/>',
+  // 日历：地平线「今日」入口
+  calendar:
+    '<rect x="4" y="5.5" width="16" height="15" rx="2.2"/><path d="M8.2 3.5v3.4M15.8 3.5v3.4M4 10.2h16"/>',
+  // 箱体：地平线「器物」入口
+  box:
+    '<path d="M12 3.4 20.6 8v8L12 20.6 3.4 16V8L12 3.4Z"/><path d="M3.6 8.2 12 12.8l8.4-4.6M12 12.8v7.6"/>',
 };
 </script>
 
