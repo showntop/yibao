@@ -22,6 +22,7 @@ import HorizonBar from "./HorizonBar.vue";
 import HomeDayTitle from "../HomeDayTitle.vue";
 import Avatar from "../../components/pet/Avatar.vue";
 import HomeShelfStats from "../HomeShelfStats.vue";
+import HomeRemindCard from "../HomeRemindCard.vue";
 import type { LiveSelection } from "../../lib/surface/selection-store.ts";
 import { docInfo, postToPanel } from "../../lib/surface/selection-store.ts";
 import HomeFrame from "../HomeFrame.vue";
@@ -709,7 +710,7 @@ onMounted(async () => {
   }
   if (activeId) {
     currentSessionId.value = activeId;
-    await restoreConversation(activeId);
+    await restoreConversation(activeId).catch(() => {}); // 恢复失败不拖垮挂载尾部（窑变/断点初始化在其后）
   }
   // 技能 chip 动态数据：与左栏技能同源（list_plugins），不另起炉灶
   try { plugins.value = await listPlugins().catch(() => []); } catch { plugins.value = []; }
@@ -928,11 +929,10 @@ onUnmounted(() => {
       />
     </div>
     <HorizonBar :state="state" :proc="horizonProc" :shelf="shelfCollapsed" :doc="workFocusDoc" @entry="onHorizonEntry" />
-    <!-- 器物 peek：架收进降级档后，从地平线"器物"入口浮出（design §8），出生走开片 -->
+    <!-- 器物 peek：架收进降级档后，从地平线"器物"入口浮出（design §8），内容=当前架真身 -->
     <div v-if="shelfPeek && shelfCollapsed" class="shelf-peek yb-craze">
-      <HomeLife only="spark" @chat="onInfoChat" />
-      <HomeBench />
-      <HomeJot />
+      <HomeRemindCard force />
+      <HomeShelfStats />
     </div>
     <!-- 会话 peek 已改为 frame-row 内的停靠抽屉（结构列，推内容不让位） -->
   </div>
