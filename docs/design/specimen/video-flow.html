@@ -1,0 +1,1177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>译宝 · 视频创作十幕 V0 走查</title>
+<link rel="stylesheet" href="../../../desktop/src/assets/tokens.css">
+<style>
+  :root {
+    --yb-fs-display-l: 48px;
+    --yb-fs-display-m: 32px;
+    --yb-serif: "Songti SC", "Noto Serif SC", "Source Han Serif SC", serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--yb-font);
+    color: var(--yb-text);
+    background:
+      radial-gradient(130% 100% at 12% -10%, rgba(255,255,255,0.95), transparent 50%),
+      radial-gradient(90% 70% at 88% 108%, rgba(var(--yb-c-sky-rgb), 0.10), transparent 60%),
+      linear-gradient(160deg, #f2f5fa 0%, var(--yb-desk) 45%, #d3dcea 100%);
+    overflow: hidden;
+  }
+  body::before {
+    content: "";
+    position: fixed; inset: 0; z-index: 0;
+    background-image: var(--yb-widget-grain);
+    opacity: 0.22; mix-blend-mode: multiply; pointer-events: none;
+  }
+
+  /* ============ 走查框架（非产品 UI） ============ */
+  .scene { position: absolute; inset: 0; display: none; }
+  .scene.on { display: block; }
+  .act-tag {
+    position: absolute; top: 10px; left: 14px; z-index: 60;
+    font-family: var(--yb-mono); font-size: 11px; letter-spacing: 0.08em;
+    color: var(--yb-text-faint);
+    background: rgba(255,255,255,0.72); border: 1px solid var(--yb-widget-border);
+    padding: 3px 10px; border-radius: var(--yb-radius-pill);
+    backdrop-filter: var(--yb-blur);
+  }
+  .act-tag b { color: var(--yb-accent-deep); font-weight: 600; }
+  .walk-nav {
+    position: fixed; top: 10px; right: 14px; z-index: 99;
+    display: flex; gap: 8px; align-items: center;
+    font-family: var(--yb-mono); font-size: 11px; color: var(--yb-text-faint);
+  }
+  .walk-nav button {
+    font: inherit; color: var(--yb-text-dim); cursor: pointer;
+    background: rgba(255,255,255,0.72); border: 1px solid var(--yb-widget-border);
+    border-radius: var(--yb-radius-pill); padding: 3px 12px;
+  }
+  body.shot .walk-nav { display: none; }
+
+  /* ============ 通用产品构件 ============ */
+  .desk { position: absolute; inset: 0; padding: 26px 36px 50px; }
+  .tile {
+    position: relative;
+    border: 1px solid var(--yb-widget-border);
+    border-radius: var(--yb-widget-radius);
+    background: linear-gradient(180deg, rgba(255,255,255,0.65), transparent 46%), var(--yb-widget-bg);
+    box-shadow: var(--yb-glaze-hi), var(--yb-note-shadow-lift);
+    overflow: hidden;
+  }
+  .tile::after {
+    content: ""; position: absolute; inset: 0; z-index: 1;
+    border-radius: inherit; pointer-events: none;
+    opacity: var(--yb-widget-grain-opacity); mix-blend-mode: multiply;
+    background-image: var(--yb-widget-grain);
+  }
+  .tile > * { position: relative; z-index: 2; }
+  .tile-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    padding: 14px 16px 8px;
+    color: var(--yb-paper-ink-dim);
+    font-size: var(--yb-fs-sm); font-weight: var(--yb-fw-medium);
+    letter-spacing: var(--yb-kicker-track);
+  }
+  .tile-head .more { color: var(--yb-accent); letter-spacing: 0; }
+
+  .bubble {
+    max-width: 420px; width: fit-content;
+    padding: 10px 14px; border-radius: 18px;
+    font-size: var(--yb-fs-lg); line-height: var(--yb-lh-base);
+    border: 1px solid var(--yb-widget-border);
+    box-shadow: var(--yb-glaze-hi), var(--yb-shadow-2);
+  }
+  .bubble.ai { align-self: flex-start; background: linear-gradient(180deg, #fff, var(--yb-widget-bg)); border-bottom-left-radius: 6px; }
+  .bubble.ai.lead { font-family: var(--yb-serif); font-size: 19px; line-height: 1.5; padding: 16px 20px; color: var(--yb-text-strong); }
+  .bubble.me { align-self: flex-end; background: var(--yb-bubble-user); color: var(--yb-text-strong); border-bottom-right-radius: 6px; }
+  .bubble time { display: block; margin-top: 4px; font-family: var(--yb-mono); font-size: var(--yb-fs-xs); color: var(--yb-text-faint); }
+
+  .composer {
+    display: flex; align-items: center; gap: 10px;
+    padding: 13px 20px; border-radius: var(--yb-radius-pill);
+    background: linear-gradient(180deg, #fff, var(--yb-widget-bg));
+    border: 1px solid var(--yb-widget-border);
+    box-shadow: var(--yb-glaze-hi), var(--yb-note-shadow-lift);
+    color: var(--yb-text-faint); font-size: var(--yb-fs-lg);
+  }
+  .composer .caret { width: 1.5px; height: 16px; background: var(--yb-accent); }
+  .composer .send { margin-left: auto; color: var(--yb-accent); }
+
+  .tuanzi { position: relative; flex: none; }
+  .tuanzi::after {
+    content: ""; position: absolute; left: -18px; bottom: -10px;
+    width: 100px; height: 40px;
+    background: radial-gradient(50% 50% at 50% 50%, var(--yb-think-mist), transparent 70%);
+    pointer-events: none;
+  }
+
+  /* 地平线 */
+  .horizon {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 36px; z-index: 50;
+    display: flex; align-items: center; gap: 24px; padding: 0 20px;
+    border-top: 1px solid var(--yb-line);
+    background: var(--yb-paper-sticky); backdrop-filter: var(--yb-blur);
+    font-family: var(--yb-mono); font-size: var(--yb-fs-xs); color: var(--yb-text-faint);
+  }
+  .horizon .nodes { display: flex; align-items: center; gap: 26px; }
+  .horizon .node { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+  .horizon .node i { width: 6px; height: 6px; border-radius: 50%; background: var(--yb-c-slate-300); }
+  .horizon .node.hot i { background: var(--yb-accent); box-shadow: 0 0 6px rgba(var(--yb-c-sky-rgb), 0.5); }
+  .horizon .node span { font-size: 9px; }
+  .horizon .echo { color: var(--yb-text-dim); }
+  .horizon .echo em { font-style: normal; color: var(--yb-intent-ok); }
+  .horizon .echo em.amber { color: var(--yb-intent-pending-ink); }
+  .horizon .echo em.red { color: var(--yb-intent-danger); }
+  .horizon .entries { margin-left: auto; display: flex; gap: 18px; }
+  .horizon .entries b { font-weight: var(--yb-fw-medium); color: var(--yb-text-dim); }
+  .horizon .ctx { color: var(--yb-text-faint); }
+  /* focus 态发丝地平线 */
+  .horizon.hair { height: 12px; padding: 0 20px; }
+  .horizon.hair .nodes, .horizon.hair .echo, .horizon.hair .entries, .horizon.hair .ctx { display: none; }
+
+  /* 确认卡 / 印章 */
+  .gate-card {
+    border: 1px solid var(--yb-widget-border);
+    border-radius: var(--yb-widget-radius);
+    background: linear-gradient(180deg, rgba(255,255,255,0.8), var(--yb-widget-bg));
+    box-shadow: var(--yb-glaze-hi), var(--yb-note-shadow-lift);
+    padding: 14px 18px;
+    font-size: var(--yb-fs-md);
+  }
+  .gate-card .kicker { font-size: var(--yb-fs-xs); letter-spacing: var(--yb-kicker-track); color: var(--yb-paper-ink-dim); margin-bottom: 6px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 14px; border-radius: var(--yb-radius-pill);
+    font-size: var(--yb-fs-sm); font-weight: var(--yb-fw-medium);
+    border: 1px solid var(--yb-widget-border); background: #fff; color: var(--yb-text-dim);
+  }
+  .btn.primary { background: var(--yb-accent); border-color: var(--yb-accent); color: var(--yb-text-on-accent); }
+  .btn.amber { background: var(--yb-intent-pending); border-color: var(--yb-intent-pending); color: #fff; }
+  .stamp {
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 8px 18px; border: 2px solid var(--yb-intent-danger); border-radius: 8px;
+    color: var(--yb-intent-danger); font-weight: 700; font-family: var(--yb-serif);
+    transform: rotate(-3deg); background: rgba(229,72,77,0.06);
+    letter-spacing: 0.12em;
+  }
+  .chip {
+    display: inline-flex; padding: 2px 8px; border-radius: var(--yb-radius-pill);
+    font-size: var(--yb-fs-xs); background: var(--yb-accent-soft); color: var(--yb-accent-deep);
+    white-space: nowrap;
+  }
+  .chip.amber { background: var(--yb-intent-pending-soft); color: var(--yb-intent-pending-ink); }
+  .chip.green { background: rgba(62,142,90,0.12); color: var(--yb-intent-ok); }
+  .chip.grey { background: var(--yb-c-slate-100, #eef1f5); color: var(--yb-text-faint); }
+
+  /* 牵引线（出生证） */
+  .tether {
+    position: absolute; height: 1.5px; transform-origin: left center;
+    background: linear-gradient(90deg, rgba(var(--yb-c-sky-rgb), 0.0), rgba(var(--yb-c-sky-rgb), 0.55));
+    pointer-events: none;
+  }
+  .tether::after {
+    content: ""; position: absolute; right: -3px; top: -2.5px;
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--yb-accent); box-shadow: 0 0 6px rgba(var(--yb-c-sky-rgb), 0.6);
+  }
+
+  /* peek 浮层 */
+  .peek {
+    position: absolute; z-index: 40;
+    border: 1px solid var(--yb-widget-border);
+    border-radius: var(--yb-widget-radius);
+    background: linear-gradient(180deg, rgba(255,255,255,0.92), var(--yb-widget-bg));
+    box-shadow: 0 24px 60px -18px rgba(var(--yb-c-slate-rgb), 0.35), var(--yb-glaze-hi);
+    backdrop-filter: var(--yb-blur);
+  }
+
+  .kv { font-family: var(--yb-mono); font-size: var(--yb-fs-xs); color: var(--yb-text-faint); }
+</style>
+</head>
+<body>
+  <div class="walk-nav">
+    <span id="navLabel"></span>
+    <button onclick="go(-1)">←</button>
+    <button onclick="go(1)">→</button>
+  </div>
+
+  <!-- 团子模板（Avatar.vue idle 态静态化） -->
+  <template id="tpl-pet">
+    <svg viewBox="0 0 120 120" width="100%" height="100%" aria-hidden="true">
+      <defs>
+        <linearGradient id="yb-body" x1="34%" y1="6%" x2="66%" y2="100%">
+          <stop offset="0%" stop-color="var(--yb-body-hi)" />
+          <stop offset="46%" stop-color="var(--yb-body-mid)" />
+          <stop offset="100%" stop-color="var(--yb-body-lo)" />
+        </linearGradient>
+        <radialGradient id="yb-hi" cx="36%" cy="22%" r="32%">
+          <stop offset="0%" stop-color="#fff" stop-opacity="0.95" />
+          <stop offset="100%" stop-color="#fff" stop-opacity="0" />
+        </radialGradient>
+        <radialGradient id="yb-sh" cx="74%" cy="80%" r="46%">
+          <stop offset="0%" stop-color="var(--yb-body-core-shadow)" stop-opacity="0.42" />
+          <stop offset="100%" stop-color="var(--yb-body-core-shadow)" stop-opacity="0" />
+        </radialGradient>
+        <radialGradient id="yb-dot-glow" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stop-color="var(--yb-state-idle)" stop-opacity="0.55" />
+          <stop offset="100%" stop-color="var(--yb-state-idle)" stop-opacity="0" />
+        </radialGradient>
+        <radialGradient id="yb-aura" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stop-color="var(--yb-accent)" stop-opacity="0.42" />
+          <stop offset="55%" stop-color="var(--yb-accent)" stop-opacity="0.22" />
+          <stop offset="100%" stop-color="var(--yb-accent)" stop-opacity="0" />
+        </radialGradient>
+        <clipPath id="yb-clip">
+          <path d="M60 27.24 C76 27.24 84 39.72 84 57.66 C84 78.72 74 92.76 60 92.76 C46 92.76 36 78.72 36 57.66 C36 39.72 44 27.24 60 27.24 Z" />
+        </clipPath>
+        <filter id="yb-b1"><feGaussianBlur stdDeviation="1.4" /></filter>
+        <filter id="yb-b2"><feGaussianBlur stdDeviation="3.2" /></filter>
+        <filter id="yb-b3"><feGaussianBlur stdDeviation="5.5" /></filter>
+      </defs>
+      <ellipse cx="63" cy="100.56" rx="33" ry="5.07" fill="var(--yb-shadow-ink)" opacity="0.16" filter="url(#yb-b3)" />
+      <ellipse cx="60" cy="64" rx="30" ry="24" fill="url(#yb-aura)" />
+      <g>
+        <path d="M60 27.24 C76 27.24 84 39.72 84 57.66 C84 78.72 74 92.76 60 92.76 C46 92.76 36 78.72 36 57.66 C36 39.72 44 27.24 60 27.24 Z" fill="url(#yb-body)" />
+        <g clip-path="url(#yb-clip)">
+          <rect x="28" y="21" width="86" height="78" fill="url(#yb-sh)" />
+          <ellipse cx="44" cy="39.72" rx="28" ry="18.72" fill="url(#yb-hi)" />
+          <ellipse cx="60" cy="95.88" rx="28" ry="7.8" fill="var(--yb-body-contact)" opacity="0.26" filter="url(#yb-b2)" />
+        </g>
+        <path d="M40 38.16 C37.6 49.86 37.8 70.14 44 86.52" fill="none" stroke="#fff" stroke-opacity="0.9" stroke-width="2" filter="url(#yb-b1)" />
+        <ellipse cx="33" cy="63.12" rx="7.5" ry="8.97" fill="url(#yb-body)" transform="rotate(-14 33 63.12)" />
+        <ellipse cx="34" cy="60" rx="3" ry="3.9" fill="#fff" opacity="0.5" transform="rotate(-14 34 60)" />
+        <ellipse cx="87" cy="63.12" rx="7.5" ry="8.97" fill="url(#yb-body)" transform="rotate(14 87 63.12)" />
+        <ellipse cx="88" cy="60" rx="3" ry="3.9" fill="var(--yb-body-core-shadow)" opacity="0.32" transform="rotate(14 88 60)" />
+        <path d="M46 45.96 Q60 52.2 74 45.96" fill="none" stroke="var(--yb-accent)" stroke-width="2.9" stroke-linecap="round" />
+        <path d="M46 45.18 Q60 51.42 74 45.18" fill="none" stroke="#fff" stroke-opacity="0.5" stroke-width="0.9" stroke-linecap="round" />
+        <ellipse cx="47" cy="66" rx="4.2" ry="2.5" fill="var(--yb-body-blush)" opacity="0.24" />
+        <ellipse cx="73" cy="66" rx="4.2" ry="2.5" fill="var(--yb-body-blush)" opacity="0.24" />
+        <ellipse cx="51" cy="60" rx="3.2" ry="4.5" fill="var(--yb-body-ink)" />
+        <ellipse cx="69" cy="60" rx="3.2" ry="4.5" fill="var(--yb-body-ink)" />
+        <circle cx="52.2" cy="58.4" r="1.05" fill="#fff" />
+        <circle cx="70.2" cy="58.4" r="1.05" fill="#fff" />
+        <path d="M55 69 Q60 72 65 69" fill="none" stroke="var(--yb-body-ink)" stroke-width="2.4" stroke-linecap="round" />
+      </g>
+      <g>
+        <ellipse cx="47" cy="94.32" rx="7.5" ry="3.9" fill="url(#yb-body)" transform="rotate(-9 47 94.32)" />
+        <ellipse cx="73" cy="95.88" rx="7.5" ry="3.9" fill="url(#yb-body)" transform="rotate(11 73 95.88)" />
+        <path d="M41 95.88 Q47 98.22 53 95.88" fill="none" stroke="var(--yb-body-core-shadow)" stroke-opacity="0.4" stroke-width="1.35" stroke-linecap="round" />
+        <path d="M67 97.44 Q73 99.78 79 97.44" fill="none" stroke="var(--yb-body-core-shadow)" stroke-opacity="0.4" stroke-width="1.35" stroke-linecap="round" />
+      </g>
+      <line x1="60" y1="28.8" x2="60" y2="21.78" stroke="var(--yb-body-stem)" stroke-width="2" stroke-linecap="round" />
+      <circle cx="60" cy="19.44" r="6" fill="url(#yb-dot-glow)" />
+      <circle cx="60" cy="19.44" r="3.4" fill="var(--yb-state-idle)" />
+    </svg>
+  </template>
+
+<style>
+  /* ============ 家态布局 ============ */
+  .desk-home { display: grid; grid-template-columns: 46% 27% 1fr; gap: 28px; }
+  .stream-zone { display: flex; flex-direction: column; min-width: 0; }
+  .brand { font-size: var(--yb-fs-lg); font-weight: var(--yb-fw-bold); color: var(--yb-text-strong); letter-spacing: 0.02em; }
+  .day-title { font-family: var(--yb-serif); font-size: 54px; font-weight: 700; color: var(--yb-text-strong); letter-spacing: 0.01em; margin-top: 12px; line-height: 1.12; text-shadow: 0 1px 0 rgba(255,255,255,0.8); }
+  .day-sub { margin-top: 6px; font-family: var(--yb-mono); font-size: var(--yb-fs-sm); color: var(--yb-text-faint); font-variant-numeric: tabular-nums; }
+  .stream { flex: 1; min-height: 0; max-width: 480px; display: flex; flex-direction: column; justify-content: flex-end; gap: 14px; padding: 28px 0 18px; mask-image: linear-gradient(180deg, transparent, #000 12%); -webkit-mask-image: linear-gradient(180deg, transparent, #000 12%); }
+  .estuary { display: flex; align-items: flex-end; gap: 14px; padding-top: 8px; }
+  .estuary .tuanzi { width: 64px; height: 64px; }
+  .estuary .composer { flex: 1; max-width: 520px; }
+
+  .today { padding-bottom: 10px; align-self: start; margin-top: 96px; }
+  .week { display: grid; grid-template-columns: repeat(7, 1fr); padding: 2px 14px 10px; text-align: center; font-size: var(--yb-fs-sm); color: var(--yb-text-dim); }
+  .week .d { padding: 4px 0; border-radius: 8px; font-variant-numeric: tabular-nums; }
+  .week .d.head { color: var(--yb-text-faint); font-size: var(--yb-fs-xs); }
+  .week .d.now { background: var(--yb-accent); color: var(--yb-text-on-accent); font-weight: var(--yb-fw-bold); }
+  .agenda { padding: 0 16px; display: flex; flex-direction: column; }
+  .agenda .row { display: flex; align-items: baseline; gap: 10px; padding: 8px 0; border-top: 1px solid var(--yb-card-row-line); font-size: var(--yb-fs-md); }
+  .agenda .row:first-child { border-top: none; }
+  .agenda time { font-family: var(--yb-mono); color: var(--yb-text-faint); font-size: var(--yb-fs-xs); flex: none; }
+  .agenda .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--yb-accent); flex: none; align-self: center; }
+  .agenda .dot.amber { background: var(--yb-intent-pending); }
+  .agenda .tag { margin-left: auto; flex: none; font-size: var(--yb-fs-xs); color: var(--yb-accent-deep); background: var(--yb-accent-soft); padding: 2px 8px; border-radius: var(--yb-radius-pill); }
+  .agenda .tag.amber { color: var(--yb-intent-pending-ink); background: var(--yb-intent-pending-soft); }
+
+  .shelf { display: flex; flex-direction: column; gap: 14px; min-width: 0; align-self: start; margin-top: 96px; }
+  .remind .row { display: flex; align-items: baseline; gap: 8px; padding: 8px 16px; border-top: 1px solid var(--yb-card-row-line); font-size: var(--yb-fs-md); color: var(--yb-text); }
+  .remind .row:first-of-type { border-top: none; }
+  .remind time { font-family: var(--yb-mono); font-size: var(--yb-fs-xs); color: var(--yb-text-faint); flex: none; }
+  .remind .st { margin-left: auto; font-size: var(--yb-fs-xs); }
+  .remind .st.amber { color: var(--yb-intent-pending-ink); }
+  .remind .st.ok { color: var(--yb-intent-ok); }
+  .mini { display: flex; align-items: center; gap: 12px; padding: 12px 16px 14px; }
+  .mini .num { font-family: var(--yb-mono); font-size: 30px; font-weight: 600; color: var(--yb-text-strong); font-variant-numeric: tabular-nums; }
+  .mini .lbl { font-size: var(--yb-fs-sm); color: var(--yb-text-dim); line-height: 1.4; }
+  .mini .go { margin-left: auto; font-size: var(--yb-fs-xs); color: var(--yb-accent); }
+  .shelf-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+
+  /* ============ stage 态骨架：细脊 + 批注列 + 中央器 ============ */
+  .desk-stage { display: grid; grid-template-columns: 56px 264px 1fr; gap: 18px; }
+  .spine {
+    border: 1px solid var(--yb-widget-border); border-radius: var(--yb-widget-radius);
+    background: linear-gradient(180deg, rgba(255,255,255,0.5), transparent 40%), var(--yb-widget-bg);
+    box-shadow: var(--yb-glaze-hi), var(--yb-shadow-2);
+    display: flex; flex-direction: column; align-items: center; padding: 14px 0; gap: 14px;
+  }
+  .spine .sdot { width: 8px; height: 8px; border-radius: 50%; background: var(--yb-c-slate-300); }
+  .spine .sdot.hot { background: var(--yb-accent); box-shadow: 0 0 6px rgba(var(--yb-c-sky-rgb), 0.5); }
+  .spine .stext { writing-mode: vertical-rl; font-size: var(--yb-fs-xs); color: var(--yb-text-faint); letter-spacing: 0.3em; }
+  .annots { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding-top: 40px; }
+  .annot {
+    position: relative;
+  border: 1px solid var(--yb-widget-border); border-radius: 14px;
+    background: linear-gradient(180deg, #fff, var(--yb-widget-bg));
+    box-shadow: var(--yb-glaze-hi), var(--yb-shadow-2);
+    padding: 10px 12px; font-size: var(--yb-fs-sm); line-height: var(--yb-lh-base);
+  }
+  .annot .who { display: flex; align-items: center; gap: 6px; font-size: var(--yb-fs-xs); color: var(--yb-text-faint); margin-bottom: 4px; }
+  .annot .who i { width: 14px; height: 14px; border-radius: 50%; background: linear-gradient(180deg, #fff, var(--yb-widget-bg)); border: 1px solid var(--yb-widget-border); }
+  .annot .acts { display: flex; gap: 6px; margin-top: 8px; }
+  .annot-anchor { position: absolute; right: -19px; top: 16px; width: 18px; height: 1.5px; background: rgba(var(--yb-c-sky-rgb), 0.55); }
+  .annot-anchor::after { content: ""; position: absolute; right: -3.5px; top: -2.75px; width: 7px; height: 7px; border-radius: 50%; background: var(--yb-accent); }
+
+  /* stage 态驻底指令条（无锚指令通道）；锚定批注是带锚主通道 */
+  .desk-stage { padding-bottom: 96px; }
+  .stagebar {
+    position: absolute; left: 392px; right: 36px; bottom: 46px; z-index: 45;
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 16px; border-radius: var(--yb-radius-pill);
+    background: rgba(255,255,255,0.8); border: 1px solid var(--yb-widget-border);
+    backdrop-filter: var(--yb-blur); box-shadow: var(--yb-shadow-2);
+    color: var(--yb-text-faint); font-size: var(--yb-fs-md);
+  }
+  .stagebar .caret { width: 1.5px; height: 14px; background: var(--yb-accent); flex: none; }
+  .stagebar .hint { margin-left: auto; font-family: var(--yb-mono); font-size: var(--yb-fs-xs); color: var(--yb-text-faint); }
+  </style>
+
+<!-- ============ 场景 0：总览 ============ -->
+<section class="scene" id="sc-0">
+  <div class="act-tag"><b>总览</b> · 视频创作十幕 × 呼吸四态 + 小窗</div>
+  <div class="desk" style="display:flex;flex-direction:column;gap:18px;">
+    <div>
+      <div class="brand" style="font-size:15px;">译宝 AgentOS</div>
+      <h1 style="font-family:var(--yb-serif);font-size:44px;font-weight:700;color:var(--yb-text-strong);margin-top:8px;">一次视频创作的十种姿势</h1>
+      <div class="day-sub">V0 纸面走查 · 设计依据 docs/design/2026-08-30-video-creation-workflow.md · ←/→ 翻页</div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:14px;flex:1;align-content:start;">
+      <div class="tile" style="padding:14px 16px;"><div class="kv">S0 · 家态+peek</div><div style="font-size:17px;font-weight:600;margin:6px 0;">选题</div><div style="font-size:12px;color:var(--yb-text-dim);line-height:1.6;">选题库三层入口；封面前置立门槛；HKRR 标注</div></div>
+      <div class="tile" style="padding:14px 16px;"><div class="kv">S1 · stage</div><div style="font-size:17px;font-weight:600;margin:6px 0;">脚本</div><div style="font-size:12px;color:var(--yb-text-dim);line-height:1.6;">留存骨架写作，秒针倒推法；锚定批注修改</div></div>
+      <div class="tile" style="padding:14px 16px;"><div class="kv">S2 · stage</div><div style="font-size:17px;font-weight:600;margin:6px 0;">分镜</div><div style="font-size:12px;color:var(--yb-text-dim);line-height:1.6;">镜头卡片表：镜号/景别/运镜/台词/叙事目的</div></div>
+      <div class="tile" style="padding:14px 16px;"><div class="kv">S3 · stage</div><div style="font-size:17px;font-weight:600;margin:6px  0;">资产筹备</div><div style="font-size:12px;color:var(--yb-text-dim);line-height:1.6;">画布出三视图；多变体钦定；血缘入库</div></div>
+      <div class="tile" style="padding:14px 16px;"><div class="kv">S4 · stage+闸门</div><div style="font-size:17px;font-weight:600;margin:6px 0;">出镜头</div><div style="font-size:12px;color:var(--yb-text-dim);line-height:1.6;">批量队列 + 配额确认；废片回收站；单镜重抽</div></div>
+      <div class="tile" style="padding:14px 16px;"><div class="kv">S5 · stage</div><div style="font-size:17px;font-weight:600;margin:6px 0;">粗剪</div><div style="font-size:12px;color:var(--yb-text-dim);line-height:1.6;">台词轨先行，按配音反调画面；70 分初稿</div></div>
+      <div class="tile" style="padding:14px 16px;"><div class="kv">S6 · stage</div><div style="font-size:17px;font-weight:600;margin:6px 0;">精剪</div><div style="font-size:12px;color:var(--yb-text-dim);line-height:1.6;">时间码评论 → agent 定位执行；留存预检</div></div>
+      <div class="tile" style="padding:14px 16px;"><div class="kv">S6b · focus</div><div style="font-size:17px;font-weight:600;margin:6px 0;">审片</div><div style="font-size:12px;color:var(--yb-text-dim);line-height:1.6;">单一器近乎全屏；地平线收成发丝线</div></div>
+      <div class="tile" style="padding:14px 16px;"><div class="kv">S7 · peek+L3</div><div style="font-size:17px;font-weight:600;margin:6px 0;">发布</div><div style="font-size:12px;color:var(--yb-text-dim);line-height:1.6;">分平台变体打包；红色发布印需本人按</div></div>
+      <div class="tile" style="padding:14px 16px;"><div class="kv">S8 · 家态+守夜</div><div style="font-size:17px;font-weight:600;margin:6px 0;">复盘</div><div style="font-size:12px;color:var(--yb-text-dim);line-height:1.6;">留存曲线四段归因；掉点回写选题库</div></div>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;">
+      <span class="kv">态图例：</span>
+      <span class="chip">家态 对话 46%</span><span class="chip">peek 浮层</span><span class="chip">stage 器占中央</span><span class="chip">focus 阅读室</span><span class="chip">小窗 守夜陪伴</span>
+      <span class="kv" style="margin-left:auto;">校验规则：说不出对应事件/tool 的元素就是装饰，删</span>
+    </div>
+  </div>
+  <footer class="horizon">
+    <div class="nodes"><div class="node hot"><i></i><span>09:12</span></div><div class="node"><i></i><span>09:40</span></div><div class="node"><i></i><span>10:05</span></div></div>
+    <div class="echo">echo: <em>video.flow(demo) · 10 acts ✓</em></div>
+    <div class="entries"><b>今日</b><b>会话</b><b>器物</b></div>
+    <div class="ctx">ctx: desk · walkthrough</div>
+  </footer>
+</section>
+
+<!-- ============ 场景 1：S0 选题（家态 + 选题库 peek） ============ -->
+<section class="scene" id="sc-1">
+  <div class="act-tag"><b>S0 · 选题</b> —— 家态 + peek：封面前置是立项门槛</div>
+  <div class="desk desk-home">
+    <section class="stream-zone">
+      <div class="brand">译宝</div>
+      <h1 class="day-title">9月1日 · 星期一</h1>
+      <div class="day-sub">晴 · 已陪伴你 131 天</div>
+      <div class="stream">
+        <div class="bubble me">想做一支 60 秒的产品短片，发 B站，讲「工具墙」这个痛点。<time>09:12</time></div>
+        <div class="bubble ai lead">好。按封面前置的规矩，我先出 3 个选题方向，每个都带 3 版标题+封面概念——做不出好封面的，我们直接不立。<time>09:12</time></div>
+        <div class="bubble ai" style="max-width:470px;padding:12px 14px;">
+          <div class="kv" style="margin-bottom:8px;">topics.draft ×3 · 已存入选题库 →</div>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <div style="display:flex;gap:10px;align-items:center;">
+              <div style="width:64px;height:36px;border-radius:6px;background:linear-gradient(135deg,#dfeaf5,#b9d2ea);flex:none;"></div>
+              <div style="font-size:13px;line-height:1.4;color:var(--yb-text-strong);">「你的素材在 5 个工具之间搬了几次？」</div>
+            </div>
+            <div style="display:flex;gap:10px;align-items:center;">
+              <div style="width:64px;height:36px;border-radius:6px;background:linear-gradient(135deg,#f5e8d8,#ecd2ae);flex:none;"></div>
+              <div style="font-size:13px;line-height:1.4;color:var(--yb-text-strong);">「60 秒，从一句话到一支成片」</div>
+            </div>
+            <div style="display:flex;gap:10px;align-items:center;opacity:0.55;">
+              <div style="width:64px;height:36px;border-radius:6px;background:linear-gradient(135deg,#e8e8ea,#c9ccd4);flex:none;"></div>
+              <div style="font-size:13px;line-height:1.4;">「AI 短片幕后：抽卡 85 次选了 12 镜」</div>
+            </div>
+          </div>
+          <time>09:13</time>
+        </div>
+      </div>
+      <div class="tether" style="left:470px;bottom:300px;width:640px;transform:rotate(-18deg);"></div>
+      <div class="estuary">
+        <div class="tuanzi" data-pet></div>
+        <div class="composer"><span class="caret"></span>对译宝说点什么…<span class="send">➤</span></div>
+      </div>
+    </section>
+    <section class="tile today">
+      <div class="tile-head"><span>今日</span><span class="more">+ 新建</span></div>
+      <div class="week">
+        <span class="d head">一</span><span class="d head">二</span><span class="d head">三</span><span class="d head">四</span><span class="d head">五</span><span class="d head">六</span><span class="d head">日</span>
+        <span class="d now">1</span><span class="d">2</span><span class="d">3</span><span class="d">4</span><span class="d">5</span><span class="d">6</span><span class="d">7</span>
+      </div>
+      <div class="agenda">
+        <div class="row"><time>11:00</time><span class="dot amber"></span><span class="t">选题会：短片方向三选一</span><span class="tag amber">待你定</span></div>
+        <div class="row"><time>16:30</time><span class="dot"></span><span class="t">用户反馈整理 · 90 分钟</span></div>
+      </div>
+    </section>
+    <section class="shelf">
+      <div class="peek" style="position:static;">
+        <div class="tile-head"><span>选题库 · 短片候选</span><span class="more">全部 →</span></div>
+        <div style="padding:0 14px 6px;"><span class="chip">刚刚 +3 · 来自本次对话</span></div>
+        <div style="padding:4px 14px 14px;display:flex;flex-direction:column;gap:12px;">
+          <div style="border:1px solid var(--yb-widget-border);border-radius:12px;padding:10px 12px;background:rgba(255,255,255,0.6);">
+            <div style="display:flex;gap:10px;align-items:center;">
+              <div style="width:88px;height:50px;border-radius:8px;background:linear-gradient(135deg,#dfeaf5,#b9d2ea);flex:none;display:flex;align-items:center;justify-content:center;font-size:11px;color:#4d6f92;font-weight:600;">封面概念 A</div>
+              <div style="min-width:0;">
+                <div style="font-size:13.5px;font-weight:600;line-height:1.4;">「你的素材在 5 个工具之间搬了几次？」</div>
+                <div style="margin-top:4px;display:flex;gap:6px;"><span class="chip">共鸣 R</span><span class="chip">节奏 ✓</span><span class="chip grey">同类完播 41%</span></div>
+              </div>
+            </div>
+          </div>
+          <div style="border:1px solid var(--yb-widget-border);border-radius:12px;padding:10px 12px;background:rgba(255,255,255,0.6);">
+            <div style="display:flex;gap:10px;align-items:center;">
+              <div style="width:88px;height:50px;border-radius:8px;background:linear-gradient(135deg,#f5e8d8,#ecd2ae);flex:none;display:flex;align-items:center;justify-content:center;font-size:11px;color:#8a6a3f;font-weight:600;">封面概念 B</div>
+              <div style="min-width:0;">
+                <div style="font-size:13.5px;font-weight:600;line-height: 1.4;">「60 秒，从一句话到一支成片」</div>
+                <div style="margin-top:4px;display:flex;gap:6px;"><span class="chip">知识 K</span><span class="chip">节奏 ✓</span><span class="chip grey">同类完播 38%</span></div>
+              </div>
+            </div>
+          </div>
+          <div style="border:1px solid var(--yb-intent-pending);border-radius:12px;padding:10px 12px;background:var(--yb-intent-pending-soft);">
+            <div style="display:flex;gap:10px;align-items:center;">
+              <div style="width:88px;height:50px;border-radius:8px;background:linear-gradient(135deg,#e8e8ea,#c9ccd4);flex:none;display:flex;align-items:center;justify-content:center;font-size:11px;color:#5b6070;font-weight:600;">封面概念 C</div>
+              <div style="min-width:0;">
+                <div style="font-size:13.5px;font-weight:600;line-height:1.4;">「AI 短片幕后：抽卡 85 次选了 12 镜」</div>
+                <div style="margin-top:4px;display:flex;gap:6px;"><span class="chip amber">封面太弱 · 建议弃</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="tile remind">
+        <div class="tile-head"><span>提醒</span><span class="more">全部 3</span></div>
+        <div class="row"><time>11:00</time><span>选题会</span><span class="st amber">待你定</span></div>
+        <div class="row"><time>昨天</time><span>发布 checklist 模板</span><span class="st ok">已完成</span></div>
+      </div>
+    </section>
+  </div>
+  <footer class="horizon">
+    <div class="nodes"><div class="node hot"><i></i><span>09:12</span></div><div class="node"><i></i><span>昨天</span></div><div class="node"><i></i><span>周五</span></div></div>
+    <div class="echo">echo: <em>topics.draft(3, with=封面概念) ✓</em></div>
+    <div class="entries"><b>今日</b><b>会话</b><b>器物</b></div>
+    <div class="ctx">ctx: desk · 选题中</div>
+  </footer>
+</section>
+
+<!-- ============ 场景 2：S0 立项确认（家态 + L2 闸门卡） ============ -->
+<section class="scene" id="sc-2">
+  <div class="act-tag"><b>S0 · 立项</b> —— 家态：阶段门 = 人按印，项目实体落账</div>
+  <div class="desk desk-home">
+    <section class="stream-zone">
+      <div class="brand">译宝</div>
+      <h1 class="day-title">9月1日 · 星期一</h1>
+      <div class="day-sub">晴 · 已陪伴你 131 天</div>
+      <div class="stream">
+        <div class="bubble me">就用 A，「你的素材在 5 个工具之间搬了几次？」这个方向。<time>11:02</time></div>
+        <div class="bubble ai">好。立项需要建一个项目空间：目录骨架 + 选题卡归档 + 素材库就位。确认一下：<time>11:02</time></div>
+        <div class="gate-card" style="max-width:440px;">
+          <div class="kicker">立项 · L2 待你定</div>
+          <div style="font-family:var(--yb-serif);font-size:19px;font-weight:700;color:var(--yb-text-strong);">译宝品牌短片 · 60s</div>
+          <div style="margin-top:8px;font-size:13px;color:var(--yb-text-dim);line-height:1.7;">
+            01_素材 / 02_工程 / 03_导出 / 04_文档<br>
+            选题卡（封面概念 A · 3 版标题）· HKRR：共鸣+节奏<br>
+            目标平台：B站主发 · 抖音竖版派生
+          </div>
+          <div style="display:flex;gap:8px;margin-top:12px;">
+            <span class="btn primary">确认立项</span>
+            <span class="btn">再调整</span>
+          </div>
+        </div>
+      </div>
+      <div class="estuary">
+        <div class="tuanzi" data-pet></div>
+        <div class="composer"><span class="caret"></span>对译宝说点什么…<span class="send">➤</span></div>
+      </div>
+    </section>
+    <section class="tile today">
+      <div class="tile-head"><span>今日</span><span class="more">+ 新建</span></div>
+      <div class="week">
+        <span class="d head">一</span><span class="d head">二</span><span class="d head">三</span><span class="d head">四</span><span class="d head">五</span><span class="d head">六</span><span class="d head">日</span>
+        <span class="d now">1</span><span class="d">2</span><span class="d">3</span><span class="d">4</span><span class="d">5</span><span class="d">6</span><span class="d">7</span>
+      </div>
+      <div class="agenda">
+        <div class="row"><time>11:00</time><span class="dot"></span><span class="t">选题会：定了 A 方向</span><span class="tag">已完成</span></div>
+        <div class="row"><time>11:05</time><span class="dot amber"></span><span class="t">立项确认</span><span class="tag amber">待你定</span></div>
+        <div class="row"><time>16:30</time><span class="dot"></span><span class="t">用户反馈整理 · 90 分钟</span></div>
+      </div>
+    </section>
+    <section class="shelf">
+      <div class="tile remind">
+        <div class="tile-head"><span>项目</span><span class="more">新建 +</span></div>
+        <div style="margin:2px 12px 8px;border:1px solid var(--yb-widget-border);border-radius:12px;background:rgba(255,255,255,0.7);padding:10px 12px;">
+          <div style="display:flex;align-items:baseline;gap:8px;">
+            <span style="font-size:13.5px;font-weight:600;color:var(--yb-text-strong);">译宝品牌短片 · 60s</span>
+            <span class="chip amber" style="margin-left:auto;">待确认 1</span>
+          </div>
+          <div style="display:flex;gap:3px;margin:10px 0 7px;">
+            <span style="flex:1;height:4px;border-radius:2px;background:var(--yb-accent);"></span>
+            <span style="flex:1;height:4px;border-radius:2px;background:rgba(var(--yb-c-sky-rgb),0.45);"></span>
+            <span style="flex:1;height:4px;border-radius:2px;background:var(--yb-c-slate-100,#e6ebf2);"></span>
+            <span style="flex:1;height:4px;border-radius:2px;background:var(--yb-c-slate-100,#e6ebf2);"></span>
+            <span style="flex:1;height:4px;border-radius:2px;background:var(--yb-c-slate-100,#e6ebf2);"></span>
+            <span style="flex:1;height:4px;border-radius:2px;background:var(--yb-c-slate-100,#e6ebf2);"></span>
+            <span style="flex:1;height:4px;border-radius:2px;background:var(--yb-c-slate-100,#e6ebf2);"></span>
+            <span style="flex:1;height:4px;border-radius:2px;background:var(--yb-c-slate-100,#e6ebf2);"></span>
+            <span style="flex:1;height:4px;border-radius:2px;background:var(--yb-c-slate-100,#e6ebf2);"></span>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:10.5px;color:var(--yb-text-faint);">
+            <span>S1 · 脚本</span><span>下一步 · 脚本初稿</span>
+          </div>
+        </div>
+        <div class="row"><time>上周</time><span>官网改版文案</span><span class="st ok">进行中</span></div>
+      </div>
+      <div class="shelf-pair">
+        <div class="tile"><div class="mini"><span class="num">12</span><span class="lbl">素材<br>张卡片</span><span class="go">去看看 →</span></div></div>
+        <div class="tile"><div class="mini"><span class="num">2</span><span class="lbl">闪念<br>条未处理</span><span class="go">去处理 →</span></div></div>
+      </div>
+    </section>
+  </div>
+  <footer class="horizon">
+    <div class="nodes"><div class="node"><i></i><span>09:12</span></div><div class="node hot"><i></i><span>11:02</span></div><div class="node"><i></i><span>11:05</span></div></div>
+    <div class="echo">echo: <em class="amber">project.create("译宝品牌短片") → 待你定</em></div>
+    <div class="entries"><b>今日</b><b>会话</b><b>器物</b></div>
+  <div class="ctx">ctx: 译宝品牌短片 · 立项</div>
+  </footer>
+</section>
+
+<!-- ============ 场景 3：S1 脚本（stage：编辑器 + 锚定批注） ============ -->
+<section class="scene" id="sc-3">
+  <div class="act-tag"><b>S1 · 脚本</b> —— stage：留存骨架写作 + 锚定批注</div>
+  <div class="desk desk-stage">
+    <aside class="spine">
+      <span class="sdot hot"></span><span class="sdot"></span><span class="sdot"></span><span class="sdot"></span>
+      <span class="stext">溪流</span>
+    </aside>
+    <aside class="annots">
+      <div class="annot">
+        <div class="who"><i></i>你 · 钉在 钩子区<time style="margin-left:auto;">11:26</time></div>
+        这个钩子太平。换成认知冲突型的？
+        <div class="annot-anchor"></div>
+      </div>
+      <div class="annot" style="border-color:var(--yb-intent-pending);background:linear-gradient(180deg,#fff,var(--yb-intent-pending-soft));">
+        <div class="who"><i style="background:var(--yb-accent);border:none;"></i>译宝 · diff 提案<time style="margin-left:auto;">11:26</time></div>
+        <div style="font-size:12.5px;line-height:1.7;">
+          <s style="color:var(--yb-text-faint);">今天给大家看看我们的新功能。</s><br>
+          <span style="color:var(--yb-text-strong);">「你的素材今天在 5 个工具之间搬了 7 次。」</span>
+        </div>
+        <div class="acts"><span class="btn primary" style="padding:4px 12px;font-size:12px;">接受</span><span class="btn" style="padding:4px 12px;font-size:12px;">换一版</span></div>
+      </div>
+      <div class="annot" style="border-color:rgba(var(--yb-c-sky-rgb),0.6);box-shadow:0 0 0 3px rgba(var(--yb-c-sky-rgb),0.12),var(--yb-shadow-2);">
+        <div class="who"><i></i>你 · 钉在 峰值区 · 输入中</div>
+        <div style="font-size:12.5px;color:var(--yb-text);">0:42 这里要全场最高密度<span style="display:inline-block;width:1.5px;height:12px;background:var(--yb-accent);vertical-align:-1px;"></span></div>
+        <div class="annot-anchor"></div>
+      </div>
+      <div class="annot">
+        <div class="who"><i></i>校验 · 留存骨架<time style="margin-left:auto;">自动</time></div>
+        <div style="font-size:12.5px;line-height:1.8;">
+          <span class="chip green">钩子区 ≤3s ✓</span> <span class="chip green">承诺 ≤15s ✓</span><br>
+          <span class="chip amber">0:42–0:48 无信息点</span> <span class="chip green">单 CTA ✓</span>
+        </div>
+      </div>
+    </aside>
+    <main class="tile" style="display:flex;flex-direction:column;">
+      <div class="tile-head"><span>脚本 · 译宝品牌短片 60s</span><span class="kv">v3 · 母稿（B站版）</span></div>
+      <div style="flex:1;display:grid;grid-template-columns:64px 1fr;min-height:0;">
+        <div style="border-right:1px solid var(--yb-card-row-line);position:relative;font-family:var(--yb-mono);font-size:9.5px;color:var(--yb-text-faint);">
+          <div style="position:absolute;top:14px;left:6px;right:6px;height:9%;background:rgba(var(--yb-c-sky-rgb),0.14);border-radius:4px;padding:2px 4px;">钩子 0-3s</div>
+          <div style="position:absolute;top:25%;left:6px;right:6px;height:7%;background:rgba(var(--yb-c-sky-rgb),0.07);border-radius:4px;padding: 2px 4px;">兑现</div>
+          <div style="position:absolute;top:58%;left:6px;right:6px;height:6%;background:rgba(242,160,60,0.16);border-radius:4px;padding:2px 4px;color:var(--yb-intent-pending-ink);">峰值 60%</div>
+          <div style="position:absolute;bottom:14px;left:6px;right:6px;height:8%;background:rgba(62,142,90,0.12);border-radius:4px;padding:2px 4px;color:var(--yb-intent-ok);">CTA</div>
+        </div>
+        <div style="padding:18px 26px;overflow:hidden;font-size:14.5px;line-height:2.05;color:var(--yb-text);">
+          <p><span style="background:rgba(var(--yb-c-sky-rgb),0.16);border-radius:4px;padding:1px 3px;">「你的素材今天在 5 个工具之间搬了 7 次。」</span></p>
+          <p>写脚本在一个窗口，找图在另一个窗口，配音在第三个窗口——每搬一次，上下文就丢一次。</p>
+          <p>译宝把这件事反过来：工具来找你。</p>
+          <p>分镜写在对话旁边，出图直接进素材库，剪辑在同一个时间线上。你做的唯一一件事，是决定。</p>
+          <p style="color:var(--yb-text-faint);">（中段：三个真实操作演示，每个 ≤8 秒，配数据弹窗）</p>
+          <p>60 秒，从一句话到一支成片。素材没搬过一次家。</p>
+          <p><span style="background:rgba(62,142,90,0.14);border-radius:4px;padding:1px 3px;">下期我们拆这支片子的分镜表——关注了别刷丢。</span></p>
+        </div>
+      </div>
+      <div style="border-top:1px solid var(--yb-card-row-line);padding:8px 16px;display:flex;gap:14px;align-items:center;">
+        <span class="kv">口播 228 字/分钟 · 估算 58s ✓</span>
+        <span class="kv" style="color:var(--yb-intent-pending-ink);">⚠ 0:42–0:48 冷区：补 B-roll 或字幕弹窗</span>
+        <span class="kv" style="margin-left:auto;">抖音竖版变体 · 派生自母稿</span>
+      </div>
+    </main>
+    <div class="stagebar"><span class="caret"></span>对译宝说点什么…<span class="hint">选中任意对象 = 钉住它说 · ⌘J</span></div>
+  </div>
+  <footer class="horizon">
+    <div class="nodes"><div class="node"><i></i><span>11:02</span></div><div class="node"><i></i><span>11:18</span></div><div class="node hot"><i></i><span>11:26</span></div></div>
+    <div class="echo">echo: <em class="amber">editor.replace_range(hook_01) → 待你定</em></div>
+    <div class="entries"><b>今日</b><b>会话</b><b>器物</b></div>
+    <div class="ctx">ctx: 译宝品牌短片 · 脚本</div>
+  </footer>
+</section>
+
+
+<!-- ============ 场景 4：S2 · 分镜（stage：镜头卡片表） ============ -->
+<section class="scene" id="sc-4">
+  <div class="act-tag"><b>S2 · 分镜</b> —— stage：镜头卡片是共同界面，不是画布上的自由图片</div>
+  <div class="desk desk-stage">
+    <aside class="spine">
+      <span class="sdot"></span><span class="sdot hot"></span><span class="sdot"></span><span class="sdot"></span>
+      <span class="stext">溪流</span>
+    </aside>
+    <aside class="annots">
+      <div class="annot">
+        <div class="who"><i></i>你 · 钉在 E03<time style="margin-left:auto;">14:07</time></div>
+        这镜和 E04 顺序换一下，转折要提前。
+        <div class="annot-anchor"></div>
+      </div>
+      <div class="annot">
+        <div class="who"><i style="background:var(--yb-accent);border:none;"></i>译宝 · 校验<time style="margin-left:auto;">自动</time></div>
+        <div style="font-size:12.5px;line-height:1.8;">
+          <span class="chip green">单镜 ≤8s ✓</span> <span class="chip green">台词对轨 ✓</span><br>
+          <span class="chip green">景别节奏 全-特-中 ✓</span> <span class="chip amber">E09 缺叙事目的</span>
+         </div>
+      </div>
+      <div class="annot">
+        <div class="who"><i></i>阶段门<time style="margin-left:auto;">14:20</time></div>
+        <div style="font-size:12.5px;">分镜批准后进入资产筹备。<br>叙事目的字段先补齐。</div>
+        <div class="acts"><span class="btn primary" style="padding:4px 12px;font-size:12px;">批准分镜 · 门②</span></div>
+      </div>
+    </aside>
+    <main class="tile" style="display:flex;flex-direction:column;">
+      <div class="tile-head"><span>分镜表 · 译宝品牌短片</span><span class="kv">12 镜 · 58s · 引用脚本 v3</span></div>
+      <div style="flex:1;padding:12px 16px;display:grid;grid-template-columns:repeat(4,1fr);grid-auto-rows:1fr;gap:10px;min-height: 0;">
+        <!-- 12 张镜头卡 -->
+        <div style="border:1px solid var(--yb-widget-border);border-radius:10px;padding:8px 10px;background:rgba(255,255,255,0.65);font-size:11px;line-height:1.5;"><b>E01</b> <span class="chip">全景</span><div style="height:34px;border-radius:6px;background:linear-gradient(135deg,#dfe9f3,#c2d4e6);margin:5px 0;"></div>五窗快切 · 4s<br><span style="color:var(--yb-text-faint);">建立痛点</span></div>
+        <div style="border:1px solid var(--yb-widget-border);border-radius:10px;padding:8px 10px;background:rgba(255,255,255,0.65);font-size:11px;line-height:1.5;"><b>E02</b> <span class="chip">特写</span><div style="height:34px;border-radius:6px;background:linear-gradient(135deg,#e8eef5,#c9d8e8);margin:5px 0;"></div>字幕弹出 · 3s<br><span style="color:var(--yb-text-faint);">认知冲突</span></div>
+        <div style="border:1px solid var(--yb-intent-pending);border-radius:10px;padding:8px 10px;background:var(--yb-intent-pending-soft);font-size:11px;line-height:1.5;"><b>E03</b> <span class="chip">中景</span><div style="height:34px;border-radius:6px;background:linear-gradient(135deg,#f2e8d8,#e5d2b4);margin:5px 0;"></div>三窗口播 · 5s<br><span style="color:var(--yb-text-faint);">问题具象化</span></div>
+        <div style="border:1px solid var(--yb-widget-border);border-radius:10px;padding:8px 10px;background:rgba(255,255,255,0.65);font-size:11px;line-height:1.5;"><b>E04</b> <span class="chip">特写</span><div style="height:34px;border-radius:6px;background:linear-gradient(135deg,#e2ecf6,#c5d8ec);margin:5px 0;"></div>反转宣言 · 4s<br><span style="color:var(--yb-text-faint);">转折</span></div>
+        <div style="border:1px solid var(--yb-widget-border);border-radius:10px;padding:8px 10px;background:rgba(255,255,255,0.65);font-size:11px;line-height:1.5;"><b>E05</b> <span class="chip">中景</span><div style="height:34px;border-radius:6px;background:linear-gradient(135deg,#dde8f2,#c3d5e8);margin:5px 0;"></div>演示：对话出分镜 · 6s<br><span style="color:var(--yb-text-faint);">证据 1</span></div>
+        <div style="border:1px solid var(--yb-widget-border);border-radius:10px;padding:8px 10px;background:rgba(255,255,255,0.65);font-size:11px;line-height:1.5;"><b>E06</b> <span class="chip">中景</span><div style="height:34px;border-radius:6px;background:linear-gradient(135deg,#e0eaf4,#c6d9ec);margin:5px 0;"></div>演示：出图入库 · 6s<br><span style="color:var(--yb-text-faint);">证据 2</span></div>
+        <div style="border:1px solid var(--yb-widget-border);border-radius:10px;padding:8px 10px;background:rgba(255,255,255,0.65);font-size:11px;line-height:1.5;"><b>E07</b> <span class="chip">中景</span><div style="height:34px;border-radius:6px;background:linear-gradient(135deg,#dfe9f3,#c4d6e9);margin:5px 0;"></div>演示：同线剪辑 · 6s<br><span style="color:var(--yb-text-faint);">证据 3</span></div>
+        <div style="border:1px solid var(--yb-widget-border);border-radius:10px;padding:8px 10px;background:rgba(255,255,255,0.65);font-size:11px;line-height:1.5;"><b>E08</b> <span class="chip">特写</span><div style="height:34px;border-radius:6px;background:linear-gradient(135deg,#e6eef7,#cbdcf0);margin:5px 0;"></div>弹窗：搬运 0 次 · 4s<br><span style="color:var(--yb-text-faint);">强调</span></div>
+        <div style="border:1px solid var(--yb-intent-pending);border-radius:10px;padding:8px 10px;background:var(--yb-intent-pending-soft);font-size:11px;line-height:1.5;"><b>E09</b> <span class="chip amber">全景</span><div style="height:34px;border-radius:6px;background:linear-gradient(135deg,#efe6d6,#e2d2b6);margin:5px 0;"></div>时间线全景 · 5s<br><span style="color:var(--yb-intent-pending-ink);">⚠ 补叙事目的</span></div>
+        <div style="border:1px solid var(--yb-widget-border);border-radius:10px;padding:8px 10px;background:rgba(255,255,255,0.65);font-size:11px;line-height:1.5;"><b>E10</b> <span class="chip">中景</span><div style="height:34px;border-radius:6px;background:linear-gradient(135deg,#e1ebf5,#c7daf0);margin:5px 0;"></div>口播升华 · 5s<br><span style="color:var(--yb-text-faint);">峰值收尾</span></div>
+        <div style="border:1px solid var(--yb-widget-border);border-radius:10px;padding:8px 10px;background:rgba(255,255,255,0.65);font-size:11px;line-height:1.5;"><b>E11</b> <span class="chip">特写</span><div style="height:34px;border-radius:6px;background:linear-gradient(135deg,#e4edf6,#cadaee);margin:5px 0;"></div>成品定格 · 4s<br><span style="color:var(--yb-text-faint);">缓冲</span></div>
+        <div style="border:1px solid var(--yb-widget-border);border-radius:10px;padding:8px 10px;background:rgba(255,255,255,0.65);font-size:11px;line-height:1.5;"><b>E12</b> <span class="chip">中景</span><div style="height:34px;border-radius:6px;background:linear-gradient(135deg,#e6efe9,#cbdfd2);margin:5px 0;"></div>下期预告 · 6s<br><span style="color:var(--yb-text-faint);">CTA 关注</span></div>
+      </div>
+    </main>
+    <div class="stagebar"><span class="caret"></span>对译宝说点什么…<span class="hint">选中任意对象 = 钉住它说 · ⌘J</span></div>
+  </div>
+  <footer class="horizon">
+    <div class="nodes"><div class="node"><i></i><span>11:26</span></div><div class="node hot"><i></i><span>14:07</span></div><div class="node"><i></i><span>14:20</span></div></div>
+    <div class="echo">echo: <em>storyboard.derive(script_v3) ✓ 12 shots</em></div>
+    <div class="entries"><b>今日</b><b>会话</b><b>器物</b></div>
+    <div class="ctx">ctx: 译宝品牌短片 · 分镜</div>
+  </footer>
+</section>
+
+<!-- ============ 场景 5：S3 资产筹备（stage：画布 + 钦定制） ============ -->
+<section class="scene" id="sc-5">
+  <div class="act-tag"><b>S3 · 资产筹备</b> —— stage：画布服务探索期，多变体并排，人钦定</div>
+  <div class="desk desk-stage">
+    <aside class="spine">
+      <span class="sdot"></span><span class="sdot"></span><span class="sdot hot"></span><span class="sdot"></span>
+      <span class="stext">溪流</span>
+    </aside>
+    <aside class="annots">
+      <div class="annot">
+        <div class="who"><i></i>你 · 钉在 场景 B<time style="margin-left:auto;">15:32</time></div>
+        场景 B 的色调和封面概念 A 不一致，往冷灰调。
+        <div class="annot-anchor"></div>
+      </div>
+      <div class="annot">
+        <div class="who"><i style="background:var(--yb-accent);border:none;"></i>译宝<time style="margin-left:auto;">15:33</time></div>
+        已按冷灰调重出 4 个变体，血缘挂在 E05/E06 上。钦定哪张？
+      </div>
+    </aside>
+    <main class="tile" style="position:relative;overflow:hidden;background:
+      radial-gradient(circle, rgba(77,144,196,0.10) 1px, transparent 1px) 0 0/22px 22px,
+      linear-gradient(180deg, rgba(255,255,255,0.55), transparent 40%), var(--yb-widget-bg);">
+      <div class="tile-head"><span>画布 · 资产筹备</span><span class="kv">探索期 · 收敛后让位分镜表</span></div>
+      <!-- 角色三视图卡 -->
+      <div style="position:absolute;left:26px;top:56px;width:300px;border:1px solid var(--yb-widget-border);border-radius:12px;background:#fff;padding:10px 12px;box-shadow:var(--yb-shadow-2);">
+        <div class="kv">角色 · 团子三视图 <span class="chip green">已钦定</span></div>
+        <div style="display:flex;gap:6px;margin-top:8px;">
+          <div style="flex:1;height:64px;border-radius:8px;background:linear-gradient(160deg,#f4f7fb,#dbe6f1);display:flex;align-items:center;justify-content:center;font-size:10px;color:#6c8199;">正面</div>
+          <div style="flex:1;height:64px;border-radius:8px;background:linear-gradient(160deg,#f2f6fa,#d8e3ef);display:flex;align-items:center;justify-content:center;font-size:10px;color:#6c8199;">侧面</div>
+          <div style="flex:1;height:64px;border-radius:8px;background:linear-gradient(160deg,#f0f4f9,#d5e0ed);display:flex;align-items:center;justify-content:center;font-size:10px;color:#6c8199;">背面</div>
+        </div>
+        <div class="kv" style="margin-top:6px;">seed 88231 · mj v7 · 引用者: E01/E05/E06/E10</div>
+      </div>
+      <!-- 场景参考卡 -->
+      <div style="position:absolute;left:60px;top:280px;width:220px;border:1px solid var(--yb-widget-border);border-radius:12px;background:#fff;padding:10px 12px;box-shadow:var(--yb-shadow-2);">
+        <div class="kv">场景 A · 桌面全景 <span class="chip green">已钦定</span></div>
+        <div style="height:80px;border-radius:8px;background:linear-gradient(135deg,#dfeaf5,#b9d2ea);margin-top:8px;"></div>
+      </div>
+      <div style="position:absolute;left:310px;top:340px;width:220px;border:1px solid var(--yb-intent-pending);border-radius:12px;background:#fff;padding:10px 12px;box-shadow:var(--yb-shadow-2);">
+        <div class="kv">场景 B · 剪辑特写 <span class="chip amber">重出中</span></div>
+        <div style="height:80px;border-radius:8px;background:linear-gradient(135deg,#efe9df,#ddd2c0);margin-top:8px;"></div>
+      </div>
+      <!-- 首帧多变体组 -->
+      <div style="position:absolute;right:26px;top:56px;width:340px;border:1px solid var(--yb-widget-border);border-radius:12px;background:#fff;padding:10px 12px;box-shadow:var(--yb-shadow-2);">
+        <div class="kv">E01 首帧 · 多变体 <span class="chip">4 选 1</span></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px;">
+          <div style="height:74px;border-radius:8px;background:linear-gradient(135deg,#e3edf6,#c5d9ec);position:relative;"><span style="position:absolute;right:6px;bottom:4px;" class="chip green">钦定 ✓</span></div>
+          <div style="height:74px;border-radius:8px;background:linear-gradient(135deg,#e8eef5,#ccd9e8);opacity:0.75;"></div>
+          <div style="height:74px;border-radius:8px;background:linear-gradient(135deg,#e5ecf3,#c8d6e6);opacity:0.75;"></div>
+          <div style="height:74px;border-radius:8px;background:linear-gradient(135deg,#e9edf2,#cdd7e4);opacity:0.75;"></div>
+        </div>
+        <div class="kv" style="margin-top:6px;">废体进回收站 · 可对比可复活</div>
+      </div>
+      <!-- 连线 -->
+      <svg style="position:absolute;inset:0;pointer-events:none;">
+        <path d="M360 130 C 430 130, 440 130, 530 130" stroke="rgba(77,144,196,0.5)" stroke-width="1.5" fill="none" stroke-dasharray="5 4"/>
+        <path d="M170 280 C 240 220, 420 180, 528 170" stroke="rgba(77,144,196,0.35)" stroke-width="1.5" fill="none" stroke-dasharray="5 4"/>
+      </svg>
+      <!-- 画布工具条 -->
+      <div style="position:absolute;left:26px;bottom:16px;display:flex;gap:8px;">
+        <span class="btn">+ 生成</span><span class="btn">+ 参考图</span><span class="btn">回收站 · 5</span>
+      </div>
+    </main>
+    <div class="stagebar"><span class="caret"></span>对译宝说点什么…<span class="hint">选中任意对象 = 钉住它说 · ⌘J</span></div>
+  </div>
+  <footer class="horizon">
+    <div class="nodes"><div class="node"><i></i><span>14:20</span></div><div class="node hot"><i></i><span>15:32</span></div><div class="node"><i></i><span>15:33</span></div></div>
+    <div class="echo">echo: <em>assets.bind(E05/E06, 场景B_v4) ✓ 血缘已记</em></div>
+    <div class="entries"><b>今日</b><b>会话</b><b>器物</b></div>
+    <div class="ctx">ctx: 译宝品牌短片 · 资产</div>
+  </footer>
+</section>
+
+<!-- ============ 场景 6：S4 出镜头（stage：批量队列 + 配额闸门） ============ -->
+<section class="scene" id="sc-6">
+  <div class="act-tag"><b>S4 · 出镜头</b> —— stage：抽卡是经济问题，配额闸门 + 多变体钦定 + 回收站</div>
+  <div class="desk desk-stage">
+    <aside class="spine">
+      <span class="sdot"></span><span class="sdot"></span><span class="sdot"></span><span class="sdot hot"></span>
+      <span class="stext">溪流</span>
+    </aside>
+    <aside class="annots">
+      <div class="annot" style="border-color:var(--yb-intent-pending);background:linear-gradient(180deg,#fff,var(--yb-intent-pending-soft));">
+        <div class="who"><i style="background:var(--yb-accent);border:none;"></i>配额闸门 · L2<time style="margin-left:auto;">16:04</time></div>
+        <div style="font-size:12.5px;line-height:1.7;">
+                 批量生成 12 镜 × 4 变体<br>
+          预计 <b>¥860</b> · 按 40% 命中估≈ 29 镜成本<br>
+          一致性引用：角色#c1 · 场景#s2
+        </div>
+        <div class="acts"><span class="btn amber" style="padding:4px 12px;font-size:12px;">确认预算</span><span class="btn" style="padding:4px 12px;font-size:12px;">先出 3 镜</span></div>
+      </div>
+      <div class="annot">
+        <div class="who"><i></i>复盘卡 · 自动<time style="margin-left:auto;">16:40</time></div>
+        <div style="font-size:12.5px;line-height:1.7;">
+          E09 三次未过：运镜太复杂（摇+移）<br>
+          → 拆成两镜，成功率回升
+        </div>
+      </div>
+    </aside>
+    <main class="tile" style="display:flex;flex-direction:column;">
+      <div class="tile-head"><span>生成队列 · 批量出镜头</span><span class="kv">12 镜 · 队列 2 · 回收站 5</span></div>
+      <div style="flex:1;padding:10px 16px;display:flex;flex-direction:column;gap:6px;overflow:hidden;font-size:12.5px;">
+        <div style="display:grid;grid-template-columns:56px 1fr 76px 90px;gap:8px;padding:7px 10px;border-radius:8px;background:rgba(62,142,90,0.08);"><b>E01</b><span>全景 · 五窗快切</span><span class="chip green">已钦定</span><span class="kv">¥72 · 4 变体</span></div>
+        <div style="display:grid;grid-template-columns:56px 1fr 76px 90px;gap:8px;padding:7px 10px;border-radius:8px;background:rgba(62,142,90,0.08);"><b>E02</b><span>特写 · 字幕弹出</span><span class="chip green">已钦定</span><span class="kv">¥58 · 3 变体</span></div>
+        <div style="display:grid;grid-template-columns:56px 1fr 76px 90px;gap:8px;padding:7px 10px;border-radius:8px;background:rgba(62,142,90,0.08);"><b>E03</b><span>中景 · 三窗口播</span><span class="chip green">已钦定</span><span class="kv">¥64 · 4 变体</span></div>
+        <div style="display:grid;grid-template-columns:56px 1fr 76px 90px;gap:8px;padding:7px 10px;border-radius:8px;background:rgba(62,142,90,0.08);"><b>E04</b><span>特写 · 反转宣言</span><span class="chip green">已钦定</span><span class="kv">¥60 · 3 变体</span></div>
+        <div style="display:grid;grid-template-columns:56px 1fr 76px 90px;gap:8px;padding:7px 10px;border-radius:8px;background:rgba(62,142,90,0.08);"><b>E05</b><span>中景 · 对话出分镜</span><span class="chip green">已钦定</span><span class="kv">¥70 · 4 变体</span></div>
+        <div style="display:grid;grid-template-columns:56px 1fr 76px 90px;gap:8px;padding:7px 10px;border-radius:8px;background:rgba(var(--yb-c-sky-rgb),0.10);"><b>E06</b><span>中景 · 出图入库</span><span class="chip">生成中 62%</span><span class="kv">预计 ¥68</span></div>
+        <div style="display:grid;grid-template-columns:56px 1fr 76px 90px;gap:8px;padding:7px 10px;border-radius:8px;background:rgba(var(--yb-c-sky-rgb),0.10);"><b>E07</b><span>中景 · 同线剪辑</span><span class="chip">生成中 18%</span><span class="kv">预计 ¥68</span></div>
+        <div style="display:grid;grid-template-columns:56px 1fr 76px 90px;gap:8px;padding:7px 10px;border-radius:8px;background:rgba(62,142,90,0.08);"><b>E08</b><span>特写 · 弹窗 0 次</span><span class="chip green">已钦定</span><span class="kv">¥55 · 3 变体</span></div>
+        <div style="display:grid;grid-template-columns:56px 1fr 76px 90px;gap:8px;padding:7px 10px;border-radius:8px;background:var(--yb-intent-pending-soft);"><b>E09</b><span>全景 · 时间线（已拆两镜）</span><span class="chip amber">待重抽</span><span class="kv">已耗 ¥144</span></div>
+        <div style="display:grid;grid-template-columns:56px 1fr 76px 90px;gap:8px;padding:7px 10px;border-radius:8px;background:rgba(62,142,90,0.08);"><b>E10</b><span>中景 · 口播升华</span><span class="chip green">已钦定</span><span class="kv">¥62 · 3 变体</span></div>
+        <div style="display:grid;grid-template-columns:56px 1fr 76px 90px;gap:8px;padding:7px 10px;border-radius:8px;"><b>E11</b><span>特写 · 成品定格</span><span class="chip grey">排队</span><span class="kv">预计 ¥60</span></div>
+        <div style="display:grid;grid-template-columns:56px 1fr 76px 90px;gap:8px;padding:7px 10px;border-radius:8px;"><b>E12</b><span>中景 · 下期预告</span><span class="chip grey">排队</span><span class="kv">预计 ¥64</span></div>
+      </div>
+      <div style="border-top:1px solid var(--yb-card-row-line);padding:8px 16px;display:flex;gap:14px;align-items:center;">
+        <span class="kv">累计 ¥707 / 预算 ¥860</span>
+        <span class="kv">回收站 5 镜 · <span style="color:var(--yb-accent);">并排对比</span></span>
+        <span class="kv" style="margin-left:auto;">单镜重抽不动其余（局部再生成）</span>
+      </div>
+    </main>
+    <div class="stagebar"><span class="caret"></span>对译宝说点什么…<span class="hint">选中任意对象 = 钉住它说 · ⌘J</span></div>
+  </div>
+  <footer class="horizon">
+    <div class="nodes"><div class="node"><i></i><span>16:04</span></div><div class="node hot"><i></i><span>16:31</span></div><div class="node"><i></i><span>16:40</span></div></div>
+    <div class="echo">echo: <em>video.gen(E06, n=4, refs=[c1,s2]) ✓ ¥68</em></div>
+    <div class="entries"><b>今日</b><b>会话</b><b>器物</b></div>
+    <div class="ctx">ctx: 译宝品牌短片 · 出镜头</div>
+  </footer>
+</section>
+
+<!-- ============ 场景 7：S5 粗剪（stage：时间线初版，台词轨先行） ============ -->
+<section class="scene" id="sc-7">
+  <div class="act-tag"><b>S5 · 粗剪</b> —— stage：agent 按镜号拼装，台词轨反调画面时长</div>
+  <div class="desk desk-stage">
+    <aside class="spine">
+      <span class="sdot"></span><span class="sdot"></span><span class="sdot"></span><span class="sdot hot"></span>
+      <span class="stext">溪流</span>
+    </aside>
+    <aside class="annots">
+      <div class="annot">
+        <div class="who"><i style="background:var(--yb-accent);border:none;"></i>译宝 · 粗剪完成<time style="margin-left:auto;">17:20</time></div>
+        <div style="font-size:12.5px;line-height:1.7;">
+          12 镜已按镜号入轨；台词轨（TTS 试听版）先行，E04 画面按配音从 4s 拉到 4.6s。看一遍？
+        </div>
+        <div class="acts"><span class="btn primary" style="padding:4px 12px;font-size:12px;">▶ 播放粗剪</span><span class="btn" style="padding:4px 12px;font-size:12px;">换配音声线</span></div>
+      </div>
+      <div class="annot">
+        <div class="who"><i></i>提示<time style="margin-left:auto;">自动</time></div>
+        <div style="font-size:12.5px;">台词轨是一等公民：删一句台词 = 删对应片段。</div>
+      </div>
+    </aside>
+    <main class="tile" style="display:flex;flex-direction:column;">
+      <div class="tile-head"><span>时间线 · 粗剪 v1</span><span class="kv">总时长 58.4s · 12 镜 · 台词对轨 ✓</span></div>
+      <div style="margin:12px 16px 0;aspect-ratio:16/8.2;border-radius:10px;background:linear-gradient(150deg,#2c3947,#43566b 60%,#5a738c);position:relative;box-shadow:inset 0 1px 0 rgba(255,255,255,0.15);">
+        <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,0.85);font-size:13px;">▶ 可播放的分镜表 · 预览 E01–E12</div>
+        <div style="position:absolute;left:38%;top:0;bottom:0;width:1.5px;background:rgba(255,255,255,0.9);"></div>
+      </div>
+      <div style="flex:1;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-height:0;">
+        <div style="display:flex;gap:8px;align-items:center;font-size:10.5px;color:var(--yb-text-faint);"><span style="width:44px;">画面</span>
+          <div style="flex:1;display:flex;gap:2px;height:34px;">
+            <span style="flex:4;background:rgba(77,144,196,0.5);border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;">E01</span>
+            <span style="flex:3;background:rgba(77,144,196,0.42);border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;">E02</span>
+            <span style="flex:5;background:rgba(77,144,196,0.5);border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;">E03</span>
+            <span style="flex:4.6;background:rgba(77,144,196,0.42);border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;">E04</span>
+            <span style="flex:6;background:rgba(77,144,196,0.5);border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;">E05</span>
+            <span style="flex:6;background:rgba(77,144,196,0.42);border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;">E06</span>
+            <span style="flex:6;background:rgba(77,144,196,0.5);border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;">E07</span>
+            <span style="flex:4;background:rgba(77,144,196,0.42);border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;">E08</span>
+            <span style="flex:5.6;background:rgba(77,144,196,0.5);border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;">E09</span>
+            <span style="flex:5;background:rgba(77,144,196,0.42);border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;">E10</span>
+            <span style="flex:4;background:rgba(77,144,196,0.5);border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;">E11</span>
+            <span style="flex:6;background:rgba(62,142,90,0.55);border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;">E12</span>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;font-size:10.5px;color:var(--yb-text-faint);"><span style="width:44px;">台词</span>
+          <div style="flex:1;display:flex;gap:2px;height:22px;">
+            <span style="flex:0 0 9.5%;background:rgba(255,255,255,0.9);border:1px solid var(--yb-widget-border);border-radius:4px;font-size:9px;display:flex;align-items:center;padding:0 4px;overflow:hidden;white-space:nowrap;">你的素材今天…</span>
+            <span style="flex:16%;background:rgba(255,255,255,0.9);border:1px solid var(--yb-widget-border);border-radius:4px;font-size:9px;display:flex;align-items:center;padding:0 4px;overflow:hidden;white-space:nowrap;">写脚本在一个窗口…</span>
+            <span style="flex:14%;background:rgba(255,255,255,0.9);border:1px solid var(--yb-widget-border);border-radius:4px;font-size:9px;display:flex;align-items:center;padding:0 4px;overflow:hidden;white-space:nowrap;">译宝把这件事反过来…</span>
+            <span style="flex:31%;background:rgba(255,255,255,0.9);border:1px solid var(--yb-widget-border);border-radius:4px;font-size:9px;display:flex;align-items:center;padding:0 4px;overflow:hidden;white-space:nowrap;">分镜写在对话旁边，出图直接进素材库…</span>
+            <span style="flex:16%;background:rgba(255,255,255,0.9);border:1px solid var(--yb-widget-border);border-radius:4px;font-size:9px;display:flex;align-items:center;padding:0 4px;overflow:hidden;white-space:nowrap;">60 秒，从一句话…</span>
+            <span style="flex:12%;background:rgba(255,255,255,0.9);border:1px solid var(--yb-widget-border);border-radius:4px;font-size:9px;display:flex;align-items:center;padding:0 4px;overflow:hidden;white-space:nowrap;">下期我们拆…</span>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;font-size:10.5px;color:var(--yb-text-faint);"><span style="width:44px;">音乐</span>
+          <div style="flex:1;height:14px;border-radius:4px;background:repeating-linear-gradient(90deg,rgba(77,101,132,0.35) 0 3px,transparent 3px 6px);"></div>
+        </div>
+      </div>
+    </main>
+    <div class="stagebar"><span class="caret"></span>对译宝说点什么…<span class="hint">选中任意对象 = 钉住它说 · ⌘J</span></div>
+  </div>
+  <footer class="horizon">
+    <div class="nodes"><div class="node"><i></i><span>16:40</span></div><div class="node hot"><i></i><span>17:20</span></div><div class="node"><i></i><span>17:21</span></div></div>
+    <div class="echo">echo: <em>timeline.assemble(12 shots, dialogue-first) ✓ 58.4s</em></div>
+    <div class="entries"><b>今日</b><b>会话</b><b>器物</b></div>
+    <div class="ctx">ctx: 译宝品牌短片 · 粗剪</div>
+  </footer>
+</section>
+
+
+<!-- ============ 场景 8：S6 精剪（stage：时间码评论 + 留存预检） ============ -->
+<section class="scene" id="sc-8">
+  <div class="act-tag"><b>S6 · 精剪</b> —— stage：结构层 agent 做，审美帧级人做，undo 栈一视同仁</div>
+  <div class="desk desk-stage">
+    <aside class="spine">
+      <span class="sdot"></span><span class="sdot"></span><span class="sdot"></span><span class="sdot hot"></span>
+      <span class="stext">溪流</span>
+    </aside>
+    <aside class="annots">
+      <div class="annot">
+        <div class="who"><i></i>你 · 钉在 0:23<time style="margin-left:auto;">19:41</time></div>
+        这段 BGM 太满了，压过人声。
+        <div class="annot-anchor"></div>
+      </div>
+      <div class="annot" style="border-color:var(--yb-intent-pending);background:linear-gradient(180deg,#fff,var(--yb-intent-pending-soft));">
+        <div class="who"><i style="background:var(--yb-accent);border:none;"></i>译宝 · 待你定<time style="margin-left:auto;">19:41</time></div>
+        <div style="font-size:12.5px;line-height:1.7;">
+          0:21–0:29 人声段 BGM 降到 -18dB（sidechain）<br>
+          备选：换 3 个候选配乐 ▸ 试听
+        </div>
+        <div class="acts"><span class="btn primary" style="padding:4px 12px;font-size:12px;">采纳</span><span class="btn" style="padding:4px 12px;font-size:12px;">试听候选</span></div>
+      </div>
+      <div class="annot">
+        <div class="who"><i></i>留存预检 · 自动<time style="margin-left:auto;">19:38</time></div>
+        <div style="font-size:12.5px;line-height:1.8;">
+          <span class="chip green">3-5s 视觉变化 ✓</span> <span class="chip green">无长停顿 ✓</span><br>
+          <span class="chip green">结尾 BGM 渐弱 ✓</span> <span class="chip amber">0:42–0:48 冷区未补</span>
+        </div>
+      </div>
+    </aside>
+    <main class="tile" style="display:flex;flex-direction:column;">
+      <div class="tile-head"><span>时间线 · 精剪 v4</span><span class="kv">undo 栈 · agent 与人的操作同列可退</span></div>
+      <div style="margin:12px 16px 0;aspect-ratio:16/7.4;border-radius:10px;background:linear-gradient(150deg,#31404f,#48596e 55%,#61788f);position:relative;">
+        <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,0.85);font-size:13px;">0:23 · E06 出图入库演示</div>
+        <div style="position:absolute;left:39.6%;top:0;bottom:0;width:1.5px;background:#fff;"></div>
+        <div style="position:absolute;left:39.6%;top:-1px;transform:translateX(-50%);background:var(--yb-accent);color:#fff;font-size:9px;padding:1px 6px;border-radius:0 0 6px 6px;">0:23 评论</div>
+      </div>
+      <div style="flex:1;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-height:0;">
+        <div style="display:flex;gap:8px;align-items:center;font-size:10.5px;color:var(--yb-text-faint);"><span style="width:44px;">画面</span>
+          <div style="flex:1;display:flex;gap:2px;height:30px;">
+            <span style="flex:4;background:rgba(77,144,196,0.5);border-radius:4px;"></span><span style="flex:3;background:rgba(77,144,196,0.42);border-radius:4px;"></span><span style="flex:5;background:rgba(77,144,196,0.5);border-radius:4px;"></span><span style="flex:4.6;background:rgba(77,144,196,0.42);border-radius:4px;"></span><span style="flex:6;background:rgba(77,144,196,0.5);border-radius:4px;"></span><span style="flex:6;background:rgba(255,255,255,0.95);border:1.5px solid var(--yb-accent);border-radius:4px;"></span><span style="flex:6;background:rgba(77,144,196,0.5);border-radius:4px;"></span><span style="flex:4;background:rgba(77,144,196,0.42);border-radius:4px;"></span><span style="flex:5.6;background:rgba(77,144,196,0.5);border-radius:4px;"></span><span style="flex:5;background:rgba(77,144,196,0.42);border-radius:4px;"></span><span style="flex:4;background:rgba(77,144,196,0.5);border-radius:4px;"></span><span style="flex:6;background:rgba(62,142,90,0.55);border-radius:4px;"></span>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;font-size:10.5px;color:var(--yb-text-faint);"><span style="width:44px;">台词</span>
+          <div style="flex:1;height:16px;border-radius:4px;background:rgba(255,255,255,0.75);border:1px solid var(--yb-widget-border);"></div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;font-size:10.5px;color:var(--yb-text-faint);"><span style="width:44px;">音乐</span>
+          <div style="flex:1;height:16px;border-radius:4px;position:relative;background:repeating-linear-gradient(90deg,rgba(77,101,132,0.35) 0 3px,transparent 3px 6px);">
+            <span style="position:absolute;left:36%;right:57%;top:0;bottom:0;background:rgba(242,160,60,0.35);border-radius:4px;"></span>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;font-size:10.5px;color:var(--yb-text-faint);"><span style="width:44px;">字幕</span>
+          <div style="flex:1;height:14px;border-radius:4px;background:rgba(255,255,255,0.6);border:1px dashed var(--yb-widget-border);"></div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;font-size:10.5px;color:var(--yb-text-faint);"><span style="width:44px;">undo</span>
+          <div style="flex:1;display:flex;gap:4px;">
+            <span class="chip grey">你 · trim E03</span><span class="chip">译宝 · bgm duck 0:21-0:29</span><span class="chip grey">你 · 转场 E08</span><span class="chip">译宝 · 字幕对齐</span>
+          </div>
+        </div>
+      </div>
+    </main>
+    <div class="stagebar"><span class="caret"></span>对译宝说点什么…<span class="hint">选中任意对象 = 钉住它说 · ⌘J</span></div>
+  </div>
+  <footer class="horizon">
+    <div class="nodes"><div class="node"><i></i><span>17:20</span></div><div class="node hot"><i></i><span>19:41</span></div><div class="node"><i></i><span>19:52</span></div></div>
+    <div class="echo">echo: <em class="amber">timeline.patch(bgm@0:21-0:29, -18dB) → 待你定</em></div>
+    <div class="entries"><b>今日</b><b>会话</b><b>器物</b></div>
+    <div class="ctx">ctx: 译宝品牌短片 · 精剪</div>
+  </footer>
+</section>
+
+<!-- ============ 场景 9：S6b focus 审片 ============ -->
+<section class="scene" id="sc-9">
+  <div class="act-tag"><b>S6b · 审片</b> —— focus：单一器近乎全屏，地平线收成发丝线</div>
+  <div class="desk" style="padding:20px 28px 34px;">
+    <div class="tile" style="height:100%;display:flex;flex-direction:column;">
+      <div class="tile-head"><span>终审 · 译宝品牌短片 60s v4</span><span class="kv">focus · Esc 退回 stage</span></div>
+      <div style="flex:1;margin:0 18px 14px;border-radius:12px;background:linear-gradient(150deg,#2c3947,#43566b 55%,#5a738c);position:relative;display:flex;align-items:center;justify-content:center;">
+        <div style="color:rgba(255,255,255,0.9);font-size:15px;">▶ 全片预览 · 0:00 / 0:58</div>
+        <div style="position:absolute;left:24px;bottom:18px;right:24px;height:4px;border-radius:2px;background:rgba(255,255,255,0.25);">
+          <div style="width:31%;height:100%;border-radius:2px;background:#fff;"></div>
+        </div>
+        <div style="position:absolute;left:50%;bottom:52px;transform:translateX(-50%);display:flex;gap:10px;">
+          <span class="btn primary">✓ 通过 · 门③</span><span class="btn">✎ 时间码批注</span><span class="btn">打回精剪</span>
+        </div>
+        <div style="position:absolute;left:26px;bottom:30px;width:56px;height:56px;" data-pet></div>
+      </div>
+    </div>
+  </div>
+  <footer class="horizon hair"></footer>
+</section>
+
+<!-- ============ 场景 10：S7 发布（家态 + 发布卡 peek，L3 红印） ============ -->
+<section class="scene" id="sc-10">
+  <div class="act-tag"><b>S7 · 发布</b> —— 家态：按印在对话流（L3），发布包 peek 只看不定</div>
+  <div class="desk desk-home">
+    <section class="stream-zone">
+      <div class="brand">译宝</div>
+      <h1 class="day-title">9月3日 · 星期三</h1>
+      <div class="day-sub">阴 · 已陪伴你 133 天</div>
+      <div class="stream">
+        <div class="bubble ai">终审通过的话，发布包已经按平台分装好了。两边标题封面都按 CTR 设计错开，B站赌分享、抖音赌前 3 秒。<time>10:20</time></div>
+        <div class="gate-card" style="max-width:440px;">
+          <div class="kicker">发布 · L3 需本人确认</div>
+          <div style="font-family:var(--yb-serif);font-size:17px;font-weight:700;color:var(--yb-text-strong);">译宝品牌短片 · 60s → B站 + 抖音</div>
+          <div style="margin-top:6px;font-size:12.5px;color:var(--yb-text-dim);line-height:1.7;">
+            B站 20:00 · 抖音 20:30 · 导出 = 不可逆外发<br>
+            发布后 3 个动作已排进提醒
+          </div>
+          <div style="display:flex;gap:10px;margin-top:12px;align-items:center;">
+            <span class="stamp" style="padding:5px 12px;font-size:13px;">按印发布</span>
+            <span class="btn">查看发布包 →</span>
+          </div>
+        </div>
+      </div>
+      <div class="tether" style="left:490px;bottom:260px;width:700px;transform:rotate(-27deg);"></div>
+      <div class="estuary">
+        <div class="tuanzi" data-pet></div>
+        <div class="composer"><span class="caret"></span>对译宝说点什么…<span class="send">➤</span></div>
+      </div>
+    </section>
+    <section class="tile today">
+      <div class="tile-head"><span>今日</span><span class="more">+ 新建</span></div>
+      <div class="agenda">
+        <div class="row"><time>20:00</time><span class="dot amber"></span><span class="t">短片发布（B站 20:00 / 抖音 20:30）</span><span class="tag amber">待你按印</span></div>
+        <div class="row"><time>20:30</time><span class="dot"></span><span class="t">回前 20 条评论 · 置顶讨论</span><span class="tag">已排程</span></div>
+        <div class="row"><time>明 09:00</time><span class="dot"></span><span class="t">冷启动数据 · 守夜人抓</span><span class="tag">已排程</span></div>
+      </div>
+    </section>
+    <section class="shelf">
+      <div class="peek" style="position:static;">
+        <div class="tile-head"><span>发布 · 译宝品牌短片 60s</span><span class="kv">L3</span></div>
+        <div style="padding:4px 16px 14px;display:flex;flex-direction:column;gap:12px;font-size:12.5px;">
+          <div style="border:1px solid var(--yb-widget-border);border-radius:12px;padding:10px 12px;background:rgba(255,255,255,0.6);">
+            <div style="display:flex;gap:10px;align-items:center;">
+              <div style="width:96px;height:54px;border-radius:8px;background:linear-gradient(135deg,#dfeaf5,#b9d2ea);flex:none;display:flex;align-items:center;justify-content:center;font-size:10px;color:#4d6f92;font-weight:600;">B站封面 16:9</div>
+              <div style="min-width:0;line-height:1.5;">
+                <b>「你的素材今天在 5 个工具之间搬了 7 次」</b><br>
+                <span class="kv">6 章节 mini-headline ✓ · 合集「译宝短片」挂载 ✓</span>
+              </div>
+            </div>
+          </div>
+          <div style="border:1px solid var(--yb-widget-border);border-radius:12px;padding:10px 12px;background:rgba(255,255,255,0.6);">
+            <div style="display:flex;gap:10px;align-items:center;">
+              <div style="width:40px;height:64px;border-radius:8px;background:linear-gradient(135deg,#2c3947,#5a738c);flex:none;display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff;font-weight:600;">9:16</div>
+              <div style="min-width:0;line-height:1.5;">
+                <b>「搬了 7 次素材的人，都该看看这个」</b><br>
+                <span class="kv">前 3s 钩子重剪重剪版 · 1 主标签 + 2 长尾 ✓</span>
+              </div>
+            </div>
+          </div>
+          <div class="kv" style="text-align:right;">按印在左侧对话流 · L3</div>
+        </div>
+      </div>
+      <div class="tile remind">
+        <div class="tile-head"><span>发布后 · 已排进提醒</span><span class="more">全部 →</span></div>
+        <div class="row"><time>+30min</time><span>回评论 · 置顶问题</span><span class="st amber">待执行</span></div>
+        <div class="row"><time>+24h</time><span>四象限定性（CTR×留存）</span><span class="st amber">待执行</span></div>
+        <div class="row"><time>+72h</time><span>留存曲线对齐脚本节点</span><span class="st amber">待执行</span></div>
+      </div>
+    </section>
+  </div>
+  <footer class="horizon">
+    <div class="nodes"><div class="node"><i></i><span>周一</span></div><div class="node"><i></i><span>周二</span></div><div class="node hot"><i></i><span>10:20</span></div></div>
+    <div class="echo">echo: <em class="red">publish(bilibili+douyin) → 需本人确认 · L3</em></div>
+    <div class="entries"><b>今日</b><b>会话</b><b>器物</b></div>
+    <div class="ctx">ctx: 译宝品牌短片 · 发布</div>
+  </footer>
+</section>
+
+<!-- ============ 场景 11：S8 复盘（家态 + 留存分析 peek，守夜人） ============ -->
+<section class="scene" id="sc-11">
+  <div class="act-tag"><b>S8 · 复盘</b> —— 家态 + peek：数据回流选题库，闭环的另一半</div>
+  <div class="desk desk-home">
+    <section class="stream-zone">
+      <div class="brand">译宝</div>
+      <h1 class="day-title">9月5日 · 星期五</h1>
+      <div class="day-sub">晴 · 已陪伴你 135 天</div>
+      <div class="stream">
+        <div class="bubble ai lead">短片发布 48 小时：CTR 6.2% 达标，但 0:41 有个断崖——演示段切得太硬，承诺兑现完没有缓冲。掉点和改法我写进复盘卡了，跑出来的那个钩子已经沉淀进模块库。<time>09:00</time></div>
+        <div class="bubble me">0:41 怎么改？<time>09:04</time></div>
+        <div class="bubble ai">下期开场直接前置演示高光 3 秒。这条不改了——一次只修一段的原则是对下一条说的。<time>09:04</time></div>
+      </div>
+      <div class="tether" style="left:150px;bottom:280px;width:330px;transform:rotate(-10deg);"></div>
+      <div class="estuary">
+        <div class="tuanzi" data-pet></div>
+        <div class="composer"><span class="caret"></span>对译宝说点什么…<span class="send">➤</span></div>
+      </div>
+    </section>
+    <section class="tile today">
+      <div class="tile-head"><span>今日</span><span class="more">+ 新建</span></div>
+      <div class="agenda">
+        <div class="row"><time>09:00</time><span class="dot"></span><span class="t">短片复盘会 · 48h 数据</span><span class="tag">已完成</span></div>
+        <div class="row"><time>+5d</time><span class="dot"></span><span class="t">7 天沉淀：选题库重排</span><span class="tag">已排程</span></div>
+      </div>
+    </section>
+    <section class="shelf">
+      <div class="peek" style="position:static;">
+        <div class="tile-head"><span>留存曲线 · B站 48h</span><span class="kv">CTR 6.2% ✓</span></div>
+        <div style="padding:6px 16px 4px;">
+          <svg viewBox="0 0 320 110" style="width:100%;display:block;">
+            <line x1="8" y1="96" x2="312" y2="96" stroke="var(--yb-card-row-line)"/>
+            <line x1="8" y1="10" x2="8" y2="96" stroke="var(--yb-card-row-line)"/>
+            <path d="M8 26 C 40 30, 70 34, 110 40 C 150 46, 175, 46, 195 44 C 205 43, 212 52, 218 66 C 226 76, 250 74, 312 78" stroke="var(--yb-accent)" stroke-width="2" fill="none"/>
+            <line x1="218" y1="40" x2="218" y2="96" stroke="var(--yb-intent-pending)" stroke-dasharray="3 3"/>
+            <circle cx="218" cy="66" r="3.5" fill="var(--yb-intent-pending)"/>
+            <text x="212" y="106" font-size="8" fill="var(--yb-intent-pending-ink)" font-family="var(--yb-mono)">0:41 断崖</text>
+            <text x="10" y="20" font-size="8" fill="var(--yb-text-faint)" font-family="var(--yb-mono)">3s 留存 74% ✓</text>
+          </svg>
+        </div>
+        <div style="padding:0 16px 12px;display:flex;flex-direction:column;gap:6px;font-size:12px;">
+          <div><span class="chip green">四象限</span> CTR 达标 + 前段留存好 → <b>改中段</b></div>
+          <div><span class="chip amber">掉点 0:41</span> 兑现区结束太硬 → 下期前置演示高光</div>
+          <div><span class="chip green">已回流</span> 钩子「搬了 7 次」入模块库 · 选题库已重排</div>
+        </div>
+      </div>
+      <div class="tile remind">
+        <div class="tile-head"><span>守夜人</span><span class="more">昨夜</span></div>
+        <div class="row"><time>03:00</time><span>抓取 B站/抖音数据</span><span class="st ok">已落账</span></div>
+        <div class="row"><time>09:00</time><span>复盘卡已写回</span><span class="st ok">已落账</span></div>
+      </div>
+    </section>
+  </div>
+  <footer class="horizon">
+    <div class="nodes"><div class="node"><i></i><span>周三</span></div><div class="node"><i></i><span>03:00</span></div><div class="node hot"><i></i><span>09:00</span></div></div>
+    <div class="echo">echo: <em>review.note(断崖 0:41 → 下期前置高光) ✓</em></div>
+    <div class="entries"><b>今日</b><b>会话</b><b>器物</b></div>
+    <div class="ctx">ctx: 译宝品牌短片 · 复盘</div>
+  </footer>
+</section>
+
+<!-- ============ 场景 12：小窗（守夜/陪伴形态） ============ -->
+<section class="scene" id="sc-12">
+  <div class="act-tag"><b>小窗</b> —— 全程陪伴形态：主屏收敛后，溪口继续呼吸</div>
+  <div class="desk" style="display:flex;align-items:center;justify-content:center;">
+    <div style="text-align:center;max-width:520px;">
+      <div style="font-family:var(--yb-serif);font-size:34px;font-weight:700;color:var(--yb-text-strong);">主屏合上之后</div>
+      <p style="margin-top:12px;font-size:14px;color:var(--yb-text-dim);line-height:1.9;">
+        家态 / peek / stage / focus 都退场，小窗一直在。<br>
+        守夜抓数据、提醒到点、配额超支熔断——只记账，不抢戏。<br>
+        想说话，它就在输入框后面。
+      </p>
+    </div>
+    <!-- 小窗本体：右下角浮窗 -->
+    <div style="position:absolute;right:56px;bottom:96px;width:330px;border-radius:20px;border:1px solid var(--yb-widget-border);background:linear-gradient(180deg,rgba(255,255,255,0.94),var(--yb-widget-bg));box-shadow:0 28px 64px -20px rgba(45,64,89,0.4), var(--yb-glaze-hi);backdrop-filter:var(--yb-blur);">
+      <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--yb-card-row-line);">
+        <span style="width:26px;height:26px;display:inline-block;" data-pet></span>
+        <span style="font-size:13px;font-weight:600;">译宝</span>
+        <span class="kv" style="margin-left:auto;">在线 · 守夜中</span>
+      </div>
+      <div style="padding:12px 14px;font-size:13px;line-height:1.7;color:var(--yb-text);">
+        成片两个平台都发出去了 ✓ 明早 9 点我把冷启动数据放你桌上。
+      </div>
+      <div style="padding:0 12px 12px;">
+        <div class="composer" style="padding:9px 14px;font-size:13px;"><span class="caret"></span>说一句…<span class="send">➤</span></div>
+      </div>
+    </div>
+  </div>
+  <footer class="horizon">
+    <div class="nodes"><div class="node"><i></i><span>20:00</span></div><div class="node hot"><i></i><span>20:30</span></div><div class="node"><i></i><span>03:00</span></div></div>
+    <div class="echo">echo: <em>nightwatch.schedule(+9h, 冷启动数据) ✓</em></div>
+    <div class="entries"><b>今日</b><b>会话</b><b>器物</b></div>
+    <div class="ctx">ctx: pet · idle</div>
+  </footer>
+</section>
+
+<script>
+  const scenes = [...document.querySelectorAll('.scene')];
+  const params = new URLSearchParams(location.search);
+  let cur = Math.min(Math.max(parseInt(params.get('scene') ?? '0', 10) || 0, 0), scenes.length - 1);
+  if (params.has('shot')) document.body.classList.add('shot');
+  function show(i) {
+    cur = (i + scenes.length) % scenes.length;
+    scenes.forEach((el, j) => el.classList.toggle('on', j === cur));
+    const lbl = document.getElementById('navLabel');
+    if (lbl) lbl.textContent = (cur + 1) + ' / ' + scenes.length;
+  }
+  function go(d) { show(cur + d); }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight') go(1);
+    if (e.key === 'ArrowLeft') go(-1);
+  });
+  document.querySelectorAll('[data-pet]').forEach((el) => {
+    el.appendChild(document.getElementById('tpl-pet').content.cloneNode(true));
+  });
+  show(cur);
+</script>
+
+</body>
+</html>
