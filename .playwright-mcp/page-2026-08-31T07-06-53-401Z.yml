@@ -1,0 +1,114 @@
+- generic [ref=f38e3]:
+  - banner [ref=f38e4]:
+    - generic [ref=f38e6]:
+      - img "译宝" [ref=f38e8]
+      - navigation [ref=f38e9]:
+        - button "主屏" [ref=f38e10] [cursor=pointer]
+        - button "能力" [ref=f38e15] [cursor=pointer]
+        - button "数据" [ref=f38e19] [cursor=pointer]
+      - generic [ref=f38e24]:
+        - button "⌘K" [ref=f38e25] [cursor=pointer]
+        - button "主题：跟随系统（当前浅色）· 点击切换" [ref=f38e30] [cursor=pointer]
+        - button "设置 (⌘,)" [ref=f38e34] [cursor=pointer]
+        - button "收起为小窗" [ref=f38e39] [cursor=pointer]
+  - main [ref=f38e43]:
+    - generic [ref=f38e45]:
+      - generic [ref=f38e48]:
+        - generic [ref=f38e49]:
+          - heading "8月31日 · 星期一" [level=1] [ref=f38e52]
+          - generic [ref=f38e56]:
+            - img "译宝 · 待机" [ref=f38e58]
+            - paragraph [ref=f38e95]: 下午好
+            - paragraph [ref=f38e96]: 输入一条，或从下面开始
+            - generic [ref=f38e97]:
+              - button "记一条闪念" [ref=f38e98] [cursor=pointer]
+              - button "看看选题看板" [ref=f38e102] [cursor=pointer]
+              - button "帮我写点什么" [ref=f38e106] [cursor=pointer]
+        - generic [ref=f38e111]:
+          - generic [ref=f38e112]:
+            - heading "今日" [level=3] [ref=f38e113]
+            - generic [ref=f38e114]:
+              - button "上一月" [ref=f38e115] [cursor=pointer]: ‹
+              - generic [ref=f38e116]: 2026年8月
+              - button "下一月" [ref=f38e117] [cursor=pointer]: ›
+              - button "今" [ref=f38e118] [cursor=pointer]
+          - generic [ref=f38e119]:
+            - generic [ref=f38e120]:
+              - generic [ref=f38e121]: 日
+              - generic [ref=f38e122]: 一
+              - generic [ref=f38e123]: 二
+              - generic [ref=f38e124]: 三
+              - generic [ref=f38e125]: 四
+              - generic [ref=f38e126]: 五
+              - generic [ref=f38e127]: 六
+            - generic [ref=f38e128]:
+              - generic [ref=f38e129]: "26"
+              - generic [ref=f38e130]: "27"
+              - generic [ref=f38e131]: "28"
+              - generic [ref=f38e132]: "29"
+              - generic [ref=f38e133]: "30"
+              - generic [ref=f38e134]: "31"
+              - generic [ref=f38e135]: "1"
+            - generic [ref=f38e136]:
+              - generic [ref=f38e137]: "2"
+              - generic [ref=f38e138]: "3"
+              - generic [ref=f38e139]: "4"
+              - generic [ref=f38e140]: "5"
+              - generic [ref=f38e141]: "6"
+              - generic [ref=f38e142]: "7"
+              - generic [ref=f38e143]: "8"
+            - generic [ref=f38e144]:
+              - generic [ref=f38e145]: "9"
+              - generic [ref=f38e146]: "10"
+              - generic [ref=f38e147]: "11"
+              - generic [ref=f38e148]: "12"
+              - generic [ref=f38e149]: "13"
+              - generic [ref=f38e150]: "14"
+              - generic [ref=f38e151]: "15"
+            - generic [ref=f38e152]:
+              - generic [ref=f38e153]: "16"
+              - generic [ref=f38e154]: "17"
+              - generic [ref=f38e155]: "18"
+              - generic [ref=f38e156]: "19"
+              - generic [ref=f38e157]: "20"
+              - generic [ref=f38e158]: "21"
+              - generic [ref=f38e159]: "22"
+            - generic [ref=f38e160]:
+              - generic [ref=f38e161]: "23"
+              - generic [ref=f38e162]: "24"
+              - generic [ref=f38e163]: "25"
+              - generic [ref=f38e164]: "26"
+              - generic [ref=f38e165]: "27"
+              - generic [ref=f38e166]: "28"
+              - generic [ref=f38e167]: "29"
+            - generic [ref=f38e168]:
+              - generic [ref=f38e169]: "30"
+              - generic [ref=f38e170]: "31"
+              - generic [ref=f38e171]: "1"
+              - generic [ref=f38e172]: "2"
+              - generic [ref=f38e173]: "3"
+              - generic [ref=f38e174]: "4"
+              - generic [ref=f38e175]: "5"
+          - generic [ref=f38e176]:
+            - paragraph [ref=f38e177]: 今日安排
+            - paragraph [ref=f38e178]: 今天没有安排，享受空白
+        - generic [ref=f38e181]:
+          - generic [ref=f38e182]:
+            - generic [ref=f38e183]: 呼出技能
+            - button "日程" [ref=f38e184] [cursor=pointer]
+            - button "写作" [ref=f38e188] [cursor=pointer]
+            - button "生活" [ref=f38e192] [cursor=pointer]
+          - generic [ref=f38e196]:
+            - generic "译宝 · idle" [ref=f38e197]:
+              - img "译宝 · 待机" [ref=f38e198]
+            - generic [ref=f38e236]:
+              - button "添加附件或引用" [ref=f38e238] [cursor=pointer]
+              - textbox "Shift+回车换行" [ref=f38e242]:
+                - /placeholder: 对译宝说点什么…（shift+回车换行）
+              - button "语音输入" [ref=f38e243] [cursor=pointer]
+              - button "发送" [disabled] [ref=f38e247]
+      - generic [ref=f38e250]:
+        - button "会话" [ref=f38e251] [cursor=pointer]
+        - generic [ref=f38e254]: "echo: 待命中"
+        - button "今日" [ref=f38e256] [cursor=pointer]
+        - generic [ref=f38e260]: "ctx: home · idle"

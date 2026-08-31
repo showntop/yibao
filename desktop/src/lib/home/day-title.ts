@@ -8,13 +8,13 @@ export function dayTitleFace(now: Date = new Date(), firstSeen?: number): { main
   return { main, sub: companionSub(now, firstSeen) };
 }
 
-/** 「已陪伴你 N 天」：完整天数（首日不计，数字当天内不闪）。首日/未知 → null 不显示。 */
+/** 「已陪伴你 N 天」：含当天（首日=1，数字当天内不闪）。未知 first_seen → null 不显示。 */
 function companionSub(now: Date, firstSeen?: number): string | null {
   if (!firstSeen) return null;
   const day0 = new Date(firstSeen);
   day0.setHours(0, 0, 0, 0);
   const today0 = new Date(now);
   today0.setHours(0, 0, 0, 0);
-  const days = Math.floor((today0.getTime() - day0.getTime()) / 86_400_000);
-  return days > 0 ? `已陪伴你 ${days} 天` : null;
+  const days = Math.floor((today0.getTime() - day0.getTime()) / 86_400_000) + 1;
+  return `已陪伴你 ${days} 天`;
 }

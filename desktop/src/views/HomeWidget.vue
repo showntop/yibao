@@ -12,6 +12,8 @@ import { isPlaced } from "../lib/home/home-assembly.ts";
 const props = defineProps<{
   id: WidgetId;
   fill?: boolean;
+  /** 旁路 placed 判定（peek/抽屉等非装配场景复用瓷片壳） */
+  force?: boolean;
 }>();
 
 const widgets = useHomeWidgets();
@@ -54,7 +56,7 @@ onUnmounted(() => document.removeEventListener("mousedown", onDoc));
 
 <template>
   <section
-    v-if="spec.visible && placed"
+    v-if="force || (spec.visible && placed)"
     ref="root"
     class="yb-widget"
     :class="[
