@@ -85,6 +85,24 @@ def test_all_tools_registered_with_risks(env):
         assert reg.get(tid).default_risk == risk, tid
 
 
+def test_declarative_tools_carry_human_labels(env):
+    """过程展示用 manifest label（缺省回退 tool id）：不再暴露 zimeiti.add 这类内部名。"""
+    reg, _, _ = env
+    expected = {
+        "zimeiti.add": "记选题",
+        "zimeiti.list": "选题看板",
+        "zimeiti.open_editor": "打开编辑器",
+        "zimeiti.update": "改选题",
+        "zimeiti.mat_list": "素材库",
+        "zimeiti.mat_get": "素材正文",
+        "zimeiti.mat_delete": "删素材",
+        "zimeiti.mat_link": "关联素材",
+        "zimeiti.stat_list": "发布数据",
+    }
+    for tid, label in expected.items():
+        assert reg.get(tid).label == label, tid
+
+
 # ---------- 声明式全链：add → list → get → move → delete ----------
 
 
@@ -1082,6 +1100,142 @@ def test_strip_md_plain_semantics(env):
     src = "# 标题\n- 要点一\n> 引用一句\n![图alt](https://x/1.png)\n[文字](https://x/2) 和 `code`"
     assert strip(src).splitlines() == ["标题", "· 要点一", "引用一句", "图alt", "文字（https://x/2） 和 code"]
 
+
+# ---------- 视频 workflow S0：选题卡扩展字段（hkrr/钩型/目标视频平台/封面概念） ----------
+
+_S0_COLS = ("hkrr", "hook_type", "target_platform", "cover_concepts", "project_id")
+
+
+def test_add_writes_s0_video_fields(env):
+    """S0 选题卡：add 收 4 个视频字段（hkrr/cover_concepts 为 JSON 文本），落库原样可读。"""
+    reg, _, _ = env
+    hkrr = json.dumps({"happy": "解压向", "knowledge": "", "resonance": "打工人心声",
+                       "rhythm": "可行"}, ensure_ascii=False)  # 快乐/知识/共鸣 ≥1 + 节奏可行/存疑
+    covers = json.dumps(["大字报标题+人物表情", "对比分屏", "结果前置截图"], ensure_ascii=False)
+    r = _run(reg, "zimeiti.add", {"title": "视频选题", "hkrr": hkrr, "hook_type": "反常识",
+                                  "target_platform": "B站", "cover_concepts": covers})
+    assert r.success
+    row = _run(reg, "zimeiti.get", {"id": r.data["id"]}).data["rows"][0]
+    assert row["hkrr"] == hkrr and row["hook_type"] == "反常识" and row["target_platform"] == "B站"
+    assert json.loads(row["cover_concepts"]) == ["大字报标题+人物表情", "对比分屏", "结果前置截图"]
+
+
+def test_add_s0_fields_default_empty(env):
+    """防御：只给标题 → S0 新列全部落空串默认值（不炸、不缺键）；聚合展示字段同步给空。"""
+    reg, _, _ = env
+    tid = _run(reg, "zimeiti.add", {"title": "裸选题"}).data["id"]
+    row = _run(reg, "zimeiti.get", {"id": tid}).data["rows"][0]
+    for col in _S0_COLS:
+        assert row[col] == ""
+    assert row["hkrr_happy"] == "" and row["cover_1"] == "" and row["project"] == ""
+
+
+def test_add_coerces_structured_params_to_json(env):
+    """防御：LLM 把 hkrr 给成 dict / cover_concepts 给成 list 时落 JSON 文本，不是绑定报错。"""
+    reg, _, _ = env
+    r = _run(reg, "zimeiti.add", {"title": "T", "hkrr": {"happy": "解压"}, "cover_concepts": ["a", "b", "c"]})
+    assert r.success
+    row = _run(reg, "zimeiti.get", {"id": r.data["id"]}).data["rows"][0]
+    assert json.loads(row["hkrr"]) == {"happy": "解压"}
+    assert json.loads(row["cover_concepts"]) == ["a", "b", "c"]
+    assert row["hkrr_happy"] == "解压" and row["cover_3"] == "c"  # 详情聚合已拆平
+
+
+def test_get_enriches_s0_display_bad_json_degrades(env):
+    """详情聚合把 hkrr/cover_concepts JSON 拆平成行；坏 JSON / 类型不对降级空串，不炸。"""
+    reg, _, _ = env
+    tid = _run(reg, "zimeiti.add", {"title": "T"}).data["id"]
+    db = reg.get("zimeiti.get").plugin_ctx.db
+    db.update("topics", tid, {"hkrr": "这不是 JSON", "cover_concepts": '{"not": "a list"}'})
+    row = _run(reg, "zimeiti.get", {"id": tid}).data["rows"][0]
+    assert row["hkrr_happy"] == "" and row["hkrr_rhythm"] == "" and row["cover_1"] == ""
+
+
+def test_update_writes_s0_fields(env):
+    """update 承接 S0 字段修订（含立项流程回写的 project_id），不动未传字段。"""
+    reg, _, _ = env
+    tid = _run(reg, "zimeiti.add", {"title": "T", "angle": "旧角度"}).data["id"]
+    assert _run(reg, "zimeiti.update", {"id": tid, "hook_type": "悬念", "project_id": "proj_x"}).success
+    row = _run(reg, "zimeiti.get", {"id": tid}).data["rows"][0]
+    assert row["hook_type"] == "悬念" and row["project_id"] == "proj_x" and row["angle"] == "旧角度"
+
+
+def test_topics_table_migration_adds_s0_columns(tmp_path):
+    """老库迁移：老 schema（无 S0 列）的 topics 有存量行，按新 manifest apply → ALTER 补列、数据不动。"""
+    import tomllib
+
+    from yibao_brain.plugindb import PluginDb
+
+    doc = tomllib.loads((ZIMEITI_DIR / "manifest.toml").read_text(encoding="utf-8"))
+    spec = next(t for t in doc["table"] if t["name"] == "topics")
+    old_spec = {**spec, "columns": [c for c in spec["columns"] if c["name"] not in _S0_COLS]}
+    path = str(tmp_path / "migrate" / "data.db")
+    old = PluginDb("zimeiti", db_path=path)
+    old.apply_schema([old_spec])
+    rid = old.insert("topics", {"title": "老选题", "created_at": 1, "updated_at": 1})
+    old.close()
+
+    new = PluginDb("zimeiti", db_path=path)
+    new.apply_schema([spec])
+    row = new.query("topics", where={"id": rid})[0]
+    assert row["title"] == "老选题"  # 存量数据不动
+    for col in _S0_COLS:
+        assert row[col] == ""  # 新列带默认值补齐
+    new.apply_schema([spec])  # 重复 apply 幂等不炸
+    new.close()
+
+
+# ---------- 立项（S0 相变：选题 → 项目实体，L3 闸门卡由系统弹） ----------
+
+
+def test_promote_api_registered_intent(env):
+    """详情卡「立项」= intent 方法：走 agent 流程调 project.create（面板不直调绕过闸门）。"""
+    env  # 触发加载
+    api = get_api("zimeiti.promote")
+    assert api is not None and not api.direct and api.handler == "zimeiti.get"
+    assert "{title}" in api.intent and "{id}" in api.intent
+    assert "project.create" in api.intent and "zimeiti.topic" in api.intent and "zimeiti.update" in api.intent
+
+
+def test_promote_intent_renders_params(env):
+    """intent 模板渲染：{title}/{id} 占位被面板参数替换干净。"""
+    from yibao_brain.panel import _render_intent
+
+    env
+    text = _render_intent(get_api("zimeiti.promote"), {"id": "t1", "title": "AI 桌宠的一天"})
+    assert "AI 桌宠的一天" in text and "t1" in text and "{title}" not in text and "{id}" not in text
+
+
+def test_promote_flow_attach_and_writeback(env, data_dir, monkeypatch):
+    """立项链路（模拟 agent 按印后的两步）：project.create 挂选题 → update 回写 → get 给「已立项 → 项目名」。"""
+    from yibao_brain import config
+    from yibao_brain.project_tools import make_project_tools
+    from yibao_brain.projects import ProjectStore
+
+    monkeypatch.setattr(config, "settings_path", lambda: str(data_dir / "settings.json"))
+    reg, _, _ = env
+    tid = _run(reg, "zimeiti.add", {"title": "立项选题"}).data["id"]
+    tools = {t.id: t for t in make_project_tools(ProjectStore(str(data_dir / "projects.json")))}
+
+    r = tools["project.create"].run(
+        {"name": "立项选题", "objects": [{"type": "zimeiti.topic", "ref": tid}]}, None)
+    assert r.success
+    proj = r.data["project"]
+    assert proj["objects"] == [{"type": "zimeiti.topic", "ref": tid}]  # 选题已挂进新项目
+
+    assert _run(reg, "zimeiti.update", {"id": tid, "project_id": proj["id"]}).success
+    row = _run(reg, "zimeiti.get", {"id": tid}).data["rows"][0]
+    assert row["project_id"] == proj["id"]
+    assert row["project"] == f"已立项 → {proj['name']}"
+
+
+def test_project_label_fallback_when_registry_missing(env):
+    """防御：project_id 有值但 projects.json 不存在/读不到 → 保底显示 id，不炸。"""
+    reg, _, _ = env
+    tid = _run(reg, "zimeiti.add", {"title": "T"}).data["id"]
+    _run(reg, "zimeiti.update", {"id": tid, "project_id": "proj_ghost"})
+    row = _run(reg, "zimeiti.get", {"id": tid}).data["rows"][0]
+    assert row["project"] == "已立项 → proj_ghost"
 
 
 # ---------- wewrite CLI（ww_hotspots / ww_score：subprocess 薄封装，WEWRITE_HOME 指插件数据目录） ----------

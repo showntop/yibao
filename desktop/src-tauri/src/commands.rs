@@ -53,8 +53,8 @@ pub fn open_data_dir(app: AppHandle) -> Result<(), String> {
 /// radius 0 = 不设圆角（snip 全屏框选层等）。
 #[cfg(target_os = "macos")]
 pub(crate) fn apply_window_chrome(win: &tauri::WebviewWindow, radius: f64) {
-    use objc2::msg_send;
-    use objc2::runtime::AnyObject;
+    use objc2::runtime::{AnyObject, Bool};
+    use objc2::{msg_send, sel};
     use objc2_app_kit::NSView;
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     if let Ok(h) = win.window_handle() {
@@ -69,7 +69,13 @@ pub(crate) fn apply_window_chrome(win: &tauri::WebviewWindow, radius: f64) {
                 }
                 if let Some(window) = view.window() {
                     if radius > 0.0 {
-                        let _: () = msg_send![&*window, setCornerRadius: radius];
+                        // macOS 26 起 NSWindow 不再响应 setCornerRadius:（圆角已由上面
+                        // view 的 layer 裁切承担）。盲发会抛 NSInvalidArgumentException，
+                        // 异常穿过 Rust 帧直接 abort——先问再发。
+                        let can: Bool = msg_send![&*window, respondsToSelector: sel!(setCornerRadius:)];
+                        if can.as_bool() {
+                            let _: () = msg_send![&*window, setCornerRadius: radius];
+                        }
                     }
                     let _: () = msg_send![&*window, setHasShadow: true];
                 }
@@ -598,6 +604,58 @@ pub fn mem_delete(state: tauri::State<Brain>, id: String) -> Result<(), String> 
 #[tauri::command]
 pub fn mem_edit(state: tauri::State<Brain>, id: String, text: String) -> Result<(), String> {
     brain_cmd_with(&state, "mem_edit", serde_json::json!({ "mem_id": id, "text": text }))
+}
+
+/// 项目实体：列表 + 当前项目 id（回 {"type":"projects",...} 经 brain-projects 广播；
+/// 任何项目变更 sidecar 也主动广播同型消息）。
+#[tauri::command]
+pub fn get_projects(state: tauri::State<Brain>) -> Result<(), String> {
+    brain_cmd(&state, "projects")
+}
+
+/// 项目实体：新建（回 {"type":"project_created","ok":...} 经 brain-project-created 广播，带最新视图）。
+#[tauri::command]
+pub fn project_create(state: tauri::State<Brain>, name: String) -> Result<(), String> {
+    brain_cmd_with(&state, "project_create", serde_json::json!({ "name": name }))
+}
+
+/// 项目实体：切换（id 或名字；回 project_switched 经 brain-project-switched 广播，带最新视图）。
+#[tauri::command]
+pub fn project_switch(state: tauri::State<Brain>, id: String) -> Result<(), String> {
+    brain_cmd_with(&state, "project_switch", serde_json::json!({ "id": id }))
+}
+
+/// 项目实体：挂对象进项目（id 省略=当前项目；成功时 sidecar 直接广播 projects 视图，
+/// 失败回 project_object_added ok:false 经 brain-project-object-added 广播）。
+/// 注：ref 是协议字段名，Rust 侧用 r#ref 转义关键字。
+#[tauri::command]
+pub fn project_add_object(
+    state: tauri::State<Brain>,
+    obj_type: String,
+    r#ref: String,
+    id: Option<String>,
+) -> Result<(), String> {
+    brain_cmd_with(
+        &state,
+        "project_add_object",
+        serde_json::json!({ "id": id, "obj_type": obj_type, "ref": r#ref }),
+    )
+}
+
+/// 项目实体：从项目摘除对象（同上：成功走 brain-projects 广播，
+/// 失败回 project_object_removed ok:false 经 brain-project-object-removed 广播）。
+#[tauri::command]
+pub fn project_remove_object(
+    state: tauri::State<Brain>,
+    obj_type: String,
+    r#ref: String,
+    id: Option<String>,
+) -> Result<(), String> {
+    brain_cmd_with(
+        &state,
+        "project_remove_object",
+        serde_json::json!({ "id": id, "obj_type": obj_type, "ref": r#ref }),
+    )
 }
 
 /// 用户设置查询（回 {"type":"settings"} 经 brain-settings 广播）。

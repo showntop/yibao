@@ -348,6 +348,14 @@ function toggleFocus() {
 // 待批准数：顶栏「主屏」徽标（收件箱有待处理的事，一眼可见）
 const approvalCount = ref(0);
 
+// 按印定位信号：收件箱 toast 点击 → 递增传给 HomeChat（滚到底部并脉冲对话流里的闸门卡），
+// 修复 toast 原地跳转、闸门卡找不到的死路
+const gateSignal = ref(0);
+function onOpenPending() {
+  navigate("home");
+  gateSignal.value += 1;
+}
+
 // ---- ⌘K 全局命令面板 ----
 const paletteOpen = ref(false);
 function togglePalette() {
@@ -527,6 +535,7 @@ function close() {
           <HomeChat
             v-if="!qaMode"
             :draft="chatDraft"
+            :gate-signal="gateSignal"
             :workstation="deskWork ? capability : null"
             :lend-ear="deskWork && pluginHandoff"
             :work-busy="activityBusy"
@@ -606,7 +615,7 @@ function close() {
       :busy="busyActivity"
       :pending-count="approvalCount"
       @open="openFromActivity"
-      @open-pending="navigate('home')"
+      @open-pending="onOpenPending"
     />
   </div>
 </template>

@@ -22,6 +22,7 @@ export const HOME_PARTS = [
   { id: "need", kind: "glance" as const, presentations: ["tile"] as const },
   { id: "tasks", kind: "glance" as const, presentations: ["tile"] as const },
   { id: "remind", kind: "glance" as const, presentations: ["tile"] as const },
+  { id: "project", kind: "glance" as const, presentations: ["tile"] as const },
   { id: "spark", kind: "glance" as const, presentations: ["tile"] as const },
   { id: "glimpse", kind: "glance" as const, presentations: ["tile"] as const },
   { id: "catch", kind: "glance" as const, presentations: ["tile"] as const },

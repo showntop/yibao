@@ -1,6 +1,6 @@
 # 项目实体：从插件围墙到工作语境（设计稿 v1）
 
-> 状态：讨论稿，待定稿
+> 状态：V1a 已实施（2026-08-31，分期与口径校准见 §8）；P2 起待定稿
 > 日期：2026-08-30
 > 缘起：地平线只有 `ctx: home · idle` 这样的状态读数，没有「我在做哪个项目」。
 > 用户问「项目/空间/目录的选择器及展示区呢」——需要一个真·项目实体。
@@ -78,3 +78,34 @@ JSON 足够；将来跨设备同步/多人再迁 SQLite。
 2. 删除项目 = 删聚合（引用的对象原样保留）——需要二次确认 UI
 3. 对象引用的展示文案：各域自己出 face（zimeiti.topic → 选题标题；
    coding.cwd → 目录名）——引用式的好处，域内自己会说话
+
+## 8. 实施校准（V1a 落地，2026-08-31）
+
+与上文设计稿的偏差，以代码为准：
+
+- **分期提前**：agent tool（原 P3）提前进 V1a——`project.create` /
+  `project.open` / `project.current` / `project.attach` 已注册
+  （`sidecar/src/yibao_brain/project_tools.py`），人与 agent 同权操作项目
+  （检验清单第 4 条提前兑现）。
+- **Project 增加 `dir` 字段**：立项即落目录骨架
+  `data_dir()/projects/<slug>/{01_素材,02_工程,03_导出,04_文档}`
+  （视频文档 §8.1）。目录是项目在文件系统的锚点，视图本质不变。
+- **L2/L3 分级映射**（重要）：设计稿里写的"L2 按印"，代码里必须落
+  `RiskLevel.L3_HIGH`——GatePolicy 对 ≤L2 是自动执行，只有 L3 弹人工
+  确认卡。`project.create` 已按 L3_HIGH 注册。今后设计文档凡写
+  "L2/L3 按印"处，实现一律 L3_HIGH。
+- **IPC 实装名**：查询是 `projects`（不是 `project_list`）；变更广播
+  `{"type":"projects", current, projects}`；id 格式 `proj_xxx`。
+- **UI 校准**：项目卡不止 §5 的 ctx peek——家态装配零件 `HomeProject`
+  （项目名 + S0–S8 九段进度轨 + 下一步 + 待确认数）已注册进 parts.ts，
+  暂只入 field 预设 shelf。进度轨推导规则（objects 引用类型 → 阶段）
+  与待确认数（恒 0）是诚实占位，**V1b 接阶段模型与确认队列后替换**。
+  地平线 ctx 已读项目名（`项目名 · state`；无项目回落 `home · state`）。
+- **立项相变实装**：zimeiti 选题详情卡「立项」→ schema 卡 action →
+  `panel_action` IPC → api.toml intent `zimeiti.promote` → agent 流程 →
+  `project.create`（L3 闸门卡按印）→ agent 回写 `topics.project_id`
+  并把选题挂进项目 objects（`{type:"zimeiti.topic", ref:选题id}`）。
+  选 intent 通道的原因：它能过闸门且能带数组型 objects 参数；
+  裸 IPC `project_create` 无闸门，只留给前端人工操作。
+- **仍未做**（开放）：项目选择器/新建 UI（specimen 头部的"新建 +"）、
+  会话与素材归属过滤（P2）、守夜人按项目汇总（P3 残余）。

@@ -332,6 +332,7 @@ _SETTINGS_DEFAULTS: dict = {
     "http.bind": "127.0.0.1",  # HTTP 面监听地址：127.0.0.1 仅本机；0.0.0.0 局域网（手机浏览器体验，token 把关）
     "http.public_url": "",    # 对外域名（VPS Caddy）；配对二维码用，空=仅局域网调试
     "push.devices": [],       # 已注册推送设备 [{registration_id, platform, added_at}]
+    "current_project_id": "",  # 当前项目（项目实体 V1a：projects.json 的 id；空 = 无项目语境）
 }
 
 # 枚举型设置的合法取值；非法值拒收保持原值（防前端/手滑写坏）

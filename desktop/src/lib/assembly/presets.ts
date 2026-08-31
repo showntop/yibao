@@ -292,6 +292,7 @@ export const HOME_PRESETS = {
       today: "panel",
       remind: "card",
       stats: "pair",
+      project: "tile",
     },
     absent: ["now", "mind", "identity", "line", "need", "tasks", "glimpse", "catch", "scratch", "when", "spark", "sessions", "bench", "jot"],
     grid: {
@@ -307,7 +308,7 @@ export const HOME_PRESETS = {
       stacks: {
         chat: ["dayTitle", "chat"],
         axis: ["today"],
-        shelf: ["remind", "stats"],
+        shelf: ["project", "remind", "stats"], // 器物架首张 = 项目卡（specimen video-flow.html 场景 2）
         compose: ["composer"],
       },
       grow: ["chat"],

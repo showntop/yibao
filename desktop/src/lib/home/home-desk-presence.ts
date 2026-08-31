@@ -105,6 +105,11 @@ export function unmatchedDeskAsk(texts: readonly string[]): string | null {
   return unmatchedDeskPath(texts);
 }
 
+/** 摊开去重：当前未收起的摊开行与将盖的相同 → 跳过（连续摊开同一表面不重复盖章）。 */
+export function isDeskPathDupe(texts: readonly string[], line: string): boolean {
+  return unmatchedDeskPath(texts) === line;
+}
+
 export function deskKind(plugin: string, input?: string | null): DeskKind {
   if (input === "handoff" || plugin.trim() === "coding") return "worker";
   if (input === "none" || plugin.trim() === "toolbox") return "tool";

@@ -21,6 +21,12 @@ columns = [
   {name = "status", type = "text", default = "候选"},
   {name = "published_at", type = "integer", default = 0},
   {name = "published_version", type = "integer", default = 0},   # 发布时的稿版本（复盘对齐数据与稿）
+  # 视频 workflow S0 选题卡字段（2026-08-31）：均为 JSON/文本，缺省空串（老选题天然空）
+  {name = "hkrr", type = "text", default = ""},            # HKRR 标注 JSON：{"happy": 快乐, "knowledge": 知识, "resonance": 共鸣, "rhythm": 节奏}（快乐/知识/共鸣 ≥1 + 节奏可行）
+  {name = "hook_type", type = "text", default = ""},       # 钩型（如 悬念/反常识/利益承诺）
+  {name = "target_platform", type = "text", default = ""}, # 目标视频平台（抖音/B站/YouTube；platform 列仍是图文平台）
+  {name = "cover_concepts", type = "text", default = ""},  # 封面概念 JSON 数组，恰好 3 条文案级方案（只出文字，图像生成是 V2）
+  {name = "project_id", type = "text", default = ""},      # 立项回写：所属项目 id（空 = 未立项）
   {name = "created_at", type = "integer"},
   {name = "updated_at", type = "integer"},
 ]
@@ -71,8 +77,9 @@ indexes = ["topic_id"]
 
 [[tool]]
 id = "add"
+label = "记选题"
 type = "db"
-description = "记录一条新选题（标题必填），初始状态为「候选」进看板"
+description = "记录一条新选题（标题必填），初始状态为「候选」进看板；面向视频的选题可附 HKRR/钩型/目标视频平台/3 条封面概念"
 risk = "L1"
 panel = "zimeiti:board"
 refresh = "list"   # 写入后面板拿刷新后的看板，而非回执 {"id":…}
@@ -83,6 +90,10 @@ angle = {type = "string", description = "切入角度：从哪个点写、给谁
 platform = {type = "string", description = "目标平台（如公众号/小红书/播客）"}
 source = {type = "string", description = "选题来源（如灵感/读者反馈/热点）"}
 url = {type = "string", description = "来源链接（热点转选题时的原文地址，可选）"}
+hkrr = {type = "string", description = "HKRR 标注 JSON 字符串（视频选题用）：{\"happy\": 快乐, \"knowledge\": 知识, \"resonance\": 共鸣, \"rhythm\": 节奏}——快乐/知识/共鸣至少沾 1 项（成立理由），节奏标注可行/存疑"}
+hook_type = {type = "string", description = "钩型（视频选题用，如 悬念/反常识/利益承诺/身份代入）"}
+target_platform = {type = "string", description = "目标视频平台（视频选题用，如 抖音/B站/YouTube）"}
+cover_concepts = {type = "string", description = "封面概念 JSON 数组字符串，恰好 3 条文案级方案（只出文字，不出图；视频选题用）"}
 [tool.db]
 op = "insert"
 table = "topics"
@@ -90,6 +101,7 @@ auto = {created_at = "unixts", updated_at = "unixts"}   # 时间戳由系统生�
 
 [[tool]]
 id = "list"
+label = "选题看板"
 type = "db"
 description = "列出选题看板（按更新时间倒序，最多 100 条）"
 risk = "L0"
@@ -103,6 +115,7 @@ limit = 100
 
 [[tool]]
 id = "open_editor"
+label = "打开编辑器"
 type = "db"
 description = "打开选题的写作编辑器（用户点名「打开编辑器」「进编辑器写稿」「打开选题X的编辑器」时用；面板自动加载该选题最新稿）。只是查看详情用 get。"
 risk = "L0"
@@ -118,8 +131,9 @@ limit = 1
 
 [[tool]]
 id = "update"
+label = "改选题"
 type = "db"
-description = "改选题的标题/角度/目标平台（只更新传入的字段；改状态用 move）"
+description = "改选题字段（只更新传入的字段；改状态用 move）。project_id 是立项流程回写用，平时不要动"
 risk = "L1"
 panel = "zimeiti:detail"
 refresh = "get"
@@ -129,6 +143,11 @@ id = {type = "string", description = "选题 id"}
 title = {type = "string", description = "新标题（可选）"}
 angle = {type = "string", description = "新角度（可选）"}
 platform = {type = "string", description = "新目标平台（可选）"}
+hkrr = {type = "string", description = "新 HKRR 标注 JSON 字符串（可选，同 add）"}
+hook_type = {type = "string", description = "新钩型（可选）"}
+target_platform = {type = "string", description = "新目标视频平台（可选）"}
+cover_concepts = {type = "string", description = "新封面概念 JSON 数组字符串，恰好 3 条（可选）"}
+project_id = {type = "string", description = "立项回写的项目 id（仅立项流程用）"}
 [tool.db]
 op = "update"
 table = "topics"
@@ -140,6 +159,7 @@ auto = {updated_at = "unixts"}
 
 [[tool]]
 id = "mat_list"
+label = "素材库"
 type = "db"
 description = "列出素材库（标题/摘要/标签，按更新时间倒序，最多 100 条）。写稿前先看有没有可当论据的素材，有就 mat_get 取正文"
 risk = "L0"
@@ -152,6 +172,7 @@ limit = 100
 
 [[tool]]
 id = "mat_get"
+label = "素材正文"
 type = "db"
 description = "取一条素材的全文（写作引用论据时用；mat_list 里挑中后调它）"
 risk = "L0"
@@ -164,6 +185,7 @@ table = "materials"
 
 [[tool]]
 id = "mat_delete"
+label = "删素材"
 type = "db"
 description = "删除一条素材"
 risk = "L2"
@@ -178,6 +200,7 @@ table = "materials"
 
 [[tool]]
 id = "mat_link"
+label = "关联素材"
 type = "db"
 description = "把一条已有素材关联到某个选题"
 risk = "L1"
@@ -194,6 +217,7 @@ auto = {updated_at = "unixts"}
 
 [[tool]]
 id = "stat_list"
+label = "发布数据"
 type = "db"
 description = "列出发布数据（按记录时间倒序，最多 50 条）。运行时 where 由调用方传，如 {where: {topic_id: …}} 按选题过滤；不传则列全部"
 risk = "L0"
@@ -208,6 +232,7 @@ type = "schema"
 name = "board"
 label = "选题看板"
 src = "panel/board.schema.json"
+open = "list"   # 面板级入口；也是摊开/开窗「打开即重拉」的数据源（走查 B2/M3 快照陈旧修复）
 
 [[panel]]
 type = "schema"

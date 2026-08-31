@@ -19,7 +19,9 @@ import HomeContextPanel from "../HomeContextPanel.vue";
 import HomeWidget from "../HomeWidget.vue";
 import SessionList from "./SessionList.vue";
 import HorizonBar from "./HorizonBar.vue";
+import HomeGateCard from "./HomeGateCard.vue";
 import HomeDayTitle from "../HomeDayTitle.vue";
+import HomeProject from "../HomeProject.vue";
 import Avatar from "../../components/pet/Avatar.vue";
 import HomeShelfStats from "../HomeShelfStats.vue";
 import HomeRemindCard from "../HomeRemindCard.vue";
@@ -34,7 +36,7 @@ import { collapsibleSidesOf, defaultPeek, faceOf } from "../../lib/home/home-ass
 import { viewOf } from "../../lib/home/home-assembly-ui.ts";
 import { livePluginIds } from "../../composables/useAssembly";
 import { syncPluginParts } from "../../lib/assembly/parts";
-import { deskKind, deskPathOpen, isResumeDeskWork, shouldStampDeskPath, type DeskKind, type DeskWork } from "../../lib/home/home-desk-presence.ts";
+import { deskKind, deskPathOpen, isDeskPathDupe, isResumeDeskWork, shouldStampDeskPath, type DeskKind, type DeskWork } from "../../lib/home/home-desk-presence.ts";
 import {
   HOME_CHAT_SESSION,
   type BubbleMsg,
@@ -56,9 +58,15 @@ import {
   listPlugins,
   panelAction,
   recapCheck,
+  onPendingConfirms,
+  sendConfirmBatch,
+  canRememberTool,
+  type PendingConfirm,
   type BrainPermissions,
   type BrainStatusMsg,
 } from "../../lib/brain";
+import { gateItemsFor } from "../../lib/home/gate";
+import { showRunMetrics } from "../../lib/run-metrics";
 import { groupPages, groupThread, paperErrorNotice, paperStamps, runAnswer, runShowFooter as footerReady } from "../../lib/work-thread";
 import { formatContextPrefix, type InputContext } from "../../lib/at-mention";
 import { sessionStore } from "../../state/store";
@@ -84,6 +92,8 @@ const props = defineProps<{
   lendEar?: boolean;
   workBusy?: boolean;
   workFocus?: boolean;
+  /** 按印定位信号：父级（收件箱 toast）递增 → 滚到底部并脉冲闸门卡 */
+  gateSignal?: number;
 }>();
 const browserPreview = typeof window !== "undefined" && !(
   window as unknown as { __TAURI_INTERNALS__?: { transformCallback?: unknown } }
@@ -142,6 +152,62 @@ const {
   onEditMessage, copyText, onFeedback, regenerate,
   procOk, procErrSuffix, procText, paperShowProc,
 } = chatFlow;
+
+// ---- 按印闸门卡（对话流内联）：L3 确认卡落当前会话流尾部，按印/否决在此完成 ----
+// 不再只落小窗输入槽；大窗共享 surface="pet"，归属按 conversationId 细分（gate.ts）。
+const gateQueue = ref<PendingConfirm[]>([]);
+const gateRaw = ref<PendingConfirm[]>([]); // 未过滤原始队列：切会话时重滤
+const gate = computed(() => gateQueue.value[0] ?? null);
+const gateBusy = ref(false);
+const gateError = ref("");
+const gateRemember = ref(false);
+const gateFlash = ref(false);
+let gateFlashTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function decideGate(approved: boolean) {
+  const g = gate.value;
+  if (!g || gateBusy.value) return;
+  gateBusy.value = true;
+  gateError.value = "";
+  try {
+    // 乐观出队在 sendConfirmBatch 内部（失败自动恢复）；后续 agent 消息进流即为记录
+    await sendConfirmBatch([{ id: g.id, approved, remember: approved && gateRemember.value && canRememberTool(g.tool_id) }]);
+    gateRemember.value = false;
+  } catch (err) {
+    gateError.value = "没有提交成功，请重试：" + String(err);
+  } finally {
+    gateBusy.value = false;
+  }
+}
+
+async function decideGateAll(approved: boolean) {
+  if (gateQueue.value.length < 2 || gateBusy.value) return;
+  gateBusy.value = true;
+  gateError.value = "";
+  try {
+    await sendConfirmBatch(gateQueue.value.map(({ id }) => ({ id, approved, remember: false })));
+  } catch (err) {
+    gateError.value = "没有提交成功，请重试：" + String(err);
+  } finally {
+    gateBusy.value = false;
+  }
+}
+
+watch(
+  () => props.gateSignal,
+  () => {
+    if (!gate.value) return;
+    scrollBubbles(true);
+    gateFlash.value = true;
+    if (gateFlashTimer) clearTimeout(gateFlashTimer);
+    gateFlashTimer = setTimeout(() => (gateFlash.value = false), 1400);
+  },
+);
+
+// 切会话重滤闸门卡（队列不变时订阅不会重发）
+watch(currentSessionId, (id) => {
+  gateQueue.value = gateItemsFor(gateRaw.value, id);
+});
 
 /** 恢复目标会话气泡：从 Rust 权威重拉（内存缓存可能被在途 run / 别的窗口写过） */
 async function restoreConversation(id: string) {
@@ -208,6 +274,11 @@ watch(
       return;
     }
     if (!kind) return;
+    // 去重：未收起的摊开行与将盖的相同 → 不重复盖章（同一表面连续摊开只留一条）
+    if (isDeskPathDupe(bubbles.value.map((b) => b.text), deskPathOpen(kind, next))) {
+      deskSurface = { kind, work: next };
+      return;
+    }
     const since = lastFootprintIndex >= 0 ? bubbles.value.slice(lastFootprintIndex + 1) : bubbles.value;
     if (!shouldStampDeskPath(deskSurface?.work ?? null, lastFootprint, next, since)) {
       deskSurface = { kind, work: next };
@@ -393,6 +464,7 @@ let unlistenSetupErr: (() => void) | null = null;
 let unlistenSetupCfg: (() => void) | null = null;
 let unlistenUpdated: (() => void) | null = null;
 let unlistenWidgets: (() => void) | null = null;
+let unlistenGate: (() => void) | null = null; // 按印闸门卡队列订阅
 
 const assembly = useLiveAssembly();
 const chatFace = computed(() => faceOf(assembly.value, "chat", "thread"));
@@ -476,6 +548,8 @@ function noticeFor(b: BubbleMsg) {
   return pageNotice(b.text, b.icon);
 }
 function runMetricsOf(indices: number[]) {
+  // 运行指标是开发者噪音：设置默认关；关时页脚只留 复制/反馈/重写 等操作按钮
+  if (!showRunMetrics.value) return undefined;
   for (let k = indices.length - 1; k >= 0; k -= 1) {
     const metrics = bubbles.value[indices[k]].metrics;
     if (metrics) return metrics;
@@ -668,6 +742,11 @@ provide(HOME_CHAT_SESSION, {
   threadKey,
   submit,
   fmtDay,
+  // TODO(V1c 器契约)：摊开目前只重开当前表面（面板级，数据由 restoreSurface 打开即重拉保鲜）。
+  // 对象级深链（摊开某选题直达其详情）缺「对象身份」链路透传：HomePlugins computeFocus 已有
+  // rows[0].id，但 SurfaceMeta/DeskWork 只带 objectTitle、路径戳记气泡只存文本——点击时拿不到
+  // id，无法经 panel_action 调对象打开方法（如 zimeiti.get 带 id）。「哪个方法打开该面板的
+  // 对象」应由面板契约声明，属 V1c 器契约的活，此处不发明机制。
   openPanel: () => emit("openPanel"),
   procOk,
   procErrSuffix,
@@ -759,6 +838,15 @@ onMounted(async () => {
     syncPluginParts(result.widgets ?? []);
     unlistenWidgets = await onWidgets((payload) => syncPluginParts(payload?.widgets ?? []));
   } catch { /* sidecar unavailable */ }
+  // 按印闸门卡：订阅待批准队列，按当前会话过滤（onPendingConfirms 立即回当前值）
+  unlistenGate = onPendingConfirms((items) => {
+    gateRaw.value = items;
+    gateQueue.value = gateItemsFor(items, currentSessionId.value);
+    if (!gateQueue.value.length) {
+      gateRemember.value = false;
+      gateError.value = "";
+    }
+  });
   if (previewDemo) {
     currentSessionTitle.value = "站会结论与跟进";
     sessionStarted = true;
@@ -804,6 +892,8 @@ onUnmounted(() => {
   unlistenSetupCfg?.();
   unlistenUpdated?.();
   unlistenWidgets?.();
+  unlistenGate?.();
+  if (gateFlashTimer) clearTimeout(gateFlashTimer);
   if (valenceTimer !== null) clearTimeout(valenceTimer);
   if (thinkNoteTimer !== null) clearInterval(thinkNoteTimer);
 });
@@ -863,6 +953,9 @@ onUnmounted(() => {
       <template #remind>
         <component :is="viewOf('remind', faceOf(assembly, 'remind', 'tile'))" only="remind" @chat="onInfoChat" />
       </template>
+      <template #project>
+        <HomeProject @chat="onInfoChat" />
+      </template>
       <template #stats>
         <HomeShelfStats />
       </template>
@@ -920,6 +1013,19 @@ onUnmounted(() => {
           <PermissionsBanner v-if="missingPerms && perms" :perms="perms" />
           <component :is="chatView" />
         </template>
+        <!-- 按印闸门卡：对话流内联，不被工作面/桌面协作遮挡（设计纪律：按印回落对话流） -->
+        <HomeGateCard
+          v-if="gate"
+          :pending="gate"
+          :count="gateQueue.length"
+          :busy="gateBusy"
+          :error="gateError"
+          :can-remember="canRememberTool(gate.tool_id)"
+          :flash="gateFlash"
+          v-model:remember="gateRemember"
+          @decide="decideGate"
+          @decide-all="decideGateAll"
+        />
         <HomeFloatNotes />
       </template>
 

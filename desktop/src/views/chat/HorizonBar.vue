@@ -4,8 +4,9 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import YbIcon from "../../components/common/YbIcon.vue";
 import { getFeedOnce, onFeed, type FeedItem, type FeedResponse } from "../../lib/brain";
-import { horizonEcho, horizonNodes } from "../../lib/home/horizon.ts";
+import { horizonCtx, horizonEcho, horizonNodes } from "../../lib/home/horizon.ts";
 import type { HomeAvatarState } from "../../lib/home/home-chat-session.ts";
+import { useProject } from "../../composables/useProject";
 
 const props = defineProps<{
   state: HomeAvatarState;
@@ -59,6 +60,9 @@ function firePulse(id: number) {
 
 const nodes = computed(() => horizonNodes(items.value, now.value));
 const echo = computed(() => horizonEcho({ state: props.state, proc: props.proc }));
+// ctx 位：在手项目名（项目实体，useProject 单例自拉取/跟广播），无项目退回 home
+const { current: currentProject } = useProject();
+const ctx = computed(() => horizonCtx({ state: props.state, project: currentProject.value?.name }));
 </script>
 
 <template>
@@ -96,7 +100,7 @@ const echo = computed(() => horizonEcho({ state: props.state, proc: props.proc }
         <YbIcon name="calendar" :size="11" />今日
       </button>
     </div>
-    <div class="ctx">ctx: home · {{ state }}</div>
+    <div class="ctx">ctx: {{ ctx }}</div>
   </footer>
 </template>
 

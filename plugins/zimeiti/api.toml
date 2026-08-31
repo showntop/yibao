@@ -62,6 +62,15 @@ handler = "zimeiti.mat_list"
 direct = true
 quiet = true
 
+# 器物架统计卡的素材计数（挂载 + 每分钟轮询）：只取行数、不发 panel 事件（quiet）——
+# 非 quiet 时每次轮询都发素材库面板事件，会把恢复出来/正在看的面板冲成素材库（走查 W1；
+# 照 coding.sessions / 上方 mat_peek 的 quiet 别名先例）
+[[method]]
+name = "mat_count"
+handler = "zimeiti.mat_list"
+direct = true
+quiet = true
+
 [[method]]
 name = "mat_delete"
 handler = "zimeiti.mat_delete"
@@ -169,6 +178,13 @@ intent = "读选题「{title}」的最新稿（id={id}）：用 zimeiti.article_
 name = "review"
 handler = "zimeiti.stat_list"
 intent = "复盘选题「{title}」（id={id}）：先用 zimeiti.stat_list 查它的发布数据（where 按 topic_id 过滤；没有数据就先问我数据或跳过），再用 zimeiti.article_read 读最新稿（id={id}），然后给我一份复盘：这篇内容好在哪、差在哪、数据反映了什么、下次同方向选题怎么改进。复盘要点存进长期记忆。"
+
+# 详情页「立项」（视频 workflow S0 相变）：走 agent 流程——project.create 是 L3 阶段门，
+# 闸门卡由系统弹出请用户按印，面板不直调绕过；确认后选题挂进新项目并回写 project_id
+[[method]]
+name = "promote"
+handler = "zimeiti.get"
+intent = "为选题「{title}」（id={id}）立项成项目：第一步调用 project.create，name 用「{title}」，objects 传一个数组、唯一元素的 type 是 zimeiti.topic、ref 是 {id}（把这条选题挂进新项目）。project.create 是阶段门动作，系统会弹确认条等我按印——照常发起即可，不要试图绕过确认；我拒绝就停下。创建成功后第二步调用 zimeiti.update，参数 id={id}、project_id 为新项目的 id（回写立项状态，详情卡会显示「已立项」）。若创建失败（如项目名重复），告诉我原因，不要反复重试。完成后告诉我项目名和项目目录路径。"
 
 # ---- 事件白名单（design §3 事件通道）：面板经 yibao.emitEvent 上报，未声明的拒收 ----
 [[event]]

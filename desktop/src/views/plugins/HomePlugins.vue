@@ -14,6 +14,7 @@ import InputBar from "../../components/common/InputBar.vue";
 import YbIcon from "../../components/common/YbIcon.vue";
 import {
   onBrainEvent,
+  onBrainStatus,
   panelAction,
   runInput,
   voiceStart,
@@ -146,6 +147,7 @@ const current = ref<{
 } | null>(null);
 const errorText = ref(""); // 面板内顶部错误细条（不进对话气泡）
 let unlisten: (() => void) | null = null;
+let unlistenStatus: (() => void) | null = null; // brain-status：重拉置脏的补拉触发器
 
 // ---- 工作台条状态 ----
 const state = ref<AvatarState>("idle");
@@ -183,6 +185,7 @@ function computeFocus(cur: typeof current.value): PanelFocus | null {
 function setCurrent(v: NonNullable<typeof current.value>, silent = false) {
   const isNewPanel = current.value?.panel !== v.panel;
   const wasList = viewingList.value;
+  refreshDirty = false; // [W1] panel 事件落地 = 数据刚刷新过，清掉重拉置脏
   current.value = v;
   if (isNewPanel) errorText.value = ""; // 换面板清上一条失败残条（错误条按面板归属，不跨面板残留）
   viewingList.value = false;
@@ -234,6 +237,25 @@ async function backToList() {
   emit("close");
 }
 
+/** 打开即重拉（走查 B2/M3：摊开/恢复工作面只带打开时刻的快照，推送一丢就「有数据却显示空」）。
+ *  当前面板在 manifest 声明了 open（列表类面板的数据入口方法）就直调重拉，新鲜 panel 事件回来覆盖；
+ *  detail/matdoc 等对象面板没有 open——它们由带 id 的动作打开，数据本就是当刻查出的。
+ *  回来的是同面板事件：setCurrent 里 isNewPanel=false 不再外发裁决，不会循环也不抢表面。
+ *  启动竞态（走查 W1）：恢复可能发生在大脑还没起来时——直调失败/事件未落地就置脏，
+ *  等 brain-status up 补拉一次（事件落地即清脏，不重复刷）。 */
+let refreshDirty = false;
+function refreshCurrentPanel() {
+  const cur = current.value;
+  if (!cur) return;
+  const [plugin, name] = cur.panel.split(":");
+  const entry = plugins.value
+    .find((p) => p.id === plugin)
+    ?.panels?.find((pa) => pa.name === name);
+  if (!entry?.open) return;
+  refreshDirty = true; // 受理≠落地；panel 事件回到 setCurrent 才清脏
+  void panelAction(`${plugin}.${entry.open}`, {}, undefined, surface.value).catch(() => {});
+}
+
 /** 工作面收起时只暂停对象注入，保留面板数据与滚动状态，活动胶囊可原样恢复。 */
 function suspendSurface() {
   focus.value = null;
@@ -245,6 +267,7 @@ function restoreSurface() {
   viewingList.value = false;
   focus.value = computeFocus(current.value);
   void reportPanelContext(focus.value).catch(() => {});
+  refreshCurrentPanel();
   // 恢复时若有任何锚点（用户卡片 originRect 或上次收起锚点 collapseAnchor），从同处长回
   if (originRect.value || collapseAnchor.value) void nextTick(() => growIn());
   return true;
@@ -502,12 +525,19 @@ onMounted(async () => {
   try {
     unlisten = await onBrainEvent(onEvent);
   } catch { /* 静默：仍尝试拉取面板缓存/快照 */ }
+  try {
+    // 启动竞态（W1）：恢复/重拉撞上大脑未起 → 置脏；大脑上线时补拉一次，保证工作面最终有新鲜数据
+    unlistenStatus = await onBrainStatus((m) => {
+      if (m.status === "up" && refreshDirty) refreshCurrentPanel();
+    });
+  } catch { /* 订阅失败退回无补拉（旧行为） */ }
   void loadPlugins();
   await pullCache();
   emit("state", state.value); // 父级侧边栏团子拿初始态
 });
 onUnmounted(() => {
   unlisten?.();
+  unlistenStatus?.();
   overlayDispose();
 });
 </script>

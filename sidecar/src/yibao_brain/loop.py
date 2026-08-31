@@ -218,6 +218,9 @@ class AgentLoop:
                 refreshed["explicit"] = True
             else:
                 refreshed.pop("explicit", None)
+                # 同理压注意力：非用户点名的刷新跟单只刷数据 + 记活动轨（quiet），
+                # 不弹 peek——「存个稿/记个选题」不该有浮层抢视线（走查 M2）
+                refreshed["attention"] = "quiet"
             payload = refreshed
         return _with_surface_hints(self._redirect_to_focused_webview(payload), result, action.id)
 

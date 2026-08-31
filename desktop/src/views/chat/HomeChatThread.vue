@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { inject } from "vue";
+import { inject, onMounted } from "vue";
 import Avatar from "../../components/pet/Avatar.vue";
 import Bubble from "../../components/common/Bubble.vue";
 import YbIcon from "../../components/common/YbIcon.vue";
@@ -76,6 +76,13 @@ function dispatchUserAction(a: MsgAction, i: number) {
       break;
   }
 }
+
+// 桌上工位期间本视图被 HomeDeskWork 整个替换（卸载）；收起工作面后这里重新挂载。
+// 重挂必须回到最新一条：bubbles 长度没变、watch 不再触发，不补这一下的话长会话会停在
+// 顶部、最新消息压在视口下沿之外（走查 I1：收起后"看不到最新、以为滚动死了"）。
+onMounted(() => {
+  scrollBubbles(false);
+});
 </script>
 
 <template>

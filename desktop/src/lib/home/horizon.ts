@@ -39,3 +39,9 @@ export function horizonEcho(input: {
     ? { text: `${proc.label} ✗`, tone: "warn" }
     : { text: `${proc.label} ✓`, tone: "ok" };
 }
+
+/** ctx 位内容（HorizonBar 模板自带 "ctx: " 前缀）：在手项目名优先，无项目退回 home（空态同前）。 */
+export function horizonCtx(input: { state: AvatarState; project?: string | null }): string {
+  const name = input.project?.trim();
+  return `${name || "home"} · ${input.state}`;
+}
