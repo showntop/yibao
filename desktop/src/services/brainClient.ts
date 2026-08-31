@@ -8,6 +8,7 @@ import {
   EMPTY_FEED,
   EMPTY_MEM,
   EMPTY_PERCEPTION,
+  EMPTY_PROJECTS,
   EMPTY_STATS,
   EMPTY_WIDGETS,
   type BrainEvent,
@@ -29,6 +30,8 @@ import {
   type PetMessage,
   type PerceptionDeleted,
   type PerceptionResponse,
+  type ProjectAck,
+  type ProjectsResponse,
   type SettingsValues,
   type SetupConfig,
   type TrustStats,
@@ -271,9 +274,15 @@ export function getConversationMessages(id: string, limit = 500): Promise<PetMes
   return invoke("get_conversation_messages", { id, limit });
 }
 
-/** 插件清单（id/name/panels/commands；插件启动器与技能 chip 数据源；commands 供 /命令 生成插件动作）。 */
+/** 插件清单（id/name/panels/commands；插件启动器与技能 chip 数据源；commands 供 /命令 生成插件动作）。
+ *  panels 是带 open 声明的面板级入口（Rust 解析 manifest [[panel]]），打开即重拉也用它找数据方法。 */
 export function listPlugins(): Promise<
-  { id: string; name: string; commands?: { name: string; handler: string }[] }[]
+  {
+    id: string;
+    name: string;
+    panels?: { name: string; label: string; open: string }[];
+    commands?: { name: string; handler: string }[];
+  }[]
 > {
   return invoke("list_plugins");
 }
@@ -442,6 +451,53 @@ export function memEdit(id: string, text: string, timeoutMs = 5000): Promise<Mem
     timeoutMs,
     (p) => p.id === id,
   );
+}
+
+// ---- 项目实体 ----
+
+/** 查询项目列表 + 当前项目 id（响应经 brain-projects 事件回来；任何变更 sidecar 也主动广播同型消息）。 */
+export function fetchProjects(): Promise<void> {
+  return invoke("get_projects");
+}
+
+/** 订阅项目视图（projects 查询回包与变更广播同型：{current, projects[]}）。 */
+export function onProjects(cb: (r: ProjectsResponse) => void): Promise<UnlistenFn> {
+  return listenIfAvailable<ProjectsResponse>("brain-projects", cb);
+}
+
+/** 一次性取项目视图；大脑不在线/超时返回空（家态项目卡照常渲染空态）。 */
+export function getProjectsOnce(timeoutMs = 3000): Promise<ProjectsResponse> {
+  return onceWithTimeout("brain-projects", () => fetchProjects(), EMPTY_PROJECTS, timeoutMs);
+}
+
+/** 新建项目，等 brain-project-created 回包（带最新视图）；超时按失败处理。 */
+export function projectCreate(name: string, timeoutMs = 5000): Promise<ProjectAck> {
+  return onceWithTimeout(
+    "brain-project-created",
+    () => invoke("project_create", { name }),
+    { ok: false, error: "创建超时（大脑不在线？）" },
+    timeoutMs,
+  );
+}
+
+/** 切换项目（id 或名字），等 brain-project-switched 回包（带最新视图）；超时按失败处理。 */
+export function projectSwitch(idOrName: string, timeoutMs = 5000): Promise<ProjectAck> {
+  return onceWithTimeout(
+    "brain-project-switched",
+    () => invoke("project_switch", { id: idOrName }),
+    { ok: false, error: "切换超时（大脑不在线？）" },
+    timeoutMs,
+  );
+}
+
+/** 挂对象进项目（id 省略=当前项目）：fire-and-forget，成功经 brain-projects 广播回来。 */
+export function projectAttach(objType: string, ref: string, id?: string): Promise<void> {
+  return invoke("project_add_object", { objType, ref, id: id ?? null });
+}
+
+/** 从项目摘除对象（id 省略=当前项目）：fire-and-forget，成功经 brain-projects 广播回来。 */
+export function projectDetach(objType: string, ref: string, id?: string): Promise<void> {
+  return invoke("project_remove_object", { objType, ref, id: id ?? null });
 }
 
 // ---- 表面层事件通道（design §3）----

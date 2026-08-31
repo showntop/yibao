@@ -2,10 +2,13 @@
 
 聚合（详情页用）：draft = 最新稿版本+字数（「v3 · 2100 字」/「还没写稿」）、
 materials = 关联素材数（「2 条」/「—」）。不带 id 的全量查询不拼聚合（避免逐条读稿）。
+2026-08-31 视频 workflow S0：hkrr/cover_concepts（JSON 文本）拆平成展示行，
+project_id 反解项目名给「已立项 → 项目名」反馈；解析一律防御降级，不炸。
 文件自包含（禁止跨文件 import）；数据目录从 ctx.db.path 推导（同 article_save 姿势）。
 """
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -71,6 +74,47 @@ class GetTopicTool(Tool):
             row["draft"] = "还没写稿"
         mats = db.query("materials", where={"topic_id": tid})
         row["materials"] = f"{len(mats)} 条" if mats else "—"
+        self._enrich_s0(db, row)
+
+    def _enrich_s0(self, db, row: dict) -> None:
+        """视频 workflow S0 展示派生：hkrr 四项/封面概念拆平成行，project_id 反解项目名。
+
+        hkrr/cover_concepts 是 JSON 文本列：坏 JSON/类型不对一律降级空串（老选题天然全空）。
+        """
+        hkrr = _load_json(row.get("hkrr"))
+        if not isinstance(hkrr, dict):
+            hkrr = {}
+        for key in ("happy", "knowledge", "resonance", "rhythm"):
+            row[f"hkrr_{key}"] = str(hkrr.get(key) or "")
+        covers = _load_json(row.get("cover_concepts"))
+        if not isinstance(covers, list):
+            covers = []
+        for i in range(3):
+            row[f"cover_{i + 1}"] = str(covers[i]) if i < len(covers) else ""
+        row["project"] = _project_label(db, str(row.get("project_id") or ""))
+
+
+def _load_json(raw) -> Any:
+    """JSON 文本解析：空串/坏 JSON → None（调用方按类型降级，不炸）。"""
+    try:
+        return json.loads(str(raw or ""))
+    except ValueError:
+        return None
+
+
+def _project_label(db, pid: str) -> str:
+    """立项状态文案：已立项 → 项目名（projects.json 只读反解；读不到保底显示 id）。"""
+    if not pid:
+        return ""
+    # 插件库在 <data_dir>/plugins/zimeiti/data.db，项目注册表在 <data_dir>/projects.json
+    try:
+        raw = json.loads((Path(db.path).parents[2] / "projects.json").read_text(encoding="utf-8"))
+        for p in raw.get("projects") or []:
+            if p.get("id") == pid:
+                return f"已立项 → {p.get('name') or pid}"
+    except (OSError, ValueError, AttributeError):
+        pass
+    return f"已立项 → {pid}"
 
 
 def make_tools(ctx: Any) -> list[Tool]:

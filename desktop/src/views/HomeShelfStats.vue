@@ -16,8 +16,8 @@ const flash = computed(() => flashesStatFace(widgets.value));
 
 async function refreshMat() {
   try {
-    // mat_list 直调（HomeBench 调 coding.sessions 同款先例）
-    const data = (await runPanelAction("zimeiti.mat_list", {}, "panel:zimeiti")) ?? {};
+    // mat_count 直调（quiet 别名：只取行数，不发素材库面板事件——轮询不该冲掉用户当前面板）
+    const data = (await runPanelAction("zimeiti.mat_count", {}, "panel:zimeiti")) ?? {};
     matCount.value = Array.isArray((data as { rows?: unknown }).rows) ? (data as { rows: unknown[] }).rows.length : 0;
   } catch {
     matCount.value = 0;

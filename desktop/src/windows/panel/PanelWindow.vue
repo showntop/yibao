@@ -22,6 +22,7 @@ import {
   interrupt,
   reportPanelContext,
   setSurface,
+  listPlugins,
   type BrainEvent,
   type PendingConfirm,
   type PanelFocus,
@@ -375,6 +376,35 @@ async function pullCache() {
   }
 }
 
+// 面板 open 入口表（manifest [[panel]] open，"plugin:panel" → api 方法名）：打开/再显示即重拉的数据源
+const panelOpeners = ref<Record<string, string>>({});
+
+async function loadOpeners() {
+  try {
+    const list = await listPlugins();
+    const map: Record<string, string> = {};
+    for (const p of list) {
+      for (const pa of p.panels ?? []) {
+        if (pa.open) map[`${p.id}:${pa.name}`] = pa.open;
+      }
+    }
+    panelOpeners.value = map;
+  } catch { /* 清单拉不到 → 不重拉，退回缓存 + 直播事件（旧行为） */ }
+}
+
+/** 打开即重拉（走查 M3：浮窗曾是打开时刻的快照，隐藏期事件被 WKWebView 挂起丢过，
+ *  出现「浮层有数据、独立窗口空」）。当前面板声明了 open 就直调重拉，新鲜 panel 事件回来覆盖；
+ *  detail/matdoc 等对象面板无 open（数据由带 id 的动作当刻查出），不重拉。
+ *  回来的是非 explicit 的同面板事件：各窗只刷数据，不经 decideSurface 再弹表面。 */
+function refetchCurrentPanel() {
+  const cur = current.value;
+  if (!cur) return;
+  const method = panelOpeners.value[cur.panel];
+  if (!method) return;
+  const plugin = cur.panel.split(":", 1)[0] || cur.panel;
+  void panelAction(`${plugin}.${method}`, {}, undefined, `panel:${plugin}`).catch(() => {});
+}
+
 // webview 面板 html（空串 → 走 schema 面板/占位）
 const webviewHtml = computed(() => current.value?.webview?.html ?? "");
 // module 面板(R4):url/v 直传 WebviewPanel;空串 → 与 html 一起判空走 schema/占位
@@ -399,6 +429,7 @@ onMounted(async () => {
     if (current.value !== null) {
       void nextTick(() => webviewRef.value?.postToIframe({ type: "init", data: current.value?.data }));
     }
+    refetchCurrentPanel(); // schema 面板同款 treatment：再显示即重拉，不留陈旧快照
   });
   unlistenApprovals = onPendingConfirms((items) => {
     pendingConfirms.value = items.filter((item) => item.surface?.startsWith("panel"));
@@ -408,8 +439,10 @@ onMounted(async () => {
       state.value = "idle";
     }
   });
-  // 首开竞态：panel 事件先于本窗口订阅发出，从 Rust 缓存补拉最近一次面板
-  await pullCache();
+  // 首开竞态：panel 事件先于本窗口订阅发出，从 Rust 缓存补拉最近一次面板；
+  // 补拉完按 open 声明重拉一次——缓存是事件发出时刻的快照，可能已不是最新
+  await Promise.all([pullCache(), loadOpeners()]);
+  refetchCurrentPanel();
   // 兜底：窗口再聚焦时——若仍是占位页重拉缓存；若有面板，重推最新 init 数据。
   // 后者关键：面板窗关闭=隐藏（不销毁），隐藏期间 WebviewPanel watch(data) 的 postMessage
   // 可能因 WKWebView 挂起而丢失（第二次对话打开时 iframe 还停在旧数据，看起来"打不开"）；

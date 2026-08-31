@@ -37,8 +37,10 @@ from .background import (
     _reminder_loop,
     _watch_tick,
 )
-from .config import a11y_enabled, computer_use_enabled, computer_use_max_steps, ensure_first_seen, history_path, http_port, llm_api_key, load_settings, perception_db_path, save_settings, screenshot_dir, stt_model_dir, tts_voice, vad_max_seconds, vad_min_silence, vad_model_path, vision_api_key, voice_enabled
+from .config import a11y_enabled, computer_use_enabled, data_dir, computer_use_max_steps, ensure_first_seen, history_path, http_port, llm_api_key, load_settings, perception_db_path, save_settings, screenshot_dir, stt_model_dir, tts_voice, vad_max_seconds, vad_min_silence, vad_model_path, vision_api_key, voice_enabled
 from .feed import FeedStore
+from .projects import ProjectStore
+from .project_tools import make_project_tools
 from .distiller import Distiller, DistillerStore
 from .jobstore import JobsStore
 from .history import ConversationHistory
@@ -591,6 +593,8 @@ async def serve_async(
     # 主屏 Feed 存储（OS 感 §4.2）：任务播报/提醒触发在此落库，主屏查询时一次拿回。
     # 与审计库同目录；FeedStore 写失败只 print，不拖垮主链路。
     feed = FeedStore(os.path.join(os.path.dirname(db_path), "feed.db"))
+    # 项目实体（视频 workflow V1a）：projects.json 原子写 + 目录骨架；当前项目 id 在 settings
+    project_store = ProjectStore(os.path.join(data_dir(), "projects.json"))
     proactive_dispatcher = ProactiveDispatcher(
         settings=settings,
         feed=feed,
@@ -613,6 +617,11 @@ async def serve_async(
     # 不变量在 tool 侧把守：surface.open 只收 inline/peek；editor.* 写类发射即回执。
     for _st in make_surface_tools(surface_bridge):
         agent.skills.register(_st, plugin=_st.id.split(".", 1)[0], always_visible=True)
+    # 项目 tool（V1a）：与 surface 同款伪插件注册；立项 L3 弹确认条（设计稿 L2 按印的代码映射）
+    def _broadcast_projects():
+        write_msg({"type": "projects", **project_store.view()})
+    for _pt in make_project_tools(project_store, on_change=_broadcast_projects):
+        agent.skills.register(_pt, plugin=_pt.id.split(".", 1)[0], always_visible=True)
     # watch_command 跨重启恢复：任务落 jobs.db；上代进程的 running 孤儿重跑或标失败，全部 Feed 记账
     jobs_store = JobsStore(os.path.join(os.path.dirname(db_path), "jobs.db"))
     _recover_background_jobs(feed, getattr(agent.skills, "background_jobs", None),
@@ -1336,6 +1345,49 @@ async def serve_async(
         elif which == "input":
             permissions.prompt_input()
         write_msg({"type": "permissions", "permissions": _permissions_status()})
+
+
+    async def _h_projects(msg: dict) -> None:
+        # 项目列表 + 当前 id（家态项目卡/地平线 ctx 用）
+        write_msg({"type": "projects", **project_store.view()})
+
+    async def _h_project_create(msg: dict) -> None:
+        # 前端发起的新建（人操作，无闸门；agent 侧走 project.create tool 的 L3 确认）
+        name = str(msg.get("name") or "").strip()
+        try:
+            project_store.create(name)
+        except (ValueError, OSError) as e:
+            write_msg({"type": "project_created", "ok": False, "error": str(e)})
+            return
+        write_msg({"type": "project_created", "ok": True, **project_store.view()})
+
+    async def _h_project_switch(msg: dict) -> None:
+        key = str(msg.get("id") or msg.get("name") or "").strip()
+        proj = project_store.get(key) or project_store.find_by_name(key)
+        ok = project_store.switch(proj["id"]) if proj else False
+        write_msg({"type": "project_switched", "ok": ok, **project_store.view()})
+
+    async def _h_project_add_object(msg: dict) -> None:
+        pid = str(msg.get("id") or project_store.current_id())
+        ok = project_store.add_object(pid, str(msg.get("obj_type") or ""), str(msg.get("ref") or ""))
+        if ok:
+            write_msg({"type": "projects", **project_store.view()})
+        else:
+            write_msg({"type": "project_object_added", "ok": False, "error": "项目不存在"})
+
+    async def _h_project_remove_object(msg: dict) -> None:
+        pid = str(msg.get("id") or project_store.current_id())
+        ok = project_store.remove_object(pid, str(msg.get("obj_type") or ""), str(msg.get("ref") or ""))
+        if ok:
+            write_msg({"type": "projects", **project_store.view()})
+        else:
+            write_msg({"type": "project_object_removed", "ok": False, "error": "项目不存在"})
+
+    _handlers["projects"] = _h_projects
+    _handlers["project_create"] = _h_project_create
+    _handlers["project_switch"] = _h_project_switch
+    _handlers["project_add_object"] = _h_project_add_object
+    _handlers["project_remove_object"] = _h_project_remove_object
 
     _handlers["run"] = _h_run
     _handlers["voice_start"] = _h_run  # 复合分支：原 if rtype in ("run", "voice_start") 共用一体

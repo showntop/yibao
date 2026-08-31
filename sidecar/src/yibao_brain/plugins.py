@@ -102,6 +102,13 @@ def _render_params(obj, render):
 # ---------- 声明式 tool ----------
 
 
+def _coerce_json(row: dict) -> dict:
+    """写库防御：LLM 给的结构化值（如 HKRR dict / 封面概念 list）sqlite 绑不上会炸，
+    一律落成 JSON 文本；标量原样（缺省字段本就由表默认值兜底，不进 params）。"""
+    return {k: json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else v
+            for k, v in row.items()}
+
+
 class DeclarativeTool(Tool):
     """manifest [[tool]] 声明的免代码 tool：按 type 分发到 db/http/llm/composite 执行。"""
 
@@ -198,7 +205,7 @@ class DeclarativeTool(Tool):
         spec = self._spec.get("db") or {}
         op, table = spec.get("op", "insert"), spec["table"]
         if op == "insert":
-            row = dict(params)
+            row = _coerce_json(params)
             # auto 声明系统生成字段（当前仅 unixts = unix 秒）；覆盖入参防伪造
             for field_name, kind in (spec.get("auto") or {}).items():
                 if kind != "unixts":
@@ -220,7 +227,7 @@ class DeclarativeTool(Tool):
             return ActionResult(success=True, data={"rows": rows})
         if op == "update":
             row_id = params.get("id")
-            fields = {k: v for k, v in params.items() if k != "id"}
+            fields = _coerce_json({k: v for k, v in params.items() if k != "id"})
             # auto 声明系统生成字段（同 insert；覆盖入参防伪造）
             for field_name, kind in (spec.get("auto") or {}).items():
                 if kind != "unixts":

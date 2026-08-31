@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { horizonEcho, horizonNodes } from "./horizon.ts";
+import { horizonCtx, horizonEcho, horizonNodes } from "./horizon.ts";
 import type { FeedItem } from "../brain";
 
 function feed(partial: Partial<FeedItem> & Pick<FeedItem, "id" | "text">): FeedItem {
@@ -95,5 +95,17 @@ describe("horizonEcho", () => {
       text: "editor.replace_range ✓",
       tone: "ok",
     });
+  });
+});
+
+describe("horizonCtx", () => {
+  it("无项目时保持 home 空态（同旧行为）", () => {
+    expect(horizonCtx({ state: "idle" })).toBe("home · idle");
+    expect(horizonCtx({ state: "work", project: null })).toBe("home · work");
+    expect(horizonCtx({ state: "work", project: "  " })).toBe("home · work");
+  });
+
+  it("有在手项目时项目名替换 home", () => {
+    expect(horizonCtx({ state: "idle", project: "译宝品牌短片" })).toBe("译宝品牌短片 · idle");
   });
 });

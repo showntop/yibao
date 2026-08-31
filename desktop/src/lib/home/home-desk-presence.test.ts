@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import {
   deskAskLine,
+  isDeskPathDupe,
   unmatchedDeskPath,
   deskPathOpen,
   deskPathClose,
@@ -82,6 +83,18 @@ describe("unmatchedDeskPath", () => {
     expect(unmatchedDeskPath(["摊开 闪念盘"])).toBe("摊开 闪念盘");
     expect(unmatchedDeskPath(["摊开 闪念盘", "收起 闪念盘"])).toBeNull();
     expect(unmatchedDeskPath(["已请 改登录", "已走 改登录", "用了 工具箱"])).toBe("用了 工具箱");
+  });
+});
+
+describe("isDeskPathDupe", () => {
+  it("skips re-stamping while the same open line is still unmatched", () => {
+    expect(isDeskPathDupe(["摊开 闪念盘"], "摊开 闪念盘")).toBe(true);
+    // 中间隔着对话/过程行也不算新摊开：行没收起就还是同一张面
+    expect(isDeskPathDupe(["摊开 闪念盘", "记一条", "记下了"], "摊开 闪念盘")).toBe(true);
+    // 已收起、换面、无历史 → 该盖还盖
+    expect(isDeskPathDupe(["摊开 闪念盘", "收起 闪念盘"], "摊开 闪念盘")).toBe(false);
+    expect(isDeskPathDupe(["摊开 闪念盘"], "摊开 工具箱")).toBe(false);
+    expect(isDeskPathDupe([], "摊开 闪念盘")).toBe(false);
   });
 });
 

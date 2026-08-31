@@ -327,6 +327,39 @@ export interface PendingConfirm {
   tier?: "Notify" | "Question" | "Review";
 }
 
+// ---- 项目实体（家态项目卡/地平线 ctx；sidecar projects IPC）----
+
+/** 挂在项目下的对象引用（type 如 zimeiti.topic；ref 为插件侧 id/路径）。 */
+export interface ProjectObject {
+  type: string;
+  ref: string;
+}
+
+export interface ProjectInfo {
+  id: string;
+  name: string;
+  created_at: number; // Unix 秒（sidecar time.time()）
+  touched_at: number; // Unix 秒；列表按其倒序
+  dir: string;
+  objects: ProjectObject[];
+}
+
+/** projects 查询回包/变更广播（同型）：当前项目 id（空串 = 无项目）+ 全部项目。 */
+export interface ProjectsResponse {
+  current: string;
+  projects: ProjectInfo[];
+}
+
+/** project_created / project_switched 回包：ok + 最新视图（ok=false 时只有 error）。 */
+export interface ProjectAck {
+  ok: boolean;
+  error?: string;
+  current?: string;
+  projects?: ProjectInfo[];
+}
+
+export const EMPTY_PROJECTS: ProjectsResponse = { current: "", projects: [] };
+
 // ---- 记忆管理（OS 感 §4.4：「它记得我什么」必须可见、可删）----
 
 export interface MemItem {

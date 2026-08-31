@@ -289,15 +289,10 @@ fn spawn_bridge(app: AppHandle, mut rx: tauri::async_runtime::Receiver<CommandEv
                                     }
                                 }
                                 let _ = app.emit("brain-event", payload.clone());
-                                // 兜底：不论前端 PetWindow 是否裁决通过（conversationId 过滤/未重编译等
-                                // 导致 openPanelWindow 没被调的面板弹不出场景），Rust 主动 show 面板窗。
-                                // 用户体验层：对话里点名的面板操作必弹；裁决仍由前端做（精细控制），
-                                // 这里只在 Rust 这层补漏。
-                                if payload.get("kind").and_then(|k| k.as_str()) == Some("panel") {
-                                    // 兜底：panel 事件到达时确保面板窗显示（大窗可见时按设计不弹浮窗——
-                                    // 面板由大窗内嵌渲染；宠物窗/小窗模式才弹浮窗）。
-                                    let _ = crate::commands::show_panel_window_impl(&app, false);
-                                }
+                                // 面板浮窗不再由 Rust 兜底强弹（走查 M2：弹出裁决唯一判据是前端
+                                // decideSurface——pet 窗 usePetEvents / 大窗 HomePlugins 都已按
+                                // explicit+attention 裁决并自行 openPanelWindow；这里强弹会绕过
+                                // 裁决，把 quiet 跟单刷新也拍成浮窗）。
                             }
                             Some("run_done") => {
                                 let _ = app.emit("brain-run-done", v);
@@ -398,6 +393,24 @@ fn spawn_bridge(app: AppHandle, mut rx: tauri::async_runtime::Receiver<CommandEv
                             }
                             Some("mem_edited") => {
                                 let _ = app.emit("brain-mem-edited", v);
+                            }
+                            // 项目实体：查询回包与变更广播同型（{current, projects}），整体转发
+                            Some("projects") => {
+                                let _ = app.emit("brain-projects", v);
+                            }
+                            // 项目实体：新建/切换回包（带最新视图）：整体转发
+                            Some("project_created") => {
+                                let _ = app.emit("brain-project-created", v);
+                            }
+                            Some("project_switched") => {
+                                let _ = app.emit("brain-project-switched", v);
+                            }
+                            // 项目实体：挂/摘对象失败回执（成功走上面的 projects 广播）
+                            Some("project_object_added") => {
+                                let _ = app.emit("brain-project-object-added", v);
+                            }
+                            Some("project_object_removed") => {
+                                let _ = app.emit("brain-project-object-removed", v);
                             }
                             Some("settings") => {
                                 let _ = app.emit("brain-settings", v);

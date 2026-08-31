@@ -6,7 +6,7 @@ import { computed, onMounted, onBeforeUnmount, ref } from "vue";
 import SchemaPanel from "../components/panel/SchemaPanel.vue";
 import WebviewPanel from "../components/panel/WebviewPanel.vue";
 import YbIcon from "../components/common/YbIcon.vue";
-import { onBrainEvent, type BrainEvent } from "../lib/brain";
+import { onBrainEvent, panelAction, type BrainEvent } from "../lib/brain";
 import type { WebviewPayload } from "../lib/webview-source";
 
 const props = withDefaults(
@@ -34,6 +34,13 @@ function onEvent(e: BrainEvent) {
   if (e.kind !== "panel_data") return;
   if (props.panel !== (e.payload?.panel ?? "")) return;
   mergedData.value = { ...mergedData.value, ...(e.payload?.data ?? {}) };
+}
+
+/** 面板内动作（素材「查看」/看板卡「详情」等）：与 HomePlugins/PanelWindow 同一条 panel_action 直调路径。
+ *  结果 panel 事件仍经 decideSurface 裁决回落（探窗内换成新面板内容），不新辟弹出通道。
+ *  surface 用 panel:<插件>（面板工作台惯例）：动作回执不并进主对话流。 */
+function onAction(a: { method: string; params: Record<string, unknown> }) {
+  void panelAction(a.method, a.params, undefined, `panel:${props.provider}`).catch(() => {});
 }
 
 function prefersReducedMotion(): boolean {
@@ -103,7 +110,7 @@ onBeforeUnmount(() => {
       </header>
       <div class="peek-body">
         <WebviewPanel v-if="isWebview" :panel="panel" :html="webview!.html" :url="webview!.url" :v="webview!.v" :data="mergedData" />
-        <SchemaPanel v-else :panel="panel" :schema="schema" :data="mergedData" />
+        <SchemaPanel v-else :panel="panel" :schema="schema" :data="mergedData" @action="onAction" />
       </div>
     </section>
   </div>

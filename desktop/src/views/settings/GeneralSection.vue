@@ -18,6 +18,7 @@ import {
 } from "../../lib/brain";
 import { buildPairUrl } from "../../lib/pair";
 import { applyFinish, FINISHES, readFinish, type FinishId } from "../../lib/finish";
+import { setShowRunMetrics, showRunMetrics } from "../../lib/run-metrics";
 import { applyChrome, isHomeChromeId, useHomeChrome } from "../../lib/home/home-chrome.ts";
 import { HOME_PRESET_LIST } from "../../lib/home/home-assembly.ts";
 import {
@@ -402,6 +403,17 @@ onUnmounted(() => {
         title="清掉这份预设里拖过的位置；结构预设几乎无框可清"
         @click="homeWidgets.resetLayout(chromeId)"
       >恢复默认</button>
+    </div>
+  </section>
+
+  <section class="s-group">
+    <div class="s-group-title">对话</div>
+    <div class="s-row">
+      <span class="s-row-label">
+        显示运行指标
+        <span class="s-row-why">开发者调试信息（tokens / 耗时 / 模型名），默认关</span>
+      </span>
+      <button class="switch" :class="{ on: showRunMetrics }" role="switch" :aria-checked="showRunMetrics" title="显示运行指标" @click="setShowRunMetrics(!showRunMetrics)"><i /></button>
     </div>
   </section>
 
