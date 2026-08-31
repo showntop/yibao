@@ -4,7 +4,7 @@
 //   - getJsonResult/postJsonResult：返回 {data, error}——用于「错误态必须亮出来」的专页
 //     （错误文案区分服务器状态码与网络错误，由调用方拼装）。
 // 不抛错、不弹窗，错误展示由页面层决定。
-import type { ConnConfig } from "./connection";
+import { apiBase, type ConnConfig } from "./connection";
 
 export interface JsonResult {
   data: unknown | null;
@@ -19,7 +19,7 @@ async function request(
   fetchImpl: typeof fetch,
 ): Promise<JsonResult> {
   try {
-    const r = await fetchImpl(`${conn.host}${path}`, init);
+    const r = await fetchImpl(`${apiBase(conn)}${path}`, init);
     if (!r.ok) {
       // 优先取服务端 error 字段（如 /v1/reminders/cancel 的 500 详情）；无则退回状态码
       let detail = "";

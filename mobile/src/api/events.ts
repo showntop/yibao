@@ -1,5 +1,5 @@
 import { ref, type Ref } from "vue";
-import type { ConnConfig } from "./connection";
+import { apiBase, type ConnConfig } from "./connection";
 
 // 订阅的服务端事件名（P1 定的 SSE kind；未列的 kind 被丢弃——事件面小，列全即可）
 export const KNOWN_KINDS = [
@@ -21,7 +21,7 @@ export interface StreamLike {
 
 export function buildEventsUrl(c: ConnConfig, lastEventId = 0): string {
   // token 走 query：EventSource 不能设自定义 header（P1 协议决定，TLS/局域网下可接受）
-  const base = `${c.host}/v1/events?token=${encodeURIComponent(c.token)}`;
+  const base = `${apiBase(c)}/v1/events?token=${encodeURIComponent(c.token)}`;
   // 断点续传：手动重连是「新建」EventSource，带不上 Last-Event-ID header → query 是唯一通道
   return lastEventId > 0 ? `${base}&last_event_id=${lastEventId}` : base;
 }

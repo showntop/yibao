@@ -16,7 +16,7 @@ const ITEMS = [
 describe("useFeed", () => {
   it("refresh 拉 /v1/feed：items/stats/running 各就位，服务端倒序原样保留", async () => {
     const fetchImpl = vi.fn(async (url: string, _init?: RequestInit) => {
-      expect(url).toBe("http://x/v1/feed?limit=60");
+      expect(url).toBe("/v1/feed?limit=60");
       return new Response(JSON.stringify({
         ok: true,
         items: ITEMS,

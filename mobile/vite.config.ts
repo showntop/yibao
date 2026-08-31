@@ -11,6 +11,8 @@ export default defineConfig({
   plugins: [vue(), ...(isVitest ? [] : [mkcert()])], // mkcert: 本地 CA 签发证书，dev 面出 https——安全上下文（clipboard/randomUUID）+ PWA 加主屏前提
   clearScreen: false,
   // host: 局域网体验——手机浏览器经 https://<Mac内网IP>:5173 访问（证书含内网 IP，手机装一次 rootCA 即无红锁）
-  server: { port: 5173, strictPort: true, host: true },
+  // proxy: sidecar(aiohttp) 无 TLS，https 页面页内直连 http://…:19527 撞 WebKit mixed content
+  // 拦截（"Load failed"）——浏览器态 apiBase 走同源，经此代理到本机 sidecar（SSE 流式可透传）
+  server: { port: 5173, strictPort: true, host: true, proxy: { "/v1": "http://127.0.0.1:19527" } },
   test: { environment: "jsdom" },
 });

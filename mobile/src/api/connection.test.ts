@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-const { normalizeHost, parsePairUrl, testConn } = await import("./connection");
+const { apiBase, normalizeHost, parsePairUrl, testConn } = await import("./connection");
 
 describe("normalizeHost", () => {
   it("补 scheme 去尾斜杠", () => {
@@ -30,6 +30,16 @@ describe("parsePairUrl", () => {
   });
 });
 
+describe("apiBase", () => {
+  const c = { host: "http://192.168.31.52:19527", token: "t" };
+  it("浏览器态返空串：https 页直连 http host 撞 WebKit mixed content（Load failed），走 vite 同源代理", () => {
+    expect(apiBase(c)).toBe("");
+  });
+  it("原生态直连 conn.host（WebView 无 mixed content 语义）", () => {
+    expect(apiBase(c, () => true)).toBe("http://192.168.31.52:19527");
+  });
+});
+
 describe("testConn", () => {
   it("health 200 → ok；401 → 带 reason；网络错 → reason", async () => {
     const ok = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
@@ -42,5 +52,10 @@ describe("testConn", () => {
     const r3 = await testConn({ host: "http://x", token: "t" }, dead as unknown as typeof fetch);
     expect(r3.ok).toBe(false);
     expect(r3.reason).toBeTruthy();
+  });
+  it("浏览器态经 apiBase 同源请求：URL 不带 host（jsdom 即浏览器态）", async () => {
+    const f = vi.fn(async () => new Response("{}", { status: 200 }));
+    await testConn({ host: "http://192.168.31.52:19527", token: "t" }, f as unknown as typeof fetch);
+    expect(f).toHaveBeenCalledWith("/v1/health", expect.anything());
   });
 });

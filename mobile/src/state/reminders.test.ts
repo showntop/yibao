@@ -13,7 +13,7 @@ const ITEMS = [
 describe("useReminders", () => {
   it("refresh 拉 /v1/reminders：items 就位", async () => {
     const fetchImpl = vi.fn(async (url: string, _init?: RequestInit) => {
-      expect(url).toBe("http://x/v1/reminders");
+      expect(url).toBe("/v1/reminders");
       return new Response(JSON.stringify({ ok: true, items: ITEMS }), { status: 200 });
     });
     const r = useReminders({ host: "http://x", token: "t" } as ConnConfig, fetchImpl as never);
@@ -38,7 +38,7 @@ describe("useReminders", () => {
     const r = useReminders({ host: "http://x", token: "t" } as ConnConfig, fetchImpl as never);
     await r.refresh();
     await r.cancel("ef56gh78");
-    expect(posts[0]).toMatchObject({ url: "http://x/v1/reminders/cancel", body: { id: "ef56gh78" } });
+    expect(posts[0]).toMatchObject({ url: "/v1/reminders/cancel", body: { id: "ef56gh78" } });
     expect(r.items.value.map((i) => i.id)).toEqual(["ab12cd34"]); // 本地即除，不等 refresh
     expect(r.error.value).toBe("");
   });

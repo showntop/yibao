@@ -24,14 +24,14 @@ const MEM_ITEMS = [
 describe("useMemories", () => {
   it("refresh：GET /v1/memories 带 token header，items 落地且 error 清位", async () => {
     const { fetchImpl, calls } = mkFetch({
-      "http://x/v1/memories": { body: { ok: true, items: MEM_ITEMS } },
+      "/v1/memories": { body: { ok: true, items: MEM_ITEMS } },
     });
     const m = useMemories({ host: "http://x", token: "t" } as ConnConfig, fetchImpl);
     await m.refresh();
     expect(m.items.value).toEqual(MEM_ITEMS);
     expect(m.error.value).toBe("");
     expect(m.loading.value).toBe(false);
-    expect(calls[0].url).toBe("http://x/v1/memories");
+    expect(calls[0].url).toBe("/v1/memories");
     expect(calls[0].headers["X-Yibao-Token"]).toBe("t");
   });
 
@@ -49,13 +49,13 @@ describe("useMemories", () => {
   it("非 200（含 503 未接线）→ error 文案（错误态与空态分开），items 不动", async () => {
     const m = useMemories(
       { host: "http://x", token: "t" } as ConnConfig,
-      mkFetch({ "http://x/v1/memories": { status: 503, body: { ok: false } } }).fetchImpl,
+      mkFetch({ "/v1/memories": { status: 503, body: { ok: false } } }).fetchImpl,
     );
     await m.refresh();
     expect(m.error.value).toContain("503");
     expect(m.items.value).toEqual([]);
     // 恢复后：列表落地且 error 清位
-    const { fetchImpl } = mkFetch({ "http://x/v1/memories": { body: { ok: true, items: MEM_ITEMS } } });
+    const { fetchImpl } = mkFetch({ "/v1/memories": { body: { ok: true, items: MEM_ITEMS } } });
     const m2 = useMemories({ host: "http://x", token: "t" } as ConnConfig, fetchImpl);
     await m2.refresh();
     expect(m2.error.value).toBe("");

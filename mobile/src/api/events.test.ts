@@ -20,15 +20,16 @@ function fakeES() {
 }
 
 describe("buildEventsUrl", () => {
-  it("token 走 query 参数", () => {
+  // jsdom 即浏览器态：apiBase 返空串 → 同源相对路径走 vite 代理（https 页直连 http host 撞 mixed content）
+  it("浏览器态同源相对路径，token 走 query 参数", () => {
     expect(buildEventsUrl({ host: "http://127.0.0.1:19527", token: "a b&c" }))
-      .toBe("http://127.0.0.1:19527/v1/events?token=a%20b%26c");
+      .toBe("/v1/events?token=a%20b%26c");
   });
 
   it("lastEventId>0 拼 last_event_id 断点；0/缺省不拼", () => {
     const c = { host: "http://127.0.0.1:19527", token: "t" } as const;
     // 手动重连新建的 EventSource 带不上 Last-Event-ID header，query 是唯一续传通道
-    expect(buildEventsUrl(c, 7)).toBe("http://127.0.0.1:19527/v1/events?token=t&last_event_id=7");
+    expect(buildEventsUrl(c, 7)).toBe("/v1/events?token=t&last_event_id=7");
     expect(buildEventsUrl(c)).not.toContain("last_event_id");
     expect(buildEventsUrl(c, 0)).not.toContain("last_event_id");
   });

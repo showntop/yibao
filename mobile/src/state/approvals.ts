@@ -1,5 +1,5 @@
 import { ref, type Ref } from "vue";
-import type { ConnConfig } from "../api/connection";
+import { apiBase, type ConnConfig } from "../api/connection";
 import type { StreamLike } from "../api/events";
 import { getJsonResult } from "../api/http";
 
@@ -43,7 +43,7 @@ export function useApprovals(
 
   async function decide(id: string, approved: boolean, remember: boolean): Promise<"ok" | "gone" | "fail"> {
     try {
-      const r = await fetchImpl(`${conn.host}/v1/confirm`, {
+      const r = await fetchImpl(`${apiBase(conn)}/v1/confirm`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Yibao-Token": conn.token },
         body: JSON.stringify({ id, approved, remember }),

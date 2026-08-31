@@ -1,3 +1,4 @@
+import { Capacitor } from "@capacitor/core";
 import { Preferences } from "@capacitor/preferences";
 
 export interface ConnConfig {
@@ -55,12 +56,23 @@ export async function clearConn(): Promise<void> {
   await Preferences.remove({ key: KEY });
 }
 
+/** API 基址：dev 面页面是 https（vite+mkcert），页内直连 sidecar 的 http:// 撞
+ * WebKit mixed content 拦截（请求根本不发，fetch 抛 "Load failed"）——
+ * 浏览器态一律同源走 vite 代理（vite.config server.proxy /v1 → 127.0.0.1:19527）；
+ * 原生 WebView 无 mixed content 语义，直连 conn.host。 */
+export function apiBase(
+  c: ConnConfig,
+  isNative: () => boolean = () => Capacitor.isNativePlatform(),
+): string {
+  return isNative() ? c.host : "";
+}
+
 export async function testConn(
   c: ConnConfig,
   fetchImpl: typeof fetch = fetch,
 ): Promise<{ ok: boolean; reason?: string }> {
   try {
-    const r = await fetchImpl(`${c.host}/v1/health`, { headers: { "X-Yibao-Token": c.token } });
+    const r = await fetchImpl(`${apiBase(c)}/v1/health`, { headers: { "X-Yibao-Token": c.token } });
     if (r.status === 200) return { ok: true };
     if (r.status === 401 || r.status === 429) return { ok: false, reason: `token 不对或被限速（${r.status}）` };
     return { ok: false, reason: `服务器返回 ${r.status}` };

@@ -102,7 +102,7 @@ describe("useChat", () => {
     const { chat, posts } = mkChat();
     await chat.send("长任务");
     await chat.interrupt();
-    expect(posts[1].url).toBe("http://x/v1/interrupt");
+    expect(posts[1].url).toBe("/v1/interrupt");
     expect(posts[1].body).toEqual({ conversation_id: chat.conversationId.value });
   });
 
@@ -245,11 +245,11 @@ describe("useChat", () => {
       (u) => (urls.push(u), es),
       fetchImpl as unknown as typeof fetch,
     );
-    expect(urls[0]).toBe("http://x:19527/v1/events?token=t"); // 首连无断点
+    expect(urls[0]).toBe("/v1/events?token=t"); // 首连无断点（浏览器态 apiBase 同源相对路径）
     listeners.get("final_reply_chunk")?.({ data: JSON.stringify({ text: "a", surface: "mobile" }), lastEventId: "5" });
     expect(chat.stream.lastSeq.value).toBe(5);
     chat.stream.start(); // Chat.vue 的 5s 兜底重连走的正是这条路径
-    expect(urls[1]).toBe("http://x:19527/v1/events?token=t&last_event_id=5"); // 续传断点生效
+    expect(urls[1]).toBe("/v1/events?token=t&last_event_id=5"); // 续传断点生效
   });
 });
 

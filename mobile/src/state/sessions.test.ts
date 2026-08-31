@@ -21,18 +21,18 @@ const CONV_ITEMS = [
 
 describe("useSessions", () => {
   it("refresh：GET /v1/conversations 带 token header，列表形状落地", async () => {
-    const { fetchImpl, calls } = mkFetch({ "http://x/v1/conversations": { body: { ok: true, items: CONV_ITEMS } } });
+    const { fetchImpl, calls } = mkFetch({ "/v1/conversations": { body: { ok: true, items: CONV_ITEMS } } });
     const s = useSessions({ host: "http://x", token: "t" } as ConnConfig, fetchImpl);
     expect(s.list.value).toEqual([]);
     await s.refresh();
     expect(s.list.value).toEqual(CONV_ITEMS);
-    expect(calls[0].url).toBe("http://x/v1/conversations");
+    expect(calls[0].url).toBe("/v1/conversations");
     expect(calls[0].headers["X-Yibao-Token"]).toBe("t");
   });
 
   it("refresh 失败：非 200 列表留空、网络错保留旧列表，均不抛", async () => {
     // 非 200：首次就失败 → 列表留空
-    const bad = mkFetch({ "http://x/v1/conversations": { status: 503, body: { ok: false } } });
+    const bad = mkFetch({ "/v1/conversations": { status: 503, body: { ok: false } } });
     const s = useSessions({ host: "http://x", token: "t" } as ConnConfig, bad.fetchImpl);
     await expect(s.refresh()).resolves.toBeUndefined();
     expect(s.list.value).toEqual([]);
@@ -51,13 +51,13 @@ describe("useSessions", () => {
 
   it("refresh 首败：错误态落地（与空态分开），成功后清位", async () => {
     // 首拉就失败（列表尚空）：不能只留「还没有历史会话」的空态文案——要能区分「没数据」与「没拉到」
-    const bad = mkFetch({ "http://x/v1/conversations": { status: 500, body: { ok: false } } });
+    const bad = mkFetch({ "/v1/conversations": { status: 500, body: { ok: false } } });
     const s = useSessions({ host: "http://x", token: "t" } as ConnConfig, bad.fetchImpl);
     await s.refresh();
     expect(s.error.value).not.toBe("");
     expect(s.list.value).toEqual([]);
     // 恢复后：列表落地且错误位清零
-    const ok = mkFetch({ "http://x/v1/conversations": { body: { ok: true, items: CONV_ITEMS } } });
+    const ok = mkFetch({ "/v1/conversations": { body: { ok: true, items: CONV_ITEMS } } });
     const s2 = useSessions({ host: "http://x", token: "t" } as ConnConfig, ok.fetchImpl);
     await s2.refresh();
     expect(s2.error.value).toBe("");
@@ -73,7 +73,7 @@ describe("useSessions", () => {
 
   it("open(cid)：GET /v1/history?conversation_id=… 返回 items（含 tool 轮，清洗交 loadHistory）", async () => {
     const { fetchImpl, calls } = mkFetch({
-      "http://x/v1/history": { body: { ok: true, items: [
+      "/v1/history": { body: { ok: true, items: [
         { role: "user", text: "问" },
         { role: "tool", text: "工具轨迹" },
         { role: "assistant", text: "答" },
@@ -82,22 +82,22 @@ describe("useSessions", () => {
     const s = useSessions({ host: "http://x", token: "t" } as ConnConfig, fetchImpl);
     const items = await s.open("c 42"); // id 含空格：必须 urlencode
     expect(items).toHaveLength(3);
-    expect(calls[0].url).toBe("http://x/v1/history?conversation_id=c%2042");
+    expect(calls[0].url).toBe("/v1/history?conversation_id=c%2042");
     expect(calls[0].headers["X-Yibao-Token"]).toBe("t");
   });
 
   it("open 无 conversation_id → 服务端默认桶（query 仍带空值不误伤）", async () => {
     const { fetchImpl, calls } = mkFetch({
-      "http://x/v1/history": { body: { ok: true, items: [] } },
+      "/v1/history": { body: { ok: true, items: [] } },
     });
     const s = useSessions({ host: "http://x", token: "t" } as ConnConfig, fetchImpl);
     await expect(s.open("")).resolves.toEqual([]); // 真·空桶：空数组
-    expect(calls[0].url).toBe("http://x/v1/history?conversation_id=");
+    expect(calls[0].url).toBe("/v1/history?conversation_id=");
   });
 
   it("open 失败返回 null（M3）：没拉到不冒充空历史，pickSession 据此亮错误不切换", async () => {
     // 非 200：与「真空桶 []」区分开——空历史会静默清掉当前消息，失败则保留现场等重试
-    const bad = mkFetch({ "http://x/v1/history": { status: 500, body: { ok: false } } });
+    const bad = mkFetch({ "/v1/history": { status: 500, body: { ok: false } } });
     const s = useSessions({ host: "http://x", token: "t" } as ConnConfig, bad.fetchImpl);
     await expect(s.open("c-1")).resolves.toBeNull();
     // 断线/超时同样返回 null
