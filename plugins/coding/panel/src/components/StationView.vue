@@ -131,8 +131,9 @@ const costText = computed(() => {
 });
 const newChatDisabled = computed(() => state.sending || state.streaming || !state.currentSession);
 
-// ---- 工位头人话标识(2026-09 交互重构):「项目名 · 任务摘要」为主标题,裸哈希降级 tooltip——
-//      同一会话三个表面三张脸(头=哈希/左栏=项目·摘要/输入条=cwd 路径)收敛为一套语言 ----
+// ---- 工位头人话标识(2026-09 走查校准):项目名归 tab 条,头部只带会话身份(任务摘要)——
+//      tab「1 yibao」+ 头部「yibao CC」相邻两行重复项目名是走查实锤的冗余;空工位整行
+//      头隐藏(发射台承载全部信息),接续入口落成发射台真按钮 ----
 const projectBase = computed(() => {
   const normed = (cwd.value || "").replace(/\/+$/, "");
   return normed.split("/").filter(Boolean).pop() || "";
@@ -144,7 +145,7 @@ const firstUserText = computed(() => {
   return "";
 });
 const headTitle = computed(() => {
-  if (projectBase.value) return firstUserText.value ? projectBase.value + " · " + firstUserText.value : projectBase.value;
+  if (firstUserText.value) return firstUserText.value;
   return state.currentSession ? "会话 " + state.currentSession.slice(0, 8) : "新会话";
 });
 const headTooltip = computed(() => {
@@ -562,10 +563,10 @@ defineExpose({ state, dockH, cwd, onData, bindSession, unbindSession, stop, isBu
     <!-- 桥缺失时可见,提示这是设计预览 -->
     <div v-if="!hasBridge" id="bridge-warn">设计预览：未检测到译宝桥（window.yibao），起停/流式回显不可用。</div>
 
-    <!-- 工位头(2026-09 交互重构):主标题「项目名 · 任务摘要」人话标识(哈希降级 tooltip),
-         引擎徽标 + waiting/busy 状态点;右 成本聚合 + 接续 + 新对话。关工位 ✕ 收敛进顶部
-         tab 条(语义显式:「关这个工位」),头部不再放歧义按钮 -->
-    <header>
+    <!-- 工位头(2026-09 走查校准):项目名归 tab 条,头部只带会话身份(任务摘要/新会话)+
+         引擎徽标 + waiting/busy 状态点;右 成本聚合 + 接续 + 新对话。空工位整行隐藏
+         (发射台承载全部信息,消除「tab yibao / 头部 yibao」相邻重复) -->
+    <header v-if="state.items.length">
       <span class="title" :title="headTooltip">{{ headTitle }}</span>
       <span class="agent-badge" :title="'当前会话引擎：' + agentLabel(state.curSessAgent)">{{ agentLabel(state.curSessAgent) }}</span>
       <span v-if="state.waiting" class="dot-waiting" title="有权限请求待审批"></span>
@@ -583,11 +584,14 @@ defineExpose({ state, dockH, cwd, onData, bindSession, unbindSession, stop, isBu
     </header>
 
     <!-- 空工位态 → 发射台(2026-09 交互重构):文案上移让位居中的 hero composer(样式:
-         .station.empty footer 脱离页底停靠,居中放大);指引按上下文给全(项目/快捷键) -->
+         .station.empty footer 脱离页底停靠,居中放大);接续落成真按钮(头部此态已隐藏) -->
     <div v-if="!state.items.length" class="station-empty">
       <p class="station-empty-kicker">编码工位</p>
       <p class="station-empty-lead">{{ projectBase ? "在 " + projectBase + " 说清任务，后台开跑" : "选个项目目录，说清任务，后台开跑" }}</p>
-      <p class="station-empty-hint">↩ 发送 · ⇧↩ 换行 · @ 引用文件 · 右上「接续」恢复历史</p>
+      <div class="station-empty-acts">
+        <button type="button" class="station-empty-resume" title="上次会话（CC 继续 / Codex 原生续或交接）+ 本项目译宝历史" @click.stop="openHistory">接续上次会话</button>
+        <span class="station-empty-hint">↩ 发送 · ⇧↩ 换行 · @ 引用文件</span>
+      </div>
     </div>
     <MessageList
       v-show="state.items.length > 0"

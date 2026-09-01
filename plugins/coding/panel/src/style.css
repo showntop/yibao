@@ -1023,6 +1023,15 @@ button.ghost:disabled { opacity: .5; cursor: default; }
 .station-empty-hint {
   margin-top: 6px; font-size: 12.5px; color: var(--muted); line-height: 1.5;
 }
+/* 发射台动作行(2026-09 走查校准):接续落成真按钮(空态头部已隐藏),快捷键提示随行 */
+.station-empty-acts { margin-top: 16px; display: flex; align-items: center; gap: 12px; }
+.station-empty-acts .station-empty-hint { margin-top: 0; font-size: 12px; }
+.station-empty-resume {
+  border: 1px solid var(--border-strong); background: var(--card); color: var(--muted);
+  font-size: 12px; font-weight: 500; padding: 5px 14px; border-radius: var(--r-pill); cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+.station-empty-resume:hover { border-color: var(--accent); color: var(--accent-deep); background: var(--accent-soft); }
 
 /* spinner:10px 边框圆 + 旋转(状态行用) */
 .spin {
