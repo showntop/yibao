@@ -29,7 +29,11 @@ export type RenderItem =
   // 在组件内,store 只持数据;newChat/resumeSession 清 items 时卡随之消失(对齐原 #log 清空)。
   // seq 自增序号:v-for key 用——index-key 在删前卡后会让后卡复用前卡组件实例(text/sealed 串扰),
   // sid 同会话可出两张卡不能作 key
-  | { type: "handoff"; seq: number; sid: string; brief: string | null; incomplete: boolean; errMsg: string | null };
+  | { type: "handoff"; seq: number; sid: string; brief: string | null; incomplete: boolean; errMsg: string | null }
+  // 轮级文件改动汇总(2026-09 交互重构):done/stopped 落一枚「✎ 本轮改动 N 个文件」chip,
+  // 点击开本会话改动清单浮层(壳/工位接 open-changes)。count = 本轮(最近 user 消息后)的
+  // file_edit 数;轮内无改动不落 chip。
+  | { type: "editsummary"; count: number };
 
 export type SessionEnded = "done" | "stopped" | "error" | null;
 
@@ -115,6 +119,22 @@ export function createSessionStore(deps: SessionDeps) {
     else drainSendQueue();
   }
 
+  /** 轮级改动汇总(2026-09 交互重构):done/stopped 落一枚 chip,轮内无改动不落。
+   *  统计口径=最近一条 user 消息之后的 file_edit 项数(与消息流的轮切分一致)。 */
+  function pushTurnSummary() {
+    let lastUser = -1;
+    for (let i = state.items.length - 1; i >= 0; i--) {
+      const it = state.items[i];
+      if (it && it.type === "user") { lastUser = i; break; }
+    }
+    let count = 0;
+    for (let i = lastUser + 1; i < state.items.length; i++) {
+      const it = state.items[i];
+      if (it && it.type === "fileedit") count++;
+    }
+    if (count > 0) state.items.push({ type: "editsummary", count });
+  }
+
   /** 事件归约:sid 过滤已由调用方(handleData)做完。 */
   function applyEvent(ev: CodingEvent) {
     switch (ev.kind) {
@@ -182,6 +202,7 @@ export function createSessionStore(deps: SessionDeps) {
         return;
       case "stopped":
         state.items.push({ type: "marker", text: ev.text || "已中断", err: true });
+        pushTurnSummary(); // 中断也可能已改了文件:同样落汇总 chip
         onSessionEnded("stopped");
         return;
       case "done":
@@ -189,6 +210,7 @@ export function createSessionStore(deps: SessionDeps) {
         // codex 会话无 user_msg 回流——轮内唯一既有清 error 路径——不清则 errbar 永红）
         state.error = null;
         addUsage(ev.usage);
+        pushTurnSummary();
         onSessionEnded("done");
         return;
       case "error":
@@ -314,6 +336,13 @@ export function createSessionStore(deps: SessionDeps) {
       await send(opts.cwd, "【交接上下文】\n" + brief + "\n\n【用户继续】\n" + opts.userText, opts.mode, newAgent, { refs: opts.refs });
       return "sent";
     } catch {
+      // F8 回滚交接痕迹：start 失败时旧会话其实还活着（交接从未发生），留着「交接给 X」
+      // marker + 旧 sid 进 discarded 会让日志陈述与会话实态矛盾（且旧会话不可见）。
+      // 摘 marker、旧 sid 出黑名单并恢复绑定——用户可原会话重试或另做打算。
+      const mi = state.items.findIndex((it) => it.type === "marker" && typeof it.text === "string" && it.text.startsWith("交接给 "));
+      if (mi >= 0) state.items.splice(mi, 1);
+      discardedSessions.delete(oldSid);
+      if (!state.currentSession) state.currentSession = oldSid;
       return "failed"; // start 失败文本已由 state.error 承载(errbar + 状态行)
     }
   }
@@ -335,6 +364,7 @@ export function createSessionStore(deps: SessionDeps) {
       if (!csid) throw new Error("未返回 session_id");
       state.currentSession = csid; // 旧会话 id 被覆盖;其迟到事件被 currentSession 过滤(同原)
       state.curSessAgent = "claude-code"; // handoff 落 CC 会话(coding.start 缺省引擎)
+      sendQueue = []; // F4:排队消息是旧 codex 会话上下文的意图,交接后的新会话不该泄放旧 prompt
       if (pendingTurnEnded) { pendingTurnEnded = false; return true; } // 秒败:onSessionEnded 已收场
       return true;
     } catch (e) {
@@ -392,16 +422,25 @@ export function createSessionStore(deps: SessionDeps) {
   }
 
   let resuming = false;
-  let pendingResume: { sid: string; agent?: string } | null = null;
+  let pendingResume: { sid: string; agent?: string; opts: { skipIfEmpty?: boolean } } | null = null;
 
-  /** 返回恢复的消息数;skipIfEmpty 且空历史返回 0;防重入归并返回 -1。恒不 reject。 */
+  /** 返回恢复的消息数;skipIfEmpty 且空历史返回 0;防重入归并/让位返回 -1。恒不 reject。 */
   async function resumeSession(sid: string, agent?: string, opts: { skipIfEmpty?: boolean } = {}): Promise<number> {
-    if (resuming) { pendingResume = { sid, agent }; return -1; }
+    if (resuming) { pendingResume = { sid, agent, opts }; return -1; }
+    const sidBefore = state.currentSession; // F1:await 前快照,回来后比对(见下)
     resuming = true;
     try {
       const r = (await deps.invoke("coding.history", { id: sid })) as { messages?: HistoryMessage[]; cwd?: string };
       const msgs = r.messages ?? [];
       if (opts.skipIfEmpty && msgs.length === 0) return 0;
+      // F1 await 后重校验（resume 是唯一 await 后不看重世界状态的长事务，历史在这里终结）:
+      // history 在飞期间世界可能已变——用户发了消息（send 起了新会话/streaming）或视图
+      // 被别路径切走。此时照旧绑定会把在跑的新会话丢进 discarded 黑洞（事件全滤、
+      // 不可见不可停）、items 被旧历史覆盖。让位：放弃本次绑定（autoReplay 拿 -1 自然停）。
+      // 快照比对而非「currentSession !== sid」：换绑别会话（sidBefore=s1 → 恢复 s2）是
+      // 正常流程，await 期间没变就不让。
+      if (state.sending || state.streaming) return -1;
+      if (state.currentSession !== sidBefore && state.currentSession !== sid) return -1;
       if (state.currentSession) discardedSessions.add(state.currentSession);
       state.currentSession = sid;
       discardedSessions.delete(sid); // 关键:目标会话必须出黑名单,否则自己的流被过滤吞掉锁死面板
@@ -415,6 +454,7 @@ export function createSessionStore(deps: SessionDeps) {
       state.lastUsage = null;
       state.runVerb = "";
       fallbackUserIndex = -1;
+      sendQueue = []; // F4:排队消息是旧上下文的意图,恢复别会话后泄放会静默落错历史
       if (r.cwd) deps.onResumedCwd?.(String(r.cwd)); // 对齐原 setCwd(r.cwd):恢复跟随会话落盘目录
       return msgs.length;
     } catch (e) {
@@ -424,7 +464,7 @@ export function createSessionStore(deps: SessionDeps) {
       resuming = false;
       const next = pendingResume;
       pendingResume = null;
-      if (next && next.sid !== state.currentSession) void resumeSession(next.sid, next.agent);
+      if (next && next.sid !== state.currentSession) void resumeSession(next.sid, next.agent, next.opts);
     }
   }
 

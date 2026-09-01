@@ -114,7 +114,10 @@ def make_permission_callback(sid: str, on_event, *, timeout_s: float = 60.0, emi
             got = await asyncio.to_thread(entry["event"].wait, timeout_s)
         except BaseException:  # 取消/中断穿透（含 CancelledError，BaseException 系）：按拒绝收场（fail-closed），清理照做
             got = False
-        allow = entry["allow"] if got else None
+        # 超时（got=False）与裁决写入相撞的 TOCTOU 兜底：DecideTool 先写 allow 再 set event，
+        # 醒来的瞬间可能已错过 event——pop 前无条件复读 entry，保证「用户已点允许/拒绝」
+        # 不被误判成 timeout（事件 set 本身幂等，复读读到的必是已定裁决）。
+        allow = entry["allow"]
         _PERM.pop(rid, None)
         outcome = "allow" if allow is True else ("deny" if allow is False else "timeout")
         try:
@@ -301,9 +304,11 @@ class ClaudeCodeRunner:
     """claude-agent-sdk 流式 runner。client_factory 可注入（测试用 fake，不触真 SDK）。"""
 
     def __init__(self, client_factory: Callable[..., Any] | None = None,
-                 allowed_tools: list[str] | None = None):
+                 allowed_tools: list[str] | None = None,
+                 cancel_poll_s: float = 1.0):
         self._allowed_tools = allowed_tools or ["Read", "Write", "Edit", "MultiEdit", "Bash", "Glob", "Grep"]
         self._client_factory = client_factory  # None → 生产用真 SDK（lazy 导入）
+        self._cancel_poll_s = cancel_poll_s    # cancel watchdog 轮询间隔（B1：中断不再等下一条流事件）
 
     def _default_factory(self, cwd: str, tools: list[str], resume: str | None = None,
                          permission_mode: str = "acceptEdits", can_use_tool=None):
@@ -331,60 +336,94 @@ class ClaudeCodeRunner:
           成功发 rewind_ok、失败发 error 事件（鸭子类型，client 无此方法或调用失败均跳过，延迟 ≤1 条消息）。
         - cc_session_id 捕获：流中遇到 ResultMessage（duck-typed 带 .session_id）时缓存其值，
           run 结束返回（str | None）。失败时返回 None；取消时返回已捕获的 cc_sid。
-        - 取消语义：在每条 SDK 消息前查 cancel_event.is_set() → True 则先 client.interrupt()
-          真杀后台工具（旧行为只停读，后台还在跑；interrupt 鸭子类型，缺失/失败静默），
-          再发 stopped 终态后立即 return（不发 done）。
+        - 取消语义：两条路径都收敛到「interrupt 真杀 + stopped 终态（不发 done）」——
+          ① 每条 SDK 消息前查 cancel_event.is_set()（消息边界处取消，旧语义保留）；
+          ② cancel watchdog（B1）：读流挂在「等下一条消息」（长工具执行中）时，逐条检查
+          永远轮不到——drain 读流放 task，主协程每 cancel_poll_s 醒一次查 cancel，置位即
+          interrupt。interrupt 后 SDK 尾部残余消息不再上屏（stopped 后事件抑制由
+          _drain 顶部的 cancel 检查承担），stopped 只发一次（stopped_sent 去重）。
         - 容错语义：run 内任何异常 → on_event({"kind":"error","text":str(e)})，绝不向调用方抛。
-        - 正常结束：on_event({"kind":"done"})。
+        - 正常结束：on_event({"kind":"done"})；流尽未遇 done（SDK 未回 Result）也补裸 done。
         """
         factory = self._client_factory or self._default_factory
         cc_sid: str | None = None
+        done_seen = False       # 流中已遇 done（Result）：不再补裸 done
+        stopped_sent = False    # stopped 只发一次（消息边界路径 / watchdog 路径去重）
+
+        async def _interrupt(c) -> None:
+            interrupt = getattr(c, "interrupt", None)
+            if interrupt is None:
+                return
+            try:
+                await interrupt()
+            except Exception:
+                pass
+
         try:
             client = factory(cwd, self._allowed_tools, resume=resume_session_id,
                              permission_mode=permission_mode, can_use_tool=can_use_tool)
             async with client as c:
                 await c.query(prompt)
-                async for msg in c.receive_response():
-                    if cancel_event.is_set():
-                        # 先 interrupt 真杀后台工具，再发 stopped 终态（否则面板永远停「运行中」、按钮锁死）
-                        interrupt = getattr(c, "interrupt", None)
-                        if interrupt is not None:
-                            try:
-                                await interrupt()
-                            except Exception:
-                                pass
-                        on_event({"kind": "stopped", "text": "已中断"})
-                        return cc_sid
-                    # 运行中模式切换（coding.mode 写入 _SESSIONS mode_pending；下条消息生效，延迟 ≤1 条）
-                    if session_entry is not None:
-                        pending = session_entry.pop("mode_pending", None)
-                        if pending is not None:
-                            set_mode = getattr(c, "set_permission_mode", None)
-                            if set_mode is not None:
-                                try:
-                                    await set_mode(pending)
-                                except Exception as e:
-                                    print(f"[yibao/coding] 运行中切换模式失败（已跳过）：{e}", file=sys.stderr)
-                    # 运行中回滚（coding.rewind 写入 _SESSIONS rewind_pending；下条消息前执行 rewind_files）
-                    if session_entry is not None:
-                        rew = session_entry.pop("rewind_pending", None)
-                        if rew is not None:
-                            rewind_files = getattr(c, "rewind_files", None)
-                            if rewind_files is not None:
-                                try:
-                                    await rewind_files(rew)
-                                    on_event({"kind": "rewind_ok", "text": "已回滚到此前的文件状态"})
-                                except Exception as e:
-                                    on_event({"kind": "error", "text": f"回滚失败：{e}"})
-                    # ResultMessage 携 session_id：先从原 msg 读，再 normalize
-                    sid = getattr(msg, "session_id", None)
-                    if sid:
-                        cc_sid = sid
-                    for ev in normalize(msg):
-                        on_event(ev)
-                        if ev.get("kind") == "done":
-                            return cc_sid
-            on_event({"kind": "done"})
+
+                async def _drain() -> None:
+                    nonlocal cc_sid, done_seen, stopped_sent
+                    async for msg in c.receive_response():
+                        if cancel_event.is_set():
+                            # 消息边界取消：先 interrupt 真杀后台工具，再发 stopped 终态
+                            # （否则面板永远停「运行中」、按钮锁死）；watchdog 已 interrupt 过
+                            # （cancelled 已立）则不重复，只补 stopped
+                            if not cancelled:
+                                await _interrupt(c)
+                            on_event({"kind": "stopped", "text": "已中断"})
+                            stopped_sent = True
+                            return
+                        # 运行中模式切换（coding.mode 写入 _SESSIONS mode_pending；下条消息生效，延迟 ≤1 条）
+                        if session_entry is not None:
+                            pending = session_entry.pop("mode_pending", None)
+                            if pending is not None:
+                                set_mode = getattr(c, "set_permission_mode", None)
+                                if set_mode is not None:
+                                    try:
+                                        await set_mode(pending)
+                                    except Exception as e:
+                                        print(f"[yibao/coding] 运行中切换模式失败（已跳过）：{e}", file=sys.stderr)
+                        # 运行中回滚（coding.rewind 写入 _SESSIONS rewind_pending；下条消息前执行 rewind_files）
+                        if session_entry is not None:
+                            rew = session_entry.pop("rewind_pending", None)
+                            if rew is not None:
+                                rewind_files = getattr(c, "rewind_files", None)
+                                if rewind_files is not None:
+                                    try:
+                                        await rewind_files(rew)
+                                        on_event({"kind": "rewind_ok", "text": "已回滚到此前的文件状态"})
+                                    except Exception as e:
+                                        on_event({"kind": "error", "text": f"回滚失败：{e}"})
+                        # ResultMessage 携 session_id：先从原 msg 读，再 normalize
+                        sid = getattr(msg, "session_id", None)
+                        if sid:
+                            cc_sid = sid
+                        for ev in normalize(msg):
+                            on_event(ev)
+                            if ev.get("kind") == "done":
+                                done_seen = True
+                                return
+
+                drain = asyncio.ensure_future(_drain())
+                cancelled = False   # watchdog 已 interrupt 过（_drain 顶部检查据此去重）
+                # cancel watchdog（B1）：drain 挂在「等下一条消息」时逐条检查永远轮不到——
+                # 主协程周期醒来查 cancel，置位即 interrupt 真杀后台工具
+                while not drain.done() and not cancel_event.is_set():
+                    await asyncio.wait({drain}, timeout=self._cancel_poll_s)
+                if not drain.done() and cancel_event.is_set():
+                    cancelled = True
+                    await _interrupt(c)
+                await drain   # 正常收尾 / interrupt 后流尽；SDK 异常由此上抛 → 外层 error 事件
+            if cancel_event.is_set():
+                if not stopped_sent:
+                    on_event({"kind": "stopped", "text": "已中断"})
+                return cc_sid
+            if not done_seen:
+                on_event({"kind": "done"})
             return cc_sid
         except Exception as e:
             print(f"[yibao/coding] runner 失败：{e}", file=sys.stderr)

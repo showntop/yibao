@@ -83,4 +83,17 @@ describe("stations store", () => {
     s.bind(id2!, "b", "claude-code");
     expect(s.pickBindTarget()).toBe(1); // 满员 → 聚焦工位换绑
   });
+
+  it("F2: syncStationSid 复用 bind 去重——resume 他工位已绑的 sid 不产生双绑定 ghost", () => {
+    const s = createStationsStore();
+    const id2 = s.addStation();
+    s.bind(1, "sess-1", "claude-code");
+    // 工位 2 的接续浮层恢复了工位 1 已绑的 sess-1(sid-change 上报)
+    s.syncStationSid(id2!, "sess-1", "claude-code");
+    expect(s.stationForSid("sess-1")).toBe(id2!); // 唯一归属新工位
+    expect(s.state.stations.find((x) => x.id === 1)!.boundSid).toBeNull(); // 旧绑被解,无 ghost
+    // null 语义不变:仅解绑本工位
+    s.syncStationSid(id2!, null);
+    expect(s.stationForSid("sess-1")).toBeNull();
+  });
 });

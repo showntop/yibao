@@ -84,6 +84,9 @@
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.10), 0 1px 2px rgba(8,16,28,0.35), 0 6px 18px rgba(8,16,28,0.4);
   }
   :root:not([data-theme="light"]) #errbar .err-detail { background: rgba(0,0,0,0.22); } /* 浅色是白井压红底;深色改黑井 */
+  :root:not([data-theme="light"]) .station.empty .composer-bar {
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.10), 0 2px 6px rgba(8,16,28,0.4), 0 16px 40px rgba(8,16,28,0.5);
+  }
   /* --red 深色已提亮为文字色,实底钮沿用浅色实红保白字对比 */
   :root:not([data-theme="light"]) .rail-stop { background: #b6554a; }
 }
@@ -122,6 +125,9 @@
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.10), 0 1px 2px rgba(8,16,28,0.35), 0 6px 18px rgba(8,16,28,0.4);
 }
 :root[data-theme="dark"] #errbar .err-detail { background: rgba(0,0,0,0.22); }
+:root[data-theme="dark"] .station.empty .composer-bar {
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.10), 0 2px 6px rgba(8,16,28,0.4), 0 16px 40px rgba(8,16,28,0.5);
+}
 :root[data-theme="dark"] .rail-stop { background: #b6554a; }
 html, body, #app { height: 100%; }
 body {
@@ -136,7 +142,8 @@ button:focus-visible, .rail-row:focus-visible, .pill:focus-visible, .cbtn:focus-
 }
 button:active:not(:disabled) { transform: translateY(0.5px); }
 @media (prefers-reduced-motion: reduce) {
-  .spin, .dot-waiting { animation: none; }
+  .spin, .dot-waiting, .live-dot.waiting { animation: none; }
+  .edit-summary, .jump-bottom, .review-card, .review-rail, .changes-panel { animation: none; }
 }
 /* Vue 挂载点;唯一子级是 .shell(T6 多工位壳 flex 行——工位纵向排在 .station 内) */
 #app { display: flex; flex-direction: column; }
@@ -154,16 +161,31 @@ button:active:not(:disabled) { transform: translateY(0.5px); }
   background: var(--accent); color: #fff; font-size: 12px; font-weight: 500;
 }
 .skip-link:focus { top: 8px; outline: none; box-shadow: var(--focus-ring); }
-.shell { position: relative; display: flex; height: 100%; min-height: 100dvh; }
+/* 2026-09 交互重构:壳改列向——tab 条在上,工位区占满余高;review 栏改浮层(见下)不再占流 */
+.shell { position: relative; display: flex; flex-direction: column; height: 100%; min-height: 100dvh; }
+.main-col { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .stations { position: relative; flex: 1; display: flex; min-width: 0; }
 .station {
   position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column;
   border-left: 1px solid var(--line);
 }
-.station:first-of-type { border-left: none; }  /* of-type:窄窗 ☰ 钮(.stations 首子级)不顶掉首个工位 */
-.station.focused { box-shadow: inset 0 2px 0 var(--accent); padding-bottom: var(--dock-h, 150px); } /* 聚焦信号:顶部 accent 细条(原全周描边显框感,验收样式收敛) */
+.station:first-of-type { border-left: none; }  /* of-type:窄窗审批钮(.stations 首子级)不顶掉首个工位 */
+.station.focused { box-shadow: inset 0 3px 0 var(--accent); padding-bottom: var(--dock-h, 150px); } /* 聚焦信号:顶部 accent 条(2026-09:2px→3px,深色下可辨) */
+.station.focused.empty { padding-bottom: 0; }  /* 发射台:composer 居中,无需停靠空间 */
 .station footer { display: none; }                 /* 非聚焦工位输入条隐藏(实例存活,草稿保留) */
 .station.focused footer { display: flex; flex-direction: column; position: absolute; z-index: 20; left: 0; right: 0; bottom: 0; } /* 列向：独子 .composer-bar 横向拉伸满槽位（默认 row 向会缩成内容宽） */
+/* 发射台(2026-09 交互重构):空工位 composer 脱离页底停靠,居中放大——先选目录再说任务的
+   「发射」仪式感;空态文案让位到上半区,与 composer 构成上下两个视觉锚 */
+.station.focused.empty footer {
+  top: 52%; transform: translateY(-50%);
+  bottom: auto; padding: 0 26px;
+}
+.station.empty .composer-bar {
+  border-radius: var(--r-lg);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 2px 6px rgba(40,60,90,0.08), 0 16px 40px rgba(40,60,90,0.16);
+}
+.station.empty #prompt { font-size: 15px; padding: 12px 0; min-height: 72px; }
+.station.empty .station-empty { justify-content: flex-start; padding: clamp(48px, 15vh, 132px) 24px 0; }
 
 /* ---- 左栏会话 rail(T5 结构,T6 落样式;卡片化/圆角,配色用本面板既有变量) ---- */
 .rail {
@@ -209,6 +231,13 @@ button:active:not(:disabled) { transform: translateY(0.5px); }
   font-size: 9.5px; font-weight: 600; border-radius: var(--r-xs); vertical-align: 1px;
   background: var(--accent-soft); color: var(--accent-deep);
 }
+/* 活体点(2026-09 活体语言统一):点+色+文案三处一致(工位头 / tab / 左栏行) */
+.live-dot {
+  display: inline-block; width: 6px; height: 6px; margin-right: 4px; border-radius: 50%;
+  background: var(--faint); vertical-align: 1px;
+}
+.live-dot.running { background: var(--green); }
+.live-dot.waiting { background: var(--amber); animation: waiting-pulse 2s ease-in-out infinite; }
 .rail-stop {
   position: absolute; top: 6px; right: 6px; border: none; border-radius: var(--r-sm);
   padding: 2px 10px; font-size: 10.5px; font-weight: 600; cursor: pointer;
@@ -219,27 +248,63 @@ button:active:not(:disabled) { transform: translateY(0.5px); }
 /* 抽屉模式(常驻,默认收起——验收样式迭代):罩层 + 左滑出面板(fixed 盖在工位区上,260px 对齐设计稿 overlay 宽) */
 .rail-mask { position: fixed; inset: 0; z-index: 60; background: rgba(30,42,56,0.32); }
 .rail-drawer { position: fixed; z-index: 61; left: 0; top: 0; bottom: 0; width: 260px; box-shadow: var(--shadow-pop); }
-/* ☰ 常显(左栏常驻抽屉,验收样式迭代):stations 左上角绝对定位;工位头左让位(全宽模式同) */
-.rail-toggle {
-  position: absolute; z-index: 25; top: 6px; left: 6px;
-  width: 28px; height: 28px; padding: 0;
+
+/* ---- 工位 tab 条(2026-09 交互重构):工位一等公民——编号+项目名+活体点一排看全,
+   点击聚焦、✕ 关工位(语义显式);☰ 抽屉与 + 新工位同排收编;窄窗同样可见可切
+   (修复「窄窗下空工位不可达」死区——旧 rail 只列会话,stations prop 是死代码) ---- */
+.tabs {
+  flex: none; display: flex; align-items: center; gap: 4px;
+  padding: 5px 8px; border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+}
+.tab-btn {
+  flex: none; width: 26px; height: 26px; padding: 0;
   display: grid; place-items: center;
-  border: 1px solid var(--border); background: var(--card); color: var(--muted);
-  border-radius: var(--r-sm); cursor: pointer;
-  box-shadow: var(--shadow-card);
+  border: 1px solid transparent; background: transparent; color: var(--muted);
+  border-radius: var(--r-sm); cursor: pointer; font-size: 15px; line-height: 1;
+  font-family: inherit;
   transition: border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
 }
-.rail-toggle:hover { border-color: var(--accent); color: var(--accent-deep); background: var(--accent-soft); }
-.rail-toggle svg { display: block; }
-.shell .station header { padding-left: 36px; }
-/* 窄窗「审批 N」徽按钮现身时,工位头右侧让位(与左侧 ☰ 的 padding-left 对称) */
+.tab-btn:hover { border-color: var(--border); background: var(--card); color: var(--accent-deep); }
+.tab-btn:disabled { opacity: .4; cursor: default; }
+.tab-btn:disabled:hover { border-color: transparent; background: transparent; color: var(--muted); }
+.tab-scroll { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; overflow-x: auto; }
+.tab {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 220px;
+  padding: 4px 8px 4px 10px; border-radius: var(--r-sm);
+  border: 1px solid transparent; background: transparent; color: var(--muted);
+  font-size: 12px; cursor: pointer; user-select: none; white-space: nowrap;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.tab:hover { background: var(--card); }
+.tab.active { background: var(--card); border-color: var(--border); color: var(--text); box-shadow: var(--shadow-card); }
+.tab-no {
+  flex: none; width: 15px; height: 15px; line-height: 15px; text-align: center;
+  font-size: 10px; font-weight: 600; border-radius: 4px;
+  background: var(--accent-soft); color: var(--accent-deep);
+}
+.tab-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
+.tab.active .tab-name { font-weight: 600; }
+.tab .dot-waiting, .tab .dot-running { flex: none; width: 7px; height: 7px; }
+.tab-close {
+  flex: none; border: none; background: transparent; color: var(--faint);
+  font-size: 10px; line-height: 1; padding: 2px; border-radius: 4px; cursor: pointer;
+  opacity: 0; transition: opacity .12s ease, background-color .12s ease, color .12s ease;
+}
+.tab:hover .tab-close, .tab.active .tab-close { opacity: .7; }
+.tab-close:hover { opacity: 1 !important; background: var(--surface-2h); color: var(--red); }
+/* 窄窗「审批 N」徽按钮现身时,工位头右侧让位(徽按钮 absolute 右上角) */
 .shell.narrow.has-review .station header { padding-right: 64px; }
 
-/* ---- 右栏统一 review 栏(R4 阶段四 T5):跨工位待批聚合。视觉对齐左栏 rail
-   (surface-2 底 + 卡片行);宽窗 260px 仅 items>0 出列,窄窗 drawer(罩层 + 右滑出面板) ---- */
+/* ---- 右栏统一 review 栏(2026-09 交互重构):改浮层停靠右侧——不再挤压工位区宽度,
+   审批进出不再触发全部工位 relayout;玻璃卡面 + 滑入动效。窄窗仍 drawer(罩层 + 右滑出) ---- */
 .review-rail {
-  flex: none; width: 260px; display: flex; flex-direction: column;
-  overflow-y: auto; background: var(--surface-2); border-left: 1px solid var(--line);
+  position: absolute; z-index: 45; top: 96px; right: 12px; bottom: 12px; width: 280px;
+  display: flex; flex-direction: column;
+  overflow-y: auto; background: var(--card);
+  border: 1px solid var(--border); border-radius: var(--r-md);
+  box-shadow: var(--shadow-pop);
+  animation: slide-in-right .2s var(--ease);
 }
 .review-head {
   flex: none; padding: 10px 12px 8px; border-bottom: 1px solid var(--line);
@@ -251,15 +316,23 @@ button:active:not(:disabled) { transform: translateY(0.5px); }
   display: flex; align-items: center; justify-content: space-between;
   padding: 0 2px; font-size: 11.5px; color: var(--muted);
 }
+.review-group-acts { display: inline-flex; gap: 4px; }
 .review-approve-all {
   border: 1px solid var(--border-strong); background: var(--card); color: var(--muted);
   font-size: 11px; font-weight: 500; padding: 2px 10px; border-radius: var(--r-sm); cursor: pointer;
   transition: border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
 }
 .review-approve-all:hover { border-color: var(--accent); color: var(--accent-deep); background: var(--accent-soft); }
+.review-deny-all {
+  border: 1px solid var(--border-strong); background: var(--card); color: var(--muted);
+  font-size: 11px; font-weight: 500; padding: 2px 10px; border-radius: var(--r-sm); cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+.review-deny-all:hover { border-color: var(--red); color: var(--red); background: var(--red-bg); }
 .review-card {
   padding: 8px 10px; border-radius: var(--r-md);
-  background: var(--card); box-shadow: var(--shadow-card);
+  background: var(--surface-2); box-shadow: var(--shadow-card);
+  animation: rise-in .18s var(--ease);
 }
 /* 工具徽标:amber 系(等待审批语义,同工位头 dot-waiting) */
 .review-card-tool {
@@ -280,9 +353,13 @@ button:active:not(:disabled) { transform: translateY(0.5px); }
 .review-allow:hover { background: var(--accent-deep); }
 .review-deny { border: 1px solid var(--red-bar); background: transparent; color: var(--red); margin-left: 6px; }
 .review-deny:hover { background: var(--red-bg); }
-/* 窄窗 drawer:罩层 + 右滑出面板(z 层对齐左栏 rail-mask/rail-drawer,自右出) */
+/* 窄窗 drawer:罩层 + 右滑出面板(z 层对齐左栏 rail-mask/rail-drawer,自右出;
+   position/width/边距覆写浮层态的 absolute 基座) */
 .review-mask { position: fixed; inset: 0; z-index: 60; background: rgba(30,42,56,0.32); }
-.review-drawer { position: fixed; z-index: 61; right: 0; top: 0; bottom: 0; width: 260px; box-shadow: var(--shadow-pop); }
+.review-drawer {
+  position: fixed; z-index: 61; right: 0; top: 0; bottom: 0; width: 260px;
+  border-radius: 0; border: none; box-shadow: var(--shadow-pop);
+}
 /* 窄窗「审批 N」徽按钮:stations 右上角绝对定位(与 ☰ 对称),仅 narrow 且有待批渲染 */
 .review-toggle {
   position: absolute; z-index: 25; top: 6px; right: 6px;
@@ -354,6 +431,18 @@ header .title { flex: none; font-size: 13px; font-weight: 600; color: var(--text
 #log > .row, #log > .card, #log > .tool-result {
   width: 100%; max-width: 720px; margin-left: auto; margin-right: auto;
 }
+/* 消息流容器(2026-09 交互重构):#log 包一层 .log-wrap 做回底 pill 的定位锚 */
+.log-wrap { position: relative; flex: 1; display: flex; min-height: 0; }
+.log-wrap #log { flex: 1; }
+.jump-bottom {
+  position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+  border: 1px solid var(--border-strong); background: var(--card); color: var(--muted);
+  font-size: 11.5px; font-weight: 500; padding: 5px 12px; border-radius: var(--r-pill);
+  cursor: pointer; box-shadow: var(--shadow-pop); z-index: 15;
+  transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+  animation: rise-in .16s var(--ease);
+}
+.jump-bottom:hover { color: var(--accent-deep); border-color: var(--accent); }
 .row { display: flex; width: 100%; }
 .row.user { justify-content: flex-end; margin-top: 14px; }
 .row.ai { justify-content: flex-start; }
@@ -575,9 +664,12 @@ header .title { flex: none; font-size: 13px; font-weight: 600; color: var(--text
   white-space: pre-wrap; word-break: break-word;
 }
 
-/* 待批脉冲(工位头 dot-waiting / 左栏活体共用;阶段四 T3 起审批卡不再进消息流,
+/* 待批脉冲(工位头 dot-waiting / tab / 左栏活体共用;阶段四 T3 起审批卡不再进消息流,
    原 .perm-card 段随之删除) */
 @keyframes waiting-pulse { 0%, 100% { opacity: .25; } 50% { opacity: .9; } }
+/* 进出场微动效(2026-09):chip/浮层/审批卡轻升入 / review 栏右滑入;reduced-motion 关闭 */
+@keyframes rise-in { from { opacity: 0; transform: translateY(4px); } }
+@keyframes slide-in-right { from { opacity: 0; transform: translateX(10px); } }
 
 /* 终止标 / 历史分隔(验收样式迭代:灰 pill → 发丝线 divider——文本居中,两侧横线贯通消息带宽) */
 .marker {
@@ -587,6 +679,50 @@ header .title { flex: none; font-size: 13px; font-weight: 600; color: var(--text
 .marker::before, .marker::after { content: ""; flex: 1; height: 1px; background: var(--border); }
 .marker.err { color: var(--red); }
 .marker.err::before, .marker.err::after { background: var(--red-bar); }
+
+/* 轮级改动汇总 chip(2026-09 交互重构):done/stopped 后「✎ 本轮改动 N 个文件」,
+   点击开本会话改动清单浮层——编码回看的核心诉求,过去只能滚消息流找 fileedit 卡 */
+.edit-summary {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+  border: 1px solid var(--green-line); background: var(--green-bg); color: var(--green);
+  font-size: 11.5px; font-weight: 600; padding: 4px 12px; border-radius: var(--r-pill);
+  cursor: pointer; transition: filter var(--dur-fast) var(--ease);
+  animation: rise-in .18s var(--ease);
+}
+.edit-summary:hover { filter: brightness(0.97); }
+.edit-summary .ic { font-size: 12px; }
+.edit-summary .more { font-weight: 400; opacity: .75; }
+
+/* ---- 会话文件改动清单浮层(2026-09 交互重构):absolute 相对工位根(同接续浮层定位模式) ---- */
+#changes-overlay { position: absolute; inset: 0; z-index: 40; }
+.changes-mask { position: absolute; inset: 0; background: rgba(30,42,56,0.32); }
+.changes-panel {
+  position: absolute; top: 46px; right: 12px; bottom: 12px; left: 12px;
+  display: flex; flex-direction: column;
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--r-md);
+  box-shadow: var(--shadow-pop); overflow: hidden;
+  animation: rise-in .18s var(--ease);
+}
+.changes-head {
+  flex: none; display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--surface-2);
+}
+.changes-title { font-size: 12.5px; font-weight: 600; color: var(--text); }
+.changes-count {
+  display: inline-block; margin-left: 4px; padding: 0 7px; line-height: 16px;
+  font-size: 10.5px; font-weight: 600; border-radius: var(--r-pill);
+  background: var(--green-bg); color: var(--green);
+}
+.changes-close {
+  border: 1px solid var(--border-strong); background: var(--card); color: var(--muted);
+  font-size: 11.5px; font-weight: 500; padding: 3px 12px; border-radius: var(--r-sm); cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.changes-close:hover { border-color: var(--accent); color: var(--accent-deep); }
+.changes-body { flex: 1; overflow-y: auto; padding: 10px 14px 16px; }
+.changes-item { padding: 4px 0; border-bottom: 1px dashed var(--line); }
+.changes-item:last-child { border-bottom: none; }
+.changes-empty { padding: 24px; text-align: center; color: var(--muted); font-size: 12.5px; }
 
 /* ---- Composer（handoff 复刻宿主 InputBar；样式源头 desktop/src/components/InputBar.vue .bar，
    改版需同步——沙箱吃不到 tokens.css，字面值写死，同 :root 注释先例）----
@@ -654,6 +790,21 @@ footer { flex: none; background: transparent; padding: 0 10px 10px; }
 .pill.plan { border-color: var(--accent); color: var(--accent-deep); background: var(--accent-soft); }
 .pill:disabled { opacity: .45; cursor: not-allowed; }
 .pill:disabled:hover { border-color: var(--border-strong); color: var(--muted); }
+/* 上下文行分层(2026-09 交互重构):「在哪个项目里」是首要上下文(primary)——cwd chip
+   提级(实底/加粗/未选时 accent 填充引导),权限模式/引擎弱化(次级小字) */
+.cwd-chip {
+  border-color: var(--border-strong); background: var(--card);
+  max-width: 260px; padding: 3px 12px;
+}
+.cwd-chip span { font-size: 11.5px; font-weight: 600; color: var(--text); }
+.cwd-chip.empty { border-color: var(--accent); background: var(--accent-soft); }
+.cwd-chip.empty span { color: var(--accent-deep); }
+#mode-pill { font-size: 10.5px; }
+#mode-pill:not(.plan) { color: var(--faint); background: transparent; border-color: var(--border); }
+#mode-pill:not(.plan):hover { color: var(--muted); border-color: var(--border-strong); background: transparent; }
+#agent-chip { font-size: 10.5px; }
+#agent-chip:not(.sw):not(.ro) { color: var(--faint); background: transparent; }
+#agent-chip:not(.sw):not(.ro):hover { color: var(--muted); background: transparent; border-color: var(--border-strong); }
 .cwd-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 220px; }
 .cwd-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono-family); font-size: 11px; }
 .cwd-chip.empty span { color: var(--faint); font-family: var(--sans); }

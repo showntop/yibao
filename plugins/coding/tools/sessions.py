@@ -123,7 +123,20 @@ def _spawn_stream(db, sid: str, cwd: str, prompt: str, runner, emit_event,
             loop.close()
             _SESSIONS.pop(sid, None)
 
-    threading.Thread(target=_thread, daemon=True, name=f"yibao-coding-{sid}").start()
+    thread = threading.Thread(target=_thread, daemon=True, name=f"yibao-coding-{sid}")
+    try:
+        thread.start()
+    except Exception as e:
+        # B6：线程起不来（资源耗尽等）→ 半失败态收口——行已插 running，不收口则永久卡
+        # running（只能等重启对账）。落 failed + 补终态事件/汇报，绝不静默。
+        print(f"[yibao/coding] session {sid} 流式线程启动失败：{type(e).__name__}: {e}",
+              file=sys.stderr)
+        _SESSIONS.pop(sid, None)
+        try:
+            db.update("sessions", sid, {"status": "failed", "finished_at": int(time.time())})
+        except Exception:
+            pass
+        _report_final(emit_event, sid, prompt, "failed", None)
 
 
 async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cancel,
@@ -263,12 +276,20 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
     # cc_sid 为 None（首轮取消/失败未捕获会话 id）无法 resume → break，终态照常落。
     while not cancel.is_set() and cc_sid:
         entry = _SESSIONS.get(sid)
+        # B2 收尾竞态封口：先立 closing 再查队。SendTool 入队后复读 closing——
+        # 「先立后查」与「查空即立（保持 True 到线程 finally pop）」两序都收敛：
+        # 窗内晚到的入队者要么被本次查到（续跑），要么复读到 closing 自撤（收到拒绝，
+        # 不再有「ack 后静默丢弃」）。续跑窗重开（closing=False），steer 可再入队。
+        if isinstance(entry, dict):
+            entry["closing"] = True
         queue = entry.get("steer") if isinstance(entry, dict) else None
         queued: list[str] = []
         while queue:                     # 逐条 pop(0)：与 SendTool 并发 append 不丢消息（GIL 原子）
             queued.append(str(queue.pop(0)))
         if not queued:
-            break
+            break                        # closing 保持 True：收尾窗（落终态→线程 pop）内 SendTool 一律拒
+        if isinstance(entry, dict):
+            entry["closing"] = False     # 续跑窗重开：期间新到 steer 继续入队，下轮收尾再立
         on_event({"kind": "marker",
                   "text": f"督导补充已接续（合并 {len(queued)} 条排队消息）"})
         merged = "【督导补充】\n" + "\n".join(queued)
@@ -288,6 +309,16 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
             state["error"] = True
         if state["error"]:
             break                        # 续跑失败：不再 drain，落 failed 终态（残余队列随流终丢弃）
+
+    # B5 流终残留 pending 兜底：rewind/mode 的消费点在「下一条消息前」，本轮在最后一条
+    # 消息后直接收尾时 entry 里的 pending 永不执行，而 RewindTool 已回执 success——
+    # 补 marker 讲实话（再次点击 ⏪ 走 fresh-client 路径仍可回滚）；mode 库值已更新、
+    # 下轮 send 自然生效，静默清即可。
+    _entry = _SESSIONS.get(sid)
+    if isinstance(_entry, dict):
+        if _entry.pop("rewind_pending", None) is not None:
+            on_event({"kind": "marker", "text": "回滚未执行（本轮恰已收尾），请再点一次 ⏪ 重试"})
+        _entry.pop("mode_pending", None)
 
     # 定最终状态：stopped（用户主动停）> error > done
     try:
@@ -316,6 +347,23 @@ async def _stream(db, sid: str, cwd: str, prompt: str, runner, emit_event, cance
     except Exception as e:
         print(f"[yibao/coding] session {sid} 落最终状态失败：{type(e).__name__}: {e}",
               file=sys.stderr)
+    # B7 终态覆盖缝：读态（running）→ 写终态之间用户 stop 完成（先落 stopped 后 set cancel）
+    # 时，上面刚落的 done/failed 会反过来盖掉 stopped。cancel 已 set ⟹ stopped 必已落库
+    # （stop 协议顺序保证）——写后复核一次，撞上即纠正回 stopped + 补 stopped 终态事件
+    # （此路径 runner 已退出、未消费 cancel，不会有第二条 stopped 事件，不重复）。
+    if final != "stopped" and cancel.is_set():
+        final = "stopped"
+        try:
+            db.update("sessions", sid, {"status": "stopped", "finished_at": int(time.time())})
+        except Exception as e:
+            print(f"[yibao/coding] session {sid} 终态纠正失败：{type(e).__name__}: {e}",
+                  file=sys.stderr)
+        _persist("marker", "已中断")
+        if emit_event is not None:
+            emit_event({"kind": "panel_data",
+                        "payload": {"panel": "coding:studio",
+                                    "data": {"session_id": sid, "agent": agent,
+                                             "event": {"kind": "stopped", "text": "已中断"}}}})
     _report_final(emit_event, sid, prompt, final, state.get("usage"))
 
 

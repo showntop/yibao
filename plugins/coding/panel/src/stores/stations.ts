@@ -68,6 +68,13 @@ export function createStationsStore() {
   function syncStationSid(id: number, sid: string | null, agent?: string) {
     const st = byId(id);
     if (!st) return;
+    // F2:与 bind() 同款去重——接续浮层/autoReplay 可能恢复一个他工位已绑的 sid
+    // (浮层区 2 不排除已绑行),盲写会产生同 sid 双绑定:stationForSid 只命中一家,
+    // 事件全投那家,另一工位成 ghost(busy/黄点照显、事件断流)
+    if (sid) {
+      const prev = stationForSid(sid);
+      if (prev !== null && prev !== id) unbind(prev); // 一个会话至多占一个工位
+    }
     st.boundSid = sid;
     if (sid && agent) st.boundAgent = agent;
   }

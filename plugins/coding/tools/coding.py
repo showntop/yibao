@@ -466,6 +466,11 @@ class DecideTool(Tool):
         entry = _PERM.get(rid)
         if entry is None:
             return ActionResult(success=False, error="权限请求不存在或已超时")
+        # B4 TOCTOU：60s 超时与点击相撞时，waiter 可能已按 timeout 收场并 pop——但 entry
+        # 尚未 pop 的窗内这里无条件覆盖会破坏先到先得（超时 deny 被改成 allow）。
+        # 已有裁决（含 stop 放行的 deny）不再覆盖，回执「已裁决」让面板可感知。
+        if entry.get("allow") is not None:
+            return ActionResult(success=False, error="该请求已被裁决")
         entry["allow"] = allow
         entry["event"].set()
         return ActionResult(success=True, data={"ok": True})

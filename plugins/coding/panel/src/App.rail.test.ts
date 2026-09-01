@@ -25,13 +25,13 @@ describe("左栏常驻抽屉", () => {
     const w = mount(App);
     await flushPromises();
     expect(w.find(".rail").exists()).toBe(false);
-    expect(w.find(".rail-toggle").exists()).toBe(true);
+    expect(w.find(".tab-btn").exists()).toBe(true);
   });
 
   it("☰ 开抽屉(罩层+滑出);点行加入工位并自动收", async () => {
     const w = mount(App);
     await flushPromises();
-    await w.find(".rail-toggle").trigger("click");
+    await w.find(".tab-btn").trigger("click");
     expect(w.find(".rail-drawer").exists()).toBe(true);
     expect(w.find(".rail-mask").exists()).toBe(true);
     const row = w.find(".rail-row");
@@ -44,7 +44,7 @@ describe("左栏常驻抽屉", () => {
   it("点罩层收抽屉", async () => {
     const w = mount(App);
     await flushPromises();
-    await w.find(".rail-toggle").trigger("click");
+    await w.find(".tab-btn").trigger("click");
     await w.find(".rail-mask").trigger("click");
     expect(w.find(".rail").exists()).toBe(false);
   });
