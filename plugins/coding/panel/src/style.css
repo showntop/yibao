@@ -76,8 +76,7 @@
     --shadow-pop: 0 2px 8px rgba(8,16,28,0.4), 0 12px 32px rgba(8,16,28,0.5);
     --focus-ring: 0 0 0 2px var(--card), 0 0 0 4px rgba(77,144,196,0.7);
   }
-  /* 字面值写死的玻璃面/白井,深色逐条覆盖(tokens --yb-glass 系) */
-  :root:not([data-theme="light"]) header { background: rgba(24,33,43,0.94); }
+  /* 字面值写死的玻璃面/白井,深色逐条覆盖(tokens --yb-glass 系;顶栏已 retired,仅余 composer/err) */
   :root:not([data-theme="light"]) .composer-bar {
     background: rgba(24,33,43,0.94);
     border-color: var(--border);
@@ -118,7 +117,6 @@
   --shadow-pop: 0 2px 8px rgba(8,16,28,0.4), 0 12px 32px rgba(8,16,28,0.5);
   --focus-ring: 0 0 0 2px var(--card), 0 0 0 4px rgba(77,144,196,0.7);
 }
-:root[data-theme="dark"] header { background: rgba(24,33,43,0.94); }
 :root[data-theme="dark"] .composer-bar {
   background: rgba(24,33,43,0.94);
   border-color: var(--border);
@@ -331,8 +329,34 @@ button:active:not(:disabled) { transform: translateY(0.5px); }
 }
 .tab:hover .tab-close, .tab.active .tab-close { opacity: .7; }
 .tab-close:hover { opacity: 1 !important; background: var(--surface-2h); color: var(--red); }
-/* 窄窗「审批 N」徽按钮现身时,工位头右侧让位(徽按钮 absolute 右上角) */
-.shell.narrow.has-review .station header { padding-right: 64px; }
+/* 会话区(2026-09 走查校准):聚焦工位的当前会话收在 tab 条右端——摘要 · 引擎 · 成本 · 新对话 */
+.tab-session {
+  flex: none; display: flex; align-items: center; gap: 8px;
+  min-width: 0; max-width: 46%; padding-left: 10px;
+}
+.tab-session-sum {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12px; font-weight: 600; color: var(--text); letter-spacing: -0.01em;
+}
+.tab-session-agent {
+  flex: none; font-size: 10px; font-weight: 600; line-height: 15px; padding: 0 6px;
+  border-radius: var(--r-xs); background: var(--accent-soft); color: var(--accent-deep);
+  letter-spacing: 0.02em;
+}
+.tab-session-cost {
+  flex: none; font: var(--mono); font-size: 11px; color: var(--faint);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tab-session-new {
+  flex: none; border: 1px solid var(--border); background: var(--card);
+  color: var(--muted); font-size: 12px; padding: 3px 10px; border-radius: var(--r-sm);
+  cursor: pointer; font-weight: 500;
+  transition: border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+.tab-session-new:hover { border-color: var(--accent); color: var(--accent-deep); background: var(--accent-soft); }
+.tab-session-new:disabled { opacity: .5; cursor: default; }
+.tab-session-new:disabled:hover { border-color: var(--border); color: var(--muted); background: var(--card); }
 
 /* ---- 右栏统一 review 栏(2026-09 交互重构):改浮层停靠右侧——不再挤压工位区宽度,
    审批进出不再触发全部工位 relayout;玻璃卡面 + 滑入动效。窄窗仍 drawer(罩层 + 右滑出) ---- */
@@ -413,47 +437,10 @@ button:active:not(:disabled) { transform: translateY(0.5px); }
   text-align: center; border-bottom: 1px solid var(--accent-line);
 }
 
-/* ---- 顶栏(D4 收窄,高约 40px):左标题「编码对话」+ 右成本聚合 + 新对话 ghost ---- */
-header {
-  flex: none; display: flex; align-items: center; gap: 8px;
-  padding: 5px 14px 6px; min-height: 40px; border-bottom: 1px solid var(--line);
-  background: rgba(255,255,255,0.88);
-  -webkit-backdrop-filter: saturate(140%) blur(12px); backdrop-filter: saturate(140%) blur(12px);
-}
-header .title { flex: none; font-size: 13px; font-weight: 600; color: var(--text); letter-spacing: -0.02em; }
-.spacer { flex: 1; }
-/* 会话成本聚合(C4):顶栏右侧灰小字「N tok · $X.XXXX」,done 事件 usage 前端累加 */
-#cost {
-  flex: none; font: var(--mono); font-size: 11px; color: var(--faint);
-  font-variant-numeric: tabular-nums;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-/* 右上工具按钮:轻描边小钮(验收样式收敛:纯文本像半成品,加形出按钮感) */
-#history, #new-chat {
-  flex: none; border: 1px solid var(--border); background: var(--card);
-  color: var(--muted); font-size: 12px; padding: 3px 10px; border-radius: var(--r-sm);
-  cursor: pointer; font-weight: 500;
-  transition: border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
-}
-#history:hover, #new-chat:hover {
-  border-color: var(--accent); color: var(--accent-deep); background: var(--accent-soft);
-}
-#history:disabled, #new-chat:disabled { opacity: .5; cursor: default; }
-
-/* 工位头新增件(T4 结构,T6 落样式):引擎徽标 / waiting·running 状态点 / 移出 ✕ */
-.agent-badge {
-  flex: none; font-size: 10px; font-weight: 600; line-height: 15px; padding: 0 6px;
-  border-radius: var(--r-xs); background: var(--accent-soft); color: var(--accent-deep);
-  letter-spacing: 0.02em;
-}
+/* ---- 顶栏已 retired(2026-09 走查校准):会话信息上移 tab 条右端,面板一行 chrome ---- */
 .dot-waiting, .dot-running { flex: none; width: 8px; height: 8px; border-radius: 50%; }
 .dot-waiting { background: var(--amber); animation: waiting-pulse 2s ease-in-out infinite; }
 .dot-running { background: var(--green); }
-.station-remove {
-  flex: none; border: none; background: transparent; color: var(--faint);
-  font-size: 12px; padding: 2px 6px; border-radius: 6px; cursor: pointer; transition: all .15s ease;
-}
-.station-remove:hover { background: var(--surface-2); color: var(--red); }
 
 /* ---- 主区:流式日志(唯一视觉焦点)。文档流排版(验收样式迭代 v2,对齐 Claude.ai 阅读流):
    720px 阅读带居中;turn 内消息距 10px,用户消息开新 turn 上沿加 14px(分组靠间距不靠框);

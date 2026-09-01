@@ -34,7 +34,7 @@ describe("style.css 深色模式", () => {
   it("字面值玻璃面(header/composer/err-detail)有深色覆盖", () => {
     const m = css.match(/@media \(prefers-color-scheme: dark\) \{([\s\S]*?)\n\}/);
     const dark = m![1]!;
-    for (const sel of ["header", ".composer-bar", "#errbar .err-detail", ".rail-stop"]) {
+    for (const sel of [".composer-bar", "#errbar .err-detail", ".rail-stop"]) {
       expect(dark).toContain(sel);
     }
   });
@@ -58,7 +58,6 @@ describe("style.css 深色模式", () => {
       expect(explicit).toContain(v + ":");
     }
     for (const sel of [
-      ':root[data-theme="dark"] header',
       ':root[data-theme="dark"] .composer-bar',
       ':root[data-theme="dark"] #errbar .err-detail',
       ':root[data-theme="dark"] .rail-stop',

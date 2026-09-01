@@ -18,12 +18,13 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { hasBridge, invoke, onInit, onHostMessage } from "./lib/bridge";
 import type { LastSessions, PanelData, SessionRow } from "./lib/types";
-import { normCwd, permPublicParams, permSummary, relTime } from "./lib/format";
-import { normAgent } from "./stores/drivers";
+import type { SessionState } from "./stores/session";
+import { normCwd, permPublicParams, permSummary, relTime, fmtCost, fmtTok } from "./lib/format";
+import { agentLabel, normAgent } from "./stores/drivers";
 import { createStationsStore, MAX_STATIONS, type RailLive } from "./stores/stations";
 import { createReviewStore, type ReviewItem } from "./stores/review";
 import StationView from "./components/StationView.vue";
-import StationTabs, { type TabInfo } from "./components/StationTabs.vue";
+import StationTabs, { type SessionChipInfo, type TabInfo } from "./components/StationTabs.vue";
 import SessionRail, { LIVE_TEXT, type RailRow } from "./components/SessionRail.vue";
 import ReviewRail from "./components/ReviewRail.vue";
 
@@ -32,7 +33,7 @@ const review = createReviewStore();
 
 // StationView defineExpose 的壳侧视图(以磁盘实装为准;expose 代理 unwrap ref,dockH/cwd 直读数字/字符串)
 interface StationViewExposed {
-  state: { waiting: boolean; streaming: boolean; sending: boolean };
+  state: SessionState;
   dockH: number;
   cwd: string;
   isBusy: boolean;
@@ -44,6 +45,7 @@ interface StationViewExposed {
   attachCc: (ccSid: string) => Promise<boolean>;        // 会话抽屉上次会话卡(入口合一)
   attachCodex: (sid: string) => Promise<boolean>;
   startCodexHandoff: () => Promise<void>;
+  newChat: () => void;                                  // tab 条会话区「新对话」
 }
 
 // v-for 函数 ref 收集(不收进 reactive,避免组件代理被二次包裹;refsVersion 供 dockH 重算)
@@ -374,6 +376,28 @@ const tabInfos = computed<TabInfo[]>(() => {
   }));
 });
 
+// 聚焦工位的会话信息(tab 条右端;空工位 → null 不渲染)。依赖同 tabInfos:
+// refsVersion + 工位 expose 代理上的 state 读取(items/usage/currentSession 均响应式)。
+const focusedSession = computed<SessionChipInfo | null>(() => {
+  void refsVersion.value;
+  const st = stationRefs[stations.state.focusId];
+  if (!st) return null;
+  const s = st.state;
+  if (!s.items.length && !s.currentSession) return null; // 空工位:发射台承载,不出会话区
+  let summary = "";
+  for (const it of s.items) {
+    if (it.type === "user") { summary = String(it.text).replace(/\s+/g, " ").slice(0, 24); break; }
+  }
+  const cost = (s.usage.tok || s.usage.hasCost)
+    ? fmtTok(s.usage.tok) + " tok" + (s.usage.hasCost ? " · " + fmtCost(s.usage.cost) : "")
+    : "";
+  return {
+    summary, agent: agentLabel(s.curSessAgent), cost,
+    hasSession: !!s.currentSession, busy: s.sending || s.streaming,
+  };
+});
+function onNewChat() { focusedStation()?.newChat(); }
+
 // ---- Esc 关抽屉(2026-09 交互重构):会话/review 抽屉先于工位内 esc 语义(stop/浮层)——
 //      capture 阶段拦下并 stopPropagation,抽屉开着时 esc 不再误触中断流 ----
 function onShellKeydown(e: KeyboardEvent) {
@@ -435,10 +459,12 @@ onBeforeUnmount(() => {
         :tabs="tabInfos"
         :focus-id="stations.state.focusId"
         :add-disabled="stations.state.stations.length >= MAX_STATIONS"
+        :session="focusedSession"
         @focus="onFocusStation"
         @close="onRemoveStation"
         @add="onNewStation"
         @open-drawer="drawerOpen = true"
+        @new-chat="onNewChat"
       />
       <div id="stations" class="stations" :style="{ '--dock-h': dockH + 'px' }">
         <!-- 窄窗「审批 N」徽按钮(T5):右上角,仅有待批时现身,点击开 review drawer -->

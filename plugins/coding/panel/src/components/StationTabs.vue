@@ -8,23 +8,34 @@ export interface TabInfo {
   projectId: string;
   live: RailLive;
 }
+
+// 聚焦工位的会话信息(壳从工位 expose 的 store state 派生;空工位传 null → 右侧不渲染)
+export interface SessionChipInfo {
+  summary: string;      // 任务摘要(首条用户消息前 24 字;"")
+  agent: string;        // 引擎展示名(CC/Codex)
+  cost: string;         // 成本聚合文案("" = 无数据)
+  hasSession: boolean;
+  busy: boolean;        // sending/streaming → 新对话禁用
+}
 </script>
 
 <script setup lang="ts">
-// 工位 tab 条(2026-09 交互重构):工位升一等公民——编号 + 项目名 + 活体点一排看全,
-// 点击聚焦、✕ 关工位(语义显式:「关这个工位」,解绑会话/移除空工位由壳决定,与旧头部
-// 裸 ✕ 同壳语义但落点更可预期)。☰ 会话抽屉与 + 新工位同排收编,stations 区顶让出
-// 36px padding。窄窗同样可见可切换——修复「窄窗下空工位不可达」死区(旧 rail 只列会话)。
+// 工位 tab 条(2026-09 走查校准:一行 chrome)——左边工位(tabs:编号+项目名+活体点,
+// 点击聚焦、✕ 关工位),右边聚焦工位的当前会话(摘要 · 引擎 · 成本 · 新对话)。
+// 工位头整行 retired:项目名归 tab,会话身份/成本/新对话收进本行右端。
+// ☰ 会话抽屉与 + 新工位同排;窄窗同样可见可切(修复窄窗空工位不可达死区)。
 defineProps<{
   tabs: TabInfo[];
   focusId: number;
   addDisabled: boolean;
+  session: SessionChipInfo | null;
 }>();
 const emit = defineEmits<{
   focus: [id: number];
   close: [id: number];
   add: [];
   "open-drawer": [];
+  "new-chat": [];
 }>();
 </script>
 
@@ -57,6 +68,22 @@ const emit = defineEmits<{
           @click.stop="emit('close', t.id)"
         >✕</button>
       </div>
+    </div>
+    <!-- 聚焦工位的当前会话(空工位不渲染):摘要 · 引擎 · 成本 · 新对话 -->
+    <div v-if="session" class="tab-session">
+      <span
+        class="tab-session-sum"
+        :title="session.summary || '新会话（发送即开）'"
+      >{{ session.summary || "新会话" }}</span>
+      <span class="tab-session-agent" title="当前会话引擎">{{ session.agent }}</span>
+      <span v-if="session.cost" class="tab-session-cost" title="本会话累计 token 与成本">{{ session.cost }}</span>
+      <button
+        type="button"
+        class="tab-session-new"
+        title="清空当前对话，开新会话（下次发送走 coding.start）"
+        :disabled="session.busy || !session.hasSession"
+        @click="emit('new-chat')"
+      >新对话</button>
     </div>
     <button
       type="button"

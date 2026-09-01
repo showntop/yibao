@@ -30,7 +30,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { hasBridge, invoke } from "../lib/bridge";
 import type { HandoffSessionItem, PanelData, SessionRow } from "../lib/types";
-import { doneStatusText, emsg, fmtCost, fmtTok, normCwd } from "../lib/format";
+import { doneStatusText, emsg, normCwd } from "../lib/format";
 import { pickReplayCandidate, replayStep, shouldYieldReplay } from "../lib/replay";
 import { createSessionStore, type HandoffSendResult, type RenderItem } from "../stores/session";
 import { agentLabel, createDriversStore, normAgent } from "../stores/drivers";
@@ -123,37 +123,11 @@ function onDocKeydown(e: KeyboardEvent) {
   if (state.currentSession && (state.streaming || state.sending)) void store.stop();
 }
 
-// ---- 顶栏:会话成本聚合(C4,对齐 renderCost):tok 与成本都未见 → 空;codex 无 cost → 只 token 段 ----
-const costText = computed(() => {
-  const u = state.usage;
-  if (!u.tok && !u.hasCost) return "";
-  return fmtTok(u.tok) + " tok" + (u.hasCost ? " · " + fmtCost(u.cost) : "");
-});
-const newChatDisabled = computed(() => state.sending || state.streaming || !state.currentSession);
-
-// ---- 工位头人话标识(2026-09 走查校准):项目名归 tab 条,头部只带会话身份(任务摘要)——
-//      tab「1 yibao」+ 头部「yibao CC」相邻两行重复项目名是走查实锤的冗余;空工位整行
-//      头隐藏(发射台承载全部信息),接续入口落成发射台真按钮 ----
+// ---- 会话身份(2026-09 走查校准):项目名归 tab 条,会话信息(摘要/引擎/成本/新对话)
+//      上移 tab 条右端——工位头整行 retired;本组件只留发射台文案要用的 projectBase ----
 const projectBase = computed(() => {
   const normed = (cwd.value || "").replace(/\/+$/, "");
   return normed.split("/").filter(Boolean).pop() || "";
-});
-const firstUserText = computed(() => {
-  for (const it of state.items) {
-    if (it.type === "user") return String(it.text).replace(/\s+/g, " ").slice(0, 24);
-  }
-  return "";
-});
-const headTitle = computed(() => {
-  if (firstUserText.value) return firstUserText.value;
-  return state.currentSession ? "会话 " + state.currentSession.slice(0, 8) : "新会话";
-});
-const headTooltip = computed(() => {
-  const parts: string[] = [];
-  if (cwd.value) parts.push("项目目录：" + cwd.value);
-  if (state.currentSession) parts.push("会话 " + state.currentSession);
-  if (!state.currentSession && !cwd.value) parts.push("新会话（未绑定，发送即开）");
-  return parts.join("\n");
 });
 
 // ---- 会话文件改动清单(2026-09 交互重构):editsummary chip 点击开浮层,聚合全部 file_edit 项 ----
@@ -518,10 +492,11 @@ onBeforeUnmount(() => {
 function fillDraft(text: string) { composerRef.value?.fillDraft(text); }
 // cwd 一并 expose（壳装配工位 tab 项目名；响应式经 expose 代理保留，tab 模板直读可追踪）。
 // attachCc/attachCodex/startCodexHandoff 供壳会话抽屉的「上次会话」卡调（入口合一：
-// 抽屉 → 壳 → 聚焦本工位执行,状态行反馈落本工位）
+// 抽屉 → 壳 → 聚焦本工位执行,状态行反馈落本工位）;newChat 供 tab 条会话区「新对话」。
+function newChat() { store.newChat(); }
 defineExpose({
   state, dockH, cwd, onData, bindSession, unbindSession, stop, isBusy: busy, hint, fillDraft,
-  attachCc, attachCodex, startCodexHandoff,
+  attachCc, attachCodex, startCodexHandoff, newChat,
 });
 </script>
 
@@ -532,18 +507,8 @@ defineExpose({
     <!-- 桥缺失时可见,提示这是设计预览 -->
     <div v-if="!hasBridge" id="bridge-warn">设计预览：未检测到译宝桥（window.yibao），起停/流式回显不可用。</div>
 
-    <!-- 工位头(2026-09 走查校准):项目名归 tab 条,头部只带会话身份(任务摘要/新会话)+
-         引擎徽标 + waiting/busy 状态点;右 成本聚合 + 接续 + 新对话。空工位整行隐藏
-         (发射台承载全部信息,消除「tab yibao / 头部 yibao」相邻重复) -->
-    <header v-if="state.items.length">
-      <span class="title" :title="headTooltip">{{ headTitle }}</span>
-      <span class="agent-badge" :title="'当前会话引擎：' + agentLabel(state.curSessAgent)">{{ agentLabel(state.curSessAgent) }}</span>
-      <span v-if="state.waiting" class="dot-waiting" title="有权限请求待审批"></span>
-      <span v-else-if="state.streaming" class="dot-running" title="会话运行中"></span>
-      <span class="spacer"></span>
-      <span id="cost" title="本会话累计 token 与成本（done 事件累加；新对话/恢复历史后清零重计）">{{ costText }}</span>
-      <button id="new-chat" type="button" title="清空当前对话，开新会话（下次发送走 coding.start）" :disabled="newChatDisabled" @click="store.newChat()">新对话</button>
-    </header>
+    <!-- 工位头已 retired(2026-09 走查校准):项目名归 tab,会话信息(摘要/引擎/成本/新对话)
+         上移 tab 条右端——面板只剩一行 chrome;活体点归 tab(壳从 state 直读) -->
 
     <!-- 空工位态 → 发射台(2026-09 交互重构):文案上移让位居中的 hero composer(样式:
          .station.empty footer 脱离页底停靠,居中放大);接续落成真按钮(头部此态已隐藏) -->
