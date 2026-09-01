@@ -29,7 +29,7 @@
 //     replayStep);空会话顺延;currentSession||isResuming 让位。
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { hasBridge, invoke } from "../lib/bridge";
-import type { HandoffSessionItem, LastSessions, PanelData, SessionRow } from "../lib/types";
+import type { HandoffSessionItem, PanelData, SessionRow } from "../lib/types";
 import { doneStatusText, emsg, fmtCost, fmtTok, normCwd } from "../lib/format";
 import { pickReplayCandidate, replayStep, shouldYieldReplay } from "../lib/replay";
 import { createSessionStore, type HandoffSendResult, type RenderItem } from "../stores/session";
@@ -41,7 +41,6 @@ import CwdChip from "./CwdChip.vue";
 import ModePill from "./ModePill.vue";
 import AgentChip from "./AgentChip.vue";
 import StatusLine from "./StatusLine.vue";
-import HistoryOverlay from "./HistoryOverlay.vue";
 import HandoffPicker from "./HandoffPicker.vue";
 import ChangesOverlay from "./ChangesOverlay.vue";
 
@@ -54,6 +53,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   "sid-change": [sid: string | null, agent: string]; // watch state.currentSession 上报(壳更新路由表)
   "cwd-change": [cwd: string];                       // watch cwd 上报(壳装配工位 tab 项目名)
+  "open-sessions": [];  // 发射台「接续上次会话」(壳:开 ☰ 会话抽屉——会话入口合一)
   "request-focus": [];  // 工位任意处 mousedown(壳切聚焦)
 }>();
 
@@ -106,19 +106,19 @@ if (!hasBridge) {
   );
 }
 
-// ---- 浮层互收:任一 picker/浮层开时关其他(cwd/agent/history/handoff 单枚举兑现) ----
-type Layer = "" | "cwd" | "agent" | "history" | "handoff";
+// ---- 浮层互收:任一 picker/浮层开时关其他(cwd/agent/handoff 单枚举兑现) ----
+type Layer = "" | "cwd" | "agent" | "handoff";
 const openLayer = ref<Layer>("");
 function toggleLayer(l: Exclude<Layer, "">) { openLayer.value = openLayer.value === l ? "" : l; }
 // 点外部关浮层(对齐原 document click 关 cwd 浮层;agent picker 有 backdrop,双路关闭幂等);
 // focused 守卫(T4):多工位共存只有聚焦工位响应文档级监听
 function onDocClick() { if (!props.focused) return; if (openLayer.value) openLayer.value = ""; }
-// esc 优先级:agent-picker → history → handoff → stop(cwd 浮层 Esc 由其 input stopPropagation 消费)
+// esc 优先级:agent-picker → handoff → stop(cwd 浮层 Esc 由其 input stopPropagation 消费;
+// 会话列表入口已合一进壳抽屉,history 层随接续浮层退役)
 function onDocKeydown(e: KeyboardEvent) {
   if (!props.focused) return; // 多工位共存只有聚焦工位响应
   if (e.key !== "Escape") return;
   if (openLayer.value === "agent") { openLayer.value = ""; return; }
-  if (openLayer.value === "history") { openLayer.value = ""; return; }
   if (openLayer.value === "handoff") { openLayer.value = ""; return; }
   if (state.currentSession && (state.streaming || state.sending)) void store.stop();
 }
@@ -287,79 +287,44 @@ function toggleMode() {
   if (state.currentSession) void invoke("coding.mode", { id: state.currentSession, mode: curMode.value }).catch(() => {});
 }
 
-// ---- 接续浮层(T7;对齐 :2335-2554 openHistory/renderResumePopover/attach)----
-const historyLoading = ref(false);
-const historyLast = ref<LastSessions | null>(null); // 区 1 跨源检测(失败降级 null)
-const historyRows = ref<SessionRow[]>([]);          // 区 2 译宝历史(normCwd 过滤后)
-const historyListErr = ref<string | null>(null);
+// ---- 接续/跨源恢复(2026-09 入口合一):接续浮层 retired,上次会话卡住壳抽屉——
+//      三个动作经 expose 供壳调(抽屉 → 壳 → 聚焦本工位);busy 守卫补齐(抽屉不再
+//      像旧浮层那样在入口拦 streaming)。true = 受理(壳据此收抽屉) ----
 
-function openHistory() {
-  if (!hasBridge) return;
-  if (state.streaming) { onComposerStatus("当前会话运行中，请先中断再恢复/接续会话", true); return; }
-  const c = cwd.value.trim();
-  if (!c) { onComposerStatus("请先选择项目目录", true); openLayer.value = "cwd"; return; }
-  openLayer.value = "history"; // 互收:agent/handoff/cwd 浮层同收(原 closeHandoffPicker/closeAgentPicker)
-  historyLoading.value = true;
-  historyLast.value = null;
-  historyRows.value = [];
-  historyListErr.value = null;
-  // 两路并发:区 1 跨源检测失败(方法缺失/扫描异常)静默降级为无区 1,不拖垮区 2
-  const lastP = invoke<LastSessions>("coding.last_sessions", { cwd: c }).catch(() => null);
-  const listP = invoke<{ sessions?: SessionRow[] }>("coding.list", {})
-    .then((r) => ({ rows: (r && r.sessions) || [], err: null as string | null }))
-    .catch((e) => ({ rows: [] as SessionRow[], err: emsg(e) }));
-  void Promise.all([lastP, listP]).then(([last, listR]) => {
-    if (openLayer.value !== "history") return; // 响应到达时浮层已关,丢弃
-    historyLast.value = last;
-    historyRows.value = listR.rows.filter((r) => normCwd(r.cwd) === normCwd(c)); // 只显示本项目;跨项目总览归左栏 rail
-    historyListErr.value = listR.err;
-    historyLoading.value = false;
-  });
-}
-
-// CC 卡 [继续]:attach_cc 把 transcript 导入会话库(幂等)→ resumeSession(原生 resume,上下文完整)
-async function onAttachCc(ccSid: string): Promise<boolean> {
+// CC [继续]:attach_cc 把 transcript 导入会话库(幂等)→ resumeSession(原生 resume,上下文完整)
+async function attachCc(ccSid: string): Promise<boolean> {
+  if (state.sending || state.streaming) { onComposerStatus("会话进行中，先停止再接续", true); return false; }
   onComposerStatus("导入 Claude Code 会话…", false);
   try {
     const r = await invoke<{ session_id?: string }>("coding.attach_cc", { cc_session_id: ccSid, cwd: cwd.value.trim() });
     const sid = r && r.session_id;
     if (!sid) throw new Error("attach_cc 未返回 session_id");
-    openLayer.value = ""; // 浮层关闭(原 resumeSession 内隐藏 overlay,成败都关)
     const n = await store.resumeSession(sid, "claude-code");
     // 恢复成功反馈(对齐原 resumeSession 的 setStatus);失败由 state.error 承载、顺延(-1)不亮
     if (n >= 0 && !state.error) onComposerStatus("已恢复会话 " + sid + "，发消息将在同一上下文继续", false);
     return true;
   } catch (e) {
     onComposerStatus("导入 Claude Code 会话失败：" + emsg(e), true);
-    return false; // 组件据此解锁按钮
+    return false; // 抽屉据此解锁按钮
   }
 }
 
-// Codex 卡 [原生续]:attach_codex 用 codex thread_id 建/取 DB 行(幂等,agent="codex")→ resumeSession
-async function onAttachCodex(codexSid: string): Promise<boolean> {
+// Codex [原生续]:attach_codex 用 codex thread_id 建/取 DB 行(幂等,agent="codex")→ resumeSession
+async function attachCodex(codexSid: string): Promise<boolean> {
+  if (state.sending || state.streaming) { onComposerStatus("会话进行中，先停止再接续", true); return false; }
   onComposerStatus("恢复 Codex 会话…", false);
   try {
     const r = await invoke<{ session_id?: string }>("coding.attach_codex", { session_id: codexSid });
     const sid = r && r.session_id;
     if (!sid) throw new Error("attach_codex 未返回 session_id");
-    openLayer.value = "";
     const n = await store.resumeSession(sid, "codex");
-    // 同 onAttachCc:成功才亮「已恢复会话」提示
+    // 同 attachCc:成功才亮「已恢复会话」提示
     if (n >= 0 && !state.error) onComposerStatus("已恢复会话 " + sid + "，发消息将在同一上下文继续", false);
     return true;
   } catch (e) {
     onComposerStatus("恢复 Codex 会话失败：" + emsg(e), true);
     return false;
   }
-}
-
-// 区 2 行点击:resumeSession(row.id, row.agent)(原 resumeSession 关闭 overlay)
-function onResumeRow(row: SessionRow) {
-  openLayer.value = "";
-  void store.resumeSession(row.id, row.agent).then((n) => {
-    // 同 attach 两路:成功才亮「已恢复会话」提示(对齐原 setStatus)
-    if (n >= 0 && !state.error) onComposerStatus("已恢复会话 " + row.id + "，发消息将在同一上下文继续", false);
-  });
 }
 
 // ---- Codex→CC 交接(T7;对齐 :2047-2119 handoff/picker + :2158-2172 handoffBrief)----
@@ -399,7 +364,6 @@ async function handoffBrief(sid: string) {
 }
 
 function onHandoffPick(sid: string) { openLayer.value = ""; void handoffBrief(sid); }
-function onCodexCardHandoff() { openLayer.value = ""; void startCodexHandoff(); } // 区 1 Codex 卡 [交接给 CC]
 function onHandoffCancel(item: RenderItem) { store.dropHandoffCard(item); }
 
 // 交接卡 [用它开始 → Claude Code]:组件已 seal;brief 作 prompt、source 标来源,受理前即 streaming
@@ -552,8 +516,13 @@ onBeforeUnmount(() => {
 // hint=壳侧状态行提示通道(T8)
 // handoff 草稿随迁：壳路由 → 本工位 Composer（壳只管投递，工位内直转）
 function fillDraft(text: string) { composerRef.value?.fillDraft(text); }
-// cwd 一并 expose（壳装配工位 tab 项目名；响应式经 expose 代理保留，tab 模板直读可追踪）
-defineExpose({ state, dockH, cwd, onData, bindSession, unbindSession, stop, isBusy: busy, hint, fillDraft });
+// cwd 一并 expose（壳装配工位 tab 项目名；响应式经 expose 代理保留，tab 模板直读可追踪）。
+// attachCc/attachCodex/startCodexHandoff 供壳会话抽屉的「上次会话」卡调（入口合一：
+// 抽屉 → 壳 → 聚焦本工位执行,状态行反馈落本工位）
+defineExpose({
+  state, dockH, cwd, onData, bindSession, unbindSession, stop, isBusy: busy, hint, fillDraft,
+  attachCc, attachCodex, startCodexHandoff,
+});
 </script>
 
 <template>
@@ -573,13 +542,6 @@ defineExpose({ state, dockH, cwd, onData, bindSession, unbindSession, stop, isBu
       <span v-else-if="state.streaming" class="dot-running" title="会话运行中"></span>
       <span class="spacer"></span>
       <span id="cost" title="本会话累计 token 与成本（done 事件累加；新对话/恢复历史后清零重计）">{{ costText }}</span>
-      <button
-        id="history"
-        type="button"
-        title="接续历史会话：上次会话（CC 继续 / Codex 原生续或交接）+ 本项目译宝历史，恢复后继续在同一上下文聊"
-        :disabled="state.sending || state.streaming"
-        @click.stop="openHistory"
-      >接续</button>
       <button id="new-chat" type="button" title="清空当前对话，开新会话（下次发送走 coding.start）" :disabled="newChatDisabled" @click="store.newChat()">新对话</button>
     </header>
 
@@ -589,7 +551,7 @@ defineExpose({ state, dockH, cwd, onData, bindSession, unbindSession, stop, isBu
       <p class="station-empty-kicker">编码工位</p>
       <p class="station-empty-lead">{{ projectBase ? "在 " + projectBase + " 说清任务，后台开跑" : "选个项目目录，说清任务，后台开跑" }}</p>
       <div class="station-empty-acts">
-        <button type="button" class="station-empty-resume" title="上次会话（CC 继续 / Codex 原生续或交接）+ 本项目译宝历史" @click.stop="openHistory">接续上次会话</button>
+        <button type="button" class="station-empty-resume" title="打开会话列表：上次会话（CC 继续 / Codex 原生续或交接）+ 本项目历史" @click.stop="emit('open-sessions')">接续上次会话</button>
         <span class="station-empty-hint">↩ 发送 · ⇧↩ 换行 · @ 引用文件</span>
       </div>
     </div>
@@ -646,21 +608,6 @@ defineExpose({ state, dockH, cwd, onData, bindSession, unbindSession, stop, isBu
       </Composer>
     </footer>
 
-    <!-- 接续浮层(T7):区 1 上次会话(CC 继续 / Codex 原生续·交接)+ 区 2 译宝历史 + 空态;
-         留在工位内(T6:position:absolute 相对工位根定位,样式壳 style.css 落) -->
-    <HistoryOverlay
-      v-if="openLayer === 'history'"
-      :loading="historyLoading"
-      :last="historyLast"
-      :rows="historyRows"
-      :list-err="historyListErr"
-      :cur-agent="dstate.curAgent"
-      :on-attach-cc="onAttachCc"
-      :on-attach-codex="onAttachCodex"
-      @close="openLayer = ''"
-      @resume="onResumeRow"
-      @handoff="onCodexCardHandoff"
-    />
     <!-- Codex session 选择器(T7):handoff_list 多条时弹出 -->
     <HandoffPicker
       v-if="openLayer === 'handoff'"
@@ -672,3 +619,4 @@ defineExpose({ state, dockH, cwd, onData, bindSession, unbindSession, stop, isBu
     <ChangesOverlay v-if="changesOpen" :items="fileEditItems" @close="changesOpen = false" />
   </div>
 </template>
+

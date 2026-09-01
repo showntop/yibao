@@ -17,8 +17,8 @@
 //     有待批出列,窄窗 stations 右上「审批 N」徽按钮开 drawer(裁决清空自动收)。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { hasBridge, invoke, onInit, onHostMessage } from "./lib/bridge";
-import type { PanelData, SessionRow } from "./lib/types";
-import { permPublicParams, permSummary, relTime } from "./lib/format";
+import type { LastSessions, PanelData, SessionRow } from "./lib/types";
+import { normCwd, permPublicParams, permSummary, relTime } from "./lib/format";
 import { normAgent } from "./stores/drivers";
 import { createStationsStore, MAX_STATIONS, type RailLive } from "./stores/stations";
 import { createReviewStore, type ReviewItem } from "./stores/review";
@@ -41,6 +41,9 @@ interface StationViewExposed {
   unbindSession: () => void;
   hint: (text: string, err?: boolean) => void;          // T8:壳侧状态行提示通道
   fillDraft: (text: string) => void;                    // handoff 草稿随迁（壳 → 聚焦工位 Composer）
+  attachCc: (ccSid: string) => Promise<boolean>;        // 会话抽屉上次会话卡(入口合一)
+  attachCodex: (sid: string) => Promise<boolean>;
+  startCodexHandoff: () => Promise<void>;
 }
 
 // v-for 函数 ref 收集(不收进 reactive,避免组件代理被二次包裹;refsVersion 供 dockH 重算)
@@ -188,7 +191,7 @@ async function refreshRail() {
       const sid = String(row.id || "");
       const boundId = stations.stationForSid(sid);
       const live = boundId !== null ? liveOfStation(boundId) : (stations.state.railLive[sid] ?? normLive(row.live));
-      return { id: sid, title: railTitle(row), subtitle: railSubtitle(row, live), agent: normAgent(String(row.agent || "")), live, boundStationId: boundId };
+      return { id: sid, title: railTitle(row), subtitle: railSubtitle(row, live), agent: normAgent(String(row.agent || "")), cwd: String(row.cwd || ""), live, boundStationId: boundId };
     });
   } catch { /* 静默:下轮事件再刷 */ }
 }
@@ -259,6 +262,61 @@ function onSidChange(id: number, sid: string | null, agent: string) {
   scheduleRailRefresh();
 }
 
+// ---- 会话抽屉(2026-09 入口合一):上次会话卡数据 + 本项目/其他项目分组 + 动作路由 ----
+const drawerOpen = ref(false); // 抽屉开关(窄窗 review 抽屉另有 reviewDrawerOpen)
+const focusedCwd = computed(() => String(stationRefs[stations.state.focusId]?.cwd ?? ""));
+const focusedCwdBase = computed(() => cwdBaseOf(focusedCwd.value));
+const projectRows = computed<RailRow[]>(() => {
+  const c = normCwd(focusedCwd.value);
+  return c ? railRows.value.filter((r) => normCwd(r.cwd) === c) : [];
+});
+const otherRows = computed<RailRow[]>(() => {
+  const c = normCwd(focusedCwd.value);
+  return c ? railRows.value.filter((r) => normCwd(r.cwd) !== c) : railRows.value;
+});
+const drawerLast = ref<LastSessions | null>(null);
+const drawerLastLoading = ref(false);
+let lastReqSeq = 0;
+async function loadDrawerLast() {
+  const c = focusedCwd.value.trim();
+  if (!hasBridge || !c) { drawerLast.value = null; drawerLastLoading.value = false; return; }
+  const seq = ++lastReqSeq;
+  drawerLastLoading.value = true;
+  try {
+    const r = await invoke<LastSessions>("coding.last_sessions", { cwd: c });
+    if (seq === lastReqSeq) drawerLast.value = r || null;      // 过期响应丢弃(切工位竞态)
+  } catch {
+    if (seq === lastReqSeq) drawerLast.value = null;           // 失败降级无卡(同旧接续浮层)
+  } finally {
+    if (seq === lastReqSeq) drawerLastLoading.value = false;
+  }
+}
+watch(drawerOpen, (open) => { if (open) void loadDrawerLast(); });          // 开抽屉即拉
+watch(() => stations.state.focusId, () => { if (drawerOpen.value) void loadDrawerLast(); }); // 抽屉开着切工位重拉
+
+// 聚焦工位 ref 捷径(抽屉卡片动作路由)
+function focusedStation() {
+  return stationRefs[stations.state.focusId] ?? null;
+}
+async function onDrawerAttachCc(ccSid: string): Promise<boolean> {
+  const st = focusedStation();
+  if (!st) return false;
+  const ok = await st.attachCc(ccSid).catch(() => false);
+  if (ok) drawerOpen.value = false; // 受理即收抽屉(会话已在聚焦工位恢复)
+  return ok;
+}
+async function onDrawerAttachCodex(codexSid: string): Promise<boolean> {
+  const st = focusedStation();
+  if (!st) return false;
+  const ok = await st.attachCodex(codexSid).catch(() => false);
+  if (ok) drawerOpen.value = false;
+  return ok;
+}
+function onDrawerHandoff() {
+  drawerOpen.value = false; // 先收抽屉:交接 brief 卡落在本工位消息流,得让用户看见
+  focusedStation()?.startCodexHandoff();
+}
+
 // ---- review 栏(R4 阶段四 T5):跨工位待批聚合的壳侧接线 ----
 // 挂载快照:perm_pending 全量对账(面板晚开错过 permission_request 时补全);失败静默——
 // 后续增删由流事件 tap 兜底(permission_request 增 / permission_done 删)
@@ -326,7 +384,6 @@ function onShellKeydown(e: KeyboardEvent) {
 
 // ---- 窄窗自适应:rail 隐藏 + ☰ 开抽屉,v-show 只留聚焦工位 ----
 const narrow = ref(false);
-const drawerOpen = ref(false);
 let mq: MediaQueryList | null = null;
 function onMqChange() {
   narrow.value = !!mq?.matches;
@@ -353,20 +410,24 @@ onBeforeUnmount(() => {
 <template>
   <div class="shell" :class="{ narrow, 'has-review': review.state.items.length > 0 }">
     <a class="skip-link" href="#stations">跳到工位</a>
-    <!-- 左栏常驻抽屉(会话列表默认收起,tab 条 ☰ 唤出;点行/罩层即收):
-         抽屉只管会话,工位切换/关闭归 tab 条(2026-09 交互重构) -->
+    <!-- 会话抽屉(2026-09 入口合一):会话唯一的家——上次会话卡 + 本项目/其他项目;
+         tab 条 ☰ 唤出,点行/罩层即收 -->
     <SessionRail
       v-if="drawerOpen"
-      :rows="railRows"
-      :stations="stations.state.stations"
-      :focus-id="stations.state.focusId"
-      drawer
+      :project-rows="projectRows"
+      :other-rows="otherRows"
+      :project-label="focusedCwdBase"
+      :last="drawerLast"
+      :last-loading="drawerLastLoading"
+      :on-attach-cc="onDrawerAttachCc"
+      :on-attach-codex="onDrawerAttachCodex"
       :add-disabled="stations.state.stations.length >= MAX_STATIONS"
       @join="join"
       @stop="stopSession"
       @new-session="onNewStation"
       @focus-station="onFocusStation"
       @close-drawer="drawerOpen = false"
+      @handoff="onDrawerHandoff"
     />
     <div class="main-col">
       <!-- 工位 tab 条:☰ 抽屉 + 工位 tabs(聚焦/活体/关闭) + 新工位;窄窗同样可切(修死区) -->
@@ -395,6 +456,7 @@ onBeforeUnmount(() => {
           :autoplay="s.id === 1"
           :default-cwd="lastCwd"
           @sid-change="(sid, agent) => onSidChange(s.id, sid, agent)"
+          @open-sessions="drawerOpen = true"
           @request-focus="stations.focus(s.id)"
         />
       </div>
