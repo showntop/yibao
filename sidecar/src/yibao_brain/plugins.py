@@ -30,7 +30,7 @@ from .tools import skills_index
 
 # 合法 capability 集合（v2 §3.3）；host 不由加载器注入（invoker 执行时嫁接）
 # process：声明本插件会 spawn 子进程（如调本机 CLI 智能体）；仅声明不注入，供审计/闸门识别
-CAPABILITIES = {"db", "memory", "http", "llm", "host", "reminders", "process"}
+CAPABILITIES = {"db", "blobs", "memory", "http", "llm", "host", "reminders", "process"}
 # 能力表面四档（调研 §12.7）：manifest 面板可声明支持哪些档；非法值静默过滤
 _SURFACE_LEVELS = ("inline", "peek", "stage", "focus")
 # 面板输入模式（panel-input-modes spec）：[[panel]].input 合法值；非法值告警后按未声明处理
@@ -147,6 +147,13 @@ class DeclarativeTool(Tool):
         # 用户明确意图信号（对话点名「看看 XX」）：成功后置 result.explicit，宿主可越过
         # AUTO_MAX 弹 stage/浮窗（与 fun 代码工具手动置位同一语义，声明式补齐）
         self._explicit = bool(spec.get("explicit"))
+        output = spec.get("work_output")
+        if output is not None:
+            from .work_events import normalize_work_output
+
+            self.work_outputs = (normalize_work_output(output),)
+        else:
+            self.work_outputs = ()
         self._registry = registry  # composite 顺序调用同 registry 的其他 tool
 
     def openai_schema(self) -> dict:
@@ -592,6 +599,8 @@ def load_plugins(
     reminders=None,
     emit_event=None,
     existing: set[str] | None = None,
+    workflow_registrar=None,
+    blob_store=None,
 ) -> dict[str, str]:
     """扫描加载所有插件，返回 {插件标识: "ok" 或错误信息}（失败插件的标识为目录名）。
 
@@ -612,7 +621,8 @@ def load_plugins(
         try:
             pid = _load_one(child, registry, memory=memory, http=http, llm=llm,
                             emit_panel=emit_panel, host_available=host_available,
-                            reminders=reminders, emit_event=emit_event)
+                            reminders=reminders, emit_event=emit_event,
+                            workflow_registrar=workflow_registrar, blob_store=blob_store)
             results[pid] = "ok"
         except Exception as e:  # 失败隔离：坏插件不拖累其他插件/底座
             results[child.name] = f"{type(e).__name__}: {e}"
@@ -620,7 +630,7 @@ def load_plugins(
 
 
 def _load_one(child: Path, registry: ToolRegistry, *, memory, http, llm, emit_panel, host_available,
-              reminders=None, emit_event=None) -> str:
+              reminders=None, emit_event=None, workflow_registrar=None, blob_store=None) -> str:
     manifest = tomllib.loads((child / "manifest.toml").read_text(encoding="utf-8"))
     pid = manifest["id"]  # id 必填；min_engine_version 只解析暂不校验（阶段 0）
     if not _PLUGIN_ID.match(pid):
@@ -642,6 +652,16 @@ def _load_one(child: Path, registry: ToolRegistry, *, memory, http, llm, emit_pa
     tables = manifest.get("table") or []
     if tables and "db" not in caps:
         raise ValueError("声明了 [[table]] 但未声明 db capability")
+    workflows = manifest.get("workflow") or []
+    if not isinstance(workflows, list):
+        raise ValueError("[[workflow]] 必须是数组")
+    if workflows:
+        from .work_graph import WorkGraphStore
+
+        workflows = [
+            WorkGraphStore.normalize_workflow_definition(item, source_plugin=pid)
+            for item in workflows
+        ]
 
     # 按 capabilities 构造 scoped ctx：未声明的能力对应属性保持 None
     # emit_event 与 capability 无关（后台线程主动播报的公共通道，如 agents 插件任务完成通知）
@@ -649,6 +669,13 @@ def _load_one(child: Path, registry: ToolRegistry, *, memory, http, llm, emit_pa
     if "db" in caps:
         ctx.db = PluginDb(pid)
         ctx.db.apply_schema(tables)
+    if "blobs" in caps:
+        if blob_store is None:
+            from . import config
+            from .blob_store import BlobStore
+
+            blob_store = BlobStore(Path(config.data_dir()) / "blobs")
+        ctx.blobs = blob_store
     if "memory" in caps:
         ns = manifest.get("mem_namespace") or pid
         ctx.memory = ScopedMemory(memory, ns)
@@ -687,6 +714,9 @@ def _load_one(child: Path, registry: ToolRegistry, *, memory, http, llm, emit_pa
         _load_api(pid, api_file, registry)
     # 插件自带技能（spec §对象模型 bundled_skills）：扫 skills/**/SKILL.md 注册 <pid>:* 命名空间
     skills_index.register_bundled(pid, child)
+    if workflow_registrar is not None:
+        for definition in workflows:
+            workflow_registrar(definition, source_plugin=pid)
     return pid
 
 

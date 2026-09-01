@@ -1,7 +1,7 @@
 // 大脑 sidecar 通信客户端：Tauri IPC（invoke）封装 + 事件订阅 + 通用「请求→回包」工具。
 // 组件不得直接 invoke，一律走这里的函数（错误处理在此收敛）。
 import { invoke } from "@tauri-apps/api/core";
-import { emit, listen, once, type UnlistenFn } from "@tauri-apps/api/event";
+import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { WebviewPayload } from "../lib/webview-source";
 import {
   EMPTY_DOCK,
@@ -75,8 +75,10 @@ function onceWithTimeout<T>(
   const holder: { un: (() => void) | null } = { un: null };
   let settled = false;
   const resp = new Promise<T>((resolve) => {
-    void once<T>(event, (ev) => {
-      if (!match || match(ev.payload)) resolve(ev.payload);
+    void listen<T>(event, (ev) => {
+      if (match && !match(ev.payload)) return;
+      holder.un?.();
+      resolve(ev.payload);
     }).then((u) => {
       holder.un = u;
       if (settled) u();
@@ -455,9 +457,9 @@ export function memEdit(id: string, text: string, timeoutMs = 5000): Promise<Mem
 
 // ---- 项目实体 ----
 
-/** 查询项目列表 + 当前项目 id（响应经 brain-projects 事件回来；任何变更 sidecar 也主动广播同型消息）。 */
-export function fetchProjects(): Promise<void> {
-  return invoke("get_projects");
+/** 查询 Workspace 列表 + 指定 Session 的当前绑定。 */
+export function fetchProjects(conversationId?: string): Promise<void> {
+  return invoke("get_projects", { conversationId: conversationId ?? null });
 }
 
 /** 订阅项目视图（projects 查询回包与变更广播同型：{current, projects[]}）。 */
@@ -466,38 +468,49 @@ export function onProjects(cb: (r: ProjectsResponse) => void): Promise<UnlistenF
 }
 
 /** 一次性取项目视图；大脑不在线/超时返回空（家态项目卡照常渲染空态）。 */
-export function getProjectsOnce(timeoutMs = 3000): Promise<ProjectsResponse> {
-  return onceWithTimeout("brain-projects", () => fetchProjects(), EMPTY_PROJECTS, timeoutMs);
+export function getProjectsOnce(conversationId?: string, timeoutMs = 3000): Promise<ProjectsResponse> {
+  const cid = conversationId ?? "";
+  return onceWithTimeout(
+    "brain-projects",
+    () => fetchProjects(cid),
+    { ...EMPTY_PROJECTS, conversation_id: cid },
+    timeoutMs,
+    (p) => (p.conversation_id ?? "") === cid,
+  );
 }
 
 /** 新建项目，等 brain-project-created 回包（带最新视图）；超时按失败处理。 */
-export function projectCreate(name: string, timeoutMs = 5000): Promise<ProjectAck> {
+export function projectCreate(name: string, conversationId?: string, timeoutMs = 5000): Promise<ProjectAck> {
+  const cid = conversationId ?? "";
   return onceWithTimeout(
     "brain-project-created",
-    () => invoke("project_create", { name }),
-    { ok: false, error: "创建超时（大脑不在线？）" },
+    () => invoke("project_create", { name, conversationId: cid || null }),
+    { ok: false, error: "创建超时（大脑不在线？）", conversation_id: cid },
     timeoutMs,
+    (p) => (p.conversation_id ?? "") === cid,
   );
 }
 
 /** 切换项目（id 或名字），等 brain-project-switched 回包（带最新视图）；超时按失败处理。 */
-export function projectSwitch(idOrName: string, timeoutMs = 5000): Promise<ProjectAck> {
+export function projectSwitch(idOrName: string, conversationId?: string, timeoutMs = 5000): Promise<ProjectAck> {
+  const cid = conversationId ?? "";
   return onceWithTimeout(
     "brain-project-switched",
-    () => invoke("project_switch", { id: idOrName }),
-    { ok: false, error: "切换超时（大脑不在线？）" },
+    () => invoke("project_switch", { id: idOrName, conversationId: cid || null }),
+    { ok: false, error: "切换超时（大脑不在线？）", conversation_id: cid },
     timeoutMs,
+    (p) => (p.conversation_id ?? "") === cid,
   );
 }
 
 /** 挂对象进项目（id 省略=当前项目）：fire-and-forget，成功经 brain-projects 广播回来。 */
-export function projectAttach(objType: string, ref: string, id?: string): Promise<void> {
-  return invoke("project_add_object", { objType, ref, id: id ?? null });
+export function projectAttach(objType: string, ref: string, id?: string, conversationId?: string): Promise<void> {
+  return invoke("project_add_object", { objType, ref, id: id ?? null, conversationId: conversationId ?? null });
 }
 
 /** 从项目摘除对象（id 省略=当前项目）：fire-and-forget，成功经 brain-projects 广播回来。 */
-export function projectDetach(objType: string, ref: string, id?: string): Promise<void> {
-  return invoke("project_remove_object", { objType, ref, id: id ?? null });
+export function projectDetach(objType: string, ref: string, id?: string, conversationId?: string): Promise<void> {
+  return invoke("project_remove_object", { objType, ref, id: id ?? null, conversationId: conversationId ?? null });
 }
 
 // ---- 表面层事件通道（design §3）----

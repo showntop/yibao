@@ -51,7 +51,10 @@ class DeleteTopicTool(Tool):
         # 稿件：删库行 + 磁盘文件（content_path 兼容老库绝对路径），最后收掉该选题的稿件目录
         for row in db.query("articles", where={"topic_id": tid}):
             db.delete("articles", str(row["id"]))
-            cp = Path(str(row.get("content_path") or ""))
+            raw = str(row.get("content_path") or "")
+            if raw.startswith("blob://sha256/"):
+                continue  # 内容可跨 Artifact 共享，由 BlobStore 引用扫描 + 宽限期统一回收。
+            cp = Path(raw)
             p = cp if cp.is_absolute() else self._articles_dir.parent / cp
             try:
                 p.unlink(missing_ok=True)

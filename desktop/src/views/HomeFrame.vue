@@ -101,12 +101,26 @@ function stackOf(area: string): ResolvedItem[] {
     .filter((item): item is ResolvedItem => Boolean(item));
 }
 
-function railOverviewOf(area: string): ResolvedItem[] {
-  return stackOf(area).filter((item) => item.id !== "sessions");
+function sectionTailIds(area: string): readonly string[] {
+  return grid.value?.sections?.[area]?.tail ?? [];
 }
 
-function railSessionsOf(area: string): ResolvedItem[] {
-  return stackOf(area).filter((item) => item.id === "sessions");
+function sectionBodyOf(area: string): ResolvedItem[] {
+  const tail = new Set(sectionTailIds(area));
+  return stackOf(area).filter((item) => !tail.has(item.id));
+}
+
+function sectionTailOf(area: string): ResolvedItem[] {
+  const tail = new Set(sectionTailIds(area));
+  return stackOf(area).filter((item) => tail.has(item.id));
+}
+
+function sectionTailStyle(area: string) {
+  const section = grid.value?.sections?.[area];
+  return {
+    ...(section?.tailBasis ? { flexBasis: section.tailBasis } : {}),
+    ...(section?.tailMin ? { minHeight: section.tailMin } : {}),
+  };
 }
 
 function foldLabel(fold: AssemblyFold): string {
@@ -210,13 +224,13 @@ function onMoveStart(item: ResolvedItem, e: PointerEvent) {
           v-for="area in areas"
           :key="area"
           class="area"
-          :class="`area-${area}`"
+          :class="[`area-${area}`, { sectioned: Boolean(grid?.sections?.[area]) }]"
           :style="{ gridArea: area }"
         >
-          <template v-if="presetId === 'rails' && area === 'left'">
-            <div class="rail-overview" aria-label="译宝概览">
+          <template v-if="grid?.sections?.[area]">
+            <div class="section-body">
               <div
-                v-for="item in railOverviewOf(area)"
+                v-for="item in sectionBodyOf(area)"
                 :key="item.id"
                 class="host"
                 :class="[`kind-${item.kind}`, `part-${item.id}`, `face-${item.presentation}`, { grow: item.grow, 'pin-end': item.pinEnd }]"
@@ -225,10 +239,11 @@ function onMoveStart(item: ResolvedItem, e: PointerEvent) {
               </div>
             </div>
             <div
-              v-for="item in railSessionsOf(area)"
+              v-for="item in sectionTailOf(area)"
               :key="item.id"
-              class="host rail-sessions-host"
+              class="host section-tail-host"
               :class="[`kind-${item.kind}`, `part-${item.id}`, `face-${item.presentation}`, { grow: item.grow, 'pin-end': item.pinEnd }]"
+              :style="sectionTailStyle(area)"
             >
               <slot :name="item.id" />
             </div>
@@ -376,7 +391,7 @@ function onMoveStart(item: ResolvedItem, e: PointerEvent) {
   gap: 8px;
   min-width: 0;
 }
-.frame[data-preset="rails"] .area-left {
+.area.sectioned {
   gap: 0;
   padding: 10px;
   overflow: hidden;
@@ -387,7 +402,7 @@ function onMoveStart(item: ResolvedItem, e: PointerEvent) {
     color-mix(in srgb, var(--yb-widget-bg) 90%, var(--yb-content-bg));
   box-shadow: var(--yb-widget-shadow);
 }
-.frame[data-preset="rails"] .rail-overview {
+.section-body {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
@@ -396,8 +411,8 @@ function onMoveStart(item: ResolvedItem, e: PointerEvent) {
   scrollbar-width: thin;
   overscroll-behavior: contain;
 }
-.frame[data-preset="rails"] .area-left > .host,
-.frame[data-preset="rails"] .rail-overview > .host {
+.area.sectioned > .host,
+.section-body > .host {
   flex: none;
   overflow: visible;
   border: 0;
@@ -405,62 +420,61 @@ function onMoveStart(item: ResolvedItem, e: PointerEvent) {
   background: transparent;
   box-shadow: none;
 }
-.frame[data-preset="rails"] .area-left > .host + .host,
-.frame[data-preset="rails"] .rail-overview > .host + .host {
+.area.sectioned > .host + .host,
+.section-body > .host + .host {
   border-top: 1px solid color-mix(in srgb, var(--yb-widget-border) 72%, transparent);
 }
-.frame[data-preset="rails"] .area-left > .host.grow,
-.frame[data-preset="rails"] .rail-overview > .host.grow {
+.area.sectioned > .host.grow,
+.section-body > .host.grow {
   flex: 1;
   min-height: 160px;
   overflow: hidden;
 }
-.frame[data-preset="rails"] .area-left > .host > :deep(.yb-widget),
-.frame[data-preset="rails"] .rail-overview > .host > :deep(.yb-widget) {
+.area.sectioned > .host > :deep(.yb-widget),
+.section-body > .host > :deep(.yb-widget) {
   width: 100%;
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
 }
-.frame[data-preset="rails"] .area-left > .host > :deep(.yb-widget::after),
-.frame[data-preset="rails"] .rail-overview > .host > :deep(.yb-widget::after) {
+.area.sectioned > .host > :deep(.yb-widget::after),
+.section-body > .host > :deep(.yb-widget::after) {
   display: none;
 }
-.frame[data-preset="rails"] .area-left > .part-identity,
-.frame[data-preset="rails"] .rail-overview > .part-identity {
+.area.sectioned > .part-identity,
+.section-body > .part-identity {
   margin-bottom: 4px;
   border: 1px solid color-mix(in srgb, var(--yb-widget-border) 86%, transparent);
   border-radius: var(--yb-widget-radius);
   background: color-mix(in srgb, var(--yb-widget-bg) 88%, transparent);
   box-shadow: var(--yb-glaze-hi), var(--yb-shadow-1);
 }
-.frame[data-preset="rails"] .area-left > .part-identity + .host,
-.frame[data-preset="rails"] .rail-overview > .part-identity + .host {
+.area.sectioned > .part-identity + .host,
+.section-body > .part-identity + .host {
   border-top: 0;
 }
-.frame[data-preset="rails"] .area-left > .host.rail-sessions-host.grow {
-  flex: 0 0 clamp(208px, 30dvh, 280px);
-  min-height: 208px;
+.area.sectioned > .host.section-tail-host.grow {
+  flex: 0 0 auto;
   overflow: hidden;
   border-top: 1px solid color-mix(in srgb, var(--yb-widget-border) 82%, transparent);
   background: color-mix(in srgb, var(--yb-widget-bg) 94%, var(--yb-content-bg));
   box-shadow: 0 -10px 20px color-mix(in srgb, var(--yb-content-bg) 52%, transparent);
 }
-.frame[data-preset="rails"] .area-main,
-.frame[data-preset="rails"] .area-right {
+.area-main,
+.area-right {
   padding-block: 2px;
 }
 @media (max-height: 780px) {
-  .frame[data-preset="rails"] .rail-overview > .part-mind :deep(.brain-stage) {
+  .section-body > .part-mind :deep(.brain-stage) {
     height: 132px;
     min-height: 132px;
     aspect-ratio: auto;
   }
-  .frame[data-preset="rails"] .rail-overview > .part-today :deep(.stain-wrap) {
+  .section-body > .part-today :deep(.stain-wrap) {
     display: none;
   }
-  .frame[data-preset="rails"] .rail-overview > .part-today :deep(.today-summary) {
+  .section-body > .part-today :deep(.today-summary) {
     margin: 2px 10px 10px;
     overflow: hidden;
     text-overflow: ellipsis;

@@ -29,6 +29,7 @@ import type { LiveSelection } from "../../lib/surface/selection-store.ts";
 import { docInfo, postToPanel } from "../../lib/surface/selection-store.ts";
 import HomeFrame from "../HomeFrame.vue";
 import HomeDeskWork from "../HomeDeskWork.vue";
+import { useProject } from "../../composables/useProject";
 import HomeHostAsk from "../HomeHostAsk.vue";
 import HomeFloatNotes from "../HomeFloatNotes.vue";
 import { useLiveAssembly } from "../../lib/home/home-chrome.ts";
@@ -128,6 +129,7 @@ function onIdentityChat(d: string) {
 // ---- 会话（左复合栏）：标题/预览随对话更新；切换会话保存/恢复气泡（SessionStore.conversation 权威）----
 const sessionRef = ref<InstanceType<typeof SessionList> | null>(null);
 const currentSessionId = ref(sessionStore.conversation.getActiveConversationId() ?? "");
+const { current: currentWorkspace } = useProject(currentSessionId);
 let sessionStarted = false; // 当前会话是否已有首条用户消息（决定是否生成标题）
 
 function readSessionTitle(id: string): string {
@@ -954,7 +956,7 @@ onUnmounted(() => {
         <component :is="viewOf('remind', faceOf(assembly, 'remind', 'tile'))" only="remind" @chat="onInfoChat" />
       </template>
       <template #project>
-        <HomeProject @chat="onInfoChat" />
+        <HomeProject :session-id="currentSessionId" @chat="onInfoChat" />
       </template>
       <template #stats>
         <HomeShelfStats />
@@ -998,6 +1000,8 @@ onUnmounted(() => {
           v-if="props.workstation"
           :plugin="props.workstation.plugin"
           :title="props.workstation.title"
+          :workspace-title="currentWorkspace?.name"
+          :mission-title="currentWorkspace?.mission?.title && currentWorkspace.mission.title !== currentWorkspace.name ? currentWorkspace.mission.title : currentSessionTitle"
           :object-title="props.workstation.objectTitle"
           :busy="props.workBusy"
           :focused="props.workFocus"
@@ -1068,7 +1072,7 @@ onUnmounted(() => {
         @close="hostAskOpen = false"
       />
     </div>
-    <HorizonBar :state="state" :proc="horizonProc" :shelf="shelfCollapsed" :doc="workFocusDoc" @entry="onHorizonEntry" />
+    <HorizonBar :state="state" :proc="horizonProc" :shelf="shelfCollapsed" :doc="workFocusDoc" :session-id="currentSessionId" @entry="onHorizonEntry" />
     <!-- 器物 peek：架收进降级档后，从地平线"器物"入口浮出（design §8），内容=当前架真身 -->
     <div v-if="shelfPeek && shelfCollapsed" class="shelf-peek yb-craze">
       <HomeRemindCard force />
@@ -1153,13 +1157,12 @@ onUnmounted(() => {
 .chat-page.work-focus :deep(.horizon .ctx) {
   display: none;
 }
-/* focus 收器物区（验收发现#1）：含 axis/shelf 区的摊法下收区并让工作面吃满。
-   按区名键控（area-* 是布局数据，非 preset 名），不含这些区的摊法天然无作用 */
-.chat-page.work-focus :deep(.area-axis),
-.chat-page.work-focus :deep(.area-shelf) {
+/* Focus 只保留工作面与输入口：按角色区键控，不依赖具体 preset 的 axis/shelf 命名。
+   新摊法新增辅助区时也会自动收起，避免出现“功能进了 Focus、网格仍留空列”。 */
+.chat-page.work-focus :deep(.stage > .area:not(.area-chat):not(.area-compose)) {
   display: none;
 }
-.chat-page.work-focus :deep(.stage:has(.area-axis)) {
+.chat-page.work-focus :deep(.stage) {
   grid-template-columns: minmax(0, 1fr) !important;
   grid-template-areas: "chat" "compose" !important;
 }

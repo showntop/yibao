@@ -101,6 +101,11 @@ describe("resolveAssembly", () => {
     expect(rails.items.find((i) => i.id === "today")?.area).toBe("left");
     expect(rails.items.find((i) => i.id === "scratch")).toBeUndefined();
     expect(collapsibleOf("rails")).toEqual(["left", "right"]);
+    expect(rails.grid?.sections?.left).toEqual({
+      tail: ["sessions"],
+      tailBasis: "clamp(208px, 30dvh, 280px)",
+      tailMin: "208px",
+    });
 
     const desk = resolveAssembly("desk", defaultLayout());
     expect(desk.place).toBe("grid");

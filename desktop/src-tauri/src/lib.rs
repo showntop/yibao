@@ -295,6 +295,28 @@ pub fn run() {
                     my + (sh - 700.0) / 2.0,
                 ));
             }
+            // 本地真机验收入口：显式设置时直接开大窗，默认启动行为完全不变。
+            // 避免靠浏览器或自动点托盘才能检查 Home / Stage 响应式效果。
+            if std::env::var_os("YIBAO_DEV_SHOW_HOME").is_some() {
+                let qa_width = 1320.0;
+                let qa_height = 820.0;
+                let _ = home.set_size(tauri::LogicalSize::new(qa_width, qa_height));
+                if let Ok(Some(mon)) = home.current_monitor() {
+                    let s = mon.scale_factor();
+                    let mx = mon.position().x as f64 / s;
+                    let my = mon.position().y as f64 / s;
+                    let sw = mon.size().width as f64 / s;
+                    let sh = mon.size().height as f64 / s;
+                    let _ = home.set_position(tauri::LogicalPosition::new(
+                        mx + (sw - qa_width) / 2.0,
+                        my + (sh - qa_height) / 2.0,
+                    ));
+                }
+                let _ = home.show().and_then(|_| home.set_focus());
+                if let Some(main) = app.get_webview_window("main") {
+                    let _ = main.hide();
+                }
+            }
 
             // 唤起条（划词动作菜单）：预创建隐藏，⌘⇧U 抓到文字后光标旁落位展示
             tauri::WebviewWindowBuilder::new(app, "invoke-bar", tauri::WebviewUrl::App("invoke.html".into()))

@@ -29,6 +29,12 @@ export type GridTemplate = {
   rows?: string;
   areas?: string;
   stacks: Readonly<Record<string, readonly string[]>>;
+  /** 区域内的通用分段堆栈：主体独立滚动，tail 固定在底部。 */
+  sections?: Readonly<Record<string, {
+    tail: readonly string[];
+    tailBasis?: string;
+    tailMin?: string;
+  }>>;
   grow?: readonly string[];
   pinEnd?: readonly string[];
   pluginArea?: string;
@@ -104,6 +110,13 @@ export const HOME_PRESETS = {
         left: ["identity", "spark", "mind", "today", "sessions"],
         main: ["chat", "composer"],
         right: ["now"],
+      },
+      sections: {
+        left: {
+          tail: ["sessions"],
+          tailBasis: "clamp(208px, 30dvh, 280px)",
+          tailMin: "208px",
+        },
       },
       grow: ["sessions", "chat"],
       pluginArea: "left",

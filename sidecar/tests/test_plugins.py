@@ -9,6 +9,7 @@ from yibao_brain.ipc import ActionResult, RiskLevel
 from yibao_brain.llm import FakeProvider, ToolCall
 from yibao_brain.memory import FakeMemory
 from yibao_brain.plugins import LlmChat, ScopedMemory, load_plugins
+from yibao_brain.plugindb import PluginDb
 from yibao_brain.safety import Gate, GatePolicy, RiskClassifier
 from yibao_brain.tools import EchoTool, Tool, ToolContext, ToolRegistry
 
@@ -135,6 +136,20 @@ def test_process_capability_accepted(data_dir, tmp_path):
     assert "teleport" in results["badcap"]  # 报错指明未知能力
 
 
+def test_blob_capability_injects_shared_content_store(data_dir, tmp_path):
+    manifest = NOTES_MANIFEST.replace(
+        'capabilities = ["db"]', 'capabilities = ["db", "blobs"]',
+    )
+    _write_plugin(tmp_path, "notes", manifest)
+    reg = ToolRegistry()
+    assert _load(tmp_path, reg) == {"notes": "ok"}
+    ctx = reg.get("notes.keep").plugin_ctx
+    staged = ctx.blobs.stage_text("portable artifact")
+    ref = staged.finalize()
+    assert ref.startswith("blob://sha256/")
+    assert ctx.blobs.resolve(ref).read_text(encoding="utf-8") == "portable artifact"
+
+
 # ---------- 声明式 db tool 端到端 ----------
 
 
@@ -157,6 +172,45 @@ def test_db_tool_end_to_end(data_dir, tmp_path):
     assert (data_dir / "plugins" / "notes" / "data.db").is_file()
 
 
+def test_plugin_db_business_write_and_work_outbox_share_one_transaction(tmp_path):
+    db = PluginDb("atomic", str(tmp_path / "atomic.db"))
+    db.apply_schema([{
+        "name": "notes",
+        "columns": [
+            {"name": "id", "type": "text", "pk": True},
+            {"name": "text", "type": "text"},
+        ],
+    }])
+    try:
+        with pytest.raises(RuntimeError, match="work_transaction"):
+            db.enqueue_work_events("inv-outside", [{
+                "event_type": "artifact.upsert", "payload": {"ref": "outside"},
+            }])
+
+        with db.work_transaction() as tx:
+            db.insert("notes", {"id": "rolled-back", "text": "不应留下"})
+            db.enqueue_work_events("inv-rollback", [{
+                "event_type": "artifact.upsert", "payload": {"ref": "rolled-back"},
+            }])
+            tx.rollback()
+        assert db.query("notes") == []
+        assert db.work_outbox_events() == []
+
+        with db.work_transaction():
+            db.insert("notes", {"id": "committed", "text": "原子提交"})
+            event_ids = db.enqueue_work_events("inv-commit", [{
+                "event_type": "artifact.upsert", "payload": {"ref": "committed"},
+            }])
+        assert [row["id"] for row in db.query("notes")] == ["committed"]
+        assert db.work_outbox_events() == [{
+            "id": event_ids[0], "invocation_id": "inv-commit", "event_seq": 1,
+            "event_type": "artifact.upsert", "status": "pending", "attempts": 0,
+            "last_error": "",
+        }]
+    finally:
+        db.close()
+
+
 def test_db_tool_openai_schema_uses_manifest(data_dir, tmp_path):
     _write_plugin(tmp_path, "notes", NOTES_MANIFEST)
     reg = ToolRegistry()
@@ -165,6 +219,54 @@ def test_db_tool_openai_schema_uses_manifest(data_dir, tmp_path):
     assert schema["name"] == "notes.keep"
     assert schema["description"] == "记一条闪念"
     assert "text" in schema["parameters"]["properties"]
+
+
+def test_plugin_registers_workflow_pack_and_declares_work_output(data_dir, tmp_path):
+    manifest = NOTES_MANIFEST + """
+
+[[workflow]]
+id = "notes.research"
+version = "1.0.0"
+domain = "research"
+label = "研究笔记"
+matches = ["研究", "research"]
+stages = [
+  {id = "collect", label = "收集", artifact_patterns = ["note"]},
+  {id = "deliver", label = "交付", artifact_patterns = ["report"]},
+]
+"""
+    # work_output 属于 keep 这个 [[tool]]，插在其 [tool.db] 之后、下一个 [[tool]] 之前。
+    manifest = manifest.replace(
+        '[tool.db]\nop = "insert"\ntable = "notes"\n\n[[tool]]',
+        '[tool.db]\nop = "insert"\ntable = "notes"\n'
+        '[tool.work_output]\nkind = "artifact"\nartifact_type = "research.note"\n'
+        'ref_from = "data.id"\nmetadata_fields = ["params.text"]\n\n[[tool]]',
+        1,
+    )
+    _write_plugin(tmp_path, "notes", manifest)
+    registered: list[tuple[dict, str]] = []
+
+    def register(definition, *, source_plugin):
+        registered.append((definition, source_plugin))
+
+    reg = ToolRegistry()
+    assert _load(tmp_path, reg, workflow_registrar=register) == {"notes": "ok"}
+    assert registered[0][0]["id"] == "notes.research"
+    assert registered[0][0]["source_plugin"] == "notes"
+    assert registered[0][1] == "notes"
+    assert reg.get("notes.keep").work_outputs[0]["artifact_type"] == "research.note"
+
+
+def test_invalid_work_output_fails_plugin_at_load_time(data_dir, tmp_path):
+    manifest = NOTES_MANIFEST.replace(
+        '[tool.db]\nop = "insert"\ntable = "notes"',
+        '[tool.db]\nop = "insert"\ntable = "notes"\n'
+        '[tool.work_output]\nkind = "teleport"\nartifact_type = "note"\nref_from = "data.id"',
+        1,
+    )
+    _write_plugin(tmp_path, "notes", manifest)
+    result = _load(tmp_path, ToolRegistry())
+    assert "未知 work_output kind" in result["notes"]
 
 
 # ---------- capability 权限模型 ----------

@@ -329,10 +329,40 @@ export interface PendingConfirm {
 
 // ---- 项目实体（家态项目卡/地平线 ctx；sidecar projects IPC）----
 
-/** 挂在项目下的对象引用（type 如 zimeiti.topic；ref 为插件侧 id/路径）。 */
+/** Work Graph Artifact 的 Project façade 投影。type/ref 兼容旧插件，id/revision 是新权威身份。 */
 export interface ProjectObject {
   type: string;
   ref: string;
+  artifact_id?: string;
+  revision_id?: string;
+  lifecycle?: "draft" | "in_review" | "approved" | "published" | "archived";
+}
+
+export interface MissionInfo {
+  id: string;
+  title: string;
+  status: string;
+  definition_of_done?: Record<string, unknown>;
+}
+
+export interface WorkflowStageInfo {
+  id: string;
+  label: string;
+  status: "pending" | "running" | "waiting_user" | "blocked" | "completed" | "failed";
+  output_artifact_ids?: string[];
+}
+
+export interface WorkflowRunInfo {
+  id: string;
+  definition_id: string;
+  definition_version: string;
+  domain: "general" | "video" | "deck" | "code" | "data";
+  label: string;
+  status: "draft" | "preflighting" | "ready" | "running" | "blocked" | "waiting_user" | "completed" | "failed" | "cancelled";
+  current_stage_id: string;
+  current_stage_index: number;
+  stages: WorkflowStageInfo[];
+  updated_at: number;
 }
 
 export interface ProjectInfo {
@@ -342,12 +372,15 @@ export interface ProjectInfo {
   touched_at: number; // Unix 秒；列表按其倒序
   dir: string;
   objects: ProjectObject[];
+  mission?: MissionInfo | null;
+  workflow_run?: WorkflowRunInfo | null;
 }
 
-/** projects 查询回包/变更广播（同型）：当前项目 id（空串 = 无项目）+ 全部项目。 */
+/** Workspace façade 查询回包：current 是指定 Session 的绑定；conversation_id 用于隔离并发回包。 */
 export interface ProjectsResponse {
   current: string;
   projects: ProjectInfo[];
+  conversation_id?: string;
 }
 
 /** project_created / project_switched 回包：ok + 最新视图（ok=false 时只有 error）。 */
@@ -356,9 +389,10 @@ export interface ProjectAck {
   error?: string;
   current?: string;
   projects?: ProjectInfo[];
+  conversation_id?: string;
 }
 
-export const EMPTY_PROJECTS: ProjectsResponse = { current: "", projects: [] };
+export const EMPTY_PROJECTS: ProjectsResponse = { current: "", projects: [], conversation_id: "" };
 
 // ---- 记忆管理（OS 感 §4.4：「它记得我什么」必须可见、可删）----
 

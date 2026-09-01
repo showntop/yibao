@@ -9,6 +9,7 @@ from ..host import Host
 from ..ipc import ActionResult, RiskLevel
 
 if TYPE_CHECKING:  # 避免运行期循环 import（plugins.py 依赖本模块）
+    from ..blob_store import BlobStore
     from ..memory import Memory
     from .plugindb import PluginDb
 
@@ -26,6 +27,7 @@ class ToolContext:
     http: Any = None  # plugins.HttpClient（鸭子类型，避免循环依赖）
     llm: Any = None  # plugins.LlmChat
     db: PluginDb | None = None
+    blobs: BlobStore | None = None
     emit_panel: Callable[[dict], None] | None = None
     # 插件后台线程发事件的通道（由底座注入；测试环境为 None 时插件应静默跳过）。
     # 事件形如 {"kind": "reminder", "text": …}——前端已支持亮窗+气泡+TTS。
@@ -51,6 +53,9 @@ class Tool(ABC):
     sensitive_output: bool = False
     # Arbitrary or context-sensitive actions can require confirmation every time.
     allow_session_remember: bool = True
+    # 成功结果写入 Work Graph 的声明式投影；由唯一 ToolInvoker 消费。
+    # kind=artifact/evidence，字段通过 data.* / params.* 路径取值。
+    work_outputs: tuple[dict, ...] = ()
 
     def session_remember_key(self, params: dict) -> dict | None:
         """Return a canonical parameter subset for exact-action session approval.

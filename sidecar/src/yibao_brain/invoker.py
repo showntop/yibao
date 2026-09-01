@@ -17,6 +17,7 @@ from .ipc import Action, ActionResult
 from .llm import ToolCall
 from .safety import Decision, Gate, RiskClassifier
 from .tools import ToolContext, ToolRegistry
+from .work_events import materialize_work_events
 
 
 class ToolInvoker:
@@ -39,6 +40,8 @@ class ToolInvoker:
         self.host = host
         # 真实技能后台线程的主动事件通道（由 serve_async 注入；插件技能走 plugin_ctx 自带）。
         self.emit_event = None
+        # serve_async 注入；测试/旧同步入口保持 None，不改变执行语义。
+        self.invocation_sink = None
 
     def propose(self, tc: ToolCall) -> Action:
         """tool_call → Action：查 registry 拿声明，分类风险。"""
@@ -119,26 +122,63 @@ class ToolInvoker:
     def execute(self, action: Action, params: dict, meta: dict | None = None) -> ActionResult:
         """执行 + 审计。技能异常转为失败结果，不抛出（不杀 run）。"""
         skill = self.skills.get(action.tool_id)
+        invoke_meta = meta or {}
+        invocation_id = (
+            self.invocation_sink.begin(action, params, invoke_meta)
+            if self.invocation_sink is not None else None
+        )
+        # 插件技能用加载器按 capability 注入好的 plugin_ctx；底座技能照旧给 host。
+        ctx = skill.plugin_ctx or ToolContext(host=self.host)
+        if invoke_meta:
+            ctx = replace(ctx, meta={**ctx.meta, **invoke_meta})
+        # 插件声明了 host capability：加载器拿不到 host，在这里嫁接 invoker 的。
+        if (
+            skill.plugin_ctx is not None
+            and skill.plugin_ctx.host is None
+            and "host" in skill.plugin_capabilities
+        ):
+            ctx.host = self.host
+        # 真实技能（如 watch_command）拿不到 plugin_ctx 的 emit_event——这里补注入，
+        # 且不覆盖插件技能已注入的 emit_event。
+        if getattr(ctx, "emit_event", None) is None and self.emit_event is not None:
+            ctx.emit_event = self.emit_event
+
+        transactional = bool(
+            self.invocation_sink is not None
+            and skill.work_outputs
+            and getattr(ctx, "db", None) is not None
+        )
+        domain_events_persisted = False
         try:
-            # 插件技能用加载器按 capability 注入好的 plugin_ctx；底座技能照旧给 host
-            ctx = skill.plugin_ctx or ToolContext(host=self.host)
-            if meta:
-                ctx = replace(ctx, meta={**ctx.meta, **meta})
-            # 插件声明了 host capability：加载器拿不到 host，在这里嫁接 invoker 的
-            if (
-                skill.plugin_ctx is not None
-                and skill.plugin_ctx.host is None
-                and "host" in skill.plugin_capabilities
-            ):
-                ctx.host = self.host
-            # 真实技能（如 watch_command）拿不到 plugin_ctx 的 emit_event——这里补注入，
-            # 且不覆盖插件技能已注入的 emit_event。
-            if getattr(ctx, "emit_event", None) is None and self.emit_event is not None:
-                ctx.emit_event = self.emit_event
-            result = skill.run(params, ctx)
+            if transactional:
+                if not invocation_id:
+                    raise RuntimeError("无法建立 Invocation，拒绝无事件提交插件业务数据")
+                with ctx.db.work_transaction() as tx:
+                    result = skill.run(params, ctx)
+                    safe = self.safe_result(action, result)
+                    if result.success:
+                        events = materialize_work_events(
+                            skill.work_outputs, params=action.params, data=safe.data or {},
+                            tool_id=action.tool_id, strict=True,
+                        )
+                        ctx.db.enqueue_work_events(invocation_id, events)
+                        domain_events_persisted = True
+                    else:
+                        tx.rollback()
+            else:
+                result = skill.run(params, ctx)
         except Exception as e:
-            result = ActionResult(success=False, error=f"技能执行异常：{e}")
-        self._safe_record(action, self.safe_result(action, result))
+            prefix = "插件工作事务失败，业务写入已回滚" if transactional else "技能执行异常"
+            result = ActionResult(success=False, error=f"{prefix}：{e}")
+            domain_events_persisted = False
+        safe = safe if transactional and domain_events_persisted else self.safe_result(action, result)
+        self._safe_record(action, safe)
+        if self.invocation_sink is not None:
+            self.invocation_sink.complete(
+                invocation_id, action, safe, skill.work_outputs,
+                plugin_db=ctx.db if domain_events_persisted else None,
+                domain_events_persisted=domain_events_persisted,
+            )
         return result
 
     def safe_result(self, action: Action, result: ActionResult) -> ActionResult:

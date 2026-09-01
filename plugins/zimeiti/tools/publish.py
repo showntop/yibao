@@ -83,9 +83,15 @@ class PublishTool(Tool):
         if not latest:
             return ActionResult(success=False, error="还没有稿件：先写初稿再发布")
         try:
-            cp = Path(str(latest[0]["content_path"]))
-            # content_path 2026-08-25 起落相对路径（相对插件数据根）；老库绝对路径兼容
-            content = (cp if cp.is_absolute() else Path(os.path.dirname(ctx.db.path)) / cp).read_text(encoding="utf-8")
+            raw = str(latest[0]["content_path"])
+            if raw.startswith("blob://sha256/"):
+                if getattr(ctx, "blobs", None) is None:
+                    return ActionResult(success=False, error="底座未提供 blobs capability")
+                path = ctx.blobs.resolve(raw, require_exists=False)
+            else:
+                cp = Path(raw)
+                path = cp if cp.is_absolute() else Path(os.path.dirname(ctx.db.path)) / cp
+            content = path.read_text(encoding="utf-8")
         except OSError as e:
             return ActionResult(success=False, error=f"读稿失败：{e}")
         title = str(topic.get("title") or "").strip()

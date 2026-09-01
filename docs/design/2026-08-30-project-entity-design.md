@@ -1,9 +1,11 @@
 # 项目实体：从插件围墙到工作语境（设计稿 v1）
 
-> 状态：V1a 已实施（2026-08-31，分期与口径校准见 §8）；P2 起待定稿
+> 状态：V1a 已实施（2026-08-31，分期与口径校准见 §8）；原 P2/P3 停止按本文模型扩展
 > 日期：2026-08-30
 > 缘起：地平线只有 `ctx: home · idle` 这样的状态读数，没有「我在做哪个项目」。
 > 用户问「项目/空间/目录的选择器及展示区呢」——需要一个真·项目实体。
+>
+> **2026-09-01 架构决策：** `Workspace` 与 `Session` 必须正交，Project 不再继续吸收会话归属、素材归属和工作流状态。本文保留为 V1a 实现快照；后续迁移以[Agent OS 通用架构](2026-09-01-agent-os-generalized-architecture.md)为准：Project 作为兼容 façade / 产品词，职责拆给 Workspace、SessionContext、Mission、ArtifactGraph 与 WorkflowRun。
 
 ## 1. 定义：项目是视图，不是容器
 

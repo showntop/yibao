@@ -45,4 +45,21 @@ describe("HomeDeskWork", () => {
     await w.get("button[title='跟译宝说']").trigger("click");
     expect(w.emitted("ask")).toBeTruthy();
   });
+
+  it("同一 Stage 明示 Workspace / Artifact，暂放不伪装成第四态", () => {
+    const w = mount(HomeDeskWork, {
+      props: {
+        plugin: "zimeiti",
+        title: "写作编辑器",
+        workspaceTitle: "Agent 概念科普视频",
+        missionTitle: "做一个 60 秒科普视频",
+        objectTitle: "口播脚本 v1",
+      },
+    });
+    expect(w.text()).toContain("工作语境");
+    expect(w.text()).toContain("Agent 概念科普视频");
+    expect(w.text()).toContain("口播脚本 v1");
+    expect(w.text()).toContain("暂放");
+    expect(w.text()).not.toContain("小窗");
+  });
 });

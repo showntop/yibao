@@ -40,6 +40,9 @@ from .background import (
 from .config import a11y_enabled, computer_use_enabled, data_dir, computer_use_max_steps, ensure_first_seen, history_path, http_port, llm_api_key, load_settings, perception_db_path, save_settings, screenshot_dir, stt_model_dir, tts_voice, vad_max_seconds, vad_min_silence, vad_model_path, vision_api_key, voice_enabled
 from .feed import FeedStore
 from .projects import ProjectStore
+from .session_contexts import SessionContextStore
+from .work_graph import WorkGraphStore
+from .work_events import WorkGraphInvocationSink
 from .project_tools import make_project_tools
 from .distiller import Distiller, DistillerStore
 from .jobstore import JobsStore
@@ -144,6 +147,8 @@ def build_loop(
     history_file: str | None = None,
     emit_event=None,
     feed=None,
+    workflow_registrar=None,
+    blob_store=None,
 ) -> AgentLoop:
     real_a11y = use_real and a11y_enabled() and sys.platform == "darwin"
     reg = skills_factory() if skills_factory else ToolRegistry()
@@ -212,7 +217,10 @@ def build_loop(
         from .nightwatch import NightStore, make_skills as _night_skills
 
         night_store = NightStore(os.path.join(os.path.dirname(db_path), "nightwatch.json"))
-        _load_plugins_safe(reg, memory, prov, host, reminders=reminder_store, emit_event=emit_event)
+        _load_plugins_safe(
+            reg, memory, prov, host, reminders=reminder_store, emit_event=emit_event,
+            workflow_registrar=workflow_registrar, blob_store=blob_store,
+        )
         # 能力热重载（P1 reload 地基）：增量扫描 plugins/，新插件免重启生效
         from pathlib import Path
 
@@ -229,6 +237,8 @@ def build_loop(
                 memory=memory, http=HttpClient(), llm=_PlugLlm(prov),
                 host_available=host is not None, reminders=reminder_store,
                 emit_event=emit_event, existing=existing,
+                workflow_registrar=workflow_registrar,
+                blob_store=blob_store,
             )
 
         reg.register(CapabilityRefreshTool(reg, _reload_plugins))
@@ -355,7 +365,10 @@ def build_loop(
     return agent
 
 
-def _load_plugins_safe(reg, memory, prov, host, reminders=None, emit_event=None) -> None:
+def _load_plugins_safe(
+    reg, memory, prov, host, reminders=None, emit_event=None, workflow_registrar=None,
+    blob_store=None,
+) -> None:
     """加载 <repo>/plugins 下的插件（env YIBAO_PLUGINS_DIR 可覆盖）。
 
     只在 use_real 且无自定义 skills_factory 时调用（测试不碰真实文件系统）；
@@ -374,6 +387,8 @@ def _load_plugins_safe(reg, memory, prov, host, reminders=None, emit_event=None)
             memory=memory, http=HttpClient(), llm=LlmChat(prov),
             host_available=host is not None, reminders=reminders,
             emit_event=emit_event,
+            workflow_registrar=workflow_registrar,
+            blob_store=blob_store,
         )
         for pid, status in results.items():
             log(f"插件 {pid}: {status}")
@@ -593,8 +608,18 @@ async def serve_async(
     # 主屏 Feed 存储（OS 感 §4.2）：任务播报/提醒触发在此落库，主屏查询时一次拿回。
     # 与审计库同目录；FeedStore 写失败只 print，不拖垮主链路。
     feed = FeedStore(os.path.join(os.path.dirname(db_path), "feed.db"))
-    # 项目实体（视频 workflow V1a）：projects.json 原子写 + 目录骨架；当前项目 id 在 settings
-    project_store = ProjectStore(os.path.join(data_dir(), "projects.json"))
+    # Agent OS 工作元数据：SQLite WAL 是 Workspace/Mission/Artifact/WorkflowRun 权威；
+    # ProjectStore 只保留兼容 façade，projects.json 的 objects 仅作一次迁移来源。
+    work_graph = WorkGraphStore(os.path.join(data_dir(), "work_graph.db"))
+    from .blob_store import BlobStore
+
+    blob_store = BlobStore(os.path.join(data_dir(), "blobs"))
+    session_context_store = SessionContextStore(os.path.join(data_dir(), "session_contexts.json"))
+    project_store = ProjectStore(
+        os.path.join(data_dir(), "projects.json"),
+        session_contexts=session_context_store,
+        work_graph=work_graph,
+    )
     proactive_dispatcher = ProactiveDispatcher(
         settings=settings,
         feed=feed,
@@ -609,17 +634,32 @@ async def serve_async(
     surface_bridge.bind(_emit_event)
     agent = build_loop(
         read_msg, use_real, db_path, provider, skills_factory, confirmer=batch_confirmer,
-        emit_event=_emit_event,
-        feed=feed,
+        emit_event=_emit_event, feed=feed,
+        workflow_registrar=work_graph.register_workflow,
+        blob_store=blob_store,
     )
     agent.invoker.emit_event = _emit_event  # 真实技能（watch_command）后台通知走同一条 gated 通道
+    invocation_sink = WorkGraphInvocationSink(
+        work_graph,
+        # 缺 conversation_id 时宁可只记 Invocation、不猜旧全局 current_project_id，
+        # 否则内部 refresh/后台调用可能把对象串到另一个 Session 的 Workspace。
+        lambda conversation_id: project_store.current_id(conversation_id) if conversation_id else "",
+    )
+    agent.invoker.invocation_sink = invocation_sink
+    # PluginDb 业务事务可能在上次进程退出前已提交、但 Host 尚未接收；稳定事件 id
+    # 让恢复可重复执行，且不会重复生成 Revision/Evidence。
+    invocation_sink.reconcile_registry(agent.skills)
+    try:
+        blob_store.gc_orphans(work_graph.blob_refs())
+    except Exception as exc:
+        log(f"BlobStore 垃圾回收失败（不影响启动）：{exc}")
     # 表面层 tool（design §3）：与插件 tool 平级、always_visible（不参与 use_plugin 折叠）。
     # 不变量在 tool 侧把守：surface.open 只收 inline/peek；editor.* 写类发射即回执。
     for _st in make_surface_tools(surface_bridge):
         agent.skills.register(_st, plugin=_st.id.split(".", 1)[0], always_visible=True)
     # 项目 tool（V1a）：与 surface 同款伪插件注册；立项 L3 弹确认条（设计稿 L2 按印的代码映射）
-    def _broadcast_projects():
-        write_msg({"type": "projects", **project_store.view()})
+    def _broadcast_projects(conversation_id: str = ""):
+        write_msg({"type": "projects", **project_store.view(conversation_id)})
     for _pt in make_project_tools(project_store, on_change=_broadcast_projects):
         agent.skills.register(_pt, plugin=_pt.id.split(".", 1)[0], always_visible=True)
     # watch_command 跨重启恢复：任务落 jobs.db；上代进程的 running 孤儿重跑或标失败，全部 Feed 记账
@@ -1348,38 +1388,45 @@ async def serve_async(
 
 
     async def _h_projects(msg: dict) -> None:
-        # 项目列表 + 当前 id（家态项目卡/地平线 ctx 用）
-        write_msg({"type": "projects", **project_store.view()})
+        # Workspace 列表 + 当前 Session 的绑定（家态卡/地平线 ctx 用）
+        conversation_id = str(msg.get("conversation_id") or "")
+        write_msg({"type": "projects", **project_store.view(conversation_id)})
 
     async def _h_project_create(msg: dict) -> None:
         # 前端发起的新建（人操作，无闸门；agent 侧走 project.create tool 的 L3 确认）
         name = str(msg.get("name") or "").strip()
+        conversation_id = str(msg.get("conversation_id") or "")
         try:
-            project_store.create(name)
+            project_store.create(name, conversation_id=conversation_id)
         except (ValueError, OSError) as e:
-            write_msg({"type": "project_created", "ok": False, "error": str(e)})
+            write_msg({"type": "project_created", "ok": False, "error": str(e),
+                       "conversation_id": conversation_id})
             return
-        write_msg({"type": "project_created", "ok": True, **project_store.view()})
+        write_msg({"type": "project_created", "ok": True, **project_store.view(conversation_id)})
 
     async def _h_project_switch(msg: dict) -> None:
         key = str(msg.get("id") or msg.get("name") or "").strip()
+        conversation_id = str(msg.get("conversation_id") or "")
         proj = project_store.get(key) or project_store.find_by_name(key)
-        ok = project_store.switch(proj["id"]) if proj else False
-        write_msg({"type": "project_switched", "ok": ok, **project_store.view()})
+        ok = project_store.switch(proj["id"], conversation_id) if proj else False
+        write_msg({"type": "project_switched", "ok": ok,
+                   **project_store.view(conversation_id)})
 
     async def _h_project_add_object(msg: dict) -> None:
-        pid = str(msg.get("id") or project_store.current_id())
+        conversation_id = str(msg.get("conversation_id") or "")
+        pid = str(msg.get("id") or project_store.current_id(conversation_id))
         ok = project_store.add_object(pid, str(msg.get("obj_type") or ""), str(msg.get("ref") or ""))
         if ok:
-            write_msg({"type": "projects", **project_store.view()})
+            write_msg({"type": "projects", **project_store.view(conversation_id)})
         else:
             write_msg({"type": "project_object_added", "ok": False, "error": "项目不存在"})
 
     async def _h_project_remove_object(msg: dict) -> None:
-        pid = str(msg.get("id") or project_store.current_id())
+        conversation_id = str(msg.get("conversation_id") or "")
+        pid = str(msg.get("id") or project_store.current_id(conversation_id))
         ok = project_store.remove_object(pid, str(msg.get("obj_type") or ""), str(msg.get("ref") or ""))
         if ok:
-            write_msg({"type": "projects", **project_store.view()})
+            write_msg({"type": "projects", **project_store.view(conversation_id)})
         else:
             write_msg({"type": "project_object_removed", "ok": False, "error": "项目不存在"})
 
@@ -1460,6 +1507,7 @@ async def serve_async(
             if jobs is not None:
                 jobs.shutdown()
             jobs_store.close()
+            work_graph.close()
             perception_stop.set()
             if perception_thread is not None:
                 perception_thread.join(timeout=1)

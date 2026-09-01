@@ -5,6 +5,8 @@ import { deskWho, type DeskKind } from "../lib/home/home-desk-presence.ts";
 const props = defineProps<{
   plugin: string;
   title: string;
+  workspaceTitle?: string;
+  missionTitle?: string;
   objectTitle?: string;
   busy?: boolean;
   focused?: boolean;
@@ -32,17 +34,27 @@ const label = computed(() => deskWho({
 </script>
 
 <template>
-  <section class="desk-work yb-craze" aria-label="工位">
+  <section class="desk-work" :aria-label="`工作台：${objectTitle || title}`">
     <header class="bar">
-      <span v-if="face === 'worker'" class="ask">译宝请来</span>
-      <span class="who">{{ label }}</span>
+      <div class="scope">
+        <span class="scope-line">
+          <span class="scope-kicker">工作语境</span>
+          <strong>{{ workspaceTitle || "未绑定" }}</strong>
+          <span class="slash" aria-hidden="true">/</span>
+          <span class="object">{{ objectTitle || title }}</span>
+        </span>
+        <span class="provenance">
+          <template v-if="face === 'worker'">译宝请来 · </template>{{ label }}
+          <template v-if="missionTitle && missionTitle !== '新对话'"> · {{ missionTitle }}</template>
+        </span>
+      </div>
       <span class="spacer" />
       <span v-if="face === 'worker'" class="live" :data-busy="busy || undefined">{{ busy ? "正在干" : "在场" }}</span>
       <button v-if="lendEar" class="act" type="button" title="跟译宝说" @click="$emit('ask')">问译宝</button>
       <button class="act" type="button" :title="focused ? '退出专注' : '进入专注'" @click="$emit('focus')">
         {{ focused ? "退出专注" : "专注" }}
       </button>
-      <button class="act" type="button" title="缩为小窗（转回右下角探窗）" @click="$emit('shrink')">小窗</button>
+      <button class="act" type="button" title="暂放到活动区，不中断当前工作" @click="$emit('shrink')">暂放</button>
       <button class="act" type="button" title="收起工位" @click="$emit('close')">收起</button>
     </header>
     <div ref="bodyEl" id="yb-desk-work-body" class="body" />
@@ -69,28 +81,50 @@ const label = computed(() => deskWho({
   align-items: center;
   gap: 8px;
   min-width: 0;
-  height: 36px;
-  padding: 0 12px;
+  min-height: 52px;
+  padding: 7px 12px;
   border-bottom: 1px solid var(--yb-border-base);
   background: color-mix(in srgb, var(--yb-widget-bg) 88%, transparent);
 }
-.ask {
-  flex: none;
-  color: var(--yb-paper-ink-dim);
-  font-size: 10px;
-  font-weight: var(--yb-fw-medium);
-  letter-spacing: 0.06em;
+.scope {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
 }
-.who {
-  flex: none;
-  color: var(--yb-paper-ink);
+.scope-line {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
   font-size: 12px;
 }
-.task {
+.scope-kicker {
+  flex: none;
+  color: var(--yb-text-faint);
+  font-size: 9px;
+  font-weight: var(--yb-fw-medium);
+  letter-spacing: 0.08em;
+}
+.scope-line strong {
+  overflow: hidden;
+  max-width: 190px;
+  color: var(--yb-text-strong);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.slash { color: var(--yb-border-strong); }
+.object {
   min-width: 0;
   overflow: hidden;
-  color: var(--yb-paper-ink-dim);
+  color: var(--yb-paper-ink);
   font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.provenance {
+  overflow: hidden;
+  color: var(--yb-text-faint);
+  font-size: 9.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -131,6 +165,10 @@ const label = computed(() => deskWho({
   border-color: rgba(var(--yb-c-sky-rgb), 0.28);
   color: var(--yb-accent);
 }
+.act:focus-visible {
+  outline: 2px solid var(--yb-accent);
+  outline-offset: 2px;
+}
 .body {
   flex: 1;
   min-width: 0;
@@ -144,5 +182,11 @@ const label = computed(() => deskWho({
   flex: 1;
   min-height: 0;
   height: 100%;
+}
+@media (max-width: 900px) {
+  .provenance { display: none; }
+  .scope-line strong { max-width: 120px; }
+  .live { display: none; }
+  .act { padding: 0 6px; }
 }
 </style>

@@ -52,20 +52,25 @@ class GetTopicTool(Tool):
         else:
             rows = db.query("topics")
         if tid and rows:
-            self._enrich(db, rows[0], tid)
+            self._enrich(ctx, rows[0], tid)
         result = ActionResult(success=True, data={"rows": rows})
         result.panel = "zimeiti:detail"
         return result
 
-    def _enrich(self, db, row: dict, tid: str) -> None:
+    def _enrich(self, ctx, row: dict, tid: str) -> None:
         """单条详情聚合：最新稿版本+字数（读文件拿真实字数）、关联素材数。失败降级为占位文案。"""
+        db = ctx.db
         latest = db.query("articles", where={"topic_id": tid}, order="version DESC", limit=1)
         if latest:
             version = int(latest[0]["version"])
             chars = 0
             try:
-                cp = Path(str(latest[0].get("content_path") or ""))
-                p = cp if cp.is_absolute() else Path(os.path.dirname(db.path)) / cp
+                raw = str(latest[0].get("content_path") or "")
+                if raw.startswith("blob://sha256/") and getattr(ctx, "blobs", None) is not None:
+                    p = ctx.blobs.resolve(raw, require_exists=False)
+                else:
+                    cp = Path(raw)
+                    p = cp if cp.is_absolute() else Path(os.path.dirname(db.path)) / cp
                 chars = len(p.read_text(encoding="utf-8"))
             except OSError:
                 pass

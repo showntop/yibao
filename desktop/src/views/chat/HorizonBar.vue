@@ -15,6 +15,8 @@ const props = defineProps<{
   shelf?: boolean;
   /** 器文档在场信息（focus 地平线文档行）：标题 + 字数 */
   doc?: { title: string; words: number } | null;
+  /** 当前会话：Workspace 绑定必须随 Session 切换，不能读进程全局项目。 */
+  sessionId?: string;
 }>();
 const emit = defineEmits<{ entry: [id: "sessions" | "today" | "shelf"] }>();
 
@@ -61,7 +63,7 @@ function firePulse(id: number) {
 const nodes = computed(() => horizonNodes(items.value, now.value));
 const echo = computed(() => horizonEcho({ state: props.state, proc: props.proc }));
 // ctx 位：在手项目名（项目实体，useProject 单例自拉取/跟广播），无项目退回 home
-const { current: currentProject } = useProject();
+const { current: currentProject } = useProject(() => props.sessionId);
 const ctx = computed(() => horizonCtx({ state: props.state, project: currentProject.value?.name }));
 </script>
 

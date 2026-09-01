@@ -50,6 +50,8 @@ async def handle_panel_action(msg: dict, agent: AgentLoop, write_msg: WriteMsg, 
     direct=false：intent 渲染后交给 run_text（与 type="run" 同路径的 agent 流程）。
     """
     surface = str(msg.get("surface") or "pet")  # 会话分流：事件随发起场景标记，壳侧各窗按 surface 过滤
+    conversation_id = str(msg.get("conversation_id") or "")
+    invoke_meta = {"conversation_id": conversation_id, "surface": surface}
 
     def emit(event: Event) -> None:
         write_msg({"type": "event", "surface": surface, "event": event.model_dump(mode="json")})
@@ -90,7 +92,7 @@ async def handle_panel_action(msg: dict, agent: AgentLoop, write_msg: WriteMsg, 
                 emit(Event(kind="error", text=f"用户拒绝执行 {api.handler}", action=action))
                 write_msg({"type": "run_done", "id": rid})
                 return
-        result = await _offload(agent.invoker.execute, action, params)  # 与 arun 一致挪线程池
+        result = await _offload(agent.invoker.execute, action, params, invoke_meta)  # 与 arun 一致挪线程池
         emit(Event(kind="action_result", action=action, result=result))
         if result.success and api.refresh is not None:
             # 声明式刷新：删除类操作后跟一次查询，面板拿新数据而不是操作回执

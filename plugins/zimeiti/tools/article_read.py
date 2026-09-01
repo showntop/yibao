@@ -43,9 +43,15 @@ class ArticleRead(Tool):
         if not rows:
             return ActionResult(success=False, error=f"选题 {tid} 还没有稿件")
         row = rows[0]
-        cp = Path(str(row["content_path"]))
-        # 2026-08-25 起 content_path 落相对路径（相对插件数据根）；老库的绝对路径原样兼容
-        path = cp if cp.is_absolute() else Path(os.path.dirname(ctx.db.path)) / cp
+        raw = str(row["content_path"])
+        if raw.startswith("blob://sha256/"):
+            if getattr(ctx, "blobs", None) is None:
+                return ActionResult(success=False, error="底座未提供 blobs capability")
+            path = ctx.blobs.resolve(raw, require_exists=False)
+        else:
+            cp = Path(raw)
+            # 旧库相对路径（相对插件数据根）与绝对路径继续兼容。
+            path = cp if cp.is_absolute() else Path(os.path.dirname(ctx.db.path)) / cp
         try:
             content = path.read_text(encoding="utf-8")
         except OSError as e:

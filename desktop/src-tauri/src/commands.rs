@@ -606,23 +606,43 @@ pub fn mem_edit(state: tauri::State<Brain>, id: String, text: String) -> Result<
     brain_cmd_with(&state, "mem_edit", serde_json::json!({ "mem_id": id, "text": text }))
 }
 
-/// 项目实体：列表 + 当前项目 id（回 {"type":"projects",...} 经 brain-projects 广播；
-/// 任何项目变更 sidecar 也主动广播同型消息）。
+/// Workspace façade：列表 + 当前 Session 绑定（conversation_id 为空时兼容旧全局语境）。
 #[tauri::command]
-pub fn get_projects(state: tauri::State<Brain>) -> Result<(), String> {
-    brain_cmd(&state, "projects")
+pub fn get_projects(
+    state: tauri::State<Brain>,
+    conversation_id: Option<String>,
+) -> Result<(), String> {
+    brain_cmd_with(
+        &state,
+        "projects",
+        serde_json::json!({ "conversation_id": conversation_id.unwrap_or_default() }),
+    )
 }
 
 /// 项目实体：新建（回 {"type":"project_created","ok":...} 经 brain-project-created 广播，带最新视图）。
 #[tauri::command]
-pub fn project_create(state: tauri::State<Brain>, name: String) -> Result<(), String> {
-    brain_cmd_with(&state, "project_create", serde_json::json!({ "name": name }))
+pub fn project_create(
+    state: tauri::State<Brain>,
+    name: String,
+    conversation_id: Option<String>,
+) -> Result<(), String> {
+    brain_cmd_with(&state, "project_create", serde_json::json!({
+        "name": name,
+        "conversation_id": conversation_id.unwrap_or_default(),
+    }))
 }
 
 /// 项目实体：切换（id 或名字；回 project_switched 经 brain-project-switched 广播，带最新视图）。
 #[tauri::command]
-pub fn project_switch(state: tauri::State<Brain>, id: String) -> Result<(), String> {
-    brain_cmd_with(&state, "project_switch", serde_json::json!({ "id": id }))
+pub fn project_switch(
+    state: tauri::State<Brain>,
+    id: String,
+    conversation_id: Option<String>,
+) -> Result<(), String> {
+    brain_cmd_with(&state, "project_switch", serde_json::json!({
+        "id": id,
+        "conversation_id": conversation_id.unwrap_or_default(),
+    }))
 }
 
 /// 项目实体：挂对象进项目（id 省略=当前项目；成功时 sidecar 直接广播 projects 视图，
@@ -634,11 +654,17 @@ pub fn project_add_object(
     obj_type: String,
     r#ref: String,
     id: Option<String>,
+    conversation_id: Option<String>,
 ) -> Result<(), String> {
     brain_cmd_with(
         &state,
         "project_add_object",
-        serde_json::json!({ "id": id, "obj_type": obj_type, "ref": r#ref }),
+        serde_json::json!({
+            "id": id,
+            "obj_type": obj_type,
+            "ref": r#ref,
+            "conversation_id": conversation_id.unwrap_or_default(),
+        }),
     )
 }
 
@@ -650,11 +676,17 @@ pub fn project_remove_object(
     obj_type: String,
     r#ref: String,
     id: Option<String>,
+    conversation_id: Option<String>,
 ) -> Result<(), String> {
     brain_cmd_with(
         &state,
         "project_remove_object",
-        serde_json::json!({ "id": id, "obj_type": obj_type, "ref": r#ref }),
+        serde_json::json!({
+            "id": id,
+            "obj_type": obj_type,
+            "ref": r#ref,
+            "conversation_id": conversation_id.unwrap_or_default(),
+        }),
     )
 }
 
@@ -1095,4 +1127,3 @@ pub fn check_permissions(state: tauri::State<Brain>) -> Result<(), String> {
 pub fn prompt_permission(state: tauri::State<Brain>, which: String) -> Result<(), String> {
     brain_cmd_with(&state, "prompt_permission", serde_json::json!({ "which": which }))
 }
-

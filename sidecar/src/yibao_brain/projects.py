@@ -1,11 +1,8 @@
-"""ProjectStore：项目实体的底座存储（2026-08-30-project-entity-design.md）。
+"""ProjectStore：Workspace 的兼容 façade（2026-09 Agent OS Work Graph）。
 
-项目 = 一组引用的聚合 + 一个名字，视图不是容器：对象只存 {type, ref} 指针，
-实体内容仍在各自域（zimeiti 选题、文件等）里，这里不搬数据。
-
-存储：data_dir()/projects.json，原子写（tmp + replace）。当前项目 id 在
-settings.json 的 current_project_id（config 层已知键）。项目目录骨架
-（01_素材/02_工程/03_导出/04_文档）在 create 时落盘，dir 存绝对路径。
+存在 WorkGraphStore 时，Workspace/Mission/Artifact/WorkflowRun 的权威数据来自
+work_graph.db；projects.json 只保留旧版本可读的名称/目录锚点和一次迁移来源，
+新对象关系不再双写回 JSON。未注入 WorkGraphStore 的测试/旧调用仍走 V1a JSON。
 
 写失败抛异常给调用方（项目是主链路，与 Feed 的"只 print"不同）；
 读损坏时降级为空库并保留坏文件（.bak），不静默丢数据。
@@ -33,11 +30,15 @@ def _slug(name: str) -> str:
 
 
 class ProjectStore:
-    def __init__(self, path: str):
+    def __init__(self, path: str, session_contexts=None, work_graph=None):
         self._path = path
+        self._session_contexts = session_contexts
+        self._work_graph = work_graph
         self._lock = threading.Lock()
         os.makedirs(os.path.dirname(path), exist_ok=True)
         self._data = self._load()
+        if self._work_graph is not None:
+            self._work_graph.migrate_projects(self._data["projects"])
 
     def _load(self) -> dict:
         try:
@@ -66,10 +67,14 @@ class ProjectStore:
     # ---------- 查询 ----------
 
     def list(self) -> list[dict]:
+        if self._work_graph is not None:
+            return self._work_graph.list_workspace_views()
         with self._lock:
             return [dict(p) for p in self._data["projects"]]
 
     def get(self, pid: str) -> dict | None:
+        if self._work_graph is not None:
+            return self._work_graph.workspace_view(pid)
         with self._lock:
             for p in self._data["projects"]:
                 if p["id"] == pid:
@@ -77,26 +82,39 @@ class ProjectStore:
         return None
 
     def find_by_name(self, name: str) -> dict | None:
+        if self._work_graph is not None:
+            for workspace in self._work_graph.list_workspace_views():
+                if workspace["name"] == name:
+                    return workspace
+            return None
         with self._lock:
             for p in self._data["projects"]:
                 if p["name"] == name:
                     return dict(p)
         return None
 
-    def current_id(self) -> str:
+    def current_id(self, conversation_id: str = "") -> str:
+        if conversation_id and self._session_contexts is not None:
+            pid = self._session_contexts.workspace_id(conversation_id)
+            return pid if pid and self.get(pid) is not None else ""
         return str(load_settings().get("current_project_id") or "")
 
-    def current(self) -> dict | None:
-        cid = self.current_id()
+    def current(self, conversation_id: str = "") -> dict | None:
+        cid = self.current_id(conversation_id)
         return self.get(cid) if cid else None
 
     # ---------- 变更 ----------
 
-    def create(self, name: str, objects: list[dict] | None = None) -> dict:
-        """立项：建实体 + 落目录骨架 + 切为当前项目。name 唯一（重复名报错）。"""
+    def create(
+        self, name: str, objects: list[dict] | None = None, conversation_id: str = "",
+        mission_title: str | None = None,
+    ) -> dict:
+        """立项：建 Workspace/Mission/WorkflowRun + 目录骨架，并绑定当前 Session。"""
         name = (name or "").strip()
         if not name:
             raise ValueError("项目名不能为空")
+        if self._work_graph is not None and self.find_by_name(name) is not None:
+            raise ValueError(f"项目名已存在：{name}")
         with self._lock:
             if any(p["name"] == name for p in self._data["projects"]):
                 raise ValueError(f"项目名已存在：{name}")
@@ -115,22 +133,40 @@ class ProjectStore:
                 "created_at": now,
                 "touched_at": now,
                 "dir": path,
-                "objects": list(objects or []),
+                # Work Graph 模式下关系只写 SQLite；JSON 不再承担对象权威。
+                "objects": [] if self._work_graph is not None else list(objects or []),
             }
             self._data["projects"].append(proj)
             self._save()
-        self.switch(pid)
-        return dict(proj)
+        if self._work_graph is not None:
+            try:
+                self._work_graph.create_workspace(
+                    pid, name, path, created_at=now, objects=list(objects or []),
+                    mission_title=mission_title,
+                )
+            except Exception:
+                # SQLite 事务已回滚；兼容 JSON 也撤回，避免出现只有半边的 Workspace。
+                with self._lock:
+                    self._data["projects"] = [p for p in self._data["projects"] if p["id"] != pid]
+                    self._save()
+                raise
+        self.switch(pid, conversation_id)
+        return self.get(pid) or dict(proj)
 
-    def switch(self, pid: str) -> bool:
-        """切换当前项目（settings.json 的 current_project_id）。"""
+    def switch(self, pid: str, conversation_id: str = "") -> bool:
+        """切换工作语境：有 conversation_id 时只绑定该 Session；旧调用回退全局 setting。"""
         if self.get(pid) is None:
             return False
-        save_settings({"current_project_id": pid})
+        if conversation_id and self._session_contexts is not None:
+            self._session_contexts.bind(conversation_id, pid)
+        else:
+            save_settings({"current_project_id": pid})
         self.touch(pid)
         return True
 
     def touch(self, pid: str) -> None:
+        if self._work_graph is not None:
+            self._work_graph.touch_workspace(pid)
         with self._lock:
             for p in self._data["projects"]:
                 if p["id"] == pid:
@@ -140,6 +176,12 @@ class ProjectStore:
 
     def add_object(self, pid: str, obj_type: str, ref: str) -> bool:
         """挂载引用（同一 type+ref 不重复挂）。"""
+        if self._work_graph is not None:
+            attached = self._work_graph.attach_external_artifact(pid, obj_type, ref)
+            if attached is None:
+                return False
+            self._touch_legacy(pid)
+            return True
         with self._lock:
             for p in self._data["projects"]:
                 if p["id"] == pid:
@@ -152,6 +194,11 @@ class ProjectStore:
         return False
 
     def remove_object(self, pid: str, obj_type: str, ref: str) -> bool:
+        if self._work_graph is not None:
+            ok = self._work_graph.detach_external_artifact(pid, obj_type, ref)
+            if ok:
+                self._touch_legacy(pid)
+            return ok
         with self._lock:
             for p in self._data["projects"]:
                 if p["id"] == pid:
@@ -166,13 +213,23 @@ class ProjectStore:
                     return True
         return False
 
+    def _touch_legacy(self, pid: str) -> None:
+        """兼容 JSON 只更新时间，不再写 objects。"""
+        with self._lock:
+            for p in self._data["projects"]:
+                if p["id"] == pid:
+                    p["touched_at"] = time.time()
+                    self._save()
+                    return
+
     # ---------- 展示 ----------
 
-    def view(self) -> dict:
-        """给前端/地平线的读模型：列表 + 当前 id。"""
-        cid = self.current_id()
+    def view(self, conversation_id: str = "") -> dict:
+        """给前端/地平线的读模型：列表 + 当前 Session 的 Workspace id。"""
+        cid = self.current_id(conversation_id)
         return {
             "current": cid,
+            "conversation_id": conversation_id,
             "projects": sorted(
                 (dict(p) for p in self.list()),
                 key=lambda p: p.get("touched_at", 0),

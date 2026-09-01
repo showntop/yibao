@@ -1,13 +1,14 @@
 <script setup lang="ts">
-// 家态项目卡（specimen video-flow.html 场景 2）：当前项目名 + S0–S8 九段进度轨 + 下一步 + 待确认数。
-// 推导规则全在 lib/home/project-card.ts（V1a 诚实推导，V1b 接阶段模型后替换），这里只渲染。
+// 家态 Workspace / Mission 卡：当前会话显式绑定工作语境；领域阶段由 Workflow Pack
+// 投影提供，组件不再知道视频九段。真正接 WorkflowRun 后保持同一卡面合同。
 import { computed } from "vue";
 import HomeWidget from "./HomeWidget.vue";
 import { useProject } from "../composables/useProject";
-import { PROJECT_STAGES, projectCardFace, projectTouchLabel } from "../lib/home/project-card.ts";
+import { projectCardFace, projectTouchLabel } from "../lib/home/project-card.ts";
 
 const emit = defineEmits<{ chat: [draft: string] }>();
-const { current, projects, switchTo } = useProject();
+const props = defineProps<{ sessionId?: string }>();
+const { current, projects, switchTo } = useProject(() => props.sessionId);
 
 const face = computed(() => (current.value ? projectCardFace(current.value) : null));
 // 其余最近项目（projects 已按 touched_at 倒序），点击=切换到该项目
@@ -24,24 +25,35 @@ function onSwitch(id: string) {
   <aside class="project-card">
     <HomeWidget id="project" aria-label="项目">
       <header class="head">
-        <span class="kicker">项目</span>
-        <span v-if="projects.length" class="total">全部 {{ projects.length }}</span>
+        <span class="kicker">工作语境</span>
+        <span v-if="projects.length" class="total">{{ face ? "本会话已接入" : `可接入 ${projects.length}` }}</span>
       </header>
-      <p v-if="!face" class="empty">还没有在手项目</p>
+      <div v-if="!face" class="empty">
+        <strong>这段会话还没有工作语境</strong>
+        <span>不会继承其他会话的项目与素材</span>
+        <button type="button" @click="emit('chat', '为这个会话创建一个新的工作语境')">新建工作语境</button>
+      </div>
       <button v-else class="current" type="button" @click="emit('chat', `查看项目「${face.name}」`)">
+        <span class="scope-line">
+          <span class="pack" :data-domain="face.domain">{{ face.packLabel }}</span>
+          <span class="artifacts">{{ face.artifactCount }} 个产物</span>
+        </span>
         <span class="line">
           <span class="name">{{ face.name }}</span>
           <span v-if="face.pending > 0" class="pending">待确认 {{ face.pending }}</span>
         </span>
+        <span v-if="face.missionTitle !== face.name" class="mission">
+          目标 · {{ face.missionTitle }}
+        </span>
         <span class="track" aria-hidden="true">
           <i
-            v-for="i in PROJECT_STAGES.length"
+            v-for="i in face.stages.length"
             :key="i"
             :class="{ done: i - 1 < face.stage, now: i - 1 === face.stage }"
           />
         </span>
         <span class="foot">
-          <span class="stage">{{ face.stageLabel }}</span>
+          <span class="stage">当前 · {{ face.stageLabel }}</span>
           <span v-if="face.nextStep" class="next">下一步 · {{ face.nextStep }}</span>
         </span>
       </button>
@@ -50,11 +62,12 @@ function onSwitch(id: string) {
         :key="p.id"
         class="row"
         type="button"
-        title="切换到此项目"
+        :title="face ? '把本会话切换到此工作语境' : '把此工作语境接入本会话'"
         @click="onSwitch(p.id)"
       >
         <time>{{ projectTouchLabel(p.touched_at) }}</time>
         <span class="row-name">{{ p.name }}</span>
+        <span class="row-action">{{ face ? "切换" : "接入" }}</span>
       </button>
     </HomeWidget>
   </aside>
@@ -86,9 +99,30 @@ function onSwitch(id: string) {
   font-size: var(--yb-fs-xs);
 }
 .empty {
-  margin: 0;
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px dashed var(--yb-widget-border);
+  border-radius: calc(var(--yb-widget-radius) - 8px);
   color: var(--yb-text-faint);
-  font-size: var(--yb-fs-sm);
+}
+.empty strong {
+  color: var(--yb-text-strong);
+  font-size: 12px;
+}
+.empty span { font-size: 10.5px; line-height: 1.45; }
+.empty button {
+  justify-self: start;
+  min-height: 28px;
+  margin-top: 4px;
+  padding: 0 10px;
+  border: 1px solid rgba(var(--yb-c-sky-rgb), 0.24);
+  border-radius: var(--yb-radius-sm);
+  background: var(--yb-note-accent);
+  color: var(--yb-accent);
+  font: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
 }
 /* 当前项目卡（specimen：tile 内嵌一张描边圆角小卡） */
 .current {
@@ -108,6 +142,29 @@ function onSwitch(id: string) {
   cursor: pointer;
 }
 .current:hover { filter: brightness(0.98); }
+.scope-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.pack {
+  padding: 2px 7px;
+  border-radius: var(--yb-radius-pill);
+  background: var(--yb-note-accent);
+  color: var(--yb-accent);
+  font-size: 9.5px;
+  font-weight: var(--yb-fw-medium);
+  letter-spacing: 0.03em;
+}
+.pack[data-domain="deck"] { background: var(--yb-intent-pending-soft); color: var(--yb-intent-pending-ink); }
+.pack[data-domain="code"] { background: var(--yb-c-slate-100); color: var(--yb-paper-ink-dim); }
+.pack[data-domain="data"] { background: color-mix(in srgb, var(--yb-intent-ok) 12%, transparent); color: var(--yb-intent-ok); }
+.artifacts {
+  margin-left: auto;
+  color: var(--yb-text-faint);
+  font-size: 9.5px;
+}
 .line {
   display: flex;
   align-items: baseline;
@@ -123,6 +180,14 @@ function onSwitch(id: string) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.mission {
+  overflow: hidden;
+  color: var(--yb-paper-ink-dim);
+  font-size: 10.5px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* 待确认 = 琥珀（design §7：待你定/异常用琥珀）；V1a 恒 0 不显示 */
 .pending {
   flex: none;
@@ -133,7 +198,7 @@ function onSwitch(id: string) {
   color: var(--yb-intent-pending-ink);
   font-size: 10px;
 }
-/* S0–S8 九段进度轨：过去=accent，当前=半透天青，未来=浅灰（specimen 场景 2 配色） */
+/* Workflow Pack 可变段数：过去=accent，当前=半透天青，未来=浅灰。 */
 .track {
   display: flex;
   gap: 3px;
@@ -180,12 +245,20 @@ function onSwitch(id: string) {
   font-size: 10px;
 }
 .row-name {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   font-size: var(--yb-fs-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.row-action {
+  flex: none;
+  color: var(--yb-accent);
+  font-size: 9.5px;
+}
 .row:hover .row-name { color: var(--yb-accent); }
+.empty button:focus-visible,
 .current:focus-visible,
 .row:focus-visible {
   outline: 2px solid var(--yb-accent);

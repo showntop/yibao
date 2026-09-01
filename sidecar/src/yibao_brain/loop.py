@@ -404,7 +404,12 @@ class AgentLoop:
                     self.invoker.execute,
                     action,
                     tc.params,
-                    {"cancel": cancel, "request_cancel": request_cancel},
+                    {
+                        "cancel": cancel,
+                        "request_cancel": request_cancel,
+                        "conversation_id": conversation_id or "",
+                        "surface": surface or "",
+                    },
                 )
                 self._auto_activate(action.tool_id)
                 skill = self.skills.get(action.tool_id)

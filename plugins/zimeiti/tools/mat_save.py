@@ -71,6 +71,16 @@ class MatSave(Tool):
         "自动起标题、写摘要、打标签后进素材库（mat_list 可见）。用户发来链接说「存一下/收藏」就用它。"
     )
     default_risk = RiskLevel.L1_LOW
+    work_outputs = ({
+        "kind": "evidence",
+        "artifact_type": "research.evidence",
+        "ref_from": "data.id",
+        "claim_from": "data.summary",
+        "source_uri_from": "params.url",
+        "source_title_from": "data.title",
+        "confidence": 0.65,
+        "metadata_fields": ["data.tags", "data.pending", "params.topic_id"],
+    },)
 
     def __init__(self) -> None:
         self.refresh = "zimeiti.mat_list"  # 存完面板拿刷新后的素材列表

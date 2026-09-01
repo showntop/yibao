@@ -1,10 +1,10 @@
-"""zimeiti.article_save：稿件落盘为新版本——文件存 articles/<topic_id>/v<n>.md，库记一行。
+"""zimeiti.article_save：稿件进入 content-addressed BlobStore，库只保存稳定 BlobRef。
 
 生成归 agent（LLM 写稿），本 tool 只做确定性的落盘+版本+状态流转（代码 vs Agent）。
 文件自包含（加载器按文件独立 importlib 加载，禁止跨文件 import）。
 数据目录从插件 scoped ctx 的 db.path 推导，不 import config（保持插件可搬运）。
-2026-08-25：content_path 改存相对路径（相对插件数据根，迁移/换机不炸；老库绝对路径由
-article_read 兼容）；版本治理——每选题保留最近 20 版，超出删行删文件。
+老库相对/绝对路径仍由读取侧兼容；新版本使用 blob://sha256/<hash>，版本治理只删关系，
+共享内容由 Host 根据 Work Graph 引用集合延迟 GC。
 """
 import os
 import time
@@ -24,9 +24,16 @@ class ArticleSave(Tool):
         "初稿完成或改稿完成后调用；note 记一句本版改了什么。"
     )
     default_risk = RiskLevel.L2_MEDIUM
+    work_outputs = ({
+        "kind": "artifact",
+        "artifact_type": "video.script",
+        "ref_from": "data.id",
+        "content_ref_from": "data.content_ref",
+        "metadata_fields": ["data.version", "params.note"],
+    },)
 
     def __init__(self, data_dir: str):
-        self._articles_dir = Path(data_dir) / "articles"
+        self._plugin_root = Path(data_dir)
         self.refresh = "zimeiti.get"  # 写后详情面板拿刷新数据（加载器会校验它已注册）
 
     def openai_schema(self) -> dict:
@@ -56,25 +63,30 @@ class ArticleSave(Tool):
             return ActionResult(success=False, error=f"选题不存在：{tid}")
         latest = ctx.db.query("articles", where={"topic_id": tid}, order="version DESC", limit=1)
         version = (int(latest[0]["version"]) if latest else 0) + 1
-        dest = self._articles_dir / tid
-        dest.mkdir(parents=True, exist_ok=True)
-        path = dest / f"v{version}.md"
+        blobs = getattr(ctx, "blobs", None)
+        if blobs is None:
+            return ActionResult(success=False, error="底座未提供 blobs capability")
         try:
-            path.write_text(str(content), encoding="utf-8")
+            # promote 先于 PluginDb commit：崩溃最多留下可 GC 的孤儿 blob，绝不会让已提交
+            # content_ref 指向不存在的文件。
+            staged = blobs.stage_text(str(content))
+            content_ref = staged.finalize()
+            path = blobs.resolve(content_ref)
         except OSError as e:
             return ActionResult(success=False, error=f"写文件失败：{e}")
         now = int(time.time())
-        rel_path = f"articles/{tid}/v{version}.md"  # 相对插件数据根落库（迁移/换机不炸）
         ctx.db.insert(
             "articles",
-            {"topic_id": tid, "version": version, "content_path": rel_path, "note": note, "created_at": now},
+            {"topic_id": tid, "version": version, "content_path": content_ref, "note": note, "created_at": now},
         )
         fields = {"updated_at": now}
         if rows[0].get("status") == "候选":  # 有稿即进入写作中；已流转的状态不回退
             fields["status"] = "写作中"
         ctx.db.update("topics", tid, fields)
         self._prune(ctx, tid)
-        result = ActionResult(success=True, data={"id": tid, "version": version, "path": str(path)})
+        result = ActionResult(success=True, data={
+            "id": tid, "version": version, "path": str(path), "content_ref": content_ref,
+        })
         result.panel = "zimeiti:detail"
         return result
 
@@ -84,8 +96,11 @@ class ArticleSave(Tool):
             rows = ctx.db.query("articles", where={"topic_id": tid}, order="version DESC")
             for row in rows[_KEEP_VERSIONS:]:
                 ctx.db.delete("articles", str(row["id"]))
-                cp = Path(str(row.get("content_path") or ""))
-                old = cp if cp.is_absolute() else self._articles_dir.parent / cp
+                raw = str(row.get("content_path") or "")
+                if raw.startswith("blob://sha256/"):
+                    continue
+                cp = Path(raw)
+                old = cp if cp.is_absolute() else self._plugin_root / cp
                 try:
                     old.unlink(missing_ok=True)
                 except OSError:

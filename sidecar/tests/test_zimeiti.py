@@ -11,9 +11,15 @@ from pathlib import Path
 import pytest
 
 from yibao_brain.llm import FakeProvider
+from yibao_brain.llm import ToolCall
 from yibao_brain.memory import FakeMemory
 from yibao_brain.plugins import LlmChat, get_api, load_plugins
+from yibao_brain.audit import AuditLog
+from yibao_brain.invoker import ToolInvoker
+from yibao_brain.safety import Gate, GatePolicy, RiskClassifier
 from yibao_brain.tools import ToolRegistry
+from yibao_brain.work_events import WorkGraphInvocationSink
+from yibao_brain.work_graph import WorkGraphStore
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ZIMEITI_DIR = REPO_ROOT / "plugins" / "zimeiti"
@@ -129,7 +135,7 @@ def test_declarative_chain(env):
 
 
 def test_delete_cascades_articles_materials_stats(env):
-    """delete 代码承接（2026-08-25）：级联清稿件（行+文件+目录）、素材关联、发布数据。"""
+    """delete 清业务关系；content-addressed 文件由 BlobStore 延迟 GC，避免误删共享内容。"""
     reg, _, _ = env
     tid = _run(reg, "zimeiti.add", {"title": "T"}).data["id"]
     p1 = Path(_run(reg, "zimeiti.article_save", {"id": tid, "content": "# v1"}).data["path"])
@@ -143,7 +149,7 @@ def test_delete_cascades_articles_materials_stats(env):
 
     db = reg.get("zimeiti.delete").plugin_ctx.db
     assert db.query("articles", where={"topic_id": tid}) == []  # 稿件库行清掉
-    assert not p1.exists() and not p2.exists() and not p1.parent.exists()  # 文件+目录清掉
+    assert p1.exists() and p2.exists()  # 共享 blob 不在领域删除中立即 unlink
     assert _run(reg, "zimeiti.mat_get", {"id": mid}).data["rows"][0]["topic_id"] == ""  # 素材本体保留、摘关联
     assert _run(reg, "zimeiti.stat_list", {}).data["rows"] == []  # 发布数据清掉
     assert _run(reg, "zimeiti.list", {}).data["rows"] == []
@@ -239,8 +245,9 @@ def test_article_save_versions_and_status_flow(env, data_dir):
     r1 = _run(reg, "zimeiti.article_save", {"id": tid, "content": "# 初稿", "note": "初稿"})
     assert r1.success and r1.data["version"] == 1 and r1.panel == "zimeiti:detail"
     path1 = Path(r1.data["path"])
-    assert path1.is_file() and path1.name == "v1.md"
-    assert data_dir in path1.parents  # 落在插件数据目录，不污染仓库
+    assert path1.is_file() and len(path1.name) == 64
+    assert r1.data["content_ref"].startswith("blob://sha256/")
+    assert data_dir in path1.parents  # 落在用户数据根，不污染仓库
     row = _run(reg, "zimeiti.get", {"id": tid}).data["rows"][0]
     assert row["status"] == "写作中"  # 有稿即进入写作中
 
@@ -1051,14 +1058,14 @@ def test_update_tool_edits_topic_fields(env):
     assert row["title"] == "新标题" and row["platform"] == "小红书" and row["angle"] == "旧角度"
 
 
-def test_article_save_stores_relative_path_and_prunes(env):
-    """content_path 落相对路径（迁移不炸）；版本治理：保留最近 20 版。"""
+def test_article_save_stores_blob_ref_and_prunes_relations(env):
+    """content_path 落稳定 BlobRef；版本治理保留最近 20 条关系，内容延迟 GC。"""
     reg, _, _ = env
     tid = _run(reg, "zimeiti.add", {"title": "T"}).data["id"]
     _run(reg, "zimeiti.article_save", {"id": tid, "content": "v1"})
     rows = reg.get("zimeiti.list").plugin_ctx.db.query("articles", where={"topic_id": tid})
-    assert rows[0]["content_path"].startswith("articles/")  # 相对路径
-    # article_read 兼容解析（相对 → 拼数据根）
+    assert rows[0]["content_path"].startswith("blob://sha256/")
+    # article_read 通过 ctx.blobs 解析稳定引用。
     r = _run(reg, "zimeiti.article_read", {"id": tid})
     assert r.success and r.data["content"] == "v1"
     # 写 25 版 → 只剩 20 版且最旧被清
@@ -1102,6 +1109,61 @@ def test_strip_md_plain_semantics(env):
 
 
 # ---------- 视频 workflow S0：选题卡扩展字段（hkrr/钩型/目标视频平台/封面概念） ----------
+
+
+def test_work_graph_output_contracts_are_declared(env):
+    reg, _memory, _results = env
+    assert reg.get("zimeiti.add").work_outputs[0]["artifact_type"] == "zimeiti.topic"
+    assert reg.get("zimeiti.article_save").work_outputs[0]["artifact_type"] == "video.script"
+    assert reg.get("zimeiti.mat_save").work_outputs[0]["kind"] == "evidence"
+
+
+def test_real_zimeiti_tool_results_automatically_advance_work_graph(env, tmp_path):
+    reg, _memory, _results = env
+    graph = WorkGraphStore(str(tmp_path / "work_graph.db"))
+    graph.create_workspace("video", "Agent 科普视频", str(tmp_path / "video"))
+    invoker = ToolInvoker(
+        reg, RiskClassifier(), Gate(GatePolicy()), AuditLog(str(tmp_path / "audit.db")),
+    )
+    invoker.invocation_sink = WorkGraphInvocationSink(graph, lambda _cid: "video")
+
+    def execute(tool_id, params):
+        action = invoker.propose(ToolCall(id=f"tc-{tool_id}", tool_id=tool_id, params=params))
+        return invoker.execute(action, params, {"conversation_id": "session-video", "surface": "home"})
+
+    try:
+        topic = execute("zimeiti.add", {"title": "Agent 为什么需要你点头"})
+        assert topic.success
+        saved = execute("zimeiti.article_save", {
+            "id": topic.data["id"], "content": "Agent 会规划、调用工具，并把结果交还给用户确认。",
+            "note": "初稿",
+        })
+        assert saved.success
+        material = execute("zimeiti.mat_save", {
+            "text": "Agent 系统由模型、工具、记忆与权限治理共同组成。", "defer": True,
+        })
+        assert material.success
+
+        view = graph.workspace_view("video")
+        assert {item["type"] for item in view["objects"]} == {
+            "zimeiti.topic", "video.script", "research.evidence",
+        }
+        assert view["workflow_run"]["current_stage_id"] == "script"
+        assert len(graph.evidence_views("video")) == 1
+        script = next(item for item in view["objects"] if item["type"] == "video.script")
+        revision = graph.artifact_view(script["artifact_id"])["revisions"][-1]
+        assert revision["content_ref"].startswith("blob://sha256/")
+        assert reg.get("zimeiti.article_save").plugin_ctx.blobs.resolve(
+            revision["content_ref"],
+        ).read_text(encoding="utf-8").startswith("Agent 会规划")
+        assert [item["status"] for item in graph.invocation_views(workspace_id="video")] == [
+            "succeeded", "succeeded", "succeeded",
+        ]
+        outbox = reg.get("zimeiti.add").plugin_ctx.db.work_outbox_events()
+        assert len(outbox) == 3
+        assert {item["status"] for item in outbox} == {"acknowledged"}
+    finally:
+        graph.close()
 
 _S0_COLS = ("hkrr", "hook_type", "target_platform", "cover_concepts", "project_id")
 

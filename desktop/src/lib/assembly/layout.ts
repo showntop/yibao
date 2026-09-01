@@ -63,6 +63,11 @@ export type ResolvedGrid = {
   rows: string;
   areas: string;
   stacks: Record<string, string[]>;
+  sections?: Readonly<Record<string, {
+    tail: readonly string[];
+    tailBasis?: string;
+    tailMin?: string;
+  }>>;
   fold: AssemblyFold[];
   bubbleMax?: string;
 };
@@ -338,6 +343,7 @@ function resolveGrid(
     rows: tracks ? "minmax(0,1fr)" : (src.rows ?? "minmax(0,1fr)"),
     areas: tracks ? `"${tracks.map((track) => track.area).join(" ")}"` : (foldedAreas.areas ?? src.areas ?? "."),
     stacks: visibleStacks,
+    sections: src.sections,
     fold,
     bubbleMax: src.bubbleMax,
   };

@@ -4,10 +4,29 @@
 id = "zimeiti"
 name = "内容创作"
 description = "内容创作选题与写作：选题推荐（「今天写什么」→ skills/topics 技能）、选题看板、写稿改稿、版本管理、素材库（收藏链接/资料，写作时当论据召回）、热点雷达"
-capabilities = ["db", "llm", "process"]   # process：本插件会 spawn 子进程（wewrite CLI）
+capabilities = ["db", "blobs", "llm", "process"]   # blobs：大内容走宿主 content-addressed store
 
 [code]
 entry = "tools"
+
+# Workflow Pack 由插件声明；Work Graph 只认识通用 stages/artifact_patterns。
+# 同 id 的更高版本会用于新 Workspace，已有 WorkflowRun 继续锁定原版本。
+[[workflow]]
+id = "video.explainer"
+version = "1.1.0"
+domain = "video"
+label = "视频创作"
+matches = ["视频", "video", "zimeiti", "storyboard", "timeline"]
+stages = [
+  {id = "topic", label = "选题", artifact_patterns = ["topic", "brief"]},
+  {id = "evidence", label = "证据", artifact_patterns = ["material", "evidence", "claim", "research"]},
+  {id = "script", label = "脚本", artifact_patterns = ["script", "article", "doc"]},
+  {id = "storyboard", label = "分镜", artifact_patterns = ["storyboard", "shot"]},
+  {id = "assets", label = "素材", artifact_patterns = ["asset", "image", "visual"]},
+  {id = "voice", label = "配音", artifact_patterns = ["voice", "audio", "narration"]},
+  {id = "compose", label = "合成", artifact_patterns = ["timeline", "composition"]},
+  {id = "deliver", label = "交付", artifact_patterns = ["render", "export", "published"]},
+]
 
 [[table]]
 name = "topics"
@@ -98,6 +117,11 @@ cover_concepts = {type = "string", description = "封面概念 JSON 数组字符
 op = "insert"
 table = "topics"
 auto = {created_at = "unixts", updated_at = "unixts"}   # 时间戳由系统生成（unix 秒）
+[tool.work_output]
+kind = "artifact"
+artifact_type = "zimeiti.topic"
+ref_from = "data.id"
+metadata_fields = ["params.title", "params.angle", "params.target_platform"]
 
 [[tool]]
 id = "list"

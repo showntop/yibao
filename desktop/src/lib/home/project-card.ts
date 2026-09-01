@@ -1,31 +1,99 @@
-// 家态项目卡（specimen video-flow.html 场景 2）的纯逻辑：S0–S8 进度轨推导 + 待确认数。
-// V1a：项目实体还没有阶段字段，按 objects 里的引用类型诚实推导，推不出一律落 S0；
-// V1b 接阶段模型后替换 projectStageIndex / projectPendingCount，组件不用动。
+// Workspace / Mission 卡的读模型适配器。
+// 新数据优先读取持久 WorkflowRun；旧 Project 数据才回退声明式 Workflow Pack
+// 投影。组件只消费通用阶段合同，不知道视频、PPT 等领域步骤。
 import type { ProjectInfo, ProjectObject } from "../brain";
 
-/** 视频创作九段（specimen video-flow.html 总览）：S0 选题 → S8 复盘。 */
-export const PROJECT_STAGES = ["选题", "脚本", "分镜", "资产筹备", "出镜头", "粗剪", "精剪", "发布", "复盘"] as const;
+export type WorkflowDomain = "general" | "video" | "deck" | "code" | "data";
 
-/** 当前段下标（0..8）。证据只看 objects 引用类型（如 zimeiti.topic）：
- *  有脚本/文档类对象 → S1；其余（含只有选题类、空）一律落 S0。
- *  V1b 接阶段模型后替换此推导。 */
-export function projectStageIndex(objects: readonly ProjectObject[]): number {
-  const types = objects.map((o) => o.type.toLowerCase());
-  if (types.some((t) => t.includes("script") || t.includes("doc"))) return 1;
+export interface WorkflowPackPreview {
+  id: string;
+  domain: WorkflowDomain;
+  label: string;
+  stages: readonly string[];
+  matches: readonly string[];
+}
+
+export const WORKFLOW_PACKS: readonly WorkflowPackPreview[] = [
+  {
+    id: "video.explainer",
+    domain: "video",
+    label: "视频创作",
+    stages: ["选题", "证据", "脚本", "分镜", "素材", "配音", "合成", "交付"],
+    matches: ["video", "视频", "zimeiti", "storyboard", "voice", "timeline"],
+  },
+  {
+    id: "deck.presentation",
+    domain: "deck",
+    label: "演示文稿",
+    stages: ["需求", "主张", "故事线", "页面", "视觉", "校验", "导出"],
+    matches: ["deck", "ppt", "演示", "幻灯", "presentation", "slide"],
+  },
+  {
+    id: "code.change",
+    domain: "code",
+    label: "软件交付",
+    stages: ["问题", "方案", "改动", "验证", "交付"],
+    matches: ["code", "代码", "开发", "coding", "repo", "patch", "test"],
+  },
+  {
+    id: "data.analysis",
+    domain: "data",
+    label: "数据分析",
+    stages: ["问题", "数据", "质量", "分析", "洞察", "交付"],
+    matches: ["data", "数据", "dataset", "query", "chart", "analysis"],
+  },
+  {
+    id: "mission.general",
+    domain: "general",
+    label: "通用任务",
+    stages: ["理解", "推进", "核验", "交付"],
+    matches: [],
+  },
+] as const;
+
+function haystack(project: Pick<ProjectInfo, "name" | "objects">): string {
+  return [project.name, ...project.objects.map((o) => o.type)].join(" ").toLowerCase();
+}
+
+export function workflowPackFor(project: Pick<ProjectInfo, "name" | "objects" | "workflow_run">): WorkflowPackPreview {
+  const run = project.workflow_run;
+  if (run?.stages.length) {
+    return {
+      id: run.definition_id,
+      domain: run.domain,
+      label: run.label,
+      stages: run.stages.map((stage) => stage.label),
+      matches: [],
+    };
+  }
+  const text = haystack(project);
+  return WORKFLOW_PACKS.find((pack) => pack.matches.some((token) => text.includes(token)))
+    ?? WORKFLOW_PACKS[WORKFLOW_PACKS.length - 1];
+}
+
+function evidenceScore(type: string): number {
+  if (/render|export|release|published/.test(type)) return 99;
+  if (/quality|review|test|validation/.test(type)) return 80;
+  if (/timeline|composition|deck\.document|report/.test(type)) return 70;
+  if (/visual|image|audio|voice|chart|slide/.test(type)) return 55;
+  if (/storyboard|storyline|outline|plan|patch|query/.test(type)) return 40;
+  if (/script|article|doc|analysis/.test(type)) return 28;
+  if (/claim|evidence|material|research|dataset/.test(type)) return 16;
+  if (/topic|brief|issue|question/.test(type)) return 4;
   return 0;
 }
 
-/** 待确认数。V1a 无数据源，恒 0（不造假）；V1b 接项目确认队列后替换。 */
-export function projectPendingCount(_objects: readonly ProjectObject[]): number {
-  return 0;
+/** 兼容投影：按对象语义估算流程位置；不把领域阶段写死进组件。 */
+export function workflowStageIndex(
+  pack: WorkflowPackPreview,
+  objects: readonly ProjectObject[],
+): number {
+  if (!objects.length) return 0;
+  const score = Math.max(...objects.map((o) => evidenceScore(o.type.toLowerCase())));
+  if (score >= 99) return pack.stages.length - 1;
+  return Math.min(pack.stages.length - 2, Math.max(0, Math.floor(score / 14)));
 }
 
-/** 下一步标签：阶段梯上的下一段名（S0 → 脚本）；最后一段返回空串。 */
-export function projectNextStep(stage: number): string {
-  return PROJECT_STAGES[stage + 1] ?? "";
-}
-
-/** 触达时间行标签（项目行用；touched_at 是 Unix 秒）：今天/昨天/M月d日。 */
 export function projectTouchLabel(touchedAt: number, now = new Date()): string {
   const d = new Date(touchedAt * 1000);
   const startOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
@@ -37,25 +105,36 @@ export function projectTouchLabel(touchedAt: number, now = new Date()): string {
 
 export interface ProjectCardFace {
   name: string;
-  /** 当前段下标（0..8） */
+  missionTitle: string;
+  domain: WorkflowDomain;
+  packId: string;
+  packLabel: string;
+  stages: readonly string[];
   stage: number;
-  /** 轨左标签：S{n} · {段名} */
   stageLabel: string;
-  /** 轨右下一步标签（最后一段为空串） */
   nextStep: string;
-  /** 待确认数（V1a 恒 0，接口留此） */
+  artifactCount: number;
   pending: number;
 }
 
-/** 当前项目 → 卡面（HomeProject 只渲染，不推导）。 */
 export function projectCardFace(project: ProjectInfo): ProjectCardFace {
   const objects = project.objects ?? [];
-  const stage = projectStageIndex(objects);
+  const pack = workflowPackFor(project);
+  const run = project.workflow_run;
+  const stage = run
+    ? Math.min(pack.stages.length - 1, Math.max(0, run.current_stage_index))
+    : workflowStageIndex(pack, objects);
   return {
     name: project.name,
+    missionTitle: project.mission?.title || project.name,
+    domain: pack.domain,
+    packId: pack.id,
+    packLabel: pack.label,
+    stages: pack.stages,
     stage,
-    stageLabel: `S${stage} · ${PROJECT_STAGES[stage]}`,
-    nextStep: projectNextStep(stage),
-    pending: projectPendingCount(objects),
+    stageLabel: pack.stages[stage] ?? "理解",
+    nextStep: pack.stages[stage + 1] ?? "",
+    artifactCount: objects.length,
+    pending: run?.status === "waiting_user" || run?.status === "blocked" ? 1 : 0,
   };
 }

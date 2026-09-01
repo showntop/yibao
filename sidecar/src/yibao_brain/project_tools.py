@@ -17,10 +17,16 @@ class _ProjectTool(Tool):
         self.store = store
         self._on_change = on_change
 
-    def _notify(self) -> None:
+    @staticmethod
+    def _conversation_id(ctx) -> str:
+        return str(((getattr(ctx, "meta", None) or {}).get("conversation_id")) or "")
+
+    def _notify(self, conversation_id: str = "") -> None:
         if self._on_change is not None:
             try:
-                self._on_change()
+                self._on_change(conversation_id)
+            except TypeError:
+                self._on_change()  # 兼容旧测试/注入方的零参数 callback
             except Exception:
                 pass  # 广播失败不拖垮 tool 主链路
 
@@ -43,6 +49,7 @@ class ProjectCreateTool(_ProjectTool):
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "description": "项目名（唯一）"},
+                    "mission": {"type": "string", "description": "本工作语境下要完成的目标；缺省与项目名相同"},
                     "objects": {
                         "type": "array",
                         "items": {
@@ -61,16 +68,19 @@ class ProjectCreateTool(_ProjectTool):
         }
 
     def run(self, params: dict, ctx) -> ActionResult:
+        conversation_id = self._conversation_id(ctx)
         try:
             proj = self.store.create(
                 str(params.get("name") or ""),
                 objects=params.get("objects") if isinstance(params.get("objects"), list) else None,
+                conversation_id=conversation_id,
+                mission_title=str(params.get("mission") or "").strip() or None,
             )
         except ValueError as e:
             return ActionResult(success=False, error=str(e))
         except OSError as e:
             return ActionResult(success=False, error=f"目录骨架创建失败：{e}")
-        self._notify()
+        self._notify(conversation_id)
         return ActionResult(success=True, data={"project": proj})
 
 
@@ -92,12 +102,13 @@ class ProjectOpenTool(_ProjectTool):
         }
 
     def run(self, params: dict, ctx) -> ActionResult:
+        conversation_id = self._conversation_id(ctx)
         key = str(params.get("name") or "").strip()
         proj = self.store.get(key) or self.store.find_by_name(key)
         if proj is None:
             return ActionResult(success=False, error=f"找不到项目：{key}")
-        self.store.switch(proj["id"])
-        self._notify()
+        self.store.switch(proj["id"], conversation_id)
+        self._notify(conversation_id)
         return ActionResult(success=True, data={"project": proj})
 
 
@@ -112,7 +123,7 @@ class ProjectCurrentTool(_ProjectTool):
                 "parameters": {"type": "object", "properties": {}}}
 
     def run(self, params: dict, ctx) -> ActionResult:
-        proj = self.store.current()
+        proj = self.store.current(self._conversation_id(ctx))
         if proj is None:
             return ActionResult(success=True, data={"project": None})
         return ActionResult(success=True, data={"project": proj})
@@ -140,13 +151,15 @@ class ProjectAttachTool(_ProjectTool):
         }
 
     def run(self, params: dict, ctx) -> ActionResult:
+        conversation_id = self._conversation_id(ctx)
         key = str(params.get("project") or "").strip()
-        proj = (self.store.get(key) or self.store.find_by_name(key)) if key else self.store.current()
+        proj = ((self.store.get(key) or self.store.find_by_name(key))
+                if key else self.store.current(conversation_id))
         if proj is None:
             return ActionResult(success=False, error="没有当前项目（先 project.create 或 project.open）" if not key else f"找不到项目：{key}")
         ok = self.store.add_object(proj["id"], str(params.get("type") or ""), str(params.get("ref") or ""))
         if ok:
-            self._notify()
+            self._notify(conversation_id)
         return ActionResult(success=ok, data={"project_id": proj["id"]})
 
 
