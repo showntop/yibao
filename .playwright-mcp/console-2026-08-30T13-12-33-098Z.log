@@ -1,4 +1,0 @@
-[      53ms] TypeError: Cannot read properties of undefined (reading 'onInit')
-    at http://localhost:1431/zimeiti/panel/editor.html:500:16
-    at http://localhost:1431/zimeiti/panel/editor.html:1069:3
-[      80ms] [ERROR] Failed to load resource: the server responded with a status of 404 (File not found) @ http://localhost:1431/favicon.ico:0
