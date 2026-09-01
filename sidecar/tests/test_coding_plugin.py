@@ -2128,3 +2128,186 @@ def test_c_fallback_loads_main_module_when_unregistered(monkeypatch):
     assert _session_skills._c() is mod
     # 不污染后续用例的 monkeypatch 约定（_c() 优先命中生产名实例）
     sys.modules.pop("yibao_plugin_coding_coding", None)
+
+
+# ---------- B1：cancel watchdog（「等下一条消息」挂起期中断） ----------
+def test_runner_watchdog_interrupts_when_drain_suspended():
+    """B1：cancel 在 drain 挂在「等下一条消息」（长工具执行中）期间置位 → watchdog 轮询
+    唤醒 interrupt + stopped，不再依赖下一条流事件才检查（中断延迟从无上界收敛到轮询间隔）。"""
+    calls = []
+
+    class SuspendedClient:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return None
+        async def query(self, p): pass
+        async def interrupt(self):
+            calls.append("interrupt")
+            unblock.set()                       # interrupt 解锁挂起的流
+        async def receive_response(self):
+            yield SimpleNamespace(content=[_FakeText("first")])
+            await unblock.wait()                # 模拟长工具执行中：流挂起无消息
+            return                              # interrupt 后流尽
+
+    client = SuspendedClient()
+    unblock = asyncio.Event()
+    events = []
+
+    async def scenario():
+        cancel = asyncio.Event()
+
+        async def set_later():
+            await asyncio.sleep(0.05)
+            cancel.set()
+        t = asyncio.ensure_future(set_later())
+        await ClaudeCodeRunner(client_factory=lambda *a, **k: client, cancel_poll_s=0.02).run(
+            "p", "/tmp", on_event=events.append, cancel_event=cancel)
+        await t
+
+    _run(scenario())
+    assert calls == ["interrupt"]               # watchdog 路径真杀一次
+    kinds = [e["kind"] for e in events]
+    assert kinds == ["text_delta", "stopped"]   # 无 done；stopped 恰一条
+
+
+# ---------- B2：收尾竞态封口（closing 协议） ----------
+def test_send_rejects_and_retracts_when_closing(monkeypatch):
+    """B2：_stream 收尾前立 closing → SendTool 入队后复读到 closing 自撤并回拒绝，
+    不回假 ack（否则消息永不执行、会话落 done，用户被静默吞消息）。"""
+    spawned = {"n": 0}
+    monkeypatch.setattr(codingmod, "_spawn_stream",
+                        lambda *a, **k: spawned.__setitem__("n", spawned["n"] + 1))
+    ctx = _make_ctx_with_session(status="running")
+    entry = {"cancel": _threading.Event(), "closing": True}   # 收尾意向已立
+    monkeypatch.setattr(codingmod._sess, "_SESSIONS", {"sid-1": entry})
+    r = SendTool().run({"id": "sid-1", "prompt": "晚到的一句"}, ctx)
+    assert r.success is False                                   # 拒绝，不 ack
+    assert "收尾" in (r.error or "")
+    assert entry["steer"] == []                                 # 入队的消息已自撤
+
+
+def test_stream_reopens_closing_when_steer_drained(monkeypatch):
+    """B2 续跑窗重开：查到排队 steer → closing 复位再续跑（期间新 steer 可继续入队）；
+    查空 → closing 保持 True 到线程 pop（收尾窗内 SendTool 一律拒）。"""
+    db = _FakeDB(); db.rows["s9"] = {"id": "s9", "status": "running"}
+
+    class SteerOnceRunner:
+        """首轮后往 entry 塞一条 steer（模拟收尾查队前一瞬入队的晚到消息）→ 第二轮被 drain。"""
+        def __init__(self): self.rounds = 0
+        async def run(self, prompt, cwd, *, on_event, cancel_event, resume_session_id=None, **_):
+            self.rounds += 1
+            if self.rounds == 1:
+                entry = _sess_module._SESSIONS.get("s9")
+                entry.setdefault("steer", []).append("晚到督导")
+                on_event({"kind": "done"})
+                return "cc-1"
+            assert "督导补充" in prompt                          # 晚到消息被合并续跑
+            on_event({"kind": "done"})
+            return "cc-1"
+
+    _sess_module = codingmod._sess
+    entry = {"cancel": _threading.Event()}
+    monkeypatch.setattr(_sess_module, "_SESSIONS", {"s9": entry})
+    runner = SteerOnceRunner()
+    _run(_stream(db, "s9", "/tmp/p", "hi", runner, emit_event=None, cancel=_threading.Event()))
+    assert runner.rounds == 2
+    assert entry.get("closing") is True                         # 最终收尾：closing 保持立起
+    assert db.updates[-1][1]["status"] == "done"
+
+
+# ---------- B4：权限裁决 TOCTOU ----------
+def test_perm_timeout_racing_decide_still_honors_allow():
+    """B4：超时醒来前裁决已写入（event 未及 set 的相撞窗）→ waiter pop 前复读 entry
+    按允许收场，不误判 timeout（用户看到「已允许」= 实际允许）。"""
+    import _runner as R
+    rid_holder = {}
+
+    def on_event(e):
+        if e.get("kind") == "permission_request":
+            rid_holder["rid"] = e["rid"]
+            R._PERM[e["rid"]]["allow"] = True   # 裁决先落，event 未 set（相撞窗）
+
+    async def scenario():
+        cb = R.make_permission_callback("s-race", on_event, timeout_s=0.01)
+        result = await cb("Bash", {"command": "ls"})
+        return result
+
+    result = _run(scenario())
+    assert "Allow" in type(result).__name__     # 按允许收场（旧行为：超时 deny）
+    assert rid_holder["rid"] not in R._PERM     # 注册表已清理
+
+
+def test_decide_rejects_already_decided_entry():
+    """B4：已裁决（含 stop 放行 deny）的 entry 不再被覆盖——先到先得，不回假成功。"""
+    from coding import DecideTool
+    # 经 coding 模块别名拿生产注册表（测试直接 import _runner 会得到另一个实例）
+    perm = codingmod._PERM
+    perm["perm_s-x_1"] = {"event": _threading.Event(), "allow": False,
+                          "tool": "Bash", "summary": "", "params": {}, "created_at": 0}
+    try:
+        res = DecideTool().run({"rid": "perm_s-x_1", "allow": True}, ctx=None)
+        assert res.success is False
+        assert "已被裁决" in (res.error or "")
+        assert perm["perm_s-x_1"]["allow"] is False              # 未被覆盖成 True
+    finally:
+        perm.pop("perm_s-x_1", None)
+
+
+# ---------- B5：流终残留 rewind pending 兜底 ----------
+def test_stream_reports_unexecuted_rewind_pending(monkeypatch):
+    """B5：本轮在最后一条消息后收尾（pending 无消费点）→ 补 marker 讲实话，
+    不再「回执成功却未执行」。mode_pending 静默清（库值已更新，下轮生效）。"""
+    db = _FakeDB(); db.rows["s5"] = {"id": "s5", "status": "running"}
+    entry = {"cancel": _threading.Event(), "rewind_pending": "uuid-1", "mode_pending": "plan"}
+    monkeypatch.setattr(codingmod._sess, "_SESSIONS", {"s5": entry})
+    events = []
+    runner = _FakeRunner(cc_sid="cc-5")
+    _run(_stream(db, "s5", "/tmp/p", "hi", runner, emit_event=events.append,
+                 cancel=_threading.Event()))
+    marks = [e["payload"]["data"]["event"]["text"] for e in events
+             if e.get("kind") == "panel_data"
+             and e["payload"]["data"]["event"].get("kind") == "marker"]
+    assert any("回滚未执行" in t for t in marks)
+    assert "rewind_pending" not in entry and "mode_pending" not in entry
+
+
+# ---------- B6：线程启动失败半态收口 ----------
+def test_spawn_stream_thread_start_failure_lands_failed(monkeypatch):
+    """B6：Thread.start 抛（资源耗尽等）→ 落 failed + 终态汇报，不永久卡 running。"""
+    db = _FakeDB()
+    sid = codingmod.start_session(db, agent="claude-code", cwd="/tmp/p", prompt="hi")
+
+    class _BoomThread:
+        def __init__(self, *a, **k): pass
+        def start(self): raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(codingmod._sess.threading, "Thread", _BoomThread)
+    events = []
+    codingmod._sess._spawn_stream(db, sid, "/tmp/p", "hi", object(), events.append)
+    assert db.rows[sid]["status"] == "failed"
+    reminders = [e for e in events if e.get("kind") == "reminder"]
+    assert reminders and "失败" in reminders[0]["text"]
+
+
+# ---------- B7：终态覆盖缝（done 写后复核 cancel） ----------
+def test_stream_corrects_done_to_stopped_when_cancel_late():
+    """B7：读态 running → 写 done 之间用户 stop 完成（先落 stopped 后 set cancel）→
+    写后复核 cancel 撞上即纠正回 stopped + 补 stopped 终态事件，不被 done 覆盖。"""
+    cancel = _threading.Event()
+
+    class _CancelOnFinalUpdateDB(_FakeDB):
+        def update(self, table, rid, fields):
+            super().update(table, rid, fields)
+            if table == "sessions" and fields.get("status") in ("done", "failed"):
+                cancel.set()   # 模拟 stop 的 set cancel 恰在我们的终态写入后、复核前被观察到
+
+    db = _CancelOnFinalUpdateDB()
+    db.rows["s7"] = {"id": "s7", "status": "running"}
+    events = []
+    _run(_stream(db, "s7", "/tmp/p", "hi", _FakeRunner(cc_sid="cc-7"),
+                 emit_event=events.append, cancel=cancel))
+    assert db.rows["s7"]["status"] == "stopped"                 # 纠正回 stopped
+    stopped_events = [e for e in events if e.get("kind") == "panel_data"
+                      and e["payload"]["data"]["event"].get("kind") == "stopped"]
+    assert stopped_events                                       # 面板收到 stopped 终态
+    reports = [e for e in events if e.get("kind") == "event"]
+    assert reports and "已停止" in reports[0]["text"]           # 汇报按 stopped（非 ✅ 完成）

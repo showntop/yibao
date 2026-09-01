@@ -152,10 +152,12 @@ class CodexCliRunner:
     """
 
     def __init__(self, process_factory: Callable[..., Any] | None = None,
-                 codex_bin: str = "codex", kill_grace_s: float = _KILL_GRACE_S):
+                 codex_bin: str = "codex", kill_grace_s: float = _KILL_GRACE_S,
+                 cancel_poll_s: float = 1.0):
         self._process_factory = process_factory  # None → 生产用真子进程
         self._codex_bin = codex_bin
         self._kill_grace_s = kill_grace_s
+        self._cancel_poll_s = cancel_poll_s      # cancel watchdog 轮询间隔（B1：中断不再等下一行 stdout）
 
     async def _default_factory(self, argv: list[str], cwd: str):
         return await asyncio.create_subprocess_exec(
@@ -216,11 +218,17 @@ class CodexCliRunner:
         - turn.completed → done{usage:{duration_ms,cost_usd:None,input_tokens,output_tokens}}：
           token 经 usage_baseline 差分；duration_ms 由本 runner time.monotonic 计；cost 无→None（前端容缺）。
         - turn.failed/error → error 事件；异常不外抛转 error 事件（对齐 CC 语义）。
-        - 取消：每条事件前查 cancel_event → SIGTERM（3s）→ SIGKILL，发 stopped 终态（不发 done）。
+        - 用户轮转录（B3）：codex 流无用户消息回放通道（对比 CC replay-user-messages）——
+          每轮开始把本轮 prompt 发一条 user_msg 事件（uuid 空），转录/交接 Brief 不再缺用户诉求；
+          CC 路径由回流覆盖，无双写。
+        - 取消：cancel watchdog（B1）——stdout 读流挂在「等下一行」（命令执行中）时逐行检查
+          轮不到，读流放 task、主协程每 cancel_poll_s 醒一次，置位即 SIGTERM（3s）→ SIGKILL，
+          发 stopped 终态（不发 done）。
         - EOF 后 returncode 守御：非零退出 = 失败终态——本轮未发过 error/done 时补发 error
           （stderr 尾部截 400 字 + 退出码），绝不发裸 done（静默失败不误报「完成」，
           如 resume 不存在 thread_id：退出码 1、错误只在 stderr、stdout 零事件）；
-          零退出才走裸 done 兜底（对齐 CC：流尽未遇 ResultMessage 也发 done）。
+          零退出且未发过 error 才走裸 done 兜底（对齐 CC：流尽未遇 ResultMessage 也发 done；
+          B8：turn.failed 后进程 0 退出不再补「完成」marker 与 failed 终态打架）。
         - can_use_tool/mode_pending/rewind_pending 忽略：headless 无运行中审批/回滚钩子
           （mode 下轮生效：SendTool 读库 mode → 新 sandbox 进 argv）。
         """
@@ -241,41 +249,70 @@ class CodexCliRunner:
             stderr_stream = getattr(proc, "stderr", None)
             stderr_task = (asyncio.ensure_future(self._read_stderr_tail(stderr_stream))
                            if stderr_stream is not None else None)
-            async for raw in proc.stdout:
-                if cancel_event.is_set():
-                    await self._kill(proc)
-                    if stderr_task is not None:
-                        stderr_task.cancel()
-                        try:
-                            await stderr_task
-                        except (asyncio.CancelledError, Exception):
-                            pass
-                    on_event({"kind": "stopped", "text": "已中断"})
-                    return thread_id
+            # B3：本轮 prompt 落一条 user 消息（流内其余事件照常；放在 stdout 消费前保序）
+            on_event({"kind": "user_msg", "uuid": "", "text": prompt})
+
+            async def _drain() -> None:
+                nonlocal thread_id, done_emitted, error_emitted, stopped_sent
+                async for raw in proc.stdout:
+                    if cancel_event.is_set():
+                        # 行边界取消：真杀子进程 + stopped 终态（不发 done）；watchdog 已杀过
+                        # （cancelled 已立）则不重复，只补 stopped
+                        if not cancelled:
+                            await self._kill(proc)
+                        on_event({"kind": "stopped", "text": "已中断"})
+                        stopped_sent = True
+                        return
+                    try:
+                        line = raw.decode("utf-8", errors="replace") if isinstance(raw, (bytes, bytearray)) else str(raw)
+                        obj = json.loads(line.strip())
+                    except (json.JSONDecodeError, ValueError):
+                        continue   # 非 JSON 行（CLI 诊断噪声混进 stdout 时）跳过
+                    etype = obj.get("type") if isinstance(obj, dict) else None
+                    if etype == "thread.started":
+                        tid = obj.get("thread_id")
+                        if tid:
+                            thread_id = str(tid)
+                        continue
+                    if etype == "turn.completed":
+                        delta = _diff_usage(obj.get("usage"), session_entry)
+                        on_event({"kind": "done", "usage": {
+                            "duration_ms": int((time.monotonic() - t0) * 1000),
+                            "cost_usd": None,
+                            **delta,
+                        }})
+                        done_emitted = True
+                        continue
+                    for ev in normalize_event(obj):
+                        if ev.get("kind") == "error":
+                            error_emitted = True
+                        on_event(ev)
+
+            drain_task = asyncio.ensure_future(_drain())
+            cancelled = False   # watchdog 已杀过（_drain 行边界检查据此去重）
+            stopped_sent = False
+            # cancel watchdog（B1）：读流挂在「等下一行」时逐行检查永远轮不到——
+            # 主协程周期醒来查 cancel，置位即真杀子进程 + stopped 终态
+            while not drain_task.done() and not cancel_event.is_set():
+                await asyncio.wait({drain_task}, timeout=self._cancel_poll_s)
+            if not drain_task.done() and cancel_event.is_set():
+                cancelled = True
+                await self._kill(proc)
+                if stderr_task is not None:
+                    stderr_task.cancel()
+                    try:
+                        await stderr_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+                on_event({"kind": "stopped", "text": "已中断"})
+                stopped_sent = True
+                drain_task.cancel()
                 try:
-                    line = raw.decode("utf-8", errors="replace") if isinstance(raw, (bytes, bytearray)) else str(raw)
-                    obj = json.loads(line.strip())
-                except (json.JSONDecodeError, ValueError):
-                    continue   # 非 JSON 行（CLI 诊断噪声混进 stdout 时）跳过
-                etype = obj.get("type") if isinstance(obj, dict) else None
-                if etype == "thread.started":
-                    tid = obj.get("thread_id")
-                    if tid:
-                        thread_id = str(tid)
-                    continue
-                if etype == "turn.completed":
-                    delta = _diff_usage(obj.get("usage"), session_entry)
-                    on_event({"kind": "done", "usage": {
-                        "duration_ms": int((time.monotonic() - t0) * 1000),
-                        "cost_usd": None,
-                        **delta,
-                    }})
-                    done_emitted = True
-                    continue
-                for ev in normalize_event(obj):
-                    if ev.get("kind") == "error":
-                        error_emitted = True
-                    on_event(ev)
+                    await drain_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+                return thread_id
+            await drain_task   # 流尽（EOF）；_drain 内异常由此上抛 → 外层 error 事件
             try:
                 await asyncio.wait_for(proc.wait(), timeout=self._kill_grace_s)
             except Exception:
@@ -295,7 +332,9 @@ class CodexCliRunner:
                         detail = f"：{tail[-400:]}" if tail else "（stderr 无输出）"
                         on_event({"kind": "error",
                                   "text": f"codex 异常退出（退出码 {rc}）{detail}"})
-                else:
+                elif not error_emitted:
+                    # 零退出裸 done 兜底（B8：已发过 error——turn.failed 后 0 退出——
+                    # 不再补「完成」，否则面板先见 error 再见完成 marker，终态却落 failed）
                     on_event({"kind": "done"})
             return thread_id
         except Exception as e:

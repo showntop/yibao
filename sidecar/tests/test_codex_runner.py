@@ -199,7 +199,9 @@ def test_runner_streams_full_session():
                           cancel_event=asyncio.Event(), session_entry=entry))
     assert tid == "t-abc"
     kinds = [e["kind"] for e in events]
-    assert kinds == ["tool_use", "tool_result", "thinking", "text_delta", "done"]
+    # B3：本轮 prompt 先落一条 user_msg（codex 流无用户回放通道，转录/交接 Brief 补用户诉求）
+    assert kinds == ["user_msg", "tool_use", "tool_result", "thinking", "text_delta", "done"]
+    assert events[0]["text"] == "干活" and events[0]["uuid"] == ""
     done = events[-1]
     assert done["usage"]["input_tokens"] == 1200 and done["usage"]["output_tokens"] == 88
     assert done["usage"]["cost_usd"] is None                        # codex 无成本 → None（前端容缺）
@@ -214,7 +216,7 @@ def test_runner_skips_non_json_lines():
     runner = CodexCliRunner(process_factory=_factory(proc))
     tid = _run(runner.run("p", "/tmp", on_event=events.append, cancel_event=asyncio.Event()))
     assert tid == "t-1"
-    assert [e["kind"] for e in events] == ["done"]
+    assert [e["kind"] for e in events] == ["user_msg", "done"]
 
 
 def test_runner_usage_baseline_across_rounds():
@@ -240,7 +242,7 @@ def test_runner_bare_done_fallback_at_eof():
                                   "item": {"type": "agent_message", "text": "半截"}})])
     _run(CodexCliRunner(process_factory=_factory(proc)).run(
         "p", "/tmp", on_event=events.append, cancel_event=asyncio.Event()))
-    assert [e["kind"] for e in events] == ["text_delta", "done"]
+    assert [e["kind"] for e in events] == ["user_msg", "text_delta", "done"]
 
 
 def test_runner_turn_failed_emits_error():
@@ -272,8 +274,8 @@ def test_runner_nonzero_exit_emits_error_with_stderr_tail():
         "继续", "/tmp", on_event=events.append, cancel_event=asyncio.Event(),
         resume_session_id="t-ghost"))
     assert tid is None
-    assert [e["kind"] for e in events] == ["error"]          # 无裸 done
-    text = events[0]["text"]
+    assert [e["kind"] for e in events] == ["user_msg", "error"]   # 无裸 done
+    text = events[-1]["text"]
     assert "退出码 1" in text and "No conversation found" in text
 
 
@@ -283,8 +285,9 @@ def test_runner_nonzero_exit_stderr_tail_truncated_400():
     proc = _FakeProc([], rc=2, stderr="头" + "x" * 5000)
     _run(CodexCliRunner(process_factory=_factory(proc)).run(
         "p", "/tmp", on_event=events.append, cancel_event=asyncio.Event()))
-    text = events[0]["text"]
-    assert events[0]["kind"] == "error" and "退出码 2" in text
+    err = [e for e in events if e["kind"] == "error"][0]
+    text = err["text"]
+    assert "退出码 2" in text
     assert "头" not in text                                   # 只留尾部
     assert "x" * 400 in text and "x" * 401 not in text       # 截 400 字
 
@@ -295,8 +298,8 @@ def test_runner_nonzero_exit_without_stderr_reports_code():
     proc = _FakeProc([], rc=3)
     _run(CodexCliRunner(process_factory=_factory(proc)).run(
         "p", "/tmp", on_event=events.append, cancel_event=asyncio.Event()))
-    assert [e["kind"] for e in events] == ["error"]
-    assert "退出码 3" in events[0]["text"]
+    assert [e["kind"] for e in events] == ["user_msg", "error"]
+    assert "退出码 3" in events[-1]["text"]
 
 
 def test_runner_nonzero_exit_after_turn_failed_no_duplicate_no_done():
@@ -305,8 +308,8 @@ def test_runner_nonzero_exit_after_turn_failed_no_duplicate_no_done():
     proc = _FakeProc([json.dumps({"type": "turn.failed", "error": {"message": "boom"}})], rc=1)
     _run(CodexCliRunner(process_factory=_factory(proc)).run(
         "p", "/tmp", on_event=events.append, cancel_event=asyncio.Event()))
-    assert [e["kind"] for e in events] == ["error"]
-    assert events[0]["text"] == "boom"
+    assert [e["kind"] for e in events] == ["user_msg", "error"]
+    assert events[-1]["text"] == "boom"
 
 
 def test_runner_zero_exit_bare_done_fallback_kept():
@@ -317,7 +320,7 @@ def test_runner_zero_exit_bare_done_fallback_kept():
                      rc=0, stderr="DeprecationWarning: blah\n")
     _run(CodexCliRunner(process_factory=_factory(proc)).run(
         "p", "/tmp", on_event=events.append, cancel_event=asyncio.Event()))
-    assert [e["kind"] for e in events] == ["text_delta", "done"]
+    assert [e["kind"] for e in events] == ["user_msg", "text_delta", "done"]
 
 
 # ---------- runner：cancel → SIGTERM →（3s）SIGKILL → stopped ----------
@@ -712,3 +715,44 @@ def test_api_toml_registers_drivers_and_attach_codex():
         assert m["handler"] == f"coding.{name}"
         assert m["direct"] is True and m["quiet"] is True
         assert "panel" not in m
+
+
+# ---------- B1：cancel watchdog（stdout 沉默期中断不再等下一行） ----------
+def test_codex_watchdog_kills_when_stdout_silent():
+    """B1：长命令执行中（stdout 无输出）置位 cancel → watchdog 轮询唤醒即 SIGTERM 真杀 +
+    stopped 终态，不等下一行 stdout（旧行为中断延迟无上界）。"""
+    class SilentProc(_FakeProc):
+        async def _gen(self):
+            yield (json.dumps({"type": "thread.started", "thread_id": "t-silent"}) + "\n").encode()
+            await asyncio.sleep(3600)   # 命令执行中：stdout 长时间沉默
+    proc = SilentProc([])
+    events = []
+
+    async def scenario():
+        cancel = asyncio.Event()
+
+        async def set_later():
+            await asyncio.sleep(0.05)
+            cancel.set()
+        t = asyncio.ensure_future(set_later())
+        tid = await CodexCliRunner(process_factory=_factory(proc), cancel_poll_s=0.02).run(
+            "p", "/tmp", on_event=events.append, cancel_event=cancel)
+        await t
+        return tid
+
+    tid = _run(scenario())
+    assert proc.terminated                                  # SIGTERM 已发（真杀）
+    kinds = [e["kind"] for e in events]
+    assert kinds[-1] == "stopped" and "done" not in kinds
+    assert tid == "t-silent"                                # 已捕获 thread_id 仍返回
+
+
+# ---------- B8：error 后零退出不补裸 done ----------
+def test_runner_zero_exit_after_error_no_bare_done():
+    """B8：turn.failed（已发 error）后进程 0 退出 → 不补「完成」marker（与 failed 终态打架）。"""
+    events = []
+    proc = _FakeProc([json.dumps({"type": "turn.failed", "error": {"message": "boom"}})], rc=0)
+    _run(CodexCliRunner(process_factory=_factory(proc)).run(
+        "p", "/tmp", on_event=events.append, cancel_event=asyncio.Event()))
+    kinds = [e["kind"] for e in events]
+    assert kinds == ["user_msg", "error"]                   # 无 done

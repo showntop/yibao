@@ -184,6 +184,15 @@ class SendTool(Tool):
                 # 并发安全照抄 entry 级操作模式（setdefault/append 与 _sess._SESSIONS 同锁域）。
                 queue = entry.setdefault("steer", [])
                 queue.append(prompt)
+                # B2 收尾竞态封口（入队后复读）：_stream 收尾前先立 closing 再查队——
+                # 复读到 closing 说明查队已过、本条必然不被消费，自撤并回拒绝，
+                # 不回假 ack（否则消息永不执行、会话落 done，用户被静默吞消息）
+                if entry.get("closing"):
+                    try:
+                        queue.remove(prompt)
+                    except ValueError:
+                        pass
+                    return ActionResult(success=False, error="会话正在收尾中，请稍候")
                 pos = len(queue)
                 text = f"督导补充已排队（第 {pos} 条），本轮结束后自动接续"
                 _c()._persist_marker(ctx.db, sid, text)
