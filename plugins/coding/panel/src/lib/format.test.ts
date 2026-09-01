@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { doneStatusText, emsg, fmtCost, fmtTok, fmtTs, humanFirstLine, normCwd, permPublicParams, relTime } from "./format";
+import { doneStatusText, emsg, fmtCost, fmtTok, fmtTs, friendlyError, humanFirstLine, normCwd, permPublicParams, relTime } from "./format";
 
 describe("fmtTok", () => {
   it("千以下原样", () => {
@@ -165,5 +165,22 @@ describe("normCwd", () => {
     expect(normCwd("/a/b")).toBe("/a/b");
     expect(normCwd("")).toBe("");
     expect(normCwd(undefined as unknown as string)).toBe("");
+  });
+});
+
+describe("friendlyError(2026-09 走查:裸英文+长 URL 摘要友好化)", () => {
+  it("命中模式表给一句人话(怎么办),不回显原文", () => {
+    const usage = "✗ You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits";
+    expect(friendlyError(usage)).toContain("额度已用尽");
+    expect(friendlyError(usage)).not.toContain("chatgpt.com");
+    expect(friendlyError("Error: rate limit exceeded (429)")).toContain("限流");
+    expect(friendlyError("stream error: unauthorized")).toContain("鉴权失败");
+    expect(friendlyError("ECONNREFUSED 127.0.0.1:8080")).toContain("网络异常");
+    expect(friendlyError("codex: command not found")).toContain("命令不存在");
+  });
+
+  it("未命中回落 humanFirstLine", () => {
+    expect(friendlyError("自定义奇怪错误")).toBe(humanFirstLine("自定义奇怪错误"));
+    expect(friendlyError("第一行\nat frame")).toBe("第一行");
   });
 });

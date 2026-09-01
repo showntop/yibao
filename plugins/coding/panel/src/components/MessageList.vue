@@ -47,6 +47,14 @@ function scrollToBottom() {
   el.scrollTop = el.scrollHeight;
 }
 
+// 交接摘要折叠(2026-09 走查修复):Codex→CC 交接把整段 brief 作为 prompt 发出
+// (handoffSend 乐观气泡 / CC user_msg 回流两条路径同文),全文刷墙观感差——
+// 渲染层折叠成「摘要行 + 点开全文」,store 防双份的文本匹配机制不动。
+const BRIEF_PREFIX = "【交接上下文】";
+function isHandoffBrief(text: string): boolean {
+  return String(text ?? "").startsWith(BRIEF_PREFIX);
+}
+
 // 流式 text_delta 是就地改末条气泡的 raw(数组长度不变),必须 deep 才能捕获;渲染后贴底跟随
 watch(() => props.items, () => { void nextTick(scrollIfAtBottom); }, { deep: true });
 
@@ -62,7 +70,22 @@ function onClick(e: MouseEvent) {
     <main id="log" ref="logEl" @scroll="onScroll" @click="onClick">
       <template v-for="(it, i) in items" :key="it.type === 'handoff' ? 'h:' + it.seq : i">
         <div v-if="it.type === 'user'" class="row user">
-          <div class="bubble">{{ it.text }}<button
+          <!-- 交接 brief 折叠:全文点开可见(⏪ 锚照挂,reduced 时经回流 uuid 升级) -->
+          <div v-if="isHandoffBrief(it.text)" class="bubble user-brief-wrap">
+            <details class="user-brief">
+              <summary>✈ 交接摘要已随消息发出 · {{ it.text.length }} 字（点开查看全文）</summary>
+              <div class="user-brief-body">{{ it.text }}</div>
+            </details>
+            <button
+              v-if="it.uuid"
+              type="button"
+              class="rewind-btn"
+              title="回滚到这条消息时的文件状态"
+              :disabled="rewindPending.has(it.uuid)"
+              @click.stop="emit('rewind', it.uuid)"
+            >⏪</button>
+          </div>
+          <div v-else class="bubble">{{ it.text }}<button
             v-if="it.uuid"
             type="button"
             class="rewind-btn"

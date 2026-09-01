@@ -117,3 +117,21 @@ export function humanFirstLine(text: string): string {
   }
   return "执行出错（点「详情」查看全文）";
 }
+
+// 已知高频错误的友好摘要(2026-09 走查):errbar 一行裸英文 + 长 URL 观感差——
+// 命中模式表给一句人话(怎么办),全文照旧进「详情」。未命中回落 humanFirstLine。
+const FRIENDLY_ERRORS: Array<[RegExp, string]> = [
+  [/usage limit|quota exceeded/i, "Codex 额度已用尽——升级套餐或等额度重置后重试（全文见「详情」）"],
+  [/rate limit|too many requests|\b429\b/i, "触发限流——稍等片刻自动恢复，无需处理"],
+  [/invalid api key|unauthorized|\b401\b|invalid_api_key/i, "鉴权失败——检查 API key / 登录态后重试"],
+  [/ECONNREFUSED|ENOTFOUND|ECONNRESET|network|fetch failed|timed? ?out/i, "网络异常——检查网络或代理后重试"],
+  [/command not found/i, "命令不存在——检查 CLI 是否安装并在 PATH 中"],
+];
+
+export function friendlyError(text: string): string {
+  const s = String(text ?? "");
+  for (const [re, msg] of FRIENDLY_ERRORS) {
+    if (re.test(s)) return msg;
+  }
+  return humanFirstLine(s);
+}

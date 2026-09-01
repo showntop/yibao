@@ -469,6 +469,20 @@ header .title { flex: none; font-size: 13px; font-weight: 600; color: var(--text
 .rewind-btn:hover { opacity: 1 !important; background: rgba(40,60,90,0.08); }
 .rewind-btn:disabled { opacity: .35; cursor: default; }
 .row.user .bubble:has(.rewind-btn) { padding-right: 30px; }
+/* 交接摘要折叠气泡(2026-09 走查修复):brief 全文刷墙退役——摘要行 + 点开全文 */
+.user-brief > summary {
+  cursor: pointer; list-style: none; user-select: none;
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 500; color: var(--muted);
+}
+.user-brief > summary::-webkit-details-marker { display: none; }
+.user-brief > summary:hover { color: var(--text); }
+.user-brief-body {
+  margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--border);
+  white-space: pre-wrap; word-break: break-word;
+  font-size: 12.5px; line-height: 1.6; color: var(--muted);
+  max-height: 280px; overflow-y: auto;
+}
 /* AI 回复:去气泡文档流——无底色无圆角,markdown 直接排在阅读带上;14px/1.75 长文阅读 */
 .row.ai .bubble {
   background: transparent; color: var(--text); padding: 0; border-radius: 0;
