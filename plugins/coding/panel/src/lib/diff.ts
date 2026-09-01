@@ -20,11 +20,21 @@ function toLines(text: string | null | undefined): string[] {
   return String(text).split("\n");
 }
 
+// LCS 护栏(F7):DP 是 O(n·m) 同步分配——万行级全量改写(bundle/lockfile 一次 file_edit)
+// 会分配数百 MB 卡死 WebView。超阈值退化为「全删 + 全加」(语义无损,只是无对齐行)。
+const LCS_MAX_LINES = 5000;
+
 export function lcsLines(oldText: string, newText: string): DiffLine[] {
   const A = toLines(oldText);
   const B = toLines(newText);
   const n = A.length;
   const m = B.length;
+  if (n + m > LCS_MAX_LINES) {
+    return [
+      ...A.map((text): DiffLine => ({ type: "del", text })),
+      ...B.map((text): DiffLine => ({ type: "add", text })),
+    ];
+  }
   // dp[i][j] = A[i:] 与 B[j:] 的 LCS 长度
   const dp: Int32Array[] = new Array(n + 1);
   for (let i = 0; i <= n; i++) {

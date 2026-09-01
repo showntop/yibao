@@ -184,6 +184,31 @@ describe("事件归约", () => {
     expect(s.state.ended).toBe("stopped");
   });
 
+  // 轮级改动汇总(2026-09 交互重构):done/stopped 萈 editsummary chip,轮内无改动不萈
+  it("done/stopped 后落 editsummary(按最近 user 消息后的 file_edit 计数);无改动不落", () => {
+    const { deps } = makeDeps();
+    const s = createSessionStore(deps);
+    s.applyEvent(ev({ kind: "user_msg", uuid: "u1", text: "改一下" }));
+    s.applyEvent(ev({ kind: "file_edit", tool: "Edit", path: "a.ts", old: "x", new: "y" }));
+    s.applyEvent(ev({ kind: "file_edit", tool: "Write", path: "b.ts", old: null, new: "z" }));
+    s.applyEvent(ev({ kind: "done" }));
+    const last = s.state.items[s.state.items.length - 1];
+    expect(last).toMatchObject({ type: "editsummary", count: 2 });
+    // 无改动轮:不落 chip
+    s.applyEvent(ev({ kind: "user_msg", uuid: "u2", text: "只问问" }));
+    s.applyEvent(ev({ kind: "text_delta", text: "答" }));
+    s.applyEvent(ev({ kind: "done" }));
+    expect(s.state.items.some((it) => it.type === "editsummary" && it.count === 0)).toBe(false);
+    const last2 = s.state.items[s.state.items.length - 1];
+    expect(last2).toMatchObject({ type: "assistant", done: true });
+    // stopped 也落(中断轮可能已改了文件)
+    s.applyEvent(ev({ kind: "user_msg", uuid: "u3", text: "再来" }));
+    s.applyEvent(ev({ kind: "file_edit", tool: "Edit", path: "c.ts", old: "1", new: "2" }));
+    s.applyEvent(ev({ kind: "stopped", text: "已中断" }));
+    const last3 = s.state.items[s.state.items.length - 1];
+    expect(last3).toMatchObject({ type: "editsummary", count: 1 });
+  });
+
   // 清单 7(秒败竞态)
   it("send 秒败竞态:终态先于 invoke 返回 → 不进 streaming", async () => {
     let release!: (v: { session_id: string }) => void;
@@ -299,6 +324,7 @@ describe("会话恢复", () => {
     const s2 = createSessionStore(d2.deps);
     await s2.send("/tmp", "hi", "acceptEdits", "claude-code"); // currentSession = s1
     s2.applyEvent(ev({ kind: "text_delta", text: "残留" }));
+    s2.applyEvent(ev({ kind: "done", usage: {} })); // 收尾（F1 守卫:streaming 期 resume 让位,先落终态再恢复）
     const n = await s2.resumeSession("s2", "codex");
     expect(n).toBe(2);
     expect(d2.invoke).toHaveBeenCalledWith("coding.history", { id: "s2" });
@@ -791,5 +817,100 @@ describe("交接卡项", () => {
     await s.send("/tmp", "hi", "acceptEdits", "claude-code");
     s.newChat();
     expect(s.state.items).toEqual([]); // 新对话清屏,卡随之消失(对齐原 #log innerHTML 清空)
+  });
+});
+
+describe("resume 让位与收尾(F1/F3/F4)", () => {
+  it("F1: history 在飞期间发了消息 → resume 让位,新会话不被丢 discarded、不被覆盖", async () => {
+    let releaseHistory!: (v: { messages: never[] }) => void;
+    const invoke = vi.fn((method: string) => {
+      if (method === "coding.history") return new Promise((res) => { releaseHistory = res; });
+      return Promise.resolve({ session_id: "new-1" }); // coding.start
+    });
+    const s = createSessionStore({ invoke });
+    const p = s.resumeSession("old-1");
+    await s.send("/tmp", "新任务", "acceptEdits", "claude-code"); // 在飞:起新会话并 streaming
+    releaseHistory({ messages: [] });
+    expect(await p).toBe(-1);                    // 让位(旧行为:-1 前先把 new-1 丢 discarded)
+    expect(s.state.currentSession).toBe("new-1");
+    s.applyEvent(ev({ kind: "text_delta", text: "在跑" })); // 新会话流不被滤、items 不被旧历史覆盖
+    expect(s.state.items.some((it) => it.type === "assistant" && it.raw === "在跑")).toBe(true);
+  });
+
+  it("F1: history 在飞期间 currentSession 已切别会话 → 让位", async () => {
+    let releaseA!: (v: { messages: Array<{ role: string; text: string; uuid: string; ts: number; seq: number }> }) => void;
+    const invoke = vi.fn((method: string, params?: Record<string, unknown>) => {
+      if (method === "coding.history" && params?.id === "a-1") {
+        return new Promise((res) => { releaseA = res; });
+      }
+      return Promise.resolve({ messages: [] });   // 其他 history / 兜底
+    });
+    const s = createSessionStore({ invoke });
+    const pa = s.resumeSession("a-1");
+    s.state.currentSession = "b-1";               // 别路径已绑定 b-1(不经 resume 免归并)
+    releaseA({ messages: [{ role: "user", text: "a", uuid: "", ts: 1, seq: 1 }] });
+    expect(await pa).toBe(-1);
+    expect(s.state.currentSession).toBe("b-1");   // 不被 a-1 夺走
+    expect(s.state.items).toEqual([]);            // b-1 的视图不被 a 的历史覆盖
+  });
+
+  it("F1 对照:换绑别会话(await 期间 currentSession 未变)不让位——正常接续流程保留", async () => {
+    const invoke = vi.fn(async () => ({
+      messages: [{ role: "user", text: "旧", uuid: "", ts: 1, seq: 1 }],
+    }));
+    const s = createSessionStore({ invoke });
+    s.state.currentSession = "s1";
+    const n = await s.resumeSession("s2");
+    expect(n).toBe(1);                            // 正常换绑
+    expect(s.state.currentSession).toBe("s2");
+    expect(s._test.discardedSessions.has("s1")).toBe(true);
+  });
+
+  it("F3: 防重入归并保留 opts(skipIfEmpty 不再静默失效)", async () => {
+    let releaseSlow!: (v: { messages: Array<{ role: string; text: string; uuid: string; ts: number; seq: number }> }) => void;
+    const invoke = vi.fn((method: string, params?: Record<string, unknown>) => {
+      if (method === "coding.history" && params?.id === "slow-1") {
+        return new Promise((res) => { releaseSlow = res; });
+      }
+      return Promise.resolve({ messages: [] });   // empty-1 空历史
+    });
+    const s = createSessionStore({ invoke });
+    const p1 = s.resumeSession("slow-1");
+    expect(await s.resumeSession("empty-1", "claude-code", { skipIfEmpty: true })).toBe(-1); // 归并
+    releaseSlow({ messages: [{ role: "user", text: "x", uuid: "", ts: 1, seq: 1 }] });
+    await p1;
+    await new Promise((r) => setTimeout(r, 0));   // finally 泄放归并是 void 异步
+    expect(s.state.currentSession).toBe("slow-1"); // skipIfEmpty 生效:空历史的 empty-1 未绑定
+  });
+
+  it("F4: resume 清空 busy 排队(旧上下文的意图不泄放新会话)", async () => {
+    const { deps } = makeDeps();
+    const s = createSessionStore(deps);
+    s.state.sending = true;                       // 占住发送窗让 queueInput 入队
+    s.queueInput("旧上下文的话", [], "/tmp", "acceptEdits", "claude-code");
+    expect(s._test.getQueue()).toHaveLength(1);
+    s.state.sending = false;                      // 复位(F1 让位守卫不触发)
+    await s.resumeSession("r-1");
+    expect(s._test.getQueue()).toHaveLength(0);
+  });
+});
+
+describe("handoffSend 失败回滚(F8)", () => {
+  it("start 失败:marker 摘除、旧会话出 discarded 并恢复绑定(日志不与实态矛盾)", async () => {
+    const invoke = vi.fn(async (method: string) => {
+      if (method === "coding.session_brief") return { brief: "摘要" };
+      throw new Error("启动失败");                 // coding.start
+    });
+    const s = createSessionStore({ invoke });
+    s.state.currentSession = "old-1";
+    s.state.curSessAgent = "codex";
+    const r = await s.handoffSend("claude-code", {
+      cwd: "/tmp", userText: "继续", mode: "acceptEdits",
+      isStale: () => false, onHandedOff: () => {},
+    });
+    expect(r).toBe("failed");
+    expect(s.state.items.some((it) => it.type === "marker" && it.text.startsWith("交接给"))).toBe(false);
+    expect(s.state.currentSession).toBe("old-1");  // 旧会话恢复绑定(后端它还活着)
+    expect(s._test.discardedSessions.has("old-1")).toBe(false);
   });
 });

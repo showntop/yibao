@@ -80,6 +80,30 @@ describe("multiEditDiff", () => {
   });
 });
 
+describe("LCS 护栏(F7: 超阈值退化全删+全加)", () => {
+  it("行数和超 5000 退化为全删+全加(不分配 O(n·m) DP,语义无损)", () => {
+    const big = Array.from({ length: 3000 }, (_, i) => `old-${i}`).join("\n");
+    const bigNew = Array.from({ length: 2500 }, (_, i) => `new-${i}`).join("\n");
+    const lines = lcsLines(big, bigNew);
+    const adds = lines.filter((l) => l.type === "add").length;
+    const dels = lines.filter((l) => l.type === "del").length;
+    expect(dels).toBe(3000);
+    expect(adds).toBe(2500);
+    expect(lines[0]).toMatchObject({ type: "del", text: "old-0" });
+    expect(lines[3000]).toMatchObject({ type: "add", text: "new-0" });
+  });
+
+  it("阈值内仍走 LCS 对齐(上下文行保留)", () => {
+    const lines = lcsLines("a\nb\nc", "a\nx\nc");
+    expect(lines).toEqual([
+      { type: "ctx", text: "a" },
+      { type: "del", text: "b" },
+      { type: "add", text: "x" },
+      { type: "ctx", text: "c" },
+    ]);
+  });
+});
+
 describe("diffStats", () => {
   it("只计 add/del,ctx 忽略", () => {
     expect(diffStats([

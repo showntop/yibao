@@ -42,3 +42,16 @@ describe("permSummary", () => {
     expect(permSummary("Bash", null)).toBe("{}");
   });
 });
+
+describe("dropSession(F5: 会话终态清待批)", () => {
+  it("按 sid 清空待批项;其他会话条目保留;无条目幂等", () => {
+    const r = createReviewStore();
+    r.upsert({ rid: "r1", sid: "s1", tool: "Bash", summary: "a", params: {} });
+    r.upsert({ rid: "r2", sid: "s1", tool: "Edit", summary: "b", params: {} });
+    r.upsert({ rid: "r3", sid: "s2", tool: "Bash", summary: "c", params: {} });
+    r.dropSession("s1");
+    expect(r.state.items.map((x) => x.rid)).toEqual(["r3"]);
+    r.dropSession("nope"); // 幂等
+    expect(r.state.items).toHaveLength(1);
+  });
+});

@@ -30,6 +30,15 @@ export function createReviewStore() {
     if (i >= 0) state.items.splice(i, 1);
   }
 
+  /** 按会话清空(F5):会话终态(done/stopped/error)时挂起的待批项随会话终结一并出列——
+   *  中断/出错路径后端会补 permission_done(deny),但面板晚收/丢事件时卡片会滞留死栏;
+   *  幂等:无此 sid 的条目则无操作 */
+  function dropSession(sid: string) {
+    const i = state.items.findIndex((x) => x.sid === sid);
+    if (i < 0) return;
+    state.items = state.items.filter((x) => x.sid !== sid);
+  }
+
   /** 挂载同步:perm_pending 快照全量替换(对账启动前漏收的事件) */
   function snapshot(items: ReviewItem[]) {
     state.items.splice(0, state.items.length, ...items);
@@ -51,5 +60,5 @@ export function createReviewStore() {
     return out;
   });
 
-  return { state, upsert, resolve, snapshot, groups };
+  return { state, upsert, resolve, dropSession, snapshot, groups };
 }
