@@ -23,16 +23,18 @@ import { normAgent } from "./stores/drivers";
 import { createStationsStore, MAX_STATIONS, type RailLive } from "./stores/stations";
 import { createReviewStore, type ReviewItem } from "./stores/review";
 import StationView from "./components/StationView.vue";
+import StationTabs, { type TabInfo } from "./components/StationTabs.vue";
 import SessionRail, { LIVE_TEXT, type RailRow } from "./components/SessionRail.vue";
 import ReviewRail from "./components/ReviewRail.vue";
 
 const stations = createStationsStore();
 const review = createReviewStore();
 
-// StationView defineExpose 的壳侧视图(以磁盘实装为准;expose 代理 unwrap ref,dockH 直读数字)
+// StationView defineExpose 的壳侧视图(以磁盘实装为准;expose 代理 unwrap ref,dockH/cwd 直读数字/字符串)
 interface StationViewExposed {
   state: { waiting: boolean; streaming: boolean; sending: boolean };
   dockH: number;
+  cwd: string;
   isBusy: boolean;
   onData: (d: PanelData) => void;
   bindSession: (sid: string, agent: string) => boolean; // T8:受理 true/守卫拒绝 false(壳据此回滚路由表)
@@ -151,11 +153,19 @@ onInit((data) => {
     review.resolve(String(ev.rid || ""));
   }
   const id = stations.stationForSid(sid);
-  if (id !== null) deliverToStation(id, d);      // 已绑工位:投递
-  else {                                          // 未绑:左栏派生 + 终态/陌生 sid 防抖刷新
+  if (id !== null) {
+    deliverToStation(id, d);                     // 已绑工位:投递
+    // F6:活体翻转事件也让左栏重算——railRows 是刷新时快照(liveOfStation 仅刷新时执行),
+    // 不刷则绑定工位跑完后左栏永远滞留「运行中」。只挑翻转事件,流式 delta 不刷。
+    if (ev.kind === "permission_request" || ev.kind === "permission_done"
+        || ev.kind === "done" || ev.kind === "stopped" || ev.kind === "error") scheduleRailRefresh();
+  } else {                                        // 未绑:左栏派生 + 终态/陌生 sid 防抖刷新
     stations.bumpRail(sid, d.event.kind);
     scheduleRailRefresh();
   }
+  // F5:会话终态时挂起的待批项一并出列——中断/出错后端虽会补 permission_done(deny),
+  // 但面板晚收/丢事件时审批栏会滞留死卡,终态即清(幂等,无条目无操作)
+  if (ev.kind === "done" || ev.kind === "stopped" || ev.kind === "error") review.dropSession(sid);
 });
 
 // ---- 左栏编排 ----
@@ -289,6 +299,31 @@ const dockH = computed(() => {
   return stationRefs[stations.state.focusId]?.dockH || 150;
 });
 
+// ---- 工位 tab 条(2026-09 交互重构):编号 + 项目名 + 活体点一排看全。tabInfos 的响应式
+//      依赖有两路:refsVersion(ref 登记/注销)+ 工位 expose 代理上的 cwd/state 读取
+//      (ref 与 store reactive 的依赖追踪在读取点生效)——壳无需轮询 ----
+function cwdBaseOf(cwd: string): string {
+  if (!cwd) return "";
+  const normed = cwd.replace(/\/+$/, "") || cwd;
+  return normed.split("/").filter(Boolean).pop() || "";
+}
+const tabInfos = computed<TabInfo[]>(() => {
+  void refsVersion.value;
+  return stations.state.stations.map((s) => ({
+    id: s.id,
+    projectId: cwdBaseOf(String(stationRefs[s.id]?.cwd ?? "")),
+    live: liveOfStation(s.id),
+  }));
+});
+
+// ---- Esc 关抽屉(2026-09 交互重构):会话/review 抽屉先于工位内 esc 语义(stop/浮层)——
+//      capture 阶段拦下并 stopPropagation,抽屉开着时 esc 不再误触中断流 ----
+function onShellKeydown(e: KeyboardEvent) {
+  if (e.key !== "Escape") return;
+  if (drawerOpen.value) { drawerOpen.value = false; e.stopPropagation(); return; }
+  if (reviewDrawerOpen.value) { reviewDrawerOpen.value = false; e.stopPropagation(); }
+}
+
 // ---- 窄窗自适应:rail 隐藏 + ☰ 开抽屉,v-show 只留聚焦工位 ----
 const narrow = ref(false);
 const drawerOpen = ref(false);
@@ -304,11 +339,13 @@ onMounted(() => {
     onMqChange();
     mq.addEventListener("change", onMqChange);
   }
+  document.addEventListener("keydown", onShellKeydown, true); // capture:抽屉 esc 先于工位语义
   void refreshRail(); // 挂载即刷
   void syncReviewPending(); // review 栏挂载快照(T5)
 });
 onBeforeUnmount(() => {
   mq?.removeEventListener("change", onMqChange);
+  document.removeEventListener("keydown", onShellKeydown, true);
   if (railTimer) clearTimeout(railTimer);
 });
 </script>
@@ -316,8 +353,8 @@ onBeforeUnmount(() => {
 <template>
   <div class="shell" :class="{ narrow, 'has-review': review.state.items.length > 0 }">
     <a class="skip-link" href="#stations">跳到工位</a>
-    <!-- 左栏常驻抽屉(验收样式迭代:会话列表默认收起,stations 区铺满全宽):☰ 常显开抽屉,
-         点行/罩层即收(SessionRail 内部自带 close-drawer);窄窗语义不变(单工位 + review 徽按钮) -->
+    <!-- 左栏常驻抽屉(会话列表默认收起,tab 条 ☰ 唤出;点行/罩层即收):
+         抽屉只管会话,工位切换/关闭归 tab 条(2026-09 交互重构) -->
     <SessionRail
       v-if="drawerOpen"
       :rows="railRows"
@@ -331,33 +368,39 @@ onBeforeUnmount(() => {
       @focus-station="onFocusStation"
       @close-drawer="drawerOpen = false"
     />
-    <div id="stations" class="stations" :style="{ '--dock-h': dockH + 'px' }">
-      <!-- 会话列表钮常显(左栏常驻抽屉):stations 左上角,点击开会话列表抽屉 -->
-      <button type="button" class="rail-toggle" title="会话列表" aria-label="会话列表" :aria-expanded="drawerOpen" @click="drawerOpen = true">
-        <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
-          <path fill="currentColor" d="M2.5 3.75h11v1.25h-11zm0 3.5h11v1.25h-11zm0 3.5h11v1.25h-11z"/>
-        </svg>
-      </button>
-      <!-- 窄窗「审批 N」徽按钮(T5):与 ☰ 对称(stations 右上角),仅有待批时现身,点击开 review drawer -->
-      <button
-        v-if="narrow && review.state.items.length" type="button" class="review-toggle"
-        title="有待批的权限请求" @click="reviewDrawerOpen = true"
-      >审批 {{ review.state.items.length }}</button>
-      <!-- autoplay 仅 1 号工位:id 单调分配不复用 + v-show 只切显隐不重挂载,s.id===1 即首挂载 -->
-      <StationView
-        v-for="s in stations.state.stations" :key="s.id"
-        :ref="stationRefFn(s.id)"
-        v-show="!narrow || s.id === stations.state.focusId"
-        :class="{ focused: s.id === stations.state.focusId }"
-        :focused="s.id === stations.state.focusId"
-        :autoplay="s.id === 1"
-        :default-cwd="lastCwd"
-        @sid-change="(sid, agent) => onSidChange(s.id, sid, agent)"
-        @request-focus="stations.focus(s.id)"
-        @request-remove="onRemoveStation(s.id)"
+    <div class="main-col">
+      <!-- 工位 tab 条:☰ 抽屉 + 工位 tabs(聚焦/活体/关闭) + 新工位;窄窗同样可切(修死区) -->
+      <StationTabs
+        :tabs="tabInfos"
+        :focus-id="stations.state.focusId"
+        :add-disabled="stations.state.stations.length >= MAX_STATIONS"
+        @focus="onFocusStation"
+        @close="onRemoveStation"
+        @add="onNewStation"
+        @open-drawer="drawerOpen = true"
       />
+      <div id="stations" class="stations" :style="{ '--dock-h': dockH + 'px' }">
+        <!-- 窄窗「审批 N」徽按钮(T5):右上角,仅有待批时现身,点击开 review drawer -->
+        <button
+          v-if="narrow && review.state.items.length" type="button" class="review-toggle"
+          title="有待批的权限请求" @click="reviewDrawerOpen = true"
+        >审批 {{ review.state.items.length }}</button>
+        <!-- autoplay 仅 1 号工位:id 单调分配不复用 + v-show 只切显隐不重挂载,s.id===1 即首挂载 -->
+        <StationView
+          v-for="s in stations.state.stations" :key="s.id"
+          :ref="stationRefFn(s.id)"
+          v-show="!narrow || s.id === stations.state.focusId"
+          :class="{ focused: s.id === stations.state.focusId }"
+          :focused="s.id === stations.state.focusId"
+          :autoplay="s.id === 1"
+          :default-cwd="lastCwd"
+          @sid-change="(sid, agent) => onSidChange(s.id, sid, agent)"
+          @request-focus="stations.focus(s.id)"
+        />
+      </div>
     </div>
-    <!-- 统一 review 栏(T5):宽窗右栏 260px 仅有待批出列(自动进出);窄窗改 drawer 模式(徽按钮开) -->
+    <!-- 统一 review 栏(2026-09 交互重构):改浮层停靠右侧——不再挤压工位区宽度(旧 260px
+         侧栏每次审批进出都会 relayout 全部工位);窄窗仍 drawer 模式(徽按钮开) -->
     <ReviewRail
       v-if="review.state.items.length > 0 && (!narrow || reviewDrawerOpen)"
       :groups="reviewGroups"

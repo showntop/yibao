@@ -49,6 +49,7 @@ function onRow(r: RailRow) {
         <div class="rail-row-title">{{ r.title }}</div>
         <div class="rail-row-sub">
           <span v-if="r.boundStationId !== null" class="rail-badge">工位 {{ r.boundStationId }}</span>
+          <span class="live-dot" :class="r.live"></span>
           {{ r.subtitle }}
         </div>
         <button
@@ -75,6 +76,7 @@ function onRow(r: RailRow) {
           <div class="rail-row-title">{{ r.title }}</div>
           <div class="rail-row-sub">
             <span v-if="r.boundStationId !== null" class="rail-badge">工位 {{ r.boundStationId }}</span>
+            <span class="live-dot" :class="r.live"></span>
             {{ r.subtitle }}
           </div>
           <button

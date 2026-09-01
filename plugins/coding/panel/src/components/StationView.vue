@@ -43,6 +43,7 @@ import AgentChip from "./AgentChip.vue";
 import StatusLine from "./StatusLine.vue";
 import HistoryOverlay from "./HistoryOverlay.vue";
 import HandoffPicker from "./HandoffPicker.vue";
+import ChangesOverlay from "./ChangesOverlay.vue";
 
 const props = withDefaults(defineProps<{
   focused: boolean;   // 聚焦工位才响应文档级 esc/click-outside(多实例共存守卫)
@@ -52,8 +53,8 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   "sid-change": [sid: string | null, agent: string]; // watch state.currentSession 上报(壳更新路由表)
+  "cwd-change": [cwd: string];                       // watch cwd 上报(壳装配工位 tab 项目名)
   "request-focus": [];  // 工位任意处 mousedown(壳切聚焦)
-  "request-remove": []; // 工位头 ✕(壳决定 unbind 或 removeStation)
 }>();
 
 const store = createSessionStore({
@@ -79,6 +80,8 @@ watch(() => state.currentSession, (sid) => {
   switchAgent.value = null;
   emit("sid-change", sid, state.curSessAgent);
 });
+// cwd-change 上报壳(工位 tab 项目名用);immediate 保证挂载即有值
+watch(cwd, (c) => emit("cwd-change", c), { immediate: true });
 
 // busy 排队泄放的发送上下文:随 cwd/mode/引擎选择实时快照(原读全局变量,天然实时);
 // switchAgent 一并入快照(T9)——泄放路径的跨引擎交接守卫读它(store 侧判据)
@@ -127,6 +130,36 @@ const costText = computed(() => {
   return fmtTok(u.tok) + " tok" + (u.hasCost ? " · " + fmtCost(u.cost) : "");
 });
 const newChatDisabled = computed(() => state.sending || state.streaming || !state.currentSession);
+
+// ---- 工位头人话标识(2026-09 交互重构):「项目名 · 任务摘要」为主标题,裸哈希降级 tooltip——
+//      同一会话三个表面三张脸(头=哈希/左栏=项目·摘要/输入条=cwd 路径)收敛为一套语言 ----
+const projectBase = computed(() => {
+  const normed = (cwd.value || "").replace(/\/+$/, "");
+  return normed.split("/").filter(Boolean).pop() || "";
+});
+const firstUserText = computed(() => {
+  for (const it of state.items) {
+    if (it.type === "user") return String(it.text).replace(/\s+/g, " ").slice(0, 24);
+  }
+  return "";
+});
+const headTitle = computed(() => {
+  if (projectBase.value) return firstUserText.value ? projectBase.value + " · " + firstUserText.value : projectBase.value;
+  return state.currentSession ? "会话 " + state.currentSession.slice(0, 8) : "新会话";
+});
+const headTooltip = computed(() => {
+  const parts: string[] = [];
+  if (cwd.value) parts.push("项目目录：" + cwd.value);
+  if (state.currentSession) parts.push("会话 " + state.currentSession);
+  if (!state.currentSession && !cwd.value) parts.push("新会话（未绑定，发送即开）");
+  return parts.join("\n");
+});
+
+// ---- 会话文件改动清单(2026-09 交互重构):editsummary chip 点击开浮层,聚合全部 file_edit 项 ----
+const changesOpen = ref(false);
+const fileEditItems = computed(() =>
+  state.items.filter((it): it is Extract<RenderItem, { type: "fileedit" }> => it.type === "fileedit"),
+);
 
 // ---- footer 状态行:提交中(handoffSend 摘要窗「生成交接摘要…」/ startHandoffSession
 // invoke 窗「Codex 接续启动中…」)/运行中(spinner + 秒表)/完成行(doneStatusText,isFinite 守御)/错误 ----
@@ -518,24 +551,22 @@ onBeforeUnmount(() => {
 // hint=壳侧状态行提示通道(T8)
 // handoff 草稿随迁：壳路由 → 本工位 Composer（壳只管投递，工位内直转）
 function fillDraft(text: string) { composerRef.value?.fillDraft(text); }
-defineExpose({ state, dockH, onData, bindSession, unbindSession, stop, isBusy: busy, hint, fillDraft });
+// cwd 一并 expose（壳装配工位 tab 项目名；响应式经 expose 代理保留，tab 模板直读可追踪）
+defineExpose({ state, dockH, cwd, onData, bindSession, unbindSession, stop, isBusy: busy, hint, fillDraft });
 </script>
 
 <template>
-  <!-- 工位根(T6 起正式盒模型:flex 列,布局/停靠样式由壳 style.css 落;T4 的 display:contents
-       过渡技巧已退役);根同时是浮层定位锚(position:relative)与 request-focus 事件锚 -->
-  <div class="station" @mousedown="emit('request-focus')">
+  <!-- 工位根(T6 起正式盒模型:flex 列,布局/停靠样式由壳 style.css 落);根同时是浮层定位锚
+       (position:relative)与 request-focus 事件锚。empty 修饰类供 hero 态样式(composer 居中) -->
+  <div class="station" :class="{ empty: !state.items.length }" @mousedown="emit('request-focus')">
     <!-- 桥缺失时可见,提示这是设计预览 -->
     <div v-if="!hasBridge" id="bridge-warn">设计预览：未检测到译宝桥（window.yibao），起停/流式回显不可用。</div>
 
-    <!-- 工位头(T4,替换原顶栏「编码对话」标题):左 会话标识 + 引擎徽标 + waiting/busy 状态点
-         (dot-waiting 黄点待批 / dot-running 绿点运行中,语义 class,样式 T6 落);右 成本聚合 +
-         会话(接续浮层)/ 新对话 + 移出 ✕(壳决定 unbind 或 removeStation) -->
+    <!-- 工位头(2026-09 交互重构):主标题「项目名 · 任务摘要」人话标识(哈希降级 tooltip),
+         引擎徽标 + waiting/busy 状态点;右 成本聚合 + 接续 + 新对话。关工位 ✕ 收敛进顶部
+         tab 条(语义显式:「关这个工位」),头部不再放歧义按钮 -->
     <header>
-      <span
-        class="title"
-        :title="state.currentSession ? '当前会话 ' + state.currentSession : '新会话（未绑定，发送即开）'"
-      >{{ state.currentSession ? "会话 " + state.currentSession.slice(0, 8) : "新会话" }}</span>
+      <span class="title" :title="headTooltip">{{ headTitle }}</span>
       <span class="agent-badge" :title="'当前会话引擎：' + agentLabel(state.curSessAgent)">{{ agentLabel(state.curSessAgent) }}</span>
       <span v-if="state.waiting" class="dot-waiting" title="有权限请求待审批"></span>
       <span v-else-if="state.streaming" class="dot-running" title="会话运行中"></span>
@@ -549,14 +580,14 @@ defineExpose({ state, dockH, onData, bindSession, unbindSession, stop, isBusy: b
         @click.stop="openHistory"
       >接续</button>
       <button id="new-chat" type="button" title="清空当前对话，开新会话（下次发送走 coding.start）" :disabled="newChatDisabled" @click="store.newChat()">新对话</button>
-      <button class="station-remove" type="button" title="移出本会话（由壳决定解绑或移除工位）" @click="emit('request-remove')">✕</button>
     </header>
 
-    <!-- 空工位态(验收样式收敛):无会话无消息时的居中淡指引,替代大片灰底 -->
+    <!-- 空工位态 → 发射台(2026-09 交互重构):文案上移让位居中的 hero composer(样式:
+         .station.empty footer 脱离页底停靠,居中放大);指引按上下文给全(项目/快捷键) -->
     <div v-if="!state.items.length" class="station-empty">
-      <p class="station-empty-kicker">空工位</p>
-      <p class="station-empty-lead">输入消息开始新会话</p>
-      <p class="station-empty-hint">或点右上「接续」恢复历史</p>
+      <p class="station-empty-kicker">编码工位</p>
+      <p class="station-empty-lead">{{ projectBase ? "在 " + projectBase + " 说清任务，后台开跑" : "选个项目目录，说清任务，后台开跑" }}</p>
+      <p class="station-empty-hint">↩ 发送 · ⇧↩ 换行 · @ 引用文件 · 右上「接续」恢复历史</p>
     </div>
     <MessageList
       v-show="state.items.length > 0"
@@ -566,6 +597,7 @@ defineExpose({ state, dockH, onData, bindSession, unbindSession, stop, isBusy: b
       @rewind="onRewind"
       @handoff-cancel="onHandoffCancel"
       @handoff-start="onHandoffStart"
+      @open-changes="changesOpen = true"
       @status="onComposerStatus"
     />
 
@@ -632,5 +664,7 @@ defineExpose({ state, dockH, onData, bindSession, unbindSession, stop, isBusy: b
       @pick="onHandoffPick"
       @close="openLayer = ''"
     />
+    <!-- 会话文件改动清单(2026-09 交互重构):editsummary chip 点击开,聚合全部 file_edit 项 -->
+    <ChangesOverlay v-if="changesOpen" :items="fileEditItems" @close="changesOpen = false" />
   </div>
 </template>

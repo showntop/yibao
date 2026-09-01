@@ -35,7 +35,10 @@ function paramsTitle(it: ReviewItem) {
       <div v-if="g.items.length" class="review-group">
         <div class="review-group-head">
           <span>{{ g.label }} · {{ g.items.length }}</span>
-          <button type="button" class="review-approve-all" @click="emit('decide-group', g.sid, true)">全批</button>
+          <span class="review-group-acts">
+            <button type="button" class="review-approve-all" @click="emit('decide-group', g.sid, true)">全批</button>
+            <button type="button" class="review-deny-all" title="拒绝本组全部待批请求" @click="emit('decide-group', g.sid, false)">全拒</button>
+          </span>
         </div>
         <div v-for="it in g.items" :key="it.rid" class="review-card" :title="paramsTitle(it)">
           <span class="review-card-tool">{{ it.tool }}</span>
@@ -55,7 +58,10 @@ function paramsTitle(it: ReviewItem) {
         <div v-if="g.items.length" class="review-group">
           <div class="review-group-head">
             <span>{{ g.label }} · {{ g.items.length }}</span>
-            <button type="button" class="review-approve-all" @click="emit('decide-group', g.sid, true)">全批</button>
+            <span class="review-group-acts">
+              <button type="button" class="review-approve-all" @click="emit('decide-group', g.sid, true)">全批</button>
+              <button type="button" class="review-deny-all" title="拒绝本组全部待批请求" @click="emit('decide-group', g.sid, false)">全拒</button>
+            </span>
           </div>
           <div v-for="it in g.items" :key="it.rid" class="review-card" :title="paramsTitle(it)">
             <span class="review-card-tool">{{ it.tool }}</span>
