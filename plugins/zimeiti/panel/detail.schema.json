@@ -20,6 +20,8 @@
     {"label": "状态", "value": "$data.rows.0.status"},
     {"label": "项目", "value": "$data.rows.0.project"},
     {"label": "稿件", "value": "$data.rows.0.draft"},
+    {"label": "总字数", "value": "$data.rows.0.draft_words"},
+    {"label": "口播字数", "value": "$data.rows.0.draft_narration"},
     {"label": "素材", "value": "$data.rows.0.materials"},
     {"label": "发布", "value": "$data.rows.0.published_at|date"},
     {"label": "创建", "value": "$data.rows.0.created_at|date"},

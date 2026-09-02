@@ -59,6 +59,8 @@ columns = [
   {name = "version", type = "integer"},
   {name = "content_path", type = "text"},
   {name = "note", type = "text", default = ""},
+  {name = "word_count", type = "integer", default = 0},       # 文档总字数（_wordcount 权威口径，保存时落；0=存量未算，读时懒补）
+  {name = "narration_count", type = "integer", default = 0},  # 口播字数（现稿无口播段标记 = 总字数）
   {name = "created_at", type = "integer"},
 ]
 indexes = ["topic_id"]
@@ -177,34 +179,9 @@ columns = [
 ]
 indexes = ["topic_id"]
 
-[[tool]]
-id = "add"
-label = "记选题"
-type = "db"
-description = "记录一条新选题（标题必填），初始状态为「候选」进看板；面向视频的选题可附 HKRR/钩型/目标视频平台/3 条封面概念"
-risk = "L1"
-panel = "zimeiti:board"
-refresh = "list"   # 写入后面板拿刷新后的看板，而非回执 {"id":…}
-required = ["title"]
-[tool.params]
-title = {type = "string", description = "选题标题（一句话说清要写什么）"}
-angle = {type = "string", description = "切入角度：从哪个点写、给谁看"}
-platform = {type = "string", description = "目标平台（如公众号/小红书/播客）"}
-source = {type = "string", description = "选题来源（如灵感/读者反馈/热点）"}
-url = {type = "string", description = "来源链接（热点转选题时的原文地址，可选）"}
-hkrr = {type = "string", description = "HKRR 标注 JSON 字符串（视频选题用）：{\"happy\": 快乐, \"knowledge\": 知识, \"resonance\": 共鸣, \"rhythm\": 节奏}——快乐/知识/共鸣至少沾 1 项（成立理由），节奏标注可行/存疑"}
-hook_type = {type = "string", description = "钩型（视频选题用，如 悬念/反常识/利益承诺/身份代入）"}
-target_platform = {type = "string", description = "目标视频平台（视频选题用，如 抖音/B站/YouTube）"}
-cover_concepts = {type = "string", description = "封面概念 JSON 数组字符串，恰好 3 条文案级方案（只出文字，不出图；视频选题用）"}
-[tool.db]
-op = "insert"
-table = "topics"
-auto = {created_at = "unixts", updated_at = "unixts"}   # 时间戳由系统生成（unix 秒）
-[tool.work_output]
-kind = "artifact"
-artifact_type = "zimeiti.topic"
-ref_from = "data.id"
-metadata_fields = ["params.title", "params.angle", "params.target_platform"]
+# add 已由 tools/add_topic.py 代码承接（2026-09-02 P1-02 后续：会话绑定项目时自动回写
+# project_id，免模型手工 zimeiti.update 双写漂移；required/params/risk/panel/refresh/
+# work_output 与原声明式等价，quiet 保留参数在代码 openai_schema 里声明）
 
 # list 已由 tools/list_topics.py 代码承接（2026-09-02 项目作用域：会话绑定项目时默认
 # 只列本项目选题，scope="global"/project_id 显式放宽；scope/project_id 参数在代码

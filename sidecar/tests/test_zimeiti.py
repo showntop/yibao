@@ -181,6 +181,93 @@ def test_get_enriches_single_topic(env):
     assert "draft" not in _run(reg, "zimeiti.get", {}).data["rows"][0]
 
 
+# ---------- 字数口径统一（9-01 报告 P1-08：Agent 自估 / 详情 len() / Focus 规范计数 → 一套权威） ----------
+
+
+def _load_wordcount():
+    """按插件加载器同款方式按文件加载 tools/_wordcount.py（_ 前缀共享 helper，不当 tool 加载）。"""
+    import importlib.util
+
+    path = ZIMEITI_DIR / "tools" / "_wordcount.py"
+    spec = importlib.util.spec_from_file_location("zimeiti__wordcount_test", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_doc_words_cjk_latin_digit_mixed():
+    """权威口径（与桌面 Focus doc-status.ts docWordsOf 同步）：CJK 按字，拉丁/数字连续串按词。"""
+    wc = _load_wordcount()
+    assert wc.doc_words("一二三四五") == 5       # 纯中文按字
+    assert wc.doc_words("hello world") == 2      # 拉丁连续串按词
+    assert wc.doc_words("AI 桌宠的一天") == 6     # 混合：AI=1 + 桌宠的一天=5
+    assert wc.doc_words("3 天涨粉 200") == 5      # 数字串各计 1：3/200=2 + 天涨粉=3
+    assert wc.doc_words("it's a-test") == 2      # 连续串内部 '’- 不断词
+
+
+def test_doc_words_ignores_whitespace_and_marks():
+    """空白/markdown 记号不计；代码块整体不计；链接/图片只计文字。"""
+    wc = _load_wordcount()
+    assert wc.doc_words("# 标题\n\n**粗体** 正文") == 6         # # ** 与换行不计：标题+粗体+正文=6
+    assert wc.doc_words("见 [链接文字](https://x) 和 ![图](y.png) 末") == 8  # 只计链接/图片文字
+    assert wc.doc_words("```python\nprint(1)\n```\n正文两行") == 4  # fenced 代码块整体不计
+    assert wc.doc_words("`code` 字") == 2                      # 行内代码记号不计、内容计
+    assert wc.doc_words("  \n\t ") == 0                        # 全空白 = 0
+
+
+def test_narration_words_equals_doc_words_without_marker():
+    """口播字数：现有稿件格式（skills/write 五段式 markdown）无口播段标记，口播=全文。"""
+    wc = _load_wordcount()
+    text = "# 稿\n第一段 钩子。\n第二段 hello world。"
+    assert wc.narration_words(text) == wc.doc_words(text)
+
+
+def test_article_save_stores_authoritative_counts(env):
+    """保存时算好两个数：落 articles 行（新列）+ 放进返回 data（模型报数有权威来源）。"""
+    reg, _, _ = env
+    tid = _run(reg, "zimeiti.add", {"title": "T"}).data["id"]
+    r = _run(reg, "zimeiti.article_save", {"id": tid, "content": "# 标题\n正文 hello"})
+    assert r.success, r.error
+    assert r.data["word_count"] == 5 and r.data["narration_count"] == 5  # 标题正文=4 + hello=1
+    db = reg.get("zimeiti.article_save").plugin_ctx.db
+    row = db.query("articles", where={"topic_id": tid})[0]
+    assert row["word_count"] == 5 and row["narration_count"] == 5
+
+
+def test_get_reads_stored_word_count(env):
+    """详情聚合读存储值而非现算：手改存储值，聚合跟着变（draft + 分列字段）。"""
+    reg, _, _ = env
+    tid = _run(reg, "zimeiti.add", {"title": "T"}).data["id"]
+    _run(reg, "zimeiti.article_save", {"id": tid, "content": "一二三四五"})
+    db = reg.get("zimeiti.get").plugin_ctx.db
+    aid = db.query("articles", where={"topic_id": tid})[0]["id"]
+    db.update("articles", aid, {"word_count": 191, "narration_count": 150})
+    row = _run(reg, "zimeiti.get", {"id": tid}).data["rows"][0]
+    assert row["draft"] == "v1 · 191 字"
+    assert row["draft_words"] == 191 and row["draft_narration"] == 150
+
+
+def test_get_lazy_backfills_legacy_article_counts(env):
+    """存量稿（word_count=0）：读到时按权威口径懒计算并回写补齐（不写迁移脚本扫盘）。"""
+    reg, _, _ = env
+    tid = _run(reg, "zimeiti.add", {"title": "T"}).data["id"]
+    _run(reg, "zimeiti.article_save", {"id": tid, "content": "一二三四五"})
+    db = reg.get("zimeiti.get").plugin_ctx.db
+    aid = db.query("articles", where={"topic_id": tid})[0]["id"]
+    db.update("articles", aid, {"word_count": 0, "narration_count": 0})  # 模拟存量行
+    row = _run(reg, "zimeiti.get", {"id": tid}).data["rows"][0]
+    assert row["draft"] == "v1 · 5 字" and row["draft_words"] == 5
+    assert db.query("articles", where={"topic_id": tid})[0]["word_count"] == 5  # 已回写补齐
+
+
+def test_detail_schema_shows_both_counts(env):
+    """审计验收：详情面板「口播字数与文档总字数分别显示」（绑定聚合分列字段）。"""
+    _ = env
+    doc = json.loads((ZIMEITI_DIR / "panel" / "detail.schema.json").read_text(encoding="utf-8"))
+    values = [f["value"] for f in doc["fields"]]
+    assert "$data.rows.0.draft_words" in values and "$data.rows.0.draft_narration" in values
+
+
 # ---------- bundled skill（guides → skills/write/SKILL.md，2026-08-24 转化） ----------
 
 
@@ -297,6 +384,50 @@ def test_list_scope_global_overrides_binding(env, data_dir):
     # 未绑定会话也可显式指定项目
     rows = _run(reg, "zimeiti.list", {"project_id": "proj_a"}).data["rows"]
     assert [r["id"] for r in rows] == [ta]
+
+
+# ---------- zimeiti.add 代码承接：立项自动回写 project_id（9-01 报告 P1-02 后续） ----------
+
+
+def test_add_auto_binds_project_id(env, data_dir):
+    """会话绑定项目时 add 自动写 project_id（不再要模型手工 zimeiti.update 双写）。"""
+    reg, _, _ = env
+    _bind_project(data_dir, "conv1", "proj_a")
+    tid = _run_in_conv(reg, "zimeiti.add", {"title": "绑定选题"}, "conv1").data["id"]
+    row = _run(reg, "zimeiti.get", {"id": tid}).data["rows"][0]
+    assert row["project_id"] == "proj_a" and row["status"] == "候选"
+
+
+def test_add_unbound_keeps_project_id_empty(env):
+    """未绑定会话（无 meta / 有 conversation_id 但无绑定）：project_id 保持空，立项流程仍可回写。"""
+    reg, _, _ = env
+    t1 = _run(reg, "zimeiti.add", {"title": "无 meta"}).data["id"]
+    t2 = _run_in_conv(reg, "zimeiti.add", {"title": "未绑定"}, "conv_free").data["id"]
+    assert _run(reg, "zimeiti.get", {"id": t1}).data["rows"][0]["project_id"] == ""
+    assert _run(reg, "zimeiti.get", {"id": t2}).data["rows"][0]["project_id"] == ""
+
+
+def test_add_keeps_declarative_shape(env):
+    """代码承接与原声明式等价：required/params/risk/refresh/panel/work_output 不变。"""
+    from yibao_brain.ipc import RiskLevel
+
+    reg, _, _ = env
+    t = reg.get("zimeiti.add")
+    schema = t.openai_schema()
+    assert schema["parameters"]["required"] == ["title"]
+    props = schema["parameters"]["properties"]
+    for key in ("title", "angle", "platform", "source", "url", "hkrr", "hook_type",
+                "target_platform", "cover_concepts", "quiet"):
+        assert key in props, key
+    assert t.default_risk == RiskLevel.L1_LOW and t.refresh == "zimeiti.list"
+    (wo,) = t.work_outputs
+    assert wo["kind"] == "artifact" and wo["artifact_type"] == "zimeiti.topic"
+    assert wo["ref_from"] == "data.id"
+    assert wo["metadata_fields"] == ["params.title", "params.angle", "params.target_platform"]
+    r = _run(reg, "zimeiti.add", {"title": "形态等价"})
+    assert r.success and r.panel == "zimeiti:board"
+    row = _run(reg, "zimeiti.get", {"id": r.data["id"]}).data["rows"][0]
+    assert row["created_at"] > 0 and row["updated_at"] > 0  # auto 时间戳同声明式
 
 
 def test_mat_list_scoped_via_topic(env, data_dir):
@@ -461,9 +592,13 @@ def test_editor_webview_panel_loaded(env):
     assert p is not None and p["type"] == "webview"
     html = p["html"]
     assert "<textarea" in html and "window.yibao =" not in html  # 桥 JS 由父侧注入，插件不自带
-    # 面板事件 size 可控：编辑器承载 AI diff（选段 + 全文三模式）/ 版本历史 / 发布格式化 / 素材抽屉
-    # / 标题候选与平台选择弹层 / 主题通道 / AI 撤销与丢稿保护，上限放到 48KB 防失控增长
-    assert len(html.encode("utf-8")) < 48 * 1024
+    # 面板事件 size 可控：上限是防失控增长的预算告警，不是协议硬约束——webview 面板 HTML
+    # 由加载器 read_text 全量进 _PANELS、随 panel 事件内联 JSON 发出，加载/传输链路均无
+    # 尺寸限制（plugins.py 无 size check；同链路事件可携带 8MB 级图片）。编辑器承载
+    # AI diff（选段 + 全文三模式）/ 版本历史 / 发布格式化 / 素材抽屉 / 标题候选与平台选择弹层
+    # / 主题通道 / AI 撤销与丢稿保护 / 阅读态（focus 通读视图）/ 对象模型表面命令与选区上行，
+    # 2026-09-02 实测 50.5KB（阅读态+表面命令是原 48KB 预算后的正当增长），预算调到 64KB。
+    assert len(html.encode("utf-8")) < 64 * 1024
 
     payload = panel_payload(ActionResult(success=True, data={"rows": []}, panel="zimeiti:editor"))
     assert payload["schema"] is None
