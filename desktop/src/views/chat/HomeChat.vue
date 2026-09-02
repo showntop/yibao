@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import InputBar from "../../components/common/InputBar.vue";
-import PermissionsBanner from "../../components/pet/PermissionsBanner.vue";
+import PermissionsNudge from "../../components/pet/PermissionsNudge.vue";
 import SetupWizard from "../../components/pet/SetupWizard.vue";
 import AgentBrain from "../brain/AgentBrain.vue";
 import HomeGlance from "../HomeGlance.vue";
@@ -34,6 +34,8 @@ import HomeHostAsk from "../HomeHostAsk.vue";
 import HomeFloatNotes from "../HomeFloatNotes.vue";
 import { useLiveAssembly } from "../../lib/home/home-chrome.ts";
 import { collapsibleSidesOf, defaultPeek, faceOf } from "../../lib/home/home-assembly.ts";
+import { focusSceneNext, type RailScene } from "../../lib/home/focus-scene.ts";
+import { needsComputerControl } from "../../lib/perms-nudge.ts";
 import { viewOf } from "../../lib/home/home-assembly-ui.ts";
 import { livePluginIds } from "../../composables/useAssembly";
 import { syncPluginParts } from "../../lib/assembly/parts";
@@ -294,6 +296,8 @@ watch(
 );
 const brainDown = ref(false); // 大脑掉线/重启中（守护在恢复）
 const perms = ref<BrainPermissions | null>(null); // macOS 权限状态（null=未收到）
+// 权限引导就地展开信号：电脑控制工具被调用而权限缺失（能力真正需要时），会话级、不写偏好
+const permsDemand = ref(false);
 
 // ---- 首启设置向导（缺 LLM key 时 Rust 发 setup-config-needed，大脑未启动；逻辑同源宠物窗）----
 const setupNeeded = ref(false);
@@ -519,13 +523,18 @@ watch(
     if (chatFace.value === "paper" && n > (prev ?? 0) && n > 0) peekOpen.value = true;
   },
 );
+// ---- Focus 现场恢复（8-31 P0-6）：进 Focus 收起两栏前快照，退出恢复真实先前状态（非简单取反）----
+let focusSceneSaved: RailScene | null = null;
 watch(
   () => props.workFocus,
   (focused) => {
-    if (focused) {
-      leftOpen.value = false;
-      peekOpen.value = false;
-    }
+    const next = focusSceneNext(
+      { scene: { leftOpen: leftOpen.value, peekOpen: peekOpen.value }, saved: focusSceneSaved },
+      Boolean(focused),
+    );
+    leftOpen.value = next.scene.leftOpen;
+    peekOpen.value = next.scene.peekOpen;
+    focusSceneSaved = next.saved;
   },
 );
 function flipPage(delta: number) {
@@ -802,7 +811,13 @@ onMounted(async () => {
   }
   // 技能 chip 动态数据：与左栏技能同源（list_plugins），不另起炉灶
   try { plugins.value = await listPlugins().catch(() => []); } catch { plugins.value = []; }
-  unlisten = await onBrainEvent(onEvent);
+  unlisten = await onBrainEvent((e) => {
+    onEvent(e);
+    // 能力真正需要权限时就地出现：电脑控制工具被调用且权限缺失 → 自动展开权限引导
+    if (e.kind === "action_proposed" && missingPerms.value && needsComputerControl(e.action?.tool_id)) {
+      permsDemand.value = true;
+    }
+  });
   unlistenStatus = await onBrainStatus(onStatus);
   unlistenPerms = await onBrainPermissions((p) => { perms.value = p; });
   unlistenPanelClosed = await onPanelClosed(() => {
@@ -1014,7 +1029,7 @@ onUnmounted(() => {
           @body="emit('workBody', $event)"
         />
         <template v-else>
-          <PermissionsBanner v-if="missingPerms && perms" :perms="perms" />
+          <PermissionsNudge v-if="missingPerms && perms" :perms="perms" :demand="permsDemand" />
           <component :is="chatView" />
         </template>
         <!-- 按印闸门卡：对话流内联，不被工作面/桌面协作遮挡（设计纪律：按印回落对话流） -->

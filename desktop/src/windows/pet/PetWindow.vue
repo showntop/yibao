@@ -7,7 +7,7 @@ import Avatar from "../../components/pet/Avatar.vue";
 import InputBar from "../../components/common/InputBar.vue";
 import QuickPanel from "../../components/pet/QuickPanel.vue";
 import SpeechBubble from "../../components/pet/SpeechBubble.vue";
-import PermissionsBanner from "../../components/pet/PermissionsBanner.vue";
+import PermissionsNudge from "../../components/pet/PermissionsNudge.vue";
 import SetupWizard from "../../components/pet/SetupWizard.vue";
 import PluginLauncher from "../../components/pet/PluginLauncher.vue";
 import BubbleFlow from "../../components/pet/BubbleFlow.vue";
@@ -60,6 +60,7 @@ import { usePetSpeech } from "../../composables/usePetSpeech";
 import { usePetEvents } from "../../composables/usePetEvents";
 import YbIcon from "../../components/common/YbIcon.vue";
 import { inputMenuOpen, addMenuOpen } from "../../lib/input-menu";
+import { needsComputerControl } from "../../lib/perms-nudge";
 
 /** 小窗固定会话 id（方案 A）：永远用同一个会话，不镜像大窗活跃会话。
  *  run 带它使消息归属、重启可恢复；固定性从架构上消灭串台（大窗切会话不影响本窗）。 */
@@ -172,6 +173,8 @@ let hoverCloseTimer: ReturnType<typeof setTimeout> | null = null;
 
 const suggestions = SUGGESTIONS;
 const missingPerms = computed(() => perms.value !== null && (!perms.value.ax || !perms.value.screen || !perms.value.input));
+// 权限引导就地展开信号：电脑控制工具被调用而权限缺失（能力真正需要时），会话级、不写偏好
+const permsDemand = ref(false);
 // 「正在输入」占位：run 受理（think）到首个 chunk 之间气泡流还是空的，用三点呼吸占位；
 // 复用 state/streamingIdx 判断——首 chunk 建起 streaming 气泡即让位，终态（idle/error）自动消失
 const showTyping = computed(() => state.value === "think" && streamingIdx.value === null);
@@ -692,7 +695,13 @@ onMounted(async () => {
     const p0 = await getCurrentWindow().outerPosition();
     onWindowMoved({ x: p0.x, y: p0.y });
   } catch { /* 忽略 */ }
-  unlisten = await onBrainEvent(onEvent);
+  unlisten = await onBrainEvent((e) => {
+    onEvent(e);
+    // 能力真正需要权限时就地出现：电脑控制工具被调用且权限缺失 → 自动展开权限引导
+    if (e.kind === "action_proposed" && missingPerms.value && needsComputerControl(e.action?.tool_id)) {
+      permsDemand.value = true;
+    }
+  });
   // run_done 带 conversation_id（并发对话 spec §E）：只清本会话的 explicit 标记，
   // 别窗 run 收尾不再波及本窗（无归属的旧帧照常清，兼容旧 sidecar）。
   unlistenRunDone = await onRunDone((v) => {
@@ -880,7 +889,7 @@ onUnmounted(() => {
       <SetupWizard v-if="setupNeeded" :model="setupCfg.model" :base-url="setupCfg.baseUrl" :voice="setupCfg.voice" @saved="onSetupSaved" />
 
       <template v-if="!setupNeeded">
-      <PermissionsBanner v-if="missingPerms && perms" :perms="perms" />
+      <PermissionsNudge v-if="missingPerms && perms" :perms="perms" :demand="permsDemand" />
 
       <!-- 插件启动器视图（双击团子进来）：列出插件，点击直达它的主面板 -->
       <PluginLauncher v-if="view === 'plugins'" :plugins="plugins" :err="pluginErr" @launch="launchPlugin" />
