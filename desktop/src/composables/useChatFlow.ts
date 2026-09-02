@@ -8,7 +8,7 @@ import { newId } from "../state/domains/conversation";
 import { sessionStore } from "../state/store";
 import type { MessageInput } from "../state/domains/conversation";
 import type { Message } from "../state/types";
-import { procDetail, procLabel, procResultSuffix, procSkip } from "../lib/proc";
+import { procDetail, procErrorReason, procLabel, procResultSuffix, procSkip } from "../lib/proc";
 import { capabilityGapFromResult, capabilityGapTitle } from "../lib/home/capability-gap.ts";
 import { squashSpaces, truncate } from "../lib/text";
 import { isTaskLogEvent } from "../lib/work-thread";
@@ -302,6 +302,17 @@ export function useChatFlow(deps: ChatFlowDeps) {
       }
       case "interrupted":
         runRefs.length = 0; // 打断：本次 run 的引用作废
+        // 在途过程行全部收尾：取消时排队中/待确认的动作不会有 action_result，不收尾会一直转圈
+        for (const [id, idx] of procIdx) {
+          const p = bubbles.value[idx]?.proc;
+          if (p && !p.done) {
+            p.done = true;
+            p.result = { success: false, error: "已打断" };
+            const b = bubbles.value[idx];
+            if (b?.id) syncBubble(b);
+          }
+          procIdx.delete(id);
+        }
         if (streamingIdx.value !== null) {
           const haltedBubble = bubbles.value[streamingIdx.value];
           haltedBubble.halted = true;
@@ -345,6 +356,20 @@ export function useChatFlow(deps: ChatFlowDeps) {
         state.value = "idle";
         streamingIdx.value = null;
         runRefs.length = 0;
+        // 拒绝/禁止执行走 error 而非 action_result：对应过程行原地收尾，否则一直转圈
+        if (e.action?.id) {
+          const idx = procIdx.get(e.action.id);
+          if (idx !== undefined) {
+            const p = bubbles.value[idx]?.proc;
+            if (p && !p.done) {
+              p.done = true;
+              p.result = { success: false, error: procErrorReason(e.text) };
+            }
+            const b = bubbles.value[idx];
+            if (b?.id) syncBubble(b);
+            procIdx.delete(e.action.id);
+          }
+        }
         pushWarn(e.text ?? "出错了");
         deps.flashValence("error");
         break;

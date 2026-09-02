@@ -32,6 +32,8 @@ describe("work-thread", () => {
     expect(isWorkPiece(proc())).toBe(true);
     expect(isWorkPiece(user("hi"))).toBe(false);
     expect(isWorkPiece(ai("到点了", { icon: "clock" }))).toBe(false);
+    // 告警行（拒绝/出错）算进当轮工作，不劈开 run
+    expect(isWorkPiece(ai("用户拒绝执行 agents.code_exec", { icon: "alert" }))).toBe(true);
     expect(isWorkPiece(ai("⇢ 协作", { panelLink: true }))).toBe(false);
     expect(isWorkPiece(ai("已请 改登录", { panelLink: true }))).toBe(false);
     expect(isWorkPiece({ role: "sys", text: "已走 改登录" })).toBe(false);
@@ -56,6 +58,24 @@ describe("work-thread", () => {
     expect(runAnswer(bubbles, [1, 2, 3, 4])).toBe("我先搜一圈。\n\n找到这些。");
     expect(runTailIndex(bubbles, [1, 2, 3, 4])).toBe(4);
     expect(runIsLive(bubbles, [1, 2, 3, 4], null)).toBe(false);
+  });
+
+  it("keeps a rejection alert inside the run instead of splitting it into two avatar groups", () => {
+    // 回归：拒绝气泡（icon=alert）曾是 misc，把一轮工作劈成两个头像组
+    const bubbles = [
+      user("给自己做个插件"),
+      ai("先看看插件目录结构。"),
+      proc(true),
+      ai("用户拒绝执行 agents.code_exec", { icon: "alert" }),
+      ai("换个方式，直接搜清单文件。"),
+      proc(false),
+    ];
+    expect(groupThread(bubbles, () => false)).toEqual([
+      { type: "user", index: 0 },
+      { type: "run", start: 1, indices: [1, 2, 3, 4, 5] },
+    ]);
+    // 复制/重写只带 AI 正文，不含告警行
+    expect(runAnswer(bubbles, [1, 2, 3, 4, 5])).toBe("先看看插件目录结构。\n\n换个方式，直接搜清单文件。");
   });
 
   it("keeps the run live while a proc is unfinished or a segment is streaming", () => {

@@ -147,7 +147,7 @@ impl EventRecorder {
             "listening_done" => self.on_listening_done(db, conv_id, e),
             "notice" => self.append_simple(db, conv_id, "sys", e, None),
             "reminder" => self.on_reminder(db, conv_id, e),
-            "error" => self.append_simple(db, conv_id, "ai", e, Some("alert")),
+            "error" => self.on_error(db, conv_id, e),
             // panel 事件不再落 panelLink 协作气泡（对话流已去除该机制，避免消息库里残留「⇢ 正在和 X 协作」）
             _ => {}
         }
@@ -312,8 +312,37 @@ impl EventRecorder {
         }
     }
 
+    /// 拒绝/禁止执行等 error：对应过程行原地收尾（拒绝/打断没有 action_result，
+    /// 不收尾重载后永远转圈），再落告警消息。run 溯源随 error 作废（同前端 error 分支）。
+    fn on_error(&mut self, db: &SessionDb, conv_id: &str, e: &Value) {
+        if let Some(action_id) = e
+            .get("action")
+            .and_then(|a| a.get("id"))
+            .and_then(|v| v.as_str())
+        {
+            if let Some((msg_id, label)) = self.proc_ids.remove(action_id) {
+                let _ = db.update_message_payload(
+                    conv_id,
+                    &msg_id,
+                    json!({ "text": "", "proc": { "label": label, "done": true, "ok": false } }),
+                );
+            }
+        }
+        self.run_refs.clear();
+        self.append_simple(db, conv_id, "ai", e, Some("alert"));
+    }
+
     fn on_interrupted(&mut self, db: &SessionDb, conv_id: &str) {
         self.run_refs.clear();
+        // 在途过程行全部收尾为失败：排队中/待确认的动作不会有 action_result，
+        // 不收尾落库就是 done=false，重载后进度行永远转圈
+        for (_action_id, (msg_id, label)) in self.proc_ids.drain() {
+            let _ = db.update_message_payload(
+                conv_id,
+                &msg_id,
+                json!({ "text": "", "proc": { "label": label, "done": true, "ok": false } }),
+            );
+        }
         if let Some(msg_id) = self.stream_msg_id.take() {
             // 半成品落库为 halted
             let mut payload = json!({ "text": self.stream_text, "halted": true });

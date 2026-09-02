@@ -327,6 +327,50 @@ fn flush_stream_as_interrupted_saves_partial() {
 }
 
 #[test]
+fn interrupted_settles_pending_procs() {
+    // 打断时排队中/待确认的动作没有 action_result：在途过程行必须落库为终态，否则重载后永远转圈
+    let (db, mut r) = setup();
+    r.record(&db, "c1", &json!({"kind":"action_proposed","action":{"id":"a1","tool_id":"code_exec","label":"运行沙箱脚本"}}));
+    r.record(&db, "c1", &json!({"kind":"action_proposed","action":{"id":"a2","tool_id":"find_file","label":"找文件"}}));
+    r.record(&db, "c1", &json!({"kind":"interrupted"}));
+    let msgs = db.get_messages("c1", 10).unwrap();
+    let procs: Vec<_> = msgs.iter().filter(|m| m.payload["proc"].is_object()).collect();
+    assert_eq!(procs.len(), 2);
+    for m in procs {
+        assert_eq!(m.payload["proc"]["done"], true);
+        assert_eq!(m.payload["proc"]["ok"], false);
+    }
+    // 「已打断」标记照旧落库
+    assert!(msgs.iter().any(|m| m.payload["halted"] == true));
+}
+
+#[test]
+fn rejection_error_settles_matching_proc() {
+    // 用户拒绝走 error（带 action）而非 action_result：对应过程行原地收尾（截图场景的落库侧）
+    let (db, mut r) = setup();
+    r.record(&db, "c1", &json!({"kind":"action_proposed","action":{"id":"a1","tool_id":"code_exec","label":"运行沙箱脚本"}}));
+    r.record(&db, "c1", &json!({"kind":"error","action":{"id":"a1","tool_id":"code_exec","label":"运行沙箱脚本"},"text":"用户拒绝执行 code_exec"}));
+    let msgs = db.get_messages("c1", 10).unwrap();
+    assert_eq!(msgs[0].payload["proc"]["done"], true);
+    assert_eq!(msgs[0].payload["proc"]["ok"], false);
+    // 告警消息照旧落库
+    let alert = msgs.iter().find(|m| m.payload["icon"] == "alert").unwrap();
+    assert_eq!(alert.payload["text"], "用户拒绝执行 code_exec");
+    // 拒绝后 run 继续：新动作的过程行/溯源不受影响
+    r.record(&db, "c1", &json!({"kind":"action_proposed","action":{"id":"a2","tool_id":"find_file","label":"找文件"}}));
+    r.record(&db, "c1", &json!({"kind":"action_result","action":{"id":"a2","tool_id":"find_file","label":"找文件"},"result":{"success":true,"data":{"human":"ok"}}}));
+    r.record(&db, "c1", &json!({"kind":"final_reply","text":"换个方式"}));
+    let msgs = db.get_messages("c1", 10).unwrap();
+    assert_eq!(msgs[2].payload["proc"]["done"], true);
+    assert_eq!(msgs[2].payload["proc"]["ok"], true);
+    let ai = msgs.iter().find(|m| m.role == "ai" && m.payload["icon"].is_null()).unwrap();
+    let refs = ai.payload["refs"].as_array().unwrap();
+    assert_eq!(refs.len(), 1);
+    assert_eq!(refs[0]["label"], "找文件");
+    assert_eq!(refs[0]["ok"], true);
+}
+
+#[test]
 fn final_reply_metrics_persist_in_message_payload() {
     // 用量条（UsageBar）依赖 metrics 落库：重启后从 SQLite 拉回仍可见
     let (db, mut r) = setup();

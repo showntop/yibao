@@ -30,7 +30,7 @@ import {
   rememberLabelForTool,
   closePanelWindow,
 } from "../../lib/brain";
-import { procLabel, procSkip, procResultSuffix } from "../../lib/proc";
+import { procLabel, procSkip, procResultSuffix, settleProcOnError, settleProcsOnInterrupt } from "../../lib/proc";
 import { formatContextPrefix, type InputContext } from "../../lib/at-mention";
 import type { WebviewPayload } from "../../lib/webview-source";
 import type { AvatarState } from "../../protocol/brain-types";
@@ -221,6 +221,8 @@ function onEvent(e: BrainEvent) {
       break;
     case "interrupted":
       listeningHint.value = false;
+      // 在途过程行全部收尾：取消时排队中/待确认的动作不会有 action_result，不收尾会一直转圈
+      settleProcsOnInterrupt(msgs.value, procIdx);
       if (streamingIdx.value !== null) {
         msgs.value[streamingIdx.value].halted = true;
         streamingIdx.value = null;
@@ -259,6 +261,8 @@ function onEvent(e: BrainEvent) {
       scheduleCollapse(4000);
       break;
     case "error":
+      // 拒绝/禁止执行走 error 而非 action_result：对应过程行原地收尾，否则一直转圈
+      settleProcOnError(msgs.value, procIdx, e);
       errorText.value = e.text ?? "出错了";
       state.value = "idle";
       break;

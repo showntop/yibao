@@ -155,6 +155,18 @@
   word-break: break-word;
   text-align: left;
 }
+/* 拒绝/告警行：run 内的一行轻状态（不拟白卡），与「已打断」同档——小字淡色，图标表语义 */
+.work-run-body :deep(.bubble.plain.icon-alert) {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--yb-text-faint);
+}
+.work-run-body :deep(.bubble.plain.icon-alert) .b-lead {
+  flex: none;
+}
 .chips {
   display: flex;
   flex-wrap: wrap;

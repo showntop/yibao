@@ -25,7 +25,7 @@ export type PaperPage = {
   miscIndices: number[];
 };
 
-/** 过程行、或普通 AI 正文（提醒/告警/委派卡不算进同一轮工作）。 */
+/** 桌面工位孤儿戳记行（「已请/已走/摊开/收起/用了 X · Y」）：不进 run，直接跳过。 */
 export function isOrphanDeskStamp(bubble: WorkBubble): boolean {
   if (bubble.panelLink) return false;
   const text = bubble.text.trim();
@@ -50,7 +50,8 @@ export function isWorkPiece(bubble: WorkBubble): boolean {
   if (bubble.panelLink || /^(已请|已走|摊开|收起|用了)\s/.test(bubble.text.trim())) return false;
   if (isTaskLogBubble(bubble)) return false;
   if (bubble.proc) return true;
-  return bubble.role === "ai" && !bubble.icon;
+  // 告警行（拒绝/出错）算进当轮工作：拆出去会劈开 run、多出一个头像组；提醒（clock）仍独立成条
+  return bubble.role === "ai" && (!bubble.icon || bubble.icon === "alert");
 }
 
 function isThreadSkip(bubble: WorkBubble): boolean {
@@ -100,7 +101,8 @@ export function groupThread(
 export function runAnswer(bubbles: WorkBubble[], indices: number[]): string {
   return indices
     .map((i) => bubbles[i])
-    .filter((bubble) => bubble.role === "ai" && !bubble.proc)
+    // 只拼 AI 正文：过程行、告警行（拒绝/出错）不进复制文本
+    .filter((bubble) => bubble.role === "ai" && !bubble.proc && !bubble.icon)
     .map((bubble) => bubble.text.trim())
     .filter(Boolean)
     .join("\n\n");

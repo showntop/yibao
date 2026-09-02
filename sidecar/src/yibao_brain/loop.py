@@ -410,7 +410,8 @@ class AgentLoop:
                         )
                         continue
                 elif decision == Decision.DENY:
-                    yield Event(kind="error", text=f"策略禁止执行 {tc.tool_id}（风险过高）")
+                    # 带 action：前端据此把对应过程行收尾（否则会一直转圈）
+                    yield Event(kind="error", action=action, text=f"策略禁止执行 {tc.tool_id}（风险过高）")
                     messages.append(
                         {"role": "tool", "tool_call_id": tc.id, "content": "策略禁止该操作"}
                     )

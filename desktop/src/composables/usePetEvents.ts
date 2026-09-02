@@ -16,7 +16,7 @@ import {
   surfaceCount,
   type SurfaceAttr,
 } from "../lib/surface/pet-surface";
-import { procLabel, procResultSuffix, procSkip } from "../lib/proc";
+import { procLabel, procResultSuffix, procSkip, settleProcOnError, settleProcsOnInterrupt } from "../lib/proc";
 import { stripTaskStatusEmoji } from "../lib/text";
 import { isTaskLogEvent } from "../lib/work-thread";
 import type { usePetState } from "./usePetState";
@@ -164,6 +164,8 @@ export function usePetEvents(ctx: PetEventsCtx) {
         break;
       }
       case "interrupted":
+        // 在途过程行全部收尾：取消时排队中/待确认的动作不会有 action_result，不收尾会一直转圈
+        settleProcsOnInterrupt(bubbles.value, procIdx);
         if (streamingIdx.value !== null) {
           bubbles.value[streamingIdx.value].halted = true;
           streamingIdx.value = null;
@@ -251,6 +253,8 @@ export function usePetEvents(ctx: PetEventsCtx) {
       case "error":
         state.value = "idle";
         streamingIdx.value = null;
+        // 拒绝/禁止执行走 error 而非 action_result：对应过程行原地收尾，否则一直转圈
+        settleProcOnError(bubbles.value, procIdx, e);
         pushWarn(e.text ?? "出错了");
         flashValence("error");
         break;
