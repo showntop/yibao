@@ -345,11 +345,32 @@ export interface MissionInfo {
   definition_of_done?: Record<string, unknown>;
 }
 
+export interface DurableExecutionInfo {
+  id: string;
+  capability_id: string;
+  provider_id: string;
+  provider_candidates: string[];
+  status: "queued" | "running" | "resuming" | "checkpointing" | "cancel_requested" | "interrupted" | "completed" | "failed" | "cancelled";
+  progress: number;
+  attempt: number;
+  checkpoint_version: number;
+  cancel_mode: "immediate" | "checkpoint" | "unsupported";
+  resume_supported: boolean;
+  error?: string;
+  result?: Record<string, unknown>;
+}
+
 export interface WorkflowStageInfo {
   id: string;
   label: string;
-  status: "pending" | "running" | "waiting_user" | "blocked" | "completed" | "failed";
+  depends_on?: string[];
+  status: "pending" | "ready" | "running" | "waiting_user" | "blocked" | "completed" | "failed";
+  input_artifact_ids?: string[];
   output_artifact_ids?: string[];
+  checkpoint?: Record<string, unknown>;
+  checkpoint_version?: number;
+  checkpointed_at?: number | null;
+  execution?: DurableExecutionInfo | null;
 }
 
 export interface WorkflowRunInfo {
@@ -361,6 +382,7 @@ export interface WorkflowRunInfo {
   status: "draft" | "preflighting" | "ready" | "running" | "blocked" | "waiting_user" | "completed" | "failed" | "cancelled";
   current_stage_id: string;
   current_stage_index: number;
+  active_stage_ids?: string[];
   stages: WorkflowStageInfo[];
   updated_at: number;
 }

@@ -16,14 +16,30 @@ def normalize_work_output(raw: dict) -> dict:
         raise ValueError("work_output 必须是对象")
     value = dict(raw)
     kind = str(value.get("kind") or "artifact").strip()
-    if kind not in ("artifact", "evidence"):
+    if kind not in ("artifact", "evidence", "edge", "checkpoint"):
         raise ValueError(f"未知 work_output kind：{kind!r}")
-    if not str(value.get("artifact_type") or "").strip():
-        raise ValueError("work_output artifact_type 不能为空")
-    if not str(value.get("ref_from") or value.get("ref") or "").strip():
-        raise ValueError("work_output ref_from/ref 不能为空")
-    if kind == "evidence" and not str(value.get("claim_from") or value.get("claim") or "").strip():
-        raise ValueError("evidence work_output claim_from/claim 不能为空")
+    if kind in ("artifact", "evidence"):
+        if not str(value.get("artifact_type") or "").strip():
+            raise ValueError("work_output artifact_type 不能为空")
+        if not str(value.get("ref_from") or value.get("ref") or "").strip():
+            raise ValueError("work_output ref_from/ref 不能为空")
+        if kind == "evidence" and not str(value.get("claim_from") or value.get("claim") or "").strip():
+            raise ValueError("evidence work_output claim_from/claim 不能为空")
+    elif kind == "edge":
+        for endpoint in ("source", "target"):
+            if not str(value.get(f"{endpoint}_artifact_type") or "").strip():
+                raise ValueError(f"edge work_output {endpoint}_artifact_type 不能为空")
+            if not str(value.get(f"{endpoint}_ref_from") or value.get(f"{endpoint}_ref") or "").strip():
+                raise ValueError(f"edge work_output {endpoint}_ref_from/{endpoint}_ref 不能为空")
+        if not str(value.get("relation") or "").strip():
+            raise ValueError("edge work_output relation 不能为空")
+    elif kind == "checkpoint":
+        if not str(value.get("stage_id_from") or value.get("stage_id") or "").strip():
+            raise ValueError("checkpoint work_output stage_id_from/stage_id 不能为空")
+        if not str(value.get("checkpoint_from") or "").strip() and not isinstance(
+            value.get("checkpoint"), dict
+        ):
+            raise ValueError("checkpoint work_output checkpoint_from/checkpoint 不能为空")
     fields = value.get("metadata_fields") or []
     if not isinstance(fields, list) or not all(isinstance(item, str) for item in fields):
         raise ValueError("work_output metadata_fields 必须是字符串数组")
@@ -52,35 +68,36 @@ def materialize_work_events(
     业务数据已经提交、领域事件却因结果契约不完整而永久丢失。
     """
     root = {"params": params or {}, "data": data or {}}
-    events: list[dict] = []
-    for raw in specs or []:
+    events: list[tuple[int, int, dict]] = []
+    for ordinal, raw in enumerate(specs or []):
         if not isinstance(raw, dict):
             if strict:
                 raise ValueError(f"{tool_id} 的 work_output 必须是对象")
             continue
         kind = str(raw.get("kind") or "artifact").strip()
-        if kind not in ("artifact", "evidence"):
+        if kind not in ("artifact", "evidence", "edge", "checkpoint"):
             if strict:
                 raise ValueError(f"{tool_id} 的 work_output kind 非法：{kind!r}")
-            continue
-        artifact_type = str(raw.get("artifact_type") or "").strip()
-        ref = str(_value(root, raw.get("ref_from"), raw.get("ref") or "") or "").strip()
-        if not artifact_type or not ref:
-            if strict:
-                raise ValueError(
-                    f"{tool_id} 的 work_output 缺少运行期 artifact_type/ref"
-                )
             continue
         metadata: dict = {"tool_id": tool_id}
         for path in raw.get("metadata_fields") or []:
             value = _value(root, str(path), None)
             if value is not None:
                 metadata[str(path).split(".")[-1]] = value
+        if kind in ("artifact", "evidence"):
+            artifact_type = str(raw.get("artifact_type") or "").strip()
+            ref = str(_value(root, raw.get("ref_from"), raw.get("ref") or "") or "").strip()
+            if not artifact_type or not ref:
+                if strict:
+                    raise ValueError(
+                        f"{tool_id} 的 work_output 缺少运行期 artifact_type/ref"
+                    )
+                continue
         if kind == "artifact":
             content_ref = str(
                 _value(root, raw.get("content_ref_from"), raw.get("content_ref") or "") or ""
             ).strip()
-            events.append({
+            events.append((0, ordinal, {
                 "event_type": "artifact.upsert",
                 "payload": {
                     "artifact_type": artifact_type,
@@ -89,14 +106,14 @@ def materialize_work_events(
                     "lifecycle": str(raw.get("lifecycle") or "draft"),
                     "metadata": metadata,
                 },
-            })
+            }))
         elif kind == "evidence":
             claim = str(_value(root, raw.get("claim_from"), raw.get("claim") or "") or "").strip()
             if not claim:
                 if strict:
                     raise ValueError(f"{tool_id} 的 evidence work_output 缺少运行期 claim")
                 continue
-            events.append({
+            events.append((0, ordinal, {
                 "event_type": "evidence.capture",
                 "payload": {
                     "artifact_type": artifact_type,
@@ -108,8 +125,47 @@ def materialize_work_events(
                     "confidence": float(raw.get("confidence") or 0.5),
                     "metadata": metadata,
                 },
-            })
-    return events
+            }))
+        elif kind == "edge":
+            source_ref = str(
+                _value(root, raw.get("source_ref_from"), raw.get("source_ref") or "") or ""
+            ).strip()
+            target_ref = str(
+                _value(root, raw.get("target_ref_from"), raw.get("target_ref") or "") or ""
+            ).strip()
+            source_type = str(raw.get("source_artifact_type") or "").strip()
+            target_type = str(raw.get("target_artifact_type") or "").strip()
+            relation = str(raw.get("relation") or "").strip()
+            if not all((source_type, source_ref, target_type, target_ref, relation)):
+                if strict:
+                    raise ValueError(f"{tool_id} 的 edge work_output 缺少运行期端点/relation")
+                continue
+            events.append((1, ordinal, {
+                "event_type": "artifact.edge.upsert",
+                "payload": {
+                    "source": {"artifact_type": source_type, "ref": source_ref},
+                    "target": {"artifact_type": target_type, "ref": target_ref},
+                    "relation": relation,
+                    "label": str(raw.get("label") or ""),
+                    "metadata": metadata,
+                },
+            }))
+        elif kind == "checkpoint":
+            stage_id = str(
+                _value(root, raw.get("stage_id_from"), raw.get("stage_id") or "") or ""
+            ).strip()
+            checkpoint = _value(root, raw.get("checkpoint_from"), raw.get("checkpoint"))
+            expected_version = _value(root, raw.get("expected_version_from"), None)
+            if not stage_id or not isinstance(checkpoint, dict):
+                if strict:
+                    raise ValueError(f"{tool_id} 的 checkpoint work_output 缺少 stage_id/checkpoint")
+                continue
+            payload = {"stage_id": stage_id, "checkpoint": checkpoint}
+            if expected_version is not None:
+                payload["expected_version"] = int(expected_version)
+            events.append((2, ordinal, {"event_type": "stage.checkpoint", "payload": payload}))
+    # 先创建节点，再建边，最后更新运行位置；声明顺序不影响参照完整性。
+    return [event for _priority, _ordinal, event in sorted(events, key=lambda item: (item[0], item[1]))]
 
 
 class WorkGraphInvocationSink:
@@ -120,6 +176,11 @@ class WorkGraphInvocationSink:
         self._workspace_for_conversation = workspace_for_conversation
 
     def begin(self, action, params: dict, meta: dict) -> str | None:
+        # Widget / 面板的 L0 取数属于 UI 投影，不是业务动作。它们仍经 Invoker 的
+        # 风险闸门与 AuditLog，但不应把轮询快照写进 Work Graph。调用方必须显式
+        # 标记 transient；有 work_output 的写事务不会使用这个模式。
+        if str(meta.get("invocation_persistence") or "") == "transient":
+            return None
         try:
             conversation_id = str(meta.get("conversation_id") or "")
             workspace_id = str(meta.get("workspace_id") or "")

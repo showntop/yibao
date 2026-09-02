@@ -513,6 +513,16 @@ export function projectDetach(objType: string, ref: string, id?: string, convers
   return invoke("project_remove_object", { objType, ref, id: id ?? null, conversationId: conversationId ?? null });
 }
 
+/** 在 provider 安全点停止长任务；已有 checkpoint 与产物不会回滚。 */
+export function durableCancel(id: string, conversationId?: string): Promise<void> {
+  return invoke("durable_cancel", { id, conversationId: conversationId ?? null });
+}
+
+/** 从最后 checkpoint 恢复中断的长任务。 */
+export function durableResume(id: string, conversationId?: string): Promise<void> {
+  return invoke("durable_resume", { id, conversationId: conversationId ?? null });
+}
+
 // ---- 表面层事件通道（design §3）----
 
 /** 面板事件上行：iframe emitEvent 的事件转送大脑（sidecar 按 [[event]] 白名单校验）。 */

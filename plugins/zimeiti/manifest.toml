@@ -9,7 +9,7 @@ capabilities = ["db", "blobs", "llm", "process"]   # blobs：大内容走宿主 
 [code]
 entry = "tools"
 
-# Workflow Pack 由插件声明；Work Graph 只认识通用 stages/artifact_patterns。
+# Workflow Pack 由插件声明；Work Graph 只认识通用 DAG/acceptance。
 # 同 id 的更高版本会用于新 Workspace，已有 WorkflowRun 继续锁定原版本。
 [[workflow]]
 id = "video.explainer"
@@ -18,14 +18,14 @@ domain = "video"
 label = "视频创作"
 matches = ["视频", "video", "zimeiti", "storyboard", "timeline"]
 stages = [
-  {id = "topic", label = "选题", artifact_patterns = ["topic", "brief"]},
-  {id = "evidence", label = "证据", artifact_patterns = ["material", "evidence", "claim", "research"]},
-  {id = "script", label = "脚本", artifact_patterns = ["script", "article", "doc"]},
-  {id = "storyboard", label = "分镜", artifact_patterns = ["storyboard", "shot"]},
-  {id = "assets", label = "素材", artifact_patterns = ["asset", "image", "visual"]},
-  {id = "voice", label = "配音", artifact_patterns = ["voice", "audio", "narration"]},
-  {id = "compose", label = "合成", artifact_patterns = ["timeline", "composition"]},
-  {id = "deliver", label = "交付", artifact_patterns = ["render", "export", "published"]},
+  {id = "topic", label = "选题", depends_on = [], acceptance = [{artifact_patterns = ["topic", "brief"]}]},
+  {id = "evidence", label = "证据", depends_on = ["topic"], acceptance = [{artifact_patterns = ["material", "evidence", "claim", "research"]}]},
+  {id = "script", label = "脚本", depends_on = ["evidence"], acceptance = [{artifact_patterns = ["script", "article", "doc"]}]},
+  {id = "storyboard", label = "分镜", depends_on = ["script"], acceptance = [{artifact_patterns = ["storyboard", "shot"]}]},
+  {id = "assets", label = "素材", depends_on = ["storyboard"], acceptance = [{artifact_patterns = ["asset", "image", "visual"]}]},
+  {id = "voice", label = "配音", depends_on = ["storyboard"], acceptance = [{artifact_patterns = ["voice", "audio", "narration"]}]},
+  {id = "compose", label = "合成", depends_on = ["assets", "voice"], acceptance = [{artifact_patterns = ["timeline", "composition"]}]},
+  {id = "deliver", label = "交付", depends_on = ["compose"], acceptance = [{artifact_patterns = ["render", "export", "published"]}]},
 ]
 
 [[table]]

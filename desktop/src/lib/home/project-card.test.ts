@@ -76,8 +76,89 @@ describe("projectCardFace", () => {
     }));
     expect(face.packId).toBe("deck.presentation");
     expect(face.stageLabel).toBe("页面");
-    expect(face.nextStep).toBe("导出");
+    expect(face.nextStep).toBe("接续 · 导出");
     expect(face.missionTitle).toBe("周五前完成 12 页策略汇报");
+  });
+
+  it("把 DAG 的并行与阻塞状态直接投影到卡面", () => {
+    const face = projectCardFace(project({
+      id: "dag",
+      name: "Agent 策略 PPT",
+      objects: [],
+      workflow_run: {
+        id: "wr-dag",
+        definition_id: "deck.presentation",
+        definition_version: "2.0.0",
+        domain: "deck",
+        label: "演示文稿",
+        status: "running",
+        current_stage_id: "slides",
+        current_stage_index: 3,
+        active_stage_ids: ["slides", "visual"],
+        updated_at: 0,
+        stages: [
+          { id: "brief", label: "需求", status: "completed" },
+          { id: "claims", label: "主张", status: "completed" },
+          { id: "storyline", label: "故事线", status: "completed" },
+          { id: "slides", label: "页面", status: "running" },
+          { id: "visual", label: "视觉", status: "ready" },
+          { id: "validate", label: "校验", status: "pending" },
+          { id: "export", label: "导出", status: "blocked" },
+        ],
+      },
+    }));
+    expect(face.activeLabels).toEqual(["页面", "视觉"]);
+    expect(face.stageLabel).toBe("页面 · 视觉");
+    expect(face.nextStep).toBe("1 个节点等待依赖");
+    expect(face.stageStates).toContain("blocked");
+  });
+
+  it("把长任务的 provider、断点进度与恢复态投影到卡面", () => {
+    const face = projectCardFace(project({
+      id: "durable",
+      name: "Agent 概念科普视频",
+      objects: [],
+      workflow_run: {
+        id: "wr-durable",
+        definition_id: "video.explainer",
+        definition_version: "1.1.0",
+        domain: "video",
+        label: "视频创作",
+        status: "blocked",
+        current_stage_id: "assets",
+        current_stage_index: 4,
+        active_stage_ids: ["assets"],
+        updated_at: 0,
+        stages: [
+          { id: "topic", label: "选题", status: "completed" },
+          { id: "evidence", label: "证据", status: "completed" },
+          { id: "script", label: "脚本", status: "completed" },
+          { id: "storyboard", label: "分镜", status: "completed" },
+          {
+            id: "assets",
+            label: "素材",
+            status: "blocked",
+            execution: {
+              id: "execution-1",
+              capability_id: "media.generate",
+              provider_id: "primary",
+              provider_candidates: ["primary", "fallback"],
+              status: "interrupted",
+              progress: 0.42,
+              attempt: 1,
+              checkpoint_version: 3,
+              cancel_mode: "checkpoint",
+              resume_supported: true,
+            },
+          },
+        ],
+      },
+    }));
+    expect(face.executionLabel).toBe("可恢复 · 42%");
+    expect(face.executionProgress).toBe(42);
+    expect(face.executionStatus).toBe("interrupted");
+    expect(face.executionCanResume).toBe(true);
+    expect(face.executionCanCancel).toBe(true);
   });
 });
 

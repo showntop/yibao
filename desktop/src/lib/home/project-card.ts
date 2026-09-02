@@ -1,7 +1,7 @@
 // Workspace / Mission 卡的读模型适配器。
 // 新数据优先读取持久 WorkflowRun；旧 Project 数据才回退声明式 Workflow Pack
 // 投影。组件只消费通用阶段合同，不知道视频、PPT 等领域步骤。
-import type { ProjectInfo, ProjectObject } from "../brain";
+import type { DurableExecutionInfo, ProjectInfo, ProjectObject } from "../brain";
 
 export type WorkflowDomain = "general" | "video" | "deck" | "code" | "data";
 
@@ -110,11 +110,19 @@ export interface ProjectCardFace {
   packId: string;
   packLabel: string;
   stages: readonly string[];
+  stageStates: readonly string[];
   stage: number;
   stageLabel: string;
+  activeLabels: readonly string[];
   nextStep: string;
   artifactCount: number;
   pending: number;
+  executionLabel: string;
+  executionProgress: number | null;
+  executionStatus: string;
+  executionId: string;
+  executionCanCancel: boolean;
+  executionCanResume: boolean;
 }
 
 export function projectCardFace(project: ProjectInfo): ProjectCardFace {
@@ -124,6 +132,33 @@ export function projectCardFace(project: ProjectInfo): ProjectCardFace {
   const stage = run
     ? Math.min(pack.stages.length - 1, Math.max(0, run.current_stage_index))
     : workflowStageIndex(pack, objects);
+  const activeLabels = run
+    ? (run.active_stage_ids ?? [run.current_stage_id])
+      .map((id) => run.stages.find((item) => item.id === id)?.label)
+      .filter((label): label is string => Boolean(label))
+    : [pack.stages[stage] ?? "理解"];
+  const blockedCount = run?.stages.filter((item) => item.status === "blocked").length ?? 0;
+  const activeExecutions = run?.stages
+    .filter((item) => (run.active_stage_ids ?? [run.current_stage_id]).includes(item.id))
+    .map((item) => item.execution)
+    .filter((execution): execution is DurableExecutionInfo => Boolean(execution)) ?? [];
+  const execution = activeExecutions.find((item) =>
+    ["queued", "running", "resuming", "checkpointing", "cancel_requested", "interrupted", "failed"].includes(item.status),
+  ) ?? activeExecutions[0];
+  const executionProgress = execution ? Math.round(Math.max(0, Math.min(1, execution.progress)) * 100) : null;
+  const executionLabel = activeExecutions.length > 1
+    ? `${activeExecutions.length} 条任务执行中`
+    : execution
+      ? execution.status === "interrupted"
+        ? `可恢复 · ${executionProgress}%`
+        : execution.status === "failed"
+          ? "执行失败"
+          : execution.status === "cancel_requested"
+            ? "正在安全停止"
+            : execution.status === "completed"
+              ? "阶段执行完成"
+              : `${execution.status === "resuming" ? "续跑" : "执行"} · ${executionProgress}%${execution.provider_id ? ` · ${execution.provider_id}` : ""}`
+      : "";
   return {
     name: project.name,
     missionTitle: project.mission?.title || project.name,
@@ -131,10 +166,27 @@ export function projectCardFace(project: ProjectInfo): ProjectCardFace {
     packId: pack.id,
     packLabel: pack.label,
     stages: pack.stages,
+    stageStates: run?.stages.map((item) => item.status)
+      ?? pack.stages.map((_label, index) => index < stage ? "completed" : index === stage ? "running" : "pending"),
     stage,
-    stageLabel: pack.stages[stage] ?? "理解",
-    nextStep: pack.stages[stage + 1] ?? "",
+    stageLabel: activeLabels.join(" · ") || pack.stages[stage] || "理解",
+    activeLabels,
+    nextStep: blockedCount > 0
+      ? `${blockedCount} 个节点等待依赖`
+      : activeLabels.length > 1
+        ? `${activeLabels.length} 条路径可并行`
+        : pack.stages[stage + 1] ? `接续 · ${pack.stages[stage + 1]}` : "",
     artifactCount: objects.length,
-    pending: run?.status === "waiting_user" || run?.status === "blocked" ? 1 : 0,
+    pending: blockedCount || (run?.status === "waiting_user" ? 1 : 0),
+    executionLabel,
+    executionProgress,
+    executionStatus: execution?.status ?? "",
+    executionId: execution?.id ?? "",
+    executionCanCancel: Boolean(
+      execution
+      && execution.cancel_mode !== "unsupported"
+      && ["queued", "running", "resuming", "checkpointing", "cancel_requested", "interrupted"].includes(execution.status),
+    ),
+    executionCanResume: execution?.status === "interrupted",
   };
 }

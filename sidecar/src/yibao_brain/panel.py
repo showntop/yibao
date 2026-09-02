@@ -11,6 +11,7 @@ from .llm import ToolCall
 from .loop import AgentLoop, _offload
 from .plugins import get_api, panel_payload
 from .safety import Decision
+from .surface_reads import SurfaceReadGuard
 
 if TYPE_CHECKING:
     from .server import WriteMsg
@@ -37,13 +38,18 @@ async def _emit_refresh_panel(agent: AgentLoop, emit, refresh_tool: str) -> None
     action = agent.invoker.propose(ToolCall(id=f"pa_refresh_{id(emit)}", tool_id=refresh_tool, params={}))
     if agent.invoker.decide(action) != Decision.AUTO:
         return
-    result = await _offload(agent.invoker.execute, action, {})
+    meta = {"surface": "panel:refresh", "invocation_persistence": "transient"}
+    # 写操作后的刷新必须强制读新值，不能命中纯读取的短缓存。
+    result = await _offload(agent.invoker.execute, action, {}, meta)
     payload = panel_payload(result)
     if payload is not None:
         emit(Event(kind="panel", payload=payload))
 
 
-async def handle_panel_action(msg: dict, agent: AgentLoop, write_msg: WriteMsg, *, run_text) -> None:
+async def handle_panel_action(
+    msg: dict, agent: AgentLoop, write_msg: WriteMsg, *, run_text,
+    read_guard: SurfaceReadGuard | None = None,
+) -> None:
     """处理壳侧 panel_action（v2 §7）：api.toml 白名单内的面板方法。
 
     direct=true：invoker 直调（propose → api.risk 只许收紧 → decide → 确认/执行 → 审计）；
@@ -76,6 +82,10 @@ async def handle_panel_action(msg: dict, agent: AgentLoop, write_msg: WriteMsg, 
         action.id = f"pa_{rid}"  # propose 会重新发 id；壳侧桥靠 pa_<rid> 关联回包/确认/错误，必须保留
         if api.risk is not None:
             action.risk = max(action.risk, api.risk)  # api.toml 只许收紧，不许放宽
+        if action.risk <= RiskLevel.L0_READONLY:
+            # 面板加载/返回/轮询只是 Surface 的读模型刷新。AuditLog 仍记录执行，
+            # Work Graph 只保留用户/Agent 的可追责动作，避免把查询快照当领域历史。
+            invoke_meta["invocation_persistence"] = "transient"
         decision = agent.invoker.decide(action)
         if decision == Decision.DENY:
             emit(Event(kind="error", text=f"策略禁止执行 {api.handler}（风险过高）", action=action))
@@ -92,7 +102,14 @@ async def handle_panel_action(msg: dict, agent: AgentLoop, write_msg: WriteMsg, 
                 emit(Event(kind="error", text=f"用户拒绝执行 {api.handler}", action=action))
                 write_msg({"type": "run_done", "id": rid})
                 return
-        result = await _offload(agent.invoker.execute, action, params, invoke_meta)  # 与 arun 一致挪线程池
+        execute = lambda: _offload(agent.invoker.execute, action, params, invoke_meta)
+        if read_guard is not None and action.risk <= RiskLevel.L0_READONLY:
+            key = read_guard.key(
+                api.handler, params, conversation_id=conversation_id, surface=surface,
+            )
+            result, _source = await read_guard.run(key, execute)
+        else:
+            result = await execute()  # 与 arun 一致挪线程池
         emit(Event(kind="action_result", action=action, result=result))
         if result.success and api.refresh is not None:
             # 声明式刷新：删除类操作后跟一次查询，面板拿新数据而不是操作回执

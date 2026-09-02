@@ -27,12 +27,12 @@ def test_video_and_deck_share_schema_but_keep_their_workflow(tmp_path):
         )
         video = graph.workspace_view("ws_video")
         assert video["workflow_run"]["definition_id"] == "video.explainer"
-        assert video["workflow_run"]["current_stage_id"] == "topic"
+        assert video["workflow_run"]["current_stage_id"] == "evidence"
 
         graph.attach_external_artifact("ws_video", "research.evidence", "e1")
         graph.attach_external_artifact("ws_video", "video.script", "s1")
         video = graph.workspace_view("ws_video")
-        assert video["workflow_run"]["current_stage_id"] == "script"
+        assert video["workflow_run"]["current_stage_id"] == "storyboard"
         assert [s["label"] for s in video["workflow_run"]["stages"]][:4] == ["选题", "证据", "脚本", "分镜"]
 
         graph.create_workspace(
@@ -44,7 +44,8 @@ def test_video_and_deck_share_schema_but_keep_their_workflow(tmp_path):
         graph.attach_external_artifact("ws_deck", "deck.slide", "slide1")
         deck = graph.workspace_view("ws_deck")
         assert deck["workflow_run"]["definition_id"] == "deck.presentation"
-        assert deck["workflow_run"]["current_stage_id"] == "slides"
+        assert deck["workflow_run"]["current_stage_id"] == "claims"
+        assert next(s for s in deck["workflow_run"]["stages"] if s["id"] == "slides")["status"] == "blocked"
         assert deck["mission"]["title"] == "周五前完成 12 页策略汇报"
         assert [s["label"] for s in deck["workflow_run"]["stages"]][:4] == ["需求", "主张", "故事线", "页面"]
 
@@ -123,7 +124,8 @@ def test_project_json_migrates_once_then_work_graph_is_authoritative(tmp_path, m
         view = reloaded_store.get("proj_legacy")
         assert [o["ref"] for o in view["objects"]] == ["s1"]
         assert view["mission"]["id"].startswith("mission_")
-        assert view["workflow_run"]["current_stage_id"] == "script"
+        assert view["workflow_run"]["current_stage_id"] == "topic"
+        assert next(s for s in view["workflow_run"]["stages"] if s["id"] == "script")["status"] == "blocked"
     finally:
         reloaded_graph.close()
 
@@ -133,6 +135,16 @@ def test_workflow_run_restores_after_database_reopen(tmp_path):
     graph = WorkGraphStore(str(path))
     graph.create_workspace("deck", "董事会 PPT", str(tmp_path / "deck"))
     graph.attach_external_artifact("deck", "deck.export.pptx", "final.pptx")
+    assert graph.workspace_view("deck")["workflow_run"]["status"] != "completed"
+    for artifact_type, ref in (
+        ("brief.presentation", "brief"),
+        ("research.claim", "claims"),
+        ("deck.storyline", "storyline"),
+        ("deck.slide", "slide-1"),
+        ("visual.image", "hero"),
+        ("quality.validation", "qa"),
+    ):
+        graph.attach_external_artifact("deck", artifact_type, ref)
     before = graph.workspace_view("deck")["workflow_run"]
     assert before["status"] == "completed"
     graph.close()
@@ -143,6 +155,42 @@ def test_workflow_run_restores_after_database_reopen(tmp_path):
         assert after["id"] == before["id"]
         assert after["status"] == "completed"
         assert after["current_stage_id"] == "export"
+    finally:
+        reopened.close()
+
+
+def test_startup_reprojects_locked_run_after_same_version_core_rewrite(tmp_path):
+    path = tmp_path / "work_graph.db"
+    graph = WorkGraphStore(str(path))
+    graph.create_workspace(
+        "video", "Agent 视频", str(tmp_path / "video"),
+        objects=[
+            {"type": "zimeiti.topic", "ref": "topic"},
+            {"type": "research.evidence", "ref": "evidence"},
+        ],
+    )
+    run_id = graph.workspace_view("video")["workflow_run"]["id"]
+    # 模拟上一代线性投影留下的状态；定义同版本原位重写后必须重算。
+    graph._conn.execute(
+        "UPDATE stage_instances SET status='pending',input_artifact_ids='[]' WHERE workflow_run_id=?",
+        (run_id,),
+    )
+    graph._conn.execute(
+        "UPDATE workflow_runs SET status='running',current_stage_id='evidence' WHERE id=?", (run_id,),
+    )
+    graph._conn.commit()
+    graph.close()
+
+    reopened = WorkGraphStore(str(path))
+    try:
+        run = reopened.workspace_view("video")["workflow_run"]
+        assert run["current_stage_id"] == "script"
+        assert [stage["status"] for stage in run["stages"][:3]] == [
+            "completed", "completed", "ready",
+        ]
+        script = next(stage for stage in run["stages"] if stage["id"] == "script")
+        evidence = next(stage for stage in run["stages"] if stage["id"] == "evidence")
+        assert script["input_artifact_ids"] == evidence["output_artifact_ids"]
     finally:
         reopened.close()
 
@@ -179,6 +227,46 @@ class _ArtifactTool(Tool):
         })
 
 
+class _ReadonlyProjectionTool(Tool):
+    id = "demo.list"
+    default_risk = RiskLevel.L0_READONLY
+
+    def run(self, params, ctx):
+        return ActionResult(success=True, data={"rows": [{"id": "one"}]})
+
+
+class _GraphOutputTool(Tool):
+    id = "demo.graph_output"
+    default_risk = RiskLevel.L1_LOW
+    # 故意把 edge 声明在 artifact 前；materializer 必须按引用完整性排序。
+    work_outputs = (
+        {
+            "kind": "edge", "relation": "supports", "label": "核心主张",
+            "source_artifact_type": "research.evidence", "source_ref_from": "data.evidence_id",
+            "target_artifact_type": "video.script", "target_ref_from": "data.script_id",
+        },
+        {
+            "kind": "artifact", "artifact_type": "research.evidence",
+            "ref_from": "data.evidence_id", "content_ref_from": "data.evidence_ref",
+        },
+        {
+            "kind": "artifact", "artifact_type": "video.script",
+            "ref_from": "data.script_id", "content_ref_from": "data.script_ref",
+        },
+        {
+            "kind": "checkpoint", "stage_id": "storyboard",
+            "checkpoint_from": "data.checkpoint",
+        },
+    )
+
+    def run(self, params, ctx):
+        return ActionResult(success=True, data={
+            "evidence_id": "evidence-main", "evidence_ref": "blob://evidence",
+            "script_id": "script-main", "script_ref": "blob://script",
+            "checkpoint": {"cursor": 12, "completed_shots": ["shot-01"]},
+        })
+
+
 def test_tool_invoker_immediately_projects_safe_result_to_work_graph(tmp_path):
     graph = WorkGraphStore(str(tmp_path / "work_graph.db"))
     graph.create_workspace("deck", "策略 PPT", str(tmp_path / "deck"))
@@ -196,7 +284,8 @@ def test_tool_invoker_immediately_projects_safe_result_to_work_graph(tmp_path):
             assert result.success
 
         view = graph.workspace_view("deck")
-        assert view["workflow_run"]["current_stage_id"] == "slides"
+        assert view["workflow_run"]["current_stage_id"] == "brief"
+        assert next(s for s in view["workflow_run"]["stages"] if s["id"] == "slides")["status"] == "blocked"
         artifact = graph.artifact_view(view["objects"][0]["artifact_id"])
         assert [revision["content_ref"] for revision in artifact["revisions"]] == [
             "blob://deck-v1", "blob://deck-v2",
@@ -205,6 +294,134 @@ def test_tool_invoker_immediately_projects_safe_result_to_work_graph(tmp_path):
         assert [item["status"] for item in invocations] == ["succeeded", "succeeded"]
         assert invocations[0]["params_hash"] and "params" not in invocations[0]
         assert graph.outbox_views(invocations[0]["id"])[0]["status"] == "applied"
+    finally:
+        graph.close()
+
+
+def test_declared_artifacts_edge_and_checkpoint_apply_as_one_ordered_contract(tmp_path):
+    graph = WorkGraphStore(str(tmp_path / "work_graph.db"))
+    graph.create_workspace(
+        "video", "Agent 概念科普视频", str(tmp_path / "video"),
+        objects=[{"type": "zimeiti.topic", "ref": "agent-topic"}],
+    )
+    registry = ToolRegistry()
+    registry.register(_GraphOutputTool(), plugin="demo")
+    invoker = ToolInvoker(
+        registry, RiskClassifier(), Gate(GatePolicy()), AuditLog(str(tmp_path / "audit.db")),
+    )
+    invoker.invocation_sink = WorkGraphInvocationSink(graph, lambda _cid: "video")
+    try:
+        action = invoker.propose(ToolCall(id="graph", tool_id="demo.graph_output", params={}))
+        assert invoker.execute(action, {}, {"conversation_id": "s", "surface": "stage"}).success
+
+        invocation = graph.invocation_views(workspace_id="video")[0]
+        events = graph.outbox_views(invocation["id"])
+        assert [event["event_type"] for event in events] == [
+            "artifact.upsert", "artifact.upsert", "artifact.edge.upsert", "stage.checkpoint",
+        ]
+        assert {event["status"] for event in events} == {"applied"}
+        view = graph.workspace_view("video")
+        by_type = {item["type"]: item for item in view["objects"]}
+        script = graph.artifact_view(by_type["video.script"]["artifact_id"])
+        assert script["edges"][0]["relation"] == "supports"
+        assert script["edges"][0]["source_artifact_id"] == by_type["research.evidence"]["artifact_id"]
+        storyboard = next(stage for stage in view["workflow_run"]["stages"] if stage["id"] == "storyboard")
+        assert storyboard["status"] == "running"
+        assert storyboard["checkpoint"] == {"cursor": 12, "completed_shots": ["shot-01"]}
+        assert storyboard["checkpoint_version"] == 1
+    finally:
+        graph.close()
+
+
+def test_dag_parallel_gates_and_checkpoint_survive_reopen(tmp_path):
+    path = tmp_path / "work_graph.db"
+    graph = WorkGraphStore(str(path))
+    graph.create_workspace("deck", "Agent 策略 PPT", str(tmp_path / "deck"))
+    try:
+        # 绕过依赖投入后续产物，只能 blocked，不能伪造前置完成。
+        graph.attach_external_artifact("deck", "deck.export.pptx", "premature.pptx")
+        jumped = graph.workspace_view("deck")["workflow_run"]
+        assert jumped["current_stage_id"] == "brief"
+        assert next(stage for stage in jumped["stages"] if stage["id"] == "export")["status"] == "blocked"
+
+        for artifact_type, ref in (
+            ("brief.presentation", "brief"),
+            ("research.claim", "claims"),
+            ("deck.storyline", "storyline"),
+        ):
+            graph.attach_external_artifact("deck", artifact_type, ref)
+        parallel = graph.workspace_view("deck")["workflow_run"]
+        assert parallel["active_stage_ids"] == ["slides", "visual"]
+        assert next(stage for stage in parallel["stages"] if stage["id"] == "validate")["status"] == "pending"
+
+        first = graph.save_stage_checkpoint(
+            parallel["id"], "slides", {"page": 4, "draft_ids": ["s1", "s2"]},
+            expected_version=0,
+        )
+        assert first["status"] == "running" and first["checkpoint_version"] == 1
+        with pytest.raises(ValueError, match="版本冲突"):
+            graph.save_stage_checkpoint(parallel["id"], "slides", {"page": 2}, expected_version=0)
+    finally:
+        graph.close()
+
+    reopened = WorkGraphStore(str(path))
+    try:
+        run = reopened.workspace_view("deck")["workflow_run"]
+        slides = next(stage for stage in run["stages"] if stage["id"] == "slides")
+        assert slides["status"] == "running"
+        assert slides["checkpoint"] == {"page": 4, "draft_ids": ["s1", "s2"]}
+        assert slides["checkpoint_version"] == 1
+    finally:
+        reopened.close()
+
+
+def test_workflow_definition_rejects_cycles_and_supports_count_acceptance(tmp_path):
+    with pytest.raises(ValueError, match="循环依赖"):
+        WorkGraphStore.normalize_workflow_definition({
+            "id": "bad.cycle", "version": "1", "domain": "test", "label": "cycle",
+            "matches": [],
+            "stages": [
+                {"id": "a", "label": "A", "depends_on": ["b"], "acceptance": [{"artifact_patterns": ["a"]}]},
+                {"id": "b", "label": "B", "depends_on": ["a"], "acceptance": [{"artifact_patterns": ["b"]}]},
+            ],
+        })
+
+    graph = WorkGraphStore(str(tmp_path / "count.db"))
+    try:
+        graph.register_workflow({
+            "id": "research.two_sources", "version": "1", "domain": "research",
+            "label": "双源验收", "matches": ["双源"],
+            "stages": [{
+                "id": "sources", "label": "来源", "depends_on": [],
+                "acceptance": [{"artifact_patterns": ["research\\.evidence"], "min_count": 2}],
+            }],
+        }, source_plugin="research")
+        graph.create_workspace("research", "双源调研", str(tmp_path / "research"))
+        graph.attach_external_artifact("research", "research.evidence", "one")
+        assert graph.workspace_view("research")["workflow_run"]["status"] != "completed"
+        graph.attach_external_artifact("research", "research.evidence", "two")
+        assert graph.workspace_view("research")["workflow_run"]["status"] == "completed"
+    finally:
+        graph.close()
+
+
+def test_transient_ui_projection_skips_work_graph_invocation_but_still_executes(tmp_path):
+    graph = WorkGraphStore(str(tmp_path / "work_graph.db"))
+    graph.create_workspace("deck", "策略 PPT", str(tmp_path / "deck"))
+    registry = ToolRegistry()
+    registry.register(_ReadonlyProjectionTool(), plugin="demo")
+    invoker = ToolInvoker(
+        registry, RiskClassifier(), Gate(GatePolicy()), AuditLog(str(tmp_path / "audit.db")),
+    )
+    invoker.invocation_sink = WorkGraphInvocationSink(graph, lambda _cid: "deck")
+    try:
+        params = {}
+        action = invoker.propose(ToolCall(id="widget", tool_id="demo.list", params=params))
+        result = invoker.execute(action, params, {
+            "surface": "widget", "invocation_persistence": "transient",
+        })
+        assert result.success and result.data == {"rows": [{"id": "one"}]}
+        assert graph.invocation_views(workspace_id="deck") == []
     finally:
         graph.close()
 
@@ -228,7 +445,11 @@ def test_evidence_event_and_unbound_session_are_explicit(tmp_path):
         assert graph.outbox_views(invocation)[0]["status"] == "applied"
         evidence = graph.evidence_views("video")
         assert evidence[0]["claim"] == "Agent 会调用工具完成动作"
-        assert graph.workspace_view("video")["workflow_run"]["current_stage_id"] == "evidence"
+        assert graph.workspace_view("video")["workflow_run"]["current_stage_id"] == "topic"
+        assert next(
+            stage for stage in graph.workspace_view("video")["workflow_run"]["stages"]
+            if stage["id"] == "evidence"
+        )["status"] == "blocked"
 
         unbound = graph.begin_invocation(
             action_id="a2", workspace_id=None, conversation_id="s2",

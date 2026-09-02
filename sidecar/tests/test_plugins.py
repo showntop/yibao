@@ -136,6 +136,22 @@ def test_process_capability_accepted(data_dir, tmp_path):
     assert "teleport" in results["badcap"]  # 报错指明未知能力
 
 
+def test_durable_capability_requires_and_injects_execution_engine(data_dir, tmp_path):
+    manifest = NOTES_MANIFEST.replace(
+        'capabilities = ["db"]', 'capabilities = ["db", "durable"]',
+    )
+    _write_plugin(tmp_path, "notes", manifest)
+    missing = ToolRegistry()
+    assert "DurableExecutionEngine" in _load(tmp_path, missing)["notes"]
+
+    engine = object()
+    reg = ToolRegistry()
+    assert _load(tmp_path, reg, durable_engine=engine) == {"notes": "ok"}
+    skill = reg.get("notes.keep")
+    assert skill.plugin_capabilities == frozenset({"db", "durable"})
+    assert skill.plugin_ctx.durable is engine
+
+
 def test_blob_capability_injects_shared_content_store(data_dir, tmp_path):
     manifest = NOTES_MANIFEST.replace(
         'capabilities = ["db"]', 'capabilities = ["db", "blobs"]',

@@ -76,3 +76,14 @@ class SessionContextStore:
             "conversation_id": conversation_id,
             "workspace_id": self.workspace_id(conversation_id),
         }
+
+    def conversation_ids(self, workspace_id: str) -> list[str]:
+        """Return sessions bound to a Workspace for scoped read-model updates."""
+        if not workspace_id:
+            return []
+        with self._lock:
+            return sorted(
+                conversation_id
+                for conversation_id, item in self._data["contexts"].items()
+                if isinstance(item, dict) and str(item.get("workspace_id") or "") == workspace_id
+            )

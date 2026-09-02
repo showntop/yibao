@@ -344,7 +344,7 @@ interface CapabilityDescriptor {
 }
 ```
 
-插件 tool 可声明一个通用 `work_output`：`artifact` 或 `evidence`。字段只允许从安全 result 与显式选定的 params 路径投影；执行入口不按插件名判断业务语义。
+插件 tool 可声明一个 `work_output` 或多个 `work_outputs`，通用 kind 为 `artifact` / `evidence` / `edge` / `checkpoint`。字段只允许从安全 result 与显式选定的 params 路径投影；执行入口不按插件名判断业务语义。Host 会将事件稳定排成“Artifact/Evidence → Edge → Checkpoint”，因此声明顺序不会制造悬空引用。
 
 ```toml
 [tool.work_output]
@@ -355,9 +355,34 @@ content_ref_from = "data.path"
 metadata_fields = ["data.version"]
 ```
 
-对话调用和面板直调均通过唯一 `ToolInvoker`：执行前写 `Invocation(running)`；带 `db + work_output` 的插件调用把领域写入与 PluginDb outbox 放入同一 SQLite 事务，再由 Host 以稳定事件 id 幂等接收、投影 Artifact、Revision 或 Evidence 并回写确认。进程若恰好崩在插件提交与 Host 接收之间，启动时会从 PluginDb 重放；没有 `conversation_id → Workspace` 绑定时，Host 事件保持 `blocked`，不得回退猜测全局项目。
+```toml
+[[tool.work_outputs]]
+kind = "edge"
+relation = "supports"
+source_artifact_type = "research.evidence"
+source_ref_from = "data.evidence_id"
+target_artifact_type = "video.script"
+target_ref_from = "data.script_id"
 
-### 5.2 宿主裁决
+[[tool.work_outputs]]
+kind = "checkpoint"
+stage_id = "storyboard"
+checkpoint_from = "data.checkpoint"
+```
+
+对话调用和面板直调均通过唯一 `ToolInvoker`。Agent/用户触发的可追责动作在执行前写 `Invocation(running)`；Widget 轮询、面板 L0 只读加载和写后刷新属于 `transient` Surface 投影，仍经过风险闸门和 AuditLog，但不写入 Work Graph，避免把高频 UI 快照误建模成业务历史。带 `db + work_output` 的插件调用把领域写入与 PluginDb outbox 放入同一 SQLite 事务，再由 Host 以稳定事件 id 幂等接收、投影 Artifact、Revision 或 Evidence 并回写确认。进程若恰好崩在插件提交与 Host 接收之间，启动时会从 PluginDb 重放；没有 `conversation_id → Workspace` 绑定时，Host 事件保持 `blocked`，不得回退猜测全局项目。
+
+L0 Surface 读取还经过共享 `SurfaceReadGuard`：键由 method、params、Session 与 Surface 共同决定；同键并发请求 single-flight，350ms 内复用深拷贝快照，1 秒超过 20 次时熔断 2 秒并优先返回 30 秒内的 stale 快照。状态表最多保留 256 个键，避免高基数参数把防护层自身撑大。写操作后的声明式刷新强制读取新值，不进入短缓存。
+
+### 5.2 DurableExecution：长任务不是后台线程
+
+`DurableExecution` 是 `WorkflowRun + StageInstance` 下的持久执行实例，不等于 `Run`，也不等于只保存 command/output 的 `BackgroundJob`。它保存 capability、provider 候选、幂等键、安全 request、checkpoint/CAS version、progress、attempt、取消语义与终态结果；每次 provider 尝试另存 `DurableAttempt`。
+
+插件必须显式声明 `durable` capability 才能得到执行引擎。provider 实现统一函数合同 `handler(request, checkpoint, control)`；只能通过 `control.checkpoint()` 原子推进执行与 StageInstance，通过 `control.raise_if_cancelled()` 在安全点响应取消。Host 按候选顺序 claim provider；可重试失败会保留 checkpoint 并切换下一个支持 resume 的 provider，非重试失败进入终态。进程启动时把未完成的 running/resuming/checkpointing 标成 interrupted；拥有相应 provider 的插件加载后，从最后 checkpoint 恢复。插件缺失或被禁用时保持 resumable，不能把“当前没有 provider”误判成任务失败。
+
+完成时 result 与声明式 work events 绑定到同一 Invocation：Artifact/Evidence/Edge 仍经 Host outbox 幂等投影，Workflow acceptance 而不是 provider 返回成功决定阶段是否真正 completed。Home 读模型只读取最新 execution，显示执行/续跑/可恢复/安全停止、provider 与阶段内百分比；它不是调度权威。
+
+### 5.3 宿主裁决
 
 插件只能提出 `suggestedSurfaces`，Host 根据以下信息做最终裁决：
 
@@ -607,7 +632,7 @@ flowchart TB
 ### 8.2 运行原则
 
 - Run 状态：`queued → running → waiting_user / blocked → done / failed / cancelled`；
-- 每个 tool result 立即写 Invocation Log，不能等 final reply 才落整轮；
+- 每个持久 tool result 立即写 Invocation Log，不能等 final reply 才落整轮；UI 轮询和 L0 读模型刷新显式标记为 transient；
 - 用户打断只改变当前 Run / Invocation，已提交 Revision 和 Evidence 不回滚；
 - 长媒体、导出、索引任务使用 durable job，关闭窗口后继续，重启可恢复；
 - `speech_stop`、`run_cancel`、`job_cancel` 是三个不同命令；
@@ -636,20 +661,24 @@ flowchart TB
 
 - 将 topic、article、material 映射为 typed Artifact；
 - 将 Project.objects 映射成 Artifact + WorkspaceArtifact；对象间关系映射为 ArtifactEdge；
-- tool result 即时写 Invocation / Evidence / Revision；
+- 持久 tool result 即时写 Invocation / Evidence / Revision；L0 Surface 读模型不进入业务图；
 - 插件域通过 outbox 发事件，消灭 `project.attach + plugin.project_id` 双写。
 
 当前落地：`work_graph.db` 已建立 Workspace、Mission、Artifact、不可变 Revision、ArtifactEdge、WorkflowDefinition、WorkflowRun、StageInstance、Invocation、Evidence 与 Host outbox；legacy `projects.json` 只迁移一次，后续对象写入以 Work Graph 为权威。`PluginDb` 已内建 transactional outbox，Host 以稳定插件事件 id 充当 inbox 幂等键，并在启动时扫描未确认事件恢复。`zimeiti.add / article_save / mat_save` 已改为声明产出，数据库业务写入与领域事件原子提交，成功后自动投影，不再要求 Agent 手工 `project.attach`。
 
 大内容层也已落地第一版：共享 BlobStore 支持 bytes、text 与流式文件 staging，以 `blob://sha256/<hash>` 形成位置无关引用；tool 在 PluginDb 提交前原子 promote，outbox 只发布已经存在的内容哈希。这样崩溃不会产生“数据库已提交但文件不存在”，最坏只留下无引用对象；Host 启动时从 Revision 与 outbox 生成保守 live set，经过七天宽限期回收过期 staging 与孤儿对象。`article_save / read / publish / get / wewrite` 已接入，旧相对路径和绝对路径继续只读兼容。
 
-剩余边界：BlobStore 目前解决单机持久化、去重、崩溃顺序与孤儿回收，还没有团队同步、分片上传、加密域、配额和显式 retention policy；领域删除也不会立即物理清除仍被不可变 Revision 引用的内容。下一阶段应扩展 ArtifactEdge 事件、DAG gate、长任务 checkpoint，并用真实 `deck.export.pptx` 与视频渲染文件验证大二进制流式写入及同步策略。
+已落地的 Workflow Engine 纵向切片：Workflow Pack 正规化为显式 `depends_on` DAG，加载时拒绝不存在的依赖、自依赖与环；acceptance 支持多规则与 `min_count`，节点只在所有依赖已完成且自身验收通过时完成。后续产物若提前出现，该节点会 blocked，不会反向把前置节点伪造成 completed。StageInstance checkpoint 为有界 JSON（最大 64KiB）、带 CAS version 与 invocation 来源，重启后可继续投影为 running。Home 卡面直接显示并行 ready/running 节点和阻塞轨道，不再把 DAG 伪装成“只有一个下一步”。
+
+剩余边界：BlobStore 目前解决单机持久化、去重、崩溃顺序与孤儿回收，还没有团队同步、分片上传、加密域、配额和显式 retention policy；领域删除也不会立即物理清除仍被不可变 Revision 引用的内容。`DurableExecution` 已把执行中 checkpoint、取消、重启续跑和 provider fallback 接进 Work Graph，并以视频素材失败切换与 PPT 页面取消/重启契约验证；尚未以真实 `deck.export.pptx` 和视频渲染大文件验证分片写入、外部 provider 幂等、成本结算与进程级 kill。
 
 ### Phase 3：Workflow Engine 与两个对照 Pack
 
-- 先实现 `video.explainer.60s` 与 `deck.strategy-review`；
-- 用两个差异足够大的领域逼出 DAG、acceptance、fallback、并行和 resume；
-- Home 项目阶段改读活跃 WorkflowRun，不再读 `PROJECT_STAGES` 常量。
+- 已实现 `video.explainer` 与 `deck.presentation` 的 DAG / acceptance 对照；
+- 已实现分叉汇合、跳步阻塞、多产物数量验收、checkpoint CAS 与重启恢复；
+- 已实现通用 DurableExecution、执行中 checkpoint、协作式取消、provider fallback 与插件 capability 隔离；
+- Home 卡面已改读活跃 WorkflowRun 的并行/阻塞状态，不再把阶段序号当成内核真相；
+- 未完成：真实大文件 provider、人工 acceptance report、条件分支、成本/配额和多设备 worker lease。
 
 ### Phase 4：通用 Artifact Workbench Shell
 

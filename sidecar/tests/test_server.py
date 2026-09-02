@@ -1289,6 +1289,7 @@ def _patch_api(monkeypatch, **kw):
 
 def test_panel_action_direct_end_to_end(tmp_path, monkeypatch):
     executed = []
+    monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path / "data"))
     _patch_api(monkeypatch)
     from yibao_brain import plugins
 
@@ -1313,6 +1314,12 @@ def test_panel_action_direct_end_to_end(tmp_path, monkeypatch):
     assert pe["payload"] == {"panel": "tdel:list", "title": "tdel:list", "schema": {"type": "list"}, "data": {"deleted": "r1"}}
     assert kinds.index("panel") > kinds.index("action_result")
     assert out[-1] == {"type": "run_done", "id": 1}
+    from yibao_brain.work_graph import WorkGraphStore
+    graph = WorkGraphStore(str(tmp_path / "data" / "work_graph.db"))
+    try:
+        assert [row["tool_id"] for row in graph.invocation_views()] == ["tdel.delete"]
+    finally:
+        graph.close()
 
 
 def test_panel_action_api_panel_override_emits_webview(tmp_path, monkeypatch):
@@ -1453,6 +1460,7 @@ def test_panel_action_readonly_bypasses_slot_no_preempt(tmp_path, monkeypatch):
     回归：面板数据加载（read_article 等）与对话 run 互相抢占 → 回复截断 + 编辑器「没反应」。
     """
     executed = []
+    monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path / "data"))
     _patch_api(monkeypatch, name="tread.get", handler="tdel.delete")
     out = []
     _run_async(
@@ -1474,6 +1482,52 @@ def test_panel_action_readonly_bypasses_slot_no_preempt(tmp_path, monkeypatch):
     assert reply["text"] == "你好"                            # run 没被抢占，完整收尾
     assert not any(e["kind"] == "interrupted" for e in evs)
     assert {"type": "run_done", "id": 1} in out and {"type": "run_done", "id": 2} in out
+    from yibao_brain.work_graph import WorkGraphStore
+    graph = WorkGraphStore(str(tmp_path / "data" / "work_graph.db"))
+    try:
+        assert graph.invocation_views() == []                 # L0 Surface 取数不污染业务图
+    finally:
+        graph.close()
+
+
+def test_panel_action_readonly_storm_executes_tool_once(tmp_path, monkeypatch):
+    """同一个 Surface 的 L0 风暴共享一次执行；每个请求仍收到自己的 run_done。"""
+    from yibao_brain.ipc import ActionResult as AR
+    from yibao_brain.tools import Tool as _S, ToolRegistry
+
+    executed = []
+    monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path / "data"))
+    _patch_api(monkeypatch, name="tread.get", handler="tread.get")
+
+    class SlowRead(_S):
+        id = "tread.get"
+        description = "读"
+        default_risk = RiskLevel.L0_READONLY
+
+        def run(self, params, ctx):
+            time.sleep(0.03)
+            executed.append(dict(params))
+            return AR(success=True, data={"rows": [{"id": params.get("id")}]})
+
+    def factory():
+        reg = ToolRegistry()
+        reg.register(SlowRead(), plugin="tread")
+        return reg
+
+    requests = [
+        {"id": i, "type": "panel_action", "method": "tread.get",
+         "params": {"id": "same"}, "surface": "panel:tread"}
+        for i in range(1, 61)
+    ]
+    out = []
+    _run_async(serve_async(
+        make_reader(requests), lambda m: out.append(m), use_real=False,
+        db_path=str(tmp_path / "a.db"), provider=FakeProvider(), skills_factory=factory,
+    ))
+    assert executed == [{"id": "same"}]
+    assert {m["id"] for m in out if m.get("type") == "run_done"} == set(range(1, 61))
+    errors = [m for m in out if m.get("type") == "event" and m["event"]["kind"] == "error"]
+    assert errors == []
 
 
 def test_panel_action_intent_goes_to_agent(tmp_path, monkeypatch):

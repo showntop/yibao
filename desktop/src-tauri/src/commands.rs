@@ -690,6 +690,32 @@ pub fn project_remove_object(
     )
 }
 
+/// Workflow 阶段长任务：在 provider 的安全 checkpoint 请求停止。
+#[tauri::command]
+pub fn durable_cancel(
+    state: tauri::State<Brain>,
+    id: String,
+    conversation_id: Option<String>,
+) -> Result<(), String> {
+    brain_cmd_with(&state, "durable_cancel", serde_json::json!({
+        "id": id,
+        "conversation_id": conversation_id.unwrap_or_default(),
+    }))
+}
+
+/// Workflow 阶段长任务：从最后 checkpoint 恢复执行。
+#[tauri::command]
+pub fn durable_resume(
+    state: tauri::State<Brain>,
+    id: String,
+    conversation_id: Option<String>,
+) -> Result<(), String> {
+    brain_cmd_with(&state, "durable_resume", serde_json::json!({
+        "id": id,
+        "conversation_id": conversation_id.unwrap_or_default(),
+    }))
+}
+
 /// 用户设置查询（回 {"type":"settings"} 经 brain-settings 广播）。
 #[tauri::command]
 pub fn get_settings(state: tauri::State<Brain>) -> Result<(), String> {

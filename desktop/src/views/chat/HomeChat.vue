@@ -22,9 +22,9 @@ import HorizonBar from "./HorizonBar.vue";
 import HomeGateCard from "./HomeGateCard.vue";
 import HomeDayTitle from "../HomeDayTitle.vue";
 import HomeProject from "../HomeProject.vue";
+import HomeShelfPeek from "../HomeShelfPeek.vue";
 import Avatar from "../../components/pet/Avatar.vue";
 import HomeShelfStats from "../HomeShelfStats.vue";
-import HomeRemindCard from "../HomeRemindCard.vue";
 import type { LiveSelection } from "../../lib/surface/selection-store.ts";
 import { docInfo, postToPanel } from "../../lib/surface/selection-store.ts";
 import HomeFrame from "../HomeFrame.vue";
@@ -1075,8 +1075,7 @@ onUnmounted(() => {
     <HorizonBar :state="state" :proc="horizonProc" :shelf="shelfCollapsed" :doc="workFocusDoc" :session-id="currentSessionId" @entry="onHorizonEntry" />
     <!-- 器物 peek：架收进降级档后，从地平线"器物"入口浮出（design §8），内容=当前架真身 -->
     <div v-if="shelfPeek && shelfCollapsed" class="shelf-peek yb-craze">
-      <HomeRemindCard force />
-      <HomeShelfStats />
+      <HomeShelfPeek :session-id="currentSessionId" @chat="onInfoChat" />
     </div>
     <!-- 会话 peek 已改为 frame-row 内的停靠抽屉（结构列，推内容不让位） -->
   </div>

@@ -128,12 +128,63 @@ CREATE TABLE IF NOT EXISTS stage_instances (
   status TEXT NOT NULL DEFAULT 'pending',
   input_artifact_ids TEXT NOT NULL DEFAULT '[]',
   output_artifact_ids TEXT NOT NULL DEFAULT '[]',
+  checkpoint TEXT NOT NULL DEFAULT '{}',
+  checkpoint_version INTEGER NOT NULL DEFAULT 0,
+  checkpointed_at REAL,
+  checkpoint_invocation_id TEXT,
   started_at REAL,
   completed_at REAL,
   updated_at REAL NOT NULL,
   UNIQUE(workflow_run_id, stage_id)
 );
 CREATE INDEX IF NOT EXISTS idx_stage_instances_run ON stage_instances(workflow_run_id, ordinal);
+
+CREATE TABLE IF NOT EXISTS durable_executions (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  workflow_run_id TEXT NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
+  stage_id TEXT NOT NULL,
+  invocation_id TEXT REFERENCES invocations(id) ON DELETE SET NULL,
+  capability_id TEXT NOT NULL,
+  provider_id TEXT NOT NULL DEFAULT '',
+  provider_candidates TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',
+  request TEXT NOT NULL,
+  checkpoint TEXT NOT NULL DEFAULT '{}',
+  checkpoint_version INTEGER NOT NULL DEFAULT 0,
+  progress REAL NOT NULL DEFAULT 0,
+  attempt INTEGER NOT NULL DEFAULT 0,
+  idempotency_key TEXT NOT NULL,
+  cancel_mode TEXT NOT NULL DEFAULT 'checkpoint',
+  resume_supported INTEGER NOT NULL DEFAULT 1,
+  error TEXT NOT NULL DEFAULT '',
+  result TEXT NOT NULL DEFAULT '{}',
+  created_at REAL NOT NULL,
+  started_at REAL,
+  updated_at REAL NOT NULL,
+  completed_at REAL,
+  UNIQUE(workspace_id, capability_id, idempotency_key),
+  FOREIGN KEY(workflow_run_id, stage_id)
+    REFERENCES stage_instances(workflow_run_id, stage_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_durable_executions_stage
+  ON durable_executions(workflow_run_id, stage_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_durable_executions_status
+  ON durable_executions(status, updated_at);
+
+CREATE TABLE IF NOT EXISTS durable_attempts (
+  id TEXT PRIMARY KEY,
+  execution_id TEXT NOT NULL REFERENCES durable_executions(id) ON DELETE CASCADE,
+  attempt INTEGER NOT NULL,
+  provider_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  error TEXT NOT NULL DEFAULT '',
+  started_at REAL NOT NULL,
+  completed_at REAL,
+  UNIQUE(execution_id, attempt)
+);
+CREATE INDEX IF NOT EXISTS idx_durable_attempts_execution
+  ON durable_attempts(execution_id, attempt);
 
 CREATE TABLE IF NOT EXISTS invocations (
   id TEXT PRIMARY KEY,
@@ -220,12 +271,24 @@ def _bounded_json(value: Any, limit: int = 16_000) -> str:
     return _json({"truncated": True, "sha256": digest, "preview": raw[: min(2_000, limit)]})
 
 
+def _checked_json(value: Any, label: str, limit: int = 64 * 1024) -> str:
+    """可恢复协议不能截断：超限就拒绝，大内容必须转 Artifact/Blob。"""
+    raw = _json(value)
+    if len(raw.encode("utf-8")) > limit:
+        raise ValueError(f"{label} 超过 {limit // 1024}KiB，大内容应存 Artifact/Blob")
+    return raw
+
+
 def _external_content_ref(obj_type: str, ref: str) -> str:
     return f"external://{obj_type}/{ref}"
 
 
-# 领域流程留在 Workflow Pack，不进入 Work Graph schema。artifact_patterns 只负责
-# 把迁移期外部对象投影到 pack 节点；StageInstance 才是 UI 的流程真相。
+_DURABLE_TERMINAL = {"completed", "failed", "cancelled"}
+_DURABLE_ACTIVE = {"queued", "running", "resuming", "checkpointing", "cancel_requested", "interrupted"}
+
+
+# 领域流程留在 Workflow Pack，不进入 Work Graph schema。depends_on 和
+# acceptance 都是数据；StageInstance 才是某次执行的流程真相。
 BUILTIN_WORKFLOWS: tuple[dict, ...] = (
     {
         "id": "video.explainer",
@@ -234,14 +297,14 @@ BUILTIN_WORKFLOWS: tuple[dict, ...] = (
         "label": "视频创作",
         "matches": [r"视频", r"video", r"zimeiti", r"storyboard", r"timeline"],
         "stages": [
-            {"id": "topic", "label": "选题", "artifact_patterns": [r"topic", r"brief"]},
-            {"id": "evidence", "label": "证据", "artifact_patterns": [r"material", r"evidence", r"claim", r"research"]},
-            {"id": "script", "label": "脚本", "artifact_patterns": [r"script", r"article", r"doc"]},
-            {"id": "storyboard", "label": "分镜", "artifact_patterns": [r"storyboard", r"shot"]},
-            {"id": "assets", "label": "素材", "artifact_patterns": [r"asset", r"image", r"visual"]},
-            {"id": "voice", "label": "配音", "artifact_patterns": [r"voice", r"audio", r"narration"]},
-            {"id": "compose", "label": "合成", "artifact_patterns": [r"timeline", r"composition"]},
-            {"id": "deliver", "label": "交付", "artifact_patterns": [r"render", r"export", r"published"]},
+            {"id": "topic", "label": "选题", "depends_on": [], "acceptance": [{"artifact_patterns": [r"topic", r"brief"]}]},
+            {"id": "evidence", "label": "证据", "depends_on": ["topic"], "acceptance": [{"artifact_patterns": [r"material", r"evidence", r"claim", r"research"]}]},
+            {"id": "script", "label": "脚本", "depends_on": ["evidence"], "acceptance": [{"artifact_patterns": [r"script", r"article", r"doc"]}]},
+            {"id": "storyboard", "label": "分镜", "depends_on": ["script"], "acceptance": [{"artifact_patterns": [r"storyboard", r"shot"]}]},
+            {"id": "assets", "label": "素材", "depends_on": ["storyboard"], "acceptance": [{"artifact_patterns": [r"asset", r"image", r"visual"]}]},
+            {"id": "voice", "label": "配音", "depends_on": ["storyboard"], "acceptance": [{"artifact_patterns": [r"voice", r"audio", r"narration"]}]},
+            {"id": "compose", "label": "合成", "depends_on": ["assets", "voice"], "acceptance": [{"artifact_patterns": [r"timeline", r"composition"]}]},
+            {"id": "deliver", "label": "交付", "depends_on": ["compose"], "acceptance": [{"artifact_patterns": [r"render", r"export", r"published"]}]},
         ],
     },
     {
@@ -251,13 +314,13 @@ BUILTIN_WORKFLOWS: tuple[dict, ...] = (
         "label": "演示文稿",
         "matches": [r"ppt", r"演示", r"幻灯", r"presentation", r"slide", r"deck"],
         "stages": [
-            {"id": "brief", "label": "需求", "artifact_patterns": [r"brief", r"requirement"]},
-            {"id": "claims", "label": "主张", "artifact_patterns": [r"claim", r"evidence", r"research"]},
-            {"id": "storyline", "label": "故事线", "artifact_patterns": [r"storyline", r"outline"]},
-            {"id": "slides", "label": "页面", "artifact_patterns": [r"slide", r"deck\.document"]},
-            {"id": "visual", "label": "视觉", "artifact_patterns": [r"chart", r"image", r"visual", r"asset"]},
-            {"id": "validate", "label": "校验", "artifact_patterns": [r"quality", r"validation", r"review"]},
-            {"id": "export", "label": "导出", "artifact_patterns": [r"pptx", r"pdf", r"export", r"published"]},
+            {"id": "brief", "label": "需求", "depends_on": [], "acceptance": [{"artifact_patterns": [r"brief", r"requirement"]}]},
+            {"id": "claims", "label": "主张", "depends_on": ["brief"], "acceptance": [{"artifact_patterns": [r"claim", r"evidence", r"research"]}]},
+            {"id": "storyline", "label": "故事线", "depends_on": ["claims"], "acceptance": [{"artifact_patterns": [r"storyline", r"outline"]}]},
+            {"id": "slides", "label": "页面", "depends_on": ["storyline"], "acceptance": [{"artifact_patterns": [r"slide", r"deck\.document"]}]},
+            {"id": "visual", "label": "视觉", "depends_on": ["storyline"], "acceptance": [{"artifact_patterns": [r"chart", r"image", r"visual", r"asset"]}]},
+            {"id": "validate", "label": "校验", "depends_on": ["slides", "visual"], "acceptance": [{"artifact_patterns": [r"quality", r"validation", r"review"]}]},
+            {"id": "export", "label": "导出", "depends_on": ["validate"], "acceptance": [{"artifact_patterns": [r"pptx", r"pdf", r"export", r"published"]}]},
         ],
     },
     {
@@ -319,10 +382,23 @@ class WorkGraphStore:
             self._conn.execute("PRAGMA foreign_keys = ON")
             self._conn.execute("PRAGMA journal_mode = WAL")
             self._conn.executescript(_SCHEMA)
+            self._ensure_stage_checkpoint_columns_locked()
             self._register_builtin_workflows_locked()
+            for row in self._conn.execute("SELECT id FROM workspaces").fetchall():
+                self._sync_workflow_locked(str(row["id"]))
             # 上次进程若在 tool 执行中退出，running 不得永远冒充仍在执行。
             self._conn.execute(
                 "UPDATE invocations SET status='interrupted',completed_at=? WHERE status='running'",
+                (time.time(),),
+            )
+            self._conn.execute(
+                "UPDATE durable_attempts SET status='interrupted',completed_at=? "
+                "WHERE status='running'",
+                (time.time(),),
+            )
+            self._conn.execute(
+                "UPDATE durable_executions SET status='interrupted',updated_at=? "
+                "WHERE status IN ('running','resuming','checkpointing')",
                 (time.time(),),
             )
             self._conn.commit()
@@ -330,9 +406,26 @@ class WorkGraphStore:
 
     # ---------- definition / bootstrap ----------
 
+    def _ensure_stage_checkpoint_columns_locked(self) -> None:
+        """SQLite CREATE TABLE IF NOT EXISTS 不会给旧表补列，显式演进持久节点。"""
+        existing = {
+            str(row["name"])
+            for row in self._conn.execute("PRAGMA table_info(stage_instances)").fetchall()
+        }
+        additions = {
+            "checkpoint": "TEXT NOT NULL DEFAULT '{}'",
+            "checkpoint_version": "INTEGER NOT NULL DEFAULT 0",
+            "checkpointed_at": "REAL",
+            "checkpoint_invocation_id": "TEXT",
+        }
+        for column, ddl in additions.items():
+            if column not in existing:
+                self._conn.execute(f"ALTER TABLE stage_instances ADD COLUMN {column} {ddl}")
+
     def _register_builtin_workflows_locked(self) -> None:
         now = time.time()
-        for definition in BUILTIN_WORKFLOWS:
+        for raw in BUILTIN_WORKFLOWS:
+            definition = self.normalize_workflow_definition(raw, source_plugin="core")
             self._conn.execute(
                 "INSERT INTO workflow_definitions(id,version,domain,label,definition,created_at) "
                 "VALUES(?,?,?,?,?,?) ON CONFLICT(id,version) DO UPDATE SET "
@@ -363,25 +456,73 @@ class WorkGraphStore:
             raise ValueError("WorkflowDefinition stages 不能为空")
         normalized_stages: list[dict] = []
         seen: set[str] = set()
-        for stage in stages:
+        for ordinal, stage in enumerate(stages):
             if not isinstance(stage, dict):
                 raise ValueError("WorkflowDefinition stage 必须是对象")
             stage_id = str(stage.get("id") or "").strip()
             stage_label = str(stage.get("label") or "").strip()
-            patterns = stage.get("artifact_patterns") or []
             if not stage_id or stage_id in seen or not stage_label:
                 raise ValueError(f"WorkflowDefinition stage id/label 非法：{stage!r}")
-            if not isinstance(patterns, list) or not all(isinstance(pattern, str) for pattern in patterns):
-                raise ValueError(f"stage {stage_id} artifact_patterns 必须是字符串数组")
-            # 加载期编译一次，坏正则不能拖到运行期才炸。
-            for pattern in patterns:
-                re.compile(pattern, re.IGNORECASE)
+            depends_on = stage.get("depends_on")
+            if depends_on is None:
+                # 旧的 artifact_patterns 是当前内置插件包的简写；入库后只保留显式 DAG。
+                depends_on = [str(stages[ordinal - 1].get("id") or "")] if ordinal else []
+            if not isinstance(depends_on, list) or not all(isinstance(item, str) for item in depends_on):
+                raise ValueError(f"stage {stage_id} depends_on 必须是字符串数组")
+            depends_on = [item.strip() for item in depends_on]
+            if any(not item for item in depends_on) or len(depends_on) != len(set(depends_on)):
+                raise ValueError(f"stage {stage_id} depends_on 包含空值或重复项")
+
+            acceptance = stage.get("acceptance")
+            if acceptance is None:
+                acceptance = [{"artifact_patterns": stage.get("artifact_patterns") or [], "min_count": 1}]
+            if not isinstance(acceptance, list) or not acceptance:
+                raise ValueError(f"stage {stage_id} acceptance 必须是非空数组")
+            normalized_acceptance: list[dict] = []
+            for rule in acceptance:
+                if not isinstance(rule, dict):
+                    raise ValueError(f"stage {stage_id} acceptance rule 必须是对象")
+                patterns = rule.get("artifact_patterns") or []
+                if not isinstance(patterns, list) or not patterns or not all(
+                    isinstance(pattern, str) and pattern for pattern in patterns
+                ):
+                    raise ValueError(
+                        f"stage {stage_id} acceptance.artifact_patterns 必须是非空字符串数组"
+                    )
+                min_count = rule.get("min_count", 1)
+                if isinstance(min_count, bool) or not isinstance(min_count, int) or min_count < 1:
+                    raise ValueError(f"stage {stage_id} acceptance.min_count 必须是正整数")
+                for pattern in patterns:
+                    re.compile(pattern, re.IGNORECASE)
+                normalized_acceptance.append({
+                    "artifact_patterns": patterns,
+                    "min_count": min_count,
+                })
             seen.add(stage_id)
             normalized_stages.append({
                 "id": stage_id,
                 "label": stage_label,
-                "artifact_patterns": patterns,
+                "depends_on": depends_on,
+                "acceptance": normalized_acceptance,
             })
+        stage_ids = {stage["id"] for stage in normalized_stages}
+        for stage in normalized_stages:
+            unknown = set(stage["depends_on"]) - stage_ids
+            if unknown:
+                raise ValueError(f"stage {stage['id']} 依赖不存在的节点：{sorted(unknown)}")
+            if stage["id"] in stage["depends_on"]:
+                raise ValueError(f"stage {stage['id']} 不能依赖自己")
+
+        # Kahn 拓扑校验：允许分叉/汇合，拒绝任何环。
+        remaining = {stage["id"]: set(stage["depends_on"]) for stage in normalized_stages}
+        resolved: set[str] = set()
+        while remaining:
+            ready = {stage_id for stage_id, deps in remaining.items() if deps <= resolved}
+            if not ready:
+                raise ValueError(f"WorkflowDefinition 存在循环依赖：{sorted(remaining)}")
+            resolved.update(ready)
+            for stage_id in ready:
+                remaining.pop(stage_id)
         for pattern in matches:
             re.compile(pattern, re.IGNORECASE)
         return {
@@ -419,6 +560,12 @@ class WorkGraphStore:
                     normalized["label"], _json(normalized), time.time(),
                 ),
             )
+            affected = self._conn.execute(
+                "SELECT workspace_id FROM workflow_runs WHERE definition_id=? AND definition_version=?",
+                (normalized["id"], normalized["version"]),
+            ).fetchall()
+            for row in affected:
+                self._sync_workflow_locked(str(row["workspace_id"]))
             self._conn.commit()
         return normalized
 
@@ -673,35 +820,406 @@ class WorkGraphStore:
         if not relation:
             raise ValueError("ArtifactEdge relation 不能为空")
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT id,workspace_id FROM artifacts WHERE id IN (?,?)",
-                (source_artifact_id, target_artifact_id),
-            ).fetchall()
-            by_id = {str(row["id"]): str(row["workspace_id"]) for row in rows}
-            if source_artifact_id not in by_id or target_artifact_id not in by_id:
-                raise ValueError("ArtifactEdge 两端对象必须存在")
-            if by_id[source_artifact_id] != by_id[target_artifact_id]:
-                raise ValueError("跨 Workspace 关系需要独立授权，不能直接建边")
-            workspace_id = by_id[source_artifact_id]
-            edge_id = _id("edge")
-            now = time.time()
-            self._conn.execute(
-                "INSERT INTO artifact_edges(id,workspace_id,source_artifact_id,target_artifact_id,relation,"
-                "label,metadata,created_by,invocation_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?) "
-                "ON CONFLICT(workspace_id,source_artifact_id,target_artifact_id,relation,label) "
-                "DO UPDATE SET metadata=excluded.metadata,invocation_id=excluded.invocation_id",
-                (
-                    edge_id, workspace_id, source_artifact_id, target_artifact_id, relation,
-                    label, _json(metadata or {}), created_by, invocation_id, now,
-                ),
+            row = self._add_edge_locked(
+                source_artifact_id, target_artifact_id, relation, label=label,
+                metadata=metadata or {}, created_by=created_by, invocation_id=invocation_id,
             )
-            row = self._conn.execute(
-                "SELECT * FROM artifact_edges WHERE workspace_id=? AND source_artifact_id=? "
-                "AND target_artifact_id=? AND relation=? AND label=?",
-                (workspace_id, source_artifact_id, target_artifact_id, relation, label),
-            ).fetchone()
             self._conn.commit()
         return self._edge_dict(row)
+
+    def _add_edge_locked(
+        self, source_artifact_id: str, target_artifact_id: str, relation: str, *,
+        label: str, metadata: dict, created_by: str, invocation_id: str | None,
+    ) -> sqlite3.Row:
+        rows = self._conn.execute(
+            "SELECT id,workspace_id FROM artifacts WHERE id IN (?,?)",
+            (source_artifact_id, target_artifact_id),
+        ).fetchall()
+        by_id = {str(row["id"]): str(row["workspace_id"]) for row in rows}
+        if source_artifact_id not in by_id or target_artifact_id not in by_id:
+            raise ValueError("ArtifactEdge 两端对象必须存在")
+        if by_id[source_artifact_id] != by_id[target_artifact_id]:
+            raise ValueError("跨 Workspace 关系需要独立授权，不能直接建边")
+        workspace_id = by_id[source_artifact_id]
+        now = time.time()
+        self._conn.execute(
+            "INSERT INTO artifact_edges(id,workspace_id,source_artifact_id,target_artifact_id,relation,"
+            "label,metadata,created_by,invocation_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(workspace_id,source_artifact_id,target_artifact_id,relation,label) "
+            "DO UPDATE SET metadata=excluded.metadata,created_by=excluded.created_by,"
+            "invocation_id=excluded.invocation_id",
+            (
+                _id("edge"), workspace_id, source_artifact_id, target_artifact_id, relation,
+                label, _json(metadata), created_by, invocation_id, now,
+            ),
+        )
+        return self._conn.execute(
+            "SELECT * FROM artifact_edges WHERE workspace_id=? AND source_artifact_id=? "
+            "AND target_artifact_id=? AND relation=? AND label=?",
+            (workspace_id, source_artifact_id, target_artifact_id, relation, label),
+        ).fetchone()
+
+    def save_stage_checkpoint(
+        self, workflow_run_id: str, stage_id: str, checkpoint: dict, *,
+        expected_version: int | None = None, invocation_id: str | None = None,
+    ) -> dict:
+        """CAS 写入可恢复节点；旧 worker 不能覆盖新 worker 的进度。"""
+        if not isinstance(checkpoint, dict):
+            raise ValueError("Stage checkpoint 必须是对象")
+        raw = _json(checkpoint)
+        if len(raw.encode("utf-8")) > 64 * 1024:
+            raise ValueError("Stage checkpoint 超过 64KiB，大内容应存 Artifact/Blob")
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT si.*,wr.workspace_id FROM stage_instances si "
+                "JOIN workflow_runs wr ON wr.id=si.workflow_run_id "
+                "WHERE si.workflow_run_id=? AND si.stage_id=?",
+                (workflow_run_id, stage_id),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"StageInstance 不存在：{workflow_run_id}/{stage_id}")
+            current_version = int(row["checkpoint_version"])
+            if expected_version is not None and expected_version != current_version:
+                raise ValueError(
+                    f"Stage checkpoint 版本冲突：期望 {expected_version}，当前 {current_version}"
+                )
+            now = time.time()
+            self._conn.execute(
+                "UPDATE stage_instances SET checkpoint=?,checkpoint_version=?,checkpointed_at=?,"
+                "checkpoint_invocation_id=?,updated_at=? WHERE workflow_run_id=? AND stage_id=?",
+                (
+                    raw, current_version + 1, now, invocation_id, now,
+                    workflow_run_id, stage_id,
+                ),
+            )
+            self._sync_workflow_locked(str(row["workspace_id"]))
+            self._conn.commit()
+            updated = self._conn.execute(
+                "SELECT * FROM stage_instances WHERE workflow_run_id=? AND stage_id=?",
+                (workflow_run_id, stage_id),
+            ).fetchone()
+        return self._stage_dict(updated)
+
+    # ---------- durable workflow execution ----------
+
+    def create_durable_execution(
+        self, *, workspace_id: str, stage_id: str, capability_id: str,
+        provider_candidates: list[str], request: dict, idempotency_key: str,
+        invocation_id: str | None = None, cancel_mode: str = "checkpoint",
+        resume_supported: bool = True,
+    ) -> dict:
+        """创建一个可跨 Run/重启继续的执行；request 只允许安全引用与参数。"""
+        capability_id = str(capability_id).strip()
+        idempotency_key = str(idempotency_key).strip()
+        candidates = list(dict.fromkeys(str(item).strip() for item in provider_candidates if str(item).strip()))
+        if not capability_id or not idempotency_key or not candidates:
+            raise ValueError("DurableExecution 缺少 capability/provider/idempotency_key")
+        if not isinstance(request, dict):
+            raise ValueError("DurableExecution request 必须是对象")
+        if cancel_mode not in ("immediate", "checkpoint", "unsupported"):
+            raise ValueError(f"非法 cancel_mode：{cancel_mode}")
+        request_raw = _checked_json(request, "DurableExecution request")
+        now = time.time()
+        with self._lock:
+            existing = self._conn.execute(
+                "SELECT * FROM durable_executions WHERE workspace_id=? AND capability_id=? "
+                "AND idempotency_key=?",
+                (workspace_id, capability_id, idempotency_key),
+            ).fetchone()
+            if existing is not None:
+                return self._durable_execution_dict_locked(existing)
+            run = self._conn.execute(
+                "SELECT id FROM workflow_runs WHERE workspace_id=? ORDER BY created_at DESC LIMIT 1",
+                (workspace_id,),
+            ).fetchone()
+            if run is None:
+                raise ValueError(f"Workspace 无 WorkflowRun：{workspace_id}")
+            stage = self._conn.execute(
+                "SELECT checkpoint,checkpoint_version FROM stage_instances "
+                "WHERE workflow_run_id=? AND stage_id=?",
+                (run["id"], stage_id),
+            ).fetchone()
+            if stage is None:
+                raise ValueError(f"StageInstance 不存在：{stage_id}")
+            execution_id = _id("execution")
+            if invocation_id:
+                invocation = self._conn.execute(
+                    "SELECT workspace_id FROM invocations WHERE id=?", (invocation_id,),
+                ).fetchone()
+                if invocation is None or str(invocation["workspace_id"] or "") != workspace_id:
+                    raise ValueError("DurableExecution invocation 不存在或不属于当前 Workspace")
+            else:
+                invocation_id = _id("invocation")
+                params_hash = hashlib.sha256(request_raw.encode("utf-8")).hexdigest()
+                self._conn.execute(
+                    "INSERT INTO invocations(id,action_id,workspace_id,conversation_id,surface,tool_id,"
+                    "params_hash,status,started_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (
+                        invocation_id, execution_id, workspace_id, "", "workflow",
+                        capability_id, params_hash, "running", now,
+                    ),
+                )
+            self._conn.execute(
+                "INSERT INTO durable_executions(id,workspace_id,workflow_run_id,stage_id,invocation_id,"
+                "capability_id,provider_candidates,status,request,checkpoint,checkpoint_version,progress,"
+                "attempt,idempotency_key,cancel_mode,resume_supported,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    execution_id, workspace_id, run["id"], stage_id, invocation_id,
+                    capability_id, _json(candidates), "queued", request_raw,
+                    str(stage["checkpoint"] or "{}"), int(stage["checkpoint_version"]), 0.0,
+                    0, idempotency_key, cancel_mode, 1 if resume_supported else 0, now, now,
+                ),
+            )
+            self._conn.commit()
+            row = self._conn.execute(
+                "SELECT * FROM durable_executions WHERE id=?", (execution_id,),
+            ).fetchone()
+        return self._durable_execution_dict_locked(row)
+
+    def claim_durable_execution(self, execution_id: str, provider_id: str) -> dict:
+        provider_id = str(provider_id).strip()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM durable_executions WHERE id=?", (execution_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"DurableExecution 不存在：{execution_id}")
+            if str(row["status"]) not in ("queued", "interrupted"):
+                raise ValueError(f"DurableExecution 不可 claim：{row['status']}")
+            candidates = _decode(row["provider_candidates"], [])
+            if provider_id not in candidates:
+                raise ValueError(f"provider 不在候选集：{provider_id}")
+            has_checkpoint = bool(_decode(row["checkpoint"], {}))
+            if has_checkpoint and not bool(row["resume_supported"]):
+                raise ValueError("DurableExecution 存在 checkpoint 但声明不支持 resume")
+            attempt = int(row["attempt"]) + 1
+            now = time.time()
+            status = "resuming" if has_checkpoint else "running"
+            self._conn.execute(
+                "UPDATE durable_executions SET provider_id=?,status=?,attempt=?,"
+                "started_at=COALESCE(started_at,?),updated_at=?,error='' WHERE id=?",
+                (provider_id, status, attempt, now, now, execution_id),
+            )
+            self._conn.execute(
+                "INSERT INTO durable_attempts(id,execution_id,attempt,provider_id,status,started_at) "
+                "VALUES(?,?,?,?,?,?)",
+                (_id("attempt"), execution_id, attempt, provider_id, "running", now),
+            )
+            if row["invocation_id"]:
+                self._conn.execute(
+                    "UPDATE invocations SET status='running',error='',completed_at=NULL WHERE id=?",
+                    (row["invocation_id"],),
+                )
+            self._sync_workflow_locked(str(row["workspace_id"]))
+            self._conn.commit()
+            updated = self._conn.execute(
+                "SELECT * FROM durable_executions WHERE id=?", (execution_id,),
+            ).fetchone()
+        return self._durable_execution_dict_locked(updated)
+
+    def checkpoint_durable_execution(
+        self, execution_id: str, checkpoint: dict, *, progress: float,
+        expected_version: int,
+    ) -> dict:
+        if not isinstance(checkpoint, dict):
+            raise ValueError("DurableExecution checkpoint 必须是对象")
+        checkpoint_raw = _checked_json(checkpoint, "DurableExecution checkpoint")
+        progress = max(0.0, min(float(progress), 1.0))
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM durable_executions WHERE id=?", (execution_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"DurableExecution 不存在：{execution_id}")
+            if str(row["status"]) not in ("running", "resuming", "checkpointing", "cancel_requested"):
+                raise ValueError(f"DurableExecution 不可 checkpoint：{row['status']}")
+            current = int(row["checkpoint_version"])
+            if current != int(expected_version):
+                raise ValueError(f"DurableExecution checkpoint 版本冲突：期望 {expected_version}，当前 {current}")
+            stage = self._conn.execute(
+                "SELECT checkpoint_version FROM stage_instances WHERE workflow_run_id=? AND stage_id=?",
+                (row["workflow_run_id"], row["stage_id"]),
+            ).fetchone()
+            if stage is None:
+                raise ValueError("DurableExecution 对应 StageInstance 不存在")
+            now = time.time()
+            next_version = current + 1
+            next_status = "cancel_requested" if str(row["status"]) == "cancel_requested" else "running"
+            self._conn.execute(
+                "UPDATE durable_executions SET checkpoint=?,checkpoint_version=?,progress=?,status=?,"
+                "updated_at=? WHERE id=?",
+                (checkpoint_raw, next_version, progress, next_status, now, execution_id),
+            )
+            self._conn.execute(
+                "UPDATE stage_instances SET checkpoint=?,checkpoint_version=checkpoint_version+1,"
+                "checkpointed_at=?,checkpoint_invocation_id=?,updated_at=? "
+                "WHERE workflow_run_id=? AND stage_id=?",
+                (
+                    checkpoint_raw, now, row["invocation_id"], now,
+                    row["workflow_run_id"], row["stage_id"],
+                ),
+            )
+            self._sync_workflow_locked(str(row["workspace_id"]))
+            self._conn.commit()
+            updated = self._conn.execute(
+                "SELECT * FROM durable_executions WHERE id=?", (execution_id,),
+            ).fetchone()
+        return self._durable_execution_dict_locked(updated)
+
+    def request_cancel_durable_execution(self, execution_id: str) -> bool:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM durable_executions WHERE id=?", (execution_id,),
+            ).fetchone()
+            if row is None or str(row["status"]) in _DURABLE_TERMINAL:
+                return False
+            if str(row["cancel_mode"]) == "unsupported":
+                return False
+            now = time.time()
+            if str(row["status"]) in ("queued", "interrupted"):
+                status, completed_at = "cancelled", now
+            else:
+                status, completed_at = "cancel_requested", None
+            self._conn.execute(
+                "UPDATE durable_executions SET status=?,updated_at=?,completed_at=? WHERE id=?",
+                (status, now, completed_at, execution_id),
+            )
+            if status == "cancelled" and row["invocation_id"]:
+                self._conn.execute(
+                    "UPDATE invocations SET status='cancelled',error='用户取消',completed_at=? WHERE id=?",
+                    (now, row["invocation_id"]),
+                )
+            self._sync_workflow_locked(str(row["workspace_id"]))
+            self._conn.commit()
+            return True
+
+    def durable_execution_cancel_requested(self, execution_id: str) -> bool:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT status FROM durable_executions WHERE id=?", (execution_id,),
+            ).fetchone()
+        return bool(row and str(row["status"]) in ("cancel_requested", "cancelled"))
+
+    def fail_durable_attempt(self, execution_id: str, error: str, *, retryable: bool) -> dict:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM durable_executions WHERE id=?", (execution_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"DurableExecution 不存在：{execution_id}")
+            now = time.time()
+            next_status = "interrupted" if retryable else "failed"
+            self._conn.execute(
+                "UPDATE durable_attempts SET status='failed',error=?,completed_at=? "
+                "WHERE execution_id=? AND attempt=?",
+                (str(error)[:2000], now, execution_id, int(row["attempt"])),
+            )
+            self._conn.execute(
+                "UPDATE durable_executions SET status=?,error=?,updated_at=?,completed_at=? WHERE id=?",
+                (
+                    next_status, str(error)[:2000], now,
+                    None if retryable else now, execution_id,
+                ),
+            )
+            if not retryable and row["invocation_id"]:
+                self._conn.execute(
+                    "UPDATE invocations SET status='failed',error=?,completed_at=? WHERE id=?",
+                    (str(error)[:2000], now, row["invocation_id"]),
+                )
+            self._sync_workflow_locked(str(row["workspace_id"]))
+            self._conn.commit()
+            updated = self._conn.execute(
+                "SELECT * FROM durable_executions WHERE id=?", (execution_id,),
+            ).fetchone()
+        return self._durable_execution_dict_locked(updated)
+
+    def finish_durable_execution(
+        self, execution_id: str, *, status: str, result: dict | None = None,
+        error: str = "", work_events: list[dict] | None = None,
+    ) -> dict:
+        if status not in _DURABLE_TERMINAL:
+            raise ValueError(f"非法 DurableExecution 终态：{status}")
+        result_raw = _checked_json(result or {}, "DurableExecution result")
+        invocation_id = ""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM durable_executions WHERE id=?", (execution_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"DurableExecution 不存在：{execution_id}")
+            if str(row["status"]) in _DURABLE_TERMINAL:
+                return self._durable_execution_dict_locked(row)
+            now = time.time()
+            attempt_status = "completed" if status == "completed" else status
+            self._conn.execute(
+                "UPDATE durable_attempts SET status=?,error=?,completed_at=? "
+                "WHERE execution_id=? AND attempt=?",
+                (attempt_status, str(error)[:2000], now, execution_id, int(row["attempt"])),
+            )
+            self._conn.execute(
+                "UPDATE durable_executions SET status=?,progress=?,result=?,error=?,updated_at=?,"
+                "completed_at=? WHERE id=?",
+                (
+                    status, 1.0 if status == "completed" else float(row["progress"]),
+                    result_raw, str(error)[:2000], now, now, execution_id,
+                ),
+            )
+            invocation_id = str(row["invocation_id"] or "")
+            if invocation_id:
+                invocation_status = "succeeded" if status == "completed" else status
+                self._conn.execute(
+                    "UPDATE invocations SET status=?,safe_result=?,error=?,completed_at=? WHERE id=?",
+                    (
+                        invocation_status, _bounded_json(result or {}), str(error)[:2000],
+                        now, invocation_id,
+                    ),
+                )
+                if status == "completed":
+                    self._append_invocation_events_locked(
+                        invocation_id, str(row["workspace_id"]), work_events or [], now,
+                    )
+            self._sync_workflow_locked(str(row["workspace_id"]))
+            self._conn.commit()
+        if invocation_id and status == "completed" and work_events:
+            self.drain_outbox(invocation_id=invocation_id)
+        return self.durable_execution_view(execution_id) or {}
+
+    def _append_invocation_events_locked(
+        self, invocation_id: str, workspace_id: str, events: list[dict], now: float,
+    ) -> None:
+        row = self._conn.execute(
+            "SELECT COALESCE(MAX(event_seq),0) AS seq FROM outbox_events WHERE invocation_id=?",
+            (invocation_id,),
+        ).fetchone()
+        start = int(row["seq"] if row else 0)
+        for offset, event in enumerate(events, start=1):
+            event_type = str(event.get("event_type") or "").strip()
+            if not event_type:
+                continue
+            self._conn.execute(
+                "INSERT INTO outbox_events(id,workspace_id,invocation_id,event_seq,event_type,payload,"
+                "status,created_at) VALUES(?,?,?,?,?,?,?,?)",
+                (
+                    _id("outbox"), workspace_id, invocation_id, start + offset,
+                    event_type, _bounded_json(event.get("payload") or {}), "pending", now,
+                ),
+            )
+
+    def durable_execution_view(self, execution_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM durable_executions WHERE id=?", (execution_id,),
+            ).fetchone()
+            return self._durable_execution_dict_locked(row) if row else None
+
+    def resumable_durable_executions(self) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM durable_executions WHERE status IN "
+                "('queued','interrupted','cancel_requested') ORDER BY created_at",
+            ).fetchall()
+            return [self._durable_execution_dict_locked(row) for row in rows]
 
     # ---------- invocation / evidence / outbox ----------
 
@@ -871,6 +1389,10 @@ class WorkGraphStore:
             self._upsert_event_artifact_locked(workspace_id, invocation_id, payload)
         elif event_type == "evidence.capture":
             self._capture_evidence_locked(workspace_id, invocation_id, payload)
+        elif event_type == "artifact.edge.upsert":
+            self._upsert_event_edge_locked(workspace_id, invocation_id, payload)
+        elif event_type == "stage.checkpoint":
+            self._checkpoint_event_stage_locked(workspace_id, invocation_id, payload)
         else:
             raise ValueError(f"未知 Work Graph 事件：{event_type}")
         self._sync_workflow_locked(workspace_id)
@@ -967,6 +1489,71 @@ class WorkGraphStore:
             (invocation_id, artifact_id, source_uri or f"local://{external_ref}", claim),
         ).fetchone()
         return str(row["id"] if row else evidence_id)
+
+    def _artifact_for_selector_locked(self, workspace_id: str, selector: dict) -> str:
+        artifact_type = str(selector.get("artifact_type") or "").strip()
+        external_ref = str(selector.get("ref") or "").strip()
+        if not artifact_type or not external_ref:
+            raise ValueError("Artifact selector 缺少 artifact_type/ref")
+        row = self._conn.execute(
+            "SELECT a.id FROM artifacts a JOIN workspace_artifacts wa ON wa.artifact_id=a.id "
+            "WHERE a.workspace_id=? AND a.type=? AND a.external_ref=? AND wa.detached_at IS NULL",
+            (workspace_id, artifact_type, external_ref),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"Artifact selector 未命中：{artifact_type}/{external_ref}")
+        return str(row["id"])
+
+    def _upsert_event_edge_locked(
+        self, workspace_id: str, invocation_id: str, payload: dict,
+    ) -> str:
+        source = payload.get("source") if isinstance(payload.get("source"), dict) else {}
+        target = payload.get("target") if isinstance(payload.get("target"), dict) else {}
+        relation = str(payload.get("relation") or "").strip()
+        if not relation:
+            raise ValueError("artifact.edge.upsert 缺少 relation")
+        source_id = self._artifact_for_selector_locked(workspace_id, source)
+        target_id = self._artifact_for_selector_locked(workspace_id, target)
+        row = self._add_edge_locked(
+            source_id, target_id, relation,
+            label=str(payload.get("label") or "").strip(),
+            metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {},
+            created_by="invocation", invocation_id=invocation_id,
+        )
+        return str(row["id"])
+
+    def _checkpoint_event_stage_locked(
+        self, workspace_id: str, invocation_id: str, payload: dict,
+    ) -> None:
+        stage_id = str(payload.get("stage_id") or "").strip()
+        checkpoint = payload.get("checkpoint")
+        if not stage_id or not isinstance(checkpoint, dict):
+            raise ValueError("stage.checkpoint 缺少 stage_id/checkpoint")
+        raw = _json(checkpoint)
+        if len(raw.encode("utf-8")) > 64 * 1024:
+            raise ValueError("Stage checkpoint 超过 64KiB，大内容应存 Artifact/Blob")
+        run = self._conn.execute(
+            "SELECT id FROM workflow_runs WHERE workspace_id=? ORDER BY created_at DESC LIMIT 1",
+            (workspace_id,),
+        ).fetchone()
+        if run is None:
+            raise ValueError(f"Workspace 无 WorkflowRun：{workspace_id}")
+        row = self._conn.execute(
+            "SELECT checkpoint_version FROM stage_instances WHERE workflow_run_id=? AND stage_id=?",
+            (run["id"], stage_id),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"StageInstance 不存在：{stage_id}")
+        expected = payload.get("expected_version")
+        current = int(row["checkpoint_version"])
+        if expected is not None and int(expected) != current:
+            raise ValueError(f"Stage checkpoint 版本冲突：期望 {expected}，当前 {current}")
+        now = time.time()
+        self._conn.execute(
+            "UPDATE stage_instances SET checkpoint=?,checkpoint_version=?,checkpointed_at=?,"
+            "checkpoint_invocation_id=?,updated_at=? WHERE workflow_run_id=? AND stage_id=?",
+            (raw, current + 1, now, invocation_id, now, run["id"], stage_id),
+        )
 
     def invocation_view(self, invocation_id: str) -> dict | None:
         with self._lock:
@@ -1074,40 +1661,129 @@ class WorkGraphStore:
             "WHERE wa.workspace_id=? AND wa.detached_at IS NULL",
             (workspace_id,),
         ).fetchall()
-        highest = 0
-        matched_any = False
-        outputs: dict[int, list[str]] = {}
-        for idx, stage in enumerate(stages):
-            patterns = stage.get("artifact_patterns") or []
-            ids = [
-                str(a["id"]) for a in artifacts
-                if any(re.search(pattern, str(a["type"]), re.IGNORECASE) for pattern in patterns)
-            ]
-            if ids:
-                outputs[idx] = ids
-                highest = max(highest, idx)
-                matched_any = True
+        instance_rows = self._conn.execute(
+            "SELECT * FROM stage_instances WHERE workflow_run_id=?", (run["id"],),
+        ).fetchall()
+        instances = {str(row["stage_id"]): row for row in instance_rows}
+        execution_rows = self._conn.execute(
+            "SELECT * FROM durable_executions WHERE workflow_run_id=? ORDER BY created_at DESC",
+            (run["id"],),
+        ).fetchall()
+        latest_executions: dict[str, sqlite3.Row] = {}
+        for execution in execution_rows:
+            latest_executions.setdefault(str(execution["stage_id"]), execution)
+        outputs: dict[str, list[str]] = {}
+        accepted: dict[str, bool] = {}
+        for stage in stages:
+            stage_id = str(stage["id"])
+            rule_matches: list[list[str]] = []
+            for rule in stage.get("acceptance") or []:
+                patterns = rule.get("artifact_patterns") or []
+                ids = [
+                    str(artifact["id"]) for artifact in artifacts
+                    if any(
+                        re.search(pattern, str(artifact["type"]), re.IGNORECASE)
+                        for pattern in patterns
+                    )
+                ]
+                rule_matches.append(ids)
+            outputs[stage_id] = list(dict.fromkeys(
+                artifact_id for ids in rule_matches for artifact_id in ids
+            ))
+            accepted[stage_id] = bool(rule_matches) and all(
+                len(ids) >= int(rule.get("min_count") or 1)
+                for rule, ids in zip(stage.get("acceptance") or [], rule_matches)
+            )
+
+        # 状态只由 DAG 依赖、acceptance 和持久 checkpoint 决定。
+        statuses: dict[str, str] = {}
+        unresolved = {str(stage["id"]): stage for stage in stages}
+        while unresolved:
+            progressed = False
+            for stage_id, stage in list(unresolved.items()):
+                dependencies = [str(item) for item in stage.get("depends_on") or []]
+                if any(dependency not in statuses for dependency in dependencies):
+                    continue
+                deps_completed = all(statuses[dependency] == "completed" for dependency in dependencies)
+                instance = instances.get(stage_id)
+                checkpoint = _decode(instance["checkpoint"] if instance else None, {})
+                has_checkpoint = bool(checkpoint)
+                execution = latest_executions.get(stage_id)
+                execution_status = str(execution["status"]) if execution else ""
+                if deps_completed and accepted.get(stage_id, False):
+                    status = "completed"
+                elif not deps_completed:
+                    status = "blocked" if accepted.get(stage_id, False) or has_checkpoint or execution else "pending"
+                elif execution_status in ("queued", "running", "resuming", "checkpointing", "cancel_requested"):
+                    status = "running"
+                elif execution_status == "interrupted":
+                    status = "blocked"
+                elif execution_status == "failed":
+                    status = "failed"
+                elif execution_status == "cancelled":
+                    status = "ready"
+                elif has_checkpoint:
+                    status = "running"
+                else:
+                    status = "ready"
+                statuses[stage_id] = status
+                unresolved.pop(stage_id)
+                progressed = True
+            if not progressed:  # 正规化已拒绝环，这里只是防御损坏数据。
+                raise ValueError("WorkflowDefinition DAG 无法拓扑求值")
+
         now = time.time()
-        completed = bool(stages and matched_any and highest == len(stages) - 1)
-        run_status = "completed" if completed else ("running" if artifacts else "draft")
-        for idx, stage in enumerate(stages):
-            if completed or idx < highest:
-                status = "completed"
-            elif idx == highest:
-                status = "running" if artifacts else "pending"
-            else:
-                status = "pending"
+        completed = bool(stages) and all(status == "completed" for status in statuses.values())
+        active_stage_ids = [
+            str(stage["id"]) for stage in stages
+            if statuses.get(str(stage["id"])) in ("running", "ready")
+        ]
+        if completed:
+            run_status = "completed"
+        elif any(status == "failed" for status in statuses.values()):
+            run_status = "failed"
+        elif any(status == "running" for status in statuses.values()):
+            run_status = "running"
+        elif not active_stage_ids and any(status == "blocked" for status in statuses.values()):
+            run_status = "blocked"
+        elif artifacts or any(status == "completed" for status in statuses.values()):
+            run_status = "running"
+        else:
+            run_status = "draft"
+        for stage in stages:
+            stage_id = str(stage["id"])
+            status = statuses[stage_id]
+            dependencies = [str(item) for item in stage.get("depends_on") or []]
+            input_ids = list(dict.fromkeys(
+                artifact_id for dependency in dependencies for artifact_id in outputs.get(dependency, [])
+            ))
             self._conn.execute(
-                "UPDATE stage_instances SET status=?,output_artifact_ids=?,"
-                "started_at=CASE WHEN ? IN ('running','completed') THEN COALESCE(started_at,?) ELSE NULL END,"
+                "UPDATE stage_instances SET status=?,input_artifact_ids=?,output_artifact_ids=?,"
+                "started_at=CASE WHEN ? IN ('running','blocked','completed') THEN COALESCE(started_at,?) "
+                "ELSE started_at END,"
                 "completed_at=CASE WHEN ?='completed' THEN COALESCE(completed_at,?) ELSE NULL END,updated_at=? "
                 "WHERE workflow_run_id=? AND stage_id=?",
                 (
-                    status, _json(outputs.get(idx, [])), status, now, status, now, now,
-                    run["id"], stage["id"],
+                    status, _json(input_ids), _json(outputs.get(stage_id, [])),
+                    status, now, status, now, now, run["id"], stage_id,
                 ),
             )
-        current_stage_id = stages[highest]["id"] if stages else ""
+        if completed:
+            current_stage_id = str(stages[-1]["id"]) if stages else ""
+        else:
+            current_stage_id = next(
+                (str(stage["id"]) for stage in stages if statuses[str(stage["id"])] == "running"),
+                next(
+                    (str(stage["id"]) for stage in stages if statuses[str(stage["id"])] == "ready"),
+                    next(
+                        (str(stage["id"]) for stage in stages if statuses[str(stage["id"])] == "failed"),
+                        next(
+                            (str(stage["id"]) for stage in stages if statuses[str(stage["id"])] == "blocked"),
+                            str(stages[0]["id"]) if stages else "",
+                        ),
+                    ),
+                ),
+            )
         self._conn.execute(
             "UPDATE workflow_runs SET status=?,current_stage_id=?,updated_at=?,completed_at=? WHERE id=?",
             (run_status, current_stage_id, now, now if completed else None, run["id"]),
@@ -1169,19 +1845,38 @@ class WorkGraphStore:
         instance_rows = self._conn.execute(
             "SELECT * FROM stage_instances WHERE workflow_run_id=? ORDER BY ordinal", (run["id"],),
         ).fetchall()
+        execution_rows = self._conn.execute(
+            "SELECT * FROM durable_executions WHERE workflow_run_id=? ORDER BY created_at DESC",
+            (run["id"],),
+        ).fetchall()
+        latest_executions: dict[str, sqlite3.Row] = {}
+        for execution in execution_rows:
+            latest_executions.setdefault(str(execution["stage_id"]), execution)
         by_id = {str(row["stage_id"]): row for row in instance_rows}
         stages = []
         current_index = 0
         for idx, stage in enumerate(definition.get("stages") or []):
             row = by_id.get(str(stage["id"]))
+            execution = latest_executions.get(str(stage["id"]))
             if str(stage["id"]) == str(run["current_stage_id"]):
                 current_index = idx
             stages.append({
                 "id": str(stage["id"]),
                 "label": str(stage["label"]),
+                "depends_on": list(stage.get("depends_on") or []),
                 "status": str(row["status"] if row else "pending"),
+                "input_artifact_ids": _decode(row["input_artifact_ids"] if row else None, []),
                 "output_artifact_ids": _decode(row["output_artifact_ids"] if row else None, []),
+                "checkpoint": _decode(row["checkpoint"] if row else None, {}),
+                "checkpoint_version": int(row["checkpoint_version"] if row else 0),
+                "checkpointed_at": (
+                    float(row["checkpointed_at"]) if row and row["checkpointed_at"] is not None else None
+                ),
+                "execution": self._durable_execution_dict_locked(execution) if execution else None,
             })
+        active_stage_ids = [
+            stage["id"] for stage in stages if stage["status"] in ("ready", "running")
+        ]
         return {
             "id": str(run["id"]),
             "definition_id": str(run["definition_id"]),
@@ -1191,6 +1886,7 @@ class WorkGraphStore:
             "status": str(run["status"]),
             "current_stage_id": str(run["current_stage_id"]),
             "current_stage_index": current_index,
+            "active_stage_ids": active_stage_ids,
             "stages": stages,
             "updated_at": float(run["updated_at"]),
         }
@@ -1269,6 +1965,62 @@ class WorkGraphStore:
             "created_by": str(row["created_by"]),
             "invocation_id": str(row["invocation_id"] or ""),
             "created_at": float(row["created_at"]),
+        }
+
+    @staticmethod
+    def _stage_dict(row: sqlite3.Row) -> dict:
+        return {
+            "id": str(row["id"]),
+            "workflow_run_id": str(row["workflow_run_id"]),
+            "stage_id": str(row["stage_id"]),
+            "ordinal": int(row["ordinal"]),
+            "status": str(row["status"]),
+            "input_artifact_ids": _decode(row["input_artifact_ids"], []),
+            "output_artifact_ids": _decode(row["output_artifact_ids"], []),
+            "checkpoint": _decode(row["checkpoint"], {}),
+            "checkpoint_version": int(row["checkpoint_version"]),
+            "checkpointed_at": (
+                float(row["checkpointed_at"]) if row["checkpointed_at"] is not None else None
+            ),
+            "checkpoint_invocation_id": str(row["checkpoint_invocation_id"] or ""),
+        }
+
+    def _durable_execution_dict_locked(self, row: sqlite3.Row) -> dict:
+        attempts = self._conn.execute(
+            "SELECT * FROM durable_attempts WHERE execution_id=? ORDER BY attempt", (row["id"],),
+        ).fetchall()
+        return {
+            "id": str(row["id"]),
+            "workspace_id": str(row["workspace_id"]),
+            "workflow_run_id": str(row["workflow_run_id"]),
+            "stage_id": str(row["stage_id"]),
+            "invocation_id": str(row["invocation_id"] or ""),
+            "capability_id": str(row["capability_id"]),
+            "provider_id": str(row["provider_id"]),
+            "provider_candidates": _decode(row["provider_candidates"], []),
+            "status": str(row["status"]),
+            "request": _decode(row["request"], {}),
+            "checkpoint": _decode(row["checkpoint"], {}),
+            "checkpoint_version": int(row["checkpoint_version"]),
+            "progress": float(row["progress"]),
+            "attempt": int(row["attempt"]),
+            "idempotency_key": str(row["idempotency_key"]),
+            "cancel_mode": str(row["cancel_mode"]),
+            "resume_supported": bool(row["resume_supported"]),
+            "error": str(row["error"]),
+            "result": _decode(row["result"], {}),
+            "attempts": [
+                {
+                    "attempt": int(attempt["attempt"]),
+                    "provider_id": str(attempt["provider_id"]),
+                    "status": str(attempt["status"]),
+                    "error": str(attempt["error"]),
+                }
+                for attempt in attempts
+            ],
+            "created_at": float(row["created_at"]),
+            "updated_at": float(row["updated_at"]),
+            "completed_at": float(row["completed_at"]) if row["completed_at"] is not None else None,
         }
 
     def close(self) -> None:

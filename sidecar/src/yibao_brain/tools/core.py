@@ -33,6 +33,7 @@ class ToolContext:
     # 事件形如 {"kind": "reminder", "text": …}——前端已支持亮窗+气泡+TTS。
     emit_event: Callable[[dict], None] | None = None
     reminders: Any = None  # reminders.ReminderStore（提醒管理插件与底座技能共享同一实例）
+    durable: Any = None  # DurableExecutionEngine；插件需声明 durable capability
 
 
 class Tool(ABC):

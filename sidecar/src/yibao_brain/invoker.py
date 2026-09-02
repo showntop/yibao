@@ -42,6 +42,7 @@ class ToolInvoker:
         self.emit_event = None
         # serve_async 注入；测试/旧同步入口保持 None，不改变执行语义。
         self.invocation_sink = None
+        self.durable_engine = None
 
     def propose(self, tc: ToolCall) -> Action:
         """tool_call → Action：查 registry 拿声明，分类风险。"""
@@ -138,6 +139,12 @@ class ToolInvoker:
             and "host" in skill.plugin_capabilities
         ):
             ctx.host = self.host
+        if (
+            skill.plugin_ctx is not None
+            and getattr(skill.plugin_ctx, "durable", None) is None
+            and "durable" in skill.plugin_capabilities
+        ):
+            ctx.durable = self.durable_engine
         # 真实技能（如 watch_command）拿不到 plugin_ctx 的 emit_event——这里补注入，
         # 且不覆盖插件技能已注入的 emit_event。
         if getattr(ctx, "emit_event", None) is None and self.emit_event is not None:

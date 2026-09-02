@@ -29,6 +29,15 @@ def test_two_sessions_bind_independently_and_persist(tmp_path, monkeypatch):
     assert reloaded.workspace_id("cv-deck") == deck["id"]
 
 
+def test_workspace_can_address_all_bound_sessions(tmp_path):
+    contexts = SessionContextStore(str(tmp_path / "session_contexts.json"))
+    contexts.bind("session-b", "workspace-1")
+    contexts.bind("session-a", "workspace-1")
+    contexts.bind("session-c", "workspace-2")
+    assert contexts.conversation_ids("workspace-1") == ["session-a", "session-b"]
+    assert contexts.conversation_ids("") == []
+
+
 def test_switching_one_session_does_not_move_another(tmp_path, monkeypatch):
     store, _ = make_store(tmp_path, monkeypatch)
     first = store.create("一号", conversation_id="cv-a")

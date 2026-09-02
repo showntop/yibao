@@ -1148,7 +1148,7 @@ def test_real_zimeiti_tool_results_automatically_advance_work_graph(env, tmp_pat
         assert {item["type"] for item in view["objects"]} == {
             "zimeiti.topic", "video.script", "research.evidence",
         }
-        assert view["workflow_run"]["current_stage_id"] == "script"
+        assert view["workflow_run"]["current_stage_id"] == "storyboard"
         assert len(graph.evidence_views("video")) == 1
         script = next(item for item in view["objects"] if item["type"] == "video.script")
         revision = graph.artifact_view(script["artifact_id"])["revisions"][-1]

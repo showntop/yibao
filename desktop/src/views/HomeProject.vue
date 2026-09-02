@@ -5,10 +5,11 @@ import { computed } from "vue";
 import HomeWidget from "./HomeWidget.vue";
 import { useProject } from "../composables/useProject";
 import { projectCardFace, projectTouchLabel } from "../lib/home/project-card.ts";
+import { durableCancel, durableResume } from "../lib/brain";
 
 const emit = defineEmits<{ chat: [draft: string] }>();
 const props = defineProps<{ sessionId?: string }>();
-const { current, projects, switchTo } = useProject(() => props.sessionId);
+const { current, projects, switchTo, refresh } = useProject(() => props.sessionId);
 
 const face = computed(() => (current.value ? projectCardFace(current.value) : null));
 // 其余最近项目（projects 已按 touched_at 倒序），点击=切换到该项目
@@ -18,6 +19,13 @@ const others = computed(() =>
 
 function onSwitch(id: string) {
   void switchTo(id);
+}
+
+async function onDurableAction(kind: "cancel" | "resume", executionId: string) {
+  if (!executionId) return;
+  if (kind === "cancel") await durableCancel(executionId, props.sessionId);
+  else await durableResume(executionId, props.sessionId);
+  await refresh().catch(() => { /* background broadcast normally wins */ });
 }
 </script>
 
@@ -33,30 +41,59 @@ function onSwitch(id: string) {
         <span>不会继承其他会话的项目与素材</span>
         <button type="button" @click="emit('chat', '为这个会话创建一个新的工作语境')">新建工作语境</button>
       </div>
-      <button v-else class="current" type="button" @click="emit('chat', `查看项目「${face.name}」`)">
-        <span class="scope-line">
+      <div v-else class="current">
+        <button class="current-main" type="button" @click="emit('chat', `查看项目「${face.name}」`)">
+          <span class="scope-line">
           <span class="pack" :data-domain="face.domain">{{ face.packLabel }}</span>
           <span class="artifacts">{{ face.artifactCount }} 个产物</span>
-        </span>
-        <span class="line">
+          </span>
+          <span class="line">
           <span class="name">{{ face.name }}</span>
-          <span v-if="face.pending > 0" class="pending">待确认 {{ face.pending }}</span>
-        </span>
-        <span v-if="face.missionTitle !== face.name" class="mission">
+          <span v-if="face.pending > 0" class="pending">受阻 {{ face.pending }}</span>
+          </span>
+          <span v-if="face.missionTitle !== face.name" class="mission">
           目标 · {{ face.missionTitle }}
-        </span>
-        <span class="track" aria-hidden="true">
+          </span>
+          <span class="track" aria-hidden="true">
           <i
             v-for="i in face.stages.length"
             :key="i"
-            :class="{ done: i - 1 < face.stage, now: i - 1 === face.stage }"
+            :class="{
+              done: face.stageStates[i - 1] === 'completed',
+              now: face.stageStates[i - 1] === 'ready' || face.stageStates[i - 1] === 'running',
+              blocked: face.stageStates[i - 1] === 'blocked',
+            }"
+            :title="`${face.stages[i - 1]} · ${face.stageStates[i - 1]}`"
           />
+          </span>
+          <span v-if="face.executionLabel" class="activity" :data-status="face.executionStatus">
+          <span class="activity-copy">
+            <i aria-hidden="true" />
+            {{ face.executionLabel }}
+          </span>
+          <span v-if="face.executionProgress !== null" class="activity-meter" aria-hidden="true">
+            <i :style="{ width: `${face.executionProgress}%` }" />
+          </span>
+          </span>
+          <span class="foot">
+          <span class="stage">{{ face.activeLabels.length > 1 ? '并行' : '当前' }} · {{ face.stageLabel }}</span>
+          <span v-if="face.nextStep" class="next">{{ face.nextStep }}</span>
+          </span>
+        </button>
+        <span v-if="face.executionCanCancel || face.executionCanResume" class="execution-actions">
+          <button
+            v-if="face.executionCanResume"
+            type="button"
+            @click="onDurableAction('resume', face.executionId)"
+          >从断点继续</button>
+          <button
+            v-if="face.executionCanCancel && !face.executionCanResume"
+            type="button"
+            class="stop"
+            @click="onDurableAction('cancel', face.executionId)"
+          >安全停止</button>
         </span>
-        <span class="foot">
-          <span class="stage">当前 · {{ face.stageLabel }}</span>
-          <span v-if="face.nextStep" class="next">下一步 · {{ face.nextStep }}</span>
-        </span>
-      </button>
+      </div>
       <button
         v-for="p in others"
         :key="p.id"
@@ -137,11 +174,21 @@ function onSwitch(id: string) {
   background: var(--yb-note-mute);
   box-shadow: var(--yb-press);
   color: var(--yb-paper-ink);
+}
+.current:hover { filter: brightness(0.98); }
+.current-main {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
-.current:hover { filter: brightness(0.98); }
 .scope-line {
   display: flex;
   align-items: center;
@@ -211,6 +258,74 @@ function onSwitch(id: string) {
 }
 .track i.done { background: var(--yb-accent); }
 .track i.now { background: rgba(var(--yb-c-sky-rgb), 0.45); }
+.track i.blocked {
+  background: repeating-linear-gradient(
+    90deg,
+    var(--yb-intent-pending-ink) 0 3px,
+    transparent 3px 5px
+  );
+  opacity: 0.62;
+}
+.activity {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(48px, 1fr);
+  align-items: center;
+  gap: 8px;
+  color: var(--yb-accent);
+  font-size: 10px;
+}
+.activity-copy {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.activity-copy > i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 3px rgba(var(--yb-c-sky-rgb), 0.10);
+}
+.activity[data-status="interrupted"],
+.activity[data-status="failed"],
+.activity[data-status="cancel_requested"] { color: var(--yb-intent-pending-ink); }
+.activity-meter {
+  height: 3px;
+  overflow: hidden;
+  border-radius: var(--yb-radius-pill);
+  background: rgba(var(--yb-c-sky-rgb), 0.10);
+}
+.activity-meter > i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: currentColor;
+  transition: width 220ms ease;
+}
+.execution-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: -2px;
+}
+.execution-actions button {
+  min-height: 26px;
+  padding: 0 9px;
+  border: 1px solid rgba(var(--yb-c-sky-rgb), 0.20);
+  border-radius: var(--yb-radius-pill);
+  background: rgba(var(--yb-c-sky-rgb), 0.07);
+  color: var(--yb-accent);
+  font: inherit;
+  font-size: 9.5px;
+  cursor: pointer;
+}
+.execution-actions button.stop {
+  border-color: color-mix(in srgb, var(--yb-intent-pending-ink) 24%, transparent);
+  background: color-mix(in srgb, var(--yb-intent-pending-soft) 58%, transparent);
+  color: var(--yb-intent-pending-ink);
+}
 .foot {
   display: flex;
   justify-content: space-between;

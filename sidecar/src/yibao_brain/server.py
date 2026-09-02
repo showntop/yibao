@@ -55,6 +55,7 @@ from .memory import FakeMemory, LazyMem0Memory
 from .proactive import ProactiveDispatcher
 from .plugins import LlmChat, get_plugin_events, get_plugin_summaries
 from .surface import RESERVED_EVENTS, SurfaceBridge
+from .surface_reads import SurfaceReadGuard
 from .surface_tools import make_surface_tools
 from .runtime import RuntimeCtx
 from .runtime import helpers
@@ -149,6 +150,7 @@ def build_loop(
     feed=None,
     workflow_registrar=None,
     blob_store=None,
+    durable_engine=None,
 ) -> AgentLoop:
     real_a11y = use_real and a11y_enabled() and sys.platform == "darwin"
     reg = skills_factory() if skills_factory else ToolRegistry()
@@ -220,6 +222,7 @@ def build_loop(
         _load_plugins_safe(
             reg, memory, prov, host, reminders=reminder_store, emit_event=emit_event,
             workflow_registrar=workflow_registrar, blob_store=blob_store,
+            durable_engine=durable_engine,
         )
         # 能力热重载（P1 reload 地基）：增量扫描 plugins/，新插件免重启生效
         from pathlib import Path
@@ -239,6 +242,7 @@ def build_loop(
                 emit_event=emit_event, existing=existing,
                 workflow_registrar=workflow_registrar,
                 blob_store=blob_store,
+                durable_engine=durable_engine,
             )
 
         reg.register(CapabilityRefreshTool(reg, _reload_plugins))
@@ -367,7 +371,7 @@ def build_loop(
 
 def _load_plugins_safe(
     reg, memory, prov, host, reminders=None, emit_event=None, workflow_registrar=None,
-    blob_store=None,
+    blob_store=None, durable_engine=None,
 ) -> None:
     """加载 <repo>/plugins 下的插件（env YIBAO_PLUGINS_DIR 可覆盖）。
 
@@ -389,6 +393,7 @@ def _load_plugins_safe(
             emit_event=emit_event,
             workflow_registrar=workflow_registrar,
             blob_store=blob_store,
+            durable_engine=durable_engine,
         )
         for pid, status in results.items():
             log(f"插件 {pid}: {status}")
@@ -462,6 +467,7 @@ async def serve_async(
     ctx.write_msg = write_msg
     ctx.ai_loop = ai_loop
     ctx.voice = voice
+    surface_read_guard = SurfaceReadGuard()
     _LOOP_TICK["t"] = time.monotonic()
 
     async def _tick() -> None:
@@ -611,6 +617,9 @@ async def serve_async(
     # Agent OS 工作元数据：SQLite WAL 是 Workspace/Mission/Artifact/WorkflowRun 权威；
     # ProjectStore 只保留兼容 façade，projects.json 的 objects 仅作一次迁移来源。
     work_graph = WorkGraphStore(os.path.join(data_dir(), "work_graph.db"))
+    from .durable_execution import DurableExecutionEngine
+
+    durable_engine = DurableExecutionEngine(work_graph)
     from .blob_store import BlobStore
 
     blob_store = BlobStore(os.path.join(data_dir(), "blobs"))
@@ -637,6 +646,7 @@ async def serve_async(
         emit_event=_emit_event, feed=feed,
         workflow_registrar=work_graph.register_workflow,
         blob_store=blob_store,
+        durable_engine=durable_engine,
     )
     agent.invoker.emit_event = _emit_event  # 真实技能（watch_command）后台通知走同一条 gated 通道
     invocation_sink = WorkGraphInvocationSink(
@@ -646,6 +656,8 @@ async def serve_async(
         lambda conversation_id: project_store.current_id(conversation_id) if conversation_id else "",
     )
     agent.invoker.invocation_sink = invocation_sink
+    agent.invoker.durable_engine = durable_engine
+    durable_engine.recover()
     # PluginDb 业务事务可能在上次进程退出前已提交、但 Host 尚未接收；稳定事件 id
     # 让恢复可重复执行，且不会重复生成 Revision/Evidence。
     invocation_sink.reconcile_registry(agent.skills)
@@ -660,6 +672,16 @@ async def serve_async(
     # 项目 tool（V1a）：与 surface 同款伪插件注册；立项 L3 弹确认条（设计稿 L2 按印的代码映射）
     def _broadcast_projects(conversation_id: str = ""):
         write_msg({"type": "projects", **project_store.view(conversation_id)})
+
+    def _broadcast_durable_update(execution: dict) -> None:
+        conversation_ids = session_context_store.conversation_ids(
+            str(execution.get("workspace_id") or ""),
+        )
+        # Empty conversation is the legacy pet-window scope.
+        for conversation_id in conversation_ids or [""]:
+            _broadcast_projects(conversation_id)
+
+    durable_engine.on_update = _broadcast_durable_update
     for _pt in make_project_tools(project_store, on_change=_broadcast_projects):
         agent.skills.register(_pt, plugin=_pt.id.split(".", 1)[0], always_visible=True)
     # watch_command 跨重启恢复：任务落 jobs.db；上代进程的 running 孤儿重跑或标失败，全部 Feed 记账
@@ -985,7 +1007,10 @@ async def serve_async(
             # L0 只读直调：独立任务并发跑，不占槽位、不抢占在跑的 run（编辑器/面板加载数据不该踩对话）
             async def _ro(m=msg):
                 try:
-                    await handle_panel_action(m, agent, write_msg, run_text=_readonly_no_run)
+                    await handle_panel_action(
+                        m, agent, write_msg, run_text=_readonly_no_run,
+                        read_guard=surface_read_guard,
+                    )
                 except Exception as e:
                     log(f"只读面板调用异常：{type(e).__name__}: {e}")
 
@@ -1002,7 +1027,9 @@ async def serve_async(
         prev = slot["task"]
         slot["surface"] = surface
         start = lambda c, m=msg, s=surface, ci=conversation_id: handle_panel_action(
-            m, agent, write_msg, run_text=lambda text, rid, c=c, s=s, ci=ci: _stream_agent(text, rid, c, s, ci)
+            m, agent, write_msg,
+            run_text=lambda text, rid, c=c, s=s, ci=ci: _stream_agent(text, rid, c, s, ci),
+            read_guard=surface_read_guard,
         )
 
         async def _marked_panel(cancel, s=start, sf=surface, sl=slot, ci=conversation_id):
@@ -1430,11 +1457,23 @@ async def serve_async(
         else:
             write_msg({"type": "project_object_removed", "ok": False, "error": "项目不存在"})
 
+    async def _h_durable_cancel(msg: dict) -> None:
+        execution_id = str(msg.get("id") or "")
+        durable_engine.cancel(execution_id)
+        _broadcast_projects(str(msg.get("conversation_id") or ""))
+
+    async def _h_durable_resume(msg: dict) -> None:
+        execution_id = str(msg.get("id") or "")
+        durable_engine.resume(execution_id)
+        _broadcast_projects(str(msg.get("conversation_id") or ""))
+
     _handlers["projects"] = _h_projects
     _handlers["project_create"] = _h_project_create
     _handlers["project_switch"] = _h_project_switch
     _handlers["project_add_object"] = _h_project_add_object
     _handlers["project_remove_object"] = _h_project_remove_object
+    _handlers["durable_cancel"] = _h_durable_cancel
+    _handlers["durable_resume"] = _h_durable_resume
 
     _handlers["run"] = _h_run
     _handlers["voice_start"] = _h_run  # 复合分支：原 if rtype in ("run", "voice_start") 共用一体
@@ -1507,6 +1546,7 @@ async def serve_async(
             if jobs is not None:
                 jobs.shutdown()
             jobs_store.close()
+            durable_engine.shutdown(wait=False)
             work_graph.close()
             perception_stop.set()
             if perception_thread is not None:
