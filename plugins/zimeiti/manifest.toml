@@ -63,6 +63,22 @@ columns = [
 ]
 indexes = ["topic_id"]
 
+# storyboard_save / storyboard_get 由 tools/storyboard_save.py / storyboard_get.py 代码承接
+# （2026-09-02 视频 workflow S2 分镜：shot 成一等对象——video.storyboard/video.shot artifact
+# + contains/derived_from 边；动态 N 个 shot artifact 走 work_output foreach_from 扇出）
+[[table]]
+name = "storyboards"
+columns = [
+  {name = "id", type = "text", pk = true},
+  {name = "topic_id", type = "text"},
+  {name = "version", type = "integer"},
+  {name = "shot_count", type = "integer", default = 0},
+  {name = "content_path", type = "text"},
+  {name = "note", type = "text", default = ""},
+  {name = "created_at", type = "integer"},
+]
+indexes = ["topic_id"]
+
 [[table]]
 name = "materials"
 columns = [

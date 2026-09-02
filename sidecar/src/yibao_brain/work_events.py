@@ -40,6 +40,9 @@ def normalize_work_output(raw: dict) -> dict:
             value.get("checkpoint"), dict
         ):
             raise ValueError("checkpoint work_output checkpoint_from/checkpoint 不能为空")
+    foreach = value.get("foreach_from")
+    if foreach is not None and (not isinstance(foreach, str) or not foreach.strip()):
+        raise ValueError("work_output foreach_from 必须是非空字符串")
     fields = value.get("metadata_fields") or []
     if not isinstance(fields, list) or not all(isinstance(item, str) for item in fields):
         raise ValueError("work_output metadata_fields 必须是字符串数组")
@@ -66,6 +69,10 @@ def materialize_work_events(
 
     普通兼容路径可跳过运行期缺字段的声明；PluginDb 事务路径必须 strict，避免
     业务数据已经提交、领域事件却因结果契约不完整而永久丢失。
+
+    foreach_from（动态 N 产物）：声明的路径命中对象数组时，每个元素产一条事件，
+    元素字段经 item.* 路径取值（与根级 data.*/params.* 可混用，如边的一端恒定、
+    一端随元素）；空数组 = 零事件（数据驱动的条件产出，如有稿才产 derived_from 边）。
     """
     root = {"params": params or {}, "data": data or {}}
     events: list[tuple[int, int, dict]] = []
@@ -79,93 +86,114 @@ def materialize_work_events(
             if strict:
                 raise ValueError(f"{tool_id} 的 work_output kind 非法：{kind!r}")
             continue
-        metadata: dict = {"tool_id": tool_id}
-        for path in raw.get("metadata_fields") or []:
-            value = _value(root, str(path), None)
-            if value is not None:
-                metadata[str(path).split(".")[-1]] = value
-        if kind in ("artifact", "evidence"):
-            artifact_type = str(raw.get("artifact_type") or "").strip()
-            ref = str(_value(root, raw.get("ref_from"), raw.get("ref") or "") or "").strip()
-            if not artifact_type or not ref:
+        foreach_path = str(raw.get("foreach_from") or "").strip()
+        if foreach_path:
+            items = _value(root, foreach_path, None)
+            if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
                 if strict:
                     raise ValueError(
-                        f"{tool_id} 的 work_output 缺少运行期 artifact_type/ref"
+                        f"{tool_id} 的 work_output foreach_from 未命中对象数组：{foreach_path}"
                     )
                 continue
-        if kind == "artifact":
-            content_ref = str(
-                _value(root, raw.get("content_ref_from"), raw.get("content_ref") or "") or ""
-            ).strip()
-            events.append((0, ordinal, {
-                "event_type": "artifact.upsert",
-                "payload": {
-                    "artifact_type": artifact_type,
-                    "ref": ref,
-                    "content_ref": content_ref,
-                    "lifecycle": str(raw.get("lifecycle") or "draft"),
-                    "metadata": metadata,
-                },
-            }))
-        elif kind == "evidence":
-            claim = str(_value(root, raw.get("claim_from"), raw.get("claim") or "") or "").strip()
-            if not claim:
-                if strict:
-                    raise ValueError(f"{tool_id} 的 evidence work_output 缺少运行期 claim")
-                continue
-            events.append((0, ordinal, {
-                "event_type": "evidence.capture",
-                "payload": {
-                    "artifact_type": artifact_type,
-                    "ref": ref,
-                    "claim": claim,
-                    "source_uri": str(_value(root, raw.get("source_uri_from"), "") or "").strip(),
-                    "source_title": str(_value(root, raw.get("source_title_from"), "") or "").strip(),
-                    "publisher": str(_value(root, raw.get("publisher_from"), "") or "").strip(),
-                    "confidence": float(raw.get("confidence") or 0.5),
-                    "metadata": metadata,
-                },
-            }))
-        elif kind == "edge":
-            source_ref = str(
-                _value(root, raw.get("source_ref_from"), raw.get("source_ref") or "") or ""
-            ).strip()
-            target_ref = str(
-                _value(root, raw.get("target_ref_from"), raw.get("target_ref") or "") or ""
-            ).strip()
-            source_type = str(raw.get("source_artifact_type") or "").strip()
-            target_type = str(raw.get("target_artifact_type") or "").strip()
-            relation = str(raw.get("relation") or "").strip()
-            if not all((source_type, source_ref, target_type, target_ref, relation)):
-                if strict:
-                    raise ValueError(f"{tool_id} 的 edge work_output 缺少运行期端点/relation")
-                continue
-            events.append((1, ordinal, {
-                "event_type": "artifact.edge.upsert",
-                "payload": {
-                    "source": {"artifact_type": source_type, "ref": source_ref},
-                    "target": {"artifact_type": target_type, "ref": target_ref},
-                    "relation": relation,
-                    "label": str(raw.get("label") or ""),
-                    "metadata": metadata,
-                },
-            }))
-        elif kind == "checkpoint":
-            stage_id = str(
-                _value(root, raw.get("stage_id_from"), raw.get("stage_id") or "") or ""
-            ).strip()
-            checkpoint = _value(root, raw.get("checkpoint_from"), raw.get("checkpoint"))
-            expected_version = _value(root, raw.get("expected_version_from"), None)
-            if not stage_id or not isinstance(checkpoint, dict):
-                if strict:
-                    raise ValueError(f"{tool_id} 的 checkpoint work_output 缺少 stage_id/checkpoint")
-                continue
-            payload = {"stage_id": stage_id, "checkpoint": checkpoint}
-            if expected_version is not None:
-                payload["expected_version"] = int(expected_version)
-            events.append((2, ordinal, {"event_type": "stage.checkpoint", "payload": payload}))
+            scopes = [dict(root, item=item) for item in items]
+        else:
+            scopes = [root]
+        for scope in scopes:
+            _materialize_one(raw, kind, scope, tool_id, strict, ordinal, events)
     # 先创建节点，再建边，最后更新运行位置；声明顺序不影响参照完整性。
     return [event for _priority, _ordinal, event in sorted(events, key=lambda item: (item[0], item[1]))]
+
+
+def _materialize_one(
+    raw: dict, kind: str, root: dict, tool_id: str, strict: bool,
+    ordinal: int, events: list[tuple[int, int, dict]],
+) -> None:
+    """单个声明 × 单个取值作用域（root 或 root+item）产一条事件，追加进 events。"""
+    metadata: dict = {"tool_id": tool_id}
+    for path in raw.get("metadata_fields") or []:
+        value = _value(root, str(path), None)
+        if value is not None:
+            metadata[str(path).split(".")[-1]] = value
+    if kind in ("artifact", "evidence"):
+        artifact_type = str(raw.get("artifact_type") or "").strip()
+        ref = str(_value(root, raw.get("ref_from"), raw.get("ref") or "") or "").strip()
+        if not artifact_type or not ref:
+            if strict:
+                raise ValueError(
+                    f"{tool_id} 的 work_output 缺少运行期 artifact_type/ref"
+                )
+            return
+    if kind == "artifact":
+        content_ref = str(
+            _value(root, raw.get("content_ref_from"), raw.get("content_ref") or "") or ""
+        ).strip()
+        events.append((0, ordinal, {
+            "event_type": "artifact.upsert",
+            "payload": {
+                "artifact_type": artifact_type,
+                "ref": ref,
+                "content_ref": content_ref,
+                "lifecycle": str(raw.get("lifecycle") or "draft"),
+                "metadata": metadata,
+            },
+        }))
+    elif kind == "evidence":
+        claim = str(_value(root, raw.get("claim_from"), raw.get("claim") or "") or "").strip()
+        if not claim:
+            if strict:
+                raise ValueError(f"{tool_id} 的 evidence work_output 缺少运行期 claim")
+            return
+        events.append((0, ordinal, {
+            "event_type": "evidence.capture",
+            "payload": {
+                "artifact_type": artifact_type,
+                "ref": ref,
+                "claim": claim,
+                "source_uri": str(_value(root, raw.get("source_uri_from"), "") or "").strip(),
+                "source_title": str(_value(root, raw.get("source_title_from"), "") or "").strip(),
+                "publisher": str(_value(root, raw.get("publisher_from"), "") or "").strip(),
+                "confidence": float(raw.get("confidence") or 0.5),
+                "metadata": metadata,
+            },
+        }))
+    elif kind == "edge":
+        source_ref = str(
+            _value(root, raw.get("source_ref_from"), raw.get("source_ref") or "") or ""
+        ).strip()
+        target_ref = str(
+            _value(root, raw.get("target_ref_from"), raw.get("target_ref") or "") or ""
+        ).strip()
+        source_type = str(raw.get("source_artifact_type") or "").strip()
+        target_type = str(raw.get("target_artifact_type") or "").strip()
+        relation = str(raw.get("relation") or "").strip()
+        if not all((source_type, source_ref, target_type, target_ref, relation)):
+            if strict:
+                raise ValueError(f"{tool_id} 的 edge work_output 缺少运行期端点/relation")
+            return
+        events.append((1, ordinal, {
+            "event_type": "artifact.edge.upsert",
+            "payload": {
+                "source": {"artifact_type": source_type, "ref": source_ref},
+                "target": {"artifact_type": target_type, "ref": target_ref},
+                "relation": relation,
+                "label": str(raw.get("label") or ""),
+                "metadata": metadata,
+            },
+        }))
+    elif kind == "checkpoint":
+        stage_id = str(
+            _value(root, raw.get("stage_id_from"), raw.get("stage_id") or "") or ""
+        ).strip()
+        checkpoint = _value(root, raw.get("checkpoint_from"), raw.get("checkpoint"))
+        expected_version = _value(root, raw.get("expected_version_from"), None)
+        if not stage_id or not isinstance(checkpoint, dict):
+            if strict:
+                raise ValueError(f"{tool_id} 的 checkpoint work_output 缺少 stage_id/checkpoint")
+            return
+        payload = {"stage_id": stage_id, "checkpoint": checkpoint}
+        if expected_version is not None:
+            payload["expected_version"] = int(expected_version)
+        events.append((2, ordinal, {"event_type": "stage.checkpoint", "payload": payload}))
 
 
 class WorkGraphInvocationSink:

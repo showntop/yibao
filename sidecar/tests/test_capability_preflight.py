@@ -17,7 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _zimeiti_like_index() -> dict:
-    """镜像 zimeiti 插件的真实声明：zimeiti.add / article_save / mat_save。"""
+    """镜像 zimeiti 插件的真实声明：zimeiti.add / article_save / mat_save / storyboard_save。"""
     return {
         "zimeiti.topic": [
             {"plugin_id": "zimeiti", "tool_id": "zimeiti.add", "label": "加入选题"},
@@ -27,6 +27,12 @@ def _zimeiti_like_index() -> dict:
         ],
         "research.evidence": [
             {"plugin_id": "zimeiti", "tool_id": "zimeiti.mat_save", "label": "保存素材"},
+        ],
+        "video.storyboard": [
+            {"plugin_id": "zimeiti", "tool_id": "zimeiti.storyboard_save", "label": "保存分镜"},
+        ],
+        "video.shot": [
+            {"plugin_id": "zimeiti", "tool_id": "zimeiti.storyboard_save", "label": "保存分镜"},
         ],
     }
 
@@ -83,7 +89,7 @@ def test_build_capability_index_from_tool_work_outputs():
 
 
 def test_video_run_created_blocked_with_stage_level_plan(tmp_path):
-    """验收锚点：video.explainer + zimeiti 能力 → 前三段 available，后五段 missing。"""
+    """验收锚点：video.explainer + zimeiti 能力 → 前四段 available，后四段 missing。"""
     graph = WorkGraphStore(str(tmp_path / "work_graph.db"))
     try:
         graph.set_capability_providers(_zimeiti_like_index())
@@ -91,15 +97,17 @@ def test_video_run_created_blocked_with_stage_level_plan(tmp_path):
         run = _run(graph, "ws")
         assert run["definition_id"] == "video.explainer"
         assert run["status"] == "blocked"
-        assert run["blocked_reason"] == "分镜、素材、配音、合成、交付 缺能力 provider"
+        assert run["blocked_reason"] == "素材、配音、合成、交付 缺能力 provider"
         plan = run["capability_plan"]
         assert plan["ready"] is False
-        assert plan["missing"] == ["storyboard", "assets", "voice", "compose", "deliver"]
+        assert plan["missing"] == ["assets", "voice", "compose", "deliver"]
         by_id = {stage["id"]: stage for stage in plan["stages"]}
-        assert [by_id[key]["status"] for key in ("topic", "evidence", "script")] == ["available"] * 3
+        assert [by_id[key]["status"] for key in ("topic", "evidence", "script", "storyboard")] == ["available"] * 4
         assert by_id["topic"]["providers"][0]["tool_id"] == "zimeiti.add"
         assert by_id["evidence"]["providers"][0]["tool_id"] == "zimeiti.mat_save"
         assert by_id["script"]["providers"][0]["tool_id"] == "zimeiti.article_save"
+        # storyboard 段 acceptance 是 storyboard/shot 双 pattern：同一 tool 两种产出都算
+        assert by_id["storyboard"]["providers"][0]["tool_id"] == "zimeiti.storyboard_save"
         # deliver 判 missing：zimeiti 的 publish/wewrite 未声明 work_outputs（代码事实）
         assert by_id["deliver"]["providers"] == []
         assert plan["computed_at"] > 0
@@ -175,7 +183,7 @@ def test_sync_preserves_capability_block_across_detach_and_reopen(tmp_path):
         graph.detach_external_artifact("ws", "zimeiti.topic", "t1")
         run = _run(graph, "ws")
         assert run["status"] == "blocked"
-        assert "分镜" in run["blocked_reason"]
+        assert "素材" in run["blocked_reason"]
     finally:
         graph.close()
 
@@ -184,7 +192,7 @@ def test_sync_preserves_capability_block_across_detach_and_reopen(tmp_path):
     try:
         run = _run(reopened, "ws")
         assert run["status"] == "blocked"
-        assert run["blocked_reason"] == "分镜、素材、配音、合成、交付 缺能力 provider"
+        assert run["blocked_reason"] == "素材、配音、合成、交付 缺能力 provider"
     finally:
         reopened.close()
 
@@ -276,10 +284,10 @@ def test_project_create_tool_surfaces_capability_summary(tmp_path, monkeypatch):
         capability = result.data["capability"]
         assert capability["ready"] is False
         assert capability["enforced"] is True
-        assert capability["available_stages"] == ["选题", "证据", "脚本"]
-        assert capability["missing_stages"] == ["分镜", "素材", "配音", "合成", "交付"]
-        assert capability["blocked_reason"] == "分镜、素材、配音、合成、交付 缺能力 provider"
-        assert capability["degradation"] == "可做到脚本；分镜起缺能力，安装对应 provider 后可继续"
+        assert capability["available_stages"] == ["选题", "证据", "脚本", "分镜"]
+        assert capability["missing_stages"] == ["素材", "配音", "合成", "交付"]
+        assert capability["blocked_reason"] == "素材、配音、合成、交付 缺能力 provider"
+        assert capability["degradation"] == "可做到分镜；素材起缺能力，安装对应 provider 后可继续"
 
         # 通用项目：摘要有，但不给降级建议（没被阻断，谈不上「只能做到哪」）
         general = tools["project.create"].run({"name": "随便整理一下"}, None)
@@ -311,10 +319,11 @@ def test_capability_summary_ready_project_has_no_degradation(tmp_path, monkeypat
 # ---------- 验收锚点：真实 zimeiti 插件声明 ----------
 
 
-def test_real_zimeiti_plugin_covers_topic_evidence_script_only(tmp_path):
-    """加载真实 plugins/ 目录建索引：只有 zimeiti 三个 artifact 产出。
+def test_real_zimeiti_plugin_covers_through_storyboard(tmp_path):
+    """加载真实 plugins/ 目录建索引：zimeiti 提供 topic/evidence/script/storyboard/shot 五种产出。
 
-    publish.py / wewrite.py 未声明 work_outputs（代码事实）→ deliver 无 provider。
+    storyboard_save（2026-09-02 分镜能力）声明 video.storyboard + video.shot → 分镜段翻
+    available；publish.py / wewrite.py 未声明 work_outputs（代码事实）→ deliver 仍无 provider。
     """
     from yibao_brain.llm import FakeProvider
     from yibao_brain.memory import FakeMemory
@@ -333,14 +342,20 @@ def test_real_zimeiti_plugin_covers_topic_evidence_script_only(tmp_path):
     load_plugins(REPO_ROOT / "plugins", reg, memory=FakeMemory(), http=_Http(),
                  llm=LlmChat(FakeProvider()))
     index = build_capability_index(reg.list())
-    assert set(index) == {"zimeiti.topic", "video.script", "research.evidence"}
+    assert set(index) == {
+        "zimeiti.topic", "video.script", "research.evidence", "video.storyboard", "video.shot",
+    }
+    assert index["video.storyboard"][0]["tool_id"] == "zimeiti.storyboard_save"
+    assert index["video.shot"][0]["tool_id"] == "zimeiti.storyboard_save"
 
     graph = WorkGraphStore(str(tmp_path / "work_graph.db"))
     try:
         graph.set_capability_providers(index)
         graph.create_workspace("ws", "Agent 概念科普视频", str(tmp_path / "ws"))
         plan = _run(graph, "ws")["capability_plan"]
-        assert plan["missing"] == ["storyboard", "assets", "voice", "compose", "deliver"]
+        by_id = {stage["id"]: stage for stage in plan["stages"]}
+        assert by_id["storyboard"]["status"] == "available"
+        assert plan["missing"] == ["assets", "voice", "compose", "deliver"]
         assert _run(graph, "ws")["status"] == "blocked"
     finally:
         graph.close()
