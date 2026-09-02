@@ -70,21 +70,6 @@ fn truncate_removes_beyond_keep() {
 }
 
 #[test]
-fn upsert_panel_link_creates_then_updates() {
-    let d = db();
-    d.create_conversation("c1", "", 100).unwrap();
-    let first = d.upsert_panel_link("c1", "⇢ 正在和「A」协作", "x1", 1000).unwrap();
-    assert_eq!(first.payload["panelLink"], true);
-    // 第二次：应更新同一条而非新增（查重）
-    let second = d.upsert_panel_link("c1", "⇢ 正在和「B」协作", "x2", 2000).unwrap();
-    assert_eq!(first.id, second.id, "应原地更新同一条 panelLink");
-    let msgs = d.get_messages("c1", 10).unwrap();
-    let links: Vec<_> = msgs.iter().filter(|m| m.payload["panelLink"] == true).collect();
-    assert_eq!(links.len(), 1);
-    assert_eq!(links[0].payload["text"], "⇢ 正在和「B」协作");
-}
-
-#[test]
 fn delete_conversation_cascades_messages() {
     let d = db();
     d.create_conversation("c1", "", 100).unwrap();

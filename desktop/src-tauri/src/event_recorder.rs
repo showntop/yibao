@@ -4,13 +4,13 @@
 //! 独立做"原始事件 → 消息 payload"的领域转换（忠实复刻前端 bubbleToInput 逻辑）；
 //! webview 的 onEvent 只做内存渲染、不写库——两路从同一事件流出发，逻辑一致则结果一致。
 //!
-//! 瞬态（流式缓冲 / proc 索引 / run 溯源）随 run 生命周期，sidecar 重启时 reset。
+//! 瞬态（流式缓冲 / proc 索引 / run 溯源 / 运行代数账本）随 sidecar 进程生命周期，重启时 reset。
 
 use crate::session_db::{now_ms, SessionDb};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-/// 对话类事件落库的状态机：流式缓冲 + proc 索引 + run 溯源引用。
+/// 对话类事件落库的状态机：流式缓冲 + proc 索引 + run 溯源引用 + 运行代数闸。
 #[derive(Default)]
 pub struct EventRecorder {
     /// 流式缓冲：当前 run 的 AI 流式消息（chunk 只累积，final/interrupted 才落库）
@@ -22,6 +22,9 @@ pub struct EventRecorder {
     proc_ids: HashMap<String, (String, String)>,
     /// 本次 run 的溯源引用，挂到下一条 AI 消息（"参考了 ▾"）
     run_refs: Vec<Value>,
+    /// 运行代数账本：conversation_id → 已见最大 run_epoch（P0 闸门。
+    /// 被抢占旧 run 的迟到事件不落库，防刷新/切会话重拉时旧回复复活）。
+    max_epoch: HashMap<String, i64>,
 }
 
 pub(crate) fn new_id() -> String {
@@ -50,12 +53,54 @@ fn truncate(s: &str, n: usize) -> String {
     }
 }
 
+/// 能力边界卡投影（忠实复刻前端 capability-gap.ts 的 capabilityGapFromResult）：
+/// 成功 + data.capability.enforced===true + missing_stages 非空 → 出卡素材；否则 None。
+/// 返回字段与前端 MessagePayload.gap（GapProjection）对齐：through/available/missing/note。
+fn gap_projection(result: &Value) -> Option<Value> {
+    if result.get("success").and_then(|v| v.as_bool()) != Some(true) {
+        return None;
+    }
+    let cap = result.get("data")?.get("capability")?.as_object()?;
+    if cap.get("enforced").and_then(|v| v.as_bool()) != Some(true) {
+        return None;
+    }
+    let strings_of = |key: &str| -> Vec<String> {
+        cap.get(key)
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+            .unwrap_or_default()
+    };
+    let missing = strings_of("missing_stages");
+    if missing.is_empty() {
+        return None;
+    }
+    let available = strings_of("available_stages");
+    let through = available.last().cloned().unwrap_or_default();
+    // 降级建议优先，缺省回退 blocked_reason（同前端 degradation || blocked_reason）
+    let degradation = cap.get("degradation").and_then(|v| v.as_str()).unwrap_or("").trim();
+    let reason = cap.get("blocked_reason").and_then(|v| v.as_str()).unwrap_or("").trim();
+    let note = if degradation.is_empty() { reason } else { degradation };
+    Some(json!({ "through": through, "available": available, "missing": missing, "note": note }))
+}
+
+/// 卡标题（同前端 capabilityGapTitle）：也作气泡回退文本（不渲染卡的面退化为这一行）。
+fn gap_title(gap: &Value) -> String {
+    let through = gap.get("through").and_then(|v| v.as_str()).unwrap_or("");
+    if through.is_empty() {
+        "能力边界".to_string()
+    } else {
+        format!("能力边界 · 可做到{through}")
+    }
+}
+
 impl EventRecorder {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// 新 run / sidecar 重启：清瞬态（流式缓冲若残留则按 interrupted 兜底落库由调用方先处理）。
+    /// sidecar 重启（hello 接管新进程）：清瞬态（流式缓冲若残留则按 interrupted 兜底落库由调用方先处理）。
+    /// 代数账本一并清零——sidecar 重启后 run_epoch 从 0 重新编号，账本不清会把新 brain 的
+    /// 事件全误判成旧账（对齐前端 resetRunEpochs）。
     pub fn reset_run(&mut self) {
         self.stream_msg_id = None;
         self.stream_text.clear();
@@ -63,11 +108,33 @@ impl EventRecorder {
         self.stream_ts = 0;
         self.proc_ids.clear();
         self.run_refs.clear();
+        self.max_epoch.clear();
+    }
+
+    /// 运行代数闸（对齐前端 run-epoch.ts 的 isStaleRunEvent）：事件带 run_epoch 时，
+    /// 比本会话已见最大代数更旧 → 丢弃（被抢占旧 run 的迟到事件，典型 final_reply_chunk）；
+    /// 更高 → 采纳并记账；相等放行。缺 run_epoch 字段（notice/reminder 等非 run 事件、
+    /// 旧 sidecar）一律放行，缺省字段稳健。
+    fn is_stale_epoch(&mut self, conv_id: &str, e: &Value) -> bool {
+        let Some(epoch) = e.get("run_epoch").and_then(|v| v.as_i64()) else {
+            return false;
+        };
+        match self.max_epoch.get(conv_id) {
+            Some(&max) if epoch < max => true,
+            _ => {
+                self.max_epoch.insert(conv_id.to_string(), epoch);
+                false
+            }
+        }
     }
 
     /// 处理一条 brain-event，按需落库到 conv_id 会话。conv_id 为空（活跃会话未建立）则跳过。
     pub fn record(&mut self, db: &SessionDb, conv_id: &str, e: &Value) {
         if conv_id.is_empty() {
+            return;
+        }
+        // 运行代数闸（P0）：被抢占旧 run 的迟到事件不落库（对齐前端 run-epoch.ts 闸门语义）。
+        if self.is_stale_epoch(conv_id, e) {
             return;
         }
         let kind = e.get("kind").and_then(|k| k.as_str()).unwrap_or("");
@@ -185,6 +252,13 @@ impl EventRecorder {
                 format!("失败：{}", truncate(err, 60))
             };
             *r = json!({ "label": label, "detail": detail, "ok": ok });
+        }
+        // 能力边界卡（对齐前端 useChatFlow 的 action_result 分支）：缺能力 visibly 落信息卡，
+        // role=sys、text 为回退标题（纸面摊法/会话 preview 用），gap 投影随消息落库，
+        // 刷新/切会话重拉后卡片恢复。
+        if let Some(gap) = gap_projection(&result) {
+            let title = gap_title(&gap);
+            self.append(db, conv_id, "sys", json!({ "text": title, "gap": gap }), now_ms());
         }
     }
 
