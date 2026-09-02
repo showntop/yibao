@@ -54,6 +54,10 @@ async function onDurableAction(kind: "cancel" | "resume", executionId: string) {
           <span v-if="face.missionTitle !== face.name" class="mission">
           目标 · {{ face.missionTitle }}
           </span>
+          <span v-if="face.capabilityBlocked" class="cap-gap">
+          <span class="cap-gap-line">缺能力 · {{ face.missingStageLabels.join("、") }}</span>
+          <span v-if="face.capabilityReason" class="cap-gap-reason">{{ face.capabilityReason }}</span>
+          </span>
           <span class="track" aria-hidden="true">
           <i
             v-for="i in face.stages.length"
@@ -62,8 +66,9 @@ async function onDurableAction(kind: "cancel" | "resume", executionId: string) {
               done: face.stageStates[i - 1] === 'completed',
               now: face.stageStates[i - 1] === 'ready' || face.stageStates[i - 1] === 'running',
               blocked: face.stageStates[i - 1] === 'blocked',
+              capmiss: face.missingStageLabels.includes(face.stages[i - 1]),
             }"
-            :title="`${face.stages[i - 1]} · ${face.stageStates[i - 1]}`"
+            :title="`${face.stages[i - 1]} · ${face.stageStates[i - 1]}${face.missingStageLabels.includes(face.stages[i - 1]) ? ' · 缺能力' : ''}`"
           />
           </span>
           <span v-if="face.executionLabel" class="activity" :data-status="face.executionStatus">
@@ -265,6 +270,34 @@ async function onDurableAction(kind: "cancel" | "resume", executionId: string) {
     transparent 3px 5px
   );
   opacity: 0.62;
+}
+/* 缺能力段：灰色虚纹弱化（与依赖阻塞的琥珀虚纹区分——不是等等就好，是装了 provider 才能跑） */
+.track i.capmiss {
+  background: repeating-linear-gradient(
+    90deg,
+    var(--yb-c-slate-300) 0 3px,
+    transparent 3px 5px
+  );
+  opacity: 0.9;
+}
+/* 能力缺口 banner：琥珀虚边小条，开工前可见 */
+.cap-gap {
+  display: grid;
+  gap: 2px;
+  padding: 6px 9px;
+  border: 1px dashed rgba(var(--yb-c-amber-rgb), 0.45);
+  border-radius: var(--yb-radius-sm);
+  background: var(--yb-intent-pending-soft);
+}
+.cap-gap-line {
+  color: var(--yb-intent-pending-ink);
+  font-size: 10.5px;
+  font-weight: var(--yb-fw-medium);
+}
+.cap-gap-reason {
+  color: var(--yb-paper-ink-dim);
+  font-size: 10px;
+  line-height: 1.45;
 }
 .activity {
   display: grid;

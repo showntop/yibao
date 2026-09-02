@@ -21,6 +21,55 @@ function makeFlow() {
   });
 }
 
+describe("useChatFlow 能力边界卡", () => {
+  const proposed = { kind: "action_proposed", action: { id: "a1", tool_id: "project.create", label: "立项" } } as BrainEvent;
+
+  it("project.create 结果带 enforced 能力缺口 → 推 gap 气泡（含标题与缺段）", () => {
+    const flow = makeFlow();
+    flow.onEvent(proposed);
+    flow.onEvent({
+      kind: "action_result",
+      action: { id: "a1", tool_id: "project.create" },
+      result: {
+        success: true,
+        data: {
+          capability: {
+            ready: false,
+            enforced: true,
+            available_stages: ["选题", "脚本"],
+            missing_stages: ["分镜", "配音"],
+            degradation: "可做到脚本；分镜起缺能力，安装对应 provider 后可继续",
+          },
+        },
+      },
+    } as BrainEvent);
+
+    const gapBubble = flow.bubbles.value.find((b) => b.gap);
+    expect(gapBubble).toBeTruthy();
+    expect(gapBubble?.text).toBe("能力边界 · 可做到脚本");
+    expect(gapBubble?.gap?.missing).toEqual(["分镜", "配音"]);
+    expect(gapBubble?.gap?.note).toContain("可做到脚本");
+    // 过程行照常收尾，不被能力卡顶掉
+    expect(flow.bubbles.value.find((b) => b.proc)?.proc?.done).toBe(true);
+  });
+
+  it("info 策略（enforced=false）不出卡", () => {
+    const flow = makeFlow();
+    flow.onEvent(proposed);
+    flow.onEvent({
+      kind: "action_result",
+      action: { id: "a1", tool_id: "project.create" },
+      result: {
+        success: true,
+        data: {
+          capability: { ready: false, enforced: false, available_stages: [], missing_stages: ["推进"] },
+        },
+      },
+    } as BrainEvent);
+    expect(flow.bubbles.value.some((b) => b.gap)).toBe(false);
+  });
+});
+
 describe("useChatFlow 停止分离", () => {
   it("speech_stopped：final_reply 已落气泡后按停——回 idle，气泡完整不标「已打断」", () => {
     const flow = makeFlow();

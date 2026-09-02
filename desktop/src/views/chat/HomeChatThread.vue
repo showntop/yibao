@@ -4,6 +4,7 @@ import Avatar from "../../components/pet/Avatar.vue";
 import Bubble from "../../components/common/Bubble.vue";
 import YbIcon from "../../components/common/YbIcon.vue";
 import UsageBar from "../../components/common/UsageBar.vue";
+import HomeGapCard from "./HomeGapCard.vue";
 import { HOME_CHAT_SESSION } from "../../lib/home/home-chat-session.ts";
 import { isDeskPathOpenLine } from "../../lib/home/home-desk-presence.ts";
 import { actionsOf, ACTION_DEFS, type MsgAction } from "../../lib/msg-actions";
@@ -100,6 +101,11 @@ onMounted(() => {
       </div>
       <template v-for="item in thread" :key="threadKey(item)">
         <div v-if="item.type === 'day'" class="date-divider"><span>{{ fmtDay(bubbles[item.index].ts) }}</span></div>
+
+        <HomeGapCard
+          v-else-if="item.type === 'misc' && bubbles[item.index].gap"
+          :gap="bubbles[item.index].gap!"
+        />
 
         <button
           v-else-if="item.type === 'misc' && isDeskPathOpenLine(bubbles[item.index].text)"

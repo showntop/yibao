@@ -162,6 +162,183 @@ describe("projectCardFace", () => {
   });
 });
 
+describe("projectCardFace 能力缺口", () => {
+  const videoStages = [
+    { id: "topic", label: "选题", status: "completed" as const },
+    { id: "evidence", label: "证据", status: "completed" as const },
+    { id: "script", label: "脚本", status: "completed" as const },
+    { id: "storyboard", label: "分镜", status: "pending" as const },
+    { id: "assets", label: "素材", status: "pending" as const },
+  ];
+
+  it("blocked + enforce plan：卡面暴露缺口、可达前缀与人话原因", () => {
+    const face = projectCardFace(project({
+      id: "cap",
+      name: "Agent 科普视频",
+      objects: [],
+      workflow_run: {
+        id: "wr-cap",
+        definition_id: "video.explainer",
+        definition_version: "1.1.0",
+        domain: "video",
+        label: "视频创作",
+        status: "blocked",
+        current_stage_id: "storyboard",
+        current_stage_index: 3,
+        updated_at: 0,
+        stages: videoStages,
+        blocked_reason: "分镜、素材 缺能力 provider",
+        capability_plan: {
+          stages: [
+            { id: "topic", label: "选题", status: "available" },
+            { id: "evidence", label: "证据", status: "available" },
+            { id: "script", label: "脚本", status: "available" },
+            { id: "storyboard", label: "分镜", status: "missing" },
+            { id: "assets", label: "素材", status: "missing" },
+          ],
+          missing: ["storyboard", "assets"],
+          ready: false,
+          policy: "enforce",
+          computed_at: 0,
+        },
+      },
+    }));
+    expect(face.capabilityBlocked).toBe(true);
+    expect(face.missingStageLabels).toEqual(["分镜", "素材"]);
+    expect(face.availableThrough).toBe("脚本");
+    expect(face.capabilityReason).toBe("分镜、素材 缺能力 provider");
+    expect(face.nextStep).toBe("缺能力 · 可做到脚本");
+  });
+
+  it("首段即缺：可达前缀为空，nextStep 不硬凑「可做到」", () => {
+    const face = projectCardFace(project({
+      id: "cap0",
+      name: "视频",
+      objects: [],
+      workflow_run: {
+        id: "wr-cap0",
+        definition_id: "video.explainer",
+        definition_version: "1.1.0",
+        domain: "video",
+        label: "视频创作",
+        status: "blocked",
+        current_stage_id: "topic",
+        current_stage_index: 0,
+        updated_at: 0,
+        stages: videoStages,
+        blocked_reason: "选题 缺能力 provider",
+        capability_plan: {
+          stages: [
+            { id: "topic", label: "选题", status: "missing" },
+            { id: "evidence", label: "证据", status: "available" },
+          ],
+          missing: ["topic"],
+          ready: false,
+          computed_at: 0,
+        },
+      },
+    }));
+    expect(face.capabilityBlocked).toBe(true);
+    expect(face.availableThrough).toBe("");
+    expect(face.nextStep).toBe("缺能力 · 待装 provider");
+  });
+
+  it("info 策略（mission.general）：只作信息，不显示缺口态", () => {
+    const face = projectCardFace(project({
+      id: "info",
+      name: "搬家安排",
+      objects: [],
+      workflow_run: {
+        id: "wr-info",
+        definition_id: "mission.general",
+        definition_version: "1.0.0",
+        domain: "general",
+        label: "通用任务",
+        status: "blocked",
+        current_stage_id: "advance",
+        current_stage_index: 1,
+        updated_at: 0,
+        stages: [
+          { id: "understand", label: "理解", status: "completed" },
+          { id: "advance", label: "推进", status: "pending" },
+        ],
+        blocked_reason: "推进 缺能力 provider",
+        capability_plan: {
+          stages: [
+            { id: "understand", label: "理解", status: "available" },
+            { id: "advance", label: "推进", status: "missing" },
+          ],
+          missing: ["advance"],
+          ready: false,
+          policy: "info",
+          computed_at: 0,
+        },
+      },
+    }));
+    expect(face.capabilityBlocked).toBe(false);
+    expect(face.missingStageLabels).toEqual([]);
+  });
+
+  it("无 plan 旧数据：blocked 只走原有依赖文案，不冒充能力缺口", () => {
+    const face = projectCardFace(project({
+      id: "old",
+      name: "季度复盘 PPT",
+      objects: [],
+      workflow_run: {
+        id: "wr-old",
+        definition_id: "deck.presentation",
+        definition_version: "1.0.0",
+        domain: "deck",
+        label: "演示文稿",
+        status: "blocked",
+        current_stage_id: "slides",
+        current_stage_index: 3,
+        updated_at: 0,
+        stages: [
+          { id: "brief", label: "需求", status: "completed" },
+          { id: "slides", label: "页面", status: "blocked" },
+        ],
+      },
+    }));
+    expect(face.capabilityBlocked).toBe(false);
+    expect(face.capabilityReason).toBe("");
+    expect(face.nextStep).toBe("1 个节点等待依赖");
+  });
+
+  it("全 available：ready 的 run 不出缺口态", () => {
+    const face = projectCardFace(project({
+      id: "ok",
+      name: "视频",
+      objects: [],
+      workflow_run: {
+        id: "wr-ok",
+        definition_id: "video.explainer",
+        definition_version: "1.1.0",
+        domain: "video",
+        label: "视频创作",
+        status: "running",
+        current_stage_id: "script",
+        current_stage_index: 2,
+        updated_at: 0,
+        stages: videoStages.slice(0, 3),
+        capability_plan: {
+          stages: [
+            { id: "topic", label: "选题", status: "available" },
+            { id: "evidence", label: "证据", status: "available" },
+            { id: "script", label: "脚本", status: "available" },
+          ],
+          missing: [],
+          ready: true,
+          computed_at: 0,
+        },
+      },
+    }));
+    expect(face.capabilityBlocked).toBe(false);
+    expect(face.missingStageLabels).toEqual([]);
+    expect(face.availableThrough).toBe("");
+  });
+});
+
 describe("projectTouchLabel", () => {
   it("按本地日期给今天/昨天/月日", () => {
     const now = new Date(2026, 7, 31, 15, 0);

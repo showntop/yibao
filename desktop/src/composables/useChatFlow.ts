@@ -9,6 +9,7 @@ import { sessionStore } from "../state/store";
 import type { MessageInput } from "../state/domains/conversation";
 import type { Message } from "../state/types";
 import { procDetail, procLabel, procResultSuffix, procSkip } from "../lib/proc";
+import { capabilityGapFromResult, capabilityGapTitle } from "../lib/home/capability-gap.ts";
 import { squashSpaces, truncate } from "../lib/text";
 import { isTaskLogEvent } from "../lib/work-thread";
 
@@ -62,6 +63,14 @@ export function useChatFlow(deps: ChatFlowDeps) {
               ok: b.proc.done ? b.proc.result?.success !== false : undefined,
             }
           : undefined,
+        gap: b.gap
+          ? {
+              through: b.gap.through,
+              available: [...b.gap.available],
+              missing: [...b.gap.missing],
+              note: b.gap.note,
+            }
+          : undefined,
       },
       ts: b.ts,
       ephemeral,
@@ -85,6 +94,14 @@ export function useChatFlow(deps: ChatFlowDeps) {
             done: m.payload.proc.done,
             expanded: false,
             result: m.payload.proc.ok === undefined ? undefined : { success: m.payload.proc.ok },
+          }
+        : undefined,
+      gap: m.payload.gap
+        ? {
+            through: m.payload.gap.through,
+            available: m.payload.gap.available,
+            missing: m.payload.gap.missing,
+            note: m.payload.gap.note,
           }
         : undefined,
     };
@@ -205,6 +222,19 @@ export function useChatFlow(deps: ChatFlowDeps) {
           ref.detail = e.result?.success
             ? truncate(String(e.result?.data?.human ?? ""), 60) || "已完成"
             : `失败：${truncate(String(e.result?.error ?? ""), 60)}`;
+        }
+        // 能力边界（project.create enforced 缺口）：缺能力 visibly 落信息卡，不靠模型转述
+        const gap = capabilityGapFromResult(e.result);
+        if (gap) {
+          const gapBubble: BubbleMsg = {
+            id: newId(),
+            role: "sys",
+            text: capabilityGapTitle(gap), // 回退文本：不渲染卡的面（纸面摊法/会话 preview）用
+            gap,
+            ts: Date.now(),
+          };
+          bubbles.value.push(gapBubble);
+          persistBubble(gapBubble);
         }
         break;
       }

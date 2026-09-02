@@ -40,6 +40,14 @@ export interface ProcProjection {
   ok?: boolean;
 }
 
+/** 能力边界卡投影（与 proc 同水位：完整 capability 摘要不落盘，只留卡面素材） */
+export interface GapProjection {
+  through: string;
+  available: string[];
+  missing: string[];
+  note: string;
+}
+
 /** 溯源引用（仅 AI 消息） */
 export interface RunRef {
   label: string;
@@ -56,6 +64,7 @@ export interface MessagePayload {
   text: string;
   panelLink?: boolean;
   proc?: ProcProjection;
+  gap?: GapProjection;
   refs?: RunRef[];
   halted?: boolean;
   icon?: "clock" | "alert";

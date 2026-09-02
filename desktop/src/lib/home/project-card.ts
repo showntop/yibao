@@ -115,6 +115,14 @@ export interface ProjectCardFace {
   stageLabel: string;
   activeLabels: readonly string[];
   nextStep: string;
+  /** 能力缺口（capability preflight）：run 被 enforce 策略阻断时为真 */
+  capabilityBlocked: boolean;
+  /** 缺口人话原因（run.blocked_reason） */
+  capabilityReason: string;
+  /** 缺能力 provider 的 stage 标签（按 plan.missing 顺序） */
+  missingStageLabels: readonly string[];
+  /** 可做到哪：plan 中连续 available 前缀的末段标签；首段即缺/无缺口时为空 */
+  availableThrough: string;
   artifactCount: number;
   pending: number;
   executionLabel: string;
@@ -159,6 +167,21 @@ export function projectCardFace(project: ProjectInfo): ProjectCardFace {
               ? "阶段执行完成"
               : `${execution.status === "resuming" ? "续跑" : "执行"} · ${executionProgress}%${execution.provider_id ? ` · ${execution.provider_id}` : ""}`
       : "";
+  // 能力预检缺口：run 被阻断 + enforce 策略 + 确有缺失才上卡面；info（mission.general）只转述
+  const plan = run?.capability_plan ?? null;
+  const capabilityBlocked = Boolean(
+    run?.status === "blocked" && plan && plan.policy !== "info" && plan.missing.length > 0,
+  );
+  const missingStageLabels = capabilityBlocked && plan
+    ? plan.missing.map((id) => plan.stages.find((item) => item.id === id)?.label ?? id)
+    : [];
+  let availableThrough = "";
+  if (capabilityBlocked && plan) {
+    for (const item of plan.stages) {
+      if (item.status !== "available") break;
+      availableThrough = item.label;
+    }
+  }
   return {
     name: project.name,
     missionTitle: project.mission?.title || project.name,
@@ -171,11 +194,17 @@ export function projectCardFace(project: ProjectInfo): ProjectCardFace {
     stage,
     stageLabel: activeLabels.join(" · ") || pack.stages[stage] || "理解",
     activeLabels,
-    nextStep: blockedCount > 0
-      ? `${blockedCount} 个节点等待依赖`
-      : activeLabels.length > 1
-        ? `${activeLabels.length} 条路径可并行`
-        : pack.stages[stage + 1] ? `接续 · ${pack.stages[stage + 1]}` : "",
+    nextStep: capabilityBlocked
+      ? availableThrough ? `缺能力 · 可做到${availableThrough}` : "缺能力 · 待装 provider"
+      : blockedCount > 0
+        ? `${blockedCount} 个节点等待依赖`
+        : activeLabels.length > 1
+          ? `${activeLabels.length} 条路径可并行`
+          : pack.stages[stage + 1] ? `接续 · ${pack.stages[stage + 1]}` : "",
+    capabilityBlocked,
+    capabilityReason: capabilityBlocked ? run?.blocked_reason ?? "" : "",
+    missingStageLabels,
+    availableThrough,
     artifactCount: objects.length,
     pending: blockedCount || (run?.status === "waiting_user" ? 1 : 0),
     executionLabel,

@@ -3,6 +3,7 @@ import type { ComputedRef, InjectionKey, Ref } from "vue";
 import type { BrainEvent, RunMetrics } from "../lib/brain";
 import type { AvatarState } from "../protocol/brain-types";
 import type { ThreadItem, PaperPage } from "../lib/work-thread";
+import type { CapabilityGap } from "../lib/home/capability-gap";
 
 export type HomeAvatarState = AvatarState;
 
@@ -23,6 +24,8 @@ export type BubbleMsg = {
   text: string;
   panelLink?: boolean;
   proc?: ProcInfo;
+  /** 能力边界卡（project.create enforced 缺口）：信息卡，非审批 */
+  gap?: CapabilityGap;
   halted?: boolean;
   icon?: "clock" | "alert";
   ts?: number;
