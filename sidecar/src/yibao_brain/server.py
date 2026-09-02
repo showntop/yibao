@@ -42,7 +42,7 @@ from .feed import FeedStore
 from .projects import ProjectStore
 from .session_contexts import SessionContextStore
 from .work_graph import WorkGraphStore, build_capability_index
-from .work_events import WorkGraphInvocationSink
+from .work_events import WorkGraphGateSink, WorkGraphInvocationSink
 from .project_tools import make_project_tools
 from .distiller import Distiller, DistillerStore
 from .jobstore import JobsStore
@@ -615,6 +615,12 @@ async def serve_async(
                 else:
                     log(f"确认被抢占取消：{tool_id}")
                     out[cid] = (False, False)
+                    # 悬空 pending Gate 不落「拒绝」：无人做过决策，标 expired。
+                    # invoker 随后拿 (False,False) 兜底 verdict 记决策时命中终态，不改写。
+                    try:
+                        work_graph.expire_gates([cid])
+                    except Exception:
+                        pass
             finally:
                 if cancel_wait is not None:
                     cancel_wait.cancel()
@@ -670,6 +676,12 @@ async def serve_async(
     )
     agent.invoker.invocation_sink = invocation_sink
     agent.invoker.durable_engine = durable_engine
+    # Gate 持久化（L3 审批落 Work Graph）：confirmation 的 pending/决策随审批链落库，
+    # 与 invocation_sink 同一 workspace 归属解析规则。
+    agent.invoker.gate_sink = WorkGraphGateSink(
+        work_graph,
+        lambda conversation_id: project_store.current_id(conversation_id) if conversation_id else "",
+    )
     durable_engine.recover()
     # PluginDb 业务事务可能在上次进程退出前已提交、但 Host 尚未接收；稳定事件 id
     # 让恢复可重复执行，且不会重复生成 Revision/Evidence。

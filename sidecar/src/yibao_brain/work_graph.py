@@ -16,6 +16,8 @@ import time
 import uuid
 from typing import Any
 
+from .log import log
+
 
 _SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -205,6 +207,24 @@ CREATE TABLE IF NOT EXISTS invocations (
 CREATE INDEX IF NOT EXISTS idx_invocations_workspace ON invocations(workspace_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_invocations_conversation ON invocations(conversation_id, started_at DESC);
 
+CREATE TABLE IF NOT EXISTS gates (
+  id TEXT PRIMARY KEY,
+  workflow_run_id TEXT,
+  invocation_id TEXT,
+  conversation_id TEXT NOT NULL DEFAULT '',
+  action TEXT NOT NULL DEFAULT '{}',
+  risk INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'pending',
+  preview_ref TEXT,
+  diff_ref TEXT,
+  decided_by TEXT,
+  decided_at REAL,
+  created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_gates_run ON gates(workflow_run_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_gates_conversation ON gates(conversation_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_gates_status ON gates(status, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS evidence (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -290,6 +310,12 @@ _DURABLE_ACTIVE = {"queued", "running", "resuming", "checkpointing", "cancel_req
 
 # 能力预检只管理「还没开工」的 run；running 及以后由 DAG/产物事实接管，plan 不再重算。
 _CAPABILITY_OPEN_RUN_STATUSES = ("draft", "ready", "blocked")
+
+# Typed artifact registry 的内核内置类型。梳理结论：内核自身不经 attach 产出任何领域
+# 对象——现存合法用法（project.create 初始 objects、project.attach）挂的都是插件域
+# 类型（zimeiti.topic、video.script、deck.* 等），由插件 work_outputs 声明经能力索引
+# 注册。本集合是「核心公认类型」的显式扩展点，当前为空是有意的，勿把插件域类型烤进内核。
+CORE_ARTIFACT_TYPES: frozenset[str] = frozenset()
 
 
 # 领域流程留在 Workflow Pack，不进入 Work Graph schema。depends_on 和
@@ -457,6 +483,9 @@ class WorkGraphStore:
                 "WHERE status IN ('running','resuming','checkpointing')",
                 (time.time(),),
             )
+            # 上次进程若死在确认等待中，pending Gate 不得永远冒充待决：
+            # 标 expired（无人做过决策，decided_* 保持空），与 interrupted 恢复同一拍。
+            self._conn.execute("UPDATE gates SET status='expired' WHERE status='pending'")
             self._conn.commit()
         self.drain_outbox()
 
@@ -900,7 +929,30 @@ class WorkGraphStore:
             self._conn.commit()
         return self.artifact_view(artifact_id)
 
+    def _check_artifact_type_registered_locked(self, obj_type: str, created_by: str) -> None:
+        """Typed artifact registry：未注册类型不得经 attach 进入项目/图谱。
+
+        注册类型 = 插件 work_outputs 声明（build_capability_index 经
+        set_capability_providers 注入的能力索引）+ CORE_ARTIFACT_TYPES。类型随插件
+        加载自动注册：server 启动在插件加载后注入索引，运行时 attach 天然在注册之后。
+
+        legacy projects.json 迁移（created_by=migration:*）里的旧自由类型不硬拒：
+        打告警放行（grandfather）——历史数据不因注册表上线而丢，但迁移完成后的新
+        attach 走正常校验。ref 只做非空校验（见 attach_external_artifact）；ref 是否
+        可 resolve 到领域对象属于插件域（PluginDb/外部系统），内核不做存在性 resolve。
+        """
+        if obj_type in CORE_ARTIFACT_TYPES or obj_type in self._capability_index:
+            return
+        if created_by.startswith("migration:"):
+            log(f"legacy 对象类型未注册（迁移放行）：{obj_type}")
+            return
+        raise ValueError(
+            f"未注册的对象类型：{obj_type}。可挂载的类型由插件 work_outputs 声明注册"
+            "（插件加载后生效）；请确认对应插件已加载、类型拼写与声明一致。"
+        )
+
     def _attach_external_locked(self, workspace_id: str, obj_type: str, ref: str, created_by: str) -> str:
+        self._check_artifact_type_registered_locked(obj_type, created_by)
         now = time.time()
         row = self._conn.execute(
             "SELECT id FROM artifacts WHERE workspace_id=? AND type=? AND external_ref=?",
@@ -1410,6 +1462,113 @@ class WorkGraphStore:
 
     # ---------- invocation / evidence / outbox ----------
 
+    # ---------- Gate（L3 审批持久化：每道阶段门的决策可审计） ----------
+
+    def record_gate_pending(
+        self, gate_id: str, *, tool_id: str, params: dict, risk: int,
+        conversation_id: str = "", workspace_id: str | None = None,
+    ) -> None:
+        """confirmation_requested 时落 Gate(pending)。
+
+        gate_id 即 Action.id（confirmation_id）。action 只存有界快照
+        （tool_id + params，_bounded_json 截断防爆库）；invocation 此刻尚未存在
+        （执行在批准之后），经 begin_invocation 按 action_id 回填 invocation_id。
+        同一 action 重复登记不覆盖：第一道 pending 是审计起点。
+        """
+        now = time.time()
+        with self._lock:
+            run_id = None
+            if workspace_id:
+                row = self._conn.execute(
+                    "SELECT id FROM workflow_runs WHERE workspace_id=? ORDER BY created_at DESC LIMIT 1",
+                    (workspace_id,),
+                ).fetchone()
+                run_id = str(row["id"]) if row else None
+            self._conn.execute(
+                "INSERT INTO gates(id,workflow_run_id,conversation_id,action,risk,status,created_at) "
+                "VALUES(?,?,?,?,?,'pending',?) ON CONFLICT(id) DO NOTHING",
+                (
+                    str(gate_id), run_id, conversation_id,
+                    _bounded_json({"tool_id": tool_id, "params": params or {}}),
+                    int(risk), now,
+                ),
+            )
+            self._conn.commit()
+
+    def record_gate_decision(self, gate_id: str, approved: bool, *, decided_by: str = "user") -> None:
+        """用户决策到达：pending → approved/denied + decided_at。
+
+        只有 pending 可被裁决——approved/denied/expired 都是终态，后到的相反决策
+        （或取消后迟到的兜底 verdict）不改写审计。
+        """
+        with self._lock:
+            self._conn.execute(
+                "UPDATE gates SET status=?,decided_by=?,decided_at=? WHERE id=? AND status='pending'",
+                ("approved" if approved else "denied", decided_by, time.time(), str(gate_id)),
+            )
+            self._conn.commit()
+
+    def expire_gates(self, gate_ids: list[str]) -> int:
+        """run 中断/抢占留下的悬空 pending → expired（无人决策，≠ denied）。"""
+        ids = [str(gate_id) for gate_id in gate_ids or [] if str(gate_id).strip()]
+        if not ids:
+            return 0
+        with self._lock:
+            expired = 0
+            for gate_id in ids:
+                cursor = self._conn.execute(
+                    "UPDATE gates SET status='expired' WHERE id=? AND status='pending'",
+                    (gate_id,),
+                )
+                expired += cursor.rowcount
+            self._conn.commit()
+        return expired
+
+    def gate_view(self, gate_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM gates WHERE id=?", (str(gate_id),)).fetchone()
+        return self._gate_dict(row) if row else None
+
+    def list_gates(
+        self, *, workflow_run_id: str | None = None, conversation_id: str | None = None,
+        status: str | None = None, limit: int = 200,
+    ) -> list[dict]:
+        """审计读模型：按 run/会话/状态过滤，时间倒序（供后续 UI/审计用）。"""
+        clauses, args = [], []
+        if workflow_run_id is not None:
+            clauses.append("workflow_run_id=?")
+            args.append(workflow_run_id)
+        if conversation_id is not None:
+            clauses.append("conversation_id=?")
+            args.append(conversation_id)
+        if status is not None:
+            clauses.append("status=?")
+            args.append(status)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT * FROM gates {where} ORDER BY created_at DESC LIMIT ?",
+                (*args, int(limit)),
+            ).fetchall()
+        return [self._gate_dict(row) for row in rows]
+
+    @staticmethod
+    def _gate_dict(row: sqlite3.Row) -> dict:
+        return {
+            "id": str(row["id"]),
+            "workflow_run_id": str(row["workflow_run_id"] or ""),
+            "invocation_id": str(row["invocation_id"] or ""),
+            "conversation_id": str(row["conversation_id"]),
+            "action": _decode(row["action"], {}),
+            "risk": int(row["risk"]),
+            "status": str(row["status"]),
+            "preview_ref": row["preview_ref"],
+            "diff_ref": row["diff_ref"],
+            "decided_by": str(row["decided_by"] or ""),
+            "decided_at": float(row["decided_at"]) if row["decided_at"] is not None else None,
+            "created_at": float(row["created_at"]),
+        }
+
     def begin_invocation(
         self, *, action_id: str, workspace_id: str | None, conversation_id: str,
         surface: str, tool_id: str, params: dict,
@@ -1429,6 +1588,12 @@ class WorkGraphStore:
                     invocation_id, action_id, workspace_id or None, conversation_id,
                     surface, tool_id, params_hash, "running", time.time(),
                 ),
+            )
+            # Gate↔Invocation 关联：按印放行的 action 进入执行，审批记录挂上 Invocation
+            # （gates.id == action_id；无审批直行的 action 无匹配行，静默跳过）。
+            self._conn.execute(
+                "UPDATE gates SET invocation_id=? WHERE id=? AND invocation_id IS NULL",
+                (invocation_id, action_id),
             )
             self._conn.commit()
         return invocation_id

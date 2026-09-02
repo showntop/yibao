@@ -43,6 +43,9 @@ class ToolInvoker:
         # serve_async 注入；测试/旧同步入口保持 None，不改变执行语义。
         self.invocation_sink = None
         self.durable_engine = None
+        # Gate 持久化（L3 审批落 Work Graph）：serve_async 注入 WorkGraphGateSink；
+        # None = 不持久化，审批流程语义不变。
+        self.gate_sink = None
 
     def propose(self, tc: ToolCall) -> Action:
         """tool_call → Action：查 registry 拿声明，分类风险。"""
@@ -80,21 +83,39 @@ class ToolInvoker:
         except Exception:  # 检查本身出问题不挡路
             return None
 
-    def batch_confirm_sync(self, actions: list[Action]) -> dict[str, tuple[bool, bool]]:
+    def _record_gates_pending(self, actions: list[Action], meta: dict | None) -> None:
+        if self.gate_sink is None:
+            return
+        for action in actions:
+            self.gate_sink.pending(action, meta)
+
+    def _record_gates_decided(self, verdicts: dict[str, tuple[bool, bool]]) -> None:
+        if self.gate_sink is None:
+            return
+        for cid, verdict in (verdicts or {}).items():
+            approved = bool(verdict[0]) if isinstance(verdict, (tuple, list)) and verdict else False
+            self.gate_sink.decided(str(cid), approved)
+
+    def batch_confirm_sync(self, actions: list[Action], meta: dict | None = None) -> dict[str, tuple[bool, bool]]:
         """同步批量确认：调 self._confirmer(actions) 返回 {action.id: (approved, remember)}。
 
         异步 confirmer 在同步路径不可用（与单 action 时代一致，抛 RuntimeError）。
+        确认前落 Gate(pending)，verdict 返回后落 approved/denied（gate_sink 注入时）。
         """
+        self._record_gates_pending(actions, meta)
         res = self.confirmer(actions)
         if inspect.isawaitable(res):
             raise RuntimeError("同步路径不支持异步 confirmer")
+        self._record_gates_decided(res)
         return res
 
-    async def batch_confirm(self, actions: list[Action]) -> dict[str, tuple[bool, bool]]:
-        """异步批量确认：同步/异步 confirmer 兼容，返回协程则 await。"""
+    async def batch_confirm(self, actions: list[Action], meta: dict | None = None) -> dict[str, tuple[bool, bool]]:
+        """异步批量确认：同步/异步 confirmer 兼容，返回协程则 await。Gate 落库同同步路径。"""
+        self._record_gates_pending(actions, meta)
         res = self.confirmer(actions)
         if inspect.isawaitable(res):
             res = await res
+        self._record_gates_decided(res)
         return res
 
     def apply_verdict(self, action: Action, approved: bool, remember: bool) -> None:

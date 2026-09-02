@@ -300,3 +300,49 @@ class WorkGraphInvocationSink:
             seen.add(path)
             acknowledged += self.reconcile_plugin_db(plugin_db)
         return acknowledged
+
+
+class WorkGraphGateSink:
+    """L3 审批（confirmation）→ Work Graph Gate 持久化。
+
+    与 Invocation sink 同层同纪律：ToolInvoker 在批量确认前记 pending、拿到
+    verdict 后记 approved/denied；抢占/取消由 server 调 expired。写失败只记
+    stderr，绝不拖垮审批主链路。
+    """
+
+    def __init__(self, graph, workspace_for_conversation: Callable[[str], str]):
+        self._graph = graph
+        self._workspace_for_conversation = workspace_for_conversation
+
+    def pending(self, action, meta: dict | None = None) -> None:
+        try:
+            conversation_id = str((meta or {}).get("conversation_id") or "")
+            workspace_id = ""
+            if conversation_id:
+                try:
+                    workspace_id = str(self._workspace_for_conversation(conversation_id) or "")
+                except Exception:
+                    workspace_id = ""  # 归属解析失败不挡审批：Gate 仍按会话落库
+            risk = getattr(action, "risk", 0)
+            self._graph.record_gate_pending(
+                str(action.id),
+                tool_id=str(getattr(action, "tool_id", "") or ""),
+                params=getattr(action, "params", None) or {},
+                risk=int(getattr(risk, "value", risk) or 0),
+                conversation_id=conversation_id,
+                workspace_id=workspace_id or None,
+            )
+        except Exception as exc:
+            log(f"Gate 登记失败（不阻断审批）：{exc}")
+
+    def decided(self, gate_id: str, approved: bool) -> None:
+        try:
+            self._graph.record_gate_decision(str(gate_id), bool(approved))
+        except Exception as exc:
+            log(f"Gate 决策记录失败（不阻断执行）：{exc}")
+
+    def expired(self, gate_ids) -> None:
+        try:
+            self._graph.expire_gates(gate_ids)
+        except Exception as exc:
+            log(f"Gate 过期标记失败：{exc}")

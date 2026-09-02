@@ -98,7 +98,7 @@ async def handle_panel_action(
             emit(Event(kind="confirmation_needed", action=action, confirmation_id=action.id))
             # 面板直达走批量 confirmer（batch size=1）：等壳 confirm_batch 回执。
             # remember 写入复用 invoker.apply_verdict（F4：消除 loop 之外的第 3 处重复）。
-            verdicts = await agent.invoker.batch_confirm([action])
+            verdicts = await agent.invoker.batch_confirm([action], meta={"conversation_id": conversation_id})
             approved, remember = verdicts.get(action.id, (False, False))
             agent.invoker.apply_verdict(action, approved, remember)
             if not approved:

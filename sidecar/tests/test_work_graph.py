@@ -18,9 +18,24 @@ from yibao_brain.work_events import WorkGraphInvocationSink
 from yibao_brain.work_graph import BUILTIN_WORKFLOWS, WorkGraphStore
 
 
+def _provide(graph: WorkGraphStore, *artifact_types: str) -> None:
+    """测试域类型经 provider 索引注册（typed registry：类型来自插件 work_outputs 声明）。
+
+    与 server 启动同序：先注入能力索引（≈插件加载完成），再 create/attach。
+    """
+    graph.set_capability_providers({
+        artifact_type: [{"plugin_id": "test", "tool_id": "test.provide", "label": artifact_type}]
+        for artifact_type in artifact_types
+    })
+
+
 def test_video_and_deck_share_schema_but_keep_their_workflow(tmp_path):
     graph = WorkGraphStore(str(tmp_path / "work_graph.db"))
     try:
+        _provide(
+            graph, "zimeiti.topic", "research.evidence", "video.script",
+            "brief.presentation", "deck.storyline", "deck.slide",
+        )
         graph.create_workspace(
             "ws_video", "Agent 概念科普视频", str(tmp_path / "video"),
             objects=[{"type": "zimeiti.topic", "ref": "t1"}],
@@ -58,6 +73,7 @@ def test_video_and_deck_share_schema_but_keep_their_workflow(tmp_path):
 def test_revision_is_immutable_and_edges_are_workspace_scoped(tmp_path):
     graph = WorkGraphStore(str(tmp_path / "work_graph.db"))
     try:
+        _provide(graph, "research.evidence", "video.script")
         graph.create_workspace("ws", "证据驱动视频", str(tmp_path / "ws"))
         evidence = graph.attach_external_artifact("ws", "research.evidence", "e1")
         script = graph.attach_external_artifact("ws", "video.script", "s1")
@@ -107,6 +123,7 @@ def test_project_json_migrates_once_then_work_graph_is_authoritative(tmp_path, m
     store = ProjectStore(str(path), work_graph=graph)
     assert store.get("proj_legacy")["objects"][0]["artifact_id"].startswith("artifact_")
 
+    _provide(graph, "video.script")
     store.add_object("proj_legacy", "video.script", "s1")
     # 新关系只写 Work Graph；legacy JSON 不发生 objects 双写。
     assert json.loads(path.read_text(encoding="utf-8"))["projects"][0]["objects"] == [
@@ -133,6 +150,10 @@ def test_project_json_migrates_once_then_work_graph_is_authoritative(tmp_path, m
 def test_workflow_run_restores_after_database_reopen(tmp_path):
     path = tmp_path / "work_graph.db"
     graph = WorkGraphStore(str(path))
+    _provide(
+        graph, "deck.export.pptx", "brief.presentation", "research.claim",
+        "deck.storyline", "deck.slide", "visual.image", "quality.validation",
+    )
     graph.create_workspace("deck", "董事会 PPT", str(tmp_path / "deck"))
     graph.attach_external_artifact("deck", "deck.export.pptx", "final.pptx")
     assert graph.workspace_view("deck")["workflow_run"]["status"] != "completed"
@@ -162,6 +183,7 @@ def test_workflow_run_restores_after_database_reopen(tmp_path):
 def test_startup_reprojects_locked_run_after_same_version_core_rewrite(tmp_path):
     path = tmp_path / "work_graph.db"
     graph = WorkGraphStore(str(path))
+    _provide(graph, "zimeiti.topic", "research.evidence")
     graph.create_workspace(
         "video", "Agent 视频", str(tmp_path / "video"),
         objects=[
@@ -300,6 +322,7 @@ def test_tool_invoker_immediately_projects_safe_result_to_work_graph(tmp_path):
 
 def test_declared_artifacts_edge_and_checkpoint_apply_as_one_ordered_contract(tmp_path):
     graph = WorkGraphStore(str(tmp_path / "work_graph.db"))
+    _provide(graph, "zimeiti.topic")
     graph.create_workspace(
         "video", "Agent 概念科普视频", str(tmp_path / "video"),
         objects=[{"type": "zimeiti.topic", "ref": "agent-topic"}],
@@ -336,6 +359,7 @@ def test_declared_artifacts_edge_and_checkpoint_apply_as_one_ordered_contract(tm
 def test_dag_parallel_gates_and_checkpoint_survive_reopen(tmp_path):
     path = tmp_path / "work_graph.db"
     graph = WorkGraphStore(str(path))
+    _provide(graph, "deck.export.pptx", "brief.presentation", "research.claim", "deck.storyline")
     graph.create_workspace("deck", "Agent 策略 PPT", str(tmp_path / "deck"))
     try:
         # 绕过依赖投入后续产物，只能 blocked，不能伪造前置完成。
@@ -396,6 +420,7 @@ def test_workflow_definition_rejects_cycles_and_supports_count_acceptance(tmp_pa
                 "acceptance": [{"artifact_patterns": ["research\\.evidence"], "min_count": 2}],
             }],
         }, source_plugin="research")
+        _provide(graph, "research.evidence")
         graph.create_workspace("research", "双源调研", str(tmp_path / "research"))
         graph.attach_external_artifact("research", "research.evidence", "one")
         assert graph.workspace_view("research")["workflow_run"]["status"] != "completed"
@@ -535,6 +560,7 @@ def test_blob_live_set_includes_revisions_and_blocked_outbox(tmp_path):
     graph = WorkGraphStore(str(tmp_path / "work_graph.db"))
     graph.create_workspace("ws", "Blob refs", str(tmp_path / "ws"))
     try:
+        _provide(graph, "deck.document")
         artifact = graph.attach_external_artifact("ws", "deck.document", "deck")
         graph.create_revision(artifact["id"], "blob://sha256/" + "a" * 64)
         invocation = graph.begin_invocation(

@@ -392,7 +392,9 @@ class AgentLoop:
                 # 一次推收件箱（旧前端读 action=actions[0]，Task 4/5 切 actions）
                 yield Event(kind="confirmation_needed", actions=confirm_actions,
                             action=confirm_actions[0], confirmation_id=confirm_actions[0].id)
-                verdicts = await self.invoker.batch_confirm(confirm_actions)
+                verdicts = await self.invoker.batch_confirm(
+                    confirm_actions, meta={"conversation_id": conversation_id or ""},
+                )
             for tc, action, decision in plan:
                 if cancelled():
                     _interrupted_evidence()

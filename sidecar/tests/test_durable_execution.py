@@ -11,7 +11,16 @@ from yibao_brain.durable_execution import (
 from yibao_brain.work_graph import WorkGraphStore
 
 
+def _provide(graph: WorkGraphStore, *artifact_types: str) -> None:
+    """测试域类型经 provider 索引注册（typed registry：类型来自插件 work_outputs 声明）。"""
+    graph.set_capability_providers({
+        artifact_type: [{"plugin_id": "test", "tool_id": "test.provide", "label": artifact_type}]
+        for artifact_type in artifact_types
+    })
+
+
 def _prepare_video(graph: WorkGraphStore, tmp_path) -> None:
+    _provide(graph, "zimeiti.topic", "research.evidence", "video.script", "video.storyboard")
     graph.create_workspace("video", "Agent 概念科普视频", str(tmp_path / "video"))
     for artifact_type, ref in (
         ("zimeiti.topic", "agent"),
@@ -23,6 +32,7 @@ def _prepare_video(graph: WorkGraphStore, tmp_path) -> None:
 
 
 def _prepare_deck(graph: WorkGraphStore, tmp_path) -> None:
+    _provide(graph, "brief.presentation", "research.claim", "deck.storyline")
     graph.create_workspace("deck", "Agent OS 产品架构 PPT", str(tmp_path / "deck"))
     for artifact_type, ref in (
         ("brief.presentation", "brief"),
