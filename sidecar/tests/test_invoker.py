@@ -339,3 +339,61 @@ def test_precheck_blocks_and_passes(tmp_path):
     assert inv.precheck(boom) is None  # 检查本身出问题不挡路
     echo = inv.propose(ToolCall(id="t4", tool_id="echo", params={}))
     assert inv.precheck(echo) is None  # 基类默认放行
+
+
+def test_invoker_enriches_ctx_meta_with_workspace_hint(tmp_path):
+    """durable 插件 tool（render_save 第一个真实消费者）经 ctx.durable 开工时需要
+    workspace_id：invoker 用 invocation_sink 的同一解析规则注入 ctx.meta，
+    meta 已显式携带时不覆盖。"""
+    from yibao_brain.tools import ToolContext
+    from yibao_brain.work_events import WorkGraphInvocationSink
+    from yibao_brain.work_graph import WorkGraphStore
+
+    captured: dict = {}
+
+    class _Plug(Tool):
+        id = "plugtool"
+        default_risk = RiskLevel.L0_READONLY
+        plugin_ctx = ToolContext()
+        plugin_capabilities = frozenset()
+
+        def run(self, params, ctx):
+            captured["meta"] = dict(ctx.meta)
+            return ActionResult(success=True)
+
+    graph = WorkGraphStore(str(tmp_path / "wg.db"))
+    try:
+        inv = make_invoker(tmp_path, [_Plug()])
+        inv.invocation_sink = WorkGraphInvocationSink(graph, lambda cid: "ws-demo")
+        inv.execute(Action(id="a", tool_id="plugtool"), {}, {"conversation_id": "c1"})
+        assert captured["meta"]["workspace_id"] == "ws-demo"
+        assert captured["meta"]["conversation_id"] == "c1"  # 原有 meta 不丢
+
+        inv.execute(
+            Action(id="b", tool_id="plugtool"), {},
+            {"workspace_id": "ws-explicit", "conversation_id": "c1"},
+        )
+        assert captured["meta"]["workspace_id"] == "ws-explicit"
+    finally:
+        graph.close()
+
+
+def test_invoker_without_sink_leaves_meta_without_workspace(tmp_path):
+    """无 sink（旧同步入口/测试）：meta 原样透传，不虚构 workspace 归属。"""
+    from yibao_brain.tools import ToolContext
+
+    captured: dict = {}
+
+    class _Plug(Tool):
+        id = "plugtool"
+        default_risk = RiskLevel.L0_READONLY
+        plugin_ctx = ToolContext()
+        plugin_capabilities = frozenset()
+
+        def run(self, params, ctx):
+            captured["meta"] = dict(ctx.meta)
+            return ActionResult(success=True)
+
+    inv = make_invoker(tmp_path, [_Plug()])
+    inv.execute(Action(id="a", tool_id="plugtool"), {}, {"conversation_id": "c1"})
+    assert "workspace_id" not in captured["meta"]

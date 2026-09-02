@@ -17,7 +17,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _zimeiti_like_index() -> dict:
-    """镜像 zimeiti 插件的真实声明：zimeiti.add / article_save / mat_save / storyboard_save。"""
+    """zimeiti 能力声明的历史快照（只到 storyboard 段）：状态机测试用的「有缺口」场景。
+
+    真实插件现已覆盖全链（见 test_real_zimeiti_plugin_covers_full_video_chain）；
+    这里刻意保持部分覆盖，blocked/blocked_reason/plan 的分支才有东西可断言。
+    """
     return {
         "zimeiti.topic": [
             {"plugin_id": "zimeiti", "tool_id": "zimeiti.add", "label": "加入选题"},
@@ -319,12 +323,15 @@ def test_capability_summary_ready_project_has_no_degradation(tmp_path, monkeypat
 # ---------- 验收锚点：真实 zimeiti 插件声明 ----------
 
 
-def test_real_zimeiti_plugin_covers_through_storyboard(tmp_path):
-    """加载真实 plugins/ 目录建索引：zimeiti 提供 topic/evidence/script/storyboard/shot 五种产出。
+def test_real_zimeiti_plugin_covers_full_video_chain(tmp_path):
+    """加载真实 plugins/ 目录建索引：zimeiti 九种产出覆盖 video.explainer 全链。
 
-    storyboard_save（2026-09-02 分镜能力）声明 video.storyboard + video.shot → 分镜段翻
-    available；publish.py / wewrite.py 未声明 work_outputs（代码事实）→ deliver 仍无 provider。
+    storyboard_save 声明 video.storyboard + video.shot；voice_save 声明 voice.track、
+    visual_card_save（降级视觉卡）声明 asset.visual；timeline_save 声明
+    timeline.composition（compose 段）、render_save 声明 video.render（deliver 段）→
+    八段全 available，missing 为空，run 判 ready（preflight 全链就绪的验收锚点）。
     """
+    from yibao_brain.durable_execution import DurableExecutionEngine
     from yibao_brain.llm import FakeProvider
     from yibao_brain.memory import FakeMemory
     from yibao_brain.plugins import LlmChat, load_plugins
@@ -339,14 +346,20 @@ def test_real_zimeiti_plugin_covers_through_storyboard(tmp_path):
         def post(self, url, **kw):
             return {}
 
+    engine = DurableExecutionEngine(WorkGraphStore(str(tmp_path / "loader_wg.db")))
     load_plugins(REPO_ROOT / "plugins", reg, memory=FakeMemory(), http=_Http(),
-                 llm=LlmChat(FakeProvider()))
+                 llm=LlmChat(FakeProvider()), durable_engine=engine)
     index = build_capability_index(reg.list())
     assert set(index) == {
         "zimeiti.topic", "video.script", "research.evidence", "video.storyboard", "video.shot",
+        "voice.track", "asset.visual", "timeline.composition", "video.render",
     }
     assert index["video.storyboard"][0]["tool_id"] == "zimeiti.storyboard_save"
     assert index["video.shot"][0]["tool_id"] == "zimeiti.storyboard_save"
+    assert index["voice.track"][0]["tool_id"] == "zimeiti.voice_save"
+    assert index["asset.visual"][0]["tool_id"] == "zimeiti.visual_card_save"
+    assert index["timeline.composition"][0]["tool_id"] == "zimeiti.timeline_save"
+    assert index["video.render"][0]["tool_id"] == "zimeiti.render_save"
 
     graph = WorkGraphStore(str(tmp_path / "work_graph.db"))
     try:
@@ -355,8 +368,13 @@ def test_real_zimeiti_plugin_covers_through_storyboard(tmp_path):
         plan = _run(graph, "ws")["capability_plan"]
         by_id = {stage["id"]: stage for stage in plan["stages"]}
         assert by_id["storyboard"]["status"] == "available"
-        assert plan["missing"] == ["assets", "voice", "compose", "deliver"]
-        assert _run(graph, "ws")["status"] == "blocked"
+        assert by_id["assets"]["status"] == "available"
+        assert by_id["voice"]["status"] == "available"
+        assert by_id["compose"]["status"] == "available"
+        assert by_id["deliver"]["status"] == "available"
+        assert plan["missing"] == []
+        assert plan["ready"] is True
+        assert _run(graph, "ws")["status"] == "ready"
     finally:
         graph.close()
 

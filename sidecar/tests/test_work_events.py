@@ -191,3 +191,26 @@ def test_foreach_strict_raises_when_element_lacks_ref():
         materialize_work_events(
             specs, params={}, data={"shots": [{"idx": 1}]}, tool_id="demo.sb", strict=True,
         )
+
+
+# ---------- workspace_hint：tool ctx 的 workspace 归属解析 ----------
+
+
+def test_workspace_hint_resolution_order_and_failure():
+    """durable tool（如 render_save）开工前要知道自己归属的 Workspace：
+    meta 显式 workspace_id 优先；否则按 conversation 映射（与 begin 同一规则）；
+    映射缺失/异常都回落空串（tool 自行决定降级，不在这里炸）。"""
+    from yibao_brain.work_events import WorkGraphInvocationSink
+
+    sink = WorkGraphInvocationSink(object(), lambda cid: {"c1": "ws-c1"}.get(cid, ""))
+    assert sink.workspace_hint({"conversation_id": "c1"}) == "ws-c1"
+    assert sink.workspace_hint({"workspace_id": "ws-x", "conversation_id": "c1"}) == "ws-x"
+    assert sink.workspace_hint({"conversation_id": "unknown"}) == ""
+    assert sink.workspace_hint({}) == ""
+
+    class _Boom:
+        def __call__(self, cid):
+            raise RuntimeError("映射炸了")
+
+    failing = WorkGraphInvocationSink(object(), _Boom())
+    assert failing.workspace_hint({"conversation_id": "c1"}) == ""

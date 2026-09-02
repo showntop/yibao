@@ -4,7 +4,7 @@
 id = "zimeiti"
 name = "内容创作"
 description = "内容创作选题与写作：选题推荐（「今天写什么」→ skills/topics 技能）、选题看板、写稿改稿、版本管理、素材库（收藏链接/资料，写作时当论据召回）、热点雷达"
-capabilities = ["db", "blobs", "llm", "process"]   # blobs：大内容走宿主 content-addressed store
+capabilities = ["db", "blobs", "llm", "process", "durable"]   # blobs：大内容走宿主 content-addressed store；durable：render 长任务走 DurableExecution（断点续跑/可取消）
 
 [code]
 entry = "tools"
@@ -75,6 +75,73 @@ columns = [
   {name = "shot_count", type = "integer", default = 0},
   {name = "content_path", type = "text"},
   {name = "note", type = "text", default = ""},
+  {name = "created_at", type = "integer"},
+]
+indexes = ["topic_id"]
+
+# voice_save 由 tools/voice_save.py 代码承接（2026-09-02 视频 workflow voice 段：
+# 逐镜 say→afconvert→ffprobe 合成 m4a，voice.track artifact + derived_from video.shot 边）
+[[table]]
+name = "voice_tracks"
+columns = [
+  {name = "id", type = "text", pk = true},
+  {name = "topic_id", type = "text"},
+  {name = "storyboard_version", type = "integer"},
+  {name = "shot_idx", type = "integer"},
+  {name = "path", type = "text"},
+  {name = "duration_sec", type = "real", default = 0},   # ffprobe 实测时长（timeline 用真实时长）
+  {name = "voice", type = "text", default = ""},
+  {name = "created_at", type = "integer"},
+]
+indexes = ["topic_id"]
+
+# visual_card_save 由 tools/visual_card_save.py 代码承接（2026-09-02 视频 workflow assets 段：
+# 降级占位视觉卡，asset.visual artifact + derived_from video.shot 边；degraded=1 诚实标注）
+[[table]]
+name = "visual_cards"
+columns = [
+  {name = "id", type = "text", pk = true},
+  {name = "topic_id", type = "text"},
+  {name = "storyboard_version", type = "integer"},
+  {name = "shot_idx", type = "integer"},
+  {name = "path", type = "text"},
+  {name = "style", type = "text", default = "dark"},
+  {name = "degraded", type = "integer", default = 1},
+  {name = "created_at", type = "integer"},
+]
+indexes = ["topic_id"]
+
+# timeline_save 由 tools/timeline_save.py 代码承接（2026-09-02 视频 workflow compose 段：
+# 分镜+音轨+视觉卡组装 timeline JSON；timeline.composition artifact + derived_from/uses 边）
+[[table]]
+name = "timelines"
+columns = [
+  {name = "id", type = "text", pk = true},
+  {name = "topic_id", type = "text"},
+  {name = "version", type = "integer"},
+  {name = "storyboard_version", type = "integer"},   # 溯源：组自哪版分镜
+  {name = "clip_count", type = "integer", default = 0},
+  {name = "duration_sec", type = "real", default = 0},   # 各 clip 真实时长求和
+  {name = "content_path", type = "text"},
+  {name = "created_at", type = "integer"},
+]
+indexes = ["topic_id"]
+
+# render_save 由 tools/render_save.py 代码承接（2026-09-02 视频 workflow deliver 段：
+# ffmpeg 渲真 MP4；video.render artifact + rendered_from timeline.composition 边；
+# 长任务走 DurableExecution（durable capability），execution_id 溯源）
+[[table]]
+name = "renders"
+columns = [
+  {name = "id", type = "text", pk = true},
+  {name = "topic_id", type = "text"},
+  {name = "version", type = "integer"},
+  {name = "timeline_version", type = "integer"},
+  {name = "storyboard_version", type = "integer"},
+  {name = "path", type = "text"},
+  {name = "duration_sec", type = "real", default = 0},   # ffprobe 实测成片时长
+  {name = "resolution", type = "text", default = ""},    # ffprobe 实测，如 1080x1920
+  {name = "execution_id", type = "text", default = ""},  # durable execution 溯源（同步退路为空）
   {name = "created_at", type = "integer"},
 ]
 indexes = ["topic_id"]

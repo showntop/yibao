@@ -203,6 +203,20 @@ class WorkGraphInvocationSink:
         self._graph = graph
         self._workspace_for_conversation = workspace_for_conversation
 
+    def workspace_hint(self, meta: dict) -> str:
+        """tool ctx 用的 workspace 归属解析（与 begin 同一规则）：meta 显式 workspace_id
+        优先，否则按 conversation 映射。映射缺失/异常回落空串——durable tool（render_save）
+        拿不到归属时自行降级，不在这里炸。"""
+        try:
+            workspace_id = str(meta.get("workspace_id") or "")
+            if not workspace_id:
+                workspace_id = self._workspace_for_conversation(
+                    str(meta.get("conversation_id") or "")
+                )
+            return str(workspace_id or "")
+        except Exception:
+            return ""
+
     def begin(self, action, params: dict, meta: dict) -> str | None:
         # Widget / 面板的 L0 取数属于 UI 投影，不是业务动作。它们仍经 Invoker 的
         # 风险闸门与 AuditLog，但不应把轮询快照写进 Work Graph。调用方必须显式

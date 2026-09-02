@@ -124,6 +124,16 @@ class ToolInvoker:
         """执行 + 审计。技能异常转为失败结果，不抛出（不杀 run）。"""
         skill = self.skills.get(action.tool_id)
         invoke_meta = meta or {}
+        if (
+            invoke_meta
+            and not invoke_meta.get("workspace_id")
+            and self.invocation_sink is not None
+        ):
+            # durable 插件 tool（render_save 起）经 ctx.durable 开工需要 workspace 归属；
+            # 用 sink 的同一解析规则补齐，与 Invocation 落库的归属保持一致。
+            workspace_id = self.invocation_sink.workspace_hint(invoke_meta)
+            if workspace_id:
+                invoke_meta = {**invoke_meta, "workspace_id": workspace_id}
         invocation_id = (
             self.invocation_sink.begin(action, params, invoke_meta)
             if self.invocation_sink is not None else None

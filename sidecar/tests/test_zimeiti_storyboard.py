@@ -14,7 +14,9 @@ import pytest
 from yibao_brain.llm import FakeProvider
 from yibao_brain.memory import FakeMemory
 from yibao_brain.plugins import LlmChat, load_plugins
+from yibao_brain.durable_execution import DurableExecutionEngine
 from yibao_brain.tools import ToolRegistry
+from yibao_brain.work_graph import WorkGraphStore
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -33,7 +35,7 @@ def data_dir(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def env(data_dir):
+def env(data_dir, tmp_path):
     reg = ToolRegistry()
     mem = FakeMemory()
 
@@ -46,6 +48,7 @@ def env(data_dir):
 
     results = load_plugins(
         REPO_ROOT / "plugins", reg,
+        durable_engine=DurableExecutionEngine(WorkGraphStore(str(tmp_path / "wg.db"))),
         memory=mem, http=_Http(), llm=LlmChat(FakeProvider()),
     )
     return reg, mem, results

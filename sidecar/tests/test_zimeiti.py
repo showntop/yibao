@@ -20,6 +20,7 @@ from yibao_brain.invoker import ToolInvoker
 from yibao_brain.safety import Gate, GatePolicy, RiskClassifier
 from yibao_brain.session_contexts import SessionContextStore
 from yibao_brain.tools import ToolRegistry
+from yibao_brain.durable_execution import DurableExecutionEngine
 from yibao_brain.work_events import WorkGraphInvocationSink
 from yibao_brain.work_graph import WorkGraphStore
 
@@ -35,7 +36,7 @@ def data_dir(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def env(data_dir):
+def env(data_dir, tmp_path):
     """加载真实插件目录；返回 (registry, FakeMemory, 加载结果)。"""
     reg = ToolRegistry()
     mem = FakeMemory()
@@ -50,6 +51,7 @@ def env(data_dir):
     results = load_plugins(
         REPO_ROOT / "plugins", reg,
         memory=mem, http=_Http(), llm=LlmChat(FakeProvider()),
+        durable_engine=DurableExecutionEngine(WorkGraphStore(str(tmp_path / "wg.db"))),
     )
     return reg, mem, results
 

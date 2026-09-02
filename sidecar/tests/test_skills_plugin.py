@@ -12,7 +12,9 @@ from yibao_brain.llm import FakeProvider
 from yibao_brain.memory import FakeMemory
 from yibao_brain.plugins import load_plugins
 from yibao_brain.tools.skills_index import refresh_index
+from yibao_brain.durable_execution import DurableExecutionEngine
 from yibao_brain.tools import ToolRegistry, UseSkillTool
+from yibao_brain.work_graph import WorkGraphStore
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -53,6 +55,7 @@ def env(skills_dir, tmp_path, monkeypatch):
 
     results = load_plugins(
         REPO_ROOT / "plugins", reg,
+        durable_engine=DurableExecutionEngine(WorkGraphStore(str(tmp_path / "wg.db"))),
         memory=FakeMemory(), http=_Http(), llm=FakeProvider(text=""),
     )
     return reg, results

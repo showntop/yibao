@@ -15,7 +15,9 @@ import pytest
 from yibao_brain.llm import FakeProvider
 from yibao_brain.memory import FakeMemory
 from yibao_brain.plugins import LlmChat, get_api, load_plugins
+from yibao_brain.durable_execution import DurableExecutionEngine
 from yibao_brain.tools import ToolRegistry
+from yibao_brain.work_graph import WorkGraphStore
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 NOTES_DIR = REPO_ROOT / "plugins" / "notes"
@@ -29,7 +31,7 @@ def data_dir(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def env(data_dir):
+def env(data_dir, tmp_path):
     """加载真实插件目录；返回 (registry, 加载结果)。"""
     reg = ToolRegistry()
 
@@ -42,6 +44,7 @@ def env(data_dir):
 
     results = load_plugins(
         REPO_ROOT / "plugins", reg,
+        durable_engine=DurableExecutionEngine(WorkGraphStore(str(tmp_path / "wg.db"))),
         memory=FakeMemory(), http=_Http(), llm=LlmChat(FakeProvider()),
     )
     return reg, results

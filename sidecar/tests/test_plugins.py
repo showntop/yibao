@@ -1103,13 +1103,17 @@ direct = true
 REPO_PLUGINS_DIR = Path(__file__).resolve().parents[2] / "plugins"
 
 
-def test_repo_notes_plugin_loads(data_dir):
+def test_repo_notes_plugin_loads(data_dir, tmp_path):
     """仓库根 plugins/notes 必须能被 load_plugins 无错加载（⑥ 的验收）。"""
+    from yibao_brain.durable_execution import DurableExecutionEngine
     from yibao_brain.plugins import get_api, get_panel
+    from yibao_brain.work_graph import WorkGraphStore
 
     reg = ToolRegistry()
-    results = _load(REPO_PLUGINS_DIR, reg)
+    results = _load(REPO_PLUGINS_DIR, reg, durable_engine=DurableExecutionEngine(
+        WorkGraphStore(str(tmp_path / "wg.db"))))
     assert results["notes"] == "ok"
+    assert results["zimeiti"] == "ok"  # 声明了 durable capability：引擎在就能全量加载
     for tid in ("notes.keep", "notes.list", "notes.delete"):
         reg.get(tid)
     assert isinstance(get_panel("notes:list"), dict)
