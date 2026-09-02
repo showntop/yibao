@@ -379,6 +379,23 @@ export interface WorkflowStageInfo {
   execution?: DurableExecutionInfo | null;
 }
 
+/** 能力预检（capability preflight）单个 stage 的可满足性：available=有 provider 能产出验收产物。 */
+export interface CapabilityPlanStage {
+  id: string;
+  label: string;
+  status: "available" | "missing";
+  providers?: Array<{ plugin_id: string; tool_id: string; label: string; artifact_type?: string }>;
+}
+
+/** 立项时算好的全链路能力可满足性（§4.2 preflight）：缺口前置暴露，不到流程末端才发现。 */
+export interface CapabilityPlan {
+  stages: CapabilityPlanStage[];
+  missing: string[]; // 缺能力 provider 的 stage id 列表
+  ready: boolean; // 全 stage available
+  policy?: "enforce" | "info"; // info（mission.general）：只作信息，不阻断
+  computed_at: number; // Unix 秒
+}
+
 export interface WorkflowRunInfo {
   id: string;
   definition_id: string;
@@ -390,6 +407,8 @@ export interface WorkflowRunInfo {
   current_stage_index: number;
   active_stage_ids?: string[];
   stages: WorkflowStageInfo[];
+  capability_plan?: CapabilityPlan | null;
+  blocked_reason?: string; // capability-blocked 的人话原因（如「分镜、配音 缺能力 provider」），非 blocked 时为空
   updated_at: number;
 }
 

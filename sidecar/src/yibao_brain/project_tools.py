@@ -10,6 +10,36 @@ from .projects import ProjectStore
 from .tools.core import RiskLevel, Tool
 
 
+def _capability_summary(project: dict | None) -> dict | None:
+    """立项回执的能力摘要（§4.2 preflight）：能完成哪些阶段、缺哪些、一句降级建议。
+
+    让模型在立项时就能把缺口告知用户，而不是流程末端才发现。info 策略的流程
+    （mission.general）enforced=False 且不给降级建议——没被阻断，谈不上「只能做到哪」。
+    """
+    run = (project or {}).get("workflow_run") or {}
+    plan = run.get("capability_plan")
+    if not isinstance(plan, dict):
+        return None
+    stages = plan.get("stages") or []
+    available = [str(stage["label"]) for stage in stages if stage.get("status") == "available"]
+    missing = [str(stage["label"]) for stage in stages if stage.get("status") == "missing"]
+    enforced = str(plan.get("policy") or "") == "enforce"
+    degradation = ""
+    if enforced and missing:
+        if available:
+            degradation = f"可做到{available[-1]}；{missing[0]}起缺能力，安装对应 provider 后可继续"
+        else:
+            degradation = f"{missing[0]}起缺能力，安装对应 provider 后可继续"
+    return {
+        "ready": bool(plan.get("ready")),
+        "enforced": enforced,
+        "available_stages": available,
+        "missing_stages": missing,
+        "blocked_reason": str(run.get("blocked_reason") or ""),
+        "degradation": degradation,
+    }
+
+
 class _ProjectTool(Tool):
     """共体：拿 store + 变更回调（server 注入广播，测试注入收集器）。"""
 
@@ -81,7 +111,11 @@ class ProjectCreateTool(_ProjectTool):
         except OSError as e:
             return ActionResult(success=False, error=f"目录骨架创建失败：{e}")
         self._notify(conversation_id)
-        return ActionResult(success=True, data={"project": proj})
+        data: dict = {"project": proj}
+        capability = _capability_summary(proj)
+        if capability is not None:
+            data["capability"] = capability
+        return ActionResult(success=True, data=data)
 
 
 class ProjectOpenTool(_ProjectTool):

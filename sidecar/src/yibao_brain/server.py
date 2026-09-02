@@ -41,7 +41,7 @@ from .config import a11y_enabled, computer_use_enabled, data_dir, computer_use_m
 from .feed import FeedStore
 from .projects import ProjectStore
 from .session_contexts import SessionContextStore
-from .work_graph import WorkGraphStore
+from .work_graph import WorkGraphStore, build_capability_index
 from .work_events import WorkGraphInvocationSink
 from .project_tools import make_project_tools
 from .distiller import Distiller, DistillerStore
@@ -151,6 +151,7 @@ def build_loop(
     workflow_registrar=None,
     blob_store=None,
     durable_engine=None,
+    capability_sink=None,
 ) -> AgentLoop:
     real_a11y = use_real and a11y_enabled() and sys.platform == "darwin"
     reg = skills_factory() if skills_factory else ToolRegistry()
@@ -224,6 +225,10 @@ def build_loop(
             workflow_registrar=workflow_registrar, blob_store=blob_store,
             durable_engine=durable_engine,
         )
+        # 能力预检（§4.2）：插件加载完成后把 artifact 能力索引注入 Work Graph，
+        # 非终态 run 的 capability plan 随之重算（blocked ↔ ready 在 store 内收口）。
+        if capability_sink is not None:
+            capability_sink(build_capability_index(reg.list()))
         # 能力热重载（P1 reload 地基）：增量扫描 plugins/，新插件免重启生效
         from pathlib import Path
 
@@ -235,7 +240,7 @@ def build_loop(
         )
 
         def _reload_plugins(existing=None):
-            return load_plugins(
+            results = load_plugins(
                 _plugins_dir, reg,
                 memory=memory, http=HttpClient(), llm=_PlugLlm(prov),
                 host_available=host is not None, reminders=reminder_store,
@@ -244,6 +249,10 @@ def build_loop(
                 blob_store=blob_store,
                 durable_engine=durable_engine,
             )
+            # 热加载/后装补齐能力后重建索引：capability-blocked 的 run 可翻 ready。
+            if capability_sink is not None:
+                capability_sink(build_capability_index(reg.list()))
+            return results
 
         reg.register(CapabilityRefreshTool(reg, _reload_plugins))
         # 能力台账（P3 管理面地基）：tool_list 只读列出全部 Tool + 来源形态/风险/特权
@@ -650,6 +659,7 @@ async def serve_async(
         workflow_registrar=work_graph.register_workflow,
         blob_store=blob_store,
         durable_engine=durable_engine,
+        capability_sink=work_graph.set_capability_providers,
     )
     agent.invoker.emit_event = _emit_event  # 真实技能（watch_command）后台通知走同一条 gated 通道
     invocation_sink = WorkGraphInvocationSink(

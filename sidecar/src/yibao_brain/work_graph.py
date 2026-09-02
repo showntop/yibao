@@ -111,6 +111,8 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
   definition_version TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'draft',
   current_stage_id TEXT NOT NULL,
+  capability_plan TEXT NOT NULL DEFAULT '',
+  blocked_reason TEXT NOT NULL DEFAULT '',
   created_at REAL NOT NULL,
   updated_at REAL NOT NULL,
   completed_at REAL,
@@ -286,6 +288,9 @@ def _external_content_ref(obj_type: str, ref: str) -> str:
 _DURABLE_TERMINAL = {"completed", "failed", "cancelled"}
 _DURABLE_ACTIVE = {"queued", "running", "resuming", "checkpointing", "cancel_requested", "interrupted"}
 
+# 能力预检只管理「还没开工」的 run；running 及以后由 DAG/产物事实接管，plan 不再重算。
+_CAPABILITY_OPEN_RUN_STATUSES = ("draft", "ready", "blocked")
+
 
 # 领域流程留在 Workflow Pack，不进入 Work Graph schema。depends_on 和
 # acceptance 都是数据；StageInstance 才是某次执行的流程真相。
@@ -368,6 +373,53 @@ BUILTIN_WORKFLOWS: tuple[dict, ...] = (
 )
 
 
+def build_capability_index(tools: Any) -> dict[str, list[dict]]:
+    """从已注册 tool 的 work_outputs 构建能力索引：artifact_type → providers。
+
+    代码工具（类属性 work_outputs）与声明式工具（manifest [tool.work_output] /
+    [[tool.work_outputs]]，经 normalize_work_output）是同一形态。kind="artifact" 与
+    kind="evidence" 都算能力：evidence.capture 在 Work Graph 里同样 upsert 一个
+    artifact_type 的 Artifact（见 _capture_evidence_locked），能满足 acceptance；
+    edge/checkpoint 不产出独立验收产物，不计入。
+    """
+    buckets: dict[str, dict[str, dict]] = {}
+    for tool in tools:
+        tool_id = str(getattr(tool, "id", "") or "").strip()
+        if not tool_id:
+            continue
+        plugin_id = tool_id.rsplit(".", 1)[0] if "." in tool_id else ""
+        label = str(getattr(tool, "label", "") or "").strip() or tool_id
+        for output in getattr(tool, "work_outputs", ()) or ():
+            if not isinstance(output, dict) or str(output.get("kind") or "") not in ("artifact", "evidence"):
+                continue
+            artifact_type = str(output.get("artifact_type") or "").strip()
+            if not artifact_type:
+                continue
+            bucket = buckets.setdefault(artifact_type, {})
+            bucket[tool_id] = {
+                "plugin_id": plugin_id, "tool_id": tool_id,
+                "label": label, "artifact_type": artifact_type,
+            }
+    return {artifact_type: list(bucket.values()) for artifact_type, bucket in buckets.items()}
+
+
+def _preflight_policy(definition: dict) -> str:
+    """能力预检策略：enforce=缺 provider 即 capability-blocked；info=只算 plan 不干预状态机。
+
+    mission.general 的 acceptance 是 brief/draft/doc 这类通用对象模式，不面向领域
+    交付物——没有 provider 是常态而非缺口，强制 blocked 会误伤所有通用项目。
+    """
+    policy = str(definition.get("capability_preflight") or "").strip()
+    if policy in ("enforce", "info"):
+        return policy
+    return "info" if str(definition.get("id") or "") == "mission.general" else "enforce"
+
+
+def _capability_blocked_reason(plan: dict) -> str:
+    labels = [str(stage["label"]) for stage in plan.get("stages") or [] if stage.get("status") == "missing"]
+    return "、".join(labels) + " 缺能力 provider" if labels else ""
+
+
 class WorkGraphStore:
     """线程安全的 Work Graph metadata store。"""
 
@@ -378,11 +430,15 @@ class WorkGraphStore:
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.RLock()
+        # 能力索引（artifact_type → providers）：server 在插件加载完成后经
+        # set_capability_providers 注入；注入前为空，plan 只反映「暂无已注册能力」。
+        self._capability_index: dict[str, list[dict]] = {}
         with self._lock:
             self._conn.execute("PRAGMA foreign_keys = ON")
             self._conn.execute("PRAGMA journal_mode = WAL")
             self._conn.executescript(_SCHEMA)
             self._ensure_stage_checkpoint_columns_locked()
+            self._ensure_workflow_capability_columns_locked()
             self._register_builtin_workflows_locked()
             for row in self._conn.execute("SELECT id FROM workspaces").fetchall():
                 self._sync_workflow_locked(str(row["id"]))
@@ -421,6 +477,20 @@ class WorkGraphStore:
         for column, ddl in additions.items():
             if column not in existing:
                 self._conn.execute(f"ALTER TABLE stage_instances ADD COLUMN {column} {ddl}")
+
+    def _ensure_workflow_capability_columns_locked(self) -> None:
+        """能力预检（§4.2）的持久列：capability_plan（JSON）+ blocked_reason。"""
+        existing = {
+            str(row["name"])
+            for row in self._conn.execute("PRAGMA table_info(workflow_runs)").fetchall()
+        }
+        additions = {
+            "capability_plan": "TEXT NOT NULL DEFAULT ''",
+            "blocked_reason": "TEXT NOT NULL DEFAULT ''",
+        }
+        for column, ddl in additions.items():
+            if column not in existing:
+                self._conn.execute(f"ALTER TABLE workflow_runs ADD COLUMN {column} {ddl}")
 
     def _register_builtin_workflows_locked(self) -> None:
         now = time.time()
@@ -525,6 +595,14 @@ class WorkGraphStore:
                 remaining.pop(stage_id)
         for pattern in matches:
             re.compile(pattern, re.IGNORECASE)
+        # 能力预检策略（§4.2）：领域流程默认 enforce（缺 provider 即 blocked）；
+        # mission.general 的 acceptance 面向通用对象而非领域交付物，默认 info
+        # （plan 照算作信息，但不把「没有 provider」当缺口阻断通用项目）。
+        preflight = str(value.get("capability_preflight") or "").strip()
+        if not preflight:
+            preflight = "info" if workflow_id == "mission.general" else "enforce"
+        if preflight not in ("enforce", "info"):
+            raise ValueError(f"WorkflowDefinition capability_preflight 非法：{preflight!r}")
         return {
             "id": workflow_id,
             "version": version,
@@ -532,6 +610,7 @@ class WorkGraphStore:
             "label": label,
             "matches": matches,
             "stages": normalized_stages,
+            "capability_preflight": preflight,
             "source_plugin": source_plugin,
         }
 
@@ -561,10 +640,13 @@ class WorkGraphStore:
                 ),
             )
             affected = self._conn.execute(
-                "SELECT workspace_id FROM workflow_runs WHERE definition_id=? AND definition_version=?",
+                "SELECT * FROM workflow_runs WHERE definition_id=? AND definition_version=?",
                 (normalized["id"], normalized["version"]),
             ).fetchall()
             for row in affected:
+                # 定义同版本原位重写（acceptance 可能变了）→ 非终态 run 的 plan 跟着刷新
+                if str(row["status"]) in _CAPABILITY_OPEN_RUN_STATUSES:
+                    self._refresh_capability_plan_locked(row)
                 self._sync_workflow_locked(str(row["workspace_id"]))
             self._conn.commit()
         return normalized
@@ -585,6 +667,101 @@ class WorkGraphStore:
             (definition for definition in definitions if definition.get("id") == "mission.general"),
             BUILTIN_WORKFLOWS[-1],
         )
+
+    # ---------- capability preflight（§4.2 状态机 / §5.1 Capability 合同） ----------
+
+    def set_capability_providers(self, index: dict[str, list[dict]] | None) -> None:
+        """注入/更新能力索引（artifact_type → providers）。
+
+        server 在插件加载完成后调用（热重载/后装路径同一条）。索引变化后对全部
+        非终态 run（draft/ready/blocked）重算 plan 并重放 sync：插件后装补齐能力，
+        capability-blocked 的 run 能翻回 ready；已开工的 run（running 及以后）不动。
+        """
+        normalized: dict[str, list[dict]] = {}
+        for artifact_type, providers in (index or {}).items():
+            atype = str(artifact_type).strip()
+            if not atype:
+                continue
+            bucket: dict[str, dict] = {}
+            for provider in providers or []:
+                if not isinstance(provider, dict):
+                    continue
+                tool_id = str(provider.get("tool_id") or "").strip()
+                if not tool_id:
+                    continue
+                bucket[tool_id] = {
+                    "plugin_id": str(provider.get("plugin_id") or ""),
+                    "tool_id": tool_id,
+                    "label": str(provider.get("label") or "").strip() or tool_id,
+                    "artifact_type": atype,
+                }
+            if bucket:
+                normalized[atype] = list(bucket.values())
+        with self._lock:
+            self._capability_index = normalized
+            rows = self._conn.execute(
+                "SELECT * FROM workflow_runs WHERE status IN ('draft','ready','blocked')",
+            ).fetchall()
+            workspace_ids: set[str] = set()
+            for row in rows:
+                self._refresh_capability_plan_locked(row)
+                workspace_ids.add(str(row["workspace_id"]))
+            for workspace_id in workspace_ids:
+                self._sync_workflow_locked(workspace_id)
+            self._conn.commit()
+
+    def _providers_for_patterns(self, patterns: list[str]) -> list[dict]:
+        """与 _sync_workflow_locked 同一匹配语义：rule 的任一 pattern 命中 provider
+        声明的 artifact_type（re.search，IGNORECASE）即该 provider 可产出。"""
+        providers: dict[str, dict] = {}
+        for artifact_type, entries in self._capability_index.items():
+            if any(re.search(pattern, artifact_type, re.IGNORECASE) for pattern in patterns):
+                for entry in entries:
+                    providers[entry["tool_id"]] = entry
+        return list(providers.values())
+
+    def _compute_capability_plan(self, definition: dict) -> dict:
+        """逐 stage、逐 acceptance rule 解析可满足性：rule 有至少一个 provider 命中
+        即可满足；stage 的全部 rule 可满足 = available，否则 missing。"""
+        stages: list[dict] = []
+        missing: list[str] = []
+        for stage in definition.get("stages") or []:
+            providers: dict[str, dict] = {}
+            rules_satisfied = True
+            for rule in stage.get("acceptance") or []:
+                matched = self._providers_for_patterns(rule.get("artifact_patterns") or [])
+                if not matched:
+                    rules_satisfied = False
+                for entry in matched:
+                    providers[entry["tool_id"]] = entry
+            status = "available" if rules_satisfied else "missing"
+            if status == "missing":
+                missing.append(str(stage["id"]))
+            stages.append({
+                "id": str(stage["id"]), "label": str(stage["label"]),
+                "status": status, "providers": list(providers.values()),
+            })
+        return {
+            "stages": stages,
+            "missing": missing,
+            "ready": not missing,
+            "policy": _preflight_policy(definition),
+            "computed_at": time.time(),
+        }
+
+    def _refresh_capability_plan_locked(self, run: sqlite3.Row) -> dict:
+        """按当前能力索引重算 run 的 plan 并落库；状态不在这里改，由 sync 统一收口。"""
+        definition_row = self._conn.execute(
+            "SELECT definition FROM workflow_definitions WHERE id=? AND version=?",
+            (str(run["definition_id"]), str(run["definition_version"])),
+        ).fetchone()
+        definition = _decode(definition_row["definition"] if definition_row else None, {})
+        plan = self._compute_capability_plan(definition)
+        self._conn.execute(
+            "UPDATE workflow_runs SET capability_plan=? WHERE id=?",
+            (_json(plan), str(run["id"])),
+        )
+        return plan
 
     def migrate_projects(self, projects: list[dict]) -> None:
         """幂等迁移 legacy projects.json；迁移完成后旧 objects 不再是写入目标。"""
@@ -681,12 +858,22 @@ class WorkGraphStore:
     def _create_run_locked(self, workspace_id: str, mission_id: str, definition: dict, now: float) -> str:
         run_id = _id("wfrun")
         stages = definition["stages"]
+        # 立项即预检（§4.2 draft → preflighting → ready/blocked）：预检是同步计算，
+        # preflighting 不落库；enforce 流程全 available → ready，有缺口 → blocked
+        # （blocked_reason 给人话）；info 流程（mission.general）保持 draft。
+        plan = self._compute_capability_plan(definition)
+        if plan["policy"] == "enforce":
+            status = "ready" if plan["ready"] else "blocked"
+            blocked_reason = _capability_blocked_reason(plan)
+        else:
+            status, blocked_reason = "draft", ""
         self._conn.execute(
             "INSERT INTO workflow_runs(id,workspace_id,mission_id,definition_id,definition_version,status,"
-            "current_stage_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+            "current_stage_id,capability_plan,blocked_reason,created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (
                 run_id, workspace_id, mission_id, definition["id"], definition["version"],
-                "draft", stages[0]["id"], now, now,
+                status, stages[0]["id"], _json(plan), blocked_reason, now, now,
             ),
         )
         for ordinal, stage in enumerate(stages):
@@ -1750,6 +1937,17 @@ class WorkGraphStore:
             run_status = "running"
         else:
             run_status = "draft"
+        # 能力预检整合（§4.2）：只有「还没开工」的 run（DAG 求值仍是 draft）才应用已存
+        # capability plan——enforce 流程全 available → ready，有缺口 → capability-blocked
+        # 并留人话原因。产物进场（running 及以后）或 info 策略（mission.general 这类
+        # acceptance 面向通用对象的流程）不干预状态机，缺口只留在 plan 里作信息。
+        plan = _decode(run["capability_plan"], None)
+        if not isinstance(plan, dict):
+            plan = self._refresh_capability_plan_locked(run)  # 旧库 run 无 plan：现算补齐
+        blocked_reason = ""
+        if run_status == "draft" and _preflight_policy(definition) == "enforce":
+            blocked_reason = _capability_blocked_reason(plan)
+            run_status = "blocked" if blocked_reason else "ready"
         for stage in stages:
             stage_id = str(stage["id"])
             status = statuses[stage_id]
@@ -1785,8 +1983,9 @@ class WorkGraphStore:
                 ),
             )
         self._conn.execute(
-            "UPDATE workflow_runs SET status=?,current_stage_id=?,updated_at=?,completed_at=? WHERE id=?",
-            (run_status, current_stage_id, now, now if completed else None, run["id"]),
+            "UPDATE workflow_runs SET status=?,current_stage_id=?,blocked_reason=?,updated_at=?,"
+            "completed_at=? WHERE id=?",
+            (run_status, current_stage_id, blocked_reason, now, now if completed else None, run["id"]),
         )
 
     # ---------- read models ----------
@@ -1888,6 +2087,8 @@ class WorkGraphStore:
             "current_stage_index": current_index,
             "active_stage_ids": active_stage_ids,
             "stages": stages,
+            "capability_plan": _decode(run["capability_plan"], None),
+            "blocked_reason": str(run["blocked_reason"] or ""),
             "updated_at": float(run["updated_at"]),
         }
 
