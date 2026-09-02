@@ -253,6 +253,8 @@ function onEvent(e: BrainEvent) {
       openLayer();
       break;
     case "speaking_done":
+    case "speech_stopped":
+      // speech_stopped：只停播报（停止语音 ≠ 取消 run）——与 speaking_done 同效，不标 halted
       state.value = "idle";
       scheduleCollapse(4000);
       break;

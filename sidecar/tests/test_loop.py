@@ -1361,3 +1361,95 @@ def test_refresh_preserves_origin_explicit(tmp_path, monkeypatch):
     pe = next(e for e in events if e.kind == "panel")
     assert pe.payload["explicit"] is True
     assert pe.payload["data"] == {"rows": [{"id": "t1", "status": "写作中"}]}  # 刷新数据仍在
+
+
+# ---------- 中断留证（P0）：中断路径也把本轮已取得的证据落史 ----------
+
+
+def _build_history_loop(tmp_path, provider):
+    reg = ToolRegistry()
+    reg.register(EchoTool())
+    return AgentLoop(
+        provider=provider,
+        skills=reg,
+        classifier=RiskClassifier(),
+        gate=Gate(GatePolicy()),
+        memory=FakeMemory(),
+        log=AuditLog(tmp_path / "a.db"),
+        history=ConversationHistory(tmp_path / "h.json"),
+    )
+
+
+def _run_with_cancel_on(loop, text, stop_on, conversation_id="c1"):
+    """驱动 arun：见到 stop_on 事件即置 cancel（模拟用户在那一刻按停）。"""
+    async def _go():
+        cancel = asyncio.Event()
+        events = []
+        async for e in loop.arun(text, cancel, conversation_id=conversation_id):
+            events.append(e)
+            if e.kind == stop_on:
+                cancel.set()
+        return events
+    return asyncio.run(_go())
+
+
+def test_loop_interrupt_after_tool_result_persists_evidence(tmp_path):
+    """工具结果刚回来就被打断：user + 工具调用轨迹 + 结果必须落史（下轮上下文能看到证据），
+    并以「已打断」收尾；正常路径不写两遍。"""
+    provider = _TwoStepProvider(
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="echo", params={"text": "秘密证据"})]),
+        second=FakeProvider(text="不该出现的答复"),
+    )
+    loop = _build_history_loop(tmp_path, provider)
+
+    events = _run_with_cancel_on(loop, "查一下", stop_on="action_result")
+
+    assert events[-1].kind == "interrupted"
+    hist = loop.history.messages("c1")
+    assert [m["role"] for m in hist] == ["user", "assistant", "tool", "assistant"]
+    assert hist[1].get("tool_calls")  # 工具调用轨迹在史
+    assert "秘密证据" in hist[2]["content"]  # 已取得的工具结果在史
+    assert "已打断" in hist[3]["content"]  # 中断标注收尾
+    # 落盘也一致（重启后仍可见）
+    disk = (tmp_path / "h.json").read_text(encoding="utf-8")
+    assert "秘密证据" in disk and "已打断" in disk
+    # 下一轮请求的 LLM 上下文必须含中断前的工具证据（研究不失忆）
+    followup = FakeProvider(text="根据刚才的证据…")
+    loop2 = _build_history_loop(tmp_path, followup)  # 同一 h.json 重新载入
+    list(loop2.run("刚才查到什么了", conversation_id="c1"))
+    ctx = json.dumps(followup.astream_calls[0]["messages"], ensure_ascii=False)
+    assert "秘密证据" in ctx
+
+
+def test_loop_interrupt_before_tool_execution_leaves_no_dangling_tool_calls(tmp_path):
+    """action_proposed 后即打断（工具未执行）：assistant 的 tool_calls 必须有占位 tool 结果，
+    否则严格校验的 provider 下一轮直接 400；中断同样标注。"""
+    provider = _TwoStepProvider(
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="echo", params={"text": "秘密证据"})]),
+        second=FakeProvider(text="不该出现的答复"),
+    )
+    loop = _build_history_loop(tmp_path, provider)
+
+    events = _run_with_cancel_on(loop, "查一下", stop_on="action_proposed")
+
+    assert events[-1].kind == "interrupted"
+    hist = loop.history.messages("c1")
+    assert [m["role"] for m in hist] == ["user", "assistant", "tool", "assistant"]
+    called = {tc["id"] for m in hist if m.get("tool_calls") for tc in m["tool_calls"]}
+    answered = {m["tool_call_id"] for m in hist if m["role"] == "tool"}
+    assert called and called <= answered  # 无悬空 tool_calls
+    assert "中断" in hist[2]["content"]  # 占位结果说明未执行
+    assert "已打断" in hist[3]["content"]
+
+
+def test_loop_interrupt_mid_stream_persists_partial_reply(tmp_path):
+    """流式中途打断：已吐出的部分回复落史并标注打断（不说半句失忆）。"""
+    loop = _build_history_loop(tmp_path, FakeProvider(chunks=["半句一", "半句二", "半句三"], delay=0.01))
+
+    events = _run_with_cancel_on(loop, "说点什么", stop_on="final_reply_chunk")
+
+    assert events[-1].kind == "interrupted"
+    hist = loop.history.messages("c1")
+    assert [m["role"] for m in hist] == ["user", "assistant"]
+    assert "半句一" in hist[1]["content"]
+    assert "已打断" in hist[1]["content"]

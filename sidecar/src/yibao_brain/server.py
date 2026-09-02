@@ -488,10 +488,13 @@ async def serve_async(
     confirm_meta: dict[str, dict] = {}  # cid -> {tool_id, summary, risk, created_at, conversation_id, surface}：手机 /v1/state 待批列表
     _confirm_done: deque[str] = deque(maxlen=100)  # 已处理确认（防手机重复点击 404）
     # run_slots：per-会话槽位表（并发对话 spec §A）。键 = conversation_id（空串归 default
-    # 槽，兼容无会话 id 的遗留调用）。每槽 {task, cancel, preempt_gen, surface, running_surface}，
-    # 字段语义同旧全局 run_state：
+    # 槽，兼容无会话 id 的遗留调用）。每槽 {task, cancel, preempt_gen, surface, running_surface,
+    # run_epoch}，字段语义同旧全局 run_state：
     # - preempt_gen：抢占代数。同槽新请求到来即 +1；排队中的任务启动时发现自己落后 →
     #   一启动即置 cancel（快速跳过），保证「同会话只有最新请求真正执行」。
+    # - run_epoch：运行代数（P0）。同槽每次受理新 run +1，经 _run_ctx 进 _stream_agent
+    #   盖到每个流出事件（conversation_id 走信封）；前端按会话只采纳最新 epoch，
+    #   被抢占旧 run 的迟到事件（收尾宽限期内照样流入）不再改变 UI 状态。
     # - surface：该槽最近一次受理请求的窗口（pet=主窗 / 面板 id，dispatch 受理即写入）；
     #   running_surface：实际在跑的（排队结束才写），手机 interrupt 按它判域。
     # - 同会话（含同会话跨 surface）新请求 → 抢占；跨会话 → 各自槽位真并行，
@@ -884,8 +887,31 @@ async def serve_async(
 
     threading.Thread(target=_reader, daemon=True).start()
 
+    def _stamp_run_event(ev: dict) -> dict:
+        """运行代数盖章（P0）：run_epoch+seq 盖进事件体（conversation_id 走信封；
+        Rust 桥对 event 载荷原样透传，壳侧零改动即拿到）。
+        无代数上下文（主动事件/未经理调度的调用）原样放行，缺省字段稳健。
+        seq 计数器放 _run_ctx：同一槽位任务共享——连续语音会话多轮 stream 单调不重启。"""
+        ctx_run = _run_ctx.get() or {}
+        epoch = ctx_run.get("run_epoch")
+        if epoch is None:
+            return ev
+        ctx_run["event_seq"] = ctx_run.get("event_seq", 0) + 1
+        return {**ev, "run_epoch": epoch, "seq": ctx_run["event_seq"]}
+
+    def _stamped_write(m: dict) -> None:
+        """write_msg 的盖章包装：event 消息盖 run_epoch/seq，其余（run_done/hello 等）原样。"""
+        if m.get("type") == "event" and isinstance(m.get("event"), dict):
+            m = {**m, "event": _stamp_run_event(m["event"])}
+        write_msg(m)
+
     async def _stream_agent(text: str, rid, cancel: asyncio.Event, surface: str = "pet", conversation_id: str = "", emit_done: bool = True):
         t0 = time.monotonic()
+
+        def _emit(ev: dict) -> None:
+            write_msg({"type": "event", "surface": surface, "conversation_id": conversation_id,
+                       "event": _stamp_run_event(ev)})
+
         tts_q: asyncio.Queue | None = asyncio.Queue() if voice is not None else None
         tts_holds_lock = False
         if tts_q is not None:
@@ -893,21 +919,23 @@ async def serve_async(
                 # 另一会话正在播报（spec §D 单声道）：本 run 静默不播（文字流式照出），
                 # 不排队——排队念旧话比不念更怪。tts_q 置空后 speaking/chunk 进队逻辑整体跳过。
                 tts_q = None
-                write_msg({"type": "event", "surface": surface, "conversation_id": conversation_id,
-                           "event": {"kind": "notice", "text": "正在播报另一段对话，这段不念了"}})
+                _emit({"kind": "notice", "text": "正在播报另一段对话，这段不念了"})
             else:
                 # 抢锁→持锁整轮（finally 里 TTS 排干后释放）：打断三连取消只作用本槽，
                 # 全局播放器的停止仅限持锁者——A 的打断掐不掉 B 正在播的音。
                 await tts_lock.acquire()
                 tts_holds_lock = True
-        tts_task = asyncio.create_task(_pump_tts(tts_q, cancel, surface, conversation_id)) if tts_q is not None else None
+        tts_task = asyncio.create_task(_pump_tts(tts_q, cancel, surface, conversation_id, _stamp_run_event)) if tts_q is not None else None
         started_speaking = False
         saw_interrupted = False
+        saw_final_reply = False
         try:
             async for event in agent.arun(text, cancel, surface=surface, conversation_id=conversation_id or None):
                 if event.kind == "interrupted":
                     saw_interrupted = True
-                write_msg({"type": "event", "surface": surface, "conversation_id": conversation_id, "event": event.model_dump(mode="json")})
+                elif event.kind == "final_reply":
+                    saw_final_reply = True
+                _emit(event.model_dump(mode="json"))
                 if (
                     tts_q is not None
                     and event.kind == "final_reply_chunk"
@@ -915,12 +943,12 @@ async def serve_async(
                 ):
                     if not started_speaking:
                         started_speaking = True
-                        write_msg({"type": "event", "surface": surface, "conversation_id": conversation_id, "event": {"kind": "speaking"}})
+                        _emit({"kind": "speaking"})
                     await tts_q.put(event.text)
         except Exception as e:
             # arun 抛异常（如 provider 400）→ 发 error + 停 TTS，别让前端卡死
             cancel.set()
-            write_msg({"type": "event", "surface": surface, "conversation_id": conversation_id, "event": {"kind": "error", "text": f"大脑出错：{e}"}})
+            _emit({"kind": "error", "text": f"大脑出错：{e}"})
         finally:
             if tts_q is not None:
                 await tts_q.put(None)  # 收尾哨兵，唤醒可能在 get() 上等待的 _pump_tts
@@ -929,9 +957,12 @@ async def serve_async(
             if tts_holds_lock:
                 tts_lock.release()  # 本槽播报排干后再放锁，下一会话才能开念
             # LLM 已吐完 final_reply 后打断只停 TTS，arun 不再 yield interrupted；
-            # 前端靠 interrupted 回 idle，不发则停止按钮停在「说话中」。
+            # 前端靠收尾事件回 idle，不发则停止按钮停在「说话中」。
+            # 停止分离（P0）：final_reply 已产出 → 只停播报，补发 speech_stopped（停止语音 ≠
+            # 取消任务，前端不得把已完成的 run 标「已打断」）；执行中被打断仍是 interrupted。
             if cancel.is_set() and not saw_interrupted:
-                write_msg({"type": "event", "surface": surface, "conversation_id": conversation_id, "event": {"kind": "interrupted"}})
+                stop_kind = "speech_stopped" if saw_final_reply else "interrupted"
+                _emit({"kind": stop_kind})
             if emit_done:  # 连续语音会话里 run_done 由 _drive_voice_start 在会话结束时统一发
                 write_msg(_run_done_msg(rid, conversation_id))
             log(f"run 完成 rid={rid}（{time.monotonic() - t0:.1f}s）")
@@ -1026,15 +1057,18 @@ async def serve_async(
         _preempt_if_same_surface(slot, surface, conversation_id)
         prev = slot["task"]
         slot["surface"] = surface
+        epoch = runs.next_epoch(slot)
+        # 面板直发事件（panel.py 不经 _stream_agent）走盖章包装，同享本 run 的代数/序号
         start = lambda c, m=msg, s=surface, ci=conversation_id: handle_panel_action(
-            m, agent, write_msg,
+            m, agent, _stamped_write,
             run_text=lambda text, rid, c=c, s=s, ci=ci: _stream_agent(text, rid, c, s, ci),
             read_guard=surface_read_guard,
         )
 
-        async def _marked_panel(cancel, s=start, sf=surface, sl=slot, ci=conversation_id):
+        async def _marked_panel(cancel, s=start, sf=surface, sl=slot, ci=conversation_id, ep=epoch):
             sl["running_surface"] = sf
-            _run_ctx.set({"cancel": cancel, "surface": sf, "conversation_id": ci})
+            _run_ctx.set({"cancel": cancel, "surface": sf, "conversation_id": ci,
+                          "run_epoch": ep, "event_seq": 0})
             await s(cancel)
 
         slot["task"] = asyncio.ensure_future(

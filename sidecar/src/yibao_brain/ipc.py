@@ -47,6 +47,7 @@ EventKind = Literal[
     "final_reply",
     "final_reply_chunk",
     "interrupted",
+    "speech_stopped",  # 只停播报：final_reply 已产出后按停止 ≠ 取消 run（前端只停播报 UI，不标「已打断」）
     "error",
     "listening",
     "listening_done",

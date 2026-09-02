@@ -30,15 +30,18 @@ def _render_intent(api, params: dict) -> str:
     return template.format_map(_KeepMissing(params))
 
 
-async def _emit_refresh_panel(agent: AgentLoop, emit, refresh_tool: str) -> None:
+async def _emit_refresh_panel(agent: AgentLoop, emit, refresh_tool: str, conversation_id: str = "") -> None:
     """直调成功后的声明式刷新：执行查询 tool（应为本插件 L0 只读），把它的 panel 事件推给壳。
 
     刷新 tool 若意外需要确认/被拒，静默跳过（不弹确认——刷新不该打断用户）。
+    conversation_id 随 meta 透传：项目作用域工具（zimeiti.list 等）的刷新要跟发起
+    会话同一数据边界，否则写操作后的跟单刷新会把面板冲成全库。
     """
     action = agent.invoker.propose(ToolCall(id=f"pa_refresh_{id(emit)}", tool_id=refresh_tool, params={}))
     if agent.invoker.decide(action) != Decision.AUTO:
         return
-    meta = {"surface": "panel:refresh", "invocation_persistence": "transient"}
+    meta = {"surface": "panel:refresh", "invocation_persistence": "transient",
+            "conversation_id": conversation_id}
     # 写操作后的刷新必须强制读新值，不能命中纯读取的短缓存。
     result = await _offload(agent.invoker.execute, action, {}, meta)
     payload = panel_payload(result)
@@ -113,7 +116,7 @@ async def handle_panel_action(
         emit(Event(kind="action_result", action=action, result=result))
         if result.success and api.refresh is not None:
             # 声明式刷新：删除类操作后跟一次查询，面板拿新数据而不是操作回执
-            await _emit_refresh_panel(agent, emit, api.refresh)
+            await _emit_refresh_panel(agent, emit, api.refresh, conversation_id)
         else:
             if result.success and api.panel is not None:
                 result.panel = api.panel  # method 声明的面板优先于 tool 自带引用（如 webview 编辑器）

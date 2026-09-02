@@ -36,7 +36,15 @@ class RunsDomain:
     def slot(self, conversation_id: str) -> dict:
         """取（无则建）会话槽位；conversation_id 空 → default 槽。"""
         return self.ctx.run_slots.setdefault(conversation_id or "", {
-            "task": None, "cancel": None, "preempt_gen": 0, "surface": None, "running_surface": None})
+            "task": None, "cancel": None, "preempt_gen": 0, "surface": None, "running_surface": None,
+            # 运行代数（P0）：本会话每次受理新 run +1，随 _run_ctx 进 _stream_agent 盖到每个
+            # 流出事件上；前端按会话只采纳最新 epoch，被抢占旧 run 的迟到事件直接丢弃。
+            "run_epoch": 0})
+
+    def next_epoch(self, slot: dict) -> int:
+        """受理新 run 即分配下一代数（dispatch 序 = epoch 序，前端发消息时的地板对齐它）。"""
+        slot["run_epoch"] += 1
+        return slot["run_epoch"]
 
     def preempt_current(self, slot: dict) -> None:
         slot["preempt_gen"] += 1
@@ -74,11 +82,15 @@ class RunsDomain:
         self.preempt_if_same_surface(slot, surface, conversation_id or "")
         prev = slot["task"]
         slot["surface"] = surface  # 受理即记录：下次 dispatch 判断同/跨 surface 无调度竞态
+        epoch = self.next_epoch(slot)
 
-        async def _marked(cancel, s=start, sf=surface, sl=slot, ci=conversation_id or ""):
+        async def _marked(cancel, s=start, sf=surface, sl=slot, ci=conversation_id or "", ep=epoch):
             sl["running_surface"] = sf
-            # 归属上下文：batch_confirmer 读本槽 cancel / confirm_meta 记会话归属
-            self._run_ctx.set({"cancel": cancel, "surface": sf, "conversation_id": ci})
+            # 归属上下文：batch_confirmer 读本槽 cancel / confirm_meta 记会话归属 /
+            # _stream_agent 读 run_epoch 给流出事件盖章（event_seq 计数器同一槽位任务共享，
+            # 连续语音会话多轮 stream 也单调）。
+            self._run_ctx.set({"cancel": cancel, "surface": sf, "conversation_id": ci,
+                               "run_epoch": ep, "event_seq": 0})
             await s(cancel)
 
         slot["task"] = asyncio.ensure_future(

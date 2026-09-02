@@ -28,7 +28,12 @@ _DEFAULT_DANGEROUS = [
 
 
 class RiskClassifier:
-    """风险 = max(skill 默认级, 关键词命中升级级)。"""
+    """风险 = max(skill 默认级, 关键词命中升级级)。
+
+    关键词升级只作用于有副作用的工具（base L2+）：L0/L1 是只读/低危档
+    （web_search、extract_url、记选题等），其参数里的危险词是「谈论危险」
+    而非「执行危险」——查询「支付安全」不该被抬到 L3 弹审批。
+    """
 
     def __init__(self, dangerous_keywords: list[str] | None = None, escalate_to: RiskLevel = RiskLevel.L3_HIGH):
         self.keywords = [k.lower() for k in (dangerous_keywords or _DEFAULT_DANGEROUS)]
@@ -36,6 +41,8 @@ class RiskClassifier:
 
     def classify(self, action: Action, skill: Tool | None) -> RiskLevel:
         base = skill.default_risk if skill is not None else action.risk
+        if base < RiskLevel.L2_MEDIUM:  # 只读/低危工具不做关键词升级
+            return base
         text = " ".join(str(v) for v in action.params.values()).lower()
         if any(k in text for k in self.keywords):
             return max(base, self.escalate_to)

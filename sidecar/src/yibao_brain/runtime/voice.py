@@ -37,20 +37,22 @@ class VoiceDomain:
                 return
             yield item
 
-    async def pump_tts(self, tts_q: asyncio.Queue, cancel: asyncio.Event, surface: str = "pet", conversation_id: str = ""):
+    async def pump_tts(self, tts_q: asyncio.Queue, cancel: asyncio.Event, surface: str = "pet", conversation_id: str = "", stamp=None):
         ctx = self.ctx
         voice = ctx.voice
         if voice is None:
             return
+        # stamp：run 事件盖章（run_epoch/seq，见 server._stream_agent）；None = 不盖（防御）
+        _st = stamp or (lambda ev: ev)
         try:
             await voice.speak_stream(self._tts_chunks(tts_q), cancel)
         except asyncio.CancelledError:
             return  # 打断命中合成/播放的正常取消，不是播报失败
         except Exception as e:
-            ctx.write_msg({"type": "event", "surface": surface, "conversation_id": conversation_id, "event": {"kind": "error", "text": f"语音播报失败：{e}"}})
+            ctx.write_msg({"type": "event", "surface": surface, "conversation_id": conversation_id, "event": _st({"kind": "error", "text": f"语音播报失败：{e}"})})
             return
         if not cancel.is_set():
-            ctx.write_msg({"type": "event", "surface": surface, "conversation_id": conversation_id, "event": {"kind": "speaking_done"}})
+            ctx.write_msg({"type": "event", "surface": surface, "conversation_id": conversation_id, "event": _st({"kind": "speaking_done"})})
 
     async def drive_voice_start(self, rid, cancel: asyncio.Event, surface: str = "pet", conversation_id: str = "", continuous: bool = False):
         # 连续对话（长按团子进入）：答完接着听。退出：退出语 / 连续两次没听清 / 打断。
@@ -122,7 +124,8 @@ class VoiceDomain:
                 finally:
                     tts_lock.release()
                 if cancel.is_set():
-                    _vev({"kind": "interrupted"})
+                    # 告别语（final_reply）已发出后按停 = 只停播报，不算打断 run
+                    _vev({"kind": "speech_stopped"})
                 else:
                     _vev({"kind": "speaking_done"})
                 _done()

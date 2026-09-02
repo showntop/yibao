@@ -38,6 +38,7 @@ import {
   type WidgetsResponse,
 } from "../protocol/brain-types";
 import { pcRemoveMany, pcRestore } from "../state/pending";
+import { isStaleRunEvent, noteRunSubmitted, resetRunEpochs } from "../lib/run-epoch";
 
 // ---- 会话分流（v2 §5）：run/语音/面板调用带 surface 标签，大脑透传回事件流与历史 ----
 // 模块级当前 surface：宠物窗恒 pet；面板窗随焦点插件变化（PanelApp setSurface）。
@@ -106,6 +107,8 @@ function onceWithTimeout<T>(
  * 面板工作台（surface=panel:xxx 瞬时输入）不传——不持久化。
  */
 export function runInput(text: string, surface?: string, conversationId?: string): Promise<void> {
+  // 新 run 开始：本会话切换到新 epoch——被抢占旧 run 的迟到事件即时作废（lib/run-epoch）
+  noteRunSubmitted(conversationId);
   return invoke("run_input", { text, surface: surface ?? _surface, conversationId: conversationId ?? null });
 }
 
@@ -130,6 +133,7 @@ export function sendConfirmBatch(
 /** 触发语音输入：sidecar 录音→STT→run→TTS 播报（Plan 4a 最小语音）。
  *  continuous=true 进连续会话：答完自动再听，退出语/打断收尾（二期）。 */
 export function voiceStart(surface?: string, continuous?: boolean, conversationId?: string): Promise<void> {
+  noteRunSubmitted(conversationId); // 语音会话也是一次新 run（同 runInput 的 epoch 切换）
   return invoke("voice_start", {
     surface: surface ?? _surface,
     continuous: continuous ?? false,
@@ -613,9 +617,14 @@ export function clearPerception(timeoutMs = 5000): Promise<PerceptionCleared> {
 
 // ---- 事件订阅（全局信号）----
 
-/** 订阅大脑事件流，返回取消监听函数。 */
+/** 订阅大脑事件流，返回取消监听函数。
+ *  运行代数闸（P0）：更旧 run_epoch 的事件（被抢占旧 run 的迟到事件）在此统一丢弃，
+ *  不到达任何订阅方——UI 状态只由当前 epoch 的 run 改变。 */
 export function onBrainEvent(cb: (e: BrainEvent) => void): Promise<UnlistenFn> {
-  return listenIfAvailable<BrainEvent>("brain-event", cb);
+  return listenIfAvailable<BrainEvent>("brain-event", (e) => {
+    if (isStaleRunEvent(e)) return; // 旧 epoch：丢弃（可在此加 debug 日志）
+    cb(e);
+  });
 }
 
 /** 订阅一次 run 完成信号。 */
@@ -623,9 +632,14 @@ export function onRunDone(cb: (v: unknown) => void): Promise<UnlistenFn> {
   return listenIfAvailable("brain-run-done", cb);
 }
 
-/** 订阅大脑守护状态（up=在线 / down=掉线 / restarting=重启中）。 */
+/** 订阅大脑守护状态（up=在线 / down=掉线 / restarting=重启中）。
+ *  进程更替 = sidecar 的 run_epoch 计数清零重来 → 前端账本同步清零（否则新 brain 的
+ *  epoch 1 会被误判成旧 run 的迟到事件而永远丢弃）。 */
 export function onBrainStatus(cb: (m: BrainStatusMsg) => void): Promise<UnlistenFn> {
-  return listenIfAvailable<BrainStatusMsg>("brain-status", cb);
+  return listenIfAvailable<BrainStatusMsg>("brain-status", (m) => {
+    resetRunEpochs();
+    cb(m);
+  });
 }
 
 /** 订阅面板窗关闭（隐藏）：宠物窗用它给「⇢ 协作中」关联气泡收尾。 */

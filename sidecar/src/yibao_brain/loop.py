@@ -177,12 +177,14 @@ class AgentLoop:
     def skills(self, reg: ToolRegistry) -> None:
         self.invoker.skills = reg
 
-    def _panel_with_refresh(self, action, result) -> dict | None:
+    def _panel_with_refresh(self, action, result, conversation_id: str | None = None) -> dict | None:
         """面板载荷：tool 声明了 refresh 时跟一次本插件只读查询，面板拿刷新数据而非操作回执。
 
         写操作（insert/delete 等）的 result.data 是回执 {"id":…}，直接喂面板会显示空；
         声明 refresh（如 notes.list）则面板事件携带查询结果。刷新意外需确认/失败 →
         回退原数据（刷新不该弹确认打断用户，与 panel._emit_refresh_panel 同一策略）。
+        conversation_id 随刷新执行的 meta 透传：项目作用域工具的跟单刷新要与本 run
+        同一会话数据边界（与 panel._emit_refresh_panel 同一语义）。
 
         refresh 传参取「action 入参 ∩ refresh tool 声明参数」（如 save{id,content} → get{id}），
         无交集传 {}（list 类刷新不带条件）。最后做 focus 重定向：用户正盯着同插件 webview
@@ -209,7 +211,9 @@ class AgentLoop:
         )
         if self.invoker.decide(r_action) != Decision.AUTO:
             return _with_surface_hints(self._redirect_to_focused_webview(payload), result, action.id)
-        r_result = self.invoker.execute(r_action, r_params)
+        r_result = self.invoker.execute(
+            r_action, r_params, {"conversation_id": conversation_id or ""}
+        )
         refreshed = panel_payload(r_result)
         if refreshed is not None:
             # explicit 属于用户直调的工具；refresh 是内部跟单，不许借它抬表面档位
@@ -275,7 +279,9 @@ class AgentLoop:
     ) -> AsyncIterator[Event]:
         """流式异步回路：LLM 边生成边吐 final_reply_chunk；cancel.is_set() 随时打断。
 
-        cancel 为 asyncio.Event（或任何带 is_set() 的对象）。打断时产出 interrupted 并返回。
+        cancel 为 asyncio.Event（或任何带 is_set() 的对象）。打断时产出 interrupted 并返回；
+        返回前把本轮已积累的部分轨迹（user + 已完成的工具调用/结果 + 已有部分回复）落史，
+        下一轮上下文能看到中断前已取得的证据（见 _record_interrupted）。
         confirmer 可同步也可异步（返回协程则 await）。
         surface 为会话分流标签（pet / panel:<plugin>）：只落历史，不进发给 provider 的消息。
         conversation_id（M3 会话隔离）：该 run 所属会话，历史按此分桶读写——
@@ -310,14 +316,25 @@ class AgentLoop:
         def cancelled() -> bool:
             return bool(cancel and cancel.is_set())
 
+        def _interrupted_evidence(partial: str = "") -> None:
+            """中断留证：中断路径直接 return、不走正常收尾的 record_messages——
+            不落史的话下一轮上下文里「已做过的研究」凭空消失，agent 会对自己的历史自相矛盾。
+            partial 为已被打断的流式部分回复。"""
+            self._record_interrupted(
+                messages, run_start, surface, safe_tool_content, sensitive_turn,
+                conversation_id, partial,
+            )
+
         for _ in range(self.max_steps):
             if cancelled():
+                _interrupted_evidence()
                 yield Event(kind="interrupted")
                 return
             text_buf = ""
             delta_acc: list = []
             async for delta in self.provider.astream(messages, tools=self._visible_tools()):
                 if cancelled():
+                    _interrupted_evidence(text_buf)
                     yield Event(kind="interrupted")
                     return
                 if delta.usage is not None:
@@ -354,6 +371,7 @@ class AgentLoop:
             plan: list[tuple[ToolCall, Action, Decision]] = []
             for tc in tool_calls:
                 if cancelled():
+                    _interrupted_evidence()
                     yield Event(kind="interrupted")
                     return
                 tc.tool_id = self.skills.resolve_llm_name(tc.tool_id)  # 安全名 → 真实 id
@@ -377,6 +395,7 @@ class AgentLoop:
                 verdicts = await self.invoker.batch_confirm(confirm_actions)
             for tc, action, decision in plan:
                 if cancelled():
+                    _interrupted_evidence()
                     yield Event(kind="interrupted")
                     return
                 if decision == Decision.CONFIRM:
@@ -415,21 +434,24 @@ class AgentLoop:
                 skill = self.skills.get(action.tool_id)
                 safe = self.invoker.safe_result(action, result)
                 yield Event(kind="action_result", action=action, result=safe)
-                if cancelled():
-                    yield Event(kind="interrupted")
-                    return
-                if action.tool_id == "use_plugin" and result.success and not (result.data or {}).get("already"):
-                    # 插件展开要知情（§12-2 已定）：轻提示，不弹窗不打断
-                    yield Event(kind="notice", text=(result.data or {}).get("human", "插件已展开"))
-                payload = await _offload(self._panel_with_refresh, action, safe)  # 壳侧面板也只拿安全副本
-                if payload is not None:
-                    yield Event(kind="panel", payload=payload)
+                # 结果先入账再判打断：中断留证（_record_interrupted）读 messages——
+                # 已完成的工具结果必须已在其内，否则被占位「未产生结果」盖掉（研究失忆的根）。
                 messages.append(
                     {"role": "tool", "tool_call_id": tc.id, "content": _stringify_result(result)}
                 )
                 safe_tool_content[tc.id] = _stringify_result(safe)
                 if skill.sensitive_output and result.success:
                     sensitive_turn = True
+                if cancelled():
+                    _interrupted_evidence()
+                    yield Event(kind="interrupted")
+                    return
+                if action.tool_id == "use_plugin" and result.success and not (result.data or {}).get("already"):
+                    # 插件展开要知情（§12-2 已定）：轻提示，不弹窗不打断
+                    yield Event(kind="notice", text=(result.data or {}).get("human", "插件已展开"))
+                payload = await _offload(self._panel_with_refresh, action, safe, conversation_id)  # 壳侧面板也只拿安全副本
+                if payload is not None:
+                    yield Event(kind="panel", payload=payload)
                 try:
                     notice = skill.post_reply_notice(result)
                 except Exception:
@@ -445,6 +467,7 @@ class AgentLoop:
         final_tool_deltas: list = []
         async for delta in self.provider.astream(final_messages, tools=[]):
             if cancelled():
+                _interrupted_evidence(final_text)
                 yield Event(kind="interrupted")
                 return
             if delta.usage is not None:
@@ -468,6 +491,44 @@ class AgentLoop:
         yield Event(kind="final_reply", text=final_text, payload=self._metrics_payload(usage_acc))
         for notice in post_reply_notices:
             yield Event(kind="notice", text=notice)
+
+    def _record_interrupted(
+        self,
+        messages: list[dict],
+        run_start: int,
+        surface: str | None,
+        safe_tool_content: dict[str, str],
+        sensitive_turn: bool,
+        conversation_id: str | None,
+        partial_text: str = "",
+    ) -> None:
+        """中断路径落史：user + 已完成的工具调用/结果 + 已有部分回复，以「已打断」收尾。
+
+        与正常收尾同一写入格式（_tag_surface + _history_safe_span）；正常路径在 record_messages
+        后直接 return，到不了这里，不会写两遍。悬空的 tool_calls（被打断时还没执行/出结果）
+        补占位 tool 结果——严格校验的 provider（DeepSeek 等）遇悬空 tool_calls 下一轮直接 400。
+        敏感轮次的占位替换由 _history_safe_span 兜底（敏感安全优先于打断标注）。
+        """
+        if not self.history:
+            return
+        span = list(messages[run_start:])
+        answered = {m.get("tool_call_id") for m in span if m.get("role") == "tool"}
+        dangling = [
+            tc["id"]
+            for m in span
+            for tc in (m.get("tool_calls") or [])
+            if tc.get("id") and tc["id"] not in answered
+        ]
+        for tc_id in dangling:
+            span.append({"role": "tool", "tool_call_id": tc_id,
+                         "content": "（执行被中断，未产生结果）"})
+        span.append({"role": "assistant",
+                     "content": f"{partial_text}\n【已打断】" if partial_text else "【已打断】"})
+        span[0] = _tag_surface(span[0], surface)
+        self.history.record_messages(
+            _history_safe_span(span, safe_tool_content, sensitive_turn),
+            conversation_id,
+        )
 
     def _metrics_payload(self, usage: Usage) -> dict:
         """整轮用量 → final_reply 的 payload 里带 metrics（token/cost/elapsed）。

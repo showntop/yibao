@@ -129,6 +129,8 @@ def test_serve_async_voice_interrupt_stops_speaking(tmp_path):
     # 读线程延迟投递 interrupt（播放中途），验证 cancel 一路传到 speak_stream：
     # LLM 快速吐完 3 chunk → 进入播放（每句 50ms，约 0~0.15s）；interrupt 在 ~0.08s 落下
     # → speak_stream 中途见 cancel → stream_interrupted，且无 speaking_done。
+    # 停止分离（P0）：final_reply 已产出，此刻按停 = 只停播报 → speech_stopped，
+    # 不再补发 interrupted（run 已完成，不该标「已打断」）；前端收 speech_stopped 同样回 idle。
     import time
 
     def _delayed_reader(specs):
@@ -167,8 +169,9 @@ def test_serve_async_voice_interrupt_stops_speaking(tmp_path):
     asyncio.run(_go())
     kinds = [m["event"]["kind"] for m in out if m["type"] == "event"]
     assert voice.stream_interrupted
-    assert "speaking_done" not in kinds  # 被打断，无正常收尾
-    assert "interrupted" in kinds  # TTS 阶段打断也要回 idle，否则停止按钮停不住
+    assert "speaking_done" not in kinds  # 被停，无正常收尾
+    assert "speech_stopped" in kinds  # 只停播报也要回 idle，否则停止按钮停不住
+    assert "interrupted" not in kinds  # final_reply 已产出：停止语音 ≠ 取消 run
 
 
 def test_serve_async_voice_interrupt_cancels_listening(tmp_path):

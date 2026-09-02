@@ -3,6 +3,7 @@
 // 大脑掉线清空（未答确认随进程死）。大窗由会话检查器呈现，小窗/面板按 surface 快批。
 import { listen } from "@tauri-apps/api/event";
 import type { BrainEvent, BrainStatusMsg, PendingConfirm } from "../protocol/brain-types";
+import { isStaleRunEvent } from "../lib/run-epoch";
 
 /** 当前确认链支持：普通技能按 skill；后台命令按 command + cwd 精确记忆。 */
 export function canRememberTool(skill: string): boolean {
@@ -68,6 +69,8 @@ export function onPendingConfirms(cb: (l: PendingConfirm[]) => void): () => void
 // 普通浏览器只用于本地 UI QA，没有 Tauri event bridge；避免模块加载时产生无意义的未处理错误。
 if (hasTauriBridge) void listen<BrainEvent>("brain-event", (ev) => {
   const e = ev.payload;
+  // 运行代数闸（P0）：被抢占旧 run 的迟到确认/结果不得再动待批队列（同 brainClient.onBrainEvent）
+  if (isStaleRunEvent(e)) return;
   if (e.kind === "confirmation_needed") {
     // Task 2 攒批：一轮可能多 CONFIRM，actions 带全部待批 action；
     // 兼容旧单条载荷——无 actions 时退化为 [action]（旧 sidecar 里 confirmation_id = action.id）。

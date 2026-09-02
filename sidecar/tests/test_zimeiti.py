@@ -6,6 +6,7 @@
 """
 import asyncio
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,7 @@ from yibao_brain.plugins import LlmChat, get_api, load_plugins
 from yibao_brain.audit import AuditLog
 from yibao_brain.invoker import ToolInvoker
 from yibao_brain.safety import Gate, GatePolicy, RiskClassifier
+from yibao_brain.session_contexts import SessionContextStore
 from yibao_brain.tools import ToolRegistry
 from yibao_brain.work_events import WorkGraphInvocationSink
 from yibao_brain.work_graph import WorkGraphStore
@@ -233,6 +235,122 @@ def test_add_quiet_stripped_before_insert(env):
     assert r.success and r.panel is None
     row = _run(reg, "zimeiti.list", {"quiet": True}).data["rows"][0]
     assert row["title"] == "T2" and "quiet" not in row
+
+
+# ---------- 项目作用域（P0：绑定项目的会话，list/mat_list 默认只出本项目） ----------
+
+
+def _bind_project(data_dir, cid, pid):
+    """会话绑定项目：与底座 SessionContextStore 同一份存储。"""
+    SessionContextStore(str(data_dir / "session_contexts.json")).bind(cid, pid)
+
+
+def _run_in_conv(reg, tid, params, cid):
+    """模拟 loop/panel 直调的 ctx 装配：conversation_id 经 ctx.meta 注入。"""
+    t = reg.get(tid)
+    return t.run(params, replace(t.plugin_ctx, meta={"conversation_id": cid}))
+
+
+def _seed_scoped_topics(reg):
+    ta = _run(reg, "zimeiti.add", {"title": "A 项目选题"}).data["id"]
+    tb = _run(reg, "zimeiti.add", {"title": "B 项目选题"}).data["id"]
+    tc = _run(reg, "zimeiti.add", {"title": "未立项选题"}).data["id"]
+    _run(reg, "zimeiti.update", {"id": ta, "project_id": "proj_a"})
+    _run(reg, "zimeiti.update", {"id": tb, "project_id": "proj_b"})
+    return ta, tb, tc
+
+
+def _seed_material(reg, title, topic_id=""):
+    db = reg.get("zimeiti.mat_list").plugin_ctx.db
+    return db.insert("materials", {"title": title, "topic_id": topic_id,
+                                   "created_at": 1, "updated_at": 1})
+
+
+def test_list_scoped_to_bound_project(env, data_dir):
+    """会话绑定 proj_a：看板只列 proj_a 选题；他项目与未立项选题不进项目作用域。"""
+    reg, _, _ = env
+    ta, _, _ = _seed_scoped_topics(reg)
+    _bind_project(data_dir, "conv1", "proj_a")
+    rows = _run_in_conv(reg, "zimeiti.list", {}, "conv1").data["rows"]
+    assert [r["id"] for r in rows] == [ta]
+
+
+def test_list_unbound_session_sees_all(env, data_dir):
+    """未绑定项目的会话维持现状（全库）：无 meta / 有 conversation_id 但无绑定都算未绑定。"""
+    reg, _, _ = env
+    _seed_scoped_topics(reg)
+    assert len(_run(reg, "zimeiti.list", {}).data["rows"]) == 3
+    assert len(_run_in_conv(reg, "zimeiti.list", {}, "conv_free").data["rows"]) == 3
+
+
+def test_list_scope_global_overrides_binding(env, data_dir):
+    """显式放宽：scope=global 返回全库；project_id 显式指定优先于会话绑定。"""
+    reg, _, _ = env
+    ta, tb, _ = _seed_scoped_topics(reg)
+    _bind_project(data_dir, "conv1", "proj_a")
+    rows = _run_in_conv(reg, "zimeiti.list", {"scope": "global"}, "conv1").data["rows"]
+    assert len(rows) == 3
+    rows = _run_in_conv(reg, "zimeiti.list", {"project_id": "proj_b"}, "conv1").data["rows"]
+    assert [r["id"] for r in rows] == [tb]
+    # 未绑定会话也可显式指定项目
+    rows = _run(reg, "zimeiti.list", {"project_id": "proj_a"}).data["rows"]
+    assert [r["id"] for r in rows] == [ta]
+
+
+def test_mat_list_scoped_via_topic(env, data_dir):
+    """material 无 project_id 列：经 topic_id 反解选题的 project_id 归属；
+    孤儿素材（无 topic）只在全球作用域可见。"""
+    reg, _, _ = env
+    ta, tb, _ = _seed_scoped_topics(reg)
+    m1 = _seed_material(reg, "A 项目素材", ta)
+    _seed_material(reg, "B 项目素材", tb)
+    _seed_material(reg, "孤儿素材")
+    _bind_project(data_dir, "conv1", "proj_a")
+    rows = _run_in_conv(reg, "zimeiti.mat_list", {}, "conv1").data["rows"]
+    assert [r["id"] for r in rows] == [m1]
+
+
+def test_mat_list_scope_global_shows_orphans(env, data_dir):
+    reg, _, _ = env
+    ta, tb, _ = _seed_scoped_topics(reg)
+    _seed_material(reg, "A 项目素材", ta)
+    _seed_material(reg, "B 项目素材", tb)
+    _seed_material(reg, "孤儿素材")
+    _bind_project(data_dir, "conv1", "proj_a")
+    rows = _run_in_conv(reg, "zimeiti.mat_list", {"scope": "global"}, "conv1").data["rows"]
+    assert len(rows) == 3
+
+
+def test_mat_list_scoped_where_topic(env, data_dir):
+    """编辑器素材抽屉的查法（where 按 topic_id 过滤）在项目作用域内仍可用；
+    where 指向他项目选题时项目边界优先，返回空。"""
+    reg, _, _ = env
+    ta, tb, _ = _seed_scoped_topics(reg)
+    m1 = _seed_material(reg, "A 素材 1", ta)
+    _seed_material(reg, "B 素材", tb)
+    _bind_project(data_dir, "conv1", "proj_a")
+    rows = _run_in_conv(reg, "zimeiti.mat_list", {"where": {"topic_id": ta}}, "conv1").data["rows"]
+    assert [r["id"] for r in rows] == [m1]
+    rows = _run_in_conv(reg, "zimeiti.mat_list", {"where": {"topic_id": tb}}, "conv1").data["rows"]
+    assert rows == []
+
+
+def test_panel_refresh_carries_conversation_scope(env, data_dir, tmp_path):
+    """写操作后的看板刷新（panel._emit_refresh_panel）继承会话项目作用域，
+    否则「记个选题」后跟单刷新会把看板冲成全库。"""
+    from types import SimpleNamespace
+
+    from yibao_brain.panel import _emit_refresh_panel
+
+    reg, _, _ = env
+    ta, _, _ = _seed_scoped_topics(reg)
+    _bind_project(data_dir, "conv1", "proj_a")
+    invoker = ToolInvoker(reg, RiskClassifier(), Gate(GatePolicy()), AuditLog(str(tmp_path / "a.db")))
+    agent = SimpleNamespace(invoker=invoker)
+    events = []
+    asyncio.run(_emit_refresh_panel(agent, events.append, "zimeiti.list", "conv1"))
+    panels = [e for e in events if e.kind == "panel"]
+    assert panels and [r["id"] for r in panels[0].payload["data"]["rows"]] == [ta]
 
 
 # ---------- article_save / article_read（版本管理） ----------

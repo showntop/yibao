@@ -3331,3 +3331,131 @@ def test_mobile_state_merges_coding_perm_pending(tmp_path, monkeypatch):
             await asyncio.wait_for(serve_task, 5)
 
     asyncio.run(main())
+
+
+def test_speech_stop_after_final_reply_is_not_run_interrupt(tmp_path):
+    """停止分离（P0）：final_reply 已产出后用户按停止 = 只停 TTS 播报——
+    服务端补发的事件必须是可区分的 speech_stopped，不得把已完成的 run 标成 interrupted。
+    （对照：执行中打断仍是 interrupted，由 test_serve_async_interrupt_stops_run 锁定。）"""
+    from fakes import FakeVoice
+
+    provider = FakeProvider(chunks=["甲一。", "甲二。"], delay=0.01)
+    voice = FakeVoice("你好", stream_delay=0.2)  # 拉长播报窗口，interrupt 落在播报中段
+
+    def _delayed_reader(specs):
+        it = iter(specs)
+
+        def _r():
+            try:
+                msg, delay = next(it)
+            except StopIteration:
+                return None
+            if delay:
+                time.sleep(delay)
+            return msg
+
+        return _r
+
+    out = []
+    _run_async(
+        serve_async(
+            _delayed_reader([
+                ({"id": 1, "type": "run", "text": "说两句", "conversation_id": "conv-a"}, 0.0),
+                ({"type": "interrupt", "conversation_id": "conv-a"}, 0.15),  # final_reply 后、播报中按停
+                (None, 1.0),
+            ]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=provider,
+            voice=voice,
+        )
+    )
+    kinds = [m["event"]["kind"] for m in out if m["type"] == "event"
+             and m.get("conversation_id") == "conv-a"]
+    assert "final_reply" in kinds
+    assert "speech_stopped" in kinds  # 只停播报：可区分事件
+    assert "interrupted" not in kinds  # run 已完成，不得标成已打断
+    assert voice.stream_interrupted is True  # 播报确实被停在中段
+    assert {"type": "run_done", "id": 1, "conversation_id": "conv-a"} in out
+
+
+def test_serve_async_events_carry_run_epoch_and_seq(tmp_path):
+    """运行代数（P0）：同会话每次新 run 分配单调递增 run_epoch；run 流出的每个事件
+    带 run_epoch + seq（seq 在 run 内单调递增），conversation_id 随信封——
+    前端据此丢弃被抢占旧 run 的迟到事件（旧 epoch 不得改 UI）。"""
+    provider = FakeProvider(chunks=["好"])
+    out = []
+
+    def _delayed_reader(specs):
+        it = iter(specs)
+
+        def _r():
+            try:
+                msg, delay = next(it)
+            except StopIteration:
+                return None
+            if delay:
+                time.sleep(delay)
+            return msg
+
+        return _r
+
+    _run_async(
+        serve_async(
+            _delayed_reader([
+                ({"id": 1, "type": "run", "text": "第一句", "conversation_id": "conv-a"}, 0.0),
+                ({"id": 2, "type": "run", "text": "第二句", "conversation_id": "conv-a"}, 0.3),  # run1 收尾后再来
+                ({"id": 3, "type": "run", "text": "别会话", "conversation_id": "conv-b"}, 0.3),
+            ]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=provider,
+        )
+    )
+    evs = [m for m in out if m["type"] == "event"]
+    assert evs, "应至少有 run 事件"
+    a_epochs = sorted({m["event"]["run_epoch"] for m in evs if m.get("conversation_id") == "conv-a"})
+    assert a_epochs == [1, 2]  # 同会话两次 run 代数单调递增
+    b_epochs = {m["event"]["run_epoch"] for m in evs if m.get("conversation_id") == "conv-b"}
+    assert b_epochs == {1}  # 代数 per 会话独立
+    # 每个 (会话, epoch) 内 seq 从 1 起严格递增
+    for conv, epoch in (("conv-a", 1), ("conv-a", 2), ("conv-b", 1)):
+        seqs = [m["event"]["seq"] for m in evs
+                if m.get("conversation_id") == conv and m["event"]["run_epoch"] == epoch]
+        assert seqs == list(range(1, len(seqs) + 1)), f"{conv}#{epoch} seq 应严格递增：{seqs}"
+
+
+def test_serve_async_preempted_run_events_keep_own_epoch(tmp_path):
+    """抢占场景：旧 run 被打断，其迟到事件（含 interrupted）仍盖旧 epoch；
+    新 run 的事件盖更新 epoch——前端凭 epoch 差即可丢弃旧 run 的迟到回复。"""
+    slow = FakeProvider(chunks=["A", "B", "C", "D"], delay=0.05)
+    fast = FakeProvider(chunks=["ok"])
+    state = {"n": 0}
+
+    class _Switch:
+        async def astream(self, messages, tools=None):
+            state["n"] += 1
+            src = slow if state["n"] == 1 else fast
+            async for d in src.astream(messages, tools):
+                yield d
+
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([
+                {"id": 1, "type": "run", "text": "slow", "conversation_id": "conv-a"},
+                {"id": 2, "type": "run", "text": "fast", "conversation_id": "conv-a"},
+            ]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=_Switch(),
+        )
+    )
+    evs = [m for m in out if m["type"] == "event" and m.get("conversation_id") == "conv-a"]
+    interrupted = next(m for m in evs if m["event"]["kind"] == "interrupted")
+    final = next(m for m in evs if m["event"]["kind"] == "final_reply")
+    assert interrupted["event"]["run_epoch"] < final["event"]["run_epoch"]
+    assert all("run_epoch" in m["event"] and "seq" in m["event"] for m in evs)

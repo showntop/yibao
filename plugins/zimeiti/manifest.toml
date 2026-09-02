@@ -123,19 +123,9 @@ artifact_type = "zimeiti.topic"
 ref_from = "data.id"
 metadata_fields = ["params.title", "params.angle", "params.target_platform"]
 
-[[tool]]
-id = "list"
-label = "选题看板"
-type = "db"
-description = "列出选题看板（按更新时间倒序，最多 100 条）"
-risk = "L0"
-panel = "zimeiti:board"
-explicit = true   # 对话点名「看看选题看板」→ 宿主可弹面板（写操作 refresh 跟单不抬档）
-[tool.db]
-op = "query"
-table = "topics"
-order = "updated_at DESC"
-limit = 100
+# list 已由 tools/list_topics.py 代码承接（2026-09-02 项目作用域：会话绑定项目时默认
+# 只列本项目选题，scope="global"/project_id 显式放宽；scope/project_id 参数在代码
+# openai_schema 里声明）
 
 [[tool]]
 id = "open_editor"
@@ -181,18 +171,9 @@ auto = {updated_at = "unixts"}
 
 # delete 已由 tools/delete_topic.py 代码承接（级联清理稿件文件/素材关联/发布数据）
 
-[[tool]]
-id = "mat_list"
-label = "素材库"
-type = "db"
-description = "列出素材库（标题/摘要/标签，按更新时间倒序，最多 100 条）。写稿前先看有没有可当论据的素材，有就 mat_get 取正文"
-risk = "L0"
-panel = "zimeiti:materials"
-[tool.db]
-op = "query"
-table = "materials"
-order = "updated_at DESC"
-limit = 100
+# mat_list 已由 tools/mat_list.py 代码承接（2026-09-02 项目作用域：materials 无
+# project_id 列，经 topic_id 反解选题归属；绑定项目的会话默认只列本项目素材，
+# 孤儿素材只在 scope="global" 可见；scope/project_id 参数在代码 openai_schema 里声明）
 
 [[tool]]
 id = "mat_get"

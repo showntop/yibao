@@ -13,9 +13,33 @@ def test_classifier_uses_skill_default():
 
 
 def test_classifier_escalates_on_dangerous_params():
+    """关键词升级只作用于有副作用的工具（base L2+）：L2 命中危险词升到 L3。"""
     c = RiskClassifier(dangerous_keywords=["delete", "format", "payment"])
-    a = Action(tool_id="x", params={"target": "delete everything"}, risk=RiskLevel.L1_LOW)
+    a = Action(tool_id="x", params={"target": "delete everything"}, risk=RiskLevel.L2_MEDIUM)
     assert c.classify(a, None) == RiskLevel.L3_HIGH
+
+
+def test_classifier_no_escalation_for_readonly_tools():
+    """只读/低危工具（L0/L1）不按查询文本升级：参数里的危险词是「谈论危险」而非
+    「执行危险」（如 web_search 查「支付安全」），升级到 L3 属于误伤。"""
+    c = RiskClassifier()
+    l1 = EchoTool()  # default_risk = L1_LOW（web_search/extract_url 同级）
+    a = Action(tool_id="web_search", params={"query": "移动支付 payment 安全"})
+    assert c.classify(a, l1) == RiskLevel.L1_LOW
+    l0 = EchoTool()
+    l0.default_risk = RiskLevel.L0_READONLY
+    assert c.classify(a, l0) == RiskLevel.L0_READONLY
+    # 无 skill 声明时同样按 base 级别裁决：L1 base 不升级
+    assert c.classify(Action(tool_id="x", params={"q": "payment"}, risk=RiskLevel.L1_LOW), None) == RiskLevel.L1_LOW
+
+
+def test_classifier_escalates_side_effect_tool():
+    """有副作用的工具（L2+）维持现行为：参数命中危险词照常升级到 L3。"""
+    c = RiskClassifier()
+    t = EchoTool()
+    t.default_risk = RiskLevel.L2_MEDIUM
+    a = Action(tool_id="danger", params={"target": "delete everything"})
+    assert c.classify(a, t) == RiskLevel.L3_HIGH
 
 
 def test_gate_auto_for_low_risk():

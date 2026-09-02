@@ -184,6 +184,11 @@ export function usePetEvents(ctx: PetEventsCtx) {
         state.value = "idle";
         clearExplicit();
         break;
+      case "speech_stopped":
+        // 只停播报：final_reply 已完整落气泡，run 不算打断（停止语音 ≠ 取消任务）；
+        // 与 speaking_done 同效——回 idle，不标 halted、不插「已打断」标记
+        state.value = "idle";
+        break;
       case "speaking_done":
         state.value = "idle";
         break;

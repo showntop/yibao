@@ -284,6 +284,11 @@ export function useChatFlow(deps: ChatFlowDeps) {
         }
         state.value = "idle";
         break;
+      case "speech_stopped":
+        // 只停播报：final_reply 已完整落气泡，run 不算打断（停止语音 ≠ 取消任务）；
+        // 与 speaking_done 同效——回 idle，气泡不留「已打断」痕迹
+        state.value = "idle";
+        break;
       case "speaking_done":
         state.value = "idle";
         break;

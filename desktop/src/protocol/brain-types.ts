@@ -10,6 +10,8 @@ export type BrainEventKind =
   | "final_reply"
   | "final_reply_chunk"
   | "interrupted"
+  /** 只停播报：final_reply 已产出后按停止 ≠ 取消 run（前端只停播报 UI，不标「已打断」） */
+  | "speech_stopped"
   | "error"
   | "listening"
   | "listening_done"
@@ -108,6 +110,10 @@ export interface BrainEvent {
   /** M3 会话归属：run 发起时确定的会话 id，随事件透传（流式中切会话不影响归属）。
    *  空 = 无归属事件（panel/notice 等全局信号，两窗都渲染） */
   conversationId?: string;
+  /** 运行代数（P0）：本会话第几次 run（单调递增）；缺省 = 非 run 事件/旧路径，一律放行 */
+  run_epoch?: number;
+  /** run 内事件序号（单调递增）；旧 epoch 判定见 lib/run-epoch */
+  seq?: number;
   /** 自主权档位（reminder 类主动事件；缺省按 full 处理，兼容旧 sidecar） */
   level?: "quiet" | "bubble" | "full";
   /** morning_recap 深链接：反刍提醒携带 type/day 供 deep-link */
