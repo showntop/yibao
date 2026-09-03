@@ -28,7 +28,6 @@ from yibao_brain.tools import Tool
 _TIMEOUT = 90            # 图像生成单镜最长 90s（cogview 实测 5–20s）
 _MAX_DOWNLOAD = 32 * 1024 * 1024  # 图像下载上限 32MB（防失控响应撑爆内存）
 _SIZE = (1080, 1920)     # 竖屏 9:16（与占位卡/渲染链一致）
-_GEN_SIZE = "720x1440"   # 请求生成尺寸（cogview 竖屏档；出来再居中裁到 9:16）
 _PROMPT_SUFFIX = "，竖屏科普视频插画，扁平矢量风，高对比，画面干净，无文字无水印"
 _UA = "yibao-visual-generate/1.0"
 
@@ -147,6 +146,8 @@ class VisualGenerate(Tool):
             )
         base_url = config.image_base_url()
         model = config.image_model()
+        gen_size = config.image_size()    # cogview 吃像素写法（720x1440）；Agnes 系吃档位（2K）
+        gen_ratio = config.image_ratio()  # Agnes 系的档位配宽高比（9:16 竖屏）；空=不传
         out_dir = self._plugin_root / "visuals" / tid / f"v{version}"
         try:
             out_dir.mkdir(parents=True, exist_ok=True)
@@ -158,6 +159,7 @@ class VisualGenerate(Tool):
             visual = str(shot.get("visual") or shot.get("narration") or "").strip() or f"第 {idx} 镜"
             out_path, error = _generate_shot(
                 base_url, api_key, model, visual, out_dir / f"s{idx}.png",
+                gen_size=gen_size, gen_ratio=gen_ratio,
             )
             if error:
                 failed.append({"idx": idx, "error": error})
@@ -247,14 +249,14 @@ def _select_shots(shots: list, raw) -> tuple[list, str]:
     return [by_idx[idx] for idx in wanted], ""
 
 
-def _generate_shot(base_url: str, api_key: str, model: str, visual: str, out_path: Path) -> tuple[Path, str]:
+def _generate_shot(base_url: str, api_key: str, model: str, visual: str, out_path: Path,
+                   gen_size: str = "720x1440", gen_ratio: str = "") -> tuple[Path, str]:
     """单镜生图：API 生成 → 取回（url/b64）→ Pillow 裁 9:16 规整 1080×1920 PNG。返回 (path, error)。"""
     try:
-        resp = _post_json(
-            f"{base_url}/images/generations",
-            {"model": model, "prompt": visual + _PROMPT_SUFFIX, "size": _GEN_SIZE},
-            api_key,
-        )
+        payload: dict = {"model": model, "prompt": visual + _PROMPT_SUFFIX, "size": gen_size}
+        if gen_ratio:  # Agnes 系方言：档位 size + ratio（9:16 竖屏原生支持）
+            payload["ratio"] = gen_ratio
+        resp = _post_json(f"{base_url}/images/generations", payload, api_key)
         items = resp.get("data") if isinstance(resp, dict) else None
         if not items or not isinstance(items, list):
             return None, f"图像 API 返回缺 data：{str(resp)[:200]}"

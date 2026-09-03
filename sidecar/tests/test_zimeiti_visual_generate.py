@@ -161,6 +161,26 @@ def test_visual_generate_prefers_b64_over_url(env, monkeypatch):
     assert Path(r.data["cards"][0]["path"]).is_file()
 
 
+def test_visual_generate_agnes_dialect_size_ratio(env, monkeypatch):
+    """Agnes 方言：YIBAO_IMAGE_SIZE=2K + YIBAO_IMAGE_RATIO=9:16 → payload 带档位与宽高比
+    （而非 cogview 的像素写法）；档位 size 与 ratio 都进请求体。"""
+    monkeypatch.setenv("YIBAO_IMAGE_SIZE", "2K")
+    monkeypatch.setenv("YIBAO_IMAGE_RATIO", "9:16")
+    reg = env
+    tid = _topic_with_storyboard(reg)
+    seen = []
+
+    def fake_post(url, payload, api_key):
+        seen.append(payload)
+        return {"data": [{"b64_json": _tiny_png_b64()}]}
+
+    g = _tool_mod(reg)
+    monkeypatch.setitem(g, "_post_json", fake_post)
+    r = _run(reg, "zimeiti.visual_generate", {"topic_id": tid, "shots": [1]})
+    assert r.success, r.error
+    assert seen and seen[0]["size"] == "2K" and seen[0]["ratio"] == "9:16"
+
+
 def test_visual_generate_not_registered_without_key(tmp_path, monkeypatch):
     """无图像 key（含回退链全空）→ tool 不注册：预检的 assets 段保持「降级」真相。"""
     for name in ("YIBAO_IMAGE_API_KEY", "YIBAO_VISION_API_KEY", "YIBAO_GLM_API_KEY",

@@ -183,6 +183,16 @@ def image_model() -> str:
     return os.environ.get("YIBAO_IMAGE_MODEL") or "cogview-4-250304"
 
 
+def image_size() -> str:
+    """图像生成请求尺寸：cogview 吃像素写法（720x1440），Agnes 系吃档位（1K/2K）。"""
+    return os.environ.get("YIBAO_IMAGE_SIZE") or "720x1440"
+
+
+def image_ratio() -> str:
+    """宽高比方言：Agnes 系的 size 档位配 ratio（如 9:16 竖屏）；空 = 不传该字段。"""
+    return os.environ.get("YIBAO_IMAGE_RATIO") or ""
+
+
 def computer_use_enabled() -> bool:
     """computer-use 视觉兜底仅 GLM 端点可用（DeepSeek 等无视觉模型时自动禁用）。"""
     return "bigmodel" in vision_base_url()
