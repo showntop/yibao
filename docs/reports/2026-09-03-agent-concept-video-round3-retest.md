@@ -127,3 +127,11 @@
 回归：sidecar **1490 passed**；desktop vitest **415 passed**、vue-tsc 干净。
 
 剩余 backlog：N4（音轨修整能力化，主场景已被 N5 fit 吸收）；真图 provider、deck pack 真实 pptx——第四轮审计的入场券。
+
+## 十、入场券落地（2026-09-03 晚，commit 781bc31）
+
+- **真图 provider**（`zimeiti.visual_generate`）：OpenAI images 兼容端点（缺省智谱 cogview），Pillow 裁 9:16 规整 1080×1920；与占位卡同一 `asset.visual` 合同，有 key 才注册。实机冒烟确认端点/鉴权/协议正确（用户账户图像余额 429 属资源问题，错误人话上报）。
+- **deck pack**（`plugins/deck`）：六段真实产物链（简报→主张→故事线→页面→视觉→校验→导出），`export_pptx` 用 python-pptx 真实构建并重开读回校验页数；全链经 invoker + outbox 把 `deck.presentation` 推进到 `completed`——同一内核跑通第二领域，不改 OS schema。
+- **附带修的隐性坑**：acceptance 的 artifact pattern 是跨插件全局匹配，deck 类型撞上 video 段宽松词（`visual`/`claim`/`doc`/`export`）→ 碰撞段锚定类型前缀（`test_work_graph.py`/`test_durable_execution.py` 的合成类型同步对齐真实插件类型名）。
+
+回归：sidecar **1500 passed**。第四轮审计可以开跑了。
