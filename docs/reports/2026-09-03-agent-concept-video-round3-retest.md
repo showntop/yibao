@@ -135,3 +135,20 @@
 - **附带修的隐性坑**：acceptance 的 artifact pattern 是跨插件全局匹配，deck 类型撞上 video 段宽松词（`visual`/`claim`/`doc`/`export`）→ 碰撞段锚定类型前缀（`test_work_graph.py`/`test_durable_execution.py` 的合成类型同步对齐真实插件类型名）。
 
 回归：sidecar **1500 passed**。第四轮审计可以开跑了。
+
+## 十一、Agnes 实机接入验证（2026-09-03 深夜，commit eafe5ad）
+
+**配置方言已兼容**：Agnes images 端点不吃像素尺寸只吃档位（`1K/2K/4K`）+ 宽高比字段 → 新增 `YIBAO_IMAGE_SIZE`（档位）与 `YIBAO_IMAGE_RATIO`（如 `9:16`）两个环境变量进 `config.py` / `visual_generate.py` payload。用户 key 已贴入 `sidecar/.env`（`apihub.agnes-ai.com/v1`，model `agnes-image-2.1-flash`，2K+9:16）。
+
+**模块级冒烟**：直调 `visual_generate` 19.6s 出 1080×1920 PNG（1.8MB，内容与 prompt 相符）。
+
+**实机全链路（三轮复测 topic `ce61cf97…`）**：
+1. `visual_generate` 全 7 镜逐镜出真图 → `visuals/<topic>/v4/s1–s7.png`，全部 1080×1920、每张约 20s（21:01–21:03 连续落盘）；
+2. 时间线重组 → `render_save` 渲出 `renders/<topic>/v2.mp4`（56.73s，h264+aac，1080×1920，2.5MB）；
+3. 抽帧验证（第 30/600 帧）确认真图画面进成片，与分镜吻合（s1 三图标钩子镜、s4 RPA 机械臂镜）。
+
+**出图质量观察**（属生成模型，非链路）：中文文字大体正确；s1 标题「会聊天 ≠ 会干活」重复两行，s4 石碑上有装饰性乱码符号——可接受，如需可在 prompt 里加强「单行标题」约束。
+
+**过程中的两个非链路发现**：
+- KimiCU 合成点击静默落空：窗口曾被挪到 `{900,150}`，右缘 1940pt 超出 1440pt 物理屏，右侧按钮（含门卡按印）全在屏外，CGEvent 报 ok 但实际不落。挪回屏内即恢复。**操作教训：合成点击前必须核对 window_bounds 是否在屏内**。
+- UI 小疑点（未定性）：最终交付回执消息在 GUI 只渲染出「参考了 2 项」与操作按钮，正文区域空白。产物硬验证不依赖该回执，记录待查。
