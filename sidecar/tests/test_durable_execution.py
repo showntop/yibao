@@ -32,11 +32,11 @@ def _prepare_video(graph: WorkGraphStore, tmp_path) -> None:
 
 
 def _prepare_deck(graph: WorkGraphStore, tmp_path) -> None:
-    _provide(graph, "brief.presentation", "research.claim", "deck.storyline")
+    _provide(graph, "brief.presentation", "deck.claim_set", "deck.storyline")
     graph.create_workspace("deck", "Agent OS 产品架构 PPT", str(tmp_path / "deck"))
     for artifact_type, ref in (
         ("brief.presentation", "brief"),
-        ("research.claim", "claims"),
+        ("deck.claim_set", "claims"),
         ("deck.storyline", "storyline"),
     ):
         graph.attach_external_artifact("deck", artifact_type, ref)

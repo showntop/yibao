@@ -1,0 +1,47 @@
+# deck 插件：演示文稿制作链（简报 → 主张 → 故事线 → 页面 → 视觉 → 校验 → 导出真实 pptx）。
+# 领域流程不进入 OS 内核：本包只提供 Artifact schema + provider 能力；
+# 内核侧 deck.presentation WorkflowDefinition（core 内置）的各段 acceptance 由本包产物满足。
+id = "deck"
+name = "演示文稿"
+description = "演示文稿制作：简报立项 → 主张论据 → 故事线 → 页面组装 → 视觉规范 → 校验 → 导出真实 pptx"
+capabilities = ["db", "blobs"]   # blobs：故事线/页面文档走宿主 content-addressed store
+
+# 代码承接：tools/ 下每个 .py 提供 make_tools(ctx)（加载器逐文件加载）
+[code]
+entry = "tools"
+
+# deck_stages：每阶段产物一行（kind 区分 storyline/document/visual/report），
+# content_path 存 blob:// 引用；exports 表存真实导出文件路径。
+[[table]]
+name = "decks"
+columns = [
+  {name = "id", type = "text", pk = true},
+  {name = "title", type = "text"},
+  {name = "audience", type = "text", default = ""},
+  {name = "goal", type = "text", default = ""},
+  {name = "page_count", type = "integer", default = 12},
+  {name = "created_at", type = "integer"},
+  {name = "updated_at", type = "integer"},
+]
+
+[[table]]
+name = "deck_stages"
+columns = [
+  {name = "id", type = "text", pk = true},
+  {name = "deck_id", type = "text"},
+  {name = "kind", type = "text"},           # claims / storyline / document / visual / report
+  {name = "version", type = "integer"},
+  {name = "content_path", type = "text"},   # blob://sha256/…
+  {name = "created_at", type = "integer"},
+]
+
+[[table]]
+name = "deck_exports"
+columns = [
+  {name = "id", type = "text", pk = true},
+  {name = "deck_id", type = "text"},
+  {name = "version", type = "integer"},
+  {name = "path", type = "text"},           # 真实 .pptx 文件路径
+  {name = "slide_count", type = "integer", default = 0},
+  {name = "created_at", type = "integer"},
+]

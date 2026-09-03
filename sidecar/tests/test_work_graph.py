@@ -151,18 +151,18 @@ def test_workflow_run_restores_after_database_reopen(tmp_path):
     path = tmp_path / "work_graph.db"
     graph = WorkGraphStore(str(path))
     _provide(
-        graph, "deck.export.pptx", "brief.presentation", "research.claim",
-        "deck.storyline", "deck.slide", "visual.image", "quality.validation",
+        graph, "deck.export.pptx", "brief.presentation", "deck.claim_set",
+        "deck.storyline", "deck.slide", "deck.visual_spec", "quality.validation",
     )
     graph.create_workspace("deck", "董事会 PPT", str(tmp_path / "deck"))
     graph.attach_external_artifact("deck", "deck.export.pptx", "final.pptx")
     assert graph.workspace_view("deck")["workflow_run"]["status"] != "completed"
     for artifact_type, ref in (
         ("brief.presentation", "brief"),
-        ("research.claim", "claims"),
+        ("deck.claim_set", "claims"),
         ("deck.storyline", "storyline"),
         ("deck.slide", "slide-1"),
-        ("visual.image", "hero"),
+        ("deck.visual_spec", "hero"),
         ("quality.validation", "qa"),
     ):
         graph.attach_external_artifact("deck", artifact_type, ref)
@@ -359,7 +359,7 @@ def test_declared_artifacts_edge_and_checkpoint_apply_as_one_ordered_contract(tm
 def test_dag_parallel_gates_and_checkpoint_survive_reopen(tmp_path):
     path = tmp_path / "work_graph.db"
     graph = WorkGraphStore(str(path))
-    _provide(graph, "deck.export.pptx", "brief.presentation", "research.claim", "deck.storyline")
+    _provide(graph, "deck.export.pptx", "brief.presentation", "deck.claim_set", "deck.storyline")
     graph.create_workspace("deck", "Agent 策略 PPT", str(tmp_path / "deck"))
     try:
         # 绕过依赖投入后续产物，只能 blocked，不能伪造前置完成。
@@ -370,7 +370,7 @@ def test_dag_parallel_gates_and_checkpoint_survive_reopen(tmp_path):
 
         for artifact_type, ref in (
             ("brief.presentation", "brief"),
-            ("research.claim", "claims"),
+            ("deck.claim_set", "claims"),
             ("deck.storyline", "storyline"),
         ):
             graph.attach_external_artifact("deck", artifact_type, ref)

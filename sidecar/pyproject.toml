@@ -35,6 +35,7 @@ dependencies = [
     # 手机伴生端 HTTP 面（P1）：扩展桥 + /v1/* 移动 API + SSE。程序化嵌入 serve_async
     # 的 asyncio loop（AppRunner/TCPSite），无 uvicorn 信号处理器/事件循环集成坑。
     "aiohttp>=3.10,<4",
+    "python-pptx>=1.0.2",
 ]
 
 [project.optional-dependencies]

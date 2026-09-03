@@ -678,7 +678,8 @@ flowchart TB
 - 已实现分叉汇合、跳步阻塞、多产物数量验收、checkpoint CAS 与重启恢复；
 - 已实现通用 DurableExecution、执行中 checkpoint、协作式取消、provider fallback 与插件 capability 隔离；
 - Home 卡面已改读活跃 WorkflowRun 的并行/阻塞状态，不再把阶段序号当成内核真相；
-- 未完成：真实大文件 provider、人工 acceptance report、条件分支、成本/配额和多设备 worker lease。
+- 2026-09-03：视频链补齐真图 provider 合同（`zimeiti.visual_generate`，与占位卡同一 `asset.visual` 合同、有图像 key 才注册以免骗过预检）；新增 `plugins/deck` 真 pptx 链（brief→claims→storyline→compose→visual→validate→export_pptx），`deck.presentation` 全程经 invoker+outbox 推进到 completed——内核泛化第一次有真实第二领域证据。教训：acceptance 的 artifact pattern 是跨插件全局匹配，deck 类型曾撞上 video 段的宽松词（`visual`/`claim`/`doc`/`export`），碰撞段已锚定到类型前缀；
+- 未完成：人工 acceptance report、条件分支、成本/配额和多设备 worker lease。
 
 ### Phase 4：通用 Artifact Workbench Shell
 

@@ -162,6 +162,27 @@ def vision_base_url() -> str:
     )
 
 
+def image_api_key() -> str:
+    """图像生成 provider key（视频链真图 provider 用）：独立配置优先，回退视觉/主 provider。"""
+    return (
+        os.environ.get("YIBAO_IMAGE_API_KEY")
+        or vision_api_key()
+    )
+
+
+def image_base_url() -> str:
+    """图像生成端点（OpenAI images 兼容：POST {base}/images/generations）。"""
+    return (
+        os.environ.get("YIBAO_IMAGE_BASE_URL")
+        or vision_base_url()
+    ).rstrip("/")
+
+
+def image_model() -> str:
+    """图像生成模型：缺省智谱 cogview-4（支持竖屏尺寸）；OpenAI 兼容端点自行覆盖。"""
+    return os.environ.get("YIBAO_IMAGE_MODEL") or "cogview-4-250304"
+
+
 def computer_use_enabled() -> bool:
     """computer-use 视觉兜底仅 GLM 端点可用（DeepSeek 等无视觉模型时自动禁用）。"""
     return "bigmodel" in vision_base_url()

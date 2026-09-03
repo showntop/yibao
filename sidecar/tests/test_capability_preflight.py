@@ -388,14 +388,19 @@ def test_stage_degraded_only_when_all_providers_degraded(tmp_path):
 # ---------- 验收锚点：真实 zimeiti 插件声明 ----------
 
 
-def test_real_zimeiti_plugin_covers_full_video_chain(tmp_path):
+def test_real_zimeiti_plugin_covers_full_video_chain(tmp_path, monkeypatch):
     """加载真实 plugins/ 目录建索引：zimeiti 九种产出覆盖 video.explainer 全链。
 
     storyboard_save 声明 video.storyboard + video.shot；voice_save 声明 voice.track、
     visual_card_save（降级视觉卡）声明 asset.visual；timeline_save 声明
     timeline.composition（compose 段）、render_save 声明 video.render（deliver 段）→
     八段全 available，missing 为空，run 判 ready（preflight 全链就绪的验收锚点）。
+    本测试删除图像 key（真图 provider visual_generate 有 key 才注册），钉住 assets 段的
+    「降级」真相不被本机 .env 里的真实 key 翻转。
     """
+    for name in ("YIBAO_IMAGE_API_KEY", "YIBAO_VISION_API_KEY", "YIBAO_GLM_API_KEY",
+                 "YIBAO_LLM_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
     from yibao_brain.durable_execution import DurableExecutionEngine
     from yibao_brain.llm import FakeProvider
     from yibao_brain.memory import FakeMemory
@@ -415,10 +420,11 @@ def test_real_zimeiti_plugin_covers_full_video_chain(tmp_path):
     load_plugins(REPO_ROOT / "plugins", reg, memory=FakeMemory(), http=_Http(),
                  llm=LlmChat(FakeProvider()), durable_engine=engine)
     index = build_capability_index(reg.list())
-    assert set(index) == {
+    # zimeiti 九种产出覆盖 video.explainer 全链（index 是全集：deck 等其它插件也在其中）
+    assert {
         "zimeiti.topic", "video.script", "research.evidence", "video.storyboard", "video.shot",
         "voice.track", "asset.visual", "timeline.composition", "video.render",
-    }
+    } <= set(index)
     assert index["video.storyboard"][0]["tool_id"] == "zimeiti.storyboard_save"
     assert index["video.shot"][0]["tool_id"] == "zimeiti.storyboard_save"
     assert index["voice.track"][0]["tool_id"] == "zimeiti.voice_save"
