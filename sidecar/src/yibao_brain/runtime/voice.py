@@ -130,8 +130,9 @@ class VoiceDomain:
                     _vev({"kind": "speaking_done"})
                 _done()
                 return
-            # 连续会话的 run_done 由本函数在会话结束时发（每轮结束就发会让前端以为请求完结）
-            await ctx.stream_agent(text, rid, cancel, surface, conversation_id, emit_done=not continuous)
+            # 连续会话的 run_done 由本函数在会话结束时发（每轮结束就发会让前端以为请求完结）；
+            # 语音会话 tts=True：回答要播报（文本 run 默认不播，P1-06）。
+            await ctx.stream_agent(text, rid, cancel, surface, conversation_id, emit_done=not continuous, tts=True)
             if not continuous:
                 return
             if cancel.is_set():

@@ -22,6 +22,8 @@ Work Graph 投影（foreach_from 扇出，同 storyboard_save 先例）：
 """
 import json
 import os
+import shutil
+import subprocess
 import time
 from pathlib import Path
 
@@ -30,6 +32,10 @@ from yibao_brain.tools import Tool
 
 _KEEP_VERSIONS = 20  # 每选题保留的 timeline 版本数上限（同 storyboards 治理先例）
 _RESOLUTION = {"width": 1080, "height": 1920}  # 竖屏 9:16（与 visual_cards 产物一致）
+_TIMEOUT = 30  # ffprobe 单文件实测超时
+# 可测试性接缝：测试经模块 globals 替换（同 voice_save 先例）
+_which = shutil.which
+_run_cmd = subprocess.run
 
 
 class TimelineSave(Tool):
@@ -117,6 +123,7 @@ class TimelineSave(Tool):
                 "topic_id": tid, "storyboard_version": version,
             })
         }
+        ffprobe_bin = _which("ffprobe")  # 没有 ffprobe 时回退入库元数据（clip 里标来源）
         clips, missing_visual, missing_voice = [], [], []
         for shot in shots:
             idx = int(shot["idx"])
@@ -128,10 +135,15 @@ class TimelineSave(Tool):
             track = voice.get(idx)
             track_path = Path(str(track["path"])) if track else None
             if track_path is not None and track_path.is_file():
-                duration = float(track["duration_sec"])
+                # 时长不信入库元数据（N3）：文件可能在入库后被外部修改（如补静音），
+                # 组装前 ffprobe 实测；实测不可用才回退 duration_sec 并在 clip 标注来源。
+                measured = _probe_duration(ffprobe_bin, track_path)
+                duration = measured if measured is not None else float(track["duration_sec"])
+                duration_source = "measured" if measured is not None else "metadata"
                 silent = False
             else:  # 无音轨（空口播跳过镜 / 音轨文件丢失）：静音镜回退分镜时长
                 duration = float(shot["duration"])
+                duration_source = "storyboard"
                 silent = True
                 missing_voice.append(idx)
             clips.append({
@@ -142,6 +154,7 @@ class TimelineSave(Tool):
                 "audio_ref": None if silent else f"{tid}#s{idx}#voice",
                 "audio_path": None if silent else str(track_path),
                 "duration": round(duration, 3),
+                "duration_source": duration_source,
                 "narration": str(shot.get("narration") or ""),
                 "silent": silent,
             })
@@ -220,6 +233,21 @@ class TimelineSave(Tool):
                 ctx.db.delete("timelines", str(row["id"]))
         except Exception:
             pass
+
+
+def _probe_duration(ffprobe_bin: str | None, path: Path) -> float | None:
+    """ffprobe 实测音频文件时长（秒，3 位小数）；无 ffprobe / 失败 / 解析异常一律 None（调用方回退）。"""
+    if not ffprobe_bin:
+        return None
+    try:
+        r = _run_cmd([ffprobe_bin, "-v", "error", "-show_entries", "format=duration",
+                      "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+                     capture_output=True, text=True, timeout=_TIMEOUT, check=False)
+        if r.returncode != 0:
+            return None
+        return round(float(r.stdout.strip()), 3)
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None
 
 
 def _load_latest_storyboard(ctx, tid: str) -> tuple[tuple, str]:

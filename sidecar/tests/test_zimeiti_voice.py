@@ -133,6 +133,18 @@ def test_voice_save_reports_missing_binaries(env, monkeypatch):
     assert not r.success and "afconvert" in r.error
 
 
+def test_voice_save_fit_requires_ffmpeg(env, monkeypatch):
+    """fit=true 才刚需 ffmpeg：缺 ffmpeg 且 fit → success=False 点名 ffmpeg；不 fit 不受影响。"""
+    reg = env
+    tid = _topic_with_storyboard(reg)
+    mod_globals = type(reg.get("zimeiti.voice_save")).run.__globals__
+    real_which = mod_globals["_which"]
+    monkeypatch.setitem(mod_globals, "_which",
+                        lambda name: None if name == "ffmpeg" else real_which(name))
+    r = _run(reg, "zimeiti.voice_save", {"topic_id": tid, "fit": True})
+    assert not r.success and "ffmpeg" in r.error
+
+
 # ---------- 真实合成（skipif 保护） ----------
 
 
@@ -185,6 +197,48 @@ def test_voice_save_shot_filter_and_json_string(env):
     assert r.success and [t["idx"] for t in r.data["tracks"]] == [3]
     rows = _db(reg).query("voice_tracks", where={"topic_id": tid})
     assert len(rows) == 1 and rows[0]["shot_idx"] == 3
+
+
+# ---------- N5：fit 目标时长收敛（真实二进制） ----------
+
+
+@needs_audio_bins
+def test_voice_save_fit_pads_short_track(env):
+    """fit=true：实测短于分镜目标 → 尾补静音（apad）收敛到目标；库存的是收敛后实测时长。"""
+    reg = env
+    shots = [{"idx": 1, "narration": "好。", "duration": 5, "visual": "卡"}]  # 一字口播远短于 5s
+    tid = _topic_with_storyboard(reg, shots)
+    r = _run(reg, "zimeiti.voice_save", {"topic_id": tid, "fit": True})
+    assert r.success, r.error
+    t = r.data["tracks"][0]
+    assert t["fit"] == "padded" and t["target_sec"] == 5
+    assert abs(t["duration_sec"] - 5) < 0.5  # 收敛后实测 ≈ 目标
+    row = _db(reg).query("voice_tracks", where={"topic_id": tid})[0]
+    assert row["duration_sec"] == pytest.approx(t["duration_sec"])
+
+
+@needs_audio_bins
+def test_voice_save_fit_over_leaves_track_unchanged(env):
+    """超目标 >15%：不毁音不蒙混——标 over、保留原实测时长，时长问题回给上游改文案。"""
+    reg = env
+    shots = [{"idx": 1, "narration": "这一镜的口播内容写得相当长，长到一秒的目标根本装不下。", "duration": 1, "visual": "卡"}]
+    tid = _topic_with_storyboard(reg, shots)
+    r = _run(reg, "zimeiti.voice_save", {"topic_id": tid, "fit": True})
+    assert r.success, r.error
+    t = r.data["tracks"][0]
+    assert t["fit"] == "over" and t["target_sec"] == 1
+    assert t["duration_sec"] > 1.15  # 原样保留，没被变速毁音
+
+
+@needs_audio_bins
+def test_voice_save_fit_off_by_default(env):
+    """不传 fit：不收敛——target_sec 为空、fit=asis，行为与旧版一致。"""
+    reg = env
+    tid = _topic_with_storyboard(reg)
+    r = _run(reg, "zimeiti.voice_save", {"topic_id": tid, "shots": [1]})
+    assert r.success, r.error
+    t = r.data["tracks"][0]
+    assert t["fit"] == "asis" and t["target_sec"] is None
 
 
 @needs_audio_bins

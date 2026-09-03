@@ -257,6 +257,12 @@ function onPanelAvailable(surface: CapabilitySurfaceEvent) {
     return;
   }
   if (p === "peek") {
+    // 有待按印的闸门时 Peek 让位（N2）：瞬态探窗不得盖住待决动作——落活动轨，批完可点开
+    if (approvalCount.value > 0) {
+      activityFeed.value.push(surface);
+      if (activityFeed.value.length > 12) activityFeed.value.shift();
+      return;
+    }
     // 探窗浮层：不重排主屏，背后对话仍可见；Esc / 点空白 / 完成动作缩回原锚点
     peekSurface.value = surface;
     peekPanel.value = sessionStore.surface.getPanel();
@@ -350,6 +356,11 @@ function toggleFocus() {
 
 // 待批准数：顶栏「主屏」徽标（收件箱有待处理的事，一眼可见）
 const approvalCount = ref(0);
+
+// 闸门出现即收 Peek（N2）：待决动作优先于瞬态预览——Peek 不得盖住按印卡
+watch(approvalCount, (n, prev) => {
+  if (n > 0 && prev === 0) closePeek();
+});
 
 // 按印定位信号：收件箱 toast 点击 → 递增传给 HomeChat（滚到底部并脉冲对话流里的闸门卡），
 // 修复 toast 原地跳转、闸门卡找不到的死路

@@ -1,14 +1,14 @@
 <script setup lang="ts">
 // 家态 Workspace / Mission 卡：当前会话显式绑定工作语境；领域阶段由 Workflow Pack
 // 投影提供，组件不再知道视频九段。真正接 WorkflowRun 后保持同一卡面合同。
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import HomeWidget from "./HomeWidget.vue";
 import { useProject } from "../composables/useProject";
 import { projectCardFace, projectTouchLabel } from "../lib/home/project-card.ts";
 import { durableCancel, durableResume } from "../lib/brain";
 
 const emit = defineEmits<{ chat: [draft: string] }>();
-const props = defineProps<{ sessionId?: string }>();
+const props = defineProps<{ sessionId?: string; busy?: boolean }>();
 const { current, projects, switchTo, refresh } = useProject(() => props.sessionId);
 
 const face = computed(() => (current.value ? projectCardFace(current.value) : null));
@@ -17,8 +17,18 @@ const others = computed(() =>
   projects.value.filter((p) => p.id !== current.value?.id).slice(0, 2),
 );
 
+// 运行中切换需确认（N1）：会话有任务在跑时点「切换」先变两步确认，4s 不点回落
+const confirmingId = ref("");
+let confirmTimer: ReturnType<typeof setTimeout> | null = null;
 function onSwitch(id: string) {
-  void switchTo(id);
+  if (!props.busy || confirmingId.value === id) {
+    if (confirmTimer) { clearTimeout(confirmTimer); confirmTimer = null; }
+    confirmingId.value = "";
+    void switchTo(id);
+    return;
+  }
+  confirmingId.value = id;
+  confirmTimer = setTimeout(() => { confirmingId.value = ""; confirmTimer = null; }, 4000);
 }
 
 async function onDurableAction(kind: "cancel" | "resume", executionId: string) {
@@ -104,12 +114,16 @@ async function onDurableAction(kind: "cancel" | "resume", executionId: string) {
         :key="p.id"
         class="row"
         type="button"
-        :title="face ? '把本会话切换到此工作语境' : '把此工作语境接入本会话'"
+        :title="confirmingId === p.id
+          ? '会话有任务正在运行，再点一次确认切换'
+          : face ? '把本会话切换到此工作语境' : '把此工作语境接入本会话'"
         @click="onSwitch(p.id)"
       >
         <time>{{ projectTouchLabel(p.touched_at) }}</time>
         <span class="row-name">{{ p.name }}</span>
-        <span class="row-action">{{ face ? "切换" : "接入" }}</span>
+        <span class="row-action" :class="{ confirm: confirmingId === p.id }">
+          {{ confirmingId === p.id ? "确认切换？" : face ? "切换" : "接入" }}
+        </span>
       </button>
     </HomeWidget>
   </aside>
@@ -404,6 +418,10 @@ async function onDurableAction(kind: "cancel" | "resume", executionId: string) {
   flex: none;
   color: var(--yb-accent);
   font-size: 9.5px;
+}
+.row-action.confirm {
+  color: var(--yb-intent-pending-ink);
+  font-weight: var(--yb-fw-medium);
 }
 .row:hover .row-name { color: var(--yb-accent); }
 .empty button:focus-visible,

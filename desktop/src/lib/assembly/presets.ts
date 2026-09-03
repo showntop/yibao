@@ -335,6 +335,7 @@ export const HOME_PRESETS = {
         composer: "bar",
         sessions: "spine",
         today: "panel",
+        project: "tile",
       },
       absent: ["now", "mind", "identity", "line", "need", "tasks", "glimpse", "catch", "scratch", "when", "spark", "bench", "jot", "remind", "sessions"],
       grid: {
@@ -348,7 +349,8 @@ export const HOME_PRESETS = {
         areas: `"chat axis" "compose ."`,
         stacks: {
           chat: ["dayTitle", "chat"],
-          axis: ["today"],
+          // 项目卡进轴列（P1-09）：窄窗也必须看见当前 Workspace/Mission，不许退回隐式全局项目
+          axis: ["project", "today"],
           compose: ["composer"],
         },
         grow: ["chat"],
@@ -363,6 +365,7 @@ export const HOME_PRESETS = {
         composer: "bar",
         sessions: "spine",
         today: "panel",
+        project: "tile",
       },
       absent: ["now", "mind", "identity", "line", "need", "tasks", "glimpse", "catch", "scratch", "when", "spark", "bench", "jot", "remind", "sessions"],
       grid: {
@@ -376,7 +379,7 @@ export const HOME_PRESETS = {
         areas: `"chat axis" "compose ."`,
         stacks: {
           chat: ["dayTitle", "chat"],
-          axis: ["today"],
+          axis: ["project", "today"],
           compose: ["composer"],
         },
         grow: ["chat"],

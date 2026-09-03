@@ -703,6 +703,38 @@ def test_no_panel_event_without_ref(tmp_path):
     assert "panel" not in [e.kind for e in events]  # 无 panel 引用不发事件
 
 
+def test_arun_user_says_no_panel_suppresses_auto_surface(tmp_path, monkeypatch):
+    """P1-05：用户明说「不要打开面板」→ 工具带回的 panel 事件压成 quiet（只进活动轨），
+    explicit 一并剥掉——「不抢焦点」硬规则进入裁决输入。"""
+    from yibao_brain import plugins
+
+    monkeypatch.setitem(plugins._PANELS, "notes:list", {"type": "list"})
+    provider = _TwoStepProvider(
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="paneldemo", params={})]),
+        second=FakeProvider(text="done"),
+    )
+    loop = _build_panel_loop(tmp_path, provider, _PanelTool())
+    events = asyncio.run(_collect_events(loop.arun("记下来，不要打开面板")))
+    pe = next(e for e in events if e.kind == "panel")
+    assert pe.payload["attention"] == "quiet"
+    assert "explicit" not in pe.payload
+
+
+def test_arun_normal_text_keeps_panel_attention(tmp_path, monkeypatch):
+    """对照：用户没说压制语 → 面板注意力保持工具默认值（suggest），不误伤。"""
+    from yibao_brain import plugins
+
+    monkeypatch.setitem(plugins._PANELS, "notes:list", {"type": "list"})
+    provider = _TwoStepProvider(
+        first=FakeProvider(tool_calls=[ToolCall(id="t1", tool_id="paneldemo", params={})]),
+        second=FakeProvider(text="done"),
+    )
+    loop = _build_panel_loop(tmp_path, provider, _PanelTool())
+    events = asyncio.run(_collect_events(loop.arun("记下来")))
+    pe = next(e for e in events if e.kind == "panel")
+    assert pe.payload["attention"] == "suggest"
+
+
 def test_plugin_tool_names_are_llm_safe(tmp_path):
     """插件 tool id 带点号（notes.keep），DeepSeek/OpenAI 要求 function name ^[a-zA-Z0-9_-]+$：
     发给 LLM 的 schema 用安全名（点→下划线），回调时映射回真实 id。"""

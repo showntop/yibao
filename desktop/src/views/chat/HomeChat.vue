@@ -971,7 +971,7 @@ onUnmounted(() => {
         <component :is="viewOf('remind', faceOf(assembly, 'remind', 'tile'))" only="remind" @chat="onInfoChat" />
       </template>
       <template #project>
-        <HomeProject :session-id="currentSessionId" @chat="onInfoChat" />
+        <HomeProject :session-id="currentSessionId" :busy="busy" @chat="onInfoChat" />
       </template>
       <template #stats>
         <HomeShelfStats />

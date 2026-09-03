@@ -254,6 +254,50 @@ def test_timeline_materialized_events_match_assembled_data(env, tmp_path):
     assert all(e["source"] == {"artifact_type": "timeline.composition", "ref": tid} for e in uses)
 
 
+# ---------- N3：组装前实测音轨，不信入库元数据 ----------
+
+
+def test_timeline_save_remeasures_voice_file(env, tmp_path, monkeypatch):
+    """音轨入库后被外部改动（如补静音）：组装时 ffprobe 实测优先于 duration_sec 元数据。"""
+    reg = env
+    tid = _topic_with_storyboard(reg)
+    _seed_assets(reg, tid, tmp=tmp_path)  # 元数据 duration 1.25/3.75
+
+    class _R:
+        returncode = 0
+        stdout = "9.876\n"  # 与元数据明显不同的实测值
+        stderr = ""
+
+    tl = reg.get("zimeiti.timeline_save")
+    g = type(tl).run.__globals__  # 插件模块不挂 sys.modules（加载器约定），经函数 globals 打补丁
+    monkeypatch.setitem(g, "_which", lambda name: "/usr/bin/ffprobe")
+    monkeypatch.setitem(g, "_run_cmd", lambda *a, **kw: _R())
+
+    r = _run(reg, "zimeiti.timeline_save", {"topic_id": tid})
+    assert r.success, r.error
+    for clip in (r.data["clips"][0], r.data["clips"][2]):
+        assert clip["duration"] == 9.876  # 实测值，不是入库的 1.25/3.75
+        assert clip["duration_source"] == "measured"
+    assert r.data["clips"][1]["duration_source"] == "storyboard"  # 静音镜
+
+
+def test_timeline_save_falls_back_to_metadata_when_probe_fails(env, tmp_path, monkeypatch):
+    """ffprobe 不可用/失败：回退入库 duration_sec，clip 标 duration_source=metadata。"""
+    reg = env
+    tid = _topic_with_storyboard(reg)
+    _seed_assets(reg, tid, tmp=tmp_path)
+
+    tl = reg.get("zimeiti.timeline_save")
+    g = type(tl).run.__globals__
+    monkeypatch.setitem(g, "_which", lambda name: None)  # 无 ffprobe
+
+    r = _run(reg, "zimeiti.timeline_save", {"topic_id": tid})
+    assert r.success, r.error
+    assert r.data["clips"][0]["duration"] == 1.25
+    assert r.data["clips"][0]["duration_source"] == "metadata"
+    assert r.data["clips"][2]["duration"] == 3.75
+
+
 # ---------- 真实上游链（skipif 保护） ----------
 
 

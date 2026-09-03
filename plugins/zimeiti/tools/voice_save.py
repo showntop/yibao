@@ -38,6 +38,8 @@ class VoiceSave(Tool):
     description = (
         "给分镜逐镜合成口播配音（本机 say → m4a，ffprobe 实测时长）：默认合成最新分镜全部镜，"
         "shots 可只合成指定镜号，voice 指定 say 语音（缺省自动选 zh_CN 语音）。"
+        "fit=true 时按分镜每镜目标时长收敛：短了补尾静音、长了轻度变速（≤1.15x），"
+        "超出能力只标注不改（该去改文案而不是毁音）。"
         "重合成同镜覆盖同一路径、叠 artifact 新版本；空口播的镜自动跳过。"
     )
     default_risk = RiskLevel.L2_MEDIUM
@@ -79,6 +81,10 @@ class VoiceSave(Tool):
                         "items": {"type": "integer"},
                         "description": "只合成指定镜号 idx 列表（可选，也可传 JSON 数组字符串；缺省=全部镜）",
                     },
+                    "fit": {
+                        "type": "boolean",
+                        "description": "按分镜目标时长收敛每镜配音：短了补尾静音、长了轻度变速（≤1.15x），超出则标 over 不改",
+                    },
                 },
                 "required": ["topic_id"],
             },
@@ -97,12 +103,15 @@ class VoiceSave(Tool):
         selected, error = _select_shots(shots, params.get("shots"))
         if error:
             return ActionResult(success=False, error=error)
-        bins = {name: _which(name) for name in ("say", "afconvert", "ffprobe")}
-        missing = [name for name, path in bins.items() if not path]
+        bins = {name: _which(name) for name in ("say", "afconvert", "ffprobe", "ffmpeg")}
+        fit = bool(params.get("fit"))
+        # fit 才刚需 ffmpeg（补静音/变速）；不 fit 时缺 ffmpeg 不影响
+        required = ("say", "afconvert", "ffprobe") + (("ffmpeg",) if fit else ())
+        missing = [name for name in required if not bins.get(name)]
         if missing:
             return ActionResult(
                 success=False,
-                error=f"本机缺少配音依赖：{'、'.join(missing)}（macOS 自带 say/afconvert；ffprobe 随 ffmpeg 安装）",
+                error=f"本机缺少配音依赖：{'、'.join(missing)}（macOS 自带 say/afconvert；ffprobe/ffmpeg 随 ffmpeg 安装）",
             )
         voice = str(params.get("voice", "") or "").strip() or _pick_zh_voice(bins["say"])
         out_dir = self._plugin_root / "voice" / tid / f"v{version}"
@@ -121,12 +130,20 @@ class VoiceSave(Tool):
             if error:
                 failed.append({"idx": idx, "error": error})
                 continue
+            duration, fit_action, target = track[1], "asis", None
+            if fit:  # 按分镜目标时长收敛（N5）：把「人来回压字」变成能力内收敛 + 验收兜底
+                target = float(shot.get("duration") or 0) or None
+                if target:
+                    duration, fit_action, fit_err = _fit_to_target(bins, track[0], track[1], target)
+                    # fit 失败不丢音轨：音频本身可用，时长保留原实测值，动作标 unfit 如实可见
             tracks.append({
                 "idx": idx,
                 "shot_ref": f"{tid}#s{idx}",
                 "track_ref": f"{tid}#s{idx}#voice",
                 "path": str(track[0]),
-                "duration_sec": track[1],
+                "duration_sec": duration,
+                "target_sec": target,
+                "fit": fit_action,
                 "voice": voice or "system",
             })
         if not tracks:
@@ -256,6 +273,43 @@ def _synthesize(bins: dict, narration: str, voice: str, out_path: Path) -> tuple
                 os.unlink(tmp_aiff)
             except OSError:
                 pass
+
+
+def _fit_to_target(bins: dict, path: Path, measured: float, target: float) -> tuple:
+    """把音轨收敛到分镜目标时长：短了补尾静音（apad），长了轻度变速（atempo ≤1.15x）。
+
+    返回 (最终实测时长, 动作, error)；动作 ∈ asis / padded / sped / over。
+    over = 超目标 >15%：不毁音、不蒙混，原样返回，由上游改文案。
+    """
+    eps = 0.05
+    if target - eps <= measured <= target + eps:
+        return measured, "asis", ""
+    if measured < target:
+        af, action = f"apad=whole_dur={target}", "padded"
+    else:
+        ratio = measured / target
+        if ratio > 1.15:
+            return measured, "over", ""
+        af, action = f"atempo={ratio:.4f}", "sped"
+    tmp = path.with_name(path.stem + ".fit.m4a")
+    try:
+        r = _run_cmd([bins["ffmpeg"], "-y", "-v", "error", "-i", str(path), "-af", af, str(tmp)],
+                     capture_output=True, text=True, timeout=_TIMEOUT, check=False)
+        if r.returncode != 0 or not tmp.is_file():
+            return measured, "unfit", f"ffmpeg 时长收敛失败：{(r.stderr or r.stdout).strip()[:200]}"
+        os.replace(tmp, path)
+        r = _run_cmd([bins["ffprobe"], "-v", "error", "-show_entries", "format=duration",
+                      "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+                     capture_output=True, text=True, timeout=_TIMEOUT, check=False)
+        if r.returncode != 0:
+            return measured, "unfit", f"收敛后 ffprobe 失败：{(r.stderr or '').strip()[:200]}"
+        return round(float(r.stdout.strip()), 3), action, ""
+    except (OSError, subprocess.TimeoutExpired, ValueError) as e:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return measured, "unfit", f"{type(e).__name__}：{e}"
 
 
 def make_tools(ctx):

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from collections.abc import AsyncIterator, Callable, Iterator
 from datetime import datetime
@@ -80,6 +81,19 @@ def _with_surface_hints(payload: dict, result: ActionResult, origin: str | None)
         "object": result.object,
         "origin": origin,
     }
+
+
+# 用户显式压制面板（P1-05）：本轮用户说了「不打开/别弹面板」一类话时，工具带回的
+# 面板只进活动轨（quiet），不得自动 Peek——「不抢焦点」是硬规则，必须进裁决输入。
+_NO_PANEL_RE = re.compile(
+    r"(?:先别|不要|不用|不需|请勿|别|不|勿)\s*(?:要|用|需)?\s*(?:打开|开|弹出?|跳出|呼出)\s*(?:任何)?\s*(?:面板|窗口|弹窗|浮层|peek)",
+    re.IGNORECASE,
+)
+
+
+def _user_suppressed_panels(user_text: str) -> bool:
+    """本轮用户文本是否明确要求不打开面板/窗口。"""
+    return bool(_NO_PANEL_RE.search(user_text or ""))
 
 
 class AgentLoop:
@@ -288,6 +302,7 @@ class AgentLoop:
         模型上下文只含本会话的最近轮次，不跨会话串台（小窗不再知道你在别的会话问过什么）。
         """
         self._run_start = time.monotonic()  # run_metrics 耗时基准
+        suppress_panels = _user_suppressed_panels(user_text)  # P1-05：本轮「不打开面板」压掉自动 Peek
         memories = await _offload(self.memory.recall, user_text, self.user_id)
         messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
         focus_msg = self._focus_message()
@@ -454,6 +469,10 @@ class AgentLoop:
                     yield Event(kind="notice", text=(result.data or {}).get("human", "插件已展开"))
                 payload = await _offload(self._panel_with_refresh, action, safe, conversation_id)  # 壳侧面板也只拿安全副本
                 if payload is not None:
+                    if suppress_panels:
+                        # 用户本轮明说不打开面板：只记活动轨，连 explicit 也不得弹（P1-05）
+                        payload = {**payload, "attention": "quiet"}
+                        payload.pop("explicit", None)
                     yield Event(kind="panel", payload=payload)
                 try:
                     notice = skill.post_reply_notice(result)

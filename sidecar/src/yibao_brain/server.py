@@ -927,14 +927,16 @@ async def serve_async(
             m = {**m, "event": _stamp_run_event(m["event"])}
         write_msg(m)
 
-    async def _stream_agent(text: str, rid, cancel: asyncio.Event, surface: str = "pet", conversation_id: str = "", emit_done: bool = True):
+    async def _stream_agent(text: str, rid, cancel: asyncio.Event, surface: str = "pet", conversation_id: str = "", emit_done: bool = True, tts: bool = False):
         t0 = time.monotonic()
 
         def _emit(ev: dict) -> None:
             write_msg({"type": "event", "surface": surface, "conversation_id": conversation_id,
                        "event": _stamp_run_event(ev)})
 
-        tts_q: asyncio.Queue | None = asyncio.Queue() if voice is not None else None
+        # TTS 默认不播（P1-06）：文本对话只出文字；语音会话（voice_start）或 run 显式
+        # 带 tts=true（将来的「朗读」入口）才建播报队列。voice 栈不可用则一律静默。
+        tts_q: asyncio.Queue | None = asyncio.Queue() if (voice is not None and tts) else None
         tts_holds_lock = False
         if tts_q is not None:
             if tts_lock.locked():
@@ -989,8 +991,8 @@ async def serve_async(
                 write_msg(_run_done_msg(rid, conversation_id))
             log(f"run 完成 rid={rid}（{time.monotonic() - t0:.1f}s）")
 
-    async def _drive_run(text: str, rid, cancel: asyncio.Event, surface: str = "pet", conversation_id: str = ""):
-        await _stream_agent(text, rid, cancel, surface, conversation_id)
+    async def _drive_run(text: str, rid, cancel: asyncio.Event, surface: str = "pet", conversation_id: str = "", tts: bool = False):
+        await _stream_agent(text, rid, cancel, surface, conversation_id, tts=tts)
 
     # voice 域续：_drive_voice_start 已迁 runtime/voice.py——其回调的 run 流
     # （_stream_agent）暂留 serve_async，经 ctx.stream_agent 注入。
@@ -1034,7 +1036,9 @@ async def serve_async(
             if ctx_text:
                 text = f"[屏幕上下文] {ctx_text}\n\n{text}"
 
-            async def _start(c, t=text, r=rid, s=surface, ci=conversation_id):
+            tts_req = bool(msg.get("tts"))  # 显式朗读：文本 run 默认不 TTS（P1-06）
+
+            async def _start(c, t=text, r=rid, s=surface, ci=conversation_id, tts_flag=tts_req):
                 # 附件图片（粘贴截图落盘 chip）：【附件：path】指向图片 → vision 描述注入，
                 # 主模型不必多模态；未配置/无图/失败一律静默。挪进调度任务里做——
                 # 串行 vision HTTP 堵的是本 run，不是主消息循环（审批/其他 run 不被卡）
@@ -1042,7 +1046,7 @@ async def serve_async(
                     att_desc = await _offload(_describe_image_attachments, t, _wvision)
                     if att_desc:
                         t = f"[附件图片内容]\n{att_desc}\n\n{t}"
-                await _drive_run(t, r, c, s, ci)
+                await _drive_run(t, r, c, s, ci, tts=tts_flag)
 
             log(f"run 受理 rid={rid} surface={surface} conv={conversation_id}：{text[:30]!r}")
             _schedule_run(surface, rid, _start, conversation_id)
@@ -1492,6 +1496,12 @@ async def serve_async(
         conversation_id = str(msg.get("conversation_id") or "")
         proj = project_store.get(key) or project_store.find_by_name(key)
         ok = project_store.switch(proj["id"], conversation_id) if proj else False
+        if ok:
+            # SessionScopeChanged 可见（N1）：切语境必须在会话里留可见痕迹，不许静默改绑
+            write_msg({"type": "event", "conversation_id": conversation_id,
+                       "event": {"kind": "notice",
+                                 "workspace_id": proj["id"],
+                                 "text": f"工作语境已切换到「{proj['name']}」——本会话后续产物归入该项目"}})
         write_msg({"type": "project_switched", "ok": ok,
                    **project_store.view(conversation_id)})
 

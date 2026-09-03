@@ -420,8 +420,8 @@ def test_tts_lock_second_conversation_silent_with_notice(tmp_path):
     _run_async(
         serve_async(
             make_reader([
-                {"id": 1, "type": "run", "text": "慢速播报", "conversation_id": "conv-a"},
-                {"id": 2, "type": "run", "text": "快速回答", "conversation_id": "conv-b"},
+                {"id": 1, "type": "run", "text": "慢速播报", "conversation_id": "conv-a", "tts": True},
+                {"id": 2, "type": "run", "text": "快速回答", "conversation_id": "conv-b", "tts": True},
             ]),
             lambda m: out.append(m),
             use_real=False,
@@ -445,6 +445,30 @@ def test_tts_lock_second_conversation_silent_with_notice(tmp_path):
     assert any(m["type"] == "event" and m.get("conversation_id") == "conv-b"
                and m["event"]["kind"] == "final_reply" for m in out)
     assert voice.stream_chunks == ["甲一。", "甲二。"]  # 只有 A 的文本进了播放器
+
+
+def test_text_run_does_not_tts_by_default(tmp_path):
+    """P1-06：文本 run 默认不 TTS——voice 栈可用也不发 speaking、不进播放器、不占锁；
+    显式 tts=true 才播（将来的「朗读」入口）。"""
+    from fakes import FakeVoice
+
+    voice = FakeVoice("你好")
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([{"id": 1, "type": "run", "text": "hi", "conversation_id": "c1"}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(chunks=["纯文字回答"]),
+            voice=voice,
+        )
+    )
+    kinds = [m["event"]["kind"] for m in out if m["type"] == "event"]
+    assert "final_reply" in kinds
+    assert "speaking" not in kinds
+    assert "speaking_done" not in kinds
+    assert voice.stream_chunks == []  # 没碰播放器
 
 
 def test_targeted_interrupt_does_not_cut_other_conversations_tts(tmp_path):
@@ -480,8 +504,8 @@ def test_targeted_interrupt_does_not_cut_other_conversations_tts(tmp_path):
     _run_async(
         serve_async(
             _delayed_reader([
-                ({"id": 1, "type": "run", "text": "乙会话长播报", "conversation_id": "conv-b"}, 0.0),
-                ({"id": 2, "type": "run", "text": "甲会话长回答", "conversation_id": "conv-a"}, 0.02),
+                ({"id": 1, "type": "run", "text": "乙会话长播报", "conversation_id": "conv-b", "tts": True}, 0.0),
+                ({"id": 2, "type": "run", "text": "甲会话长回答", "conversation_id": "conv-a", "tts": True}, 0.02),
                 ({"type": "interrupt", "conversation_id": "conv-a"}, 0.15),  # A 流式中途被打断
                 (None, 1.0),  # 留足 B 收尾窗口再关 stdin
             ]),
@@ -1674,7 +1698,7 @@ def test_serve_async_tts_cancelled_error_does_not_crash_brain(tmp_path):
 
     async def _go():
         await serve_async(
-            make_reader([{"id": 1, "type": "run", "text": "hi"}]),
+            make_reader([{"id": 1, "type": "run", "text": "hi", "tts": True}]),
             lambda m: out.append(m),
             use_real=False,
             db_path=str(tmp_path / "a.db"),
@@ -3360,7 +3384,7 @@ def test_speech_stop_after_final_reply_is_not_run_interrupt(tmp_path):
     _run_async(
         serve_async(
             _delayed_reader([
-                ({"id": 1, "type": "run", "text": "说两句", "conversation_id": "conv-a"}, 0.0),
+                ({"id": 1, "type": "run", "text": "说两句", "conversation_id": "conv-a", "tts": True}, 0.0),
                 ({"type": "interrupt", "conversation_id": "conv-a"}, 0.15),  # final_reply 后、播报中按停
                 (None, 1.0),
             ]),
@@ -3459,3 +3483,30 @@ def test_serve_async_preempted_run_events_keep_own_epoch(tmp_path):
     final = next(m for m in evs if m["event"]["kind"] == "final_reply")
     assert interrupted["event"]["run_epoch"] < final["event"]["run_epoch"]
     assert all("run_epoch" in m["event"] and "seq" in m["event"] for m in evs)
+
+
+def test_project_switch_emits_scope_notice(tmp_path, monkeypatch):
+    """N1：切换工作语境必须在会话里留可见 notice（SessionScopeChanged 的最小落地）——
+    不许静默改绑；notice 带会话归属，project_switched 回包照常。"""
+    monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path))
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([
+                {"type": "project_create", "name": "甲项目", "conversation_id": "c1"},
+                {"type": "project_create", "name": "乙项目", "conversation_id": "c1"},
+                {"type": "project_switch", "name": "甲项目", "conversation_id": "c1"},
+            ]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+        )
+    )
+    notices = [m for m in out if m.get("type") == "event"
+               and m.get("event", {}).get("kind") == "notice"
+               and "工作语境已切换" in str(m["event"].get("text"))]
+    assert len(notices) == 1
+    assert "甲项目" in notices[0]["event"]["text"]
+    assert notices[0].get("conversation_id") == "c1"
+    assert any(m.get("type") == "project_switched" and m.get("ok") for m in out)
