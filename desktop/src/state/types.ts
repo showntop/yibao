@@ -126,7 +126,10 @@ export interface ConversationUIState {
 
 // ---- surface 域 ----
 
-export type CapabilityPresentation = "inline" | "peek" | "stage" | "focus";
+// scene 持久化的呈现档位只有公共三态；peek 是宿主对 Stage 的瞬态 compact placement
+// （架构 §6.5），用完即收、不成为恢复点，因此永远不落盘——旧数据里的 "peek"
+// 由 domains/surface.ts 读取时归一为 stage。
+export type CapabilityPresentation = "inline" | "stage" | "focus";
 
 /** scene：布局壳（嵌套链第一层） */
 export interface SurfaceScene {

@@ -61,7 +61,10 @@ export interface PanelPayload {
   webview?: WebviewPayload | null;
   data?: Record<string, unknown>;
   // ---- 能力表面提示（Phase 1）：sidecar 透传的技能建议，宿主裁决用；缺省按老规则 ----
-  /** 技能建议的展示级别（建议非命令）；旧插件缺省 null */
+  /** 技能建议的展示级别（建议非命令）；旧插件缺省 null。
+   *  插件 manifest 只能声明 inline/stage/focus 三态（sidecar _SURFACE_LEVELS）；
+   *  wire 上的 "peek" 仅来自 surface.open 的瞬态预览请求——peek 是宿主对 Stage 的
+   *  瞬态 compact placement（架构 §6.5），不是插件公共档位。 */
   presentation?: "inline" | "peek" | "stage" | "focus" | null;
   /** 注意力级别；旧插件缺省 "suggest" */
   attention?: "quiet" | "suggest" | "focus";
@@ -69,7 +72,7 @@ export interface PanelPayload {
   explicit?: boolean;
   /** 跨应用接力对象 {type,id,title}；不依赖面板 DOM */
   object?: { type?: string; id?: string; title?: string } | null;
-  /** 面板声明的支持表面范围（manifest [[panel]].surfaces）；缺省 = 全档 */
+  /** 面板声明的支持表面范围（manifest [[panel]].surfaces，公共三态子集）；缺省 = 全档三态 */
   surfaces?: string[];
   /** 面板声明的最小宽度（px）；宿主窄窗降级用 */
   min_width?: number;

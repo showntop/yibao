@@ -82,6 +82,15 @@ describe("surface domain", () => {
     expect(fresh.getInteract()).toBeNull();
   });
 
+  it("normalizes legacy peek scene to stage on hydrate", async () => {
+    // 四档时代的旧数据可能躺着 "peek"；peek 是宿主瞬态 placement、从不落盘，
+    // 读到 legacy 值归一为 stage（peek 本是 stage 的 compact 形态）。
+    await store.put(TABLES.surface, "scene", { ...scene, presentation: "peek", savedAt: Date.now() });
+    const fresh = new SurfaceDomain(store);
+    await fresh.hydrate();
+    expect(fresh.getScene()).toEqual(scene);
+  });
+
   it("panel over quota keeps only the shell", async () => {
     const big = {
       panel: "big:panel",

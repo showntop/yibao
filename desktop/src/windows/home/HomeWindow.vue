@@ -14,12 +14,12 @@ import InlineReceipt from "../../views/InlineReceipt.vue";
 import PeekSurface from "../../views/PeekSurface.vue";
 import ActivityShelf from "../../views/ActivityShelf.vue";
 import { sessionStore, clearLegacySessionKeys } from "../../state/store";
-import type { SurfacePanel } from "../../state/types";
+import type { CapabilityPresentation, SurfacePanel } from "../../state/types";
 import DataView from "../../views/settings/DataView.vue";
 import SettingsView from "../../views/settings/SettingsView.vue";
 import appLogo from "../../assets/logo.png";
 import { onPendingConfirms, closeHomeWindow } from "../../lib/brain";
-import { decideSurface, type Attention, type Presentation } from "../../lib/surface/surface-policy";
+import { decideSurface, type Attention, type Presentation, type SurfaceMode } from "../../lib/surface/surface-policy";
 import { skyPhase } from "../../lib/home/sky.ts";
 import type { AvatarState } from "../../protocol/brain-types";
 import { whenFace } from "../../lib/home/home-when-face.ts";
@@ -95,7 +95,8 @@ interface CapabilitySurfaceEvent extends CapabilityRailSurface {
   explicit: boolean;
   suggested: Presentation | null;
   attention: Attention;
-  supported?: Presentation[];
+  /** 面板声明的三态支持范围（sidecar 保证不含 peek） */
+  supported?: SurfaceMode[];
 }
 type HomePluginsRef = {
   backToList: () => void;
@@ -107,7 +108,9 @@ type HomePluginsRef = {
 const pluginHost = ref<HomePluginsRef | null>(null);
 const capability = ref<CapabilityRailSurface | null>(null);
 const surfaceVisible = ref(false);
-const presentation = ref<Presentation>("stage");
+// 工作面呈现档位：只有 stage/focus 会落到这个 ref（peek 走瞬态探窗，不进工作面状态）；
+// 类型取 scene 三态，与持久化读回兼容。
+const presentation = ref<CapabilityPresentation>("stage");
 const sceneActive = computed(() => tab.value === "home" && surfaceVisible.value && capability.value !== null);
 const deskWork = computed(() => sceneActive.value && !qaMode);
 const pluginHandoff = ref(false);
@@ -153,7 +156,7 @@ function onWorkBody(el: HTMLElement | null) {
   void nextTick(syncWorkBox);
 }
 // 场景布局（scene）持久化在 surface 域：hydrate 完成后 onMounted 读入，watch 写回
-let savedScene: { panel: string; visible: boolean; presentation: Presentation } | null = null;
+let savedScene: { panel: string; visible: boolean; presentation: CapabilityPresentation } | null = null;
 let restorePending = false;
 // 恢复只允许在启动后的短暂窗口内发生：pullCache 会从 surface 域回退并发出首个 surface；
 // 超时未匹配就放弃 pending，防止后续用户手动操作被旧布局"拽回去"。
@@ -268,7 +271,7 @@ function onPanelAvailable(surface: CapabilitySurfaceEvent) {
 /**
  * 用户明确要求展开（Inline「展开」/ 活动轨点开）：仍走同一裁决器（explicit=true）。
  * 建议档位固定为 stage——用户点的是「展开/回看」，要的是工作面，不再沿用技能的轻量建议；
- * 但面板声明的 supported 依然生效，不会给只支持到 peek 的面板硬开 stage。
+ * 但面板声明的 supported 依然生效，不会给不支持 stage 的面板硬开 stage。
  */
 function openExplicit(surface: CapabilitySurfaceEvent | null) {
   const { presentation: p, show } = decideSurface({

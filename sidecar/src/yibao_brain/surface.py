@@ -7,7 +7,8 @@
 
 不变量在 sidecar 把守（§11.1 初步倾向：不变量 sidecar、呈现细节前端）：
 - dispatch 只放行白名单命令，白名单外拒发；
-- stage/focus 永不从 agent tool 侧发起——surface.open 的呈现档位限 inline/peek，
+- stage/focus 永不从 agent tool 侧发起——surface.open 的呈现档位限 inline/peek
+  （peek 只是宿主瞬态预览 placement，不是插件公共档位），
   stage/focus 必须用户亲手（前端 explicit 通路），tool 层连参数都不收。
 """
 

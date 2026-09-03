@@ -15,17 +15,20 @@ export const SCENE_KEY = "scene";
 export const PANEL_KEY = "panel";
 export const INTERACT_KEY = "interact";
 
-const SCENE_PRESENTATIONS: readonly string[] = ["inline", "peek", "stage", "focus"];
+const SCENE_PRESENTATIONS: readonly string[] = ["inline", "stage", "focus"];
 
 function isScene(raw: unknown): SurfaceScene | null {
   if (typeof raw !== "object" || raw === null) return null;
   const s = raw as Record<string, unknown>;
   if (typeof s.panel !== "string" || !s.panel) return null;
+  // peek 是宿主对 Stage 的瞬态 compact placement（架构 §6.5），从不落盘；
+  // 四档时代的旧数据可能躺着 "peek"——读到时归一为 stage（peek 本是 stage 的 compact 形态）。
+  const pres = s.presentation === "peek" ? "stage" : s.presentation;
   return {
     panel: s.panel,
     visible: s.visible === true,
-    presentation: typeof s.presentation === "string" && SCENE_PRESENTATIONS.includes(s.presentation)
-      ? (s.presentation as SurfaceScene["presentation"])
+    presentation: typeof pres === "string" && SCENE_PRESENTATIONS.includes(pres)
+      ? (pres as SurfaceScene["presentation"])
       : "stage",
     tab: typeof s.tab === "string" ? s.tab : "home",
   };

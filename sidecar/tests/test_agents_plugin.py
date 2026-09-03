@@ -180,7 +180,7 @@ def test_api_whitelist_and_panel_schema(env):
     assert {k: registered[k] for k in ("type", "bind", "columns", "card")} == {
         k: schema[k] for k in ("type", "bind", "columns", "card")
     }
-    assert registered["surfaces"] == ["inline", "peek", "stage", "focus"]  # 未声明 → 默认全档
+    assert registered["surfaces"] == ["inline", "stage", "focus"]  # 未声明 → 默认全档（公共三态）
 
 
 # ---------- 适配表（argv 构造 + 摘要解析）----------

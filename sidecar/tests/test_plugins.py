@@ -850,7 +850,7 @@ def test_panel_declares_supported_surfaces(data_dir, tmp_path):
     """manifest [[panel]] 的 surfaces/min_width 被解析进面板注册表（宿主裁决回落依据）。"""
     manifest = NOTES_PANEL_MANIFEST.replace(
         'type = "schema"\nname = "list"',
-        'type = "schema"\nname = "list"\nsurfaces = ["peek", "stage"]\nmin_width = 720',
+        'type = "schema"\nname = "list"\nsurfaces = ["stage", "focus"]\nmin_width = 720',
     )
     _write_plugin(tmp_path, "notes", manifest, {"panel/list.schema.json": LIST_SCHEMA})
     reg = ToolRegistry()
@@ -858,32 +858,63 @@ def test_panel_declares_supported_surfaces(data_dir, tmp_path):
     from yibao_brain.plugins import get_panel
 
     panel = get_panel("notes:list")
-    assert panel["surfaces"] == ["peek", "stage"]
+    assert panel["surfaces"] == ["stage", "focus"]
     assert panel["min_width"] == 720
 
 
-def test_panel_surfaces_default_all(data_dir, tmp_path):
-    """未声明 → 默认全档支持（inline/peek/stage/focus），宿主裁决不误伤。"""
-    _write_plugin(tmp_path, "notes", NOTES_PANEL_MANIFEST, {"panel/list.schema.json": LIST_SCHEMA})
-    reg = ToolRegistry()
-    _load(tmp_path, reg)
-    from yibao_brain.plugins import get_panel
-
-    assert get_panel("notes:list")["surfaces"] == ["inline", "peek", "stage", "focus"]
-
-
-def test_panel_surfaces_invalid_filtered(data_dir, tmp_path):
-    """非法表面档位静默过滤（不报错不拖垮加载）；全非法 → 回落全档默认。"""
+def test_panel_surfaces_peek_is_not_a_plugin_level(data_dir, tmp_path):
+    """peek 是宿主对 Stage 的瞬态 compact placement（架构 §6.5），不进插件公共枚举：
+    声明 peek 与声明非法值一样被静默过滤，只剩合法三态。"""
     manifest = NOTES_PANEL_MANIFEST.replace(
         'type = "schema"\nname = "list"',
-        'type = "schema"\nname = "list"\nsurfaces = ["fullscreen", "peek", "bogus"]',
+        'type = "schema"\nname = "list"\nsurfaces = ["peek", "stage"]',
     )
     _write_plugin(tmp_path, "notes", manifest, {"panel/list.schema.json": LIST_SCHEMA})
     reg = ToolRegistry()
     assert _load(tmp_path, reg) == {"notes": "ok"}
     from yibao_brain.plugins import get_panel
 
-    assert get_panel("notes:list")["surfaces"] == ["peek"]
+    assert get_panel("notes:list")["surfaces"] == ["stage"]
+
+
+def test_panel_surfaces_peek_only_fails_closed(data_dir, tmp_path):
+    """四档时代声明 surfaces = ["peek"] 的面板（旧语义：最高只允许 peek，是最强限制），
+    过滤后为空时不能回落全档把限制放大成全许可——按最轻公共档 inline 收口（fail-closed）。
+    纯非法值（笔误，如 hologram）才视为未声明、回落全档默认。"""
+    manifest = NOTES_PANEL_MANIFEST.replace(
+        'type = "schema"\nname = "list"',
+        'type = "schema"\nname = "list"\nsurfaces = ["peek"]',
+    )
+    _write_plugin(tmp_path, "notes", manifest, {"panel/list.schema.json": LIST_SCHEMA})
+    reg = ToolRegistry()
+    assert _load(tmp_path, reg) == {"notes": "ok"}
+    from yibao_brain.plugins import get_panel
+
+    assert get_panel("notes:list")["surfaces"] == ["inline"]
+
+
+def test_panel_surfaces_default_all(data_dir, tmp_path):
+    """未声明 → 默认全档支持（inline/stage/focus 三态），宿主裁决不误伤。"""
+    _write_plugin(tmp_path, "notes", NOTES_PANEL_MANIFEST, {"panel/list.schema.json": LIST_SCHEMA})
+    reg = ToolRegistry()
+    _load(tmp_path, reg)
+    from yibao_brain.plugins import get_panel
+
+    assert get_panel("notes:list")["surfaces"] == ["inline", "stage", "focus"]
+
+
+def test_panel_surfaces_invalid_filtered(data_dir, tmp_path):
+    """非法表面档位静默过滤（不报错不拖垮加载）；全非法 → 回落全档默认。"""
+    manifest = NOTES_PANEL_MANIFEST.replace(
+        'type = "schema"\nname = "list"',
+        'type = "schema"\nname = "list"\nsurfaces = ["fullscreen", "stage", "bogus"]',
+    )
+    _write_plugin(tmp_path, "notes", manifest, {"panel/list.schema.json": LIST_SCHEMA})
+    reg = ToolRegistry()
+    assert _load(tmp_path, reg) == {"notes": "ok"}
+    from yibao_brain.plugins import get_panel
+
+    assert get_panel("notes:list")["surfaces"] == ["stage"]
 
     # 全是非法值 → 等于未声明，默认全档
     manifest2 = NOTES_PANEL_MANIFEST.replace(
@@ -893,7 +924,7 @@ def test_panel_surfaces_invalid_filtered(data_dir, tmp_path):
     _write_plugin(tmp_path, "notes2", manifest2.replace('id = "notes"', 'id = "notes2"').replace("notes:", "notes2:"), {"panel/list.schema.json": LIST_SCHEMA})
     reg2 = ToolRegistry()
     assert _load(tmp_path, reg2)["notes2"] == "ok"
-    assert get_panel("notes2:list")["surfaces"] == ["inline", "peek", "stage", "focus"]
+    assert get_panel("notes2:list")["surfaces"] == ["inline", "stage", "focus"]
 
 
 def test_panel_payload_webview_shape(data_dir, tmp_path):
@@ -913,8 +944,8 @@ def test_panel_payload_webview_shape(data_dir, tmp_path):
     assert p["schema"] is None
     assert p["webview"] == {"html": "<html>wv</html>"}
     assert p["data"] == {"rows": [1]}
-    # 未声明 surfaces → 默认全档随 payload 透传（宿主裁决用）
-    assert p["surfaces"] == ["inline", "peek", "stage", "focus"]
+    # 未声明 surfaces → 默认全档（三态）随 payload 透传（宿主裁决用）
+    assert p["surfaces"] == ["inline", "stage", "focus"]
     r2 = ActionResult(success=True, data={"x": 1})  # 无 panel 引用 → None
     assert panel_payload(r2) is None
 
@@ -1266,6 +1297,16 @@ op = "insert"
 table = "notes"
 
 [[tool]]
+id = "peeky"
+type = "db"
+description = "声明 peek 档位"
+risk = "L1"
+presentation = "peek"
+[tool.db]
+op = "insert"
+table = "notes"
+
+[[tool]]
 id = "silent"
 type = "db"
 description = "不声明"
@@ -1309,6 +1350,19 @@ def test_declarative_tool_invalid_presentation_ignored(data_dir, tmp_path):
 
     bad = reg.get("notes.bad")
     r = bad.run({"text": "x", "created_at": 1}, bad.plugin_ctx)
+    assert r.success
+    assert r.presentation is None
+
+
+def test_declarative_tool_peek_presentation_filtered(data_dir, tmp_path):
+    """presentation = "peek" 同样被过滤：peek 是宿主对 Stage 的瞬态 compact
+    placement（架构 §6.5），插件公共枚举只有 inline/stage/focus 三态。"""
+    _write_plugin(tmp_path, "notes", SURFACE_MANIFEST)
+    reg = ToolRegistry()
+    assert _load(tmp_path, reg) == {"notes": "ok"}
+
+    peeky = reg.get("notes.peeky")
+    r = peeky.run({"text": "x", "created_at": 1}, peeky.plugin_ctx)
     assert r.success
     assert r.presentation is None
 

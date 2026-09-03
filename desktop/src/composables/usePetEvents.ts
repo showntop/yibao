@@ -6,7 +6,7 @@ import type { Ref } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type { BrainEvent, BrainPermissions, BrainStatusMsg } from "../lib/brain";
-import type { Attention, Presentation } from "../lib/surface/surface-policy";
+import type { Attention, Presentation, SurfaceMode } from "../lib/surface/surface-policy";
 import {
   decideSurface,
 } from "../lib/surface/surface-policy";
@@ -294,15 +294,16 @@ export function usePetEvents(ctx: PetEventsCtx) {
         // 如对话里「听 XX/看 XX」→ fun 直达方法置 True）——两者都代表用户明确意图，允许开浮窗
         const explicit = requestedPlugin === plugin || e.payload?.explicit === true;
 
-        // cast 与 HomePlugins.vue:391-393 同款：PanelPayload 里这些字段是宽类型，
+        // cast 与 HomePlugins.vue 的 panel 事件落库处同款：PanelPayload 里这些字段是宽类型，
         // 而裁决器要窄联合。安全性由 sidecar 保证——_load_panels 已按
-        // _SURFACE_LEVELS 过滤过非法值，ActionResult 的 Literal 类型同理。
+        // _SURFACE_LEVELS（公共三态）过滤过非法值，ActionResult 的 Literal 类型同理；
+        // wire 上的 "peek" 只来自 surface.open 的瞬态预览请求。
         const decision = decideSurface({
           suggested: (e.payload?.presentation as Presentation | null | undefined) ?? null,
           attention: (e.payload?.attention as Attention | undefined) ?? "suggest",
           explicit,
           current: null,
-          supported: e.payload?.surfaces as Presentation[] | undefined,
+          supported: e.payload?.surfaces as SurfaceMode[] | undefined,
         });
 
         // 先记痕：开窗与否都留一条可点行，用户关窗后仍能一键回去

@@ -1,8 +1,8 @@
 """表面层 tool（design §3）：表面层向 agent 暴露一等接口，与插件 tool 平级注册。
 
 裁决器不变量在 sidecar 把守（§11.1 初步倾向：不变量 sidecar、呈现细节前端）：
-- surface.open 只收 inline/peek——stage/focus 必须用户亲手（宿主 explicit 通路），
-  tool 连参数都不收，参数越界直接拒；
+- surface.open 只收 inline/peek（peek = 宿主瞬态预览 placement）——stage/focus 必须
+  用户亲手（宿主 explicit 通路），tool 连参数都不收，参数越界直接拒；
 - editor.* 写类命令「发射即回执」：人在器内 diff 卡裁决，agent 永不静默落稿
   （tool.run 同步，阻塞等器内回执会死锁事件循环——见 surface.py docstring）。
 """
@@ -22,8 +22,9 @@ class SurfaceOpenTool(Tool):
     id = "surface.open"
     label = "打开表面"
     description = (
-        "把一个面板表面摆上台面：presentation 只能是 inline（行内）或 peek（探出）。"
-        "适合「把看板展开给我看看」这类请求。stage/focus 需要用户亲手操作，你不要请求。"
+        "把一个面板表面摆上台面：presentation 只能是 inline（行内回执）或 peek（宿主瞬态"
+        "预览气泡——用完即收，不是工作面档位）。适合「把看板展开给我看看」这类请求。"
+        "stage/focus 是正式工作面，需要用户亲手操作，你不要请求。"
         "panel 用「插件:面板名」引用（如 zimeiti:editor）。"
     )
     default_risk = RiskLevel.L1_LOW

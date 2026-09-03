@@ -33,8 +33,10 @@ from .tools import skills_index
 CAPABILITIES = {
     "db", "blobs", "memory", "http", "llm", "host", "reminders", "process", "durable",
 }
-# 能力表面四档（调研 §12.7）：manifest 面板可声明支持哪些档；非法值静默过滤
-_SURFACE_LEVELS = ("inline", "peek", "stage", "focus")
+# 能力表面公共三态（架构 §6）：插件只声明 inline/stage/focus；非法值静默过滤。
+# peek 不在其中——它是宿主对 Stage 的瞬态 compact placement（架构 §6.5），只由宿主裁决
+# 产生，插件声明 peek 与声明非法值一样被过滤。
+_SURFACE_LEVELS = ("inline", "stage", "focus")
 # 面板输入模式（panel-input-modes spec）：[[panel]].input 合法值；非法值告警后按未声明处理
 _INPUT_MODES = ("inherit", "coexist", "handoff", "none")
 # 声明式 tool 类型 → 所需 capability（加载期校验，manifest 未声明即加载失败）
@@ -507,7 +509,13 @@ def _load_panels(child: Path, pid: str, manifest: dict, registry: ToolRegistry) 
             _WIDGETS[ref] = {"method": full, "open": open_method, "title": _PANEL_TITLES[ref]}
         # 表面声明（调研 §12.6）：支持的档位 + 最小宽度；非法值静默过滤——单插件不该拖垮加载。
         # 未声明 → 默认全档支持（裁决器按建议走，宿主不误伤）。min_width 供宿主窄窗降级用。
-        surfaces = [s for s in (p.get("surfaces") or []) if s in _SURFACE_LEVELS] or list(_SURFACE_LEVELS)
+        declared = p.get("surfaces") or []
+        surfaces = [s for s in declared if s in _SURFACE_LEVELS]
+        if not surfaces:
+            # fail-closed：peek 是上一个合同版本的合法值（旧语义=最高只允许瞬态预览，
+            # 是最强限制），声明含 peek 而过滤后为空时按最轻公共档 inline 收口，
+            # 不能回落全档把限制声明放大成全许可；纯非法值（笔误）才视为未声明。
+            surfaces = ["inline"] if "peek" in declared else list(_SURFACE_LEVELS)
         parsed["surfaces"] = surfaces
         mw = p.get("min_width")
         if isinstance(mw, bool) or not isinstance(mw, (int, float)) or mw <= 0:

@@ -32,6 +32,9 @@ class ActionResult(BaseModel):
     screenshot_path: str | None = None
     panel: str | None = None  # 面板引用「plugin_id:name」：执行成功时带上，壳侧渲染对应面板
     # ---- 能力表面提示（调研 §12.7）：都是「建议」，最终展示级别由宿主裁决 ----
+    # 插件 manifest 只能声明 inline/stage/focus 三态（plugins.py _SURFACE_LEVELS）；
+    # wire 上的 "peek" 仅来自 surface.open 的瞬态预览请求——peek 是宿主对 Stage 的
+    # 瞬态 compact placement（架构 §6.5），不是插件公共档位。
     presentation: Literal["inline", "peek", "stage", "focus"] | None = None
     attention: Literal["quiet", "suggest", "focus"] = "suggest"
     object: dict | None = None  # {type,id,title}：跨应用接力用，不依赖面板 DOM

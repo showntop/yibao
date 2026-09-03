@@ -28,7 +28,8 @@ import {
 import { formatContextPrefix, type InputContext } from "../../lib/at-mention";
 import { procLabel, procSkip, procResultSuffix, settleProcOnError, settleProcsOnInterrupt } from "../../lib/proc";
 import { sessionStore } from "../../state/store";
-import type { Attention, Presentation } from "../../lib/surface/surface-policy";
+import type { CapabilityPresentation } from "../../state/types";
+import type { Attention, Presentation, SurfaceMode } from "../../lib/surface/surface-policy";
 import type { WebviewPayload } from "../../lib/webview-source";
 import { usePanelGrow } from "../../composables/usePanelGrow";
 import { usePluginOverlay } from "../../composables/usePluginOverlay";
@@ -36,7 +37,8 @@ import type { AvatarState } from "../../protocol/brain-types";
 
 const props = withDefaults(defineProps<{
   scene?: boolean;
-  presentation?: Presentation;
+  /** 工作面档位只有公共三态（peek 是宿主瞬态探窗，永远到不了这里） */
+  presentation?: CapabilityPresentation;
 }>(), {
   scene: false,
   presentation: "stage",
@@ -48,7 +50,8 @@ interface CapabilitySurfaceEvent extends SurfaceMeta {
   explicit: boolean;
   suggested: Presentation | null;
   attention: Attention;
-  supported?: Presentation[];
+  /** 面板声明的三态支持范围（sidecar 保证不含 peek） */
+  supported?: SurfaceMode[];
 }
 // state：同步给父级侧边栏团子（插件页活跃时团子跟着面板会话走）
 // panel：新面板打开时外发（父级自动切到本页；同面板刷新/挂载补拉不发，不抢用户所在页）
@@ -143,7 +146,7 @@ const current = ref<{
   webview: WebviewPayload | null;
   data: Record<string, unknown>;
   input?: "inherit" | "coexist" | "handoff" | "none";
-  hints?: { presentation: Presentation | null; attention: Attention; surfaces?: Presentation[]; explicit?: boolean };
+  hints?: { presentation: Presentation | null; attention: Attention; surfaces?: SurfaceMode[]; explicit?: boolean };
 } | null>(null);
 const errorText = ref(""); // 面板内顶部错误细条（不进对话气泡）
 let unlisten: (() => void) | null = null;
@@ -314,7 +317,7 @@ function onEvent(e: BrainEvent) {
         hints: {
           presentation: (e.payload?.presentation as Presentation | null | undefined) ?? null,
           attention: (e.payload?.attention as Attention | undefined) ?? "suggest",
-          surfaces: e.payload?.surfaces as Presentation[] | undefined,
+          surfaces: e.payload?.surfaces as SurfaceMode[] | undefined,
           explicit: e.payload?.explicit === true,
         },
       });
