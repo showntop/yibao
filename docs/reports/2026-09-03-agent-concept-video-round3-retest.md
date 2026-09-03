@@ -115,3 +115,15 @@
 回归：sidecar 全量 **1486 passed**；desktop vue-tsc 干净、vitest **411 passed**（7 个 unhandled errors 全在 `PanelWindow.handoff.test.ts`，与本次改动无关，属存量）。
 
 仍未做（保持 backlog）：N4（音轨修整能力化——N5 的 fit 已吸收最常见场景）、N6（Stage 器内容重启水合，Phase 4）、N7（立项回执提示降级路径）、N8（家态提醒噪声）。
+
+## 九、第二批修复回填（2026-09-03 傍晚，commit 6b58fb0）
+
+| 问题 | 修法 | 证据 |
+|---|---|---|
+| N6 重启后 Stage 器内容空白 | 根因（排查）：编辑器内「保存」经桥路径以回执重发 panel 事件，把持久化快照的 rows 载荷毒化成回执；重启后编辑器 onInit 拿不到 rows 静默返回。修法：`api.toml` 的 `save_article`/`set_status` 标 `quiet`（回执走桥 action_result，不发面板事件）+ `editor.html` onInit 兜底（有 id 无 rows 时按 id 自举读稿） | **实机验收通过**：编辑器内保存 → Cmd+Q → 重启 → 恢复工位 → 内容水合（「已加载 v5」）；`test_server.py::test_panel_action_quiet_method_emits_no_panel`、`test_zimeiti.py` 白名单断言同步 |
+| N7 立项不知降级 | `Tool.degraded` 合同（`visual_card_save` 占位卡标 True）→ 能力索引 → 预检 plan（该段 provider 全降级才标 degraded）→ 立项回执 `degraded_stages` + 人话提示（「素材」走降级实现，装真 provider 可重生成） | `test_capability_preflight.py` +3 例（含真实 zimeiti 链 assets 段 degraded 锚点） |
+| N8 提醒刷屏 | 同一提醒文本连续触发并进上一条带 ×N（`useChatFlow` reminder 分支合并 + syncBubble 回写） | `useChatFlow.test.ts` +2 例 |
+
+回归：sidecar **1490 passed**；desktop vitest **415 passed**、vue-tsc 干净。
+
+剩余 backlog：N4（音轨修整能力化，主场景已被 N5 fit 吸收）；真图 provider、deck pack 真实 pptx——第四轮审计的入场券。
