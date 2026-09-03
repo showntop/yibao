@@ -615,7 +615,9 @@ def test_editor_api_methods_whitelisted(env):
     assert ra is not None and ra.direct and ra.handler == "zimeiti.article_read"
     sa = get_api("zimeiti.save_article")
     assert sa is not None and sa.direct and sa.handler == "zimeiti.article_save"
-    assert sa.panel == "zimeiti:editor"  # 保存后仍停在编辑器（回执 data 不改变编辑器状态）
+    # N6：保存直调 quiet（不发 panel 事件）——回执重发会毒化工作台持久化快照（rows→回执），
+    # 重启后编辑器拿不到 rows 停在空白初始态；回执本就走桥回包（action_result）送 iframe
+    assert sa.quiet is True and sa.panel is None
 
 
 def _make_reader(msgs):

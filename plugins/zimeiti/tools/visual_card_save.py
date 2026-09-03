@@ -67,6 +67,7 @@ class VisualCardSave(Tool):
         "shots 只生成指定镜号；重生成同镜覆盖同一路径、叠 artifact 新版本。"
     )
     default_risk = RiskLevel.L2_MEDIUM
+    degraded = True  # 占位视觉卡是降级 provider（非 AI 生图），预检要如实提示降级路径
     work_outputs = (
         {   # 每镜一个 artifact：ref 稳定（不带分镜版本号），重生成同镜 = 同 artifact 新 revision
             "kind": "artifact",

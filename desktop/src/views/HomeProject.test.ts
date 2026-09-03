@@ -12,11 +12,11 @@ const switchCalls: string[] = [];
 vi.mock("../composables/useProject", () => ({
   useProject: () => ({
     current: computed(() => ({
-      id: "proj_current", name: "当前项目", objects: [], touched_at: 1,
+      id: "proj_current", name: "当前项目", objects: [], touched_at: 1, created_at: 1, dir: "",
     })),
     projects: ref<ProjectInfo[]>([
-      { id: "proj_current", name: "当前项目", objects: [], touched_at: 1 } as ProjectInfo,
-      { id: "proj_other", name: "别的项目", objects: [], touched_at: 1 } as ProjectInfo,
+      { id: "proj_current", name: "当前项目", objects: [], touched_at: 1, created_at: 1, dir: "" } as unknown as ProjectInfo,
+      { id: "proj_other", name: "别的项目", objects: [], touched_at: 1, created_at: 1, dir: "" } as unknown as ProjectInfo,
     ]),
     switchTo: async (id: string) => {
       switchCalls.push(id);
@@ -34,15 +34,15 @@ describe("HomeProject 切换两步确认（N1）", () => {
   it("不忙：点一次就切", async () => {
     switchCalls.length = 0;
     const w = mount(HomeProject, { props: { sessionId: "c1", busy: false }, global });
-    const row = w.findAll(".row").at(0);
-    await row!.trigger("click");
+    const row = w.findAll(".row")[0];
+    await row.trigger("click");
     expect(switchCalls).toEqual(["proj_other"]);
   });
 
   it("忙：第一下只进确认态不切，再点才切", async () => {
     switchCalls.length = 0;
     const w = mount(HomeProject, { props: { sessionId: "c1", busy: true }, global });
-    const row = w.findAll(".row").at(0)!;
+    const row = w.findAll(".row")[0];
     await row.trigger("click");
     expect(switchCalls).toEqual([]); // 没切
     expect(row.text()).toContain("确认切换");

@@ -90,11 +90,14 @@ name = "read_article"
 handler = "zimeiti.article_read"
 direct = true
 
+# 编辑器内的读稿/保存：保存回执由桥回包带给 iframe（action_result），面板不重发——
+# quiet 是硬要求：重发会把持久化快照从「可水合的 rows 载荷」换成「回执」，
+# 重启后编辑器拿不到 rows 停在空白初始态（第三轮复测 N6）。
 [[method]]
 name = "save_article"
 handler = "zimeiti.article_save"
 direct = true
-panel = "zimeiti:editor"
+quiet = true
 
 # 编辑器选段 AI 协作：直调返回 {replacement} 给 iframe 做 diff 预览，不落盘、不发 panel 事件
 [[method]]
@@ -102,11 +105,13 @@ name = "ai_edit"
 handler = "zimeiti.ai_edit"
 direct = true
 
-# 编辑器内「标为已发布」：静默流转（无 panel/refresh，编辑器不跳转看板/详情）
+# 编辑器内「标为已发布」：静默流转（quiet：不发 panel 事件——回执会顶掉编辑器快照载荷，
+# 也会让当前面板被切走；与上方 save_article 同一条纪律）
 [[method]]
 name = "set_status"
 handler = "zimeiti.set_status"
 direct = true
+quiet = true
 
 # 详情页「复制成稿」：标题+正文进剪贴板 + 标已发布记时间；refresh 回详情看状态变化
 [[method]]

@@ -344,11 +344,21 @@ export function useChatFlow(deps: ChatFlowDeps) {
       case "reminder":
         // 任务收尾（沙箱/agent）只写 Feed：插进对话会盖蓝色提醒胶囊、拆开当轮 run。
         if (isTaskLogEvent(e)) break;
-        // 主动提醒：落气泡 + 通知父级切回本页（大窗已可见，宠物窗自己管亮窗，两边互不抢）
+        // 家态降噪（N8）：同一提醒文本连续落（久坐/问候跨窗口、跨重启会重发）→
+        // 并进上一条带 ×N，不刷屏；不同文本正常各落各的
         {
-          const reminderBubble: BubbleMsg = { role: "ai", text: e.text ?? "到点了", icon: "clock", ts: Date.now() };
-          bubbles.value.push(reminderBubble);
-          persistBubble(reminderBubble);
+          const text = e.text ?? "到点了";
+          const last = bubbles.value[bubbles.value.length - 1];
+          if (last?.role === "ai" && last.icon === "clock"
+              && (last.text === text || last.text.replace(/ ×\d+$/, "") === text)) {
+            const m = / ×(\d+)$/.exec(last.text);
+            last.text = m ? `${text} ×${Number(m[1]) + 1}` : `${text} ×2`;
+            if (last.id) syncBubble(last);
+          } else {
+            const reminderBubble: BubbleMsg = { role: "ai", text, icon: "clock", ts: Date.now() };
+            bubbles.value.push(reminderBubble);
+            persistBubble(reminderBubble);
+          }
         }
         deps.emitReminder();
         break;

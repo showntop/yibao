@@ -142,3 +142,22 @@ describe("useChatFlow 过程行收尾", () => {
     expect(flow.procIdx.size).toBe(1);
   });
 });
+
+describe("useChatFlow 提醒降噪（N8）", () => {
+  it("同一提醒文本连续触发：并进上一条带 ×N，不刷屏", () => {
+    const flow = makeFlow();
+    flow.onEvent({ kind: "reminder", text: "坐久了，起来活动一下吧 🧘" } as BrainEvent);
+    flow.onEvent({ kind: "reminder", text: "坐久了，起来活动一下吧 🧘" } as BrainEvent);
+    flow.onEvent({ kind: "reminder", text: "坐久了，起来活动一下吧 🧘" } as BrainEvent);
+    const reminders = flow.bubbles.value.filter((b) => b.icon === "clock");
+    expect(reminders).toHaveLength(1);
+    expect(reminders[0].text).toBe("坐久了，起来活动一下吧 🧘 ×3");
+  });
+
+  it("不同提醒文本各落各的，不合并", () => {
+    const flow = makeFlow();
+    flow.onEvent({ kind: "reminder", text: "坐久了，起来活动一下吧 🧘" } as BrainEvent);
+    flow.onEvent({ kind: "reminder", text: "到点跑内容流水线啦 📋" } as BrainEvent);
+    expect(flow.bubbles.value.filter((b) => b.icon === "clock")).toHaveLength(2);
+  });
+});

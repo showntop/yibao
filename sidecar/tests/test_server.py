@@ -3510,3 +3510,27 @@ def test_project_switch_emits_scope_notice(tmp_path, monkeypatch):
     assert "甲项目" in notices[0]["event"]["text"]
     assert notices[0].get("conversation_id") == "c1"
     assert any(m.get("type") == "project_switched" and m.get("ok") for m in out)
+
+
+def test_panel_action_quiet_method_emits_no_panel(tmp_path, monkeypatch):
+    """N6：quiet=true 的直调（如编辑器内保存）不发 panel 事件——
+    保存回执只走 action_result 回桥，不顶掉工作台持久化快照的 rows 载荷。"""
+    executed = []
+    monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path / "data"))
+    _patch_api(monkeypatch, quiet=True)
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([{"id": 1, "type": "panel_action", "method": "tdel.delete", "params": {"id": "r1"}}]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+            skills_factory=_pa_factory(executed, ref="tdel:list"),
+        )
+    )
+    evs = [m["event"] for m in out if m["type"] == "event"]
+    assert executed == [{"id": "r1"}]
+    assert "panel" not in [e["kind"] for e in evs]  # quiet：零 panel 事件
+    assert any(e["kind"] == "action_result" and e["result"]["success"] for e in evs)
+    assert out[-1] == {"type": "run_done", "id": 1}

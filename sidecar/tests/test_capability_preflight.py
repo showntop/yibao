@@ -83,7 +83,7 @@ def test_build_capability_index_from_tool_work_outputs():
     assert set(index) == {"video.script", "research.evidence", "research.claim"}
     assert index["video.script"] == [{
         "plugin_id": "demo", "tool_id": "demo.save", "label": "保存稿件",
-        "artifact_type": "video.script",
+        "artifact_type": "video.script", "degraded": False,
     }]
     # label 缺省回退 tool_id
     assert index["research.evidence"][0]["label"] == "demo.mix"
@@ -320,6 +320,71 @@ def test_capability_summary_ready_project_has_no_degradation(tmp_path, monkeypat
         graph.close()
 
 
+# ---------- N7：降级 provider 前置提示 ----------
+
+
+def test_capability_index_carries_degraded_flag():
+    """能力索引保留 tool 的 degraded 标记（占位/降级实现要一路带到预检 plan）。"""
+    class _DegradedTool:
+        id = "demo.visual"
+        label = "占位视觉"
+        degraded = True
+        work_outputs = ({"kind": "artifact", "artifact_type": "asset.visual", "ref_from": "data.id"},)
+
+    class _FullTool:
+        id = "demo.visual2"
+        label = "真图"
+        work_outputs = ({"kind": "artifact", "artifact_type": "asset.visual", "ref_from": "data.id"},)
+
+    index = build_capability_index([_DegradedTool(), _FullTool()])
+    by_tool = {p["tool_id"]: p for p in index["asset.visual"]}
+    assert by_tool["demo.visual"]["degraded"] is True
+    assert by_tool["demo.visual2"]["degraded"] is False
+
+
+def test_capability_summary_surfaces_degraded_stages(tmp_path, monkeypatch):
+    """N7：降级 provider 不算缺能力（不阻断、ready 照常），但立项摘要必须提示降级段。"""
+    from yibao_brain import config
+
+    monkeypatch.setattr(config, "settings_path", lambda: str(tmp_path / "settings.json"))
+    index = _full_video_index()
+    for entry in index["image.asset"]:
+        entry["degraded"] = True  # 素材段的 provider 全是占位实现
+    graph = WorkGraphStore(str(tmp_path / "work_graph.db"))
+    try:
+        graph.set_capability_providers(index)
+        store = ProjectStore(str(tmp_path / "projects.json"), work_graph=graph)
+        tools = {tool.id: tool for tool in make_project_tools(store)}
+        result = tools["project.create"].run({"name": "Agent 概念科普视频"}, None)
+        capability = result.data["capability"]
+        assert capability["ready"] is True  # 降级 ≠ 缺能力，不阻断
+        assert capability["missing_stages"] == []
+        assert capability["degraded_stages"] == ["素材"]
+        assert "素材" in capability["degradation"] and "降级" in capability["degradation"]
+    finally:
+        graph.close()
+
+
+def test_stage_degraded_only_when_all_providers_degraded(tmp_path):
+    """同段有一个满血 provider 即不算降级（混合时按满血算）。"""
+    index = _full_video_index()
+    index["image.asset"].append(
+        {"plugin_id": "media", "tool_id": "media.image_real", "label": "真图", "degraded": False}
+    )
+    for entry in index["image.asset"][:1]:
+        entry["degraded"] = True
+    graph = WorkGraphStore(str(tmp_path / "work_graph.db"))
+    try:
+        graph.set_capability_providers(index)
+        graph.create_workspace("ws", "Agent 概念科普视频", str(tmp_path / "ws"))
+        plan = _run(graph, "ws")["capability_plan"]
+        by_id = {stage["id"]: stage for stage in plan["stages"]}
+        assert by_id["assets"]["degraded"] is False  # 混有满血 provider → 不标降级
+        assert plan["degraded"] == []
+    finally:
+        graph.close()
+
+
 # ---------- 验收锚点：真实 zimeiti 插件声明 ----------
 
 
@@ -369,6 +434,8 @@ def test_real_zimeiti_plugin_covers_full_video_chain(tmp_path):
         by_id = {stage["id"]: stage for stage in plan["stages"]}
         assert by_id["storyboard"]["status"] == "available"
         assert by_id["assets"]["status"] == "available"
+        assert by_id["assets"]["degraded"] is True  # visual_card_save 是占位降级 provider（N7）
+        assert plan["degraded"] == ["assets"]
         assert by_id["voice"]["status"] == "available"
         assert by_id["compose"]["status"] == "available"
         assert by_id["deliver"]["status"] == "available"

@@ -23,6 +23,9 @@ def _capability_summary(project: dict | None) -> dict | None:
     stages = plan.get("stages") or []
     available = [str(stage["label"]) for stage in stages if stage.get("status") == "available"]
     missing = [str(stage["label"]) for stage in stages if stage.get("status") == "missing"]
+    # N7：降级段（provider 全是占位/降级实现）——不缺能力但质量路径要前置说清
+    degraded = [str(stage["label"]) for stage in stages
+                if stage.get("status") == "available" and stage.get("degraded")]
     enforced = str(plan.get("policy") or "") == "enforce"
     degradation = ""
     if enforced and missing:
@@ -30,11 +33,15 @@ def _capability_summary(project: dict | None) -> dict | None:
             degradation = f"可做到{available[-1]}；{missing[0]}起缺能力，安装对应 provider 后可继续"
         else:
             degradation = f"{missing[0]}起缺能力，安装对应 provider 后可继续"
+    if degraded:
+        hint = f"「{'、'.join(degraded)}」走降级实现（如占位视觉卡），装真 provider 后可对同产物重生成"
+        degradation = f"{degradation}；{hint}" if degradation else hint
     return {
         "ready": bool(plan.get("ready")),
         "enforced": enforced,
         "available_stages": available,
         "missing_stages": missing,
+        "degraded_stages": degraded,
         "blocked_reason": str(run.get("blocked_reason") or ""),
         "degradation": degradation,
     }

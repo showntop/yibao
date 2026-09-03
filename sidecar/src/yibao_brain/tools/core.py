@@ -57,6 +57,9 @@ class Tool(ABC):
     # 成功结果写入 Work Graph 的声明式投影；由唯一 ToolInvoker 消费。
     # kind=artifact/evidence，字段通过 data.* / params.* 路径取值。
     work_outputs: tuple[dict, ...] = ()
+    # 降级 provider 标记（N7）：能产出该类型但是占位/降级实现（如占位视觉卡，非 AI 生图）。
+    # 进能力索引与预检 plan——立项回执应提示「这段走降级路径」，而不是把占位冒充满血。
+    degraded: bool = False
 
     def session_remember_key(self, params: dict) -> dict | None:
         """Return a canonical parameter subset for exact-action session approval.

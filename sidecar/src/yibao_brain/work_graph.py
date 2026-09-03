@@ -425,6 +425,7 @@ def build_capability_index(tools: Any) -> dict[str, list[dict]]:
             bucket[tool_id] = {
                 "plugin_id": plugin_id, "tool_id": tool_id,
                 "label": label, "artifact_type": artifact_type,
+                "degraded": bool(getattr(tool, "degraded", False)),
             }
     return {artifact_type: list(bucket.values()) for artifact_type, bucket in buckets.items()}
 
@@ -723,6 +724,7 @@ class WorkGraphStore:
                     "tool_id": tool_id,
                     "label": str(provider.get("label") or "").strip() or tool_id,
                     "artifact_type": atype,
+                    "degraded": bool(provider.get("degraded", False)),
                 }
             if bucket:
                 normalized[atype] = list(bucket.values())
@@ -751,9 +753,12 @@ class WorkGraphStore:
 
     def _compute_capability_plan(self, definition: dict) -> dict:
         """逐 stage、逐 acceptance rule 解析可满足性：rule 有至少一个 provider 命中
-        即可满足；stage 的全部 rule 可满足 = available，否则 missing。"""
+        即可满足；stage 的全部 rule 可满足 = available，否则 missing。
+        全 available 但 provider 全是降级实现（degraded，如占位视觉卡）→ 标 degraded：
+        立项回执据此提示「这段走降级路径」（N7），不把占位冒充满血。"""
         stages: list[dict] = []
         missing: list[str] = []
+        degraded: list[str] = []
         for stage in definition.get("stages") or []:
             providers: dict[str, dict] = {}
             rules_satisfied = True
@@ -766,13 +771,19 @@ class WorkGraphStore:
             status = "available" if rules_satisfied else "missing"
             if status == "missing":
                 missing.append(str(stage["id"]))
+            # 该段的全部候选 provider 都是降级实现 → 本段降级（有一个满血即不算）
+            is_degraded = bool(providers) and all(p.get("degraded") for p in providers.values())
+            if status == "available" and is_degraded:
+                degraded.append(str(stage["id"]))
             stages.append({
                 "id": str(stage["id"]), "label": str(stage["label"]),
-                "status": status, "providers": list(providers.values()),
+                "status": status, "degraded": is_degraded,
+                "providers": list(providers.values()),
             })
         return {
             "stages": stages,
             "missing": missing,
+            "degraded": degraded,
             "ready": not missing,
             "policy": _preflight_policy(definition),
             "computed_at": time.time(),

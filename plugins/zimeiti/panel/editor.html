@@ -500,6 +500,9 @@
   if (window.yibao && window.yibao.onInit) {
     window.yibao.onInit(function (data) {
     var row = data && data.rows && data.rows[0];
+    // 兜底（N6）：快照被回执形数据毒化过（有 id 无 rows）时按 id 自举读稿——
+    // title/angle/platform 暂空，loadArticle 读到正文后照常渲染
+    if ((!row || !row.id) && data && data.id) row = { id: data.id, title: "", angle: "", platform: "" };
     if (!row || !row.id) return;
     var sameTopic = String(row.id) === topicId;
     if (sameTopic && dirty) {
