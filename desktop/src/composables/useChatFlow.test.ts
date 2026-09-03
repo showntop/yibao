@@ -161,3 +161,25 @@ describe("useChatFlow 提醒降噪（N8）", () => {
     expect(flow.bubbles.value.filter((b) => b.icon === "clock")).toHaveLength(2);
   });
 });
+
+describe("useChatFlow 门卡批准后续跑（回归：中段文本丢显示）", () => {
+  it("门卡批准后的 chunk 段照常建气泡，final_reply 以完整文本收尾", () => {
+    const flow = makeFlow();
+    // 段1：门卡前文本
+    flow.onEvent({ kind: "final_reply_chunk", text: "先干活：" } as BrainEvent);
+    // 门卡工具：提出 →（用户批准，无事件）→ 结果
+    flow.onEvent({ kind: "action_proposed", action: { id: "a1", label: "生成视觉图", tool_id: "zimeiti.visual_generate" } } as BrainEvent);
+    flow.onEvent({ kind: "action_result", action: { id: "a1", label: "生成视觉图", tool_id: "zimeiti.visual_generate" }, result: { success: true, data: { human: "已完成" } } } as BrainEvent);
+    // 段2：批准后续跑文本（bug 现场：这类段没显示）
+    flow.onEvent({ kind: "final_reply_chunk", text: "7 镜全部生成成功。" } as BrainEvent);
+    // 第二个门卡工具
+    flow.onEvent({ kind: "action_proposed", action: { id: "a2", label: "渲染视频", tool_id: "zimeiti.render_save" } } as BrainEvent);
+    flow.onEvent({ kind: "action_result", action: { id: "a2", label: "渲染视频", tool_id: "zimeiti.render_save" }, result: { success: true, data: { human: "已完成" } } } as BrainEvent);
+    // 段3 + final 收尾
+    flow.onEvent({ kind: "final_reply_chunk", text: "✅ 全部完成" } as BrainEvent);
+    flow.onEvent({ kind: "final_reply", text: "✅ 全部完成，按印：" } as BrainEvent);
+
+    const texts = flow.bubbles.value.filter((b) => b.role === "ai").map((b) => b.text);
+    expect(texts).toEqual(["先干活：", "7 镜全部生成成功。", "✅ 全部完成，按印："]);
+  });
+});
