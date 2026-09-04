@@ -100,6 +100,10 @@ async def handle_panel_action(
             # remember 写入复用 invoker.apply_verdict（F4：消除 loop 之外的第 3 处重复）。
             verdicts = await agent.invoker.batch_confirm([action], meta={"conversation_id": conversation_id})
             approved, remember = verdicts.get(action.id, (False, False))
+            # 裁决出炉即在流内广播（与 loop 同语义）：壳侧待批队列即时出队
+            emit(Event(kind="confirmation_resolved", action=action, actions=[action],
+                       action_ids=[action.id],
+                       payload={"verdicts": {action.id: bool(approved)}}))
             agent.invoker.apply_verdict(action, approved, remember)
             if not approved:
                 emit(Event(kind="error", text=f"用户拒绝执行 {api.handler}", action=action))

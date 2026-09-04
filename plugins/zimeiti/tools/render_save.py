@@ -121,6 +121,10 @@ class RenderSave(Tool):
         latest = ctx.db.query("renders", where={"topic_id": tid}, order="version DESC", limit=1)
         version = (int(latest[0]["version"]) if latest else 0) + 1
         out_dir = self._plugin_root / "renders" / tid
+        # 盘上可能有库外产物（手工横版/库丢失后的孤儿文件）：落盘前跳过已被占用的版本号，
+        # 宁跳空号也不静默撞掉别人的文件（三轮复测实机事故：手工 v2.mp4 被重渲覆盖）。
+        while (out_dir / f"v{version}.mp4").exists():
+            version += 1
         try:
             out_dir.mkdir(parents=True, exist_ok=True)
         except OSError as e:

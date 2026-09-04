@@ -638,6 +638,13 @@ def test_serve_async_confirm_roundtrip(tmp_path):
     kinds = [m["event"]["kind"] for m in out if m["type"] == "event"]
     assert "confirmation_needed" in kinds
     assert "error" in kinds
+    # 裁决出炉即在流内广播 confirmation_resolved（主流事件，序确定性）：
+    # 壳/旁路批准后待批卡即时出队，不等 action_result
+    assert "confirmation_resolved" in kinds
+    assert kinds.index("confirmation_needed") < kinds.index("confirmation_resolved") < kinds.index("error")
+    resolved = next(m["event"] for m in out if m["type"] == "event"
+                    and m["event"]["kind"] == "confirmation_resolved")
+    assert resolved["payload"]["verdicts"] == {resolved["action_ids"][0]: False}
     assert not any(
         m["type"] == "event" and m["event"].get("kind") == "action_result"
         and m["event"]["result"]["data"].get("did") for m in out
@@ -1425,6 +1432,11 @@ def test_panel_action_confirm_flow_rejected(tmp_path, monkeypatch):
     err = next(e for e in evs if e["kind"] == "error")
     assert "拒绝" in err["text"]
     assert err["action"]["id"] == "pa_1"                     # 错误带 rid 标签（壳侧桥按标签认领）
+    # 裁决出炉即在流内广播 confirmation_resolved（旁路批准的即时出队信号；主流事件，
+    # 序确定性：confirmation_needed → confirmation_resolved → error → run_done）
+    resolved = next(e for e in evs if e["kind"] == "confirmation_resolved")
+    assert resolved["action_ids"] == ["pa_1"] and resolved["payload"]["verdicts"] == {"pa_1": False}
+    assert kinds.index("confirmation_needed") < kinds.index("confirmation_resolved") < kinds.index("error")
     assert out[-1] == {"type": "run_done", "id": 1}
 
 

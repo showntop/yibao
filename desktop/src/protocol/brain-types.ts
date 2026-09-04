@@ -6,6 +6,8 @@ export type BrainEventKind =
   | "thought"
   | "action_proposed"
   | "confirmation_needed"
+  /** 裁决出炉广播（旁路批准——手机/HTTP——即时出队信号；带 action_ids，不等 action_result） */
+  | "confirmation_resolved"
   | "action_result"
   | "final_reply"
   | "final_reply_chunk"
@@ -131,6 +133,8 @@ export interface BrainEvent {
   exit_code?: number;
   task_id?: string;
   name?: string;
+  /** confirmation_resolved：本次裁决的全部 action id（出队信号） */
+  action_ids?: string[];
 }
 
 /** 小窗（宠物会话）历史消息行（Rust get_conversation_messages 返回形状；字段为 Rust 序列化 camelCase）。 */

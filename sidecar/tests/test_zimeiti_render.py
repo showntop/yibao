@@ -247,6 +247,26 @@ def test_render_save_inline_produces_real_mp4(env, tmp_path, data_dir):
 
 
 @needs_ffmpeg
+def test_render_save_never_overwrites_foreign_file(env, tmp_path, data_dir):
+    """盘上存在但 renders 表无行的 v<N>.mp4（手工放入的外部产物）不得被静默撞掉：
+    版本分配取 max(库, 盘) + 1，外部文件原样保留。"""
+    reg, _, _ = env
+    tid, _ = _topic_with_timeline(reg, tmp_path)
+    r1 = _run(reg, "zimeiti.render_save", {"topic_id": tid})
+    assert r1.success and r1.data["version"] == 1
+
+    # 手工横版放进同目录（不入库）——三轮复测实机事故的形态
+    foreign = Path(r1.data["path"]).parent / "v2.mp4"
+    foreign.write_bytes(b"foreign-horizontal-copy")
+
+    r2 = _run(reg, "zimeiti.render_save", {"topic_id": tid})
+    assert r2.success, r2.error
+    assert r2.data["version"] == 3 and "v3.mp4" in r2.data["path"]
+    assert Path(r2.data["path"]).is_file()
+    assert foreign.read_bytes() == b"foreign-horizontal-copy"
+
+
+@needs_ffmpeg
 def test_render_materialized_events_match_rendered_data(env, tmp_path):
     """strict materialize：video.render artifact（ref=<topic>#render）+ rendered_from
     timeline.composition 边。"""

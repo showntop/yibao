@@ -46,6 +46,8 @@ EventKind = Literal[
     "thought",
     "action_proposed",
     "confirmation_needed",
+    # 裁决出炉广播（旁路批准即时出队信号）：只过 brain-event，不落 Feed、不进门卡
+    "confirmation_resolved",
     "action_result",
     "final_reply",
     "final_reply_chunk",
@@ -89,6 +91,9 @@ class Event(BaseModel):
     actions: list[Action] | None = None
     result: ActionResult | None = None
     confirmation_id: str | None = None
+    # confirmation_resolved：本次裁决的全部 action id（壳侧待批队列即时出队信号）；
+    # 各票 approved 放 payload["verdicts"]（{action_id: bool}）
+    action_ids: list[str] | None = None
     payload: dict = Field(default_factory=dict)  # kind="panel" 时放 {panel, schema, data}
     metrics: RunMetrics | None = None  # kind="run_metrics" 时携带统计
 

@@ -66,9 +66,8 @@ export function onPendingConfirms(cb: (l: PendingConfirm[]) => void): () => void
 
 // ---- 模块级副作用：消费大脑事件流维护队列 ----
 
-// 普通浏览器只用于本地 UI QA，没有 Tauri event bridge；避免模块加载时产生无意义的未处理错误。
-if (hasTauriBridge) void listen<BrainEvent>("brain-event", (ev) => {
-  const e = ev.payload;
+/** brain-event 入队/出队状态机（导出供单测直驱；Tauri 桥在时由模块级 listen 接线）。 */
+export function handlePendingBrainEvent(e: BrainEvent): void {
   // 运行代数闸（P0）：被抢占旧 run 的迟到确认/结果不得再动待批队列（同 brainClient.onBrainEvent）
   if (isStaleRunEvent(e)) return;
   if (e.kind === "confirmation_needed") {
@@ -93,6 +92,11 @@ if (hasTauriBridge) void listen<BrainEvent>("brain-event", (ev) => {
       _pc = [..._pc, ...fresh];
       _pcEmit();
     }
+  } else if (e.kind === "confirmation_resolved") {
+    // 裁决出炉即出队：旁路批准（手机/HTTP 桥）与壳 confirm_batch 同经此信号，
+    // 不再等工具执行完的 action_result（长工具下门卡曾残留整个执行期）。
+    // action_result/error 的出队分支保留兜底（旧 sidecar 无此事件）。
+    for (const id of e.action_ids ?? []) _pcRemove(id);
   } else if ((e.kind === "action_result" || e.kind === "error") && e.action?.id) {
     _pcRemove(e.action.id);
   } else if (e.kind === "interrupted") {
@@ -106,6 +110,11 @@ if (hasTauriBridge) void listen<BrainEvent>("brain-event", (ev) => {
       _pcEmit();
     }
   }
+}
+
+// 普通浏览器只用于本地 UI QA，没有 Tauri event bridge；避免模块加载时产生无意义的未处理错误。
+if (hasTauriBridge) void listen<BrainEvent>("brain-event", (ev) => {
+  handlePendingBrainEvent(ev.payload);
 });
 
 if (hasTauriBridge) void listen<BrainStatusMsg>("brain-status", (ev) => {

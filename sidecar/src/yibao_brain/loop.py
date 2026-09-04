@@ -410,6 +410,17 @@ class AgentLoop:
                 verdicts = await self.invoker.batch_confirm(
                     confirm_actions, meta={"conversation_id": conversation_id or ""},
                 )
+                # 裁决出炉即在流内广播（旁路批准——手机 /v1/confirm——与壳 confirm_batch
+                # 同汇此处）：壳侧待批队列即时出队，不等工具执行完的 action_result
+                #（长工具下门卡曾残留整个执行期；主流事件序确定，无 defer 丢失面）。
+                yield Event(
+                    kind="confirmation_resolved",
+                    actions=confirm_actions,
+                    action=confirm_actions[0],
+                    action_ids=[a.id for a in confirm_actions],
+                    payload={"verdicts": {a.id: bool(verdicts.get(a.id, (False, False))[0])
+                                          for a in confirm_actions}},
+                )
             for tc, action, decision in plan:
                 if cancelled():
                     _interrupted_evidence()
