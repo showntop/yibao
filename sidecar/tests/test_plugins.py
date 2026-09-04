@@ -950,6 +950,22 @@ def test_panel_payload_webview_shape(data_dir, tmp_path):
     assert panel_payload(r2) is None
 
 
+def test_panel_payload_passes_receipt_through(data_dir, tmp_path):
+    """回执动作合同：result.receipt 透传进 panel payload（宿主 InlineReceipt 渲染本机动作按钮）；
+    未带 receipt 的结果不出现该键。"""
+    from yibao_brain.plugins import panel_payload
+
+    _write_plugin(tmp_path, "notes", NOTES_PANEL_MANIFEST, {"panel/list.schema.json": '{"type":"list"}'})
+    reg = ToolRegistry()
+    _load(tmp_path, reg)
+
+    receipt = {"actions": [{"label": "在 Finder 显示", "kind": "reveal", "path": "/tmp/v3.mp4"}]}
+    p = panel_payload(ActionResult(success=True, data={}, panel="notes:list", receipt=receipt))
+    assert p["receipt"] == receipt
+    p2 = panel_payload(ActionResult(success=True, data={}, panel="notes:list"))
+    assert "receipt" not in p2
+
+
 # ---------- 面板输入模式声明 [[panel]].input(panel-input-modes spec)----------
 
 

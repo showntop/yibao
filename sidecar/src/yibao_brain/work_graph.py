@@ -2296,6 +2296,46 @@ class WorkGraphStore:
                 "updated_at": float(row["updated_at"]),
             }
 
+    def list_artifact_views(self, workspace_id: str) -> list[dict]:
+        """工作语境产物列表（产物浏览器数据源）：挂载中的 artifact + head 版本摘要。
+
+        path 只在 head 内容落在真实文件时给出（external://、blob://、event:// 等
+        内部指针不给），供宿主「在 Finder 显示 / 打开」动作使用。按 updated_at 倒序。
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT a.* FROM artifacts a JOIN workspace_artifacts wa ON wa.artifact_id=a.id "
+                "WHERE wa.workspace_id=? AND wa.detached_at IS NULL ORDER BY a.updated_at DESC",
+                (workspace_id,),
+            ).fetchall()
+            views = []
+            for row in rows:
+                head = None
+                if row["head_revision_id"]:
+                    head = self._conn.execute(
+                        "SELECT * FROM revisions WHERE id=?", (row["head_revision_id"],),
+                    ).fetchone()
+                revision_count = int(self._conn.execute(
+                    "SELECT COUNT(*) AS n FROM revisions WHERE artifact_id=?", (row["id"],),
+                ).fetchone()["n"])
+                metadata = _decode(head["metadata"], {}) if head else {}
+                content_ref = str(head["content_ref"]) if head else ""
+                path = ""
+                if content_ref and "://" not in content_ref and os.path.isabs(content_ref):
+                    path = content_ref
+                views.append({
+                    "id": str(row["id"]),
+                    "type": str(row["type"]),
+                    "ref": str(row["external_ref"]),
+                    "lifecycle": str(row["lifecycle"]),
+                    "head_revision_id": str(row["head_revision_id"] or ""),
+                    "revision_count": revision_count,
+                    "version": metadata.get("version"),
+                    "path": path,
+                    "updated_at": float(row["updated_at"]),
+                })
+            return views
+
     def revision_view(self, revision_id: str) -> dict | None:
         with self._lock:
             row = self._conn.execute("SELECT * FROM revisions WHERE id=?", (revision_id,)).fetchone()

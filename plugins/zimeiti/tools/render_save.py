@@ -180,6 +180,10 @@ class RenderSave(Tool):
             "execution_id": execution_id,
         })
         result.panel = "zimeiti:detail"
+        result.receipt = {"actions": [
+            {"label": "在 Finder 显示", "kind": "reveal", "path": outcome["path"]},
+            {"label": "播放", "kind": "open", "path": outcome["path"]},
+        ]}
         return result
 
     def _execute(self, ctx, tid: str, tl_version: int, version: int, request: dict):

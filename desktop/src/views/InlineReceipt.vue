@@ -1,7 +1,9 @@
 <script setup lang="ts">
 // Inline 回执（Phase 1）：简单结果在过程行原地收束为宿主原生卡，最多两个动作（忽略/展开）。
 // 视觉骨架、间距、按钮、风险提示全部由宿主控制——插件只提供身份（provider/标题）。
+// receipt.actions（文件型产物）：渲染为本机动作按钮（在 Finder 显示/打开），native: 旁路本地执行。
 import { computed } from "vue";
+import { panelAction, type ReceiptAction } from "../lib/brain";
 
 const props = withDefaults(
   defineProps<{
@@ -9,14 +11,21 @@ const props = withDefaults(
     title: string; // 面板标题（插件 · 面板）
     summary?: string; // 一句话结果摘要（缺省用 objectTitle）
     object?: { id?: string; title?: string } | null; // 跨应用接力对象
+    receipt?: { actions?: ReceiptAction[] } | null; // 回执动作（文件型产物）
   }>(),
-  { summary: "", object: null },
+  { summary: "", object: null, receipt: null },
 );
 const emit = defineEmits<{ dismiss: []; expand: [] }>();
 
 const headline = computed(() => props.summary || props.object?.title || "已完成");
 const sub = computed(() => (props.summary ? props.object?.title ?? "" : ""));
 const initial = computed(() => (props.provider ? props.provider.charAt(0).toUpperCase() : "?"));
+// 回执动作上限 2（卡面不挤）：超出截断
+const receiptActions = computed(() => (props.receipt?.actions ?? []).slice(0, 2));
+
+function runAction(a: ReceiptAction) {
+  void panelAction(`native:${a.kind}`, { path: a.path }).catch(() => {});
+}
 </script>
 
 <template>
@@ -28,6 +37,13 @@ const initial = computed(() => (props.provider ? props.provider.charAt(0).toUppe
       <span v-if="sub" class="ir-sub">{{ sub }}</span>
     </div>
     <div class="ir-actions">
+      <button
+        v-for="a in receiptActions"
+        :key="a.kind + a.path"
+        type="button"
+        class="ir-btn"
+        @click="runAction(a)"
+      >{{ a.label }}</button>
       <button type="button" class="ir-btn" @click="emit('dismiss')">忽略</button>
       <button type="button" class="ir-btn accent" @click="emit('expand')">展开</button>
     </div>

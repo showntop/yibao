@@ -5,9 +5,15 @@ import { mount } from "@vue/test-utils";
 import { computed, ref } from "vue";
 import { describe, expect, it, vi } from "vitest";
 import HomeProject from "./HomeProject.vue";
+import { openArtifacts } from "../lib/brain";
 import type { ProjectInfo } from "../lib/brain";
 
 const switchCalls: string[] = [];
+
+vi.mock("../lib/brain", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/brain")>()),
+  openArtifacts: vi.fn(() => Promise.resolve()),
+}));
 
 vi.mock("../composables/useProject", () => ({
   useProject: () => ({
@@ -48,5 +54,12 @@ describe("HomeProject 切换两步确认（N1）", () => {
     expect(row.text()).toContain("确认切换");
     await row.trigger("click");
     expect(switchCalls).toEqual(["proj_other"]); // 第二下真切
+  });
+
+  it("点当前项目主体：打开产物浏览器（不再填聊天草稿）", async () => {
+    const w = mount(HomeProject, { props: { sessionId: "c1", busy: false }, global });
+    await w.find(".current-main").trigger("click");
+    expect(openArtifacts).toHaveBeenCalledWith("proj_current", "c1");
+    expect(w.emitted("chat") ?? []).toEqual([]);
   });
 });

@@ -2,6 +2,7 @@
 // 组件不得直接 invoke，一律走这里的函数（错误处理在此收敛）。
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { WebviewPayload } from "../lib/webview-source";
 import {
   EMPTY_DOCK,
@@ -148,13 +149,21 @@ export function interrupt(conversationId?: string): Promise<void> {
   return invoke("interrupt", { conversationId: conversationId ?? null });
 }
 
-/** 面板动作：调 api.toml 白名单内的方法（id 毫秒取模，一次请求一个够唯一；webview 桥传自有 id 做回包关联）。 */
+/** 面板动作：调 api.toml 白名单内的方法（id 毫秒取模，一次请求一个够唯一；webview 桥传自有 id 做回包关联）。
+ *  native: 旁路（与 WebviewPanel 白名单同语义）：本机打开/亮出文件由宿主本地执行，
+ *  不过 sidecar、无闸门（只读动作）；白名单写死 reveal/open，path 必须非空字符串。 */
 export function panelAction(
   method: string,
   params: Record<string, unknown>,
   id?: number,
   surface?: string,
 ): Promise<void> {
+  if (method.startsWith("native:")) {
+    const path = typeof params.path === "string" ? params.path : "";
+    if (method === "native:reveal" && path) return revealItemInDir(path);
+    if (method === "native:open" && path) return openPath(path);
+    return Promise.reject(new Error(`未知或参数非法的本机动作：${method}`));
+  }
   return invoke("panel_action", { id: id ?? Date.now() % 2 ** 31, method, params, surface: surface ?? _surface });
 }
 
@@ -481,6 +490,14 @@ export function getProjectsOnce(conversationId?: string, timeoutMs = 3000): Prom
     timeoutMs,
     (p) => (p.conversation_id ?? "") === cid,
   );
+}
+
+/** 打开产物浏览器：sidecar 自投 core:artifacts 面板（Stage），fire-and-forget。 */
+export function openArtifacts(workspaceId?: string, conversationId?: string): Promise<void> {
+  return invoke("open_artifacts", {
+    workspaceId: workspaceId ?? null,
+    conversationId: conversationId ?? null,
+  });
 }
 
 /** 新建项目，等 brain-project-created 回包（带最新视图）；超时按失败处理。 */

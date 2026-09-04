@@ -44,6 +44,12 @@ const listItems = computed<Record<string, unknown>[]>(() => {
 });
 const itemTpl = computed(() => props.schema?.item ?? {});
 
+/** 行级动作：行数据自带 actions 数组时覆盖 item 模板（core 产物列表按行给动作，
+ *  非文件型行不落按钮）；无则退回模板声明（现有插件行为不变）。 */
+function rowActions(it: Record<string, unknown>): ActionDecl[] {
+  return Array.isArray(it.actions) ? (it.actions as ActionDecl[]) : (itemTpl.value.actions ?? []);
+}
+
 // ---- board（items 解析复用 list 的 listItems）----
 const boardColumns = computed<BoardColumn[]>(() => props.schema?.columns ?? []);
 const cardTpl = computed(() => props.schema?.card ?? {});
@@ -177,9 +183,9 @@ const fallbackJson = computed(() =>
           <div class="card-title">{{ text(itemTpl.title, it) }}</div>
           <div v-if="itemTpl.subtitle" class="card-sub">{{ text(itemTpl.subtitle, it) }}</div>
         </div>
-        <div v-if="itemTpl.actions?.length" class="card-actions">
+        <div v-if="rowActions(it).length" class="card-actions">
           <button
-            v-for="a in itemTpl.actions"
+            v-for="a in rowActions(it)"
             :key="a.method + a.label"
             class="btn ghost sm"
             @click="fire(a, it)"

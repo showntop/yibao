@@ -619,6 +619,23 @@ pub fn get_projects(
     )
 }
 
+/// 产物浏览器：人点工作语境卡 → sidecar 自投 core:artifacts 面板（事件流回 Stage）。
+#[tauri::command]
+pub fn open_artifacts(
+    state: tauri::State<Brain>,
+    workspace_id: Option<String>,
+    conversation_id: Option<String>,
+) -> Result<(), String> {
+    brain_cmd_with(
+        &state,
+        "artifacts_open",
+        serde_json::json!({
+            "workspace_id": workspace_id.unwrap_or_default(),
+            "conversation_id": conversation_id.unwrap_or_default(),
+        }),
+    )
+}
+
 /// 项目实体：新建（回 {"type":"project_created","ok":...} 经 brain-project-created 广播，带最新视图）。
 #[tauri::command]
 pub fn project_create(

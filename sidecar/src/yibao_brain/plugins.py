@@ -429,6 +429,10 @@ def panel_payload(result) -> dict | None:
     # 用户明确意图信号（对话点名「听 XX/看 XX」）：宿主裁决视为 explicit，可弹面板浮窗
     if getattr(result, "explicit", False):
         payload["explicit"] = True
+    # 回执动作（文件型产物「在 Finder 显示/打开」）：透传给宿主 InlineReceipt
+    receipt = getattr(result, "receipt", None)
+    if receipt:
+        payload["receipt"] = receipt
     return payload
 
 

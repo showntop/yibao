@@ -53,6 +53,13 @@ export interface BrainResult {
   panel?: string | null;
 }
 
+/** 回执动作（文件型产物）：宿主 InlineReceipt 渲染，点击走 panelAction 的 native: 旁路本地执行。 */
+export interface ReceiptAction {
+  label: string;
+  kind: "reveal" | "open";
+  path: string;
+}
+
 /** kind="panel" 事件的 payload：面板引用 + schema（找不到为 null，前端降级）+ webview HTML + 注入数据。 */
 export interface PanelPayload {
   panel?: string;
@@ -82,6 +89,8 @@ export interface PanelPayload {
   input?: "inherit" | "coexist" | "handoff" | "none";
   /** 发起动作 id：前端把表面锚定到对应的过程行 */
   origin?: string;
+  /** 回执动作（文件型产物，如 render/export）：Inline 回执卡上给「在 Finder 显示/打开」，最多 2 个 */
+  receipt?: { actions?: ReceiptAction[] };
 }
 
 /** final_reply 携带的 run 统计（sidecar loop 聚合：token/费用/耗时）。 */

@@ -3524,6 +3524,35 @@ def test_project_switch_emits_scope_notice(tmp_path, monkeypatch):
     assert any(m.get("type") == "project_switched" and m.get("ok") for m in out)
 
 
+def test_artifacts_open_emits_core_panel(tmp_path, monkeypatch):
+    """产物浏览器：人点工作语境卡 → core 自投 core:artifacts 面板（explicit/stage，schema 内联）；
+    workspace_id 缺省时回落当前会话绑定的工作语境。"""
+    monkeypatch.setenv("YIBAO_DATA_DIR", str(tmp_path))
+    out = []
+    _run_async(
+        serve_async(
+            make_reader([
+                {"type": "project_create", "name": "视频项目", "conversation_id": "c1"},
+                {"type": "artifacts_open", "conversation_id": "c1"},
+            ]),
+            lambda m: out.append(m),
+            use_real=False,
+            db_path=str(tmp_path / "a.db"),
+            provider=FakeProvider(),
+        )
+    )
+    panels = [m for m in out if m.get("type") == "event"
+              and m.get("event", {}).get("kind") == "panel"
+              and m["event"].get("payload", {}).get("panel") == "core:artifacts"]
+    assert len(panels) == 1
+    assert panels[0].get("conversation_id") == "c1"
+    payload = panels[0]["event"]["payload"]
+    assert payload["explicit"] is True
+    assert payload["presentation"] == "stage"
+    assert payload["schema"]["type"] == "list"
+    assert payload["data"]["rows"] == []
+
+
 def test_panel_action_quiet_method_emits_no_panel(tmp_path, monkeypatch):
     """N6：quiet=true 的直调（如编辑器内保存）不发 panel 事件——
     保存回执只走 action_result 回桥，不顶掉工作台持久化快照的 rows 载荷。"""

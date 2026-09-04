@@ -40,6 +40,9 @@ class ActionResult(BaseModel):
     object: dict | None = None  # {type,id,title}：跨应用接力用，不依赖面板 DOM
     explicit: bool = False  # 用户明确意图信号（如对话点名「听 XX/看 XX」）：宿主裁决视为 explicit，可弹面板浮窗。
     # 与「模型自动调用绝不在小窗开浮窗」不冲突——只给「用户点名的方法」置 True，防被动跳页原则不变。
+    # 回执动作（可选）：{actions: [{label, kind: "reveal"|"open", path}]}，最多 2 个——
+    # 文件型产物（render/export）给人「在 Finder 显示/打开」；宿主 InlineReceipt 本地执行，无闸门。
+    receipt: dict | None = None
 
 
 EventKind = Literal[

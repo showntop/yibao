@@ -242,6 +242,10 @@ def test_render_save_inline_produces_real_mp4(env, tmp_path, data_dir):
     assert rows[0]["duration_sec"] == pytest.approx(expected, abs=1.0)
     assert rows[0]["timeline_version"] == 1 and rows[0]["storyboard_version"] == 1
 
+    # 回执动作：成片给人「在 Finder 显示 / 播放」（宿主 InlineReceipt 本地执行）
+    assert [a["kind"] for a in r.receipt["actions"]] == ["reveal", "open"]
+    assert all(a["path"] == r.data["path"] for a in r.receipt["actions"])
+
     r2 = _run(reg, "zimeiti.render_save", {"topic_id": tid})  # 重渲 = 新版本
     assert r2.success and r2.data["version"] == 2 and f"v2.mp4" in r2.data["path"]
 

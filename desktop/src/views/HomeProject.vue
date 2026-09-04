@@ -5,13 +5,19 @@ import { computed, ref } from "vue";
 import HomeWidget from "./HomeWidget.vue";
 import { useProject } from "../composables/useProject";
 import { projectCardFace, projectTouchLabel } from "../lib/home/project-card.ts";
-import { durableCancel, durableResume } from "../lib/brain";
+import { durableCancel, durableResume, openArtifacts } from "../lib/brain";
 
 const emit = defineEmits<{ chat: [draft: string] }>();
 const props = defineProps<{ sessionId?: string; busy?: boolean }>();
 const { current, projects, switchTo, refresh } = useProject(() => props.sessionId);
 
 const face = computed(() => (current.value ? projectCardFace(current.value) : null));
+
+// 产物浏览器入口：点卡主体 → core:artifacts 面板直接进 Stage（人主动拉取，不等 Agent 推）
+function onOpenArtifacts() {
+  if (!current.value) return;
+  void openArtifacts(current.value.id, props.sessionId).catch(() => {});
+}
 // 其余最近项目（projects 已按 touched_at 倒序），点击=切换到该项目
 const others = computed(() =>
   projects.value.filter((p) => p.id !== current.value?.id).slice(0, 2),
@@ -52,7 +58,7 @@ async function onDurableAction(kind: "cancel" | "resume", executionId: string) {
         <button type="button" @click="emit('chat', '为这个会话创建一个新的工作语境')">新建工作语境</button>
       </div>
       <div v-else class="current">
-        <button class="current-main" type="button" @click="emit('chat', `查看项目「${face.name}」`)">
+        <button class="current-main" type="button" title="查看产物" @click="onOpenArtifacts">
           <span class="scope-line">
           <span class="pack" :data-domain="face.domain">{{ face.packLabel }}</span>
           <span class="artifacts">{{ face.artifactCount }} 个产物</span>

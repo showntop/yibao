@@ -19,6 +19,7 @@ from collections.abc import Callable
 
 from . import permissions
 from .audit import AuditLog
+from .core_surfaces import artifacts_panel
 from .background import (
     _DOCK_MAX,
     _consume_invoke_context,
@@ -1479,6 +1480,15 @@ async def serve_async(
         conversation_id = str(msg.get("conversation_id") or "")
         write_msg({"type": "projects", **project_store.view(conversation_id)})
 
+    async def _h_artifacts_open(msg: dict) -> None:
+        # 产物浏览器（人点工作语境卡触发）：core 自投 core:artifacts 面板——
+        # schema+data 内联，走与插件面板同一事件流（Stage/Focus/持久化全复用）。
+        conversation_id = str(msg.get("conversation_id") or "")
+        workspace_id = str(msg.get("workspace_id") or "") or project_store.current_id(conversation_id)
+        rows = work_graph.list_artifact_views(workspace_id) if workspace_id else []
+        write_msg({"type": "event", "surface": "home", "conversation_id": conversation_id,
+                   "event": {"kind": "panel", "payload": artifacts_panel(rows)}})
+
     async def _h_project_create(msg: dict) -> None:
         # 前端发起的新建（人操作，无闸门；agent 侧走 project.create tool 的 L3 确认）
         name = str(msg.get("name") or "").strip()
@@ -1534,6 +1544,7 @@ async def serve_async(
         _broadcast_projects(str(msg.get("conversation_id") or ""))
 
     _handlers["projects"] = _h_projects
+    _handlers["artifacts_open"] = _h_artifacts_open
     _handlers["project_create"] = _h_project_create
     _handlers["project_switch"] = _h_project_switch
     _handlers["project_add_object"] = _h_project_add_object

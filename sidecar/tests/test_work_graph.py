@@ -694,3 +694,39 @@ def test_plugin_workflow_pack_is_data_driven_and_cannot_overwrite_core(tmp_path)
             graph.register_workflow({**BUILTIN_WORKFLOWS[-1]}, source_plugin="untrusted")
     finally:
         graph.close()
+
+
+def test_list_artifact_views_surfaces_file_path_only_for_file_backed(tmp_path):
+    graph = WorkGraphStore(str(tmp_path / "work_graph.db"))
+    try:
+        _provide(graph, "video.render", "video.script")
+        graph.create_workspace("ws1", "视频项目", str(tmp_path))
+        graph.attach_external_artifact("ws1", "video.render", "t1#render")
+        graph.attach_external_artifact("ws1", "video.script", "t1#script")
+
+        views = graph.list_artifact_views("ws1")
+        assert {v["type"] for v in views} == {"video.render", "video.script"}
+        # 合成 content_ref（external://…）不给 path
+        assert all(v["path"] == "" for v in views)
+        assert all(v["revision_count"] == 1 for v in views)
+
+        render_id = next(v["id"] for v in views if v["type"] == "video.render")
+        out = tmp_path / "renders" / "t1"
+        out.mkdir(parents=True)
+        mp4 = out / "v3.mp4"
+        mp4.write_bytes(b"mp4")
+        graph.create_revision(render_id, str(mp4), metadata={"version": 3, "duration_sec": 56.7})
+
+        views = graph.list_artifact_views("ws1")
+        render = next(v for v in views if v["type"] == "video.render")
+        assert render["path"] == str(mp4)
+        assert render["version"] == 3
+        assert render["revision_count"] == 2
+        assert render["ref"] == "t1#render"
+        script = next(v for v in views if v["type"] == "video.script")
+        assert script["path"] == ""
+        assert script["version"] is None
+        # 排序：刚更新的 render 排最前
+        assert views[0]["type"] == "video.render"
+    finally:
+        graph.close()

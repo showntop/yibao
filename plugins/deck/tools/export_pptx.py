@@ -103,14 +103,21 @@ class ExportPptx(Tool):
             "deck_id": deck_id, "version": version, "path": str(out_path),
             "slide_count": slide_count, "created_at": now,
         })
-        return ActionResult(success=True, data={
-            "deck_id": deck_id,
-            "deck_ref": deck_id,
-            "export_ref": deck_id,
-            "version": version,
-            "path": str(out_path),
-            "slide_count": slide_count,
-        })
+        return ActionResult(
+            success=True,
+            data={
+                "deck_id": deck_id,
+                "deck_ref": deck_id,
+                "export_ref": deck_id,
+                "version": version,
+                "path": str(out_path),
+                "slide_count": slide_count,
+            },
+            receipt={"actions": [
+                {"label": "在 Finder 显示", "kind": "reveal", "path": str(out_path)},
+                {"label": "打开", "kind": "open", "path": str(out_path)},
+            ]},
+        )
 
 
 def _load_latest(ctx, deck_id: str, kind: str) -> tuple[dict, str]:

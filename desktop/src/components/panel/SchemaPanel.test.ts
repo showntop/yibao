@@ -51,8 +51,46 @@ describe("notes list.schema.json", () => {
   });
 });
 
-describe("notes widget.schema.json（无动作列表）", () => {
-  it("条目无 actions 时不渲染动作按钮区", () => {
+// ---------- core:artifacts：行级动作覆盖 ----------
+
+describe("core:artifacts 行级动作覆盖", () => {
+  // 行数据自带 actions 数组时覆盖 item 模板——产物列表按行给「在 Finder 显示/打开」，
+  // 非文件型产物行不落按钮（core_surfaces.py 只给有 path 的行发 actions）。
+  const schema = {
+    version: 1, type: "list",
+    bind: { items: "$data.rows" },
+    item: { title: "$item.title", subtitle: "$item.meta" },
+  };
+  const data = {
+    rows: [
+      {
+        title: "t1#render", meta: "video.render · v3", path: "/tmp/v3.mp4",
+        actions: [
+          { label: "在 Finder 显示", method: "native:reveal", params: { path: "/tmp/v3.mp4" } },
+          { label: "打开", method: "native:open", params: { path: "/tmp/v3.mp4" } },
+        ],
+      },
+      { title: "t1#script", meta: "video.script" },
+    ],
+  };
+
+  it("带 actions 的行渲染行级按钮，不带的行无按钮区", () => {
+    const w = mountPanel(schema, data);
+    const cards = w.findAll(".card");
+    expect(cards).toHaveLength(2);
+    expect(cards[0].findAll(".card-actions button").map((b) => b.text()))
+      .toEqual(["在 Finder 显示", "打开"]);
+    expect(cards[1].findAll(".card-actions button")).toHaveLength(0);
+  });
+
+  it("点击行级动作上抛 method + 字面 path params", async () => {
+    const w = mountPanel(schema, data);
+    await w.findAll(".card")[0].findAll("button")[0].trigger("click");
+    expect(w.emitted("action")).toEqual([[{ method: "native:reveal", params: { path: "/tmp/v3.mp4" } }]]);
+  });
+});
+
+describe("notes widget.schema.json（无动作列表）", () => {  it("条目无 actions 时不渲染动作按钮区", () => {
     const w = mountPanel(schemaOf("notes/panel/widget.schema.json"), {
       rows: [{ id: "a1", text: "一瞥", created_at: 1700000000 }],
     });

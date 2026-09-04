@@ -33,7 +33,7 @@ import type { Attention, Presentation, SurfaceMode } from "../../lib/surface/sur
 import type { WebviewPayload } from "../../lib/webview-source";
 import { usePanelGrow } from "../../composables/usePanelGrow";
 import { usePluginOverlay } from "../../composables/usePluginOverlay";
-import type { AvatarState } from "../../protocol/brain-types";
+import type { AvatarState, ReceiptAction } from "../../protocol/brain-types";
 
 const props = withDefaults(defineProps<{
   scene?: boolean;
@@ -52,6 +52,8 @@ interface CapabilitySurfaceEvent extends SurfaceMeta {
   attention: Attention;
   /** 面板声明的三态支持范围（sidecar 保证不含 peek） */
   supported?: SurfaceMode[];
+  /** 回执动作（文件型产物）：Inline 档时由宿主回执卡渲染 */
+  receipt?: { actions?: ReceiptAction[] };
 }
 // state：同步给父级侧边栏团子（插件页活跃时团子跟着面板会话走）
 // panel：新面板打开时外发（父级自动切到本页；同面板刷新/挂载补拉不发，不抢用户所在页）
@@ -146,6 +148,7 @@ const current = ref<{
   webview: WebviewPayload | null;
   data: Record<string, unknown>;
   input?: "inherit" | "coexist" | "handoff" | "none";
+  receipt?: { actions?: ReceiptAction[] };
   hints?: { presentation: Presentation | null; attention: Attention; surfaces?: SurfaceMode[]; explicit?: boolean };
 } | null>(null);
 const errorText = ref(""); // 面板内顶部错误细条（不进对话气泡）
@@ -222,6 +225,7 @@ function setCurrent(v: NonNullable<typeof current.value>, silent = false) {
       suggested: v.hints?.presentation ?? null,
       attention: v.hints?.attention ?? "suggest",
       supported: v.hints?.surfaces ?? undefined,
+      receipt: v.receipt,
     });
   }
   requestedUntil = 0;
@@ -314,6 +318,7 @@ function onEvent(e: BrainEvent) {
         webview: (e.payload?.webview as WebviewPayload | null) ?? null,
         data: e.payload?.data ?? {},
         input: e.payload?.input,
+        receipt: e.payload?.receipt ?? undefined,
         hints: {
           presentation: (e.payload?.presentation as Presentation | null | undefined) ?? null,
           attention: (e.payload?.attention as Attention | undefined) ?? "suggest",

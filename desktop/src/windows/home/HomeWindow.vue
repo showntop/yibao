@@ -21,7 +21,7 @@ import appLogo from "../../assets/logo.png";
 import { onPendingConfirms, closeHomeWindow } from "../../lib/brain";
 import { decideSurface, type Attention, type Presentation, type SurfaceMode } from "../../lib/surface/surface-policy";
 import { skyPhase } from "../../lib/home/sky.ts";
-import type { AvatarState } from "../../protocol/brain-types";
+import type { AvatarState, ReceiptAction } from "../../protocol/brain-types";
 import { whenFace } from "../../lib/home/home-when-face.ts";
 
 // 主屏（home）= 对话 + 信息面板的融合体（AI 原生：对话是主入口，动态/回顾/插件一瞥都在右侧）
@@ -97,6 +97,8 @@ interface CapabilitySurfaceEvent extends CapabilityRailSurface {
   attention: Attention;
   /** 面板声明的三态支持范围（sidecar 保证不含 peek） */
   supported?: SurfaceMode[];
+  /** 回执动作（文件型产物）：Inline 档时由宿主回执卡渲染 */
+  receipt?: { actions?: ReceiptAction[] };
 }
 type HomePluginsRef = {
   backToList: () => void;
@@ -604,6 +606,7 @@ function close() {
         :provider="pendingInline.plugin"
         :title="pendingInline.title"
         :summary="pendingInline.objectTitle ?? ''"
+        :receipt="pendingInline.receipt ?? null"
         @dismiss="pendingInline = null"
         @expand="upgradeInline"
       />
